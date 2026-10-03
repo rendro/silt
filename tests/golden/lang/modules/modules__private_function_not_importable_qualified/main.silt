@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: `secret` exists in module `calc` but is not `pub`
+-- stderr-contains: 'secret' is private to module 'calc'
 import calc
 
 fn main() {

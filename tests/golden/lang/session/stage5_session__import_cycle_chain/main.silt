@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- The cycle is reported once, at the import that closes it, with each
+-- import of the chain shown.
+import a
+
+fn main() {
+  println(a.f())
+}

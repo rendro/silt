@@ -1,0 +1,13 @@
+-- verdict: same
+import json
+import map
+type M { m: Map(String, Int), t: (Int, Int) }
+fn main() {
+  match json.parse("\{\"m\": \"oops\", \"t\": \"also\"\}", M) {
+    Ok(v) -> {
+      println(v)
+      println(map.length(v.m))
+    }
+    Err(e) -> println("err: {e}")
+  }
+}

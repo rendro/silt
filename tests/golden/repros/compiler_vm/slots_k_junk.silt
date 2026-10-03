@@ -1,0 +1,13 @@
+-- verdict: same
+fn main() {
+  let opt = Some(41)
+  let warm = match opt {
+    Some(v) -> v
+    None -> 0
+  }
+  let r = 100 + match opt {
+    Some(v) -> v + 1
+    None -> 0
+  }
+  println(r)
+}

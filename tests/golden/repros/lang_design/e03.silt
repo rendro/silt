@@ -1,0 +1,17 @@
+-- verdict: same
+import list
+import io
+import result
+
+fn sneaky(xs) !{} {
+  xs |> list.each { x -> println("printed from a pure fn: {x}") }
+}
+
+fn reads(paths) !{} {
+  paths |> list.map { p -> result.is_ok(io.read_file(p)) }
+}
+
+fn main() !{} {
+  sneaky([1, 2])
+  println(reads(["/etc/hostname"]))
+}

@@ -6,45 +6,38 @@
 //! list/tuple/record/map destructuring, pin patterns, when/else,
 //! plus all previous features (closures, upvalues, pipes, lambdas).
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::fmt;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
-    RecordField, Stmt, StringPart, TypeBody, TypeExpr, TypeExprKind, UnaryOp,
+    Stmt, StringPart, TypeBody, UnaryOp,
 };
-use crate::bytecode::{ANON_RECORD_TAG, Chunk, Function, Op, UpvalueDesc, VmClosure};
+use crate::bytecode::{Chunk, Function, Globals, Op, UpvalueDesc, VmClosure};
+use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
-use crate::lexer::{Lexer, Span};
 use crate::module;
-use crate::parser::Parser;
-use crate::typechecker;
-use crate::types::canonical::canonicalize_type_name;
-use crate::value::Value;
+use crate::source::Span;
+use crate::typeinfo::{FieldType, Shape, Tag, TypeInfo, TypeTable, VariantInfo};
+use crate::types::canonical::{Resolver, canonical_head};
+use crate::types::{Type, TypeRef};
+use crate::value::{HostFn, Value};
 
 mod patterns;
 
-// ── Record field types for the json / toml decoders ─────────────────
+// ── Types at run time ───────────────────────────────────────────────
 //
-// `json.parse(text, T)` and `toml.parse(text, T)` build a value of the
-// record type `T` at run time. For that, every record declaration
-// installs a list of `(field name, field type descriptor)` pairs, read by
-// the decoders in `src/builtins/data.rs` and `src/builtins/toml.rs`.
-//
-// A descriptor is one of
-//
-//   Int  Float  String  Bool  Date  Time  DateTime
-//   List:<d>   Option:<d>   Map:<d>   Tuple(<d>,<d>,...)   Record:<name>
-//   Unsupported:<type as written>
-//
-// `Map:<d>` is `Map(String, d)`. Type aliases are replaced by their
-// target before the descriptor is built. A type no decoder exists for
-// gets `Unsupported`, which makes the decoders return `Err`; it is never
-// mapped to some other type. A direct `json.parse` / `toml.parse` call
-// whose type argument names such a record is rejected at compile time
-// (see `Compiler::check_decode_target`).
+// Each record and enum type a program builds values of is described to
+// the VM by a `TypeInfo` (see `crate::typeinfo`): its id, its name, its
+// variants or its fields. A record's fields carry their types as far as
+// `json.parse(text, T)` and `toml.parse(text, T)` need them to build a
+// value of `T`. Type aliases are replaced by their target. A type no
+// decoder exists for is `FieldType::Unsupported`, which makes the
+// decoders return `Err`; it is never mapped to some other type. A direct
+// `json.parse` / `toml.parse` call whose type argument names such a
+// record is rejected at compile time (see
+// `Compiler::check_decode_target`).
 
 /// The builtin functions that decode text into a value of the type named
 /// by their last argument.
@@ -62,16 +55,19 @@ const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String
      Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, \
      non-generic record types, and aliases of these";
 
-/// A record declaration, kept to describe and check its field types.
-struct RecordDecl {
-    params: Vec<Symbol>,
-    fields: Vec<RecordField>,
+/// The record types a field type names.
+fn collect_records(field_type: &FieldType, out: &mut Vec<crate::defs::TypeId>) {
+    match field_type {
+        FieldType::Record(id) => out.push(*id),
+        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => collect_records(t, out),
+        FieldType::Tuple(ts) => ts.iter().for_each(|t| collect_records(t, out)),
+        _ => {}
+    }
 }
 
-/// A type alias declaration: `type Name(params) = target`.
-struct AliasDecl {
-    params: Vec<Symbol>,
-    target: TypeExpr,
+/// A type as messages write it, a record type by its name.
+fn shown(ty: &Type) -> String {
+    Type::show_all(&[ty], |_, _| None).remove(0)
 }
 
 /// A record field that `json.parse` / `toml.parse` cannot decode.
@@ -79,88 +75,10 @@ struct UndecodableField {
     /// The record type that declares the field.
     record: String,
     field: String,
-    /// The field's type as written in the declaration.
+    /// The field's type.
     field_type: String,
-    /// The part of the field's type that has no decoder, as written.
+    /// The part of the field's type that has no decoder.
     part: String,
-}
-
-/// Render a type expression the way it is written in source.
-fn render_type_expr(te: &TypeExpr) -> String {
-    fn render_list(items: &[TypeExpr]) -> String {
-        items
-            .iter()
-            .map(render_type_expr)
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-    match &te.kind {
-        TypeExprKind::Named(name) => resolve(*name),
-        TypeExprKind::Generic(name, args) => {
-            format!("{}({})", resolve(*name), render_list(args))
-        }
-        TypeExprKind::Tuple(elems) => format!("({})", render_list(elems)),
-        TypeExprKind::Function(params, ret) => {
-            format!("Fn({}) -> {}", render_list(params), render_type_expr(ret))
-        }
-        TypeExprKind::SelfType => "Self".to_string(),
-        TypeExprKind::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } => format!(
-            "<{} as {}>::{}",
-            render_type_expr(receiver),
-            resolve(*trait_name),
-            resolve(*assoc_name)
-        ),
-        TypeExprKind::AnonRecord { fields, tail } => {
-            let mut items: Vec<String> = fields
-                .iter()
-                .map(|(n, t)| format!("{}: {}", resolve(*n), render_type_expr(t)))
-                .collect();
-            if let Some(row) = tail {
-                items.push(format!("...{}", resolve(*row)));
-            }
-            format!("{{{}}}", items.join(", "))
-        }
-    }
-}
-
-/// Replace the type parameters `params` by `args` in `te`. Used to expand
-/// a parametric alias: `Pair(Int)` with `type Pair(a) = (a, a)` becomes
-/// `(Int, Int)`.
-fn substitute_type_params(te: &TypeExpr, params: &[Symbol], args: &[TypeExpr]) -> TypeExpr {
-    let subst = |t: &TypeExpr| substitute_type_params(t, params, args);
-    let kind = match &te.kind {
-        TypeExprKind::Named(name) => match params.iter().position(|p| p == name) {
-            Some(i) => return args[i].clone(),
-            None => TypeExprKind::Named(*name),
-        },
-        TypeExprKind::Generic(name, type_args) => {
-            TypeExprKind::Generic(*name, type_args.iter().map(subst).collect())
-        }
-        TypeExprKind::Tuple(elems) => TypeExprKind::Tuple(elems.iter().map(subst).collect()),
-        TypeExprKind::Function(fn_params, ret) => TypeExprKind::Function(
-            fn_params.iter().map(subst).collect(),
-            Box::new(substitute_type_params(ret, params, args)),
-        ),
-        TypeExprKind::SelfType => TypeExprKind::SelfType,
-        TypeExprKind::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } => TypeExprKind::AssocProj {
-            receiver: Box::new(substitute_type_params(receiver, params, args)),
-            trait_name: *trait_name,
-            assoc_name: *assoc_name,
-        },
-        TypeExprKind::AnonRecord { fields, tail } => TypeExprKind::AnonRecord {
-            fields: fields.iter().map(|(n, t)| (*n, subst(t))).collect(),
-            tail: *tail,
-        },
-    };
-    TypeExpr::new(kind, te.span)
 }
 
 // ── Bind destruct kind ───────────────────────────────────────────────
@@ -236,16 +154,19 @@ impl CompileContext {
 
 /// Convert a frame height to the `u16` slot operand of `GetLocal`,
 /// `SetLocal`, `Recur` and `Slide`.
-fn frame_slot(height: usize, span: Span) -> Result<u16, CompileError> {
-    u16::try_from(height).map_err(|_| CompileError {
-        message: format!(
-            "this function keeps more than {} values on its stack at once \
+fn frame_slot(height: usize, span: Span) -> Result<u16, Diagnostic> {
+    u16::try_from(height).map_err(|_| {
+        Diagnostic::error(
+            Code::CompileLimit,
+            span,
+            format!(
+                "this function keeps more than {} values on its stack at once \
              (its local bindings plus the values of the expression being evaluated); \
              move some of its statements into separate functions, or split a large \
              expression into smaller parts",
-            u16::MAX
-        ),
-        span,
+                u16::MAX
+            ),
+        )
     })
 }
 
@@ -255,202 +176,30 @@ struct Local {
     slot: u16,
 }
 
-// ── Compiler warnings ────────────────────────────────────────────────
-
-pub struct CompileWarning {
-    pub message: String,
-    pub span: Span,
-}
-
 // ── Compiler errors ─────────────────────────────────────────────────
 
-/// The compiler's error for a `loop(...)` with no enclosing loop in the
-/// same function. The typechecker reports every such call first (outside
-/// any loop, or inside a closure in a loop body), so the CLI pipeline
-/// drops this error when a type error stands at the same place.
-pub const LOOP_CALL_OUTSIDE_LOOP: &str = "`loop(...)` can only appear inside a `loop` body";
-
-#[derive(Debug, Clone)]
-pub struct CompileError {
-    pub message: String,
-    pub span: Span,
+/// A defect in silt: the program reached the compiler with an error the
+/// typechecker reports (a builtin module used without an import, a
+/// `loop(...)` outside a loop or with the wrong number of arguments). The
+/// session compiles only programs whose analysis has no error.
+fn checker_missed(span: Span, what: &str) -> Diagnostic {
+    Diagnostic::error(
+        Code::CompilerBug,
+        span,
+        format!("compiler bug: {what} reached the compiler; the typechecker reports it"),
+    )
 }
 
-impl fmt::Display for CompileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}:{}] {}", self.span.line, self.span.col, self.message)
-    }
-}
-
-/// Render a lex/parse error that happened inside an imported module into a
-/// human-readable `CompileError.message`. The resulting string embeds:
-///
-///   1. A `module '<name>': <kind> at <file>:<line>:<col> — <inner_msg>` header.
-///   2. A source snippet from the *module* file with a caret pointing at
-///      the offending token, formatted to resemble the outer
-///      `SourceError::Display` snippet style (`  --> file:line:col` +
-///      line gutter + `^` caret).
-///
-/// The outer `SourceError::Display` impl will still render its own snippet
-/// against the *main* file at the `import` statement — that's the
-/// surrounding context the user expects. What was broken before (G3) is
-/// that the user had no visibility into where the actual parse/lex error
-/// was inside the imported module: the caret-free "module 'bad': parse
-/// error at bad.silt:3:1" line left the user guessing. Now the module
-/// source line is reproduced directly in the error message, so the final
-/// rendered stderr contains both the outer caret (at `import bad`) and
-/// the inner caret (at the real parse error inside bad.silt).
-fn format_module_source_error(
-    module_name: &str,
-    file_path: &str,
-    source: &str,
-    kind: &str,
-    inner_message: &str,
-    span: Span,
-) -> String {
-    // Clamp a span pointing past EOF back onto the last real line so
-    // unexpected-EOF parse errors still render a snippet. Without this,
-    // truncated module files (e.g. `pub fn broken(\n` with an EOF on
-    // line 2) produce a header-only error with no caret line — the G1
-    // audit finding.
-    // Lock: tests/lang/modules.rs `test_module_parse_error_eof_renders_snippet`.
-    let clamped_span = crate::errors::clamp_span_to_source(span, source);
-    let mut out = format!(
-        "module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",
-        line = clamped_span.line,
-        col = clamped_span.col,
-    );
-
-    // Pull the offending source line from the module file so the reader
-    // can see exactly where the caret points. If the span.line is 0 or
-    // past the end of the file we silently skip the snippet — there's
-    // nothing sensible to render.
-    if clamped_span.line > 0
-        && let Some(src_line) = source.lines().nth(clamped_span.line - 1)
-    {
-        // Width of the line-number gutter for alignment. Matches the
-        // convention in src/errors.rs::SourceError::Display by calling
-        // the shared `errors::line_num_width` helper.
-        let line_num = clamped_span.line;
-        let gutter_width = crate::errors::line_num_width(line_num);
-        let gutter_blank: String = " ".repeat(gutter_width);
-        // A long line is cut to a window around the error, as in
-        // `SourceError::Display`.
-        let (src_line, col) =
-            crate::errors::excerpt_around(src_line, clamped_span.col.saturating_sub(1));
-        let src_line = src_line.as_str();
-        // Preserve tabs so the caret lines up with the actual char.
-        // Use the shared helper from `errors.rs` so CJK / emoji /
-        // other double-wide chars get one space per display cell
-        // (not one per `char`), keeping this site symmetric with
-        // `SourceError::Display`.
-        let caret_spacing: String = crate::errors::caret_spacing(src_line, col);
-
-        // Round-85 follow-up: route the inner snippet glyphs through
-        // `active_colors()` so this site honors NO_COLOR / FORCE_COLOR
-        // symmetrically with the outer `SourceError::Display` path.
-        // Previously the inner `-->` / `|` / `^` glyphs were always
-        // plain text, producing colored outer header + plain inner
-        // snippet under FORCE_COLOR=1 in a TTY.
-        let c = crate::errors::active_colors();
-        out.push_str(&format!(
-            "\n {arrow} {file_path}:{line}:{col}",
-            arrow = format_args!("{}-->{}", c.cyan, c.reset),
-            file_path = file_path,
-            line = line_num,
-            col = clamped_span.col,
-        ));
-        out.push_str(&format!(
-            "\n {gutter_blank} {bar}",
-            bar = format_args!("{}|{}", c.cyan, c.reset),
-        ));
-        out.push_str(&format!(
-            "\n {gutter_lit} {bar} {src_line}",
-            gutter_lit = format_args!("{}{}{}", c.cyan, line_num, c.reset),
-            bar = format_args!("{}|{}", c.cyan, c.reset),
-        ));
-        out.push_str(&format!(
-            "\n {gutter_blank} {bar} {caret_spacing}{caret} {inner_message}",
-            bar = format_args!("{}|{}", c.cyan, c.reset),
-            caret = format_args!("{}{}^{}", c.bold, c.red, c.reset),
-        ));
-    }
-
-    out
-}
-
-/// Render a module file path as CWD-relative when possible. Mirrors the
-/// `normalize_path` closure in `src/cli/run.rs` that does the same for
-/// runtime SourceError rendering. Keeps the inner `--> helper.silt:...`
-/// snippet consistent with the outer diagnostic's `-->` style, so a
-/// single stderr diagnostic doesn't mix absolute and relative paths.
-///
-/// We strip only the CWD prefix — if the module lives outside the CWD
-/// (e.g. a dependency under ~/.silt/deps) we fall back to the raw
-/// path, because any synthetic prefix-stripping there would lie about
-/// where the file actually lives. Lock:
-/// tests/lang/compiler_module_path_norm_round36_tests.rs.
-///
-/// The result is only ever printed, so it is escaped by the display rule
-/// (`crate::git::escape_for_display`): a directory name holding a control
-/// character cannot forge lines of a diagnostic. Plain paths, Windows
-/// backslashes included, print unchanged.
-fn normalize_module_path(p: &std::path::Path) -> String {
-    crate::git::escape_for_display(&module_path_for_display(p))
-}
-
-/// `p` canonicalized, also when `p` itself does not exist (a module that
-/// was looked for and not found): the nearest existing ancestor is
-/// canonicalized and the rest of the path appended. On Windows this also
-/// resolves short (8.3) directory names, so a path under a short-named
-/// working directory still compares with its long form.
-fn canonicalize_existing_prefix(p: &std::path::Path) -> Option<std::path::PathBuf> {
-    let mut rest = Vec::new();
-    let mut current = p;
-    loop {
-        if let Ok(canon) = std::fs::canonicalize(current) {
-            let mut out = canon;
-            for part in rest.iter().rev() {
-                out.push(part);
-            }
-            return Some(out);
-        }
-        rest.push(current.file_name()?.to_os_string());
-        current = current.parent()?;
-    }
-}
-
-/// The unescaped text of [`normalize_module_path`].
-fn module_path_for_display(p: &std::path::Path) -> String {
-    if let Ok(cwd) = std::env::current_dir() {
-        // First try a literal strip — cheap, no I/O.
-        if let Ok(rel) = p.strip_prefix(&cwd) {
-            return rel.display().to_string();
-        }
-        // Fall back to canonicalizing both sides. On Windows, upstream
-        // module resolution may have canonicalized `p` into extended-
-        // length form (`\\?\C:\...`) while `cwd` is still `C:\...`, so a
-        // literal strip misses. Canonicalizing both makes the forms
-        // comparable. `canonicalize` can fail (e.g. no filesystem access
-        // in some sandboxes); any failure falls through to the raw
-        // display.
-        if let (Some(p_canon), Ok(cwd_canon)) =
-            (canonicalize_existing_prefix(p), std::fs::canonicalize(&cwd))
-            && let Ok(rel) = p_canon.strip_prefix(&cwd_canon)
-        {
-            return rel.display().to_string();
-        }
-    }
-    // Last resort: strip the Windows `\\?\` verbatim prefix for display
-    // so an out-of-CWD module path at least renders cleanly.
-    let s = p.display().to_string();
-    #[cfg(windows)]
-    {
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            return stripped.to_string();
-        }
-    }
-    s
+/// A defect in silt: a name that the resolver resolved (every name
+/// that resolves to nothing is an error of the analysis, and a program
+/// with one is not compiled) but that is no local, upvalue or global the
+/// compiler has.
+fn name_without_binding(span: Span, name: Symbol) -> Diagnostic {
+    Diagnostic::error(
+        Code::CompilerBug,
+        span,
+        format!("compiler bug: the name '{name}' has no binding in the compiled code"),
+    )
 }
 
 /// Validate that a computed `JumpBack` distance fits in the instruction's
@@ -459,568 +208,314 @@ fn module_path_for_display(p: &std::path::Path) -> String {
 /// around and branch to garbage. Extracted into a free function so the
 /// bounds check can be unit-tested without wiring up an entire compile
 /// context.
-fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), CompileError> {
+fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), Diagnostic> {
     if jump_back_dist > u16::MAX as usize {
-        return Err(CompileError {
-            message: "loop body too large (exceeds 65535 bytes of bytecode)".to_string(),
+        return Err(Diagnostic::error(
+            Code::CompileLimit,
             span,
-        });
+            "loop body too large (exceeds 65535 bytes of bytecode)",
+        ));
     }
     Ok(())
 }
 
 // ── Compiler ──────────────────────────────────────────────────────────
 
-/// Result of resolving an `import foo` segment to a concrete file.
-///
-/// Carried internally between `compile_file_module` and its inner
-/// implementation so the file path, owning package, and per-package cache
-/// key are all derived in one place.
-struct ResolvedImport {
-    /// Absolute (or project-relative) path to the `.silt` file to load.
-    file_path: PathBuf,
-    /// Symbol identifying the package the resolved module belongs to.
-    /// Pushed on `compiling_package_stack` for the duration of the
-    /// inner compile, so nested imports can resolve relative to it.
-    package: Symbol,
-    /// Bare module name *within* `package` (e.g. `"lib"` for a dep's
-    /// entry point, `"helpers"` for a local sub-module). Used by the
-    /// cycle-message renderer to drop package prefixes when a cycle
-    /// stays inside a single package.
-    module: String,
-    /// Package-qualified key used for `compiled_modules` /
-    /// `compiling_modules*`. Format: `"{pkg_name}::{module_path}"`. The
-    /// qualification ensures the same module name living in two packages
-    /// doesn't share cache state and that cycle messages render clearly
-    /// (`pkg_a::lib -> pkg_b::lib -> pkg_a::lib`).
-    cache_key: String,
+/// A module of the program, as the session hands it to the compiler:
+/// parsed and typechecked, with what each of its imports names.
+pub struct ModuleUnit {
+    /// The module, as the session knows it.
+    pub id: crate::session::ModuleId,
+    /// The module's declarations, after the typechecker filled them in.
+    pub program: Arc<Program>,
+    /// The module's name in its package (`"lib"` for a dependency's
+    /// library, `"util"` for `src/util.silt`).
+    pub name: String,
+    /// How a value of a type of the module names the module when two
+    /// types of the program have the type's name (`util.Pt {x: 1}`):
+    /// as the entry's package imports it. A module of the entry's
+    /// package is its name (`util`); a dependency's library is the
+    /// dependency (`db`); another module of a dependency is the
+    /// dependency and the module (`db.util`).
+    pub qualifier: String,
+    /// The module each `import` of this module names, by the module
+    /// name written after `import`. Builtin modules are not in it.
+    pub imports: HashMap<Symbol, usize>,
+    /// For a host module, the function each of its signatures declares,
+    /// by name: the module's globals are these functions.
+    pub host: HashMap<Symbol, Arc<HostFn>>,
 }
 
-/// One frame of `compiling_modules_stack`. Stored as a struct (rather
-/// than just the qualified key) so the cycle renderer can produce
-/// readable messages: bare module names for in-package cycles,
-/// `pkg::module` qualified names for cycles that cross package
-/// boundaries.
-struct CompilingFrame {
-    cache_key: String,
-    package: Symbol,
-    module: String,
+/// The modules of a program, indexed by the session's module ids, and
+/// which of them is the entry: the one compiled by `compile_program` or
+/// `compile_declarations`. The others are compiled where they are first
+/// imported.
+pub struct ProgramUnits {
+    pub modules: Vec<ModuleUnit>,
+    pub entry: usize,
+    /// The definitions the resolver's slots name.
+    pub defs: Arc<crate::defs::DefTable>,
+    /// For a REPL entry: what the earlier entries left in the VM. Empty
+    /// for any other program.
+    pub earlier: EarlierCells,
+    /// The type aliases and associated-type bindings of the session:
+    /// impl targets are canonicalized with them, as the checker keyed
+    /// the impls.
+    pub resolver: Arc<Resolver>,
+    /// The fields of each record type of the session, with their types
+    /// as the checker inferred them, in declaration order.
+    pub record_fields: Arc<HashMap<crate::defs::TypeId, Vec<(Symbol, Type)>>>,
+}
+
+/// What the earlier entries of a REPL session installed, which the entry
+/// being compiled uses but does not install again.
+#[derive(Default)]
+pub struct EarlierCells {
+    /// Their declarations, oldest first: the entry knows their types.
+    pub programs: Vec<Arc<Program>>,
+    /// The modules installed already: an import of one compiles nothing.
+    pub installed: HashSet<usize>,
+    /// The global slots the earlier entries took. The entry's own
+    /// definitions get new ones.
+    pub globals: Globals,
 }
 
 pub struct Compiler {
     contexts: Vec<CompileContext>,
     /// Accumulated compiled functions (one per `Decl::Fn`).
     functions: Vec<Function>,
-    /// Source roots for every package in scope (local + path deps),
-    /// keyed by package name (the import segment users type). The
-    /// value is the directory containing that package's `.silt`
-    /// source files (typically `<pkg_root>/src/`).
-    ///
-    /// `import calc` resolves first against `package_roots`: if `calc`
-    /// is a key here it is treated as a cross-package import (loads
-    /// `<calc_src>/lib.silt`); otherwise the import is local to the
-    /// current package and resolves under `local_package`'s root.
-    package_roots: HashMap<Symbol, PathBuf>,
-    /// The local package's name. When set, imports that don't match
-    /// any entry in `package_roots` fall back to this package's source
-    /// directory. Stays `None` for the legacy single-root case (REPL,
-    /// ad-hoc scripts) where there's no manifest.
-    local_package: Option<Symbol>,
-    /// Modules already compiled in this compilation unit (avoids double-compile).
-    /// Keys are package-qualified (`{pkg}::{module}`) so the same module
-    /// name in two packages doesn't collide.
-    compiled_modules: HashSet<String>,
-    /// Public export names of each compiled file module, keyed by the
-    /// same package-qualified cache key as `compiled_modules`. Lets a
-    /// later `import foo as f` re-register alias globals even when
-    /// `foo` was already compiled by an earlier `import foo` /
-    /// `import foo.{...}` / `import foo as other` — previously the
-    /// cached-hit path returned an empty list and the alias arm
-    /// silently registered nothing, so `f.area` died at runtime with
-    /// "undefined global" while `silt check` passed (round 92 fix).
-    module_export_names: HashMap<String, Vec<String>>,
-    /// Modules currently being compiled (for circular import detection).
-    /// The HashSet gives O(1) membership checks for the hot path, and the
-    /// parallel Vec preserves insertion order so a detected cycle can be
-    /// rendered as an arrow-chain. Both fields are always pushed/popped
-    /// together by `compile_file_module`. Keys are package-qualified
-    /// strings (`{pkg}::{module}`) so a `lib` module in two different
-    /// packages doesn't collide.
-    compiling_modules: HashSet<String>,
-    /// Parallel to `compiling_modules` but preserves insertion order.
-    /// Each entry stores the package-qualified key plus the package and
-    /// bare module name; the cycle renderer uses the latter pair to
-    /// produce a clean message that drops package prefixes when the
-    /// whole cycle lives in one package.
-    compiling_modules_stack: Vec<CompilingFrame>,
-    /// Stack of packages whose modules are currently being compiled.
-    /// Pushed/popped alongside `compiling_modules_stack` so nested
-    /// `import` decls inside a dep's `lib.silt` resolve relative to
-    /// the dep's source root, not the consumer's.
-    compiling_package_stack: Vec<Symbol>,
-    /// Warnings emitted during compilation.
-    warnings: Vec<CompileWarning>,
-    /// Extra parse errors from imported modules that were recovered past
-    /// via `Parser::parse_program_recovering`. The first such error is
-    /// still returned as the hard `Err` from `compile_program` so the
-    /// existing "compile fails on broken module" flow is preserved; the
-    /// remainder live here and are drained by the CLI pipeline so the
-    /// user sees every diagnostic at once instead of fixing-then-rerunning.
-    ///
-    /// Each entry's `message` is pre-formatted via
-    /// `format_module_source_error`, so it already embeds the imported
-    /// module's file path, line, and source snippet. The `span` refers
-    /// to the outer `import` statement in the entrypoint, matching the
-    /// single-error flow so `SourceError::from_compile_error` renders
-    /// the outer caret against the correct file.
-    module_parse_errors: Vec<CompileError>,
-    /// Round 92: hard typechecker errors found in *imported* user
-    /// modules that the compiler will NOT resolve at link time (i.e.
-    /// real type errors, not the import-resolvable undefined-name /
-    /// trait cascade — see `crate::diagnostic_filters`). Previously the
-    /// per-module typecheck results in `pre_typecheck_user_module` and
-    /// `compile_file_module_inner` were bound to `_errors` /
-    /// `_type_errors` and dropped wholesale, so `silt check` exited 0
-    /// on a program whose imported module fails its own direct check.
-    ///
-    /// Each entry is already a fully-formed [`crate::errors::SourceError`]
-    /// rendered against the imported module's own source text and
-    /// (CWD-normalized) file path, so spans and snippets point into the
-    /// module file, not the import site. Drained by the CLI pipeline
-    /// via [`Compiler::take_module_type_errors`] and merged into the
-    /// entrypoint's type diagnostics.
-    module_type_errors: Vec<crate::errors::SourceError>,
-    /// Module files already harvested into `module_type_errors`. The
-    /// same module is typechecked up to twice per session (once by the
-    /// pre-typecheck pass, once by `compile_file_module_inner`); keying
-    /// by file path makes the harvest first-wins so diagnostics aren't
-    /// duplicated.
-    module_type_error_files: HashSet<PathBuf>,
-    /// Builtin modules that have been explicitly imported in this compilation unit.
-    imported_builtin_modules: HashSet<String>,
-    /// Aliases for builtin modules: maps the alias name (e.g. "l" from
-    /// `import list as l`) to the canonical builtin module name (e.g.
-    /// "list"). Used by `extract_builtin_name` and the FieldAccess
-    /// codegen to resolve `l.sum` → `CallBuiltin("list.sum", …)` so that
-    /// non-curated submodule functions (registered in the typechecker
-    /// env / VM dispatcher but absent from `module::builtin_module_functions`)
-    /// remain callable through the alias. Mirrors the typechecker's
-    /// round-58 prefix-mirror (see src/typechecker/mod.rs:3156) on the
-    /// compiler side; without it `l.sum` failed with
-    /// "undefined global: l.sum" at runtime even though `list.sum` worked.
-    imported_builtin_module_aliases: HashMap<String, String>,
+    /// The modules of the program, from the session.
+    units: ProgramUnits,
+    /// The modules being compiled, innermost last: the importing module
+    /// of an `import` met now is the last one, or the entry module.
+    unit_stack: Vec<usize>,
+    /// Modules already compiled in this compilation unit, so each is
+    /// compiled once, where it is first imported.
+    compiled_modules: HashSet<usize>,
     /// Whether the current expression is in tail position (for TCO).
     in_tail_position: bool,
-    /// When compiling inside a file-based module, maps bare function names
-    /// to their qualified equivalents so intra-module calls resolve.
-    /// Value is (module_name, map_of fn_name -> is_public).
-    module_scope: Option<(String, HashMap<String, bool>)>,
-    /// For each compiled file-based module, the set of `pub fn` names it
-    /// exports. Populated during `compile_file_module_inner`. Used by the
-    /// module-qualified call/field-access paths to distinguish "function is
-    /// private" from "function doesn't exist" when a `mod.fn` reference
-    /// fails to resolve.
-    module_public_fns: HashMap<String, HashSet<String>>,
-    /// For each compiled file-based module, the set of non-`pub` (private)
-    /// function names it defines. Lets the call-site lookup emit a crisp
-    /// compile-time visibility error ("`helper` exists in module `mymod`
-    /// but is not `pub`") instead of the VM's generic "undefined global".
-    module_private_fns: HashMap<String, HashSet<String>>,
-    /// Whether this compiler is being used to compile a REPL entry. In REPL
-    /// mode, an unknown `name.field` where `name` is neither a local nor a
-    /// known builtin module falls through to `GetGlobal(name) + GetField(field)`
-    /// so that a previously-bound REPL value (stored as a VM global) can have
-    /// its fields accessed. In non-REPL mode, unknown `name.field` is still
-    /// emitted as `GetGlobal("name.field")` so that foreign-function modules
-    /// (e.g. `mylib.double` registered via `register_fn1`) and file-module
-    /// aliases (`import string as s` → `s.split`) continue to work.
-    repl_mode: bool,
-    /// Maps enum type name → set of variant names. Populated as `type`
-    /// declarations are compiled. Used by `FieldAccess` codegen to
-    /// rewrite `EnumName.Variant` into a bare `GetGlobal("Variant")`
-    /// since variants are registered globally by bare name. Also seeded
-    /// from `module::builtin_enum_variants()` at construction so builtin
-    /// enums (Result, Option, IoError, etc.) support the same qualifier
-    /// syntax as user-declared enums.
-    known_enum_variants: HashMap<String, HashSet<String>>,
-    /// Names of known unit (nullary) enum variants — i.e. those
-    /// registered globally as `Value::Variant(name, [])`. Used to gate
-    /// the bare-variant method-dispatch rewrite: `Red.display()` must
-    /// lower to `GetGlobal("Red"); CallMethod("display", 1)` rather
-    /// than the qualified-global `GetGlobal("Red.display")` (which
-    /// produces a runtime `undefined global: Red.display`). Only unit
-    /// variants are tracked here; payload variants like `Blue(5)` go
-    /// through the receiver-expression path naturally because their
-    /// receiver is `ExprKind::Call(Blue, [5])`, not `ExprKind::Ident`.
-    /// Seeded from `module::builtin_*_enum_variants_with_arity()` so
-    /// builtin unit variants (`None`, `IoInterrupted`, etc.) are also
-    /// recognised.
-    known_unit_variants: HashSet<String>,
-    /// Round 94 (module-shadowing): binder names of the entry program's
-    /// top-level `let` declarations. These are VALUE globals, so dotted
-    /// access on them (`other.year` after `let other = P { .. }`) is
-    /// field access, never a module-member lookup — the typechecker
-    /// resolves it that way (a value binding shadows a same-named
-    /// imported module), and the codegen paths below must agree or the
-    /// VM would chase a `GetGlobal("other.year")` that doesn't exist.
-    /// Populated by a pre-pass in `compile_program_with_entry` /
-    /// `compile_declarations` (NOT in `compile_decl`, so a file
-    /// module's own top-level lets don't leak into the consumer's
-    /// view). Consulted alongside `resolve_local`/upvalue checks in
-    /// `extract_builtin_name`, the Call arm's module-call detection,
-    /// and `FieldAccess` codegen.
-    top_level_value_globals: HashSet<String>,
-    /// Names of the entry program's top-level `fn` declarations, filled
-    /// by the same pre-pass as `top_level_value_globals`. A function is a
-    /// value, so `double.baz()` with a top-level `fn double` is a method
-    /// call on the function, not a call of a member of a module `double`.
-    /// Inside a file module the module's own functions are in
-    /// `module_scope` instead.
-    top_level_fn_names: HashSet<String>,
-    /// Lowercase names imported by name (`import json.{ parse }`,
-    /// `import util.{ helper }`), per program: the key is the file module
-    /// being compiled (`None` for the entry program) and the bare name,
-    /// the value the qualified name the import binds (`json.parse`).
-    /// Filled by `collect_selective_imports` before the program's code is
-    /// compiled. An imported function is a value like a program's own
-    /// function, and a call of an imported decoder gets the same
-    /// compile-time check as the qualified call.
-    selective_imports: HashMap<(Option<String>, String), String>,
-    /// Record declarations of every program compiled so far (the entry
-    /// program and the file modules it imports), by type name. Filled by
-    /// `collect_type_decls` before any code of the program is compiled.
-    /// Read to describe record field types for the json / toml decoders.
-    record_decls: HashMap<String, RecordDecl>,
-    /// Type alias declarations, collected together with `record_decls`.
-    alias_decls: HashMap<String, AliasDecl>,
-    /// Round 64 item 6A: producer-side typecheck snapshots for every
-    /// user module the compiler has loaded. Keyed by the module name
-    /// as it appears in `import` statements. Populated incrementally
-    /// by `compile_file_module_inner` after typechecking each module,
-    /// so when the importer module is typechecked (whether by the
-    /// pipeline pre-typecheck of the entrypoint or by the recursive
-    /// inner-module pass), the typechecker has seen every dependency
-    /// it transitively imported.
-    module_exports: HashMap<Symbol, typechecker::ModuleExports>,
-    /// Compile-session-scoped canonical-resolver, mirroring
-    /// [`typechecker::TypeChecker::resolver`]. The compiler reads the
-    /// alias / assoc-binding registries via
-    /// [`crate::types::canonical::canonicalize_type_name`] when
-    /// emitting trait-impl global keys; sharing the same `Resolver`
-    /// the typechecker populated keeps registration and lookup keys
-    /// in lockstep across the typecheck → compile boundary. The
-    /// resolver flows in through `pre_typecheck_imports` (where each
-    /// per-module typecheck threads it via
-    /// `check_with_package_and_imports_resolver`) and out
-    /// again so the next module / entrypoint typecheck sees the
-    /// accumulated state. See commit 6364552 for the migration
-    /// rationale.
-    resolver: crate::types::canonical::Resolver,
+    /// The names two types of the program's modules have (two modules'
+    /// `Pt`, not a builtin type): such a type prints qualified.
+    program_clashes: HashSet<Symbol>,
+    /// The types described so far, which the VM is given.
+    types: RefCell<TypeTable>,
+    /// The global slots of the program.
+    globals: Globals,
+    /// The slot of each top-level function, `let` and host function of
+    /// the modules compiled now, by module and name.
+    own_slots: HashMap<(crate::session::ModuleId, Symbol), u16>,
+    /// Whether the derived impls of the builtin types are installed
+    /// already (by an earlier REPL entry).
+    builtin_impls_installed: bool,
 }
 
-/// Seed `known_enum_variants` with the builtin enums. Called from
-/// `Compiler::new` and `with_package_roots` so every compiler instance
-/// recognises `ResultEnum.Ok`, `IoError.IoNotFound`, etc. without
-/// needing a `type` declaration in user code.
-fn initial_known_enum_variants() -> HashMap<String, HashSet<String>> {
-    let mut map = HashMap::new();
-    for (enum_name, variants) in module::builtin_enum_variants() {
-        let set: HashSet<String> = variants.iter().map(|v| (*v).to_string()).collect();
-        map.insert((*enum_name).to_string(), set);
-    }
-    map
-}
-
-/// Seed `known_unit_variants` with all builtin nullary variants. Routes
-/// through the arity-aware registries so adding a new builtin variant
-/// (whether stdlib-error or prelude) automatically gates the
-/// bare-variant method-dispatch rewrite — no edit here is required.
-fn initial_known_unit_variants() -> HashSet<String> {
-    let mut set = HashSet::new();
-    for (_enum_name, variants) in module::builtin_error_enum_variants_with_arity() {
-        for (vname, arity) in *variants {
-            if *arity == 0 {
-                set.insert((*vname).to_string());
+/// The names two or more types of the program's modules have (two
+/// modules' `Pt`): such a type prints qualified by its module's name.
+fn program_type_clashes(units: &ProgramUnits) -> HashSet<Symbol> {
+    let mut seen: HashMap<Symbol, crate::defs::DefId> = HashMap::new();
+    let mut clashing = HashSet::new();
+    for unit in &units.modules {
+        for id in units.defs.of_module(unit.id) {
+            let def = units.defs.get(*id);
+            if !matches!(def.kind, crate::defs::DefKind::Type(_)) {
+                continue;
+            }
+            if seen.insert(def.name, *id).is_some_and(|other| other != *id) {
+                clashing.insert(def.name);
             }
         }
     }
-    for (_enum_name, variants) in module::builtin_prelude_enum_variants_with_arity() {
-        for (vname, arity) in *variants {
-            if *arity == 0 {
-                set.insert((*vname).to_string());
-            }
-        }
-    }
-    set
+    clashing
 }
 
-impl Default for Compiler {
-    fn default() -> Self {
-        Self::new()
-    }
+/// A program needs more global slots than the instruction operand can
+/// name.
+fn too_many_globals(span: Span) -> Diagnostic {
+    Diagnostic::error(
+        Code::CompileLimit,
+        span,
+        format!(
+            "this program has more than {} top-level definitions (functions, `let`s and \
+             trait methods); split it into fewer, larger definitions",
+            u16::MAX as usize + 1
+        ),
+    )
 }
 
 impl Compiler {
-    /// Shared constructor body for [`Compiler::new`] and
-    /// [`Compiler::with_package_roots`]. The two public constructors differ
-    /// only in `package_roots`/`local_package`; everything else is seeded
-    /// identically here so the two paths can never drift apart.
-    fn build(package_roots: HashMap<Symbol, PathBuf>, local_package: Option<Symbol>) -> Self {
-        Self {
+    /// A compiler for the modules of a program, as the session analysed
+    /// them. Every definition of the program that has a global slot gets
+    /// it now, so code can use a definition compiled after it.
+    pub fn for_program(units: ProgramUnits) -> Result<Self, Diagnostic> {
+        let program_clashes = program_type_clashes(&units);
+        let mut globals = units.earlier.globals.clone();
+        let builtin_impls_installed = !globals.is_empty();
+        let mut compiler = Self {
             contexts: Vec::new(),
             functions: Vec::new(),
-            package_roots,
-            local_package,
+            units,
+            unit_stack: Vec::new(),
             compiled_modules: HashSet::new(),
-            module_export_names: HashMap::new(),
-            compiling_modules: HashSet::new(),
-            compiling_modules_stack: Vec::new(),
-            compiling_package_stack: Vec::new(),
-            warnings: Vec::new(),
-            module_parse_errors: Vec::new(),
-            module_type_errors: Vec::new(),
-            module_type_error_files: HashSet::new(),
-            imported_builtin_modules: HashSet::new(),
-            imported_builtin_module_aliases: HashMap::new(),
             in_tail_position: false,
-            module_scope: None,
-            module_public_fns: HashMap::new(),
-            module_private_fns: HashMap::new(),
-            repl_mode: false,
-            known_enum_variants: initial_known_enum_variants(),
-            known_unit_variants: initial_known_unit_variants(),
-            top_level_value_globals: HashSet::new(),
-            top_level_fn_names: HashSet::new(),
-            selective_imports: HashMap::new(),
-            record_decls: HashMap::new(),
-            alias_decls: HashMap::new(),
-            module_exports: HashMap::new(),
-            resolver: crate::types::canonical::Resolver::new(),
-        }
+            program_clashes,
+            types: RefCell::new(TypeTable::default()),
+            globals: Globals::default(),
+            own_slots: HashMap::new(),
+            builtin_impls_installed,
+        };
+        compiler.own_slots = compiler.assign_slots(&mut globals)?;
+        compiler.globals = globals;
+        Ok(compiler)
     }
 
-    pub fn new() -> Self {
-        Self::build(HashMap::new(), None)
-    }
-
-    /// Create a compiler with a registered set of package source roots
-    /// and a designated local package.
-    ///
-    /// `local_package` MUST be a key in `package_roots`; the constructor
-    /// panics otherwise (programmer error). Imports that don't match any
-    /// dep package name resolve relative to `package_roots[&local_package]`.
-    pub fn with_package_roots(
-        local_package: Symbol,
-        package_roots: HashMap<Symbol, PathBuf>,
-    ) -> Self {
-        assert!(
-            package_roots.contains_key(&local_package),
-            "with_package_roots: local_package symbol must appear in package_roots"
-        );
-        Self::build(package_roots, Some(local_package))
-    }
-
-    /// Enable REPL mode. See the `repl_mode` field for semantics.
-    pub fn set_repl_mode(&mut self, enabled: bool) {
-        self.repl_mode = enabled;
-    }
-
-    /// Merge externally-supplied enum-variant lookup tables into this
-    /// compiler's builtin-seeded ones. The REPL calls this with tables
-    /// derived from its persistent type context (see
-    /// `ReplTypeContext::enum_variant_tables`) so a fresh per-turn compiler
-    /// can resolve qualified variant constructors (`EnumName.Variant`) and
-    /// unit-variant method dispatch for enums declared in earlier turns —
-    /// the compiler otherwise only knows builtins plus the current input's
-    /// own `type` decls. Merging (rather than replacing) keeps the
-    /// builtin entries and is idempotent with the current input's own
-    /// type-decl registration.
-    pub fn seed_known_variants(
-        &mut self,
-        enum_variants: &HashMap<String, HashSet<String>>,
-        unit_variants: &HashSet<String>,
-    ) {
-        for (enum_name, variants) in enum_variants {
-            let set = self
-                .known_enum_variants
-                .entry(enum_name.clone())
-                .or_default();
-            for v in variants {
-                set.insert(v.clone());
+    /// Give a global slot to each definition the program installs: the
+    /// derived impls of the builtin types (unless an earlier REPL entry
+    /// installed them), then, module by module, each function, `let`,
+    /// host function and impl method. Gives the slots of the modules'
+    /// own functions, `let`s and host functions by module and name.
+    fn assign_slots(
+        &self,
+        globals: &mut Globals,
+    ) -> Result<HashMap<(crate::session::ModuleId, Symbol), u16>, Diagnostic> {
+        let mut own = HashMap::new();
+        if !self.builtin_impls_installed {
+            for decl in crate::typechecker::builtin_derived_impls().iter() {
+                if let Decl::TraitImpl(ti) = decl {
+                    self.assign_method_slots(ti, globals)?;
+                }
             }
         }
-        for v in unit_variants {
-            self.known_unit_variants.insert(v.clone());
-        }
-    }
-
-    /// Returns warnings emitted during compilation.
-    pub fn warnings(&self) -> &[CompileWarning] {
-        &self.warnings
-    }
-
-    /// Returns the **extra** module parse errors recovered during
-    /// compilation — i.e. every parse error past the first that an
-    /// imported module produced via `Parser::parse_program_recovering`.
-    ///
-    /// The first module parse error is still surfaced as the hard `Err`
-    /// return from `compile_program`, matching the long-standing
-    /// single-error flow that callers already render. These extras let
-    /// the CLI emit the full batch of diagnostics in one run so users
-    /// don't have to fix-then-rerun when a module has several unrelated
-    /// mistakes.
-    ///
-    /// Each entry's `message` is pre-formatted (module file path + inner
-    /// snippet) and its `span` points at the `import` statement in the
-    /// entrypoint, so lifting with `SourceError::from_compile_error` uses
-    /// exactly the same context as the primary error.
-    pub fn module_parse_errors(&self) -> &[CompileError] {
-        &self.module_parse_errors
-    }
-
-    /// Drain the hard type errors harvested from *imported* user
-    /// modules (round 92). Each entry is a fully-formed
-    /// [`crate::errors::SourceError`] whose span/snippet point into the
-    /// imported module's own file. The CLI pipeline merges these into
-    /// the entrypoint's type diagnostics so `silt check`/`silt run`
-    /// report an ill-typed imported module instead of exiting 0 and
-    /// deferring to a runtime error.
-    ///
-    /// Import-resolvable shapes (the undefined-name / trait cascade
-    /// behind an "unknown module" warning — see
-    /// `crate::diagnostic_filters`) are already filtered out at harvest
-    /// time, preserving the round-91 suppression contract for
-    /// transitive imports.
-    pub fn take_module_type_errors(&mut self) -> Vec<crate::errors::SourceError> {
-        std::mem::take(&mut self.module_type_errors)
-    }
-
-    /// Harvest the reportable subset of an imported module's typecheck
-    /// diagnostics into `module_type_errors` (round 92).
-    ///
-    /// Keeps only hard errors that the compiler will NOT resolve at
-    /// link time:
-    /// - warnings are skipped (an imported module's style warnings are
-    ///   not the entrypoint's diagnostics — `silt check <module>` shows
-    ///   them directly);
-    /// - the import-resolvable cascade (undefined-name / trait shapes
-    ///   gated behind the module's own "unknown module" warning) is
-    ///   suppressed via the SAME shared predicate the CLI pipeline and
-    ///   `silt test` use, so transitive-import noise stays hidden;
-    /// - the typechecker's "module 'X' is not imported" copy is
-    ///   dropped because the compiler re-emits the identical sentence
-    ///   as the authoritative hard compile error (mirrors
-    ///   `is_module_not_imported_typecheck_error` in the CLI pipeline).
-    ///
-    /// First-wins per module file: the pre-typecheck pass and
-    /// `compile_file_module_inner` both typecheck the same module, so
-    /// the harvest is keyed by `file_path` to avoid duplicates.
-    fn harvest_module_type_errors(
-        &mut self,
-        errors: &[typechecker::TypeError],
-        source: &str,
-        file_path: &std::path::Path,
-    ) {
-        if !self.module_type_error_files.insert(file_path.to_path_buf()) {
-            return;
-        }
-        // `SourceError.file` holds the path as it is: its `Display`
-        // escapes it for a terminal, and `silt check --format json`
-        // JSON-escapes it. A display-escaped path would be escaped twice
-        // there.
-        let file = module_path_for_display(file_path);
-        let converted: Vec<crate::errors::SourceError> = errors
-            .iter()
-            .map(|e| crate::errors::SourceError::from_type_error(e, source, &file))
-            .collect();
-        let has_user_import_warning = converted.iter().any(|e| {
-            e.is_warning && crate::diagnostic_filters::is_unknown_module_warning_message(&e.message)
-        });
-        for err in converted {
-            if err.is_warning {
+        for (index, unit) in self.units.modules.iter().enumerate() {
+            if self.units.earlier.installed.contains(&index) {
                 continue;
             }
-            if crate::diagnostic_filters::should_suppress_import_cascade_message(
-                &err.message,
-                err.is_warning,
-                has_user_import_warning,
-            ) {
-                continue;
+            let qualify = index != self.units.entry;
+            for &id in self.units.defs.of_module(unit.id) {
+                let def = self.units.defs.get(id);
+                if !matches!(
+                    def.kind,
+                    crate::defs::DefKind::Fn
+                        | crate::defs::DefKind::Let
+                        | crate::defs::DefKind::Host
+                ) {
+                    continue;
+                }
+                let name = match qualify {
+                    true => format!("{}.{}", unit.qualifier, def.name),
+                    false => resolve(def.name),
+                };
+                let slot = globals
+                    .add_def(id, name)
+                    .ok_or_else(|| too_many_globals(def.span))?;
+                own.insert((unit.id, def.name), slot);
             }
-            if err.message.contains("is not imported") && err.message.contains("add `import ") {
-                continue;
+            for decl in &unit.program.decls {
+                if let Decl::TraitImpl(ti) = decl {
+                    self.assign_method_slots(ti, globals)?;
+                }
             }
-            self.module_type_errors.push(err);
         }
+        Ok(own)
     }
 
-    /// Mark all builtin modules as imported (used by the REPL).
-    pub fn import_all_builtins(&mut self) {
-        for name in crate::module::BUILTIN_MODULES {
-            self.imported_builtin_modules.insert(name.to_string());
+    /// Give a global slot to each method of the impl `ti`.
+    fn assign_method_slots(
+        &self,
+        ti: &crate::ast::TraitImpl,
+        globals: &mut Globals,
+    ) -> Result<(), Diagnostic> {
+        let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti)) else {
+            return Ok(());
+        };
+        let type_name = self.type_info(ty).name.clone();
+        for method in &ti.methods {
+            globals
+                .add_method(
+                    t,
+                    ty,
+                    &resolve(method.name),
+                    format!("{type_name}.{}", method.name),
+                )
+                .ok_or_else(|| too_many_globals(method.span))?;
         }
+        Ok(())
+    }
+
+    /// The alias registries the program was checked with: read via
+    /// [`crate::types::canonical::canonical_head`] when keying impl
+    /// methods, so registration and lookup keys agree across the
+    /// typecheck → compile boundary.
+    fn resolver(&self) -> &Resolver {
+        &self.units.resolver
+    }
+
+    /// The types the compiled code builds values of, for the VM.
+    pub fn types(&self) -> TypeTable {
+        self.types.borrow().clone()
+    }
+
+    /// The global slots of the program, for the VM.
+    pub fn globals(&self) -> &Globals {
+        &self.globals
     }
 
     // ── Public entry point ────────────────────────────────────────
 
     /// Compile a full program, returning all functions.
     ///
-    /// The first function in the returned `Vec` is the top-level `<script>`,
-    /// which ends with `GetGlobal "main" ; Call 0 ; Return`.
-    pub fn compile_program(&mut self, program: &Program) -> Result<Vec<Function>, CompileError> {
-        self.compile_program_with_entry(program, "main")
-    }
-
-    /// Compile a full program, dispatching `<script>` to call the global
-    /// named `entry_point` (instead of the default `"main"`).
-    ///
-    /// Round-74 BROKEN fix: the REPL's expression-eval path wraps user
-    /// input in a synthetic function so it can be compiled. Previously
-    /// that wrapper was named `main`, which meant a user-defined
-    /// `fn main()` would be silently shadowed by the wrapper on every
-    /// subsequent expression — and because the wrapper's body was the
-    /// user's input (e.g. `main()`), the wrapper would self-recurse
-    /// forever. The REPL now passes a unique synthetic name per
-    /// expression (`__repl_eval_<n>`) through this entry, so user code
-    /// can never collide with the wrapper. The non-REPL `silt run` path
-    /// still goes through `compile_program` and continues to require
-    /// `fn main`.
-    pub fn compile_program_with_entry(
+    /// The first function in the returned `Vec` is the top-level
+    /// `<script>`, which ends by calling `entry`, the definition the entry
+    /// module's `main` names (for a REPL entry of statements, the function
+    /// that holds them, whose name no program can write): `GetGlobal
+    /// main ; Call 0 ; Return`. A program without an entry point is never
+    /// run: the session reports that it has no `main`.
+    pub fn compile_program(
         &mut self,
         program: &Program,
-        entry_point: &str,
-    ) -> Result<Vec<Function>, CompileError> {
+        entry: Option<crate::defs::DefId>,
+    ) -> Result<Vec<Function>, Diagnostic> {
         // Push a top-level script context.
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
 
-        // Round 94: record top-level let binders up front so dotted
-        // access on them is compiled as field access even when the use
-        // site is inside a fn that is compiled before the let decl is
-        // reached. See `top_level_value_globals`.
-        self.collect_top_level_value_globals(program);
-        self.collect_type_decls(program);
-
+        self.compile_builtin_derived_impls()?;
         for decl in Self::decls_in_init_order(&program.decls) {
             self.compile_decl(decl)?;
         }
 
-        // Emit: GetGlobal <entry_point>, Call 0, Return
-        let span = Span::new(0, 0);
-        let name_idx = self.add_constant(Value::String(entry_point.into()), span)?;
-        self.current_chunk()
-            .emit_op_u16(Op::GetGlobal, name_idx, span);
-        self.current_chunk().emit_op(Op::Call, span);
-        self.current_chunk().emit_u8(0, span);
+        // Emit: GetGlobal <entry>, Call 0, Return. The call is made for
+        // the entry point's function declaration and takes its span;
+        // without one (`let main = ...`, an imported `main`), silt itself
+        // makes the call.
+        let span = entry
+            .and_then(|def| {
+                let name = self.units.defs.get(def).name;
+                program.decls.iter().find_map(|decl| match decl {
+                    Decl::Fn(f) if f.name == name => Some(f.span),
+                    _ => None,
+                })
+            })
+            .unwrap_or(Span::BUILTIN);
+        match entry.and_then(|def| self.globals.def(def)) {
+            Some(slot) => {
+                self.current_chunk().emit_op_u16(Op::GetGlobal, slot, span);
+                self.current_chunk().emit_op(Op::Call, span);
+                self.current_chunk().emit_u8(0, span);
+            }
+            None => {
+                self.current_chunk().emit_op(Op::Unit, span);
+            }
+        }
         self.current_chunk().emit_op(Op::Return, span);
 
         let script = self
             .contexts
             .pop()
-            .ok_or(CompileError {
-                message: "compiler bug: missing script context".into(),
-                span: Span::new(0, 0),
-            })?
+            .ok_or(Diagnostic::error(
+                Code::CompilerBug,
+                Span::BUILTIN,
+                "compiler bug: missing script context",
+            ))?
             .function;
 
         // Build the result: script first, then all compiled functions.
@@ -1032,190 +527,69 @@ impl Compiler {
     /// Compile all declarations without calling `main()`.
     ///
     /// Returns all compiled functions. The first is a `<script>` that
-    /// registers globals and returns Unit.  Useful for test runners and the
-    /// REPL where `main()` is not the entry-point.
-    pub fn compile_declarations(
-        &mut self,
-        program: &Program,
-    ) -> Result<Vec<Function>, CompileError> {
+    /// installs the globals and returns Unit.  Useful for test runners and
+    /// the REPL where `main()` is not the entry-point.
+    pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, Diagnostic> {
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
 
-        // Round 94: same pre-pass as `compile_program_with_entry`.
-        self.collect_top_level_value_globals(program);
-        self.collect_type_decls(program);
-
+        self.compile_builtin_derived_impls()?;
         for decl in Self::decls_in_init_order(&program.decls) {
             self.compile_decl(decl)?;
         }
 
-        // Return Unit instead of calling main.
-        let span = Span::new(0, 0);
+        // Return Unit instead of calling main: code silt adds itself.
+        let span = Span::BUILTIN;
         self.current_chunk().emit_op(Op::Unit, span);
         self.current_chunk().emit_op(Op::Return, span);
 
         let script = self
             .contexts
             .pop()
-            .ok_or(CompileError {
-                message: "compiler bug: missing script context".into(),
-                span: Span::new(0, 0),
-            })?
+            .ok_or(Diagnostic::error(
+                Code::CompilerBug,
+                Span::BUILTIN,
+                "compiler bug: missing script context",
+            ))?
             .function;
         let mut result = vec![script];
         result.append(&mut self.functions);
         Ok(result)
     }
 
+    /// Compile the derived impls of the builtin types, which the
+    /// typechecker derives and checks once (see
+    /// [`crate::typechecker::builtin_derived_impls`]), at the start of a
+    /// program's script; a REPL session installs them once.
+    fn compile_builtin_derived_impls(&mut self) -> Result<(), Diagnostic> {
+        if self.builtin_impls_installed {
+            return Ok(());
+        }
+        for decl in crate::typechecker::builtin_derived_impls().iter() {
+            self.compile_decl(decl)?;
+        }
+        Ok(())
+    }
+
     // ── Declarations ──────────────────────────────────────────────
 
-    /// Round 94: pre-pass over the entry program's decls collecting
-    /// top-level `let` binder names into `top_level_value_globals`.
-    /// Top-level lets only accept Ident patterns (see the `Decl::Let`
-    /// arm of `compile_decl`), so a single-name walk suffices. Also
-    /// collects the top-level `fn` names into `top_level_fn_names` and
-    /// the program's selective imports (`collect_selective_imports`).
-    fn collect_top_level_value_globals(&mut self, program: &Program) {
-        for decl in &program.decls {
-            match decl {
-                Decl::Let { pattern, .. } => {
-                    if let PatternKind::Ident(name) = &pattern.kind {
-                        self.top_level_value_globals.insert(resolve(*name));
-                    }
-                }
-                Decl::Fn(fn_decl) => {
-                    self.top_level_fn_names.insert(resolve(fn_decl.name));
-                }
-                _ => {}
-            }
-        }
-        self.collect_selective_imports(program);
+    /// The slot of the top-level function, `let` or host function `name`
+    /// of the module being compiled.
+    fn own_slot(&self, name: Symbol, span: Span) -> Result<u16, Diagnostic> {
+        self.own_def_slot(name).ok_or_else(|| {
+            checker_missed(
+                span,
+                &format!("the top-level name '{name}' with no definition"),
+            )
+        })
     }
 
-    /// Pre-pass recording the lowercase names `program` imports by name
-    /// (`import json.{ parse }`) in `selective_imports`, under the
-    /// program being compiled (see `current_program`). Uppercase names
-    /// are types; `Point.origin()` stays a qualified call.
-    fn collect_selective_imports(&mut self, program: &Program) {
-        let current = self.current_program();
-        for decl in &program.decls {
-            let Decl::Import(ImportTarget::Items(module_name, items), _) = decl else {
-                continue;
-            };
-            let mod_str = resolve(*module_name);
-            for item in items {
-                let item_str = resolve(*item);
-                if item_str.starts_with(|c: char| c.is_lowercase() || c == '_') {
-                    self.selective_imports.insert(
-                        (current.clone(), item_str.clone()),
-                        format!("{mod_str}.{item_str}"),
-                    );
-                }
-            }
-        }
-    }
-
-    /// The program being compiled: the file module's name, or `None` for
-    /// the entry program.
-    fn current_program(&self) -> Option<String> {
-        self.module_scope.as_ref().map(|(module, _)| module.clone())
-    }
-
-    /// Whether the identifier `name`, which is not a local or an upvalue,
-    /// names a function of the program being compiled or a value imported
-    /// by name, rather than a module. A name that is also a builtin
-    /// module, a builtin module alias or a compiled file module keeps
-    /// meaning the module.
-    fn names_function_value(&self, name: Symbol) -> bool {
-        let name_str = resolve(name);
-        if module::is_builtin_module(&name_str)
-            || self.imported_builtin_module_aliases.contains_key(&name_str)
-            || self.module_public_fns.contains_key(&name_str)
-        {
-            return false;
-        }
-        let own_function = match &self.module_scope {
-            Some((_, fns)) => fns.contains_key(&name_str),
-            None => self.top_level_fn_names.contains(&name_str),
-        };
-        own_function
-            || self
-                .selective_imports
-                .contains_key(&(self.current_program(), name_str))
-    }
-
-    /// The qualified builtin name a call of the bare identifier `callee`
-    /// calls, when `callee` was imported by name from a builtin module
-    /// (`import json.{ parse }` makes `parse` call `json.parse`) and is
-    /// not shadowed by a local, an upvalue or a function or top-level
-    /// `let` of the program.
-    fn selectively_imported_builtin(&self, callee: &Expr) -> Option<String> {
-        let ExprKind::Ident(name) = &callee.kind else {
-            return None;
-        };
-        if self.resolve_local(*name).is_some() || self.resolve_upvalue_peek(*name).is_some() {
-            return None;
-        }
-        let name_str = resolve(*name);
-        let shadowed = match &self.module_scope {
-            Some((_, fns)) => fns.contains_key(&name_str),
-            None => {
-                self.top_level_fn_names.contains(&name_str)
-                    || self.top_level_value_globals.contains(&name_str)
-            }
-        };
-        if shadowed {
-            return None;
-        }
-        let qualified = self
-            .selective_imports
-            .get(&(self.current_program(), name_str))?;
-        let module_name = qualified.split('.').next()?;
-        module::is_builtin_module(module_name).then(|| qualified.clone())
-    }
-
-    /// Pre-pass over a program's type declarations, run before any of its
-    /// code is compiled, so that a use of a type does not depend on where
-    /// in the file the type is declared: a function may name
-    /// `Color.Red`, and a record field may use an alias, ahead of the
-    /// declaration.
-    fn collect_type_decls(&mut self, program: &Program) {
-        for decl in &program.decls {
-            let Decl::Type(type_decl) = decl else {
-                continue;
-            };
-            let type_name = resolve(type_decl.name);
-            match &type_decl.body {
-                TypeBody::Enum(variants) => {
-                    let variant_set = self.known_enum_variants.entry(type_name).or_default();
-                    for variant in variants {
-                        let variant_name = resolve(variant.name);
-                        if variant.fields.is_empty() {
-                            self.known_unit_variants.insert(variant_name.clone());
-                        }
-                        variant_set.insert(variant_name);
-                    }
-                }
-                TypeBody::Record(fields) => {
-                    self.record_decls.insert(
-                        type_name,
-                        RecordDecl {
-                            params: type_decl.params.clone(),
-                            fields: fields.clone(),
-                        },
-                    );
-                }
-                TypeBody::Alias(target) => {
-                    self.alias_decls.insert(
-                        type_name,
-                        AliasDecl {
-                            params: type_decl.params.clone(),
-                            target: target.clone(),
-                        },
-                    );
-                }
-            }
-        }
+    /// [`Compiler::own_slot`], `None` when the module has no such
+    /// definition.
+    fn own_def_slot(&self, name: Symbol) -> Option<u16> {
+        let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        let module = self.units.modules[current].id;
+        self.own_slots.get(&(module, name)).copied()
     }
 
     /// The order in which a program's declarations are installed: first
@@ -1230,7 +604,7 @@ impl Compiler {
         definitions.into_iter().chain(lets).collect()
     }
 
-    fn compile_decl(&mut self, decl: &Decl) -> Result<(), CompileError> {
+    fn compile_decl(&mut self, decl: &Decl) -> Result<(), Diagnostic> {
         match decl {
             Decl::Fn(fn_decl) => {
                 let span = fn_decl.span;
@@ -1241,14 +615,15 @@ impl Compiler {
                 // callee and blew up with "cannot call value of type
                 // Int". Reject at compile time instead.
                 if fn_decl.params.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "function '{}' has {} parameters; silt functions are limited to 255",
                             resolve(fn_decl.name),
                             fn_decl.params.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
                 let arity = fn_decl.params.len() as u8;
 
@@ -1267,10 +642,11 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::Return, span);
 
                 // Pop the context, recovering the compiled function.
-                let ctx = self.contexts.pop().ok_or(CompileError {
-                    message: "compiler bug: missing function context".into(),
+                let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+                    Code::CompilerBug,
                     span,
-                })?;
+                    "compiler bug: missing function context",
+                ))?;
                 let func = ctx.function;
 
                 // Store the function as a VmClosure constant in the enclosing chunk.
@@ -1282,9 +658,8 @@ impl Compiler {
                 let fi = self.add_constant(closure_val, span)?;
                 self.current_chunk().emit_op_u16(Op::Constant, fi, span);
 
-                let name_idx = self.add_constant(Value::String(resolve(fn_decl.name)), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::SetGlobal, name_idx, span);
+                let slot = self.own_slot(fn_decl.name, span)?;
+                self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
                 self.current_chunk().emit_op(Op::Pop, span);
 
                 Ok(())
@@ -1298,245 +673,102 @@ impl Compiler {
             } => {
                 let span = *span;
                 self.compile_expr(value)?;
-
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
-                        let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, name_idx, span);
+                        let slot = self.own_slot(*name, span)?;
+                        self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
                         self.current_chunk().emit_op(Op::Pop, span);
                     }
                     _ => {
-                        return Err(CompileError {
-                            message: "unsupported pattern in top-level let".into(),
-                            span,
-                        });
+                        let mut slots = Vec::new();
+                        for (name, _, _) in crate::parser::top_level_binders(decl) {
+                            slots.push((name, self.own_slot(name, span)?));
+                        }
+                        self.install_destructured(pattern, &slots, span)?;
                     }
                 }
-
                 Ok(())
             }
 
             Decl::Type(type_decl) => {
-                let span = type_decl.span;
-                match &type_decl.body {
-                    crate::ast::TypeBody::Enum(variants) => {
-                        // Track enum-variant mapping so `EnumName.Variant`
-                        // field access can be rewritten to a bare global
-                        // lookup at codegen time.
-                        let enum_name = resolve(type_decl.name);
-                        let variant_set = self
-                            .known_enum_variants
-                            .entry(enum_name.clone())
-                            .or_default();
-                        for variant in variants {
-                            variant_set.insert(resolve(variant.name));
-                        }
-
-                        // Register the enum type name as a type descriptor
-                        // global so it can be passed as a `type a` argument
-                        // (mirrors records). Skipped when a variant shares
-                        // the enum's name — the variant constructor owns the
-                        // symbol in that case.
-                        let variant_shares_name = variants.iter().any(|v| v.name == type_decl.name);
-                        if !variant_shares_name {
-                            let val = Value::TypeDescriptor(enum_name.clone());
-                            let val_idx = self.add_constant(val, span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::Constant, val_idx, span);
-                            let name_idx =
-                                self.add_constant(Value::String(enum_name.clone()), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, name_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-                        }
-
-                        for variant in variants {
-                            let vname = resolve(variant.name);
-                            let arity = variant.fields.len();
-                            if arity == 0 {
-                                // Nullary variant: register as a Variant value
-                                let val = Value::Variant(vname.clone(), Vec::new());
-                                let val_idx = self.add_constant(val, span)?;
-                                self.current_chunk()
-                                    .emit_op_u16(Op::Constant, val_idx, span);
-                                // Track for the bare-variant method-dispatch
-                                // rewrite in `Call` codegen — so `Red.display()`
-                                // lowers to a value-method call rather than the
-                                // qualified-global `GetGlobal("Red.display")`.
-                                self.known_unit_variants.insert(vname.clone());
-                            } else {
-                                // Variant constructor
-                                let val = Value::VariantConstructor(vname.clone(), arity);
-                                let val_idx = self.add_constant(val, span)?;
-                                self.current_chunk()
-                                    .emit_op_u16(Op::Constant, val_idx, span);
-                            }
-                            let name_idx = self.add_constant(Value::String(vname.clone()), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, name_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-
-                            // Register variant -> type mapping for method dispatch.
-                            let mapping_key = format!("__type_of__{vname}");
-                            let key_idx = self.add_constant(Value::String(mapping_key), span)?;
-                            let type_val_idx =
-                                self.add_constant(Value::String(resolve(type_decl.name)), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::Constant, type_val_idx, span);
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, key_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-                        }
-                    }
-                    crate::ast::TypeBody::Record(fields) => {
-                        // Register the record type name as a TypeDescriptor global.
-                        let val = Value::TypeDescriptor(resolve(type_decl.name));
-                        let val_idx = self.add_constant(val, span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::Constant, val_idx, span);
-                        let name_idx =
-                            self.add_constant(Value::String(resolve(type_decl.name)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, name_idx, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
-
-                        // Emit record field metadata as a global list for the
-                        // json and toml decoders.
-                        // Format: list of alternating [field_name, type descriptor, ...]
-                        let field_count = fields.len();
-                        for f in fields {
-                            let fname = self.add_constant(Value::String(resolve(f.name)), span)?;
-                            self.current_chunk().emit_op_u16(Op::Constant, fname, span);
-                            let descriptor = self.field_type_descriptor(&f.ty);
-                            let ftype = self.add_constant(Value::String(descriptor), span)?;
-                            self.current_chunk().emit_op_u16(Op::Constant, ftype, span);
-                        }
-                        self.current_chunk().emit_op_u16(
-                            Op::MakeList,
-                            (field_count * 2) as u16,
-                            span,
-                        );
-                        let meta_key = self.add_constant(
-                            Value::String(format!("__record_fields__{}", type_decl.name)),
-                            span,
-                        )?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, meta_key, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
-                    }
-                    crate::ast::TypeBody::Alias(_) => {
-                        // Phase D: type aliases are transparent at the
-                        // typechecker / canonicaliser layer and emit no
-                        // runtime artefacts. The alias name has already
-                        // reduced to its target's canonical form by the
-                        // time the compiler sees any use site.
-                    }
+                // A record or enum type is described to the VM; its values
+                // and descriptor are constants where code names them. Type
+                // aliases are transparent at the typechecker / canonicaliser
+                // layer and emit no runtime artefacts.
+                if matches!(type_decl.body, TypeBody::Alias(_)) {
+                    return Ok(());
                 }
+                let Some(id) = self.declared_type(type_decl.name) else {
+                    return Err(checker_missed(
+                        type_decl.span,
+                        &format!("the type '{}' with no definition", type_decl.name),
+                    ));
+                };
+                self.type_info(id);
                 Ok(())
             }
 
             Decl::TraitImpl(trait_impl) => {
-                // Compile each method and register as "TypeName.method_name" global.
-                //
-                // The target type is routed through `canonicalize_type_name`
-                // so the emitted global key matches the typechecker's
-                // registration site (`register_trait_impl` in
-                // src/typechecker/mod.rs) and the VM's runtime dispatch
-                // name (`Vm::value_type_name_for_dispatch`). The
-                // collapse rules — `Range -> List`, `Fun -> Fn`,
-                // `() -> Unit`, and user-alias routing (see
-                // `src/types/canonical.rs::canonicalize_type_name`) —
-                // all apply here. For example, a
-                // `trait Foo for Range(a) { fn bar(self) { ... } }` impl
-                // emits `"List.bar"` here, matches the `"List.bar"` key
-                // the typechecker registered, and is found by the VM
-                // when dispatching on a `Value::Range` (or `Value::List`)
-                // receiver. Without this canonicalisation the compiler
-                // would emit `"Range.bar"` while the typechecker
-                // registers `"List.bar"`, leaving the impl unreachable.
-                let canonical_target =
-                    canonicalize_type_name(&self.resolver, trait_impl.target_type);
-
-                // Auto-derived impls for built-in enums and records
-                // synthesize bodies that reference the target type's
-                // own variants (e.g. `Display for BytesError`'s body
-                // matches `BytesInvalidUtf8`, `BytesOutOfBounds`, ...).
-                // Those names are import-gated under `import bytes`,
-                // but the synth happens unconditionally for every
-                // built-in regardless of which user imports — the
-                // user importing `time` would still see the
-                // `BytesError.display` global registered. To compile
-                // its body without tripping the gate, we temporarily
-                // pretend every builtin module is imported for the
-                // duration of the impl-body compilation. The gate is
-                // restored after the impl is done so the rest of the
-                // user's program sees the original import set.
-                //
-                // This is sound because the synthesized body is the
-                // single source that references those gated variants
-                // — the user's own code still hits the gate.
-                let saved_imports = if trait_impl.is_auto_derived {
-                    let saved = self.imported_builtin_modules.clone();
-                    for &m in module::BUILTIN_MODULES {
-                        self.imported_builtin_modules.insert(m.to_string());
-                    }
-                    Some(saved)
-                } else {
-                    None
+                // Compile each method into the global slot of the method
+                // of the impl's type: the canonical head of its target, as
+                // the typechecker keys impls (`Range` is `List`, an alias
+                // is the type it stands for), so the VM finds it by the
+                // type of the receiver.
+                // An impl whose target names no type (`trait Display
+                // for a`) is never dispatched to: it has no code.
+                let (Some(ty), Some(t)) = (self.impl_type(trait_impl), self.impl_trait(trait_impl))
+                else {
+                    return Ok(());
                 };
+                let type_name = self.type_info(ty).name.clone();
 
-                // Inner closure so we can restore `imported_builtin_modules`
-                // on every exit path (success and error).
-                let result: Result<(), CompileError> = (|| {
-                    for method in &trait_impl.methods {
-                        let span = method.span;
-                        if method.params.len() > u8::MAX as usize {
-                            return Err(CompileError {
-                                message: format!(
-                                    "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
-                                    trait_impl.target_type,
-                                    method.name,
-                                    method.params.len()
-                                ),
-                                span,
-                            });
-                        }
-                        let arity = method.params.len() as u8;
-                        let qualified_name = format!("{}.{}", canonical_target, method.name);
-
-                        self.contexts
-                            .push(CompileContext::new(qualified_name.clone(), arity));
-
-                        self.compile_params(&method.params, span)?;
-
-                        self.compile_expr(&method.body)?;
-                        self.current_chunk().emit_op(Op::Return, span);
-
-                        let ctx = self.contexts.pop().ok_or(CompileError {
-                            message: "compiler bug: missing trait method context".into(),
+                for method in &trait_impl.methods {
+                    let span = method.span;
+                    if method.params.len() > u8::MAX as usize {
+                        return Err(Diagnostic::error(
+                            Code::CompileLimit,
                             span,
-                        })?;
-                        let func = ctx.function;
-                        let vm_closure = Arc::new(VmClosure {
-                            function: Arc::new(func),
-                            upvalues: vec![],
-                        });
-                        let closure_val = Value::VmClosure(vm_closure);
-                        let fi = self.add_constant(closure_val, span)?;
-                        self.current_chunk().emit_op_u16(Op::Constant, fi, span);
-
-                        let name_idx = self.add_constant(Value::String(qualified_name), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, name_idx, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
+                            format!(
+                                "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
+                                trait_impl.target_type,
+                                method.name,
+                                method.params.len()
+                            ),
+                        ));
                     }
-                    Ok(())
-                })();
-                if let Some(saved) = saved_imports {
-                    self.imported_builtin_modules = saved;
+                    let arity = method.params.len() as u8;
+                    let qualified_name = format!("{type_name}.{}", method.name);
+
+                    self.contexts
+                        .push(CompileContext::new(qualified_name, arity));
+
+                    self.compile_params(&method.params, span)?;
+
+                    self.compile_expr(&method.body)?;
+                    self.current_chunk().emit_op(Op::Return, span);
+
+                    let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+                        Code::CompilerBug,
+                        span,
+                        "compiler bug: missing trait method context",
+                    ))?;
+                    let func = ctx.function;
+                    let vm_closure = Arc::new(VmClosure {
+                        function: Arc::new(func),
+                        upvalues: vec![],
+                    });
+                    let closure_val = Value::VmClosure(vm_closure);
+                    let fi = self.add_constant(closure_val, span)?;
+                    self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+
+                    let slot = self
+                        .globals
+                        .method(Some(t), ty, &resolve(method.name))
+                        .ok_or_else(|| checker_missed(span, "an impl method with no slot"))?;
+                    self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
+                    self.current_chunk().emit_op(Op::Pop, span);
                 }
-                result
+                Ok(())
             }
 
             Decl::Trait(_) => {
@@ -1548,814 +780,132 @@ impl Compiler {
         }
     }
 
+    /// Install the names a top-level `let` with the destructuring pattern
+    /// `pattern` binds, whose value is on the stack: each binder goes to
+    /// its global slot in `slots`. The pattern is bound as a block's `let`
+    /// would bind it, then each local is copied to its global.
+    fn install_destructured(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        slots: &[(Symbol, u16)],
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        self.begin_scope();
+        let val_slot = self.add_local(intern("__let_val__"), span)?;
+        self.current_chunk()
+            .emit_op_u16(Op::SetLocal, val_slot, span);
+        self.compile_pattern_bind_checked(pattern, span)?;
+        for (name, global) in slots {
+            let slot = self.resolve_local(*name).ok_or_else(|| {
+                checker_missed(span, &format!("the binder '{name}' of a top-level let"))
+            })?;
+            self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
+            self.current_chunk()
+                .emit_op_u16(Op::SetGlobal, *global, span);
+            self.current_chunk().emit_op(Op::Pop, span);
+        }
+        self.current_chunk().emit_op(Op::Unit, span);
+        self.end_scope_with_result(false, span)?;
+        self.current_chunk().emit_op(Op::Pop, span);
+        Ok(())
+    }
+
     // ── Import compilation ─────────────────────────────────────────
 
-    fn compile_import(&mut self, target: &ImportTarget, span: Span) -> Result<(), CompileError> {
-        match target {
-            ImportTarget::Module(name) => {
-                // Builtin modules (io, string, list, ...) are already registered
-                // in the VM's global table. Record the import for gating.
-                let name_str = resolve(*name);
-                if module::is_builtin_module(&name_str) {
-                    self.imported_builtin_modules.insert(name_str);
-                    return Ok(());
-                }
-                self.compile_file_module(&name_str, span)?;
-                Ok(())
-            }
-            ImportTarget::Items(module_name, items) => {
-                let mod_str = resolve(*module_name);
-                if module::is_builtin_module(&mod_str) {
-                    self.imported_builtin_modules.insert(mod_str.clone());
-                    // For builtin modules, create aliases: bare "item" -> "module.item"
-                    for item in items {
-                        let item_str = resolve(*item);
-                        let qualified = format!("{mod_str}.{item_str}");
-                        let qi = self.add_constant(Value::String(qualified), span)?;
-                        self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
-                        let bare_i = self.add_constant(Value::String(item_str), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, bare_i, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
-                    }
-                    return Ok(());
-                }
-                // File-based selective import: compile the module, then alias
-                // "module.item" -> bare "item" for each selected name.
-                self.compile_file_module(&mod_str, span)?;
-                for item in items {
-                    let item_str = resolve(*item);
-                    let qualified = format!("{mod_str}.{item_str}");
-                    let qi = self.add_constant(Value::String(qualified), span)?;
-                    self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
-                    let bare_i = self.add_constant(Value::String(item_str), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::SetGlobal, bare_i, span);
-                    self.current_chunk().emit_op(Op::Pop, span);
-                }
-                Ok(())
-            }
-            ImportTarget::Alias(module_name, alias) => {
-                let mod_str = resolve(*module_name);
-                let alias_str = resolve(*alias);
-                if module::is_builtin_module(&mod_str) {
-                    self.imported_builtin_modules.insert(mod_str.clone());
-                    // Record alias → canonical mapping so `l.sum(...)` can be
-                    // routed as `CallBuiltin("list.sum", ...)` by
-                    // `extract_builtin_name`, and `l.sum` as a value falls
-                    // back to `GetGlobal("list.sum")`. This covers
-                    // submodule functions registered in the typechecker /
-                    // VM dispatcher that aren't in the curated
-                    // `builtin_module_functions` list (e.g. list.sum,
-                    // string.lines). Without this the curated-only copy
-                    // loop below misses them and `l.sum` fails at runtime
-                    // with "undefined global: l.sum" even though
-                    // `list.sum(...)` works via `CallBuiltin`.
-                    self.imported_builtin_module_aliases
-                        .insert(alias_str.clone(), mod_str.clone());
-                    // Builtin alias: copy all "module.func" globals to "alias.func".
-                    let names = module::builtin_module_functions(&mod_str)
-                        .into_iter()
-                        .chain(module::builtin_module_constants(&mod_str));
-                    for func in names {
-                        let qualified = format!("{mod_str}.{func}");
-                        let qi = self.add_constant(Value::String(qualified), span)?;
-                        self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
-                        let alias_name = format!("{alias_str}.{func}");
-                        let ai = self.add_constant(Value::String(alias_name), span)?;
-                        self.current_chunk().emit_op_u16(Op::SetGlobal, ai, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
-                    }
-                    return Ok(());
-                }
-                // File module with alias: compile under original name, then
-                // re-register each public declaration under the alias prefix.
-                let public_names = self.compile_file_module(&mod_str, span)?;
-                for name in &public_names {
-                    let original = format!("{mod_str}.{name}");
-                    let qi = self.add_constant(Value::String(original), span)?;
-                    self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
-                    let alias_name = format!("{alias_str}.{name}");
-                    let ai = self.add_constant(Value::String(alias_name), span)?;
-                    self.current_chunk().emit_op_u16(Op::SetGlobal, ai, span);
-                    self.current_chunk().emit_op(Op::Pop, span);
-                }
-                Ok(())
-            }
-        }
-    }
-
-    /// Compile a file-based module's declarations into the current compilation
-    /// unit. Each public declaration is registered as a global named
-    /// `"module_name.decl_name"`. Returns the list of public names exported by
-    /// this module.
-    ///
-    /// `module_name` is the import segment as it appears in user code
-    /// (e.g. `import calc` → `module_name = "calc"`). Resolution rules:
-    /// - If `module_name` matches a key in `package_roots`, this is a
-    ///   cross-package import; load the dep's `lib.silt`, register globals
-    ///   under the dep's name, and key the cycle/cache state under
-    ///   `{module_name}::lib`.
-    /// - Otherwise this is local to the package on top of
-    ///   `compiling_package_stack` (or `local_package` if the stack is empty);
-    ///   load `<pkg_root>/{module_name}.silt`, key under `{pkg}::{module_name}`.
-    fn compile_file_module(
-        &mut self,
-        module_name: &str,
-        span: Span,
-    ) -> Result<Vec<String>, CompileError> {
-        // Resolve which package this import belongs to and where its
-        // source file lives. The resolution is the only place
-        // `package_roots` participates; everything downstream uses the
-        // resolved (file_path, package, cache_key) triple.
-        let resolved = self.resolve_import(module_name, span)?;
-
-        // Guard against double-compilation. Cache key is package-qualified
-        // so two packages can each have a `lib` module without clashing.
-        // Return the cached export list (not an empty Vec): the
-        // `ImportTarget::Alias` arm consumes these names to emit
-        // `alias.name` globals, and an alias import may legitimately
-        // follow another import of the same module (`import geometry`
-        // then `import geometry as g`, or two distinct aliases). An
-        // empty return here silently dropped the alias registration.
-        if self.compiled_modules.contains(&resolved.cache_key) {
-            return Ok(self
-                .module_export_names
-                .get(&resolved.cache_key)
-                .cloned()
-                .unwrap_or_default());
-        }
-
-        // Detect circular imports. When detected, render the full chain
-        // from the cycle's entry point (the first re-occurrence of the
-        // qualified key in the stack) through to the re-entry. Cycles
-        // confined to a single package render with bare module names
-        // (`a -> b -> c -> a`); cross-package cycles use the qualified
-        // `pkg::module` form so the boundary is visible in the message.
-        // Lock: tests/lang/modules.rs `test_circular_import_error_includes_full_chain`.
-        if self.compiling_modules.contains(&resolved.cache_key) {
-            let cycle_start = self
-                .compiling_modules_stack
-                .iter()
-                .position(|f| f.cache_key == resolved.cache_key)
-                .unwrap_or(0);
-            let cycle_frames = &self.compiling_modules_stack[cycle_start..];
-            // Single-package cycle? All frames share the same package
-            // symbol AND match the re-entered package. If so, prefer
-            // bare names for readability.
-            let single_pkg = cycle_frames.iter().all(|f| f.package == resolved.package);
-            let mut chain: Vec<String> = cycle_frames
-                .iter()
-                .map(|f| {
-                    if single_pkg {
-                        f.module.clone()
-                    } else {
-                        f.cache_key.clone()
-                    }
-                })
-                .collect();
-            chain.push(if single_pkg {
-                resolved.module.clone()
-            } else {
-                resolved.cache_key.clone()
-            });
-            let rendered_chain = chain.join(" -> ");
-            return Err(CompileError {
-                message: format!(
-                    "circular import detected: {rendered_chain} (module '{module_name}' imports itself directly or indirectly)"
-                ),
-                span,
-            });
-        }
-        self.compiling_modules.insert(resolved.cache_key.clone());
-        self.compiling_modules_stack.push(CompilingFrame {
-            cache_key: resolved.cache_key.clone(),
-            package: resolved.package,
-            module: resolved.module.clone(),
-        });
-        self.compiling_package_stack.push(resolved.package);
-
-        let result = self.compile_file_module_inner(module_name, &resolved.file_path, span);
-
-        self.compiling_modules.remove(&resolved.cache_key);
-        // Pop the matching frame from the stack; normally this is the
-        // last element, but we remove by position to be robust against
-        // any inner path that would violate LIFO ordering.
-        if let Some(pos) = self
-            .compiling_modules_stack
-            .iter()
-            .rposition(|f| f.cache_key == resolved.cache_key)
-        {
-            self.compiling_modules_stack.remove(pos);
-        }
-        if let Some(pos) = self
-            .compiling_package_stack
-            .iter()
-            .rposition(|p| *p == resolved.package)
-        {
-            self.compiling_package_stack.remove(pos);
-        }
-        if let Ok(names) = &result {
-            self.compiled_modules.insert(resolved.cache_key.clone());
-            self.module_export_names
-                .insert(resolved.cache_key, names.clone());
-        }
-        result
-    }
-
-    /// Resolve an import segment to a concrete file path and package
-    /// context. See [`compile_file_module`] for the resolution rules.
-    fn resolve_import(
-        &self,
-        module_name: &str,
-        span: Span,
-    ) -> Result<ResolvedImport, CompileError> {
-        let segment_sym = intern(module_name);
-
-        // Cross-package import? `module_name` matches a registered package.
-        // We require the dep to expose `src/lib.silt` as its public surface
-        // — internal modules of a dep are NOT reachable from a consumer
-        // (this matches Cargo's `lib.rs` discipline; silt's import syntax
-        // doesn't admit multi-segment cross-package imports anyway).
-        if let Some(pkg_root) = self.package_roots.get(&segment_sym) {
-            // Disambiguate from "the local package importing one of its own
-            // modules whose name happens to equal the local package name":
-            // if we're currently compiling a module that lives in the same
-            // package, treat this as a local import.
-            let current_pkg = self.current_package();
-            let is_local_self_import = current_pkg == Some(segment_sym);
-            if !is_local_self_import {
-                let lib_path = pkg_root.join("lib.silt");
-                if !lib_path.exists() {
-                    return Err(CompileError {
-                        message: format!(
-                            "package '{module_name}' has no library entry point — \
-                             expected `src/lib.silt` in the dep at {}",
-                            crate::git::escape_for_display(&pkg_root.display().to_string())
-                        ),
-                        span,
-                    });
-                }
-                return Ok(ResolvedImport {
-                    file_path: lib_path,
-                    package: segment_sym,
-                    module: "lib".to_string(),
-                    cache_key: format!("{module_name}::lib"),
-                });
-            }
-        }
-
-        // Local-package or nested-inside-dep import: resolve relative to
-        // whichever package is currently being compiled.
-        let pkg = self.current_package().or(self.local_package);
-        let pkg_root = match pkg.and_then(|p| self.package_roots.get(&p)) {
-            Some(root) => root,
-            None => {
-                return Err(CompileError {
-                    message: format!(
-                        "cannot import module '{module_name}': no project root set \
-                         (use Compiler::with_package_roots)"
-                    ),
-                    span,
-                });
+    /// An import of a module of the program compiles the module, once,
+    /// before the importer's code. A builtin module has no code.
+    fn compile_import(&mut self, target: &ImportTarget, span: Span) -> Result<(), Diagnostic> {
+        let module = match target {
+            ImportTarget::Module(m) | ImportTarget::Items(m, _) | ImportTarget::Alias(m, _, _) => {
+                *m
             }
         };
-        let pkg_name = resolve(pkg.unwrap());
-        let file_path = pkg_root.join(format!("{module_name}.silt"));
-        Ok(ResolvedImport {
-            file_path,
-            package: pkg.unwrap(),
-            module: module_name.to_string(),
-            cache_key: format!("{pkg_name}::{module_name}"),
-        })
+        let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        let Some(&target) = self.units.modules[importer].imports.get(&module) else {
+            return Ok(());
+        };
+        self.compile_file_module(target, module, span)
     }
 
-    /// Top of `compiling_package_stack`; the package whose source we are
-    /// currently inside, if any.
-    fn current_package(&self) -> Option<Symbol> {
-        self.compiling_package_stack.last().copied()
-    }
-
-    // ── Cross-module typecheck pre-pass (round 64 item 6A) ─────────
-
-    /// Walk the entrypoint program for `import other_user_module`
-    /// decls and recursively load + typecheck each user module so
-    /// `self.module_exports` is populated before the entrypoint's own
-    /// typecheck runs. Built-in modules and modules already cached are
-    /// skipped. Errors are intentionally swallowed here — the real
-    /// compile pass below will surface module load / parse / compile
-    /// errors with full source context.
-    ///
-    /// Called by [`Compiler::pre_typecheck_imports`] (used by the CLI
-    /// pipeline before its top-level typecheck) and from inside
-    /// `compile_file_module_inner` so transitive imports are also seen
-    /// before each module's own typecheck.
-    pub fn pre_typecheck_imports(&mut self, program: &Program) {
-        self.pre_typecheck_user_imports(program);
-    }
-
-    /// Borrow the current cross-module exports snapshot. Cloned by
-    /// the CLI pipeline so the entrypoint typecheck can consult it
-    /// without holding a `&self` on the compiler.
-    pub fn module_exports_snapshot(&self) -> HashMap<Symbol, typechecker::ModuleExports> {
-        self.module_exports.clone()
-    }
-
-    /// Detach and return the session-shared canonical resolver,
-    /// leaving the compiler with a fresh empty one. The CLI pipeline
-    /// uses this to thread the resolver into the entrypoint typecheck
-    /// (so user aliases registered while pre-typechecking imported
-    /// modules stay visible) and then restores it via
-    /// [`Compiler::put_resolver`] before the compile pass runs.
-    pub fn take_resolver(&mut self) -> crate::types::canonical::Resolver {
-        std::mem::take(&mut self.resolver)
-    }
-
-    /// Restore a previously-extracted resolver (see
-    /// [`Compiler::take_resolver`]) so the compile pass's
-    /// `canonicalize_type_name` calls see the same alias state the
-    /// typechecker used.
-    pub fn put_resolver(&mut self, resolver: crate::types::canonical::Resolver) {
-        self.resolver = resolver;
-    }
-
-    /// Internal worker for [`pre_typecheck_imports`]. Same body —
-    /// kept private and named distinctly so internal call sites
-    /// (compile_file_module_inner) read clearly.
-    fn pre_typecheck_user_imports(&mut self, program: &Program) {
-        let modules: Vec<(Symbol, Span)> = program
-            .decls
-            .iter()
-            .filter_map(|d| match d {
-                Decl::Import(ImportTarget::Module(m), span) => Some((*m, *span)),
-                Decl::Import(ImportTarget::Items(m, _), span) => Some((*m, *span)),
-                Decl::Import(ImportTarget::Alias(m, _), span) => Some((*m, *span)),
-                _ => None,
-            })
-            .collect();
-        for (m, span) in modules {
-            let name = resolve(m);
-            if module::is_builtin_module(&name) {
-                continue;
-            }
-            if self.module_exports.contains_key(&m) {
-                continue;
-            }
-            let _ = self.pre_typecheck_user_module(&name, span);
-        }
-    }
-
-    /// Pre-typecheck one user module (no bytecode emit). Recursive in
-    /// case the module itself imports other user modules.
-    fn pre_typecheck_user_module(
+    /// Compile the module `target`, imported as `written`, into the
+    /// current compilation unit, where it is first imported (at `span`):
+    /// its declarations run in a function of their own,
+    /// `<module:written>`, so runtime errors carry a frame that
+    /// identifies the source file.
+    fn compile_file_module(
         &mut self,
-        module_name: &str,
+        target: usize,
+        written: Symbol,
         span: Span,
-    ) -> Result<(), CompileError> {
-        // Resolve the module file path the same way compile_file_module
-        // does, so cross-package vs intra-package routing is identical.
-        let resolved = self.resolve_import(module_name, span)?;
-
-        // Skip if the producer's exports are already in the cache.
-        if self.module_exports.contains_key(&intern(&resolved.module)) {
+    ) -> Result<(), Diagnostic> {
+        if self.compiled_modules.contains(&target) || self.units.earlier.installed.contains(&target)
+        {
             return Ok(());
         }
-
-        // Cycle guard: if we're already pre-typechecking this module up
-        // the stack, bail without populating exports. The full
-        // compile pass enforces real cycle errors with proper diagnostics.
-        if self.compiling_modules.contains(&resolved.cache_key) {
-            return Ok(());
-        }
-        self.compiling_modules.insert(resolved.cache_key.clone());
-        self.compiling_modules_stack.push(CompilingFrame {
-            cache_key: resolved.cache_key.clone(),
-            package: resolved.package,
-            module: resolved.module.clone(),
-        });
-        self.compiling_package_stack.push(resolved.package);
-
-        let result = (|| -> Result<(), CompileError> {
-            let source =
-                std::fs::read_to_string(&resolved.file_path).map_err(|e| CompileError {
-                    // Round 93: enriched with attempted path + sibling
-                    // did-you-mean + dependency-channel help. See
-                    // `module::format_module_load_error`.
-                    message: module::format_module_load_error(
-                        module_name,
-                        &resolved.file_path,
-                        &normalize_module_path(&resolved.file_path),
-                        &e,
-                    ),
-                    span,
-                })?;
-
-            // Round 83 STYLE/BLOAT fix: previously this map_err discarded
-            // the underlying `LexError` and built a bare generic message
-            // mentioning only the module name. Because the only caller
-            // (`pre_typecheck_user_imports` at line ~1353) drops the
-            // Result entirely (`let _ = ...`), that message was
-            // unreachable to end users. Mirror the rich path used by
-            // `compile_file_module_inner` (line ~1466) so the diagnostic
-            // would carry a real file path, line, column, and snippet if
-            // this function's error path is ever propagated.
-            // Lock: tests/lang/round83_anonrec_spread_eq_tests.rs grep-asserts
-            // the old wording never returns.
-            let file_display = normalize_module_path(&resolved.file_path);
-            let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
-                message: format_module_source_error(
-                    module_name,
-                    &file_display,
-                    &source,
-                    "lex error",
-                    &e.message,
-                    e.span,
-                ),
-                span,
-            })?;
-            let (mut program, _) = Parser::new(tokens).parse_program_recovering();
-
-            // Recurse: pre-typecheck this module's own imports first.
-            self.pre_typecheck_user_imports(&program);
-
-            // Typecheck with the accumulated exports. Thread the
-            // session-shared resolver so module aliases registered by
-            // dependencies are visible here, and any aliases this
-            // module registers stay visible to downstream importers.
-            let resolver = std::mem::take(&mut self.resolver);
-            let (module_errors, exports, resolver) =
-                typechecker::check_with_package_and_imports_resolver(
-                    &mut program,
-                    self.current_package(),
-                    self.module_exports.clone(),
-                    Some(resolver),
-                );
-            self.resolver = resolver;
-            // Round 92: surface this module's REAL type errors instead
-            // of dropping the whole batch. Import-resolvable shapes
-            // stay suppressed inside the harvest — see
-            // `harvest_module_type_errors`.
-            self.harvest_module_type_errors(&module_errors, &source, &resolved.file_path);
-            self.module_exports
-                .insert(intern(&resolved.module), exports);
-            Ok(())
-        })();
-
-        self.compiling_modules.remove(&resolved.cache_key);
-        if let Some(pos) = self
-            .compiling_modules_stack
-            .iter()
-            .rposition(|f| f.cache_key == resolved.cache_key)
-        {
-            self.compiling_modules_stack.remove(pos);
-        }
-        if let Some(pos) = self
-            .compiling_package_stack
-            .iter()
-            .rposition(|p| *p == resolved.package)
-        {
-            self.compiling_package_stack.remove(pos);
-        }
-
+        self.compiled_modules.insert(target);
+        let program = self.units.modules[target].program.clone();
+        self.unit_stack.push(target);
+        let result = if self.units.modules[target].host.is_empty() {
+            self.compile_file_module_inner(written, &program, span)
+        } else {
+            self.compile_host_module(target, &program, span)
+        };
+        self.unit_stack.pop();
         result
     }
 
-    /// Inner implementation of file module compilation, separated so that
-    /// the circular-import guard can wrap it cleanly.
+    /// Install the functions of the host module `target`, one per
+    /// signature of `program`, in their global slots.
+    fn compile_host_module(
+        &mut self,
+        target: usize,
+        program: &Program,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        for decl in &program.decls {
+            let Decl::Fn(f) = decl else {
+                continue;
+            };
+            let Some(function) = self.units.modules[target].host.get(&f.name).cloned() else {
+                return Err(checker_missed(
+                    span,
+                    &format!("a host signature without a function: '{}'", f.name),
+                ));
+            };
+            let fi = self.add_constant(Value::HostFn(function), span)?;
+            self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+            let slot = self.own_slot(f.name, span)?;
+            self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
+            self.current_chunk().emit_op(Op::Pop, span);
+        }
+        Ok(())
+    }
+
+    /// Inner implementation of file module compilation: the declarations
+    /// of `program`, the module imported as `written` at `span`.
     fn compile_file_module_inner(
         &mut self,
-        module_name: &str,
-        file_path: &std::path::Path,
+        written: Symbol,
+        program: &Program,
         span: Span,
-    ) -> Result<Vec<String>, CompileError> {
-        let source = std::fs::read_to_string(file_path).map_err(|e| CompileError {
-            // Round 93: enriched with attempted path + sibling
-            // did-you-mean + dependency-channel help. See
-            // `module::format_module_load_error`.
-            message: module::format_module_load_error(
-                module_name,
-                file_path,
-                &normalize_module_path(file_path),
-                &e,
-            ),
-            span,
-        })?;
-
-        // Round-36 GAP: render the module file as a CWD-relative path when
-        // possible so the inner `--> helper.silt:...` snippet matches the
-        // outer `--> main.silt:...` style. Previously this used the raw
-        // (absolute, because `package_roots` canonicalize()s paths) file
-        // path, which produced mixed-style diagnostics: outer relative,
-        // inner absolute — the G3/G4 audit finding.
-        //
-        // Mirrors the `normalize_path` helper in `src/cli/run.rs` that does
-        // the same job for runtime SourceError rendering. Lock:
-        // tests/lang/compiler_module_path_norm_round36_tests.rs.
-        let file_display = normalize_module_path(file_path);
-
-        let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
-            message: format_module_source_error(
-                module_name,
-                &file_display,
-                &source,
-                "lex error",
-                &e.message,
-                e.span,
-            ),
-            span,
-        })?;
-
-        // Parse with the recovery parser so a module with multiple
-        // independent parse errors surfaces every one of them in a
-        // single run — the single-pass `parse_program()` would bail on
-        // the first, forcing users to fix-then-rerun for each error.
-        //
-        // Round-52 deferred: propagate every recovered error upward.
-        // First one becomes the hard `Err` (matching the historical
-        // single-error flow every caller already renders); the rest go
-        // onto `self.module_parse_errors`, drained by the CLI pipeline
-        // alongside the primary.
-        //
-        // Each parse error is formatted with the SAME
-        // `format_module_source_error` helper the single-error path used,
-        // so the module file path + inline snippet + caret render
-        // identically regardless of how many errors the module produced.
-        // The outer `span` (the import statement in the entrypoint) is
-        // reused for every accumulated error; `SourceError` rendering then
-        // pins the outer caret at the import site while the pre-formatted
-        // message carries the inner module location.
-        let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
-        if !parse_errors.is_empty() {
-            let mut formatted: Vec<CompileError> = parse_errors
-                .iter()
-                .map(|e| CompileError {
-                    message: format_module_source_error(
-                        module_name,
-                        &file_display,
-                        &source,
-                        "parse error",
-                        &e.message,
-                        e.span,
-                    ),
-                    span,
-                })
-                .collect();
-            // Preserve source order: the parser collects errors in the
-            // order it encounters them, so `formatted[0]` is the first
-            // problem in the file. That's the one we return as the hard
-            // Err; the remainder flow through `module_parse_errors` in
-            // the same order.
-            let primary = formatted.remove(0);
-            self.module_parse_errors.extend(formatted);
-            return Err(primary);
-        }
-
-        // Type-check the imported module before compiling.
-        // Type errors are not fatal here — modules with transitive imports will
-        // have "undefined" errors from the type checker because module resolution
-        // only happens during compilation.  The compiler resolves them below.
-        //
-        // Pass the package symbol so the typechecker can stamp this
-        // module's trait/enum/record decls with their owning package and
-        // enforce the trait-orphan rule (round 63 item 5) — `impl Trait
-        // for Type` is rejected when both the trait and the type's head
-        // are foreign to this package.
-        //
-        // Round 64 item 6A: pre-walk imports of THIS module so any
-        // sibling user modules it depends on are typechecked first
-        // (and their exports cached) before this module's own
-        // typecheck. Then thread the accumulated exports through the
-        // typechecker so cross-module call sites typecheck strongly,
-        // and capture this module's own exports for downstream
-        // importers (the entrypoint, sibling modules).
-        let module_sym = intern(module_name);
-        self.pre_typecheck_user_imports(&program);
-        let resolver = std::mem::take(&mut self.resolver);
-        let (module_type_errors, this_exports, resolver) =
-            typechecker::check_with_package_and_imports_resolver(
-                &mut program,
-                self.current_package(),
-                self.module_exports.clone(),
-                Some(resolver),
-            );
-        self.resolver = resolver;
-        // Round 92: harvest this module's real type errors (the
-        // import-resolvable cascade stays suppressed — see
-        // `harvest_module_type_errors`). First-wins keying by file path
-        // means this is a no-op when the pre-typecheck pass already
-        // harvested the same module.
-        self.harvest_module_type_errors(&module_type_errors, &source, file_path);
-        self.module_exports.insert(module_sym, this_exports);
-
-        // Collect public names so we know which to export.
-        let mut public_fns = HashSet::new();
-        let mut public_types = HashSet::new();
-        for decl in &program.decls {
-            match decl {
-                Decl::Fn(f) if f.is_pub => {
-                    public_fns.insert(f.name);
-                }
-                Decl::Type(t) if t.is_pub => {
-                    public_types.insert(t.name);
-                }
-                _ => {}
-            }
-        }
-
-        // Track all exported names (functions + types + variants) for alias support.
-        let mut exported_names: Vec<String> = Vec::new();
-
-        // Build module scope: all function names in this module.
-        // Public functions are registered as "module.fn", private as "__module__fn".
-        // This lets intra-module calls resolve bare names to the correct global.
-        // Save the parent scope first — recursive module compilation (imports) will
-        // overwrite it, so we need to restore ours after processing imports.
-        let saved_scope = self.module_scope.take();
-        let mut all_fn_names: HashMap<String, bool> = HashMap::new();
-        for decl in &program.decls {
-            if let Decl::Fn(f) = decl {
-                all_fn_names.insert(resolve(f.name), f.is_pub);
-            }
-        }
-        // Remember each fn's visibility under this module so the caller-side
-        // `mod.fn` lookup can tell "exists-but-private" from "doesn't exist"
-        // and emit a visibility-specific compile error.
-        let mut pub_set: HashSet<String> = HashSet::new();
-        let mut priv_set: HashSet<String> = HashSet::new();
-        for (fn_name, is_pub) in &all_fn_names {
-            if *is_pub {
-                pub_set.insert(fn_name.clone());
-            } else {
-                priv_set.insert(fn_name.clone());
-            }
-        }
-        self.module_public_fns
-            .insert(module_name.to_string(), pub_set);
-        self.module_private_fns
-            .insert(module_name.to_string(), priv_set);
-        self.module_scope = Some((module_name.to_string(), all_fn_names));
-
-        // Wrap module top-level code in a synthetic `<module:name>` function
-        // so runtime errors carry a frame that identifies the source file.
-        let init_name = format!("<module:{module_name}>");
+    ) -> Result<(), Diagnostic> {
+        let init_name = format!("<module:{written}>");
         self.contexts.push(CompileContext::new(init_name, 0));
 
-        self.collect_type_decls(&program);
-        self.collect_selective_imports(&program);
-
-        // Compile each declaration. Functions get registered as
-        // "module_name.fn_name" for public ones, or just compiled (for
-        // internal helpers that closures might reference). Synthetic emissions
-        // below (Op::SetGlobal, constants, etc.) carry the import statement's
-        // span so anything that blames them points back to the import site.
         for decl in Self::decls_in_init_order(&program.decls) {
-            match decl {
-                Decl::Fn(fn_decl) => {
-                    let fn_span = fn_decl.span;
-                    if fn_decl.params.len() > u8::MAX as usize {
-                        return Err(CompileError {
-                            message: format!(
-                                "imported function '{}' has {} parameters; silt functions are limited to 255",
-                                resolve(fn_decl.name),
-                                fn_decl.params.len()
-                            ),
-                            span: fn_span,
-                        });
-                    }
-                    let arity = fn_decl.params.len() as u8;
-
-                    self.contexts
-                        .push(CompileContext::new(resolve(fn_decl.name), arity));
-
-                    self.compile_params(&fn_decl.params, fn_span)?;
-
-                    // Compile the body in tail position for TCO, mirroring
-                    // the top-level `Decl::Fn` path in `compile_decl`.
-                    // Before round 93 this flag was never set here, so
-                    // functions in imported modules silently lacked
-                    // tail-call elimination and deep recursion blew
-                    // MAX_FRAMES. (Enabling it is only safe now that
-                    // `compile_stmt` clears the flag for statement-head
-                    // sub-expressions — see the round-93 leak fix.)
-                    self.in_tail_position = true;
-                    self.compile_expr(&fn_decl.body)?;
-                    self.in_tail_position = false;
-                    self.current_chunk().emit_op(Op::Return, fn_span);
-
-                    let ctx = self.contexts.pop().ok_or(CompileError {
-                        message: "compiler bug: missing module function context".into(),
-                        span,
-                    })?;
-                    let func = ctx.function;
-
-                    let vm_closure = Arc::new(VmClosure {
-                        function: Arc::new(func),
-                        upvalues: vec![],
-                    });
-                    let closure_val = Value::VmClosure(vm_closure);
-                    let fi = self.add_constant(closure_val, span)?;
-                    self.current_chunk().emit_op_u16(Op::Constant, fi, span);
-
-                    if public_fns.contains(&fn_decl.name) {
-                        // Register as "module_name.fn_name"
-                        let qualified = format!("{module_name}.{}", fn_decl.name);
-                        let name_idx = self.add_constant(Value::String(qualified), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, name_idx, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
-                        exported_names.push(resolve(fn_decl.name));
-                    } else {
-                        // Internal function — still register so closures / calls work,
-                        // but under a mangled private name.
-                        let private_name = format!("__{module_name}__{}", fn_decl.name);
-                        let name_idx = self.add_constant(Value::String(private_name), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, name_idx, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
-                    }
-                }
-                Decl::Type(type_decl) if public_types.contains(&type_decl.name) => {
-                    // Compile the type declaration — registers variants under bare names.
-                    self.compile_decl(decl)?;
-                    // Also register type name and variants under qualified names.
-                    exported_names.push(resolve(type_decl.name));
-                    match &type_decl.body {
-                        crate::ast::TypeBody::Enum(variants) => {
-                            for variant in variants {
-                                // Copy bare "VariantName" -> "module.VariantName"
-                                let vname = resolve(variant.name);
-                                let bare_idx =
-                                    self.add_constant(Value::String(vname.clone()), span)?;
-                                self.current_chunk()
-                                    .emit_op_u16(Op::GetGlobal, bare_idx, span);
-                                let qual = format!("{module_name}.{vname}");
-                                let qual_idx = self.add_constant(Value::String(qual), span)?;
-                                self.current_chunk()
-                                    .emit_op_u16(Op::SetGlobal, qual_idx, span);
-                                self.current_chunk().emit_op(Op::Pop, span);
-                                exported_names.push(vname);
-                            }
-                            // Register the type name itself as a qualified global
-                            // (pointing to the type name string for use in `import mod.{ Type }`).
-                            let type_val = Value::String(resolve(type_decl.name));
-                            let type_val_idx = self.add_constant(type_val, span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::Constant, type_val_idx, span);
-                            let qual_type = format!("{module_name}.{}", type_decl.name);
-                            let qual_type_idx =
-                                self.add_constant(Value::String(qual_type), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, qual_type_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-                        }
-                        crate::ast::TypeBody::Record(_) => {
-                            // Copy bare type name -> "module.TypeName"
-                            let bare_idx =
-                                self.add_constant(Value::String(resolve(type_decl.name)), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::GetGlobal, bare_idx, span);
-                            let qual = format!("{module_name}.{}", type_decl.name);
-                            let qual_idx = self.add_constant(Value::String(qual), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, qual_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-                        }
-                        crate::ast::TypeBody::Alias(_) => {
-                            // Phase D: type aliases emit no runtime
-                            // artefacts; nothing to re-export under a
-                            // qualified name. The alias has already
-                            // expanded to its target's canonical form
-                            // at typecheck time.
-                        }
-                    }
-                }
-                Decl::Type(_) => {
-                    // Private type — compile it anyway (might be referenced).
-                    self.compile_decl(decl)?;
-                }
-                Decl::Import(..) => {
-                    // Nested imports from within a module.
-                    self.compile_decl(decl)?;
-                }
-                Decl::TraitImpl(_) => {
-                    self.compile_decl(decl)?;
-                }
-                Decl::Trait(_) => {
-                    // Skip.
-                }
-                Decl::Let { .. } => {
-                    self.compile_decl(decl)?;
-                }
-            }
+            self.compile_decl(decl)?;
         }
 
-        // Close the module init function and call it inline.
+        // Close the module init function and call it inline. Code silt
+        // adds itself carries the import statement's span, so anything
+        // that blames it points back to the import site.
         self.current_chunk().emit_op(Op::Unit, span);
         self.current_chunk().emit_op(Op::Return, span);
-        let init_ctx = self.contexts.pop().ok_or(CompileError {
-            message: "compiler bug: missing module init context".into(),
+        let init_ctx = self.contexts.pop().ok_or(Diagnostic::error(
+            Code::CompilerBug,
             span,
-        })?;
+            "compiler bug: missing module init context",
+        ))?;
         let init_closure = Arc::new(VmClosure {
             function: Arc::new(init_ctx.function),
             upvalues: vec![],
@@ -2365,14 +915,12 @@ impl Compiler {
         self.current_chunk().emit_op(Op::Call, span);
         self.current_chunk().emit_u8(0, span);
         self.current_chunk().emit_op(Op::Pop, span);
-
-        self.module_scope = saved_scope;
-        Ok(exported_names)
+        Ok(())
     }
 
     // ── Statements ────────────────────────────────────────────────
 
-    fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), CompileError> {
+    fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), Diagnostic> {
         match stmt {
             Stmt::Let { pattern, value, .. } => {
                 // The bound value is NOT the block result, so it must never
@@ -2388,7 +936,6 @@ impl Compiler {
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
                         // The value just pushed becomes the local.
-                        self.warn_if_shadows_module(*name, pattern.span);
                         let slot = self.add_local(*name, span)?;
                         self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
                         if is_last {
@@ -2507,44 +1054,6 @@ impl Compiler {
 
     // ── Expressions ───────────────────────────────────────────────
 
-    /// If `module` is a known file-based module and `name` is a `fn` declared
-    /// in it without `pub`, return a `CompileError` that names the function,
-    /// the module, the source file, and the exact syntactic fix. Returning
-    /// `None` means either the module isn't a tracked user module or the name
-    /// doesn't match a private function — in both cases callers should fall
-    /// through to the existing resolution path (and let the VM raise
-    /// "undefined global" at runtime for typos).
-    fn private_module_fn_error(
-        &self,
-        module: &str,
-        name: &str,
-        span: Span,
-    ) -> Option<CompileError> {
-        // Don't shadow intra-module lookups: if we're compiling inside
-        // `module` itself, the caller already has access via `module_scope`.
-        if let Some((ref cur_mod, _)) = self.module_scope
-            && cur_mod == module
-        {
-            return None;
-        }
-        let pub_set = self.module_public_fns.get(module)?;
-        // If it's public the normal path resolves it fine.
-        if pub_set.contains(name) {
-            return None;
-        }
-        let priv_set = self.module_private_fns.get(module)?;
-        if !priv_set.contains(name) {
-            return None;
-        }
-        Some(CompileError {
-            message: format!(
-                "`{name}` exists in module `{module}` but is not `pub` — \
-                 mark it `pub fn {name}` in {module}.silt to export it"
-            ),
-            span,
-        })
-    }
-
     /// Emit the call sequence for a callee + `argc` arguments already on
     /// the stack: `TailCall argc; Return` in tail position (the frame is
     /// replaced, so nothing after may execute), `Call argc` otherwise.
@@ -2562,7 +1071,7 @@ impl Compiler {
         }
     }
 
-    fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
+    fn compile_expr(&mut self, expr: &Expr) -> Result<(), Diagnostic> {
         let span = expr.span;
         let tail = self.in_tail_position;
         self.in_tail_position = false;
@@ -2668,6 +1177,21 @@ impl Compiler {
                 self.end_scope_with_result(tail, span)?;
             }
 
+            ExprKind::Ident(_) if let Some(variant) = self.variant_value(expr) => {
+                let idx = self.add_constant(variant, span)?;
+                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
+            // A type used as a value is its descriptor.
+            ExprKind::Ident(_) if let Some(descriptor) = self.type_value(expr.res) => {
+                let idx = self.add_constant(descriptor, span)?;
+                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
+            ExprKind::Ident(_) if let Some(def) = self.value_def(expr.res) => {
+                self.emit_global_value(def, span)?;
+            }
+
             ExprKind::Ident(name) => {
                 if let Some(slot) = self.resolve_local(*name) {
                     self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
@@ -2675,218 +1199,92 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
-                    // Gate constructors that require module imports
-                    let name_str = resolve(*name);
-                    if let Some(required) = module::gated_constructor_module(&name_str)
-                        && !self.imported_builtin_modules.contains(required)
-                    {
-                        return Err(CompileError {
-                            message: format!("'{name}' requires `import {required}`"),
-                            span,
-                        });
-                    }
-                    // If we're inside a module and this name matches a sibling function,
-                    // qualify it so intra-module calls resolve correctly.
-                    // Public fns: "module.name", private fns: "__module__name".
-                    let resolved_name = if let Some((ref mod_name, ref fn_map)) = self.module_scope
-                    {
-                        match fn_map.get(&name_str) {
-                            Some(true) => format!("{mod_name}.{name_str}"),
-                            Some(false) => format!("__{mod_name}__{name_str}"),
-                            None => name_str,
-                        }
-                    } else {
-                        name_str
-                    };
-                    let name_idx = self.add_constant(Value::String(resolved_name), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::GetGlobal, name_idx, span);
+                    return Err(name_without_binding(span, *name));
                 }
             }
 
             ExprKind::Call(callee, args) => {
                 // Argument count is encoded as a `u8` in all four
-                // call emission paths below (CallBuiltin, module-
-                // qualified Call, CallMethod, plain Call). Wrapping
-                // via `.len() as u8` used to let a 256-argument call
+                // call emission paths below (CallBuiltin, CallMethod,
+                // a global's Call, plain Call). Wrapping via
+                // `.len() as u8` used to let a 256-argument call
                 // compile with argc=0, and the VM would then
                 // misinterpret an unrelated stack value as the
                 // callee. Reject at compile time here — the method-
                 // call path adds the receiver so the limit is 254
                 // explicit arguments in that case.
                 if args.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "call has {} arguments; silt calls are limited to 255",
                             args.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
-                // Check if this is a module-qualified builtin call like list.map(...)
-                if let Some(builtin_name) = self.extract_builtin_name(callee)? {
+                if let Some(variant) = self.variant_value(callee) {
+                    // A variant's constructor: `Circle(r)`,
+                    // `Shape.Circle(r)`, `channel.Message(v)`,
+                    // `m.Shape.Circle(r)`.
+                    let idx = self.add_constant(variant, span)?;
+                    self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                    self.compile_operands_above(1, args)?;
+                    let argc = args.len() as u8;
+                    self.emit_call(argc, tail, span);
+                } else if let Some(builtin_name) = self.builtin_module_function(callee) {
+                    // A builtin module's function: `list.map(...)`.
                     self.check_decode_target(&builtin_name, args.last(), span)?;
-                    // Emit arguments first
                     self.compile_operands(args)?;
                     let argc = args.len() as u8;
                     let name_idx = self.add_constant(Value::String(builtin_name), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::CallBuiltin, name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
-                } else if let ExprKind::FieldAccess(receiver, method) = &callee.kind {
-                    // Check if this is a module-qualified call on a non-local ident.
-                    // Round 94: top-level let globals are value bindings too —
-                    // they shadow same-named modules exactly like locals do
-                    // (the typechecker resolves `other.double(2)` with a
-                    // top-level `let other` as a field call on the value).
-                    // A function (the program's own, or imported by name)
-                    // is a value as well: `double.baz()` calls the method
-                    // `baz` on the function `double`.
-                    let is_module_call = if let ExprKind::Ident(name) = &receiver.kind {
-                        self.resolve_local(*name).is_none()
-                            && self.resolve_upvalue_peek(*name).is_none()
-                            && !self.top_level_value_globals.contains(&resolve(*name))
-                            && !self.names_function_value(*name)
-                    } else {
-                        false
-                    };
-                    // Qualified variant call: `EnumName.Variant(args)`
-                    // resolves to the variant's bare global constructor.
-                    // Checked before the module-call path so enum names
-                    // aren't confused with missing module imports.
-                    let qualified_variant_global = if let ExprKind::Ident(name) = &receiver.kind
-                        && is_module_call
-                    {
-                        let name_str = resolve(*name);
-                        let method_str = resolve(*method);
-                        self.known_enum_variants
-                            .get(&name_str)
-                            .filter(|vs| vs.contains(&method_str))
-                            .map(|_| method_str)
-                    } else {
-                        None
-                    };
-                    if let Some(variant_name) = qualified_variant_global {
-                        let name_idx = self.add_constant(Value::String(variant_name), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::GetGlobal, name_idx, span);
+                } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
+                    if self.builtin_trait_method_of_builtin_type(callee) && !args.is_empty() {
+                        // `Int.display(1)`: a builtin trait's method of a
+                        // builtin type, which is native, not a global; the
+                        // first argument is the receiver.
+                        self.compile_operands(args)?;
+                        self.emit_call_method(*method, args.len() as u8, callee.res, span)?;
+                    } else if let Some(slot) = self.qualified_type_member(callee)? {
+                        // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
+                        // through its type.
+                        self.current_chunk().emit_op_u16(Op::GetGlobal, slot, span);
                         self.compile_operands_above(1, args)?;
                         let argc = args.len() as u8;
                         self.emit_call(argc, tail, span);
-                    } else if let ExprKind::Ident(name) = &receiver.kind
-                        && is_module_call
-                        && self.known_unit_variants.contains(&resolve(*name))
-                    {
-                        // Bare unit-variant method call: `Red.display(args)`
-                        // where `Red` is a known nullary variant. Push the
-                        // variant value as receiver and dispatch via
-                        // `CallMethod`, which the VM routes through
-                        // `__type_of__<tag>` to find `<EnumName>.display`.
-                        // Without this rewrite, the `is_module_call` branch
-                        // below would emit `GetGlobal("Red.display")` and
-                        // fail at runtime with `undefined global`.
-                        let variant_str = resolve(*name);
-                        if args.len() >= u8::MAX as usize {
-                            return Err(CompileError {
-                                message: format!(
-                                    "method call has {} arguments (plus receiver); silt calls are limited to 255",
-                                    args.len()
-                                ),
-                                span,
-                            });
-                        }
-                        let var_idx = self.add_constant(Value::String(variant_str), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::GetGlobal, var_idx, span);
+                    } else if let Some(def) = self.value_def(callee.res) {
+                        // A module's function: `m.f(1)`.
+                        self.emit_global_value(def, span)?;
                         self.compile_operands_above(1, args)?;
-                        let argc = (args.len() + 1) as u8; // receiver + args
-                        let method_idx =
-                            self.add_constant(Value::String(resolve(*method)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::CallMethod, method_idx, span);
-                        self.current_chunk().emit_u8(argc, span);
-                    } else if is_module_call
-                        && (!self.repl_mode
-                            || matches!(&receiver.kind, ExprKind::Ident(n)
-                                if module::is_builtin_module(&resolve(*n))))
-                    {
-                        // B8 (round 94): mirror the FieldAccess arm's REPL
-                        // guard. In the REPL a previously-bound value like
-                        // `p` is a VM global (from `eval_declaration`), not
-                        // a module, and is not in `top_level_value_globals`
-                        // because each REPL line compiles separately — so
-                        // `is_module_call` is spuriously true. When the
-                        // receiver is NOT a known builtin module, fall
-                        // through to the value method-call path below, which
-                        // emits `GetGlobal(p)` + `CallMethod("d", ..)`. The
-                        // VM's CallMethod resolves `d` against the record's
-                        // fields when no method/trait method matches, so a
-                        // field holding a callable is invoked correctly —
-                        // exactly as in file mode, where `p` is a local and
-                        // already takes this path. The enum-variant and
-                        // unit-variant calls above are checked first, so
-                        // `EnumName.Variant(..)` / `Red.display(..)` still
-                        // resolve in the REPL.
-                        if let ExprKind::Ident(module) = &receiver.kind {
-                            // Gate: require import for builtin modules
-                            let mod_str = resolve(*module);
-                            if module::is_builtin_module(&mod_str)
-                                && !self.imported_builtin_modules.contains(&mod_str)
-                            {
-                                return Err(CompileError {
-                                    message: format!(
-                                        "module '{module}' is not imported; add `import {module}` at the top of the file"
-                                    ),
-                                    span,
-                                });
-                            }
-                            // Compile-time visibility check: if this module is
-                            // a known user file module and `method` exists as
-                            // a private (non-`pub`) fn there, emit a crisp
-                            // visibility error instead of letting the VM raise
-                            // a generic "undefined global" at runtime.
-                            let method_str = resolve(*method);
-                            if let Some(err) =
-                                self.private_module_fn_error(&mod_str, &method_str, span)
-                            {
-                                return Err(err);
-                            }
-                            // Module-qualified call on a global module name.
-                            let qualified = format!("{module}.{method}");
-                            let name_idx = self.add_constant(Value::String(qualified), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::GetGlobal, name_idx, span);
-                            self.compile_operands_above(1, args)?;
-                            let argc = args.len() as u8;
-                            self.emit_call(argc, tail, span);
-                        }
+                        let argc = args.len() as u8;
+                        self.emit_call(argc, tail, span);
                     } else {
                         // Method call on a value: expr.method(args)
                         // Compile receiver as first argument. The
                         // receiver takes one slot of the 255-argument
                         // budget so the explicit-arg cap is 254 here.
                         if args.len() >= u8::MAX as usize {
-                            return Err(CompileError {
-                                message: format!(
+                            return Err(Diagnostic::error(
+                                Code::CompileLimit,
+                                span,
+                                format!(
                                     "method call has {} arguments (plus receiver); silt calls are limited to 255",
                                     args.len()
                                 ),
-                                span,
-                            });
+                            ));
                         }
                         self.compile_operands(std::iter::once(&**receiver).chain(args))?;
                         let argc = (args.len() + 1) as u8; // receiver + args
-                        let method_idx =
-                            self.add_constant(Value::String(resolve(*method)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::CallMethod, method_idx, span);
-                        self.current_chunk().emit_u8(argc, span);
+                        self.emit_call_method(*method, argc, callee.res, span)?;
                     }
                 } else {
                     // Normal function call. A decoder imported by name
                     // (`import json.{ parse }`) is checked like
                     // `json.parse(..)`.
-                    if let Some(builtin_name) = self.selectively_imported_builtin(callee) {
+                    if let Some(builtin_name) = self.builtin_function(callee.res) {
                         self.check_decode_target(&builtin_name, args.last(), span)?;
                     }
                     self.compile_operands(std::iter::once(&**callee).chain(args))?;
@@ -2895,92 +1293,74 @@ impl Compiler {
                 }
             }
 
-            ExprKind::FieldAccess(expr, field) => {
-                // Check if this is a module-qualified name like list.map
-                // But only if the identifier is NOT a known local or upvalue.
-                if let ExprKind::Ident(name) = &expr.kind {
-                    // Round 94: a top-level let global is a value binding —
-                    // route through the receiver-expression path (GetGlobal +
-                    // GetField) like a local, never `GetGlobal("name.field")`.
-                    let is_local = self.resolve_local(*name).is_some()
-                        || self.resolve_upvalue(*name, span)?.is_some()
-                        || self.top_level_value_globals.contains(&resolve(*name));
-                    if !is_local {
-                        let name_str = resolve(*name);
-                        // Qualified variant access: `EnumName.Variant`
-                        // resolves to the variant's bare global
-                        // registration. Checked ahead of the builtin-
-                        // module gate so enum names aren't mistaken for
-                        // missing module imports.
-                        let field_str_early = resolve(*field);
-                        if let Some(variants) = self.known_enum_variants.get(&name_str)
-                            && variants.contains(&field_str_early)
-                        {
-                            let name_idx =
-                                self.add_constant(Value::String(field_str_early), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::GetGlobal, name_idx, span);
-                            return Ok(());
-                        }
-                        // Gate: require import for builtin modules.
-                        if module::is_builtin_module(&name_str)
-                            && !self.imported_builtin_modules.contains(&name_str)
-                        {
-                            return Err(CompileError {
-                                message: format!(
-                                    "module '{name}' is not imported; add `import {name}` at the top of the file"
+            // A variant: `EnumName.Variant`, `time.Monday`, `m.Color.Red`.
+            ExprKind::FieldAccess(..) if let Some(variant) = self.variant_value(expr) => {
+                let idx = self.add_constant(variant, span)?;
+                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
+            // `m.Pt` used as a value: the type's descriptor.
+            ExprKind::FieldAccess(..) if let Some(descriptor) = self.type_value(expr.res) => {
+                let idx = self.add_constant(descriptor, span)?;
+                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
+            // `Int.display` as a value: the function `{ a -> a.display() }`
+            // (`{ a, b -> a.compare(b) }` for the two-argument methods).
+            ExprKind::FieldAccess(_, method, _)
+                if self.builtin_trait_method_of_builtin_type(expr) =>
+            {
+                let names: &[&str] = match resolve(*method).as_str() {
+                    "compare" | "equal" => &["__self__", "__other__"],
+                    _ => &["__self__"],
+                };
+                let ident = |name: &str| Expr::new(ExprKind::Ident(intern(name)), span);
+                let call = Expr::new(
+                    ExprKind::Call(
+                        Box::new(Expr::new(
+                            ExprKind::FieldAccess(Box::new(ident(names[0])), *method, span),
+                            span,
+                        )),
+                        names[1..].iter().map(|n| ident(n)).collect(),
+                    ),
+                    span,
+                );
+                let lambda = Expr::new(
+                    ExprKind::Lambda {
+                        params: names
+                            .iter()
+                            .map(|n| crate::ast::Param {
+                                kind: crate::ast::ParamKind::Data,
+                                pattern: crate::ast::Pattern::new(
+                                    crate::ast::PatternKind::Ident(intern(n)),
+                                    span,
                                 ),
-                                span,
-                            });
-                        }
-                        // Compile-time visibility check for user file
-                        // modules: bare `mymod.helper` where `helper` is a
-                        // private fn of `mymod` should fail now with a crisp
-                        // error, not later with a VM-level "undefined global".
-                        let field_name = resolve(*field);
-                        if let Some(err) =
-                            self.private_module_fn_error(&name_str, &field_name, span)
-                        {
-                            return Err(err);
-                        }
-                        // B8: In REPL mode, a previously-bound value like `p`
-                        // is a VM global (created via `eval_declaration`), not
-                        // a module. When the identifier is NOT a known builtin
-                        // module name, fall through to the receiver-expression
-                        // path below, which emits `GetGlobal(name)` followed
-                        // by `GetField(field)`. That resolves `p.x` against
-                        // the stored record value.
-                        //
-                        // In non-REPL mode we preserve the long-standing
-                        // behaviour of emitting `GetGlobal("name.field")`,
-                        // which is how foreign-function modules registered
-                        // via `vm.register_fn1("mylib.double", ...)` and
-                        // file-module aliases like `import string as s` are
-                        // found (the alias path registers `s.split` as a
-                        // standalone global).
-                        if !self.repl_mode || module::is_builtin_module(&name_str) {
-                            let qualified = format!("{name}.{field}");
-                            let name_idx = self.add_constant(Value::String(qualified), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::GetGlobal, name_idx, span);
-                            return Ok(());
-                        }
-                        // REPL mode, non-module name — fall through.
-                    }
-                }
-                let field_str = resolve(*field);
-                if let Ok(index) = field_str.parse::<u8>() {
-                    // Tuple index access: expr.0, expr.1, etc.
-                    self.compile_expr(expr)?;
-                    self.current_chunk().emit_op(Op::GetIndex, span);
-                    self.current_chunk().emit_u8(index, span);
-                } else {
-                    // Compile the expression and access field
-                    self.compile_expr(expr)?;
-                    let name_idx = self.add_constant(Value::String(field_str), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::GetField, name_idx, span);
-                }
+                                ty: None,
+                            })
+                            .collect(),
+                        body: Box::new(call),
+                    },
+                    span,
+                );
+                self.compile_expr(&lambda)?;
+            }
+
+            ExprKind::FieldAccess(..) if let Some(slot) = self.qualified_type_member(expr)? => {
+                self.current_chunk().emit_op_u16(Op::GetGlobal, slot, span);
+            }
+
+            // `m.f`, `m.limit`, `list.map` used as a value.
+            ExprKind::FieldAccess(..) if let Some(def) = self.value_def(expr.res) => {
+                self.emit_global_value(def, span)?;
+            }
+
+            // A record's field. (Tuple indexing, `t.0`, is rejected by
+            // the checker.)
+            ExprKind::FieldAccess(expr, field, _) => {
+                self.compile_expr(expr)?;
+                let name_idx = self.add_constant(Value::String(resolve(*field)), span)?;
+                self.current_chunk()
+                    .emit_op_u16(Op::GetField, name_idx, span);
             }
 
             ExprKind::StringInterp(parts) => {
@@ -2992,13 +1372,14 @@ impl Compiler {
                 // values and produced garbled output. Reject at compile
                 // time instead, mirroring the call/tuple/record guards.
                 if parts.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "string interpolation has {} segments; silt string interpolations are limited to 255",
                             parts.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
                 // Every part stays on the stack until `StringConcat`.
                 let base = self.ctx().height;
@@ -3039,13 +1420,14 @@ impl Compiler {
 
             ExprKind::Lambda { params, body, .. } => {
                 if params.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "closure has {} parameters; silt functions are limited to 255",
                             params.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
                 let arity = params.len() as u8;
 
@@ -3061,10 +1443,11 @@ impl Compiler {
                 self.in_tail_position = false;
                 self.current_chunk().emit_op(Op::Return, span);
 
-                let ctx = self.contexts.pop().ok_or(CompileError {
-                    message: "compiler bug: missing lambda context".into(),
+                let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+                    Code::CompilerBug,
                     span,
-                })?;
+                    "compiler bug: missing lambda context",
+                ))?;
                 let upvalue_descs = ctx.upvalues.clone();
                 let func = ctx.function;
 
@@ -3093,10 +1476,11 @@ impl Compiler {
 
             ExprKind::Tuple(elems) => {
                 if elems.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "tuple cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "tuple cannot have more than 255 elements",
+                    ));
                 }
                 self.compile_operands(elems)?;
                 self.current_chunk().emit_op(Op::MakeTuple, span);
@@ -3112,14 +1496,15 @@ impl Compiler {
                 // literals at compile time with a clear error — the same
                 // shape as the `u8`-bounded tuple/record checks above.
                 if elems.len() > u16::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "list literal too large: {} elements (max {})",
                             elems.len(),
                             u16::MAX
                         ),
-                        span,
-                    });
+                    ));
                 }
                 let has_spread = elems.iter().any(|e| matches!(e, ListElem::Spread(_)));
                 if !has_spread {
@@ -3153,14 +1538,15 @@ impl Compiler {
                                 self.compile_expr(e)?;
                                 single_count += 1;
                                 if single_count > u16::MAX as usize {
-                                    return Err(CompileError {
-                                        message: format!(
+                                    return Err(Diagnostic::error(
+                                        Code::CompileLimit,
+                                        span,
+                                        format!(
                                             "list literal too large: more than {} consecutive \
                                              singleton elements between spreads",
                                             u16::MAX
                                         ),
-                                        span,
-                                    });
+                                    ));
                                 }
                             }
                             ListElem::Spread(e) => {
@@ -3208,14 +1594,15 @@ impl Compiler {
                 // literals at compile time so the VM never sees a wrapped
                 // count. See the B2 comment on the list path above.
                 if pairs.len() > u16::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "map literal too large: {} pairs (max {})",
                             pairs.len(),
                             u16::MAX
                         ),
-                        span,
-                    });
+                    ));
                 }
                 self.compile_operands(pairs.iter().flat_map(|(k, v)| [k, v]))?;
                 let pair_count = pairs.len() as u16;
@@ -3227,14 +1614,15 @@ impl Compiler {
                 // MakeSet count is emitted as u16 — reject oversized
                 // literals at compile time (B2).
                 if elems.len() > u16::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "set literal too large: {} elements (max {})",
                             elems.len(),
                             u16::MAX
                         ),
-                        span,
-                    });
+                    ));
                 }
                 self.compile_operands(elems)?;
                 let count = elems.len() as u16;
@@ -3261,30 +1649,26 @@ impl Compiler {
                 self.compile_expr(inner)?;
             }
 
-            // Round 94: the optional module qualifier (`util.Pt { .. }`)
-            // is a typecheck-time concept only — it selects which
-            // module's declaration the literal is checked against. At
-            // runtime every record carries its BARE type name (modules
-            // share the VM's global namespace; see how variants register
-            // bare + `module.Variant` aliases), so codegen ignores the
-            // qualifier and the qualified literal builds a value
-            // identical to the bare spelling — same `MakeRecord` tag,
-            // same trait dispatch, same `==`.
+            // The literal's type is the one the resolver resolved it to,
+            // written `Pt { .. }` or `util.Pt { .. }`.
             ExprKind::RecordCreate {
                 module: _,
+                name_span: _,
                 name,
                 fields,
             } => {
                 if fields.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "record cannot have more than 255 fields".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "record cannot have more than 255 fields",
+                    ));
                 }
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(fields.iter().map(|(_, val)| val))?;
-                let type_name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
+                let ty = self.record_type(expr.res, *name, span)?;
+                let type_name_idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
                 self.current_chunk()
                     .emit_op_u16(Op::MakeRecord, type_name_idx, span);
                 self.current_chunk().emit_u8(field_names.len() as u8, span);
@@ -3296,10 +1680,11 @@ impl Compiler {
 
             ExprKind::RecordUpdate { expr, fields } => {
                 if fields.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "record update cannot have more than 255 fields".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "record update cannot have more than 255 fields",
+                    ));
                 }
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(
@@ -3315,10 +1700,11 @@ impl Compiler {
 
             ExprKind::AnonRecord { spread, fields } => {
                 if fields.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "anon record literal cannot have more than 255 fields".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "anon record literal cannot have more than 255 fields",
+                    ));
                 }
                 if let Some(base) = spread {
                     // Extend op: compile base, then RecordUpdate-style merge
@@ -3348,13 +1734,14 @@ impl Compiler {
                     }
                 } else {
                     // Closed anon record literal: same encoding as nominal
-                    // RecordCreate but with the synthetic name
-                    // `ANON_RECORD_TAG`, which every run-time record-tag
-                    // check accepts (see `bytecode::record_tag_matches`).
+                    // RecordCreate but with the anonymous record type,
+                    // which every run-time record-type check accepts (see
+                    // `bytecode::record_type_matches`).
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.compile_operands(fields.iter().map(|(_, val)| val))?;
+                    let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
                     let type_name_idx =
-                        self.add_constant(Value::String(ANON_RECORD_TAG.to_string()), span)?;
+                        self.add_constant(Value::TypeDescriptor(anon.clone()), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::MakeRecord, type_name_idx, span);
                     self.current_chunk().emit_u8(field_names.len() as u8, span);
@@ -3370,39 +1757,33 @@ impl Compiler {
             }
 
             ExprKind::Recur(args) => {
-                let loop_info = self.ctx().loop_stack.last().ok_or_else(|| CompileError {
-                    message: LOOP_CALL_OUTSIDE_LOOP.into(),
-                    span,
-                })?;
+                let loop_info = self
+                    .ctx()
+                    .loop_stack
+                    .last()
+                    .ok_or_else(|| checker_missed(span, "a `loop(...)` outside a loop"))?;
                 let first_slot = loop_info.first_slot;
                 let loop_start = loop_info.loop_start;
                 let expected = loop_info.binding_count as usize;
                 if args.len() != expected {
-                    let arg_word = if expected == 1 {
-                        "argument"
-                    } else {
-                        "arguments"
-                    };
-                    return Err(CompileError {
-                        message: format!(
-                            "loop() expects {expected} {arg_word}, got {}",
-                            args.len()
-                        ),
+                    return Err(checker_missed(
                         span,
-                    });
+                        "a `loop(...)` with the wrong number of arguments",
+                    ));
                 }
                 // Defence in depth: `binding_count` is already a u8 so
                 // `expected <= 255` — but keep the limit explicit so a
                 // future refactor that widens `binding_count` doesn't
                 // silently reintroduce a wrap.
                 if args.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "`loop(...)` has {} arguments; silt loops are limited to 255 bindings",
                             args.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
 
                 self.compile_operands(args)?;
@@ -3435,7 +1816,7 @@ impl Compiler {
         arms: &[MatchArm],
         span: Span,
         tail: bool,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         // ── Guardless match (no scrutinee) ───────────────────────
         let Some(scrutinee) = scrutinee else {
             return self.compile_guardless_match(arms, span, tail);
@@ -3546,7 +1927,7 @@ impl Compiler {
         arms: &[MatchArm],
         span: Span,
         tail: bool,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         let mut end_jumps = Vec::new();
 
         for arm in arms {
@@ -3596,7 +1977,7 @@ impl Compiler {
         right: &Expr,
         span: Span,
         tail: bool,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         // val |> f(args) -> f(val, args)
         // val |> f       -> f(val)
         //
@@ -3612,15 +1993,16 @@ impl Compiler {
                 // The piped value takes one slot, so the explicit-arg
                 // cap is 254 here. Reject before the `+1` can wrap.
                 if args.len() >= u8::MAX as usize {
-                    return Err(CompileError {
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
                             "pipe call has {} arguments (plus piped value); silt calls are limited to 255",
                             args.len()
                         ),
-                        span,
-                    });
+                    ));
                 }
-                if let Some(builtin_name) = self.extract_builtin_name(callee)? {
+                if let Some(builtin_name) = self.builtin_module_function(callee) {
                     // With a piped value the type argument of a decoding
                     // builtin is still the last explicit argument.
                     self.check_decode_target(&builtin_name, args.last(), span)?;
@@ -3632,7 +2014,7 @@ impl Compiler {
                         .emit_op_u16(Op::CallBuiltin, name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
                 } else {
-                    if let Some(builtin_name) = self.selectively_imported_builtin(callee) {
+                    if let Some(builtin_name) = self.builtin_function(callee.res) {
                         self.check_decode_target(&builtin_name, args.last(), span)?;
                     }
                     // Non-builtin: callee first, then val, then args
@@ -3654,21 +2036,22 @@ impl Compiler {
 
     fn compile_loop(
         &mut self,
-        bindings: &[(Symbol, Expr)],
+        bindings: &[(Symbol, Span, Expr)],
         body: &Expr,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         // `binding_count` is stored in `LoopInfo` as a `u8`, so more
         // than 255 bindings would silently wrap and cause `recur`
         // arity mismatches to be misreported. Reject up front.
         if bindings.len() > u8::MAX as usize {
-            return Err(CompileError {
-                message: format!(
+            return Err(Diagnostic::error(
+                Code::CompileLimit,
+                span,
+                format!(
                     "loop has {} bindings; silt loops are limited to 255",
                     bindings.len()
                 ),
-                span,
-            });
+            ));
         }
 
         self.begin_scope();
@@ -3680,9 +2063,8 @@ impl Compiler {
         let first_slot = frame_slot(self.ctx().height, span)?;
 
         // Compile initial values; each stays on the stack as its binding.
-        for (name, init) in bindings {
+        for (name, _, init) in bindings {
             self.compile_expr(init)?;
-            self.warn_if_shadows_module(*name, span);
             let slot = self.add_local(*name, span)?;
             self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
         }
@@ -3709,174 +2091,517 @@ impl Compiler {
         self.end_scope_with_result(false, span)
     }
 
-    // ── Helper: extract builtin name ─────────────────────────────
+    // ── Helper: what names resolve to ────────────────────────────
 
-    /// If the callee is a module-qualified builtin (e.g., `list.map`),
-    /// return the qualified name. Only returns Some if the ident is NOT a
-    /// local/upvalue AND belongs to a known builtin module.
-    fn extract_builtin_name(&self, callee: &Expr) -> Result<Option<String>, CompileError> {
-        if let ExprKind::FieldAccess(expr, field) = &callee.kind
-            && let ExprKind::Ident(module) = &expr.kind
+    /// The name of `ty` as values of it print: its name, qualified by its
+    /// module ([`ModuleUnit::qualifier`]) when two types of the
+    /// program's modules have it.
+    fn display_type_name(&self, ty: TypeRef) -> String {
+        if crate::defs::builtin_types()
+            .get(ty.id.0.0 as usize)
+            .is_some()
+            || !self.program_clashes.contains(&ty.name)
         {
-            // Check if it's a local or upvalue first (round 94: top-level
-            // let globals are value bindings and shadow modules the same
-            // way — `list.map(x)` with `let list = ...` is a field call).
-            let mod_str = resolve(*module);
-            if self.resolve_local(*module).is_none()
-                && self.resolve_upvalue_peek(*module).is_none()
-                && !self.top_level_value_globals.contains(&mod_str)
-            {
-                if module::is_builtin_module(&mod_str) {
-                    if !self.imported_builtin_modules.contains(&mod_str) {
-                        return Err(CompileError {
-                            message: format!(
-                                "module '{module}' is not imported; add `import {module}` at the top of the file"
-                            ),
-                            span: callee.span,
-                        });
-                    }
-                    return Ok(Some(format!("{module}.{field}")));
-                }
-                // Aliased builtin: `import list as l` → `l.sum(...)` must
-                // dispatch as `CallBuiltin("list.sum", ...)`. The alias
-                // loop in `compile_import` only mirrors the curated
-                // `builtin_module_functions` list as globals, so any
-                // submodule function registered only in the typechecker
-                // / VM dispatcher (list.sum, string.lines, …) would
-                // otherwise fail at runtime with "undefined global:
-                // l.sum". Rewriting the call at compile time bypasses
-                // the global lookup entirely and lets the VM's
-                // module-prefix dispatcher do the routing.
-                if let Some(canonical) = self.imported_builtin_module_aliases.get(&mod_str) {
-                    return Ok(Some(format!("{canonical}.{field}")));
+            return resolve(ty.name);
+        }
+        let module = self.units.defs.get(ty.id.0).module;
+        match self.units.modules.iter().find(|unit| unit.id == module) {
+            Some(unit) => format!("{}.{}", unit.qualifier, ty.name),
+            None => resolve(ty.name),
+        }
+    }
+
+    /// The run-time description of the type `id`, which values of the
+    /// type carry; described once per compilation, and given to the VM.
+    fn type_info(&self, id: crate::defs::TypeId) -> Arc<TypeInfo> {
+        if crate::defs::builtin_types().get(id.0.0 as usize).is_some() {
+            return crate::typeinfo::builtin_type(id).clone();
+        }
+        if let Some(info) = self.types.borrow().get(id) {
+            return info.clone();
+        }
+        let defs = &self.units.defs;
+        let def = *defs.get(id.0);
+        let ty = TypeRef { id, name: def.name };
+        let variants = defs.variants(id.0);
+        let mut nested = Vec::new();
+        let shape = if !variants.is_empty() {
+            Shape::Enum(
+                variants
+                    .iter()
+                    .map(|v| {
+                        let variant = defs.get(*v);
+                        let arity = match variant.kind {
+                            crate::defs::DefKind::Variant { arity, .. } => arity,
+                            _ => 0,
+                        };
+                        VariantInfo {
+                            name: resolve(variant.name),
+                            arity,
+                        }
+                    })
+                    .collect(),
+            )
+        } else {
+            let fields = self.record_fields(id);
+            Shape::Record(
+                fields
+                    .iter()
+                    .map(|(name, ty)| {
+                        let field_type = self
+                            .describe_field_type(ty, &mut Vec::new())
+                            .unwrap_or_else(|_| FieldType::Unsupported(shown(ty)));
+                        collect_records(&field_type, &mut nested);
+                        (resolve(*name), field_type)
+                    })
+                    .collect(),
+            )
+        };
+        let info = Arc::new(TypeInfo {
+            id,
+            name: self.display_type_name(ty),
+            shape,
+        });
+        self.types.borrow_mut().insert(info.clone());
+        // The record types of its fields, which a decoder builds too.
+        for record in nested {
+            self.type_info(record);
+        }
+        info
+    }
+
+    /// The declaration of the type declared with its name at `span`.
+    fn type_declaration(&self, span: Span) -> Option<&crate::ast::TypeDecl> {
+        let programs = self
+            .units
+            .modules
+            .iter()
+            .map(|unit| &unit.program)
+            .chain(self.units.earlier.programs.iter());
+        for program in programs {
+            for decl in &program.decls {
+                if let Decl::Type(td) = decl
+                    && td.name_span == span
+                {
+                    return Some(td);
                 }
             }
         }
-        Ok(None)
+        None
+    }
+
+    /// The variant a resolution names (a constructor pattern, a variant
+    /// used as a value). With no resolution (the derived impls of the
+    /// builtin types, which the builtin environment makes) it is a
+    /// builtin variant, named by its name: builtin variant names are
+    /// unique among the builtins.
+    fn variant_tag(&self, res: Option<crate::defs::Res>, name: Symbol) -> Option<Tag> {
+        if let Some(res) = res {
+            let crate::defs::Res::Def(id) = res else {
+                return None;
+            };
+            let crate::defs::DefKind::Variant { ty, ordinal, .. } = self.units.defs.get(id).kind
+            else {
+                return None;
+            };
+            return Some(Tag::new(self.type_info(ty), ordinal));
+        }
+        let name = resolve(name);
+        module::builtin_enum_variants()
+            .iter()
+            .find(|(_, variants)| variants.contains(&name.as_str()))
+            .and_then(|(ty, _)| crate::typeinfo::builtin_type_named(ty))
+            .and_then(|ty| Tag::named(ty, &name))
+    }
+
+    /// The tag of the variant a constructor pattern names.
+    fn pattern_tag(
+        &self,
+        res: Option<crate::defs::Res>,
+        name: Symbol,
+        span: Span,
+    ) -> Result<Tag, Diagnostic> {
+        self.variant_tag(res, name)
+            .ok_or_else(|| checker_missed(span, &format!("the unresolved variant '{name}'")))
+    }
+
+    /// The descriptor of the type a record literal or pattern names.
+    fn record_type(
+        &self,
+        res: Option<crate::defs::Res>,
+        name: Symbol,
+        span: Span,
+    ) -> Result<Arc<TypeInfo>, Diagnostic> {
+        match self.res_type(res) {
+            Some(ty) => Ok(self.type_info(ty.id)),
+            None => crate::typeinfo::builtin_type_named(&resolve(name))
+                .cloned()
+                .ok_or_else(|| checker_missed(span, &format!("the unresolved type '{name}'"))),
+        }
+    }
+
+    /// The type a resolution names, if it names a record or enum type.
+    fn res_type(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
+        let Some(crate::defs::Res::Def(id)) = res else {
+            return None;
+        };
+        let def = self.units.defs.get(id);
+        matches!(def.kind, crate::defs::DefKind::Type(_)).then_some(TypeRef {
+            id: crate::defs::TypeId(id),
+            name: def.name,
+        })
+    }
+
+    /// The value of a type used as a value, if the resolution names a
+    /// type: a primitive type's descriptor, or the descriptor of a record,
+    /// enum or container type.
+    fn type_value(&self, res: Option<crate::defs::Res>) -> Option<Value> {
+        let ty = self.res_type(res)?;
+        let name = resolve(ty.name);
+        if crate::defs::builtin_types()
+            .get(ty.id.0.0 as usize)
+            .is_some()
+            && module::BUILTIN_PRIMITIVE_NAMES.contains(&name.as_str())
+        {
+            return Some(Value::PrimitiveDescriptor(name));
+        }
+        Some(Value::TypeDescriptor(self.type_info(ty.id)))
+    }
+
+    /// The definition a resolution names, if it names a value with a
+    /// global: a top-level function or `let`, a host function, or a
+    /// builtin function or constant.
+    fn value_def(&self, res: Option<crate::defs::Res>) -> Option<crate::defs::DefId> {
+        let Some(crate::defs::Res::Def(id)) = res else {
+            return None;
+        };
+        matches!(
+            self.units.defs.get(id).kind,
+            crate::defs::DefKind::Fn | crate::defs::DefKind::Let | crate::defs::DefKind::Host
+        )
+        .then_some(id)
+    }
+
+    /// The qualified name (`list.map`, `println`) of the builtin function
+    /// or constant a resolution names.
+    fn builtin_function(&self, res: Option<crate::defs::Res>) -> Option<String> {
+        let def = self.units.defs.get(self.value_def(res)?);
+        if !def.module.is_builtin() {
+            return None;
+        }
+        Some(match def.module.builtin_name() {
+            Some(module) => format!("{module}.{}", def.name),
+            None => resolve(def.name),
+        })
+    }
+
+    /// If the callee is a builtin module's function (`list.map`, or
+    /// `l.map` after `import list as l`), its qualified name: the call is
+    /// a `CallBuiltin`.
+    fn builtin_module_function(&self, callee: &Expr) -> Option<String> {
+        match &callee.kind {
+            ExprKind::FieldAccess(..) => self.builtin_function(callee.res),
+            _ => None,
+        }
+    }
+
+    /// Push the value of the definition `def`: its global, or for a
+    /// builtin function or constant, the function or the constant.
+    fn emit_global_value(&mut self, def: crate::defs::DefId, span: Span) -> Result<(), Diagnostic> {
+        if let Some(name) = self.builtin_function(Some(crate::defs::Res::Def(def))) {
+            let value = module::builtin_constant_value(&name).unwrap_or(Value::BuiltinFn(name));
+            let idx = self.add_constant(value, span)?;
+            self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            return Ok(());
+        }
+        let slot = self.globals.def(def).ok_or_else(|| {
+            checker_missed(
+                span,
+                &format!(
+                    "the definition '{}' with no global",
+                    self.units.defs.get(def).name
+                ),
+            )
+        })?;
+        self.current_chunk().emit_op_u16(Op::GetGlobal, slot, span);
+        Ok(())
+    }
+
+    /// The type the module being compiled declares as `name`.
+    fn declared_type(&self, name: Symbol) -> Option<crate::defs::TypeId> {
+        let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        let defs = &self.units.defs;
+        let unit = self.units.modules.get(current)?;
+        defs.of_module(unit.id)
+            .iter()
+            .copied()
+            .find(|id| {
+                let def = defs.get(*id);
+                def.name == name && matches!(def.kind, crate::defs::DefKind::Type(_))
+            })
+            .map(crate::defs::TypeId)
+    }
+
+    /// The type the impl `ti` is for, as the checker keys impls and the
+    /// VM dispatches: the canonical head of its target (`Range` is
+    /// `List`, an alias is the type it stands for). `None` for a target
+    /// that names no type (`trait Display for a`).
+    fn impl_type(&self, ti: &crate::ast::TraitImpl) -> Option<crate::defs::TypeId> {
+        let written = match ti.target_res {
+            Some(crate::defs::Res::Def(id)) => Some(TypeRef {
+                id: crate::defs::TypeId(id),
+                name: self.units.defs.get(id).name,
+            }),
+            _ => {
+                let name = resolve(ti.target_type);
+                let name = if name == "()" { "Unit" } else { name.as_str() };
+                crate::defs::builtin_type_id(name).map(|id| TypeRef {
+                    id,
+                    name: ti.target_type,
+                })
+            }
+        };
+        Some(canonical_head(self.resolver(), written?).id)
+    }
+
+    /// The trait the impl `ti` is of. The derived impls of the builtin
+    /// types, which the builtin environment makes, name a builtin trait
+    /// unresolved.
+    fn impl_trait(&self, ti: &crate::ast::TraitImpl) -> Option<crate::defs::TraitId> {
+        match ti.trait_res {
+            Some(crate::defs::Res::Def(id)) => Some(crate::defs::TraitId(id)),
+            _ => crate::defs::builtin_trait_id(&resolve(ti.trait_name)),
+        }
+    }
+
+    /// The trait a method call's resolution names: the trait of the
+    /// method the checker resolved the call to. `None` when it is not
+    /// known where the call is compiled.
+    fn res_trait(&self, res: Option<crate::defs::Res>) -> Option<crate::defs::TraitId> {
+        let Some(crate::defs::Res::Def(id)) = res else {
+            return None;
+        };
+        match self.units.defs.get(id).kind {
+            crate::defs::DefKind::Trait(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// Emit `CallMethod` of `method` with `argc` values (the receiver
+    /// first) on the stack, for the trait the call's resolution `res`
+    /// names.
+    fn emit_call_method(
+        &mut self,
+        method: Symbol,
+        argc: u8,
+        res: Option<crate::defs::Res>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let method_idx = self.add_constant(Value::String(resolve(method)), span)?;
+        let trait_operand = match self.res_trait(res) {
+            Some(t) => {
+                let name = self.units.defs.get(t.0).name;
+                self.globals
+                    .trait_index(t, resolve(name))
+                    .ok_or_else(|| too_many_globals(span))?
+            }
+            None => crate::bytecode::NO_TRAIT,
+        };
+        self.current_chunk()
+            .emit_op_u16(Op::CallMethod, method_idx, span);
+        self.current_chunk().emit_u8(argc, span);
+        self.current_chunk().emit_u16(trait_operand, span);
+        Ok(())
+    }
+
+    /// Whether `callee` is `T.method` for a builtin type (`Int`, `List`,
+    /// `io.IoError`, ...) and a method of a builtin trait (Display,
+    /// Compare, Equal, Hash, Error), which the VM implements natively for
+    /// it, or as a derived impl it dispatches to.
+    fn builtin_trait_method_of_builtin_type(&self, callee: &Expr) -> bool {
+        let ExprKind::FieldAccess(obj, method, _) = &callee.kind else {
+            return false;
+        };
+        if !matches!(
+            resolve(*method).as_str(),
+            "display" | "compare" | "equal" | "hash" | "message"
+        ) {
+            return false;
+        }
+        let Some(crate::defs::Res::Def(id)) = obj.res else {
+            return false;
+        };
+        let def = self.units.defs.get(id);
+        def.module.is_builtin() && def.is_type()
+    }
+
+    /// The global slot of `T.method` or `m.T.method`, a method of a type
+    /// reached through the type, as the resolver resolved `T` / `m.T`:
+    /// the method of the impls for the type's canonical head. `None` when
+    /// `expr` is not such an access.
+    fn qualified_type_member(&self, expr: &Expr) -> Result<Option<u16>, Diagnostic> {
+        let ExprKind::FieldAccess(obj, field, _) = &expr.kind else {
+            return Ok(None);
+        };
+        if !matches!(obj.kind, ExprKind::FieldAccess(..) | ExprKind::Ident(_))
+            || self.variant_value(expr).is_some()
+        {
+            return Ok(None);
+        }
+        let Some(crate::defs::Res::Def(id)) = obj.res else {
+            return Ok(None);
+        };
+        let def = self.units.defs.get(id);
+        if !def.is_type() {
+            return Ok(None);
+        }
+        let ty = canonical_head(
+            self.resolver(),
+            TypeRef {
+                id: crate::defs::TypeId(id),
+                name: def.name,
+            },
+        );
+        self.globals
+            .method(self.res_trait(expr.res), ty.id, &resolve(*field))
+            .map(Some)
+            .ok_or_else(|| {
+                checker_missed(
+                    expr.span,
+                    &format!("the method '{}.{field}' with no impl", def.name),
+                )
+            })
+    }
+
+    /// The value of the variant `expr` names, as the resolver resolved
+    /// it (`Red`, `Color.Red`, `m.Red`, `m.Color.Red`): a nullary variant
+    /// is the value, any other its constructor. Two enums may have
+    /// variants of one name, so a variant is not looked up by its name.
+    fn variant_value(&self, expr: &Expr) -> Option<Value> {
+        let tag = self.variant_tag(Some(expr.res?), intern(""))?;
+        Some(match tag.arity() {
+            0 => Value::Variant(tag, Vec::new()),
+            _ => Value::VariantConstructor(tag),
+        })
     }
 
     // ── Record field types for the json / toml decoders ──────────
 
-    /// The descriptor installed for a record field of type `te`; see the
-    /// descriptor grammar at the top of this file.
-    fn field_type_descriptor(&self, te: &TypeExpr) -> String {
-        match self.describe_field_type(te, &mut Vec::new(), &mut Vec::new()) {
-            Ok(descriptor) => descriptor,
-            Err(_) => format!("Unsupported:{}", render_type_expr(te)),
+    /// The fields of the record type `id`, with their types as the
+    /// checker inferred them (an alias is the type it stands for).
+    fn record_fields(&self, id: crate::defs::TypeId) -> Vec<(Symbol, Type)> {
+        let fields = self
+            .units
+            .record_fields
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
+        fields
+            .into_iter()
+            .map(|(name, ty)| {
+                (
+                    name,
+                    crate::types::canonical::canonicalize(self.resolver(), &ty),
+                )
+            })
+            .collect()
+    }
+
+    /// The type `ty` of a record field as the decoders see it.
+    ///
+    /// `Err` carries the part of `ty` no decoder exists for. The record
+    /// types the field type refers to are added to `records`.
+    fn describe_field_type(
+        &self,
+        ty: &Type,
+        records: &mut Vec<crate::defs::TypeId>,
+    ) -> Result<FieldType, String> {
+        use crate::typeinfo::ty as bt;
+        let unsupported = || Err(shown(ty));
+        match ty {
+            Type::Int => Ok(FieldType::Int),
+            Type::Float => Ok(FieldType::Float),
+            Type::String => Ok(FieldType::String),
+            Type::Bool => Ok(FieldType::Bool),
+            // A range type is described like the list type it is the
+            // same type as.
+            Type::List(elem) | Type::Range(elem) => Ok(FieldType::List(Box::new(
+                self.describe_field_type(elem, records)?,
+            ))),
+            // The keys of a JSON object or a TOML table are strings.
+            Type::Map(key, value) if matches!(**key, Type::String) => Ok(FieldType::Map(Box::new(
+                self.describe_field_type(value, records)?,
+            ))),
+            Type::Tuple(elems) if !elems.is_empty() => {
+                let mut parts = Vec::with_capacity(elems.len());
+                for elem in elems {
+                    parts.push(self.describe_field_type(elem, records)?);
+                }
+                Ok(FieldType::Tuple(parts))
+            }
+            Type::Generic(t, args) if t.id == bt::OPTION && args.len() == 1 => Ok(
+                FieldType::Option(Box::new(self.describe_field_type(&args[0], records)?)),
+            ),
+            Type::Record(t, _) => self.describe_named_type(*t, ty, records),
+            Type::Generic(t, args) if args.is_empty() => self.describe_named_type(*t, ty, records),
+            // Set, Channel, functions, generic records, ...
+            _ => unsupported(),
         }
     }
 
-    /// Build the descriptor of the field type `te`.
-    ///
-    /// `Err` carries the part of `te` no decoder exists for, as written.
-    /// `open_aliases` holds the aliases being expanded (an alias that
-    /// leads back to itself has no descriptor). The names of the record
-    /// types the descriptor refers to are added to `records`.
-    fn describe_field_type(
+    /// A named type with no arguments as the decoders see it: Date, Time,
+    /// DateTime, or a non-generic record type of the program.
+    fn describe_named_type(
         &self,
-        te: &TypeExpr,
-        open_aliases: &mut Vec<String>,
-        records: &mut Vec<String>,
-    ) -> Result<String, String> {
-        const NO_ARGS: &[TypeExpr] = &[];
-        let (name, args): (Symbol, &[TypeExpr]) = match &te.kind {
-            TypeExprKind::Named(name) => (*name, NO_ARGS),
-            TypeExprKind::Generic(name, args) => (*name, args.as_slice()),
-            TypeExprKind::Tuple(elems) if !elems.is_empty() => {
-                let mut parts = Vec::with_capacity(elems.len());
-                for elem in elems {
-                    parts.push(self.describe_field_type(elem, open_aliases, records)?);
-                }
-                return Ok(format!("Tuple({})", parts.join(",")));
-            }
-            _ => return Err(render_type_expr(te)),
-        };
-        let name_str = resolve(name);
-
-        if let Some(alias) = self.alias_decls.get(&name_str) {
-            if alias.params.len() != args.len() || open_aliases.contains(&name_str) {
-                return Err(render_type_expr(te));
-            }
-            let target = substitute_type_params(&alias.target, &alias.params, args);
-            open_aliases.push(name_str);
-            let described = self.describe_field_type(&target, open_aliases, records);
-            open_aliases.pop();
-            return described;
-        }
-
-        // Builtin types are matched by their canonical name: a range type
-        // is described like the list type it is the same type as.
-        let canonical = resolve(canonicalize_type_name(&self.resolver, name));
-        match (canonical.as_str(), args) {
-            ("Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime", []) => {
-                Ok(canonical.clone())
-            }
-            ("List", [elem]) => Ok(format!(
-                "List:{}",
-                self.describe_field_type(elem, open_aliases, records)?
-            )),
-            ("Option", [inner]) => Ok(format!(
-                "Option:{}",
-                self.describe_field_type(inner, open_aliases, records)?
-            )),
-            ("Map", [key, value]) => {
-                // The keys of a JSON object or a TOML table are strings.
-                let key_descriptor = self.describe_field_type(key, open_aliases, &mut Vec::new());
-                if key_descriptor.as_deref() != Ok("String") {
-                    return Err(render_type_expr(te));
-                }
-                Ok(format!(
-                    "Map:{}",
-                    self.describe_field_type(value, open_aliases, records)?
-                ))
-            }
-            // A non-generic record type. A name the compiler has no
-            // declaration for is taken to be one as well; the decoders
-            // return `Err` if no record of that name exists at run time.
-            (_, [])
-                if name_str.starts_with(|c: char| c.is_uppercase())
-                    && !self.known_enum_variants.contains_key(&name_str)
-                    && crate::types::builtins::lookup(&name_str).is_none()
-                    && self
-                        .record_decls
-                        .get(&name_str)
-                        .is_none_or(|decl| decl.params.is_empty()) =>
+        t: TypeRef,
+        ty: &Type,
+        records: &mut Vec<crate::defs::TypeId>,
+    ) -> Result<FieldType, String> {
+        use crate::typeinfo::ty as bt;
+        match t.id {
+            id if id == bt::DATE => Ok(FieldType::Date),
+            id if id == bt::TIME => Ok(FieldType::Time),
+            id if id == bt::DATE_TIME => Ok(FieldType::DateTime),
+            // A non-generic record type of the program.
+            id if crate::defs::builtin_types().get(id.0.0 as usize).is_none()
+                && self.units.defs.variants(id.0).is_empty()
+                && self
+                    .type_declaration(self.units.defs.get(id.0).span)
+                    .is_some_and(|decl| decl.params.is_empty()) =>
             {
-                records.push(name_str.clone());
-                Ok(format!("Record:{name_str}"))
+                records.push(id);
+                Ok(FieldType::Record(id))
             }
-            // Everything else: type parameters, enums, generic records,
-            // Set, Channel, functions, Map with a non-String key, ...
-            _ => Err(render_type_expr(te)),
+            // Enums, the other builtin types.
+            _ => Err(shown(ty)),
         }
     }
 
     /// The first field that cannot be decoded, in the record type
-    /// `record` or in a record type nested in it. `None` if there is none
-    /// or if the compiler has no declaration of `record`.
+    /// `record` or in a record type nested in it. `None` if there is none.
     fn undecodable_field(
         &self,
-        record: &str,
-        seen: &mut HashSet<String>,
+        record: crate::defs::TypeId,
+        seen: &mut HashSet<crate::defs::TypeId>,
     ) -> Option<UndecodableField> {
-        if !seen.insert(record.to_string()) {
+        if !seen.insert(record) {
             return None;
         }
-        let decl = self.record_decls.get(record)?;
-        for field in &decl.fields {
+        let def = *self.units.defs.get(record.0);
+        for (field, ty) in self.record_fields(record) {
             let mut nested = Vec::new();
-            match self.describe_field_type(&field.ty, &mut Vec::new(), &mut nested) {
+            match self.describe_field_type(&ty, &mut nested) {
                 Err(part) => {
                     return Some(UndecodableField {
-                        record: record.to_string(),
-                        field: resolve(field.name),
-                        field_type: render_type_expr(&field.ty),
+                        record: resolve(def.name),
+                        field: resolve(field),
+                        field_type: shown(&ty),
                         part,
                     });
                 }
                 Ok(_) => {
                     for nested_record in nested {
-                        if let Some(found) = self.undecodable_field(&nested_record, seen) {
+                        if let Some(found) = self.undecodable_field(nested_record, seen) {
                             return Some(found);
                         }
                     }
@@ -3888,50 +2613,64 @@ impl Compiler {
 
     /// Check the type argument of a call of a decoding builtin
     /// (`json.parse(text, T)`, `toml.parse(text, T)` and their `_list` /
-    /// `_map` forms). If `T` names a type declared in the program, every
-    /// field the decoder would have to fill must have a decoder;
-    /// otherwise the call is a compile error that names the field and its
-    /// type. An enum, a builtin container type, or a primitive type given
-    /// to a decoder that only decodes records is a compile error as well.
-    /// When the type argument is a variable (a `type a` parameter) the
-    /// type is only known at run time, where the decoders report the same
-    /// problems.
+    /// `_map` forms), as the resolver resolved it. If `T` is a record type
+    /// of the program, every field the decoder would have to fill must
+    /// have a decoder; otherwise the call is a compile error that names
+    /// the field and its type. An enum, a builtin container type, or a
+    /// primitive type given to a decoder that only decodes records is a
+    /// compile error as well. When the type argument is a variable (a
+    /// `type a` parameter) the type is only known at run time, where the
+    /// decoders report the same problems.
     fn check_decode_target(
         &self,
         builtin_name: &str,
         type_arg: Option<&Expr>,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         if !DECODING_BUILTINS.contains(&builtin_name) {
             return Ok(());
         }
         let Some(type_arg) = type_arg else {
             return Ok(());
         };
-        // `binder` is the identifier that makes the argument a variable
-        // if it is bound to one.
-        let (binder, type_name) = match &type_arg.kind {
-            ExprKind::Ident(name) => (*name, *name),
-            // `module.Type`: types live in one namespace at run time.
-            ExprKind::FieldAccess(receiver, name) => match &receiver.kind {
-                ExprKind::Ident(module) => (*module, *name),
-                _ => return Ok(()),
-            },
+        let type_name = match &type_arg.kind {
+            ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _) => resolve(*name),
             _ => return Ok(()),
         };
-        if self.resolve_local(binder).is_some()
-            || self.resolve_upvalue_peek(binder).is_some()
-            || self.top_level_value_globals.contains(&resolve(binder))
-        {
+        let Some(ty) = self.res_type(type_arg.res) else {
             return Ok(());
-        }
-
-        let type_name = resolve(type_name);
-        if self.record_decls.contains_key(&type_name) {
-            let Some(found) = self.undecodable_field(&type_name, &mut HashSet::new()) else {
+        };
+        let def = *self.units.defs.get(ty.id.0);
+        if !def.module.is_builtin() {
+            let enum_type = !self.units.defs.variants(ty.id.0).is_empty();
+            if enum_type {
+                return Err(Diagnostic::error(
+                    Code::InvalidConstruct,
+                    span,
+                    format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
+                    ),
+                )
+                .with_help("decode into a record type"));
+            }
+            if self
+                .type_declaration(def.span)
+                .is_some_and(|decl| !decl.params.is_empty())
+            {
+                return Err(Diagnostic::error(
+                    Code::InvalidConstruct,
+                    span,
+                    format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: it is a generic record \
+                         type, and a decoder builds a value of one type"
+                    ),
+                )
+                .with_help(DECODABLE_TYPES_HELP));
+            }
+            let Some(found) = self.undecodable_field(ty.id, &mut HashSet::new()) else {
                 return Ok(());
             };
-            let owner = if found.record == type_name {
+            let owner = if found.record == resolve(def.name) {
                 String::new()
             } else {
                 format!(" of `{}`, a record type nested in it,", found.record)
@@ -3941,30 +2680,33 @@ impl Compiler {
             } else {
                 format!("and `{}` has no decoder", found.part)
             };
-            return Err(CompileError {
-                message: format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: field `{}`{owner} has type `{}`, {part}\n\
-                     help: {DECODABLE_TYPES_HELP}",
+            return Err(Diagnostic::error(
+                Code::InvalidConstruct,
+                span,
+                format!(
+                    "`{builtin_name}` cannot decode `{type_name}`: field `{}`{owner} has type `{}`, {part}",
                     found.field, found.field_type
                 ),
-                span,
-            });
+            )
+            .with_help(DECODABLE_TYPES_HELP));
         }
-        if self.known_enum_variants.contains_key(&type_name) {
-            return Err(CompileError {
-                message: format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder\n\
-                     help: decode into a record type"
+        if !crate::typeinfo::builtin_type(ty.id).variants().is_empty() {
+            return Err(Diagnostic::error(
+                Code::InvalidConstruct,
+                span,
+                format!(
+                    "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
                 ),
-                span,
-            });
+            )
+            .with_help("decode into a record type"));
         }
-        // Builtin type names. `json.parse`, `json.parse_map` and
-        // `toml.parse_map` also decode the primitive types; every other
-        // decoder, and every decoder given a container type such as
-        // `List`, needs a record type.
-        let is_primitive = module::BUILTIN_PRIMITIVE_NAMES.contains(&type_name.as_str());
-        let is_container = module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&type_name.as_str());
+        // Builtin types, by their declaration. `json.parse`,
+        // `json.parse_map` and `toml.parse_map` also decode the primitive
+        // types; every other decoder, and every decoder given a container
+        // type such as `List`, needs a record type.
+        let builtin = crate::defs::builtin_types()[ty.id.0.0 as usize].0;
+        let is_primitive = module::BUILTIN_PRIMITIVE_NAMES.contains(&builtin);
+        let is_container = module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&builtin);
         let decodes_primitives = matches!(
             builtin_name,
             "json.parse" | "json.parse_map" | "toml.parse_map"
@@ -3975,13 +2717,14 @@ impl Compiler {
             } else {
                 "a record type"
             };
-            return Err(CompileError {
-                message: format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}\n\
-                     help: declare a record type with a field of the type you want, and decode into the record"
-                ),
+            return Err(Diagnostic::error(
+                Code::InvalidConstruct,
                 span,
-            });
+                format!("`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"),
+            )
+            .with_help(
+                "declare a record type with a field of the type you want, and decode into the record",
+            ));
         }
         Ok(())
     }
@@ -4020,18 +2763,18 @@ impl Compiler {
         &mut self.ctx_mut().function.chunk
     }
 
-    /// Add a constant to the current chunk, converting overflow to `CompileError`.
-    fn add_constant(&mut self, value: Value, span: Span) -> Result<u16, CompileError> {
+    /// Add a constant to the current chunk, converting overflow to `Diagnostic`.
+    fn add_constant(&mut self, value: Value, span: Span) -> Result<u16, Diagnostic> {
         self.current_chunk()
             .add_constant(value)
-            .map_err(|msg| CompileError { message: msg, span })
+            .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))
     }
 
-    /// Patch a jump in the current chunk, converting overflow to `CompileError`.
-    fn patch_jump(&mut self, patch_offset: usize, span: Span) -> Result<(), CompileError> {
+    /// Patch a jump in the current chunk, converting overflow to `Diagnostic`.
+    fn patch_jump(&mut self, patch_offset: usize, span: Span) -> Result<(), Diagnostic> {
         self.current_chunk()
             .patch_jump(patch_offset)
-            .map_err(|msg| CompileError { message: msg, span })
+            .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))
     }
 
     fn begin_scope(&mut self) {
@@ -4065,7 +2808,7 @@ impl Compiler {
     /// above the scope's locals, and drop the locals from under it. In
     /// tail position (`tail`) the result is returned at once and the
     /// frame goes with it, so nothing is emitted.
-    fn end_scope_with_result(&mut self, tail: bool, span: Span) -> Result<(), CompileError> {
+    fn end_scope_with_result(&mut self, tail: bool, span: Span) -> Result<(), Diagnostic> {
         let end = self.ctx().height;
         let start = self.end_scope();
         if end > start && !tail {
@@ -4077,7 +2820,7 @@ impl Compiler {
     /// Emit `Slide`: the value on top of the stack becomes the value in
     /// slot `height`, and everything that was above that slot is dropped.
     /// Afterwards the frame holds `height` values plus that one.
-    fn emit_slide(&mut self, height: usize, span: Span) -> Result<(), CompileError> {
+    fn emit_slide(&mut self, height: usize, span: Span) -> Result<(), Diagnostic> {
         let slot = frame_slot(height, span)?;
         self.current_chunk().emit_op_u16(Op::Slide, slot, span);
         Ok(())
@@ -4086,7 +2829,7 @@ impl Compiler {
     /// Make the value on top of the stack a local named `name`. Its slot
     /// is the current frame height, which is where that value is.
     /// (For a parameter the value is the argument the caller pushed.)
-    fn add_local(&mut self, name: Symbol, span: Span) -> Result<u16, CompileError> {
+    fn add_local(&mut self, name: Symbol, span: Span) -> Result<u16, Diagnostic> {
         let slot = frame_slot(self.ctx().height, span)?;
         let ctx = self.ctx_mut();
         let depth = ctx.scope_depth;
@@ -4103,7 +2846,7 @@ impl Compiler {
     fn compile_operands<'a>(
         &mut self,
         operands: impl IntoIterator<Item = &'a Expr>,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         self.compile_operands_above(0, operands)
     }
 
@@ -4114,7 +2857,7 @@ impl Compiler {
         &mut self,
         pending: usize,
         operands: impl IntoIterator<Item = &'a Expr>,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         let base = self.ctx().height;
         self.ctx_mut().height = base + pending;
         for operand in operands {
@@ -4128,12 +2871,11 @@ impl Compiler {
     /// Register a function's parameters as locals and destructure those
     /// written as patterns. The arguments are already in the frame, in
     /// slots `0..params.len()`.
-    fn compile_params(&mut self, params: &[Param], span: Span) -> Result<(), CompileError> {
+    fn compile_params(&mut self, params: &[Param], span: Span) -> Result<(), Diagnostic> {
         let mut destructured = Vec::new();
         for (i, param) in params.iter().enumerate() {
             match &param.pattern.kind {
                 PatternKind::Ident(name) => {
-                    self.warn_if_shadows_module(*name, param.pattern.span);
                     self.add_local(*name, span)?;
                 }
                 _ => {
@@ -4153,20 +2895,6 @@ impl Compiler {
         Ok(())
     }
 
-    /// Emit a warning if `name` shadows a builtin module like `json`, `int`, etc.
-    fn warn_if_shadows_module(&mut self, name: Symbol, span: Span) {
-        let s = resolve(name);
-        if module::is_builtin_module(&s) {
-            self.warnings.push(CompileWarning {
-                message: format!(
-                    "variable '{s}' shadows the builtin '{s}' module; \
-                     use a different name to access '{s}.*' functions"
-                ),
-                span,
-            });
-        }
-    }
-
     fn resolve_local(&self, name: Symbol) -> Option<u16> {
         let ctx = self.ctx();
         // Search from the innermost local outward.
@@ -4178,32 +2906,12 @@ impl Compiler {
         None
     }
 
-    /// Non-mutating check if a variable could be resolved as an upvalue.
-    /// Used for determining if an identifier is a variable vs module name.
-    fn resolve_upvalue_peek(&self, name: Symbol) -> Option<()> {
-        let current_idx = self.contexts.len() - 1;
-        if current_idx == 0 {
-            return None;
-        }
-        // Check if the variable exists as a local in any enclosing context
-        // or as an upvalue already captured.
-        for i in (0..current_idx).rev() {
-            let ctx = &self.contexts[i];
-            if ctx.locals.iter().any(|l| l.name == name) {
-                return Some(());
-            }
-        }
-        // Also check if it's already captured as an upvalue in the current context
-        // This is a heuristic — we just need to know if it's a variable, not necessarily capture it
-        None
-    }
-
     /// Resolve a variable as an upvalue by walking enclosing compile contexts.
     ///
     /// If the variable is found as a local in an enclosing scope, it is captured
     /// as an upvalue (is_local = true). If the enclosing scope already has it as
     /// an upvalue, it is chained through (is_local = false, transitive capture).
-    fn resolve_upvalue(&mut self, name: Symbol, span: Span) -> Result<Option<u8>, CompileError> {
+    fn resolve_upvalue(&mut self, name: Symbol, span: Span) -> Result<Option<u8>, Diagnostic> {
         let current_idx = self.contexts.len() - 1;
         if current_idx == 0 {
             return Ok(None); // Top-level script has no enclosing scope.
@@ -4216,7 +2924,7 @@ impl Compiler {
         name: Symbol,
         context_index: usize,
         span: Span,
-    ) -> Result<Option<u8>, CompileError> {
+    ) -> Result<Option<u8>, Diagnostic> {
         if context_index == 0 {
             return Ok(None); // No more enclosing scopes.
         }
@@ -4237,12 +2945,11 @@ impl Compiler {
             // local itself needs no open/closed tracking — see
             // VmClosure doc in src/bytecode.rs.
             let index = if slot > u8::MAX as u16 {
-                return Err(CompileError {
-                    message: format!(
-                        "cannot capture local in slot {slot} as upvalue (max slot 255)"
-                    ),
+                return Err(Diagnostic::error(
+                    Code::CompileLimit,
                     span,
-                });
+                    format!("cannot capture local in slot {slot} as upvalue (max slot 255)"),
+                ));
             } else {
                 slot as u8
             };
@@ -4283,14 +2990,14 @@ impl Compiler {
     /// writing 2N operand bytes after it — those bytes would then be
     /// reinterpreted as bytecode at runtime. Mirrors the sibling
     /// bounds-check in `resolve_upvalue_in`'s "captured slot > 255"
-    /// path so both hard limits surface as `CompileError` rather than
+    /// path so both hard limits surface as `Diagnostic` rather than
     /// panics or silent miscompiles.
     fn add_upvalue(
         &mut self,
         context_index: usize,
         desc: UpvalueDesc,
         span: Span,
-    ) -> Result<u8, CompileError> {
+    ) -> Result<u8, Diagnostic> {
         let ctx = &mut self.contexts[context_index];
         // Check if we already have this exact upvalue.
         for (i, existing) in ctx.upvalues.iter().enumerate() {
@@ -4300,13 +3007,14 @@ impl Compiler {
         }
         let index = ctx.upvalues.len();
         if index >= u8::MAX as usize {
-            return Err(CompileError {
-                message: format!(
+            return Err(Diagnostic::error(
+                Code::CompileLimit,
+                span,
+                format!(
                     "too many upvalues: closure captures more than {} values (max)",
                     u8::MAX as usize
                 ),
-                span,
-            });
+            ));
         }
         ctx.upvalues.push(desc);
         ctx.function.upvalue_count = ctx.upvalues.len() as u8;
@@ -4320,32 +3028,41 @@ impl Compiler {
 mod tests {
     use super::*;
     use crate::bytecode::Op;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
 
-    /// Compile declarations (no main call) and return all functions.
+    /// The units of a program with no modules, for a compiler that
+    /// compiles nothing.
+    fn no_modules() -> ProgramUnits {
+        ProgramUnits {
+            modules: Vec::new(),
+            entry: 0,
+            defs: Arc::new(crate::typechecker::names::new_def_table()),
+            earlier: EarlierCells::default(),
+            resolver: Arc::new(Resolver::new()),
+            record_fields: Arc::new(HashMap::new()),
+        }
+    }
+
+    /// Compile declarations (no main call) through a session and return
+    /// all functions.
     fn compile(input: &str) -> Vec<Function> {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
-        let mut compiler = Compiler::new();
-        compiler.import_all_builtins();
-        compiler.compile_declarations(&program).unwrap()
+        crate::session::testing::compile_decls_str(input)
+            .unwrap_or_else(|e| panic!("{e:?}"))
+            .functions
     }
 
     /// Compile expecting an error, return the error.
-    fn compile_err(input: &str) -> CompileError {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
-        let mut compiler = Compiler::new();
-        compiler.compile_declarations(&program).unwrap_err()
+    fn compile_err(input: &str) -> Diagnostic {
+        crate::session::testing::compile_decls_str(input)
+            .err()
+            .and_then(|errors| errors.into_iter().next())
+            .expect("a compile error")
     }
 
-    /// Compile without builtin imports (to test import gating).
-    fn compile_no_imports(input: &str) -> Result<Vec<Function>, CompileError> {
-        let tokens = Lexer::new(input).tokenize().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
-        let mut compiler = Compiler::new();
-        compiler.compile_declarations(&program)
+    /// The names of a program's global slots, in slot order.
+    fn global_names(program: &crate::session::Program) -> Vec<String> {
+        (0..program.globals.len())
+            .map(|slot| program.globals.name(slot as u16).to_string())
+            .collect()
     }
 
     /// Check if a specific opcode byte appears in the chunk's bytecode.
@@ -4565,10 +3282,18 @@ mod tests {
             compile("fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { add(1, 2) }");
         // Script + 3 functions (as closures in the script's constant pool)
         assert_eq!(fns[0].name, "<script>");
-        // Functions are compiled as constants in the script, so we look for them there
-        assert!(has_string_constant(&fns[0].chunk, "add"));
-        assert!(has_string_constant(&fns[0].chunk, "sub"));
-        assert!(has_string_constant(&fns[0].chunk, "main"));
+        for name in ["add", "sub", "main"] {
+            find_fn(&fns, name);
+        }
+        // Each function is installed in a global slot named after it.
+        let program = crate::session::testing::compile_decls_str(
+            "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { add(1, 2) }",
+        )
+        .unwrap();
+        let names = global_names(&program);
+        for name in ["add", "sub", "main"] {
+            assert!(names.iter().any(|n| n == name), "{name} in {names:?}");
+        }
     }
 
     #[test]
@@ -4723,14 +3448,22 @@ type Color { Red, Green, Blue }
 fn main() { Red }
 "#,
         );
-        let script = &fns[0];
-        // Nullary variants are registered as Variant values
-        assert!(script.chunk.constants.iter().any(
-            |c| matches!(c, Value::Variant(name, fields) if name == "Red" && fields.is_empty())
+        let main = find_fn(&fns, "main");
+        // A nullary variant is a Variant value, a constant where it is
+        // used; the enum's description lists every variant.
+        assert!(main.chunk.constants.iter().any(
+            |c| matches!(c, Value::Variant(tag, fields) if tag.name() == "Red" && fields.is_empty())
         ));
-        assert!(has_string_constant(&script.chunk, "Red"));
-        assert!(has_string_constant(&script.chunk, "Green"));
-        assert!(has_string_constant(&script.chunk, "Blue"));
+        let Some(Value::Variant(tag, _)) = main.chunk.constants.first() else {
+            panic!("main's first constant is the variant");
+        };
+        let names: Vec<&str> = tag
+            .ty()
+            .variants()
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect();
+        assert_eq!(names, ["Red", "Green", "Blue"]);
     }
 
     #[test]
@@ -4741,12 +3474,15 @@ type Shape { Circle(Float), Rect(Float, Float) }
 fn main() { Circle(1.0) }
 "#,
         );
-        let script = &fns[0];
-        // Constructor variants are registered as VariantConstructor values
-        assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::VariantConstructor(name, arity) if name == "Circle" && *arity == 1)));
-        assert!(script.chunk.constants.iter().any(
-            |c| matches!(c, Value::VariantConstructor(name, arity) if name == "Rect" && *arity == 2)
-        ));
+        let main = find_fn(&fns, "main");
+        // A variant with fields is its constructor, a constant where it
+        // is used; the enum's description has each variant's arity.
+        let Some(Value::VariantConstructor(tag)) = main.chunk.constants.first() else {
+            panic!("main's first constant is the constructor");
+        };
+        assert_eq!((tag.name(), tag.arity()), ("Circle", 1));
+        assert_eq!(tag.ty().variants()[1].name, "Rect");
+        assert_eq!(tag.ty().variants()[1].arity, 2);
     }
 
     // ── Match compilation ──────────────────────────────────────────
@@ -4867,25 +3603,6 @@ fn f(p) {
         let f = find_fn(&fns, "f");
         assert!(has_op(&f.chunk, Op::TestRecordTag));
         assert!(has_op(&f.chunk, Op::DestructRecordField));
-    }
-
-    #[test]
-    fn test_compile_match_non_exhaustive_panic() {
-        let fns = compile(
-            r#"
-fn f(x) {
-    match x {
-        1 -> "one"
-    }
-}
-"#,
-        );
-        let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::Panic));
-        assert!(has_string_constant(
-            &f.chunk,
-            "non-exhaustive match: no arm matched"
-        ));
     }
 
     #[test]
@@ -5044,34 +3761,21 @@ trait Display for Color {
 }
 "#,
         );
-        let script = &fns[0];
-        // Trait method registered as "Color.display" global
-        assert!(has_string_constant(&script.chunk, "Color.display"));
+        find_fn(&fns, "Color.display");
+        // The method is installed in the global slot of `display` of
+        // `Color`.
+        let program = crate::session::testing::compile_decls_str(
+            "type Color { Red }\ntrait Display for Color {\n    fn display(self) -> String { \"color\" }\n}\n",
+        )
+        .unwrap();
+        assert!(global_names(&program).iter().any(|n| n == "Color.display"));
     }
 
     // ── Import gating ──────────────────────────────────────────────
 
     #[test]
-    fn test_import_gating_error() {
-        // Using a module without importing should error
-        let err = compile_err(
-            r#"
-fn main() {
-    list.length([1, 2])
-}
-"#,
-        );
-        assert!(
-            err.message.contains("not imported"),
-            "expected import error, got: {}",
-            err.message
-        );
-    }
-
-    #[test]
     fn test_import_gating_success() {
-        // With import, should compile fine
-        let result = compile_no_imports(
+        compile(
             r#"
 import list
 fn main() {
@@ -5079,7 +3783,6 @@ fn main() {
 }
 "#,
         );
-        assert!(result.is_ok());
     }
 
     // ── Builtin module calls ───────────────────────────────────────
@@ -5117,26 +3820,16 @@ fn main() {
         assert!(has_op(&main.chunk, Op::CallMethod));
     }
 
-    // ── Tuple index access ─────────────────────────────────────────
-
-    #[test]
-    fn test_compile_tuple_index() {
-        let fns = compile("fn main() { let t = (1, 2)\n t.0 }");
-        let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::GetIndex));
-    }
-
     // ── compile_program vs compile_declarations ────────────────────
 
     #[test]
     fn test_compile_program_calls_main() {
-        let tokens = Lexer::new("fn main() { 42 }").tokenize().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
-        let mut compiler = Compiler::new();
-        let fns = compiler.compile_program(&program).unwrap();
+        let fns = crate::session::testing::compile_str("fn main() { 42 }")
+            .unwrap()
+            .functions;
         let script = &fns[0];
-        // compile_program emits GetGlobal "main", Call 0, Return
-        assert!(has_string_constant(&script.chunk, "main"));
+        // compile_program emits GetGlobal main, Call 0, Return
+        assert!(has_op(&script.chunk, Op::GetGlobal));
         assert!(has_op(&script.chunk, Op::Call));
     }
 
@@ -5149,53 +3842,29 @@ fn main() {
         assert!(has_op(&script.chunk, Op::Return));
     }
 
-    // ── Warnings ───────────────────────────────────────────────────
-
-    #[test]
-    fn test_shadow_module_warning() {
-        let tokens = Lexer::new("fn main() { let list = 42\n list }")
-            .tokenize()
-            .unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
-        let mut compiler = Compiler::new();
-        compiler.import_all_builtins();
-        compiler.compile_declarations(&program).unwrap();
-        assert!(
-            compiler
-                .warnings()
-                .iter()
-                .any(|w| w.message.contains("shadows")),
-            "expected shadow warning"
-        );
-    }
-
     // ── Selective import compilation ────────────────────────────────
 
     #[test]
     fn test_compile_selective_import() {
-        let result = compile_no_imports(
+        let fns = compile(
             r#"
 import list.{ length, map }
 fn main() { length([1, 2]) }
 "#,
         );
-        assert!(result.is_ok());
-        let fns = result.unwrap();
-        let script = &fns[0];
-        // Selective import creates aliases: "length" -> "list.length"
-        assert!(has_string_constant(&script.chunk, "list.length"));
-        assert!(has_string_constant(&script.chunk, "length"));
+        assert!(!find_fn(&fns, "main").chunk.code.is_empty());
     }
 
     #[test]
     fn test_compile_aliased_import() {
-        let result = compile_no_imports(
+        let fns = compile(
             r#"
 import list as l
 fn main() { l.length([1]) }
 "#,
         );
-        assert!(result.is_ok());
+        let main = find_fn(&fns, "main");
+        assert!(has_string_constant(&main.chunk, "list.length"));
     }
 
     // ── Pattern destructuring in function params ───────────────────
@@ -5276,29 +3945,31 @@ fn f(x) {
 
     // ── `loop(...)` outside a loop is an error ─────────────────────
 
-    #[test]
-    fn test_compile_recur_outside_loop() {
-        let err = compile_err("fn f() { loop(1) }");
-        assert!(
-            err.message
-                .contains("`loop(...)` can only appear inside a `loop` body")
-        );
-    }
-
     // ── Record field metadata ──────────────────────────────────────
 
     #[test]
     fn test_compile_record_field_metadata() {
-        let fns = compile("type User { name: String, age: Int }");
-        let script = &fns[0];
-        // Record field metadata is stored as __record_fields__User
-        assert!(has_string_constant(&script.chunk, "__record_fields__User"));
+        let (mut session, entry) = crate::session::testing::session_with(&[(
+            "main.silt",
+            "type User { name: String, age: Int }",
+        )]);
+        let program = session
+            .compile(entry, crate::session::Entry::Tests { filter: None })
+            .unwrap();
+        // The record's fields, in declaration order, are in its type's
+        // description.
+        let user = program
+            .types
+            .iter()
+            .find(|ty| ty.name == "User")
+            .expect("User is described");
+        let fields: Vec<&str> = user.fields().iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(fields, ["name", "age"]);
     }
 
     #[test]
     fn test_compile_record_field_descriptors() {
-        let fns = compile(
-            r#"
+        let source = r#"
 type R {
     a: Ids,
     m: Map(String, Int),
@@ -5310,22 +3981,29 @@ type R {
 type Inner { x: Int }
 type Ids = List(Int)
 type Pair(a) = (a, a)
-"#,
+"#;
+        let (mut session, entry) = crate::session::testing::session_with(&[("main.silt", source)]);
+        let program = session
+            .compile(entry, crate::session::Entry::Tests { filter: None })
+            .unwrap();
+        let r = program.types.iter().find(|ty| ty.name == "R").expect("R");
+        let inner = program
+            .types
+            .iter()
+            .find(|ty| ty.name == "Inner")
+            .expect("the record type of a field is described too");
+        let described: Vec<String> = r.fields().iter().map(|(_, t)| format!("{t:?}")).collect();
+        assert_eq!(
+            described,
+            [
+                "List(Int)",
+                "Map(Int)",
+                "Tuple([Int, String])",
+                "Tuple([Bool, Bool])",
+                "Unsupported(\"Set(Int)\")",
+                format!("Record({:?})", inner.id).as_str(),
+            ]
         );
-        let script = &fns[0];
-        for descriptor in [
-            "List:Int",
-            "Map:Int",
-            "Tuple(Int,String)",
-            "Tuple(Bool,Bool)",
-            "Unsupported:Set(Int)",
-            "Record:Inner",
-        ] {
-            assert!(
-                has_string_constant(&script.chunk, descriptor),
-                "missing field type descriptor {descriptor:?}"
-            );
-        }
     }
 
     #[test]
@@ -5404,16 +4082,50 @@ fn f(expected, actual) {
     // `jumpback_fits_u16`; this test exercises that helper directly so
     // the bounds-check is locked without having to synthesize a
     // >64KB loop body.
+    /// A program with more top-level definitions than a `u16` slot can
+    /// name is a compile error at the first definition that does not
+    /// fit. Checking 65,537 definitions takes minutes, so the program
+    /// here is small and the slots before it are taken already, as an
+    /// earlier REPL entry would have taken them.
+    #[test]
+    fn test_more_than_65536_globals_rejected() {
+        let source = "fn main() { helper() }\nfn helper() { 1 }\n";
+        let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
+        assert!(!session.analyze(file).has_errors());
+        let mut units = session.program_units(session.module_of(file), false);
+        for k in 0..=u16::MAX as u32 - 1 {
+            let taken = units
+                .earlier
+                .globals
+                .add_def(crate::defs::DefId(u32::MAX - k), format!("taken{k}"));
+            assert!(taken.is_some());
+        }
+        let err = match Compiler::for_program(units) {
+            Ok(_) => panic!("65,537 globals must not compile"),
+            Err(err) => err,
+        };
+        assert_eq!(err.code, Code::CompileLimit, "{}", err.message);
+        assert!(
+            err.message
+                .contains("more than 65536 top-level definitions")
+        );
+        // `main` took the last slot; `helper` does not fit.
+        assert_eq!(
+            &source[err.span.start as usize..err.span.end as usize],
+            "helper"
+        );
+    }
+
     #[test]
     fn test_jumpback_overflow_rejected() {
-        use crate::lexer::Span;
+        use crate::source::Span;
 
         // A distance that exactly fits must pass.
-        assert!(super::jumpback_fits_u16(u16::MAX as usize, Span::new(0, 0)).is_ok());
+        assert!(super::jumpback_fits_u16(u16::MAX as usize, Span::BUILTIN).is_ok());
 
-        // One beyond the limit must produce a CompileError and not a
+        // One beyond the limit must produce a Diagnostic and not a
         // panic/wrap.
-        let err = super::jumpback_fits_u16(u16::MAX as usize + 1, Span::new(0, 0))
+        let err = super::jumpback_fits_u16(u16::MAX as usize + 1, Span::BUILTIN)
             .expect_err("expected u16 overflow to be rejected");
         assert!(
             err.message.contains("loop body too large"),
@@ -5422,7 +4134,7 @@ fn f(expected, actual) {
         );
 
         // Way beyond the limit also.
-        assert!(super::jumpback_fits_u16(usize::MAX, Span::new(0, 0)).is_err());
+        assert!(super::jumpback_fits_u16(usize::MAX, Span::BUILTIN).is_err());
     }
 
     // ── Audit regression: add_upvalue >255 upvalues (B5) ────────────
@@ -5443,9 +4155,9 @@ fn f(expected, actual) {
     #[test]
     fn test_add_upvalue_rejects_over_255() {
         use crate::bytecode::UpvalueDesc;
-        use crate::lexer::Span;
+        use crate::source::Span;
 
-        let mut compiler = Compiler::new();
+        let mut compiler = Compiler::for_program(no_modules()).unwrap();
         // Push an outer (script) context plus the function context we'll
         // be adding upvalues into; `add_upvalue` expects `context_index`
         // to be valid.
@@ -5465,7 +4177,7 @@ fn f(expected, actual) {
                 is_local: true,
                 index: i,
             };
-            let result = compiler.add_upvalue(inner_idx, desc, Span::new(0, 0));
+            let result = compiler.add_upvalue(inner_idx, desc, Span::BUILTIN);
             assert!(
                 result.is_ok(),
                 "upvalue {i} (of 255) should be accepted; got {result:?}"
@@ -5481,8 +4193,8 @@ fn f(expected, actual) {
             index: 0,
         };
         let err = compiler
-            .add_upvalue(inner_idx, overflowing, Span::new(0, 0))
-            .expect_err("expected 256th upvalue to return CompileError");
+            .add_upvalue(inner_idx, overflowing, Span::BUILTIN)
+            .expect_err("expected 256th upvalue to return Diagnostic");
         assert!(
             err.message.contains("too many upvalues"),
             "expected too-many-upvalues error, got: {}",
@@ -5513,9 +4225,9 @@ fn f(expected, actual) {
     #[test]
     fn test_add_upvalue_accepts_exactly_255_upvalues() {
         use crate::bytecode::UpvalueDesc;
-        use crate::lexer::Span;
+        use crate::source::Span;
 
-        let mut compiler = Compiler::new();
+        let mut compiler = Compiler::for_program(no_modules()).unwrap();
         compiler
             .contexts
             .push(CompileContext::new("<script>".into(), 0));
@@ -5530,7 +4242,7 @@ fn f(expected, actual) {
                 index: i,
             };
             let returned = compiler
-                .add_upvalue(inner_idx, desc, Span::new(0, 0))
+                .add_upvalue(inner_idx, desc, Span::BUILTIN)
                 .unwrap_or_else(|e| {
                     panic!("upvalue {i} (of 255) must be accepted; got {}", e.message)
                 });

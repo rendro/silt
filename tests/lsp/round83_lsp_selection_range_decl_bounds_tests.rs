@@ -1,6 +1,7 @@
 //! Round-83 GAP lock: `textDocument/selectionRange` must bound the
 //! cursor on BOTH sides when collecting `Decl::Type` / `Decl::Trait`
-//! ranges. Pre-fix code only checked `cursor >= decl.span.offset`,
+//! ranges. Pre-fix code only checked that the cursor was at or after the
+//! decl's start,
 //! letting an unrelated 4-byte `type` keyword span (or 5-byte `trait`)
 //! land in the selection chain whenever the cursor was anywhere AFTER
 //! the decl in source order. The chain was sorted by source-rest-length

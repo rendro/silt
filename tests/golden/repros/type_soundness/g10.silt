@@ -1,0 +1,8 @@
+-- verdict: same
+-- only return annotation omitted; params annotated
+fn parse_age(s: String) { 42 }
+fn load(s: String) { parse_age(s) }
+fn main() {
+  let name: String = load("x")
+  println(name)
+}

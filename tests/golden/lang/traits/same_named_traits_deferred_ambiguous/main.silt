@@ -1,0 +1,12 @@
+-- exit: 1
+-- A method call on a receiver that becomes Int only once the function
+-- is inferred, here where both modules' trait `Show` are seen, is
+-- ambiguous: an error at the call.
+-- stderr-contains: error[type]: ambiguous method 'show' on type 'Int': provided by traits a.Show, b.Show
+-- stderr-contains: --> main.silt:11:34
+import a
+import b
+import list
+fn main() {
+  println([5] |> list.map { y -> y.show() })
+}

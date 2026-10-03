@@ -4,8 +4,8 @@ use std::panic::AssertUnwindSafe;
 
 use super::{Vm, VmError};
 use crate::builtins;
-use crate::module;
-use crate::value::Value;
+use crate::typeinfo::Tag;
+use crate::value::{HostFn, Value};
 
 // ── Round-62 follow-up: dispatch arms for (Variant, Variant) /
 // (Record, Record) — and the corresponding entries in the hash
@@ -17,9 +17,9 @@ use crate::value::Value;
 // (Option, Result, Weekday, Method, ChannelResult, Step, IoError /
 // JsonError / ..., Date, Time, DateTime, Duration, Instant,
 // FileStat, Response, Request). Every (trait, type) pair stamped
-// in `trait_impl_set` receives a synthesized `<Type>.<method>`
-// global at compile time, and `Op::CallMethod`'s qualified-global
-// lookup resolves the call before it ever reaches
+// in `trait_impl_set` receives a synthesized impl, whose methods get
+// global slots at compile time, and `Op::CallMethod`'s method lookup
+// (`Globals::method`) resolves the call before it ever reaches
 // `dispatch_trait_method`.
 //
 // The deadness instrumentation (six atomic counters + their
@@ -29,23 +29,56 @@ use crate::value::Value;
 // must produce the expected output, which it cannot do via the
 // catch-all error arm that remains in `dispatch_trait_method`.
 
-/// Invoke a registered foreign function while catching panics that escape it.
+/// Write `text` to stdout for `print` / `println`. A closed pipe (`silt
+/// run x.silt | head -1`) ends the process quietly, with the status a
+/// death by SIGPIPE gives (141), whatever the signal's disposition or
+/// mask: `println!` would panic there. Any other failure is a runtime
+/// error.
+fn write_stdout(text: &str) -> Result<(), VmError> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match out.write_all(text.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => std::process::exit(141),
+        Err(e) => Err(VmError::new(format!(
+            "cannot write to stdout: {}",
+            crate::diagnostic::io_error_text(&e)
+        ))),
+    }
+}
+
+/// Call the host function `host` while catching panics that escape it.
 ///
-/// A panicking foreign function would otherwise tear down the scheduler worker
-/// thread (or the main thread), leaving other tasks unable to progress. We
-/// instead convert a caught panic into a [`VmError`] whose message preserves
-/// the panic payload when it is a `&str` or `String`.
-fn invoke_foreign_fn(
-    name: &str,
-    f: &super::runtime::ForeignFn,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    match std::panic::catch_unwind(AssertUnwindSafe(|| f(args))) {
-        Ok(result) => result,
+/// A panicking host function would otherwise tear down the scheduler
+/// worker thread (or the main thread), leaving other tasks unable to
+/// progress. A caught panic becomes a [`VmError`] whose message preserves
+/// the panic payload when it is a `&str` or `String`. A result that is
+/// not of the type the signature returns is an error too. Every error
+/// names the function.
+pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmError> {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| (host.call)(args))) {
+        Ok(Ok(value)) if host.returns.admits(&value) => Ok(value),
+        Ok(Ok(value)) => {
+            let mut shown = value.to_string();
+            if shown.chars().count() > 80 {
+                shown = shown.chars().take(77).collect::<String>() + "...";
+            }
+            Err(VmError::new(format!(
+                "{}: its signature returns {}, but it returned {} {shown}",
+                host.name,
+                host.returns,
+                builtins::value_kind(&value)
+            )))
+        }
+        Ok(Err(e)) => Err(VmError {
+            message: format!("{}: {}", host.name, e.message),
+            ..e
+        }),
         Err(payload) => {
             let msg = decode_panic_payload(&payload);
             Err(VmError::new(format!(
-                "foreign function '{name}' panicked: {msg}"
+                "host function '{}' panicked: {msg}",
+                host.name
             )))
         }
     }
@@ -66,7 +99,7 @@ fn decode_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
 
 /// Run a builtin module dispatch arm under `catch_unwind`, converting any
 /// panic that escapes the builtin into a clean `VmError`. This mirrors
-/// [`invoke_foreign_fn`] for user-registered FFI — a panic in a builtin
+/// [`invoke_host_fn`] for host functions — a panic in a builtin
 /// would otherwise tear down the current scheduler worker thread.
 ///
 /// Intended to wrap each arm of the module-name match in `dispatch_builtin`.
@@ -139,12 +172,13 @@ pub(crate) fn error_trait_dispatch(enum_name: &str) -> Option<ErrorTraitFn> {
 /// Used by `Value::Display` to collapse the dual shape between
 /// `format!("{e}")` and `e.message()` for stdlib error enums per the
 /// silt "explicit over implicit / one way" principle. User-defined
-/// enums are not affected — the registry only covers stdlib error
-/// enums.
-pub fn render_stdlib_error_message(tag: &str, fields: &[Value]) -> Option<String> {
-    let enum_name = crate::module::variant_to_error_enum(tag)?;
-    let dispatch_fn = error_trait_dispatch(enum_name)?;
-    let variant_value = Value::Variant(tag.into(), fields.to_vec());
+/// enums are not affected: only a variant of a builtin error enum is
+/// rendered so, whatever its name.
+pub fn render_stdlib_error_message(tag: &Tag, fields: &[Value]) -> Option<String> {
+    let ty = tag.ty();
+    crate::defs::builtin_types().get(ty.id.0.0 as usize)?;
+    let dispatch_fn = error_trait_dispatch(&ty.name)?;
+    let variant_value = Value::Variant(tag.clone(), fields.to_vec());
     match dispatch_fn("message", &[variant_value]).ok()? {
         Value::String(s) => Some(s),
         _ => None,
@@ -152,141 +186,6 @@ pub fn render_stdlib_error_message(tag: &str, fields: &[Value]) -> Option<String
 }
 
 impl Vm {
-    /// Register all builtin functions and variant constructors in globals.
-    pub(super) fn register_builtins(&mut self) {
-        // ── Prelude + stdlib-error enum variants ──
-        // Round-71 PARALLEL-ARRAY-DRIFT fix made the prelude loop
-        // data-driven from `module::builtin_prelude_enum_variants_with_arity()`,
-        // mirroring the round-64 DUP-1 fix that already drove the
-        // stdlib-error variants from
-        // `module::builtin_error_enum_variants_with_arity()`. Both loops
-        // had byte-identical bodies (`Variant` for nullary, otherwise
-        // `VariantConstructor`); round-75 DEAD-7 collapses them via
-        // `chain()`. The two registries are still authored separately
-        // (the prelude registry mirrors `module::builtin_enum_variants`
-        // minus the error enums; the error registry parallels
-        // `src/typechecker/builtins/errors.rs::register`), and the
-        // parity tests at `tests/meta/error_enum_dispatch_parity_tests.rs`
-        // and `tests/meta/round71_dispatch_collapse_and_parity_tests.rs`
-        // keep them in lockstep on `(variant, arity)`. Each variant is
-        // globally unique (module-prefixed for error enums) so we
-        // register every entry as a bare global.
-        for (_enum_name, variants) in module::builtin_prelude_enum_variants_with_arity()
-            .iter()
-            .chain(module::builtin_error_enum_variants_with_arity().iter())
-        {
-            for (variant, arity) in variants.iter() {
-                let value = if *arity == 0 {
-                    Value::Variant((*variant).into(), Vec::new())
-                } else {
-                    Value::VariantConstructor((*variant).into(), *arity)
-                };
-                self.globals.insert((*variant).into(), value);
-            }
-        }
-
-        // ── __type_of__<variant> mappings for builtin error enums ──
-        // Phase 1 of the stdlib error redesign: `CallMethod` dispatch
-        // looks up the parent type name via `__type_of__<tag>` to route
-        // `err.message()` to `IoError.message`, etc. User-declared enums
-        // register these globals at codegen time; builtin enums have to
-        // be seeded here so the same dispatch works.
-        //
-        // We also register declaration-order ordinals for every builtin
-        // variant in the same loop. The typechecker registers ordinals
-        // during `check_program`, but a Vm constructed without a
-        // preceding type-check pass (some unit tests, FFI use cases)
-        // still needs ordinals for `cmp_gen(Monday, Friday)` to honour
-        // declaration order. The two registrations are idempotent —
-        // re-registering the same (name, ordinal) is a no-op write.
-        for (enum_name, variants) in module::builtin_enum_variants() {
-            for (idx, variant) in variants.iter().enumerate() {
-                let key = format!("__type_of__{variant}");
-                self.globals.insert(key, Value::String((*enum_name).into()));
-                crate::value::register_variant_ordinal(variant, idx as u32);
-            }
-        }
-
-        // ── trait Error for builtin error enums — compiled message() ──
-        // Registered as built-in functions so `err.message()` dispatches
-        // via `CallMethod` → `<EnumName>.message` global. The function
-        // body lives in the corresponding `call_*_error_trait` helper
-        // and is routed through the matching `dispatch_builtin` arm.
-        // `.display()` is handled generically by `dispatch_trait_method`
-        // via `display_value`, so it does not need a per-enum BuiltinFn.
-        //
-        // Round-73 BLOAT-1 fix: derived from
-        // `module::builtin_error_enum_variants_with_arity` so adding a
-        // new typed-error enum no longer requires editing this list.
-        // Parity lock: `tests/meta/round73_error_enum_registry_parity_tests.rs`.
-        for (enum_name, _variants) in module::builtin_error_enum_variants_with_arity() {
-            let key = format!("{enum_name}.message");
-            self.globals
-                .insert(key.clone(), Value::BuiltinFn(key.clone()));
-        }
-
-        // Primitive type descriptors.
-        // Round-73 BLOAT-2 fix: name set hoisted to
-        // `module::BUILTIN_PRIMITIVE_NAMES`.
-        for name in module::BUILTIN_PRIMITIVE_NAMES {
-            self.globals
-                .insert((*name).into(), Value::PrimitiveDescriptor((*name).into()));
-        }
-
-        // Builtin container type descriptors — uppercase names so users
-        // can pass `List`, `Map`, etc. as `type a` arguments or invoke
-        // static-style trait methods (`List.empty()`). These don't
-        // collide with the lowercase module names (`list`, `map`) used
-        // for module calls.
-        // Round-73 BLOAT-2 fix: name set hoisted to
-        // `module::BUILTIN_GENERIC_CONTAINER_NAMES`.
-        for name in module::BUILTIN_GENERIC_CONTAINER_NAMES {
-            self.globals
-                .insert((*name).into(), Value::TypeDescriptor((*name).into()));
-        }
-
-        // Math constants
-        self.globals
-            .insert("math.pi".into(), Value::Float(std::f64::consts::PI));
-        self.globals
-            .insert("math.e".into(), Value::Float(std::f64::consts::E));
-
-        // Non-module builtin functions (not scoped to a module).
-        // Sourced from `module::builtin_free_function_names()` so that
-        // module.rs is the single source of truth — adding a new free
-        // function (e.g. `eprintln`, `assert`) only requires touching
-        // the registry plus the typechecker registration site.
-        // Parity lock: `tests/meta/builtin_free_function_parity_tests.rs`.
-        for &name in module::builtin_free_function_names() {
-            self.globals
-                .insert(name.into(), Value::BuiltinFn(name.into()));
-        }
-
-        // Module-scoped builtin functions — derived from the module registry
-        // so that module.rs is the single source of truth.
-        for &module_name in module::BUILTIN_MODULES {
-            for func in module::builtin_module_functions(module_name) {
-                let qualified = format!("{module_name}.{func}");
-                self.globals
-                    .insert(qualified.clone(), Value::BuiltinFn(qualified));
-            }
-        }
-
-        // Float constants — registered after builtin function names so that
-        // `float.max` and `float.min` resolve to the constant values (f64::MAX,
-        // f64::MIN) when used as bare expressions, overriding the BuiltinFn
-        // entries.  Function calls like `float.max(a, b)` still work because
-        // they compile to Op::CallBuiltin, which bypasses the global lookup.
-        self.globals
-            .insert("float.max_value".into(), Value::Float(f64::MAX));
-        self.globals
-            .insert("float.min_value".into(), Value::Float(f64::MIN));
-        self.globals
-            .insert("float.epsilon".into(), Value::Float(f64::EPSILON));
-        self.globals
-            .insert("float.min_positive".into(), Value::Float(f64::MIN_POSITIVE));
-    }
-
     // ── Built-in trait methods on primitive types ──────────────────
 
     /// Handle built-in trait methods like .display(), .equal(), .compare()
@@ -323,7 +222,7 @@ impl Vm {
                 if !Self::value_implements_display(receiver) {
                     // Same canonical-name reporting as Op::DisplayValue:
                     // function-shaped values collapse to "Fn" via
-                    // `dispatch_name_for_value`; the descriptor values
+                    // `dispatch_type_name`; the descriptor values
                     // (whose canonical name is the *carried* type name)
                     // fall back to `type_name` so the diagnostic names
                     // the descriptor kind, not the reflected type.
@@ -331,8 +230,7 @@ impl Vm {
                         Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
                             self.type_name(receiver).to_string()
                         }
-                        _ => crate::types::canonical::dispatch_name_for_value(receiver)
-                            .unwrap_or_else(|| self.type_name(receiver).to_string()),
+                        _ => crate::types::canonical::dispatch_type_name(receiver),
                     };
                     return Some(Err(VmError::new(format!(
                         "type '{name}' does not implement Display"
@@ -360,17 +258,14 @@ impl Vm {
                 // Defensive fallback. For every valid user/builtin type
                 // that passes the round-93 field-aware auto-derive gate
                 // (`compute_auto_derive_field_negatives`), a synth-emitted
-                // `<Type>.equal` global is produced and `Op::CallMethod`
+                // `equal` impl method is produced and `Op::CallMethod`
                 // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
                 // Variant/Record receiver never reaches this arm. Types
                 // with non-supportable fields (e.g. Channel/Map/Tuple/
                 // Function/Bytes/Handle) are now statically REJECTED by
                 // that gate (`type 'X' does not implement trait`), so the
                 // old "such fields are laundered through here" path no
-                // longer exists. The only theoretical fall-through is a
-                // `Value::Variant` with no `__type_of__` registration
-                // (src/vm/mod.rs ~:940), which is not constructible from a
-                // valid program. `impl PartialEq for Value` (in
+                // longer exists, and no valid program reaches it. `impl PartialEq for Value` (in
                 // src/value.rs) compares records and variants structurally,
                 // so this arm stays sound even on that malformed input.
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
@@ -415,17 +310,14 @@ impl Vm {
                     // Defensive fallback. For every valid user/builtin type
                     // that passes the round-93 field-aware auto-derive gate
                     // (`compute_auto_derive_field_negatives`), a synth-emitted
-                    // `<Type>.compare` global is produced and `Op::CallMethod`
+                    // `compare` impl method is produced and `Op::CallMethod`
                     // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
                     // Variant/Record receiver never reaches this arm. Types
                     // with non-supportable fields (e.g. Channel/Map/Tuple/
                     // Function/Bytes/Handle) are now statically REJECTED by
                     // that gate (`type 'X' does not implement trait`), so the
                     // old "such fields are laundered through here" path no
-                    // longer exists. The only theoretical fall-through is a
-                    // `Value::Variant` with no `__type_of__` registration
-                    // (src/vm/mod.rs ~:940), which is not constructible from a
-                    // valid program. `fn cmp` (in src/value.rs)
+                    // longer exists, and no valid program reaches it. `fn cmp` (in src/value.rs)
                     // orders records and variants structurally, so this arm
                     // stays sound even on that malformed input.
                     (Value::Variant(..), Value::Variant(..))
@@ -453,7 +345,7 @@ impl Vm {
                 // The typechecker auto-derives `Hash` for Int / Float /
                 // Bool / String / List (and more). At runtime, the
                 // synthesized impls of user types are resolved via the
-                // qualified-global path in `Op::CallMethod`; only
+                // method lookup in `Op::CallMethod`; only
                 // auto-derived primitives fall through to here.
                 //
                 // `Value` already implements `std::hash::Hash` with a
@@ -489,17 +381,14 @@ impl Vm {
                 // fallback. For every valid user/builtin type that passes
                 // the round-93 field-aware auto-derive gate
                 // (`compute_auto_derive_field_negatives`), a synth-emitted
-                // `<Type>.hash` global is produced and `Op::CallMethod`
+                // `hash` impl method is produced and `Op::CallMethod`
                 // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
                 // Variant/Record receiver never reaches this arm. Types
                 // with non-supportable fields (e.g. Channel/Map/Tuple/
                 // Function/Bytes/Handle) are now statically REJECTED by
                 // that gate (`type 'X' does not implement trait`), so the
                 // old "such fields are laundered through here" path no
-                // longer exists. The only theoretical fall-through is a
-                // `Value::Variant` with no `__type_of__` registration
-                // (src/vm/mod.rs ~:940), which is not constructible from a
-                // valid program. `impl Hash for Value` (in
+                // longer exists, and no valid program reaches it. `impl Hash for Value` (in
                 // src/value.rs) hashes records and variants structurally, so
                 // this arm stays sound even on that malformed input.
                 match receiver {
@@ -533,6 +422,23 @@ impl Vm {
                     _ => None,
                 }
             }
+            // `trait Error` of the builtin error enums (`IoError`, ...):
+            // native, through the enum's dispatch helper.
+            "message" => {
+                let Value::Variant(tag, _) = receiver else {
+                    return None;
+                };
+                let ty = tag.ty();
+                crate::defs::builtin_types().get(ty.id.0.0 as usize)?;
+                let dispatch = error_trait_dispatch(&ty.name)?;
+                let mut args = Vec::with_capacity(1 + extra_args.len());
+                args.push(receiver.clone());
+                args.extend(extra_args.iter().cloned());
+                Some(catch_builtin_panic(
+                    &ty.name,
+                    AssertUnwindSafe(|| dispatch("message", &args)),
+                ))
+            }
             _ => None,
         }
     }
@@ -544,15 +450,11 @@ impl Vm {
         name: &str,
         args: &[Value],
     ) -> Result<Value, VmError> {
-        // Foreign functions take priority -- lets embedders override builtins.
-        if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-            return invoke_foreign_fn(name, &f, args);
-        }
         if let Some((module, func)) = name.split_once('.') {
             // Each arm is wrapped in `catch_builtin_panic` so that a panic
             // inside a builtin module becomes a clean `VmError` instead of
             // tearing down the current scheduler worker thread. Mirrors
-            // `invoke_foreign_fn` for user-registered FFI.
+            // `invoke_host_fn` for host functions.
             match module {
                 "list" => catch_builtin_panic(
                     "list",
@@ -665,23 +567,6 @@ impl Vm {
                     AssertUnwindSafe(|| builtins::postgres::call(self, func, args)),
                 ),
                 // ── Built-in trait Error impls ──
-                // Phase 1 of the stdlib error redesign: `trait Error`
-                // impls for builtin error enums are routed through
-                // dedicated dispatch helpers rather than compiled from
-                // silt source. IoError, JsonError, TomlError, and
-                // ParseError are wired up; HttpError/RegexError trait
-                // impls still return `Result(_, String)` today and
-                // will migrate in later phases.
-                //
-                // Round-73 BLOAT-3 fix: 11 byte-near-identical
-                // `<Enum>` => catch_builtin_panic("<Enum>",
-                // AssertUnwindSafe(|| <module>::call_<x>_error_trait(...)))
-                // arms collapsed onto `ERROR_TRAIT_DISPATCH` table
-                // lookup. Every `call_*_error_trait` shares the
-                // uniform `fn(&str, &[Value]) -> Result<Value,VmError>`
-                // signature so a single function pointer suffices.
-                // PgError/TcpError stay cfg-gated by being conditionally
-                // included in the table.
                 #[cfg(test)]
                 "__test_panic_builtin" => {
                     catch_builtin_panic(
@@ -696,27 +581,7 @@ impl Vm {
                         }),
                     )
                 }
-                _ => {
-                    if let Some(f) = error_trait_dispatch(module) {
-                        catch_builtin_panic(module, AssertUnwindSafe(|| f(func, args)))
-                    } else if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-                        invoke_foreign_fn(name, &f, args)
-                    } else {
-                        // Round-64 LATENT fix: previously "unknown
-                        // module: <X>". The trait-method dispatch path
-                        // lowers `enum_value.method()` into the same
-                        // module-style name, so when a builtin error
-                        // enum is feature-gated off (e.g. `PgError`
-                        // without the postgres feature), users would
-                        // see "unknown module: PgError" — confusing,
-                        // since PgError is presented to them as an
-                        // enum, not a module. The "builtin namespace"
-                        // wording matches the user mental model for
-                        // both module-qualified function calls and
-                        // qualified-global error-trait dispatch.
-                        Err(VmError::new(format!("unknown builtin namespace: {module}")))
-                    }
-                }
+                _ => Err(VmError::new(format!("unknown builtin namespace: {module}"))),
             }
         } else {
             match name {
@@ -727,7 +592,9 @@ impl Vm {
                             args.len()
                         )));
                     }
-                    println!("{}", self.display_value(&args[0]));
+                    let mut text = self.display_value(&args[0]);
+                    text.push('\n');
+                    write_stdout(&text)?;
                     Ok(Value::Unit)
                 }
                 "print" => {
@@ -737,38 +604,24 @@ impl Vm {
                             args.len()
                         )));
                     }
-                    print!("{}", self.display_value(&args[0]));
+                    write_stdout(&self.display_value(&args[0]))?;
                     Ok(Value::Unit)
                 }
                 "panic" => {
                     let msg = args.first().map(|v| v.to_string()).unwrap_or_default();
                     Err(VmError::new(format!("panic: {msg}")))
                 }
-                _ => {
-                    if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-                        invoke_foreign_fn(name, &f, args)
-                    } else {
-                        Err(VmError::new(format!("unknown builtin: {name}")))
-                    }
-                }
+                _ => Err(VmError::new(format!("unknown builtin: {name}"))),
             }
         }
     }
 
-    /// Get current epoch milliseconds. Uses `__wasm_epoch_ms` foreign function
-    /// if registered (WASM), otherwise falls back to `SystemTime`.
+    /// Get current epoch milliseconds.
     pub(crate) fn epoch_ms(&self) -> Result<i64, VmError> {
-        if let Some(f) = self.runtime.foreign_fns.get("__wasm_epoch_ms") {
-            match invoke_foreign_fn("__wasm_epoch_ms", f, &[])? {
-                Value::Int(ms) => Ok(ms),
-                _ => Err(VmError::new("__wasm_epoch_ms returned non-Int".into())),
-            }
-        } else {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let dur = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| VmError::new(format!("clock failed: {e}")))?;
-            Ok(dur.as_millis() as i64)
-        }
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let dur = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| VmError::new(format!("clock failed: {e}")))?;
+        Ok(dur.as_millis() as i64)
     }
 }

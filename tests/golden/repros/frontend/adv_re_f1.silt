@@ -1,0 +1,16 @@
+-- verdict: same
+import map
+import option
+
+fn main() {
+  let m = #{ "a": 1 }
+  let v = option.unwrap_or(
+    map.get(
+      m,
+      "a", -- look up
+    )
+    |> option.map { x -> x + 1 } -- default,
+    0
+  )
+  println("{v}")
+}

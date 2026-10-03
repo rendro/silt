@@ -1,0 +1,5 @@
+-- verdict: same
+trait Default { fn default() -> Self }
+trait Default for Int { fn default() -> Self { 0 } }
+fn f(type a) -> a { a.default() }
+fn main() { println(f(Int)) }

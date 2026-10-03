@@ -1,0 +1,19 @@
+-- verdict: same
+-- `int.ParseError` and `float.ParseError` are one type: importing it by
+-- name from both modules binds one name to one definition, which is no
+-- clash. Two different definitions of one name are.
+import int
+import int.{ ParseError }
+import float.{ ParseError }
+fn kind(e: ParseError) -> String {
+  match e {
+    ParseError.ParseEmpty -> "empty"
+    _ -> "other"
+  }
+}
+fn main() {
+  match int.parse("") {
+    Ok(_) -> println("ok")
+    Err(e) -> println(kind(e))
+  }
+}

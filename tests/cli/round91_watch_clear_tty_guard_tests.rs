@@ -70,11 +70,10 @@ fn watch_writes_no_clear_screen_escape_to_piped_stderr() {
     let stdout = drain(child.stdout.take().unwrap());
     let stderr = drain(child.stderr.take().unwrap());
 
-    // The initial run, then a rerun past the 500 ms debounce window: both
-    // (re)run sites print the clear-screen sequence when stderr is a tty.
+    // The initial run, then a rerun: each run prints the clear-screen
+    // sequence when stderr is a tty.
     wait_for(&stdout, "first-run");
     wait_for(&stderr, "[watch] Watching for changes");
-    thread::sleep(Duration::from_millis(800));
     fs::write(&file, "fn main() {\n  println(\"second-run\")\n}\n").unwrap();
     wait_for(&stdout, "second-run");
 

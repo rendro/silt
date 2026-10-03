@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [1, 2, 3]
+  let r = match list.length(list.filter(xs) { x -> x > 1 }) {
+    0 -> "none"
+    _ -> "some"
+  }
+  println(r)
+}

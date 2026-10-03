@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+type P { v: Int }
+trait Greet { fn greet(self) -> String }
+trait Greet for P { fn greet(self) -> String { "p" } }
+fn main() {
+  let ps = [P { v: 1 }]
+  -- pipe form
+  ps |> list.map { p -> p.greet() } |> println
+}

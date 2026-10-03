@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+type Money { Dollars(Int), Cents(Int) }
+fn main() {
+  println([Dollars(5), Cents(250)] |> list.map { Dollars(n) -> n * 100 })
+}

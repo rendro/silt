@@ -1,0 +1,24 @@
+-- verdict: same
+-- direct recursion, result used inconsistently
+fn count(n) {
+  match n {
+    0 -> "zero"
+    _ -> {
+      let r = count(n - 1)
+      r
+    }
+  }
+}
+fn f(n) {
+  match n {
+    0 -> 0
+    _ -> {
+      let s: String = f(n - 1)
+      1
+    }
+  }
+}
+fn main() {
+  println(count(3))
+  println(f(3))
+}

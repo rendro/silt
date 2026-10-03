@@ -1,0 +1,6 @@
+-- verdict: same
+let (a, b) = (1, 2)
+
+fn main() {
+  println("{a + b}")
+}

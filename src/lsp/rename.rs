@@ -30,7 +30,7 @@ use crate::module;
 use crate::types::builtins as builtin_types;
 
 use super::Server;
-use super::ast_walk::find_ident_at_offset_with_source;
+use super::ast_walk::find_ident_at_offset;
 use super::conversions::position_to_offset;
 use super::local_bindings::{find_local_binding_at_offset, nearest_local_binding_for};
 use super::state::Document;
@@ -49,7 +49,7 @@ impl Server {
         let program = doc.program.as_ref()?;
 
         let cursor = position_to_offset(&doc.source, &pos);
-        let name = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))?;
+        let name = find_ident_at_offset(program, cursor)?;
         let name_str = resolve_sym(name);
 
         // Scope-aware gate: a symbol is renameable when it resolves to a
@@ -104,8 +104,7 @@ impl Server {
             return Ok(None);
         };
         let cursor = position_to_offset(&doc.source, &pos);
-        let Some(name) = find_ident_at_offset_with_source(program, cursor, Some(&doc.source))
-        else {
+        let Some(name) = find_ident_at_offset(program, cursor) else {
             return Ok(None);
         };
         let name_str = resolve_sym(name);

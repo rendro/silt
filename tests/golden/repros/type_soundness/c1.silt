@@ -1,0 +1,7 @@
+-- verdict: same
+-- where-clause path: rejected statically?
+fn lt(a: t, b: t) -> Bool where t: Compare { a < b }
+fn main() {
+  let f = fn(x) { x + 1 }
+  println(lt(f, f))
+}

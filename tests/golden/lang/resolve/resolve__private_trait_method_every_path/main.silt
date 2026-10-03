@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: --> main.silt:13:18
+-- stderr-contains: --> main.silt:15:11
+-- stderr-contains: error[type]: method `pm` belongs to trait 'Priv', which is private to module 'lib'
+-- A private trait's method cannot be called from an importer by any
+-- path: on a value, through a lambda whose parameter's type is not yet
+-- known, or through the type. `lib.via` may call it.
+import lib
+fn main() {
+  println(lib.via(1))
+  let f = { x -> x.pm() }
+  println(f(3))
+  println(Int.pm(3))
+}

@@ -1,0 +1,9 @@
+-- exit: 1
+-- git's output is shown as the notes of the package error, each marked
+-- `git:` right after `= note:`, not indented a second time.
+-- stderr-contains: error[package]: git dependency `remote`
+-- stderr-contains:   = note: git: fatal:
+-- stderr-not-contains: = note:   git:
+fn main() {
+  println("hi")
+}

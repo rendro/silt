@@ -1,0 +1,4 @@
+-- verdict: same
+fn main() {
+  println("{0XFF} {0B11} {1_000} {1.5e3} {2e3}")
+}

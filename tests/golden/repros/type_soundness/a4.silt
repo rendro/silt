@@ -1,0 +1,7 @@
+-- verdict: same
+-- as with type variables
+fn f(x: Int) -> a { x as a }
+fn main() {
+  let s: String = (1 as b)
+  println(s)
+}

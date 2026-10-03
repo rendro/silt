@@ -1,0 +1,8 @@
+-- verdict: same
+import b
+import a
+
+fn main() {
+  println("a.who() = {a.who()}")
+  println("b.who() = {b.who()}")
+}

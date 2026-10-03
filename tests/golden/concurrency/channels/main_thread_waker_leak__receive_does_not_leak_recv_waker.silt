@@ -14,7 +14,7 @@ fn main() {
   }
 
   match channel.receive(ch) {
-    Message(v) -> {
+    channel.Message(v) -> {
       task.join(sender)
       let probe = task.spawn { ->
         channel.try_send(ch, 999)

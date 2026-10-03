@@ -1,0 +1,6 @@
+pub type Item { name: String }
+trait Display for Item {
+  fn display(self) -> String { "m2 item {self.name}" }
+}
+pub fn mk() -> Item { Item { name: "n" } }
+pub fn show(i: Item) -> String { i.display() }

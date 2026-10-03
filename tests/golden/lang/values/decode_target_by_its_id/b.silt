@@ -1,0 +1,2 @@
+import channel
+pub type Pt { c: Channel(Int) }

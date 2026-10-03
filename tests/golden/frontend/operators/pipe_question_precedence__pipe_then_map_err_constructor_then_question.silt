@@ -2,7 +2,7 @@ import io
 import result
 
 type AppError {
-  ConfigRead(IoError),
+  ConfigRead(io.IoError),
 }
 
 fn load(path: String) -> Result(String, AppError) {
@@ -13,7 +13,7 @@ fn load(path: String) -> Result(String, AppError) {
 fn outcome() {
   match load("/definitely_does_not_exist") {
     Ok(_) -> "ok"
-    Err(ConfigRead(IoNotFound(_))) -> "not-found"
+    Err(ConfigRead(io.IoNotFound(_))) -> "not-found"
     Err(ConfigRead(_)) -> "other-io"
   }
 }

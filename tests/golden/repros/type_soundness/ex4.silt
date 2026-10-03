@@ -1,0 +1,9 @@
+-- verdict: same
+fn t(p: (List(Int), List(Int))) -> Int {
+  match p {
+    ([], _) -> 0
+    (_, []) -> 1
+    ([a, ..r1], [b]) -> a + b
+  }
+}
+fn main() { println(t(([1], [2, 3]))) }

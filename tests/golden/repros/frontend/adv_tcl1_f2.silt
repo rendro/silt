@@ -1,0 +1,21 @@
+-- verdict: same
+import list
+
+fn main() {
+  let a = list.map([1, 2]) { x -> x + 1 }
+  let b = list.map([1, 2]) { x -> x + 1 }
+  let c = [1, 2]
+  |> list.map { x -> x + 1 }
+  let d = [1, 2]
+  |> list.map { x -> x + 1 }
+  let e = list.fold([1, 2], 0) { acc, x -> acc + x }
+  let f = fn(x) {
+    x + 1
+  }
+  let g = fn(x) {
+    x + 1
+  }
+  let h = list.map([1, 2]) { x: Int -> x + 1 }
+  let i = list.map([(1, 2)]) { (p, q) -> p + q }
+  println("{a} {b} {c} {d} {e} {f(1)} {g(1)} {h} {i}")
+}

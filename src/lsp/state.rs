@@ -4,10 +4,13 @@
 //! definition/binding metadata the handlers consult on each request.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::ast::*;
 use crate::intern::Symbol;
-use crate::lexer::Span;
+use crate::session::ModuleId;
+use crate::source::{SourceFile, Span};
 use crate::types::Type;
 
 // ── Document state ─────────────────────────────────────────────────
@@ -41,12 +44,35 @@ pub(super) struct LocalBinding {
 }
 
 pub(super) struct Document {
-    pub(super) source: String,
-    pub(super) program: Option<Program>,
+    /// The document's text and its lines. The spans of `program` are
+    /// byte ranges in it.
+    pub(super) source: SourceFile,
+    /// The file the document's URI names.
+    pub(super) path: PathBuf,
+    /// `path` as a file key (canonical when it exists), computed once.
+    pub(super) key: PathBuf,
+    /// Whether the editor has the document open. A document that is not
+    /// open is a workspace file indexed for the cross-file features: its
+    /// declarations as parsed, without types and without diagnostics.
+    pub(super) open: bool,
+    /// For an open document, its module in its project's session.
+    pub(super) module: Option<ModuleRef>,
+    /// The declarations: for an open document, the session's checked
+    /// module, with the types the checker filled in. `None` when the text
+    /// does not lex.
+    pub(super) program: Option<Arc<Program>>,
     /// Definition map: name → definition info (built from top-level declarations).
     pub(super) definitions: HashMap<Symbol, DefInfo>,
     /// Local bindings (let, params, match/when) with approximate source positions.
     pub(super) locals: Vec<LocalBinding>,
+}
+
+/// A module of a project's session.
+#[derive(Clone)]
+pub(super) struct ModuleRef {
+    /// The project directory (the key of `Server::projects`).
+    pub(super) project: PathBuf,
+    pub(super) id: ModuleId,
 }
 
 /// A local variable binding visible at a given cursor position.

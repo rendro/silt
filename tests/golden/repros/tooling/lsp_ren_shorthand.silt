@@ -1,0 +1,14 @@
+-- verdict: same
+type User {
+  name: String,
+  age: Int,
+}
+
+fn greet(u: User) -> String {
+  let User { who, .. } = u
+  "hello {who}"
+}
+
+fn main() {
+  println(greet(User { name: "A", age: 1 }))
+}

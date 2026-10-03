@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use silt::errors::SourceError;
+use silt::source::{SourceMap, SourceName};
 
 use crate::cli::package::{die_on_manifest_error, find_project_root};
 use crate::cli::paths::find_silt_files;
@@ -164,7 +164,12 @@ pub(crate) fn dispatch(args: &[String]) {
 }
 
 fn format_file(path: &str) -> Result<(), String> {
-    let source = fs::read_to_string(path).map_err(|e| format!("error reading {path}: {e}"))?;
+    let source = fs::read_to_string(path).map_err(|e| {
+        format!(
+            "error reading {path}: {}",
+            silt::diagnostic::io_error_text(&e)
+        )
+    })?;
     let formatted =
         silt::formatter::format(&source).map_err(|e| render_fmt_error(&e, &source, path))?;
     // Skip the write when the file is already formatted. An
@@ -180,27 +185,23 @@ fn format_file(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Render a formatter lex/parse failure as a structured `SourceError` with
-/// the source-line snippet and caret. Without this, `silt fmt` would
-/// surface the bare `ParseError::Display` string (just `[line:col] msg`)
-/// and users would lose the context they get from `silt run` /
-/// `silt check` on the same file.
+/// Render a formatter lex/parse failure as the diagnostic `silt check`
+/// shows for the same file, with its source line and marks.
 ///
 /// A refusal (`FmtError::Internal`) is not an error in the user's file,
 /// so it is rendered under its own `error[fmt]` header, names the file,
 /// and says that the file was not touched.
 fn render_fmt_error(err: &silt::formatter::FmtError, source: &str, path: &str) -> String {
+    // The formatter lexes the text as the only file of its own.
+    let mut sources = SourceMap::new();
+    sources.add(SourceName::Path(path.into()), source.into());
     match err {
-        silt::formatter::FmtError::Lex(e) => {
-            format!("{}", SourceError::from_lex_error(e, source, path))
-        }
-        silt::formatter::FmtError::Parse(e) => {
-            format!("{}", SourceError::from_parse_error(e, source, path))
-        }
+        silt::formatter::FmtError::Syntax(e) => silt::diagnostic::render_human(&sources, e),
         silt::formatter::FmtError::Internal(e) => {
             let mut out = format!("error[fmt]: {path}: formatting refused: {}", e.message);
             if let Some(span) = e.span {
-                out.push_str(&format!("\n --> {path}:{}:{}", span.line, span.col));
+                let (line, col) = sources.line_col((span.file, span.start));
+                out.push_str(&format!("\n --> {path}:{line}:{col}"));
             }
             out.push_str("\n  = note: the file was left unchanged");
             out.push_str(
@@ -239,7 +240,10 @@ fn check_format(path: &str) -> CheckOutcome {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("error reading {path}: {e}");
+            eprintln!(
+                "error reading {path}: {}",
+                silt::diagnostic::io_error_text(&e)
+            );
             return CheckOutcome::InfraError;
         }
     };

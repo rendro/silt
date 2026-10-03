@@ -1,0 +1,6 @@
+-- verdict: same
+fn coerce(x) { x.same() }
+fn main() {
+  let n: Int = coerce("not an int")
+  println(n)
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+-- user trait method on unconstrained tyvar
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn g(x) { x.greet() }
+fn main() {
+  println(g(1))
+  println(g("s"))
+}

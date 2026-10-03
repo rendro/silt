@@ -1,0 +1,10 @@
+-- verdict: same
+type P { a: Int, b: Int }
+fn main() {
+  let opt = Some(41)
+  let p = P { a: 7, b: match opt {
+    Some(v) -> v
+    None -> 0
+  } }
+  println(p)
+}

@@ -45,10 +45,13 @@ mod uuid;
 /// (`channel.recv_timeout`, `channel.timeout`) and `time` (module-wide
 /// record binding) and `task.deadline` / `task.spawn_until` in this file.
 pub(super) fn duration_ty() -> Type {
-    Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)])
+    Type::Record(
+        TypeRef::builtin("Duration"),
+        vec![(intern("ns"), Type::Int)],
+    )
 }
 
-/// Register a record type with `checker.records` and return the
+/// Register a record type with `checker.tables.records` and return the
 /// corresponding `Type::Record` binding. Collapses the two-vec-literal
 /// pattern used across the `time` module (each record had to spell out
 /// its field vec both in the `Type::Record` binding and the
@@ -58,8 +61,8 @@ pub(super) fn record_with_fields(
     name: &str,
     fields: Vec<(Symbol, Type)>,
 ) -> Type {
-    let sym = intern(name);
-    checker.records.insert(
+    let sym = TypeRef::builtin(name);
+    checker.tables.records.insert(
         sym,
         RecordInfo {
             fields: fields.clone(),
@@ -81,7 +84,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
-                    constraints: vec![(av, intern("Display"))],
+                    constraints: vec![(av, TraitKey::builtin("Display"))],
                     optional_last_param: false,
                 },
             );
@@ -93,7 +96,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
-                    constraints: vec![(av, intern("Display"))],
+                    constraints: vec![(av, TraitKey::builtin("Display"))],
                     optional_last_param: false,
                 },
             );
@@ -107,7 +110,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::Never)),
-                    constraints: vec![(av, intern("Display"))],
+                    constraints: vec![(av, TraitKey::builtin("Display"))],
                     optional_last_param: false,
                 },
             );
@@ -125,7 +128,7 @@ impl TypeChecker {
                     vars: vec![av, ev],
                     ty: Type::Fun(
                         vec![a.clone()],
-                        Box::new(Type::Generic(intern("Result"), vec![a, e])),
+                        Box::new(Type::builtin("Result", vec![a, e])),
                     ),
                     constraints: vec![],
                     optional_last_param: false,
@@ -142,7 +145,7 @@ impl TypeChecker {
                     vars: vec![av, ev],
                     ty: Type::Fun(
                         vec![e.clone()],
-                        Box::new(Type::Generic(intern("Result"), vec![a, e])),
+                        Box::new(Type::builtin("Result", vec![a, e])),
                     ),
                     constraints: vec![],
                     optional_last_param: false,
@@ -156,10 +159,7 @@ impl TypeChecker {
                 intern("Some"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(
-                        vec![a.clone()],
-                        Box::new(Type::Generic(intern("Option"), vec![a])),
-                    ),
+                    ty: Type::Fun(vec![a.clone()], Box::new(Type::option(a))),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -172,7 +172,7 @@ impl TypeChecker {
                 intern("None"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic(intern("Option"), vec![a]),
+                    ty: Type::option(a),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -188,8 +188,8 @@ impl TypeChecker {
         // Option(a): Some(a) | None
         {
             let (opt_a, opt_av) = self.fresh_tv();
-            self.enums.insert(
-                intern("Option"),
+            self.tables.enums.insert(
+                TypeRef::builtin("Option"),
                 EnumInfo {
                     params: vec![intern("a")],
                     param_var_ids: vec![opt_av],
@@ -207,18 +207,13 @@ impl TypeChecker {
                 },
             );
         }
-        self.variant_to_enum
-            .insert(intern("Some"), intern("Option"));
-        self.variant_to_enum
-            .insert(intern("None"), intern("Option"));
-        crate::value::register_variant_decl_order(["Some", "None"]);
 
         // Result(a, e): Ok(a) | Err(e)
         {
             let (res_a, res_av) = self.fresh_tv();
             let (res_e, res_ev) = self.fresh_tv();
-            self.enums.insert(
-                intern("Result"),
+            self.tables.enums.insert(
+                TypeRef::builtin("Result"),
                 EnumInfo {
                     params: vec![intern("a"), intern("e")],
                     param_var_ids: vec![res_av, res_ev],
@@ -236,15 +231,12 @@ impl TypeChecker {
                 },
             );
         }
-        self.variant_to_enum.insert(intern("Ok"), intern("Result"));
-        self.variant_to_enum.insert(intern("Err"), intern("Result"));
-        crate::value::register_variant_decl_order(["Ok", "Err"]);
 
         // Step enum: Stop(a) / Continue(a) — for list.fold_until
         {
             let (step_a, step_av) = self.fresh_tv();
-            self.enums.insert(
-                intern("Step"),
+            self.tables.enums.insert(
+                TypeRef::builtin("Step"),
                 EnumInfo {
                     params: vec![intern("a")],
                     param_var_ids: vec![step_av],
@@ -262,20 +254,13 @@ impl TypeChecker {
                 },
             );
         }
-        self.variant_to_enum.insert(intern("Stop"), intern("Step"));
-        self.variant_to_enum
-            .insert(intern("Continue"), intern("Step"));
-        crate::value::register_variant_decl_order(["Stop", "Continue"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(
                 intern("Stop"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(
-                        vec![a.clone()],
-                        Box::new(Type::Generic(intern("Step"), vec![a])),
-                    ),
+                    ty: Type::Fun(vec![a.clone()], Box::new(Type::builtin("Step", vec![a]))),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -287,10 +272,7 @@ impl TypeChecker {
                 intern("Continue"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(
-                        vec![a.clone()],
-                        Box::new(Type::Generic(intern("Step"), vec![a])),
-                    ),
+                    ty: Type::Fun(vec![a.clone()], Box::new(Type::builtin("Step", vec![a]))),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -300,8 +282,8 @@ impl TypeChecker {
         // ChannelResult enum: Message(a) / Closed — for channel.receive
         {
             let (cr_a, cr_av) = self.fresh_tv();
-            self.enums.insert(
-                intern("ChannelResult"),
+            self.tables.enums.insert(
+                TypeRef::builtin("ChannelResult"),
                 EnumInfo {
                     params: vec![intern("a")],
                     param_var_ids: vec![cr_av],
@@ -327,16 +309,7 @@ impl TypeChecker {
                 },
             );
         }
-        self.variant_to_enum
-            .insert(intern("Message"), intern("ChannelResult"));
-        self.variant_to_enum
-            .insert(intern("Closed"), intern("ChannelResult"));
         // Also register Empty and Sent as standalones
-        self.variant_to_enum
-            .insert(intern("Empty"), intern("ChannelResult"));
-        self.variant_to_enum
-            .insert(intern("Sent"), intern("ChannelResult"));
-        crate::value::register_variant_decl_order(["Message", "Closed", "Sent", "Empty"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -345,7 +318,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![a.clone()],
-                        Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
+                        Box::new(Type::builtin("ChannelResult", vec![a])),
                     ),
                     constraints: vec![],
                     optional_last_param: false,
@@ -358,7 +331,7 @@ impl TypeChecker {
                 intern("Closed"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic(intern("ChannelResult"), vec![a]),
+                    ty: Type::builtin("ChannelResult", vec![a]),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -370,7 +343,7 @@ impl TypeChecker {
                 intern("Empty"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic(intern("ChannelResult"), vec![a]),
+                    ty: Type::builtin("ChannelResult", vec![a]),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -382,7 +355,7 @@ impl TypeChecker {
                 intern("Sent"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic(intern("ChannelResult"), vec![a]),
+                    ty: Type::builtin("ChannelResult", vec![a]),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -396,8 +369,8 @@ impl TypeChecker {
         {
             let (co_a, co_av) = self.fresh_tv();
             let ch_a = Type::Channel(Box::new(co_a.clone()));
-            self.enums.insert(
-                intern("ChannelOp"),
+            self.tables.enums.insert(
+                TypeRef::builtin("ChannelOp"),
                 EnumInfo {
                     params: vec![intern("a")],
                     param_var_ids: vec![co_av],
@@ -415,11 +388,6 @@ impl TypeChecker {
                 },
             );
         }
-        self.variant_to_enum
-            .insert(intern("Recv"), intern("ChannelOp"));
-        self.variant_to_enum
-            .insert(intern("Send"), intern("ChannelOp"));
-        crate::value::register_variant_decl_order(["Recv", "Send"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -428,7 +396,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![Type::Channel(Box::new(a.clone()))],
-                        Box::new(Type::Generic(intern("ChannelOp"), vec![a])),
+                        Box::new(Type::builtin("ChannelOp", vec![a])),
                     ),
                     constraints: vec![],
                     optional_last_param: false,
@@ -443,7 +411,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![Type::Channel(Box::new(a.clone())), a.clone()],
-                        Box::new(Type::Generic(intern("ChannelOp"), vec![a])),
+                        Box::new(Type::builtin("ChannelOp", vec![a])),
                     ),
                     constraints: vec![],
                     optional_last_param: false,
@@ -462,7 +430,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![Type::Fun(vec![], Box::new(a.clone()))],
-                        Box::new(Type::Generic(intern("Handle"), vec![a])),
+                        Box::new(Type::builtin("Handle", vec![a])),
                     ),
                     constraints: vec![],
                     optional_last_param: false,
@@ -477,10 +445,7 @@ impl TypeChecker {
                 intern("task.join"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(
-                        vec![Type::Generic(intern("Handle"), vec![a.clone()])],
-                        Box::new(a),
-                    ),
+                    ty: Type::Fun(vec![Type::builtin("Handle", vec![a.clone()])], Box::new(a)),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -494,10 +459,7 @@ impl TypeChecker {
                 intern("task.cancel"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(
-                        vec![Type::Generic(intern("Handle"), vec![a])],
-                        Box::new(Type::Unit),
-                    ),
+                    ty: Type::Fun(vec![Type::builtin("Handle", vec![a])], Box::new(Type::Unit)),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -540,7 +502,7 @@ impl TypeChecker {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![duration_ty, Type::Fun(vec![], Box::new(a.clone()))],
-                        Box::new(Type::Generic(intern("Handle"), vec![a])),
+                        Box::new(Type::builtin("Handle", vec![a])),
                     ),
                     constraints: vec![],
                     optional_last_param: false,
@@ -564,7 +526,7 @@ impl TypeChecker {
             intern("regex.find"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
-                Box::new(Type::Generic(intern("Option"), vec![Type::String])),
+                Box::new(Type::option(Type::String)),
             )),
         );
 
@@ -622,8 +584,8 @@ impl TypeChecker {
             intern("regex.captures"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
-                Box::new(Type::Generic(
-                    intern("Option"),
+                Box::new(Type::builtin(
+                    "Option",
                     vec![Type::List(Box::new(Type::String))],
                 )),
             )),
@@ -648,8 +610,8 @@ impl TypeChecker {
             intern("regex.captures_named"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
-                Box::new(Type::Generic(
-                    intern("Option"),
+                Box::new(Type::builtin(
+                    "Option",
                     vec![Type::Map(Box::new(Type::String), Box::new(Type::String))],
                 )),
             )),
@@ -661,7 +623,7 @@ impl TypeChecker {
         // call surfaces `Err(JsonError)` instead of `Err(String)` so
         // downstream match arms can destructure the typed enum, and can
         // fall back to `e.message()` via `trait Error for JsonError`.
-        let json_error_ty = Type::Generic(intern("JsonError"), vec![]);
+        let json_error_ty = Type::builtin("JsonError", vec![]);
 
         // json.parse: (String, type a) -> Result(a, JsonError)
         // The `type a` parameter is lowered to a `TypeOf(a)` descriptor in
@@ -671,8 +633,8 @@ impl TypeChecker {
         // compose naturally (pipe inserts the piped value as first arg).
         {
             let (a, av) = self.fresh_tv();
-            let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
-            let result_ty = Type::Generic(intern("Result"), vec![a, json_error_ty.clone()]);
+            let descriptor_ty = Type::type_of(a.clone());
+            let result_ty = Type::builtin("Result", vec![a, json_error_ty.clone()]);
             env.define(
                 intern("json.parse"),
                 Scheme {
@@ -687,9 +649,9 @@ impl TypeChecker {
         // json.parse_list: (String, type a) -> Result(List(a), JsonError)
         {
             let (a, av) = self.fresh_tv();
-            let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
-            let result_ty = Type::Generic(
-                intern("Result"),
+            let descriptor_ty = Type::type_of(a.clone());
+            let result_ty = Type::builtin(
+                "Result",
                 vec![Type::List(Box::new(a)), json_error_ty.clone()],
             );
             env.define(
@@ -706,9 +668,9 @@ impl TypeChecker {
         // json.parse_map: (String, type v) -> Result(Map(String, v), JsonError)
         {
             let (a, av) = self.fresh_tv();
-            let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
-            let result_ty = Type::Generic(
-                intern("Result"),
+            let descriptor_ty = Type::type_of(a.clone());
+            let result_ty = Type::builtin(
+                "Result",
                 vec![
                     Type::Map(Box::new(Type::String), Box::new(a)),
                     json_error_ty,
@@ -780,7 +742,7 @@ impl TypeChecker {
                 intern(name),
                 Scheme {
                     vars: vec![],
-                    ty: Type::Generic(intern("TypeOf"), vec![inner]),
+                    ty: Type::type_of(inner),
                     constraints: vec![],
                     optional_last_param: false,
                 },
@@ -791,8 +753,8 @@ impl TypeChecker {
         // Parallel to records/enums: `List`, `Map`, `Set`, `Channel` are
         // registered as polymorphic type descriptors so they can be
         // passed to `type a` parameters (`make(type t) where t: Empty`
-        // called as `make(List)`). At runtime the compiler emits these
-        // as `Value::TypeDescriptor(<name>)` globals. Method dispatch
+        // called as `make(List)`). The compiler emits these as
+        // `Value::TypeDescriptor` constants. Method dispatch
         // via the descriptor routes to method_table[(<name>, method)]
         // exactly like user-defined parameterized types.
         //
@@ -811,26 +773,17 @@ impl TypeChecker {
                 "List" => {
                     // `List` → forall a. TypeOf(List(a))
                     let (a, av) = self.fresh_tv();
-                    (
-                        vec![av],
-                        Type::Generic(intern("TypeOf"), vec![Type::List(Box::new(a))]),
-                    )
+                    (vec![av], Type::type_of(Type::List(Box::new(a))))
                 }
                 "Set" => {
                     // `Set` → forall a. TypeOf(Set(a))
                     let (a, av) = self.fresh_tv();
-                    (
-                        vec![av],
-                        Type::Generic(intern("TypeOf"), vec![Type::Set(Box::new(a))]),
-                    )
+                    (vec![av], Type::type_of(Type::Set(Box::new(a))))
                 }
                 "Channel" => {
                     // `Channel` → forall a. TypeOf(Channel(a))
                     let (a, av) = self.fresh_tv();
-                    (
-                        vec![av],
-                        Type::Generic(intern("TypeOf"), vec![Type::Channel(Box::new(a))]),
-                    )
+                    (vec![av], Type::type_of(Type::Channel(Box::new(a))))
                 }
                 "Map" => {
                     // `Map` → forall k v. TypeOf(Map(k, v))
@@ -838,7 +791,7 @@ impl TypeChecker {
                     let (v, vv) = self.fresh_tv();
                     (
                         vec![kv, vv],
-                        Type::Generic(intern("TypeOf"), vec![Type::Map(Box::new(k), Box::new(v))]),
+                        Type::type_of(Type::Map(Box::new(k), Box::new(v))),
                     )
                 }
                 // `Tuple` is registered VM-side as a `TypeDescriptor`
@@ -891,16 +844,15 @@ impl TypeChecker {
         // ── Built-in doc strings (round 62 phase-2 LSP doc inlining) ──
         //
         // Attach the inlined markdown for the globals (`println`,
-        // `print`, `panic`, `Ok`/`Err`/`Some`/`None`, plus the
-        // import-gated constructors `Stop`/`Continue`/`Message`/
-        // `Closed`/`Empty`/`Sent`/`Recv`/`Send`) and the regex
+        // `print`, `panic`, `Ok`/`Err`/`Some`/`None`), the sections of
+        // the builtin modules' constructors `Stop`/`Continue`/`Message`/
+        // `Closed`/`Empty`/`Sent`/`Recv`/`Send`, and the regex
         // module — those names are registered here in this file
         // rather than in a per-module submodule, so the attach
         // calls run here. The per-module submodules attach their
         // own blobs from their `register` entry points.
         //
-        // For globals we attach the FULL `GLOBALS_MD` body to every
-        // prelude / import-gated name. The summary tables ("Always
+        // For the prelude names we attach the FULL `GLOBALS_MD` body. The summary tables ("Always
         // Available" / "Available After Import") are at the top of
         // the doc and describe every name; per-`##` slicing would
         // hide the table from `Sent`/`Recv`/`Send` even though they
@@ -921,15 +873,21 @@ impl TypeChecker {
         // sub-set hand-rolled to track the markdown contents.
         let mut doc_targets: Vec<&'static str> =
             crate::module::builtin_free_function_names().to_vec();
-        doc_targets.extend_from_slice(&[
-            "Ok", "Err", "Some", "None", "Stop", "Continue", "Message", "Closed", "Empty", "Sent",
-            "Recv", "Send",
-        ]);
+        doc_targets.extend_from_slice(&["Ok", "Err", "Some", "None"]);
         let globals_doc = docs::strip_frontmatter(docs::GLOBALS_MD);
         for name in &doc_targets {
             let sym = intern(name);
             if env.bindings.contains_key(&sym) {
                 env.builtin_docs.insert(sym, globals_doc.to_string());
+            }
+        }
+        // A builtin module's variant gets its own section: hover on
+        // `channel.Message` shows `Message`, not the whole page.
+        for (keys, body) in docs::iter_sections(docs::GLOBALS_MD) {
+            for key in keys {
+                if crate::module::builtin_variant_module(&key).is_some() {
+                    env.attach_doc(intern(&key), &body);
+                }
             }
         }
         docs::attach_module_docs(env, docs::REGEX_MD);

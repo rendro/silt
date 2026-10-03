@@ -5,7 +5,7 @@
 //! 1. **Lexer** (`lexer`) -- tokenizes source text into a stream of tokens.
 //! 2. **Parser** (`parser`) -- builds an AST (`ast`) from the token stream.
 //! 3. **Type checker** (`typechecker`) -- infers and validates types (`types`)
-//!    across the AST, reporting diagnostics via `errors`.
+//!    across the AST, reporting diagnostics (`diagnostic`).
 //! 4. **Compiler** (`compiler`) -- lowers the typed AST to bytecode (`bytecode`).
 //! 5. **VM** (`vm`) -- executes bytecode, using the `scheduler` for
 //!    concurrent tasks and `builtins` for the standard library.
@@ -20,9 +20,9 @@ pub mod ast;
 pub mod builtins;
 pub mod bytecode;
 pub mod compiler;
-pub mod diagnostic_filters;
+pub mod defs;
+pub mod diagnostic;
 pub mod disassemble;
-pub mod errors;
 pub mod feature_stub;
 pub mod file_discovery;
 pub mod formatter;
@@ -35,11 +35,15 @@ pub mod lockfile;
 pub mod lsp;
 pub mod manifest;
 pub mod module;
+pub mod package_graph;
 pub mod parser;
 #[cfg(feature = "repl")]
 pub mod repl;
 pub mod scheduler;
+pub mod session;
+pub mod source;
 pub mod typechecker;
+pub mod typeinfo;
 pub mod types;
 // The self-updater shells out to curl/tar and replaces the running binary in
 // place. Neither mechanism applies on wasm32 — the playground is embedded via
@@ -51,6 +55,6 @@ pub mod vm;
 #[cfg(feature = "watch")]
 pub mod watch;
 
-// Re-export FFI types for embedders.
+// Re-export the value and conversion types embedders use.
 pub use value::{FromValue, IntoValue, Value};
 pub use vm::{Vm, VmError};

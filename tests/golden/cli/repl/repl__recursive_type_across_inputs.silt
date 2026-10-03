@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: import list\ntype Expr {\n  Num(Int),\n  Add(Expr, Expr),\n  Neg(Expr),\n}\nfn eval(e: Expr) -> Int {\n  match e {\n    Num(n) -> n\n    Add(a, b) -> eval(a) + eval(b)\n    Neg(x) -> 0 - eval(x)\n  }\n}\nlet e = Add(Num(1), Neg(Add(Num(2), Num(3))))\neval(e)\ntype Tree { Leaf(Expr), Node(List(Tree)) }\nfn total(t: Tree) -> Int {\n  match t {\n    Leaf(x) -> eval(x)\n    Node(kids) -> kids |> list.fold(0) { acc, k -> acc + total(k) }\n  }\n}\ntotal(Node([Leaf(e), Node([Leaf(Num(10))])]))\n:quit\n
+-- A recursive type declared over several lines, a recursive function on
+-- it in the next input, and a second recursive type that holds the first:
+-- each input sees the types and functions of the inputs before it.

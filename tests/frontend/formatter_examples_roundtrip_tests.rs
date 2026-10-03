@@ -25,9 +25,9 @@
 
 use std::path::{Path, PathBuf};
 
+use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
-use silt::typechecker::{self, Severity};
 
 /// Recursively collect every `.silt` file under `dir`. Mirrors the
 /// walker in `tests/lang/examples_check.rs` and
@@ -48,28 +48,44 @@ fn collect_silt_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Typecheck `source` and return any hard (Severity::Error) errors.
+/// Typecheck `source`, the text of the example `path`, and return any
+/// hard (Severity::Error) errors. The other files of the example's
+/// directory are its sibling modules.
 /// Warnings (e.g. `result`-shadowing) are intentionally tolerated here
 /// — the companion walker `tests/lang/examples_check.rs` already pins the
 /// warning-free invariant for examples, and this test's job is only
 /// to catch a formatter that produces code the type checker rejects.
-fn hard_typecheck_errors(source: &str) -> Vec<String> {
+fn hard_typecheck_errors(path: &Path, source: &str) -> Vec<String> {
     // Reset the interner so one file's interned symbols don't leak into
     // another's diagnostics. The companion walkers do the same.
     silt::intern::reset();
 
-    let tokens = match Lexer::new(source).tokenize() {
+    let tokens = match Lexer::new(silt::source::FileId::default(), source).tokenize() {
         Ok(t) => t,
         Err(e) => return vec![format!("lex error: {:?}", e)],
     };
-    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+    let (_, parse_errors) = Parser::new(tokens, source).parse_program_recovering();
     if !parse_errors.is_empty() {
         return parse_errors
             .iter()
             .map(|e| format!("parse error: {:?}", e))
             .collect();
     }
-    typechecker::check(&mut program)
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    let siblings: Vec<(String, String)> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p != path && p.extension().and_then(|s| s.to_str()) == Some("silt"))
+        .map(|p| {
+            let text = std::fs::read_to_string(&p).unwrap();
+            (p.file_name().unwrap().to_string_lossy().into_owned(), text)
+        })
+        .collect();
+    let mut files = vec![(name.as_str(), source)];
+    files.extend(siblings.iter().map(|(n, t)| (n.as_str(), t.as_str())));
+    silt::session::testing::analyze_files(&files)
+        .1
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
         .map(|e| format!("type error: {:?}", e))
@@ -171,7 +187,7 @@ fn every_example_round_trips_through_formatter_and_typechecks() {
         }
 
         // Second invariant: the formatter's output must still typecheck.
-        let errs = hard_typecheck_errors(&once);
+        let errs = hard_typecheck_errors(file, &once);
         if !errs.is_empty() {
             typecheck_failures.push(format!(
                 "{}: formatted output fails to typecheck:\n  {}",

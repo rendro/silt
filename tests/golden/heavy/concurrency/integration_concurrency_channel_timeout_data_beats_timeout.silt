@@ -9,9 +9,9 @@ fn program() {
 
   channel.send(ch, "fast")
 
-  match channel.select([Recv(ch), Recv(timer)]) {
-    (_, Message(val)) -> val
-    (_, Closed) -> "timeout"
+  match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
+    (_, channel.Message(val)) -> val
+    (_, channel.Closed) -> "timeout"
     _ -> "other"
   }
 }

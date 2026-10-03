@@ -1,0 +1,7 @@
+pub fn boom(x) {
+  helper(x)
+}
+
+fn helper(x) {
+  10 / x
+}

@@ -1,0 +1,13 @@
+-- verdict: same
+-- shadowing builtin variants
+type MyRes { Ok(Int), Nope }
+fn main() {
+  let r = Ok(1)
+  println(r)
+  let x: Result(Int, String) = Ok(2)
+  println(x)
+  match r {
+    Ok(v) -> println(v)
+    Nope -> println("nope")
+  }
+}

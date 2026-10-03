@@ -3,7 +3,7 @@
 -- An unclosed opener followed by a top-level fn decl blames the opener.
 -- stderr-contains: error[parse]
 -- stderr-contains: map literal
--- stderr-contains: starting at line 8
+-- stderr-contains: ::: parser_unclosed_delim_recovery__unclosed_map_then_fn_decl.silt:8:
 -- stderr-not-contains: expected (, found b
 fn a() { #{1: 2,
 fn b() { 99 }

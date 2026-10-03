@@ -13,13 +13,13 @@ fn main() {
   }
   -- Consumer receives until the channel is closed
   let consumer = task.spawn { ->
-    when let Message(msg1) = channel.receive(ch) else {
+    when let channel.Message(msg1) = channel.receive(ch) else {
       return
     }
-    when let Message(msg2) = channel.receive(ch) else {
+    when let channel.Message(msg2) = channel.receive(ch) else {
       return
     }
-    when let Message(msg3) = channel.receive(ch) else {
+    when let channel.Message(msg3) = channel.receive(ch) else {
       return
     }
     println("{msg1} {msg2} {msg3}")
@@ -33,13 +33,13 @@ fn main() {
   workers
   |> list.each { w -> task.join(w) }
   channel.close(results)
-  when let Message(r1) = channel.receive(results) else {
+  when let channel.Message(r1) = channel.receive(results) else {
     return
   }
-  when let Message(r2) = channel.receive(results) else {
+  when let channel.Message(r2) = channel.receive(results) else {
     return
   }
-  when let Message(r3) = channel.receive(results) else {
+  when let channel.Message(r3) = channel.receive(results) else {
     return
   }
   println("Worker results: {r1}, {r2}, {r3}")
@@ -49,10 +49,10 @@ fn main() {
   channel.send(normal, "background task done")
   channel.send(urgent, "alert!")
   -- channel.select returns (channel, Message(value) | Closed); ^pin identifies which channel
-  match channel.select([Recv(urgent), Recv(normal)]) {
-    (^urgent, Message(msg)) -> println("Urgent: {msg}")
-    (^normal, Message(msg)) -> println("Normal: {msg}")
-    (_, Closed) -> println("Channel closed")
+  match channel.select([channel.Recv(urgent), channel.Recv(normal)]) {
+    (^urgent, channel.Message(msg)) -> println("Urgent: {msg}")
+    (^normal, channel.Message(msg)) -> println("Normal: {msg}")
+    (_, channel.Closed) -> println("Channel closed")
     _ -> println("No message")
   }
 }

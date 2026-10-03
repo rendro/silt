@@ -14,6 +14,7 @@
 //! backing `Map` will deduplicate values that the language layer
 //! considers distinct, losing user data.
 
+use silt::typeinfo::bv;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -143,13 +144,18 @@ fn btreeset_of_distinct_builtin_fns_retains_all() {
 
 // ── VariantConstructor ─────────────────────────────────────────────
 
-/// Distinct constructors (different name, different arity, or both)
-/// must order non-Equal.
+/// Distinct constructors (another variant, or a variant of one name in
+/// another enum) must order non-Equal.
 #[test]
 fn ord_variant_constructor_distinct_not_equal() {
-    let a = Value::VariantConstructor("Some".into(), 1);
-    let b = Value::VariantConstructor("None".into(), 0);
-    let c = Value::VariantConstructor("Some".into(), 2); // same name, different arity
+    let a = Value::VariantConstructor(bv::SOME.tag());
+    let b = Value::VariantConstructor(bv::OK.tag());
+    let other = silt::typeinfo::TypeInfo::new_enum(
+        silt::defs::TypeId(silt::defs::DefId(9000)),
+        "Maybe",
+        &[("Some", 1)],
+    );
+    let c = Value::VariantConstructor(silt::typeinfo::Tag::new(other, 0)); // same name, another enum
     assert_ne!(a.cmp(&b), Ordering::Equal);
     assert_ne!(a.cmp(&c), Ordering::Equal);
     assert_ne!(b.cmp(&c), Ordering::Equal);
@@ -159,10 +165,10 @@ fn ord_variant_constructor_distinct_not_equal() {
 #[test]
 fn btreeset_of_distinct_variant_constructors_retains_all() {
     let mut s = BTreeSet::new();
-    s.insert(Value::VariantConstructor("Some".into(), 1));
-    s.insert(Value::VariantConstructor("None".into(), 0));
-    s.insert(Value::VariantConstructor("Ok".into(), 1));
-    s.insert(Value::VariantConstructor("Err".into(), 1));
+    s.insert(Value::VariantConstructor(bv::SOME.tag()));
+    s.insert(Value::VariantConstructor(bv::NONE.tag()));
+    s.insert(Value::VariantConstructor(bv::OK.tag()));
+    s.insert(Value::VariantConstructor(bv::ERR.tag()));
     assert_eq!(s.len(), 4);
 }
 

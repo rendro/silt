@@ -3,7 +3,7 @@ import int
 fn main() {
   match float.parse("not_a_float") {
     Ok(n) -> println("Ok({n})")
-    Err(ParseInvalidDigit(_)) -> println("Err(ParseInvalidDigit)")
+    Err(int.ParseInvalidDigit(_)) -> println("Err(ParseInvalidDigit)")
     Err(_) -> println("Err(other)")
   }
 }

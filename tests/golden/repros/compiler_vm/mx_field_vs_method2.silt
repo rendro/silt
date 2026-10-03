@@ -1,0 +1,6 @@
+-- verdict: same
+type R { compare: Fn(Int) -> Int, n: Int }
+fn main() {
+  let r = R { compare: fn(x) { x * 100 }, n: 1 }
+  println(r.compare(5))
+}

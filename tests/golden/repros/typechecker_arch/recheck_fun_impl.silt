@@ -1,0 +1,6 @@
+-- verdict: same
+trait Foo { fn foo(self) -> Int }
+trait Foo for Fun {
+  fn foo(self) -> Int { undefined_name + 1 }
+}
+fn main() { println(main.foo()) }

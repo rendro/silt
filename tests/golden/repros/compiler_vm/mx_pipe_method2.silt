@@ -1,0 +1,17 @@
+-- verdict: same
+type Color { Red, Green }
+trait Namer {
+  fn name(self, suffix: String) -> String
+}
+trait Namer for Color {
+  fn name(self, suffix: String) -> String {
+    match self {
+      Red -> "red{suffix}"
+      Green -> "green{suffix}"
+    }
+  }
+}
+fn main() {
+  println(Red.name("!"))
+  println("!" |> Red.name())
+}

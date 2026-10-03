@@ -1,0 +1,7 @@
+-- verdict: same
+import a
+import b
+fn main() {
+  println(b.g("s"))
+  println(a.f(1))
+}

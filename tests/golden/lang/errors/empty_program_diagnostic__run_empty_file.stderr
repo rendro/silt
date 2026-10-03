@@ -1,2 +1,6 @@
 error[compile]: program has no main() function
+ --> empty_program_diagnostic__run_empty_file.silt:1:1
+   |
+ 1 | -- exit: 1
+   | ^ program has no main() function
   = note: add one as the entry point

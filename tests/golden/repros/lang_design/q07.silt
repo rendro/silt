@@ -1,0 +1,10 @@
+-- verdict: same
+fn net(price, discount, tax) {
+  let total = price
+    - discount
+    * tax
+  total
+}
+fn main() {
+  println(net(100, 30, 2))
+}

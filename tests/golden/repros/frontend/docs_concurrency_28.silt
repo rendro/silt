@@ -1,0 +1,40 @@
+-- verdict: same
+import channel
+import task
+fn main() {
+  let alerts = channel.new(5)
+  let logs = channel.new(5)
+
+  task.spawn(fn() {
+    channel.send(logs, "background task done")
+    channel.send(logs, "log rotation complete")
+    channel.close(logs)
+  })
+
+  task.spawn(fn() {
+    channel.send(alerts, "disk full!")
+    channel.close(alerts)
+  })
+
+  -- Merge both streams into a single handler. Over many runs, messages from
+  -- `alerts` and `logs` interleave fairly -- neither channel starves the other.
+  -- `loop _ = () { ... loop(()) }` re-enters explicitly; a bare `loop {}`
+  -- without a `loop(...)` recursion runs its body only once.
+  loop _ = () {
+    match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
+      (^alerts, channel.Message(msg)) -> {
+        println("alert: {msg}")
+        loop(())
+      }
+      (^logs,   channel.Message(msg)) -> {
+        println("log: {msg}")
+        loop(())
+      }
+      (_, channel.Closed) -> {
+        println("a channel closed")
+        return ()
+      }
+      _ -> loop(())
+    }
+  }
+}

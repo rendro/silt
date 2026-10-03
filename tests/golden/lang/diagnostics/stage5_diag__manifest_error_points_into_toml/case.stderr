@@ -1,0 +1,5 @@
+error[package]: invalid manifest: invalid package version `one`: must be a semver string of the form `MAJOR.MINOR.PATCH` (e.g. `0.1.0`); a `-PRERELEASE` and a `+BUILD` part may follow, each made of ASCII letters, digits, `-` and `.`
+ --> silt.toml:3:11
+   |
+ 3 | version = "one"
+   |           ^^^^^ invalid manifest: invalid package version `one`: must be a semver string of the form `MAJOR.MINOR.PATCH` (e.g. `0.1.0`); a `-PRERELEASE` and a `+BUILD` part may follow, each made of ASCII letters, digits, `-` and `.`

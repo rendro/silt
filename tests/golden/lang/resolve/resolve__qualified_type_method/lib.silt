@@ -1,0 +1,5 @@
+pub trait Describe { fn describe(self) -> String }
+pub type Shape { Circle(Int), Square(Int) }
+pub type Pt { x: Int }
+trait Describe for Shape { fn describe(self) -> String { "shape" } }
+trait Describe for Pt { fn describe(self) -> String { "pt {self.x}" } }

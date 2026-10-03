@@ -1,0 +1,2 @@
+pub type Error { NotFound, Denied }
+pub fn fail() -> Error { Error.Denied }

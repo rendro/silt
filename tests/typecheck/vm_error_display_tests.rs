@@ -2,10 +2,10 @@
 //!
 //! Audit LATENT L3 (VmError::Display attractive nuisance): the Display
 //! impl emitted the raw `"VM error: <msg>"` prefix. Production paths
-//! already route around it via `SourceError::runtime_at` (round 36),
-//! but any fallback `eprintln!("{e}")` on a bare VmError reintroduced
-//! the leak. Fix canonicalizes Display to the same
-//! `error[runtime]: <msg>` shape produced by `SourceError::Display`.
+//! render runtime errors as diagnostics (`VmError::to_diagnostic`), but
+//! any fallback `eprintln!("{e}")` on a bare VmError reintroduced the
+//! leak. Display now gives the `error[runtime]: <msg>` header of the
+//! diagnostic, without the place, which needs the source map.
 
 use silt::VmError;
 

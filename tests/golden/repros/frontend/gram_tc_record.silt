@@ -1,0 +1,3 @@
+-- verdict: same
+type P { x: Int, y: Int, }
+fn main() { println("{P { x: 1, y: 2, }.x}") }

@@ -1,0 +1,7 @@
+-- verdict: same
+fn describe(x) { x.display() }
+fn id(x) { x }
+fn main() {
+  println(describe(1))
+  println(describe(id))
+}

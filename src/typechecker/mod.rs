@@ -11,6 +11,7 @@ mod auto_derive;
 mod builtins;
 mod exhaustiveness;
 mod inference;
+pub mod names;
 mod resolve;
 // `pub(crate)`: round 93 — `module::sibling_module_suggestion` reuses
 // the shared did-you-mean threshold policy for import-path hints.
@@ -20,15 +21,18 @@ pub(super) use std::collections::{BTreeSet, HashMap};
 
 pub(super) use crate::ast::*;
 pub(super) use crate::intern::{Symbol, intern, resolve};
-pub(super) use crate::lexer::Span;
+pub(super) use crate::source::Span;
 pub(super) use crate::types::*;
 
-pub use crate::types::{Scheme, Severity, TyVar, Type, TypeError};
+pub use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
+
+use crate::diagnostic::{Code, Diagnostic, Severity};
+use std::rc::Rc;
 
 /// Snapshot of a user type's resolved body, used only by the auto-
 /// derive synthesis pass (`synthesize_auto_derive_impls`). Captures the
 /// EnumInfo/RecordInfo data in an owned form so the synthesis loop can
-/// iterate without holding a borrow on `self.enums` / `self.records`.
+/// iterate without holding a borrow on `self.tables.enums` / `self.tables.records`.
 enum TypeBodyKind {
     Enum(Vec<VariantInfo>),
     Record(Vec<(Symbol, Type)>),
@@ -49,8 +53,8 @@ pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash"];
 /// Round 93: human adjective for the gated built-in traits, used by
 /// the field-aware auto-derive gate's diagnostics ("... which is not
 /// comparable").
-fn builtin_trait_adjective(trait_sym: Symbol) -> &'static str {
-    match resolve(trait_sym).as_str() {
+fn builtin_trait_adjective(trait_sym: TraitKey) -> &'static str {
+    match resolve(trait_sym.name).as_str() {
         "Compare" => "comparable",
         "Equal" => "equatable",
         "Hash" => "hashable",
@@ -81,7 +85,14 @@ pub(super) struct TypeEnv {
     /// Surfaced through LSP hover / completion / signature-help via
     /// `pub fn builtin_docs()`.
     pub(super) builtin_docs: HashMap<Symbol, String>,
-    parent: Option<Box<TypeEnv>>,
+    /// The enclosing scope. Shared, not copied: a child scope is made for
+    /// every block and lambda, and the outermost scope holds every
+    /// builtin name.
+    parent: Option<Rc<TypeEnv>>,
+    /// Whether no scheme of this scope or its parents has a free type
+    /// variable: true of the builtin scope, whose schemes are all
+    /// generalized, so `free_vars` need not walk it.
+    closed: bool,
 }
 
 impl TypeEnv {
@@ -90,14 +101,21 @@ impl TypeEnv {
             bindings: HashMap::new(),
             builtin_docs: HashMap::new(),
             parent: None,
+            closed: false,
         }
     }
 
     pub(super) fn child(&self) -> Self {
+        TypeEnv::child_of(Rc::new(self.clone()))
+    }
+
+    /// An empty scope inside `parent`.
+    fn child_of(parent: Rc<TypeEnv>) -> Self {
         TypeEnv {
             bindings: HashMap::new(),
             builtin_docs: HashMap::new(),
-            parent: Some(Box::new(self.clone())),
+            parent: Some(parent),
+            closed: false,
         }
     }
 
@@ -147,6 +165,9 @@ impl TypeEnv {
     /// Collect all free type variables in the environment.
     pub(super) fn free_vars(&self, checker: &TypeChecker) -> Vec<TyVar> {
         let mut fvs = Vec::new();
+        if self.closed {
+            return fvs;
+        }
         for scheme in self.bindings.values() {
             let ty = checker.apply(&scheme.ty);
             let mut ty_fvs = free_vars_in(&ty);
@@ -185,7 +206,7 @@ pub(super) struct EnumInfo {
     /// sentinel `intern("__builtin__")`; user enums carry the
     /// `current_package` value at the time their decl was processed,
     /// or `intern("__builtin__")` when there is no enclosing package
-    /// (ad-hoc scripts, REPL).
+    /// (a host module).
     pub(super) defined_in: Symbol,
 }
 
@@ -221,14 +242,14 @@ pub(super) struct TraitInfo {
     /// `trait HashTable(k) where k: Hash`. Each `(param_name, trait_name)`
     /// entry is checked at `register_trait_impl` against the concrete
     /// type the impl supplies for that param.
-    pub(super) param_where_clauses: Vec<(Symbol, Symbol)>,
+    pub(super) param_where_clauses: Vec<(Symbol, TraitKey)>,
     /// Supertrait names (e.g. `trait Ordered: Equal` yields `[Equal]`).
     /// Implementing this trait on a type requires every supertrait to also
     /// be implemented for the same type (validated in
     /// `validate_trait_impls`). `expand_with_supertraits` walks this list
     /// transitively to enable supertrait method calls inside `where`
     /// clauses.
-    pub(super) supertraits: Vec<Symbol>,
+    pub(super) supertraits: Vec<TraitKey>,
     /// Parallel to `supertraits`: the TypeExpr args supplied to each
     /// supertrait reference. For `trait Sub(a): Super(a)` the entry for
     /// `Super` is `[TypeExpr::Named("a")]`. Empty when the supertrait
@@ -238,10 +259,6 @@ pub(super) struct TraitInfo {
     /// activation. Arg-less entries keep the bare-name behaviour.
     pub(super) supertrait_args: Vec<Vec<TypeExpr>>,
     pub(super) methods: Vec<(Symbol, Type)>,
-    /// Source span of the trait declaration. Used by
-    /// `validate_trait_impls` to report unknown-supertrait errors at the
-    /// declaration site.
-    pub(super) decl_span: Span,
     /// Default method bodies declared inside the trait. Maps method name
     /// to the full FnDecl (with body). Impls that omit a method whose
     /// name appears here are not "missing method" errors — instead the
@@ -250,6 +267,10 @@ pub(super) struct TraitInfo {
     /// registration, body checking, dispatch, compilation) treats it
     /// identically to an explicitly-written method.
     pub(super) default_method_bodies: HashMap<Symbol, FnDecl>,
+    /// The module that declares the trait without `pub`, and its name:
+    /// the trait's methods can be called only in that module. `None` for
+    /// a `pub` trait.
+    pub(super) private_to: Option<(crate::session::ModuleId, Symbol)>,
     /// Associated-type declarations on this trait. Each entry carries a
     /// name and the trait bounds the impl-supplied binding must satisfy.
     /// Empty for traits with no associated types (the common case).
@@ -261,7 +282,7 @@ pub(super) struct TraitInfo {
     /// the sentinel `intern("__builtin__")`; user traits carry the
     /// `current_package` value at decl-processing time, or
     /// `intern("__builtin__")` when there is no enclosing package
-    /// (ad-hoc scripts, REPL).
+    /// (a check outside a session).
     pub(super) defined_in: Symbol,
 }
 
@@ -272,7 +293,7 @@ pub(super) struct TraitInfo {
 #[derive(Debug, Clone)]
 pub(super) struct AssocTypeInfo {
     pub(super) name: Symbol,
-    pub(super) bounds: Vec<(Symbol, Vec<TypeExpr>)>,
+    pub(super) bounds: Vec<(TraitKey, Vec<TypeExpr>)>,
     pub(super) span: Span,
 }
 
@@ -287,7 +308,7 @@ pub(super) struct MethodEntry {
     /// a method with the same name for the same target type. `None`
     /// for auto-derived entries (Showable on every type, etc.) that
     /// don't participate in user-visible coherence rules.
-    pub(super) trait_name: Option<Symbol>,
+    pub(super) trait_name: Option<TraitKey>,
     /// Trait constraints that must hold at every call site of this
     /// method. Accumulated from:
     ///
@@ -309,7 +330,7 @@ pub(super) struct MethodEntry {
     /// `TryInto(Float) for ...` against a `where a: TryInto(Int)` bound).
     /// Empty for parameterless traits and the legacy parameterless
     /// where-clause path.
-    pub(super) method_constraints: Vec<(TyVar, Symbol, Vec<Type>)>,
+    pub(super) method_constraints: Vec<(TyVar, TraitKey, Vec<Type>)>,
 }
 
 /// A deferred where-clause obligation captured at a call site whose
@@ -320,7 +341,7 @@ pub(super) struct PendingWhereConstraint {
     /// The tyvar at the call site that carries the obligation.
     pub(super) tyvar: TyVar,
     /// The trait name the obligation requires.
-    pub(super) trait_name: Symbol,
+    pub(super) trait_name: TraitKey,
     /// Name of the callee function (for nicer diagnostics).
     pub(super) callee_fn_name: Option<Symbol>,
     /// Span of the call site.
@@ -328,7 +349,7 @@ pub(super) struct PendingWhereConstraint {
     /// Snapshot of the enclosing fn's active constraints at the
     /// time of the call (used to decide whether the obligation is
     /// already covered).
-    pub(super) active_snapshot: HashMap<TyVar, Vec<Symbol>>,
+    pub(super) active_snapshot: HashMap<TyVar, Vec<TraitKey>>,
     /// Snapshot of the enclosing fn's param tyvars at the time of
     /// the call (used to decide whether the obligation touches the
     /// enclosing fn's own polymorphism).
@@ -341,201 +362,88 @@ pub(super) struct PendingWhereConstraint {
     pub(super) bound_trait_args: Vec<Type>,
 }
 
-// ── Helpers for cross-module remap (round 64 item 6A) ───────────────
-
-/// Collect every TyVar referenced in a `Scheme` (its quantified vars,
-/// the type body, and the constraint list).
-pub(super) fn collect_tyvars_in_scheme(
-    scheme: &Scheme,
-    out: &mut std::collections::BTreeSet<TyVar>,
-) {
-    for v in &scheme.vars {
-        out.insert(*v);
-    }
-    for v in free_vars_in(&scheme.ty) {
-        out.insert(v);
-    }
-    for (tv, _) in &scheme.constraints {
-        out.insert(*tv);
-    }
-}
-
-/// Free vars across a slice of types (helper used during cross-module
-/// merge — avoids the verbose nested loop at every call site).
-pub(super) fn free_vars_in_types(types: &[Type]) -> Vec<TyVar> {
-    let mut out: Vec<TyVar> = Vec::new();
-    for t in types {
-        for v in free_vars_in(t) {
-            if !out.contains(&v) {
-                out.push(v);
-            }
-        }
-    }
-    out
-}
-
-/// Re-stamp every TyVar inside a `Scheme` through the supplied
-/// remapping. Producer ids in `tv_remap` keys map to consumer ids in
-/// `tv_remap` values; any tyvar absent from the map is left alone (it's
-/// outside the snapshot's reach).
-pub(super) fn remap_scheme(
-    scheme: &Scheme,
-    tv_remap: &HashMap<TyVar, TyVar>,
-    ty_remap: &HashMap<TyVar, Type>,
-) -> Scheme {
-    let new_vars: Vec<TyVar> = scheme
-        .vars
-        .iter()
-        .map(|v| *tv_remap.get(v).unwrap_or(v))
-        .collect();
-    let new_ty = substitute_vars(&scheme.ty, ty_remap);
-    let new_constraints: Vec<(TyVar, Symbol)> = scheme
-        .constraints
-        .iter()
-        .map(|(tv, t)| (*tv_remap.get(tv).unwrap_or(tv), *t))
-        .collect();
-    Scheme {
-        vars: new_vars,
-        ty: new_ty,
-        constraints: new_constraints,
-        // Part of the signature: carried as is.
-        optional_last_param: scheme.optional_last_param,
-    }
-}
-
-// ── Cross-module exports (round 64 item 6A) ─────────────────────────
-
-/// A snapshot of a module's public surface that downstream importers
-/// can use to typecheck against.
-///
-/// The typechecker at module B (which does `import a`) consults a
-/// `HashMap<Symbol, ModuleExports>` keyed by module name; if the
-/// imported module's exports are present, the typechecker merges them
-/// into its env (qualifying schemes as `a.fn_name`) and seeds its
-/// internal state (`enums`, `records`, `traits`, `trait_impl_set`,
-/// `method_table`) so cross-module typechecking sees the producer's
-/// pub-decl signatures, generic parameters, where clauses, and trait
-/// impls.
-///
-/// Built by `check_program` at the end of typechecking — for every
-/// `pub fn` / `pub let` / `pub type` / `pub trait` declaration, the
-/// final scheme/info is captured here. `trait_impls` collects every
-/// `Decl::TraitImpl` in the program (impls are not `pub`-gated; they
-/// flow whenever the trait or the type is visible to the importer).
-///
-/// Producer-side serialization is shallow-clone: `Scheme`, `EnumInfo`,
-/// `RecordInfo`, `TraitInfo`, and `TraitImpl` are all `Clone`, so the
-/// exports map carries owned snapshots that survive the producer
-/// `TypeChecker` being dropped.
-#[derive(Debug, Clone, Default)]
-pub struct ModuleExports {
-    /// `pub fn` and `pub let` schemes, keyed by the bare name as
-    /// declared. The importer rewrites the key to `module.name` when
-    /// merging into its env.
-    pub(super) schemes: Vec<(Symbol, Scheme)>,
-    /// `pub type ... { variants }` snapshots.
-    pub(super) enums: Vec<(Symbol, EnumInfo)>,
-    /// `pub type ... { fields }` snapshots.
-    pub(super) records: Vec<(Symbol, RecordInfo)>,
-    /// `pub type X = Target` aliases — preserved so the importer's
-    /// `resolve_type_expr_inner` accepts uses of `X` in annotations.
-    pub(super) aliases: Vec<Symbol>,
-    /// Type-parameter arity for each alias (parallel to `aliases`).
-    pub(super) alias_arity: Vec<usize>,
-    /// `pub trait T { ... }` snapshots.
-    pub(super) traits: Vec<(Symbol, TraitInfo)>,
-    /// Variant → enum name map for every pub enum's variants. Used so
-    /// `a.Red` resolves to the same variant the producer saw.
-    pub(super) variant_to_enum: Vec<(Symbol, Symbol)>,
-    /// Trait-impl table snapshots — every `(trait_name, target_type)`
-    /// pair the producer registered, with its method entries, span,
-    /// constraints, and trait-arg bindings.
-    pub(super) trait_impl_entries: Vec<TraitImplExport>,
-    /// Record type → param TyVar ids, mirroring
-    /// `record_param_var_ids` in the producer's TypeChecker.
-    pub(super) record_param_var_ids: Vec<(Symbol, Vec<TyVar>)>,
-    /// Variant constructor schemes — bound under bare names by the
-    /// producer (`Red: () -> Color`, `Some(a) -> Option(a)`). Stored
-    /// here so the importer can re-bind them under both bare and
-    /// qualified-by-module names.
-    pub(super) variant_schemes: Vec<(Symbol, Scheme)>,
-    /// Type-name schemes registered for first-class type values
-    /// (`TypeOf(EnumName)`, `TypeOf(RecordName)`) — mirrors what the
-    /// producer's register_type_decl bound under the type's bare name.
-    pub(super) type_name_schemes: Vec<(Symbol, Scheme)>,
-}
-
-/// Snapshot of one `(trait_name, target_type)` impl in the producer's
-/// state. Carries every table entry that depends on the impl so the
-/// importer can replicate it without re-running `register_trait_impl`
-/// (which would re-emit orphan / duplicate-impl diagnostics that
-/// belong to the producer's compile, not the importer's).
-#[derive(Debug, Clone)]
-pub(super) struct TraitImplExport {
-    pub(super) trait_name: Symbol,
-    pub(super) target_type: Symbol,
-    pub(super) span: Span,
-    pub(super) impl_constraints: Vec<(usize, Symbol, Vec<Type>)>,
-    pub(super) impl_trait_args: Vec<Type>,
-    /// The impl's full canonicalized self type (see
-    /// `TypeChecker::impl_self_types`). `None` for impls the producer
-    /// never routed through `register_trait_impl`.
-    pub(super) self_type: Option<Type>,
-    /// Method entries keyed by method name.
-    pub(super) methods: Vec<(Symbol, MethodEntry)>,
-}
-
-impl ModuleExports {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 // ── The type checker ────────────────────────────────────────────────
 
-pub struct TypeChecker {
+/// One session's type-variable supply: the substitution and the next
+/// variable. Every module's check allocates from it, so a scheme one
+/// module exports is valid in the next as it is.
+#[derive(Clone, Default)]
+pub struct TyVarSupply {
     /// The substitution: maps type variables to their resolved types.
     pub(super) subst: Vec<Option<Type>>,
     /// Counter for generating fresh type variables.
-    pub(super) next_var: TyVar,
-    /// Declared enum types (type name -> enum info).
-    pub(super) enums: HashMap<Symbol, EnumInfo>,
-    /// Maps variant constructor name -> parent enum type name.
-    pub(super) variant_to_enum: HashMap<Symbol, Symbol>,
-    /// Declared record types (type name -> record info).
-    pub(super) records: HashMap<Symbol, RecordInfo>,
-    /// Round 94: module-qualified type mirrors. Keys are interned
-    /// `"prefix.Name"` where `prefix` is the spelling the importer uses
-    /// (module name or `import ... as` alias); values are the PRODUCER
-    /// module's infos. They back qualified record literals
-    /// (`util.Pt { .. }`) and qualified patterns (`shapes.Circle(r)`,
-    /// `util.Pt { x }`), and in particular keep working when a bare-name
-    /// conflict made the `or_insert` merge into `records` / `enums`
-    /// keep a DIFFERENT module's same-named type — the qualifier is
-    /// exactly how the user disambiguates. Kept in separate maps (not
-    /// dotted keys inside `records` / `enums`) so bare-name iteration
-    /// sites (exhaustiveness witness synthesis, suggestions,
-    /// auto-derive) never see qualified entries. Cleared per
-    /// `check_program` run alongside `imported_modules`.
-    pub(super) qualified_records: HashMap<Symbol, RecordInfo>,
-    /// Round 94: qualified mirror of `record_param_var_ids`, keyed like
-    /// `qualified_records`.
-    pub(super) qualified_record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
-    /// Round 94: qualified mirror of `enums` (`"prefix.EnumName"` keys).
-    pub(super) qualified_enums: HashMap<Symbol, EnumInfo>,
-    /// Round 94: maps `"prefix.Variant"` → the owning enum's BARE name.
-    /// The bare name is the enum's type identity (`Type::Generic(bare,
-    /// ..)` — two modules' same-named enums are conflated at the type
-    /// level, see `merge_imported_module_exports`); the matching
-    /// `EnumInfo` for field types lives in `qualified_enums` under
-    /// `"prefix.<bare>"`.
-    pub(super) qualified_variant_to_enum: HashMap<Symbol, Symbol>,
+    pub(super) next: TyVar,
+    /// The first variable of the module being checked.
+    base: TyVar,
+    /// The variables below `base` the module's check bound: an earlier
+    /// module's, which a later module may resolve (`pub let xs = []`).
+    trail: Vec<TyVar>,
+    /// The variables each checked module allocated, in the order of the
+    /// checks, and whether the module was forgotten since.
+    ranges: Vec<(crate::session::ModuleId, TyVar, bool)>,
+}
+
+impl TyVarSupply {
+    /// Resolve the variable `v` to `t`.
+    pub(super) fn bind(&mut self, v: TyVar, t: Type) {
+        if v < self.base {
+            self.trail.push(v);
+        }
+        self.subst[v] = Some(t);
+    }
+
+    /// Start the check of `module`: its variables come next.
+    fn begin(&mut self, module: crate::session::ModuleId) {
+        self.base = self.next;
+        self.trail.clear();
+        self.ranges.push((module, self.next, false));
+    }
+
+    /// Forget the check of `module`: undo what it bound of the earlier
+    /// modules' variables (`trail`), and give back the variables of the
+    /// checks at the end of the supply that are all forgotten, so a long
+    /// session (an editor, a REPL) does not grow with each check again.
+    fn forget(&mut self, module: crate::session::ModuleId, trail: &[TyVar]) {
+        for v in trail {
+            if let Some(slot) = self.subst.get_mut(*v) {
+                *slot = None;
+            }
+        }
+        for range in self.ranges.iter_mut().filter(|r| r.0 == module) {
+            range.2 = true;
+        }
+        while let Some(&(_, start, true)) = self.ranges.last() {
+            self.ranges.pop();
+            self.subst.truncate(start);
+            self.next = start;
+        }
+    }
+}
+
+/// What the checks of one session share: the type variables, the
+/// types, traits and impls every module declares (the builtins' first),
+/// and the scheme of every definition a module offers, once the module
+/// is checked. A module's own top-level values are in its check's
+/// environment while it is checked.
+#[derive(Clone, Default)]
+pub struct Tables {
+    pub(super) vars: TyVarSupply,
+    /// Declared enum types.
+    pub(super) enums: HashMap<TypeRef, EnumInfo>,
+    /// Declared record types.
+    pub(super) records: HashMap<TypeRef, RecordInfo>,
     /// Declared traits.
-    pub(super) traits: HashMap<Symbol, TraitInfo>,
-    /// Method table: (type_name, method_name) → method entry.
-    pub(super) method_table: HashMap<(Symbol, Symbol), MethodEntry>,
-    /// Tracks which (trait_name, type_name) pairs have been implemented.
-    pub(super) trait_impl_set: std::collections::HashSet<(Symbol, Symbol)>,
+    pub(super) traits: HashMap<TraitKey, TraitInfo>,
+    /// Method table: (type, method_name) → method entry. For a type and
+    /// name that the impls of two traits provide (two modules' `Show`
+    /// for `Int`), it holds the one the module being checked means (see
+    /// `TypeChecker::select_visible_methods`).
+    pub(super) method_table: HashMap<(TypeRef, Symbol), MethodEntry>,
+    /// Every method of a written trait impl, by its type, its name and
+    /// its trait.
+    pub(super) trait_methods: HashMap<(TypeRef, Symbol, TraitKey), MethodEntry>,
+    /// Tracks which (trait_name, type) pairs have been implemented.
+    pub(super) trait_impl_set: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// Round 93: `(trait_name, canonical type name)` pairs for which a
     /// user-declared record / enum CANNOT soundly support the built-in
     /// trait because some field / variant payload does not satisfy it
@@ -546,12 +454,12 @@ pub struct TypeChecker {
     /// Consulted by the operator-operand checks in `inference.rs` and to
     /// enrich "unknown method" diagnostics at `.equal()` / `.compare()`
     /// / `.hash()` call sites.
-    pub(super) auto_derive_negatives: HashMap<(Symbol, Symbol), String>,
+    pub(super) auto_derive_negatives: HashMap<(TraitKey, TypeRef), String>,
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
-    /// block's real source location instead of `Span::new(0, 0)`.
-    pub(super) trait_impl_spans: HashMap<(Symbol, Symbol), Span>,
+    /// block's real source location.
+    pub(super) trait_impl_spans: HashMap<(TraitKey, TypeRef), Span>,
     /// Maps `(trait_name, target_head)` → impl-level where-clause
     /// obligations expressed as `(target_arg_index, required_trait,
     /// required_trait_args)` triples. Populated from
@@ -569,7 +477,7 @@ pub struct TypeChecker {
     /// reject `Conv(String) for Int` (a mismatched impl) instead of
     /// silently accepting any `Conv(*) for Int`. Empty for
     /// parameterless trait bounds.
-    pub(super) impl_constraints: HashMap<(Symbol, Symbol), Vec<(usize, Symbol, Vec<Type>)>>,
+    pub(super) impl_constraints: HashMap<(TraitKey, TypeRef), Vec<(usize, TraitKey, Vec<Type>)>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`
@@ -578,7 +486,7 @@ pub struct TypeChecker {
     /// Float) is rejected — closing the soundness hole where parameterized-
     /// trait where-clause verification previously ignored trait args.
     /// Absent for parameter-less traits.
-    pub(super) impl_trait_args: HashMap<(Symbol, Symbol), Vec<Type>>,
+    pub(super) impl_trait_args: HashMap<(TraitKey, TypeRef), Vec<Type>>,
     /// Maps `(trait_name, target_head)` → the impl's full (canonicalized)
     /// self type as constructed by `register_trait_impl`. Coherence
     /// guarantees at most one user impl per key. Consulted by
@@ -594,17 +502,55 @@ pub struct TypeChecker {
     /// they keep matching every instantiation. Absent for impls that
     /// never pass through `register_trait_impl` (builtin pre-stamps,
     /// auto-derive synthesis) — the check silently skips those.
-    pub(super) impl_self_types: HashMap<(Symbol, Symbol), Type>,
-    /// Maps function names to their where clauses as (param_index, trait_name).
+    pub(super) impl_self_types: HashMap<(TraitKey, TypeRef), Type>,
+    /// Maps record type names to their type parameter TyVar ids.
+    pub(super) record_param_var_ids: HashMap<TypeRef, Vec<TyVar>>,
+    /// Phase D: declared type aliases. Tracks every alias the
+    /// typechecker has seen this run so `resolve_type_expr`
+    /// knows whether an uppercase identifier should fall through to
+    /// the builtins / record-or-enum lookup or be treated as an
+    /// alias. The actual alias body lives on
+    /// [`crate::types::canonical::Resolver`] (the session-scoped
+    /// alias / assoc-binding store the canonicaliser reads); this
+    /// set is just a fast-path so the typechecker doesn't have to go
+    /// through the resolver on every type-expr resolution.
+    pub(super) type_aliases: std::collections::HashSet<TypeRef>,
+    /// Phase D: parameter arity of each declared alias, for arity-
+    /// error diagnostics at use sites. Parallel to `type_aliases`
+    /// (the alias is in `type_aliases` iff it is a key here).
+    pub(super) type_alias_arity: HashMap<TypeRef, usize>,
+    /// The builtin types whose derived impls the builtin environment
+    /// holds already, so a check does not derive them again.
+    pub(super) builtin_derived: std::collections::HashSet<TypeRef>,
+    /// The session's canonical alias / associated-type-binding
+    /// registries. Populated as the typechecker processes user
+    /// `type ... = ...` decls and trait impls; consumed by
+    /// `canonicalize` and `canonical_head` at every read site, and by
+    /// the compiler when it keys impl methods.
+    pub(super) resolver: crate::types::canonical::Resolver,
+    /// The scheme of each definition of a checked module: a function, a
+    /// `let`, a variant's constructor, a type written as a value. (A
+    /// builtin's is the builtin scope's.)
+    pub(super) schemes: HashMap<crate::defs::DefId, Scheme>,
+    /// What each module's check added to the tables, so that it can be
+    /// forgotten when the module is checked again.
+    pub(super) rows: HashMap<crate::session::ModuleId, Rows>,
+    /// The name of each module checked, to tell two types of one name
+    /// apart in a message (`a.Pt`, `b.Pt`).
+    pub(super) module_names: HashMap<crate::session::ModuleId, Symbol>,
+}
+
+#[derive(Clone)]
+pub struct TypeChecker {
     /// Accumulated type errors.
-    pub errors: Vec<TypeError>,
+    pub errors: Vec<Diagnostic>,
     /// Tracks the types of bindings in the enclosing `loop` (if any),
     /// so that `recur` arity and types can be validated.
     pub(super) loop_binding_types: Option<Vec<Type>>,
     /// Active trait constraints for type variables in the current function body.
     /// Maps type variable → list of trait names it must satisfy.
     /// Populated during `check_fn_body` to enable method resolution on constrained vars.
-    pub(super) active_constraints: HashMap<TyVar, Vec<Symbol>>,
+    pub(super) active_constraints: HashMap<TyVar, Vec<TraitKey>>,
     /// Side channel holding trait arguments for parameterized-trait
     /// constraints, e.g. `where a: TryInto(Int)` stores `[Int]` under
     /// the key `(tyvar_of_a, TryInto)`. Populated during
@@ -612,11 +558,9 @@ pub struct TypeChecker {
     /// parallel monomorphic `active_constraints`; consumed during
     /// descriptor method resolution to substitute trait params.
     /// Absent for bare `where a: Display` entries.
-    pub(super) trait_arg_bindings: HashMap<(TyVar, Symbol), Vec<Type>>,
+    pub(super) trait_arg_bindings: HashMap<(TyVar, TraitKey), Vec<Type>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
-    /// Maps record type names to their type parameter TyVar ids.
-    pub(super) record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
     /// Maps function names to their body-constrained types (populated during check_fn_body).
     pub(super) fn_body_types: HashMap<Symbol, Type>,
     /// Deferred checks for field access on type variables (B4).
@@ -651,6 +595,9 @@ pub struct TypeChecker {
     /// event without threading a result type through every recursive call.
     /// Reset at the start of each `check_exhaustiveness` invocation.
     pub(super) exhaustiveness_depth_exceeded: std::cell::Cell<bool>,
+    /// The span of the match (or the pattern) the usefulness search is
+    /// working on: the patterns the search makes up take it.
+    pub(super) exhaustiveness_span: std::cell::Cell<Span>,
     /// Names of function declarations that were synthesized by parser
     /// error recovery (Option B). Populated in register_fn_decl when the
     /// FnDecl has `is_recovery_stub == true`. Used by the `ExprKind::Call`
@@ -659,20 +606,6 @@ pub struct TypeChecker {
     /// "undefined variable 'f'" or "function expects 2 args, got 1"
     /// errors would just be noise.
     pub(super) recovery_stub_names: std::collections::HashSet<Symbol>,
-    /// Phase D: declared type aliases. Tracks the *names* of every
-    /// alias the typechecker has seen this run so `resolve_type_expr`
-    /// knows whether an uppercase identifier should fall through to
-    /// the builtins / record-or-enum lookup or be treated as an
-    /// alias. The actual alias body lives on
-    /// [`crate::types::canonical::Resolver`] (the session-scoped
-    /// alias / assoc-binding store the canonicaliser reads); this
-    /// set is just a fast-path so the typechecker doesn't have to go
-    /// through the resolver on every type-expr resolution.
-    pub(super) type_aliases: std::collections::HashSet<Symbol>,
-    /// Phase D: parameter arity of each declared alias, for arity-
-    /// error diagnostics at use sites. Parallel to `type_aliases`
-    /// (the alias is in `type_aliases` iff its name is a key here).
-    pub(super) type_alias_arity: HashMap<Symbol, usize>,
     /// B2: span used by `resolve_type_expr` when reporting arity errors
     /// on user type annotations. Callers set this to the surrounding
     /// declaration's span (e.g. `f.span`) before calling resolve, and
@@ -700,7 +633,7 @@ pub struct TypeChecker {
     /// constraints is instantiated, the fresh type variables inherit the
     /// constraints here. `generalize` then consults this map to propagate
     /// constraints into newly created schemes (e.g. `let f = constrained_fn`).
-    pub(super) tyvar_trait_constraints: HashMap<TyVar, Vec<Symbol>>,
+    pub(super) tyvar_trait_constraints: HashMap<TyVar, Vec<TraitKey>>,
     /// Set by the FieldAccess arm of infer_expr: `true` when the last
     /// FieldAccess resolved via method dispatch (trait method table),
     /// `false` when it resolved via record-field or module-qualified
@@ -708,44 +641,63 @@ pub struct TypeChecker {
     /// callee to decide arity semantics (method call adds implicit self;
     /// field/module calls do not).
     pub(super) last_field_access_was_method: bool,
+    /// The trait whose method the field access being inferred calls,
+    /// which `infer_expr` records on the access (`Expr::res`): the
+    /// compiler keys the call by it.
+    pub(super) method_trait: Option<TraitKey>,
+    /// The trait the method call being inferred names already: a derived
+    /// impl's body calls the builtin trait's method of a field
+    /// (`display` of Display), whatever other trait has a method of the
+    /// name.
+    pub(super) forced_trait: Option<TraitKey>,
+    /// The traits of the method calls resolved in the deferred pass, by
+    /// the span of the access; `resolve_all_types` records each on its
+    /// access.
+    pub(super) deferred_method_traits: HashMap<Span, TraitKey>,
+    /// The methods the impls of two or more traits provide for one type,
+    /// with the traits, where this module sees none or several of the
+    /// traits: a call of one is ambiguous.
+    pub(super) ambiguous_methods: HashMap<(TypeRef, Symbol), Vec<TraitKey>>,
+    /// The traits the module names by its imports (`import m.{ T }`),
+    /// and the modules it imports: their traits it sees too.
+    pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
+    pub(super) seen_modules: std::collections::HashSet<crate::session::ModuleId>,
     /// Trait-orphan check (round 63 item 5): the package symbol whose
     /// source we're currently typechecking. `Some(pkg)` is set by
-    /// `check_with_package_and_imports_options_resolver` (the
-    /// production entrypoint used by the compiler, CLI, and LSP) when
-    /// the typechecker is invoked for an imported module so per-package
+    /// `check_module` (the entry point the session checks every module
+    /// of a program with) so per-package
     /// decls (traits/enums/records) are stamped with the right
-    /// `defined_in`. (`check_with_package` is a test-only convenience
-    /// wrapper around the same plumbing.) `None` means "scratch /
-    /// REPL / ad-hoc script": treat every decl as local (sentinel
+    /// `defined_in`. `None` means a host module: treat every decl as
+    /// local (sentinel
     /// `__builtin__`) so the orphan rule never trips on a program that
     /// has no package context.
     pub(super) current_package: Option<Symbol>,
-    /// Round 56 item 4: the set of module names visible through `import`
-    /// statements in the current program. Populated at the start of
-    /// `check()`. Used by the `FieldAccess` path to decide whether
-    /// `list.sum(...)` should typecheck or emit an
-    /// "module 'X' is not imported; add `import X`" error. Stdlib
-    /// module names (`list`, `string`, ...) have all their qualified
-    /// members pre-registered in the environment, so without this
-    /// gate they'd typecheck silently even when never imported; the
-    /// compiler would then emit the import-recommendation at its own
-    /// layer but the typechecker said nothing. The audit decision
-    /// (round 52 item 4) is that stdlib should be opaque until
-    /// imported, so this gate fires at typecheck time.
-    ///
-    /// Entries:
-    ///   - `import list` / `import list.{sum}` → contains `list`.
-    ///   - `import list as l` → contains `l` (alias), NOT `list` —
-    ///     the user renamed the module, so its original name is no
-    ///     longer in scope.
-    pub(super) imported_modules: std::collections::HashSet<Symbol>,
-    /// Cross-module typechecking (round 64 item 6A): exports from
-    /// previously-typechecked sibling modules, keyed by module name as
-    /// it appears in `import` statements. Populated by callers (the
-    /// compiler) before `check_program` runs so the import-decl loop
-    /// can consult this map instead of emitting "unknown module"
-    /// warnings. Empty for ad-hoc scripts and the REPL.
-    pub(super) module_exports: HashMap<Symbol, ModuleExports>,
+    /// The session's definitions, which the resolver's `Res` slots
+    /// name. `None` for a checker that has no program (the builtins).
+    pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
+    /// The module checked.
+    pub(super) module: crate::session::ModuleId,
+    /// Its name, for diagnostics.
+    pub(super) module_name: Symbol,
+    /// The types the module's own declarations declare, by name: what a
+    /// declaration (which has no resolution of its own) and a name the
+    /// checker writes itself refer to.
+    pub(super) own_types: HashMap<Symbol, TypeRef>,
+    /// The traits the module's own declarations declare, by name.
+    pub(super) own_traits: HashMap<Symbol, TraitKey>,
+    /// The module's type declarations that are rejected (a reserved or
+    /// builtin type's name): a use of one, or of a variant of one, is
+    /// already reported, so it is an error type, silently.
+    pub(super) rejected_types: std::collections::HashSet<TypeRef>,
+    /// The methods of the impls whose trait or type the resolver resolved
+    /// to nothing: a call of one is not reported again as unknown.
+    pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
+    /// Whether the module is a REPL cell: its `let`s are offered to the
+    /// next cell, which may fix what is unknown of their types.
+    pub(super) is_cell: bool,
+    /// Whether the program is a host module's signatures: its
+    /// functions have no bodies to check.
+    pub(super) signatures_only: bool,
     /// Round 64 item 6B (annotated polymorphic recursion): names of
     /// `fn` declarations whose signature is fully annotated (every
     /// parameter has an explicit type AND the return type is
@@ -781,18 +733,9 @@ pub struct TypeChecker {
     /// param to `Int` and then surfacing a "type mismatch" at the
     /// caller) keep firing.
     pub(super) recursive_fn_names: std::collections::HashSet<Symbol>,
-    /// Compile-session-scoped storage for the canonical alias /
-    /// associated-type-binding registries. Populated as the
-    /// typechecker processes user `type ... = ...` decls and trait
-    /// impls; consumed by `canonicalize` and `canonicalize_type_name`
-    /// at every read site. Cross-module sharing happens by extracting
-    /// this field from one TypeChecker and constructing the next via
-    /// `with_resolver` — the CLI compile pipeline does this so module
-    /// B importing module A still sees A's aliases. LSP pulls each
-    /// allocate a fresh `Resolver` so per-pull state cannot leak
-    /// across unrelated documents. See commit 6364552 for the
-    /// migration from process-global `RwLock<HashMap>` statics.
-    pub(crate) resolver: crate::types::canonical::Resolver,
+    /// What the checks of a session share; see [`Tables`]. Moved in
+    /// for one module's check and out again after it.
+    pub(super) tables: Tables,
 }
 
 impl Default for TypeChecker {
@@ -804,73 +747,50 @@ impl Default for TypeChecker {
 impl TypeChecker {
     pub fn new() -> Self {
         TypeChecker {
-            subst: Vec::new(),
-            next_var: 0,
-            enums: HashMap::new(),
-            variant_to_enum: HashMap::new(),
-            records: HashMap::new(),
-            qualified_records: HashMap::new(),
-            qualified_record_param_var_ids: HashMap::new(),
-            qualified_enums: HashMap::new(),
-            qualified_variant_to_enum: HashMap::new(),
-            traits: HashMap::new(),
-            method_table: HashMap::new(),
-            trait_impl_set: std::collections::HashSet::new(),
-            auto_derive_negatives: HashMap::new(),
-            trait_impl_spans: HashMap::new(),
-            impl_constraints: HashMap::new(),
-            impl_trait_args: HashMap::new(),
-            impl_self_types: HashMap::new(),
             errors: Vec::new(),
             loop_binding_types: None,
             active_constraints: HashMap::new(),
             trait_arg_bindings: HashMap::new(),
             current_return_type: None,
-            record_param_var_ids: HashMap::new(),
             fn_body_types: HashMap::new(),
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
             pending_question_marks: Vec::new(),
             current_qmark_spans: Vec::new(),
             exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
+            exhaustiveness_span: std::cell::Cell::new(Span::BUILTIN),
             recovery_stub_names: std::collections::HashSet::new(),
-            type_aliases: std::collections::HashSet::new(),
-            type_alias_arity: HashMap::new(),
             current_type_anno_span: None,
             pending_where_constraints: Vec::new(),
             current_fn_param_tyvars: Vec::new(),
             tyvar_trait_constraints: HashMap::new(),
             last_field_access_was_method: false,
+            method_trait: None,
+            forced_trait: None,
+            deferred_method_traits: HashMap::new(),
+            ambiguous_methods: HashMap::new(),
+            seen_traits: std::collections::HashSet::new(),
+            seen_modules: std::collections::HashSet::new(),
             current_package: None,
-            imported_modules: std::collections::HashSet::new(),
-            module_exports: HashMap::new(),
+            defs: None,
+            module: crate::session::ModuleId(0),
+            module_name: intern("main"),
+            own_types: HashMap::new(),
+            own_traits: HashMap::new(),
+            rejected_types: std::collections::HashSet::new(),
+            unresolved_impl_methods: std::collections::HashSet::new(),
+            is_cell: false,
+            signatures_only: false,
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
             recursive_fn_names: std::collections::HashSet::new(),
-            resolver: crate::types::canonical::Resolver::new(),
+            tables: Tables::default(),
         }
-    }
-
-    /// Construct a `TypeChecker` that takes ownership of an existing
-    /// `Resolver`. Used by the cross-module entry points so the
-    /// session-scoped alias / assoc-binding registries are shared
-    /// across each module's typecheck.
-    pub fn with_resolver(resolver: crate::types::canonical::Resolver) -> Self {
-        let mut tc = Self::new();
-        tc.resolver = resolver;
-        tc
-    }
-
-    /// Detach and return the resolver, leaving the typechecker with a
-    /// fresh empty one. Used by the cross-module entry points to
-    /// recover the shared resolver after typechecking finishes.
-    pub fn take_resolver(&mut self) -> crate::types::canonical::Resolver {
-        std::mem::take(&mut self.resolver)
     }
 
     /// Sentinel package symbol used as the `defined_in` for built-in
     /// trait/enum/record entries (and for user decls processed without
-    /// an enclosing package, i.e. ad-hoc scripts and the REPL). Distinct
+    /// an enclosing package, i.e. a check outside a session). Distinct
     /// from any real package name because user package names are
     /// validated against [a-z][a-z0-9_-]* by the manifest layer, so a
     /// double-underscore name cannot collide.
@@ -885,12 +805,66 @@ impl TypeChecker {
         self.current_package.unwrap_or_else(Self::builtin_pkg)
     }
 
+    /// The trait the module's own declaration `name` declares; a
+    /// builtin trait's declaration (the builtin environment) declares
+    /// the builtin trait.
+    pub(super) fn own_trait(&self, name: Symbol) -> TraitKey {
+        if let Some(t) = self.own_traits.get(&name) {
+            return *t;
+        }
+        let id = crate::defs::builtin_trait_id(&resolve(name))
+            .unwrap_or_else(|| panic!("the module declares a trait '{name}'"));
+        TraitKey { id, name }
+    }
+
+    /// The type the module's own declaration `name` declares.
+    pub(super) fn own_type(&self, name: Symbol) -> TypeRef {
+        *self
+            .own_types
+            .get(&name)
+            .unwrap_or_else(|| panic!("the module declares a type '{name}'"))
+    }
+
+    /// Enter the types the module's declarations declare, from the
+    /// definitions the resolver entered for them.
+    fn enter_own_types(&mut self) {
+        let Some(defs) = &self.defs else {
+            return;
+        };
+        let mut types = HashMap::new();
+        let mut traits = HashMap::new();
+        for id in defs.of_module(self.module) {
+            let def = defs.get(*id);
+            let name = def.name;
+            match def.kind {
+                crate::defs::DefKind::Type(ty) => {
+                    types.insert(name, TypeRef { id: ty, name });
+                }
+                crate::defs::DefKind::TypeAlias => {
+                    types.insert(
+                        name,
+                        TypeRef {
+                            id: crate::defs::TypeId(*id),
+                            name,
+                        },
+                    );
+                }
+                crate::defs::DefKind::Trait(t) => {
+                    traits.insert(name, TraitKey { id: t, name });
+                }
+                _ => {}
+            }
+        }
+        self.own_types = types;
+        self.own_traits = traits;
+    }
+
     // ── Fresh variables ─────────────────────────────────────────────
 
     pub(super) fn fresh_var(&mut self) -> Type {
-        let v = self.next_var;
-        self.next_var += 1;
-        self.subst.push(None);
+        let v = self.tables.vars.next;
+        self.tables.vars.next += 1;
+        self.tables.vars.subst.push(None);
         Type::Var(v)
     }
 
@@ -898,9 +872,9 @@ impl TypeChecker {
     /// Used by row polymorphism for `RowTail::Var(id)` where the id is
     /// the binding target rather than a type position.
     pub(super) fn fresh_tyvar_id(&mut self) -> TyVar {
-        let v = self.next_var;
-        self.next_var += 1;
-        self.subst.push(None);
+        let v = self.tables.vars.next;
+        self.tables.vars.next += 1;
+        self.tables.vars.subst.push(None);
         v
     }
 
@@ -910,7 +884,7 @@ impl TypeChecker {
     pub(super) fn apply(&self, ty: &Type) -> Type {
         match ty {
             Type::Var(v) => {
-                if let Some(Some(resolved)) = self.subst.get(*v) {
+                if let Some(Some(resolved)) = self.tables.vars.subst.get(*v) {
                     self.apply(resolved)
                 } else {
                     ty.clone()
@@ -957,7 +931,7 @@ impl TypeChecker {
                 let new_tail = match tail {
                     RowTail::Closed => RowTail::Closed,
                     RowTail::Var(v) => {
-                        if let Some(Some(resolved)) = self.subst.get(*v) {
+                        if let Some(Some(resolved)) = self.tables.vars.subst.get(*v) {
                             let resolved = self.apply(resolved);
                             if let Type::AnonRecord {
                                 fields: rfields,
@@ -1012,11 +986,11 @@ impl TypeChecker {
     /// unification.
     fn instantiate_record_fields_with_args(
         &mut self,
-        name: Symbol,
+        name: TypeRef,
         args: &[Type],
     ) -> Vec<(Symbol, Type)> {
-        if let Some(rec_info) = self.records.get(&name).cloned() {
-            if let Some(param_var_ids) = self.record_param_var_ids.get(&name).cloned() {
+        if let Some(rec_info) = self.tables.records.get(&name).cloned() {
+            if let Some(param_var_ids) = self.tables.record_param_var_ids.get(&name).cloned() {
                 let mapping: HashMap<TyVar, Type> = if args.len() == param_var_ids.len() {
                     param_var_ids
                         .iter()
@@ -1102,6 +1076,7 @@ impl TypeChecker {
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
                     self.error(
+                        Code::NoSuchField,
                         format!(
                             "record literal has unexpected field{} not declared in target type: {}",
                             if names.len() == 1 { "" } else { "s" },
@@ -1116,6 +1091,7 @@ impl TypeChecker {
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
                     self.error(
+                        Code::MissingField,
                         format!(
                             "record literal is missing required field{}: {}",
                             if names.len() == 1 { "" } else { "s" },
@@ -1143,6 +1119,7 @@ impl TypeChecker {
                 // satisfy.
                 if !only_in_1.is_empty() || !only_in_2.is_empty() {
                     self.error(
+                        Code::TypeMismatch,
                         "row variable shared between two records with mismatched field sets"
                             .to_string(),
                         span,
@@ -1163,16 +1140,16 @@ impl TypeChecker {
                     tail: new_tail,
                 };
                 if !occurs_in(v1, &to_v1) {
-                    self.subst[v1] = Some(to_v1);
+                    self.tables.vars.bind(v1, to_v1);
                 } else {
                     let msg = Self::infinite_type_message(&to_v1);
-                    self.error(msg, span);
+                    self.error(Code::InfiniteType, msg, span);
                 }
                 if !occurs_in(v2, &to_v2) {
-                    self.subst[v2] = Some(to_v2);
+                    self.tables.vars.bind(v2, to_v2);
                 } else {
                     let msg = Self::infinite_type_message(&to_v2);
-                    self.error(msg, span);
+                    self.error(Code::InfiniteType, msg, span);
                 }
             }
         }
@@ -1205,6 +1182,7 @@ impl TypeChecker {
                 .map(|s| crate::intern::resolve(*s))
                 .collect();
             self.error(
+                Code::TypeMismatch,
                 format!(
                     "record open side has fields not present in closed target: {}",
                     names.join(", ")
@@ -1218,9 +1196,13 @@ impl TypeChecker {
             tail: RowTail::Closed,
         };
         if !occurs_in(v, &leftover) {
-            self.subst[v] = Some(leftover);
+            self.tables.vars.bind(v, leftover);
         } else {
-            self.error(Self::infinite_type_message(&leftover), span);
+            self.error(
+                Code::InfiniteType,
+                Self::infinite_type_message(&leftover),
+                span,
+            );
         }
     }
 
@@ -1261,6 +1243,7 @@ impl TypeChecker {
                 .map(|s| crate::intern::resolve(*s))
                 .collect();
             self.error(
+                Code::NoSuchField,
                 format!(
                     "anon record has fields not declared on the nominal record: {}",
                     names.join(", ")
@@ -1277,6 +1260,7 @@ impl TypeChecker {
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
                     self.error(
+                        Code::MissingField,
                         format!(
                             "anon record is missing fields the nominal record requires: {}",
                             names.join(", ")
@@ -1291,9 +1275,13 @@ impl TypeChecker {
                     tail: RowTail::Closed,
                 };
                 if !occurs_in(v, &leftover) {
-                    self.subst[v] = Some(leftover);
+                    self.tables.vars.bind(v, leftover);
                 } else {
-                    self.error(Self::infinite_type_message(&leftover), span);
+                    self.error(
+                        Code::InfiniteType,
+                        Self::infinite_type_message(&leftover),
+                        span,
+                    );
                 }
             }
         }
@@ -1311,12 +1299,12 @@ impl TypeChecker {
         // is an AssocProj — keeps the cost out of the hot unification
         // path for normal types.
         let t1 = if matches!(&t1, Type::AssocProj { .. }) {
-            crate::types::canonical::canonicalize(&self.resolver, &self.apply(&t1))
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(&t1))
         } else {
             t1
         };
         let t2 = if matches!(&t2, Type::AssocProj { .. }) {
-            crate::types::canonical::canonicalize(&self.resolver, &self.apply(&t2))
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(&t2))
         } else {
             t2
         };
@@ -1339,11 +1327,12 @@ impl TypeChecker {
                     // type `a`. The descriptor is the *type*, not an
                     // instance of it.
                     if let Type::Generic(name, args) = t
-                        && resolve(*name) == "TypeOf"
+                        && name.is_builtin(crate::defs::TYPE_OF)
                         && args.len() == 1
                         && matches!(&args[0], Type::Var(inner) if inner == v)
                     {
                         self.error(
+                            Code::TypeMismatch,
                             "cannot return a `type a` parameter as a value of type `a` — \
                              the parameter is a type descriptor, not an instance. \
                              Construct an `a` in the body instead."
@@ -1351,10 +1340,10 @@ impl TypeChecker {
                             span,
                         );
                     } else {
-                        self.error(Self::infinite_type_message(t), span);
+                        self.error(Code::InfiniteType, Self::infinite_type_message(t), span);
                     }
                 } else {
-                    self.subst[*v] = Some(t.clone());
+                    self.tables.vars.bind(*v, t.clone());
                 }
             }
 
@@ -1368,6 +1357,7 @@ impl TypeChecker {
                     // reversed the diagnostic.
                     let (exp, got) = (p2.len(), p1.len());
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "function expects {exp} {arg_word}, got {got}",
                             arg_word = if exp == 1 { "argument" } else { "arguments" }
@@ -1390,12 +1380,12 @@ impl TypeChecker {
             // which has no element-level constraints to match against
             // the empty Generic args. Treat the bare-`Fn` Generic as a
             // wildcard for any function shape so user impls dispatch.
-            // `canonicalize_type_name` collapses `Fun → Fn` at
+            // `canonical_head` collapses `Fun → Fn` at
             // registration time, so the deprecated surface alias is
             // covered by the same arm.
             (Type::Fun(_, _), Type::Generic(name, args))
             | (Type::Generic(name, args), Type::Fun(_, _))
-                if args.is_empty() && resolve(*name) == "Fn" => {}
+                if args.is_empty() && name.is_builtin("Fn") => {}
 
             // `trait T for Tuple { ... }` likewise registers a self_type
             // of `Generic("Tuple", [])` — tuples are variadic, so unlike
@@ -1410,7 +1400,7 @@ impl TypeChecker {
             // trait-impl self-types, mirroring the `Fn` arm above.
             (Type::Tuple(_), Type::Generic(name, args))
             | (Type::Generic(name, args), Type::Tuple(_))
-                if args.is_empty() && resolve(*name) == "Tuple" => {}
+                if args.is_empty() && name.is_builtin("Tuple") => {}
 
             (Type::List(a), Type::List(b)) => {
                 self.unify(a, b, span);
@@ -1449,6 +1439,7 @@ impl TypeChecker {
                     // t2 (=b) is the "expected" side. Earlier wording
                     // "expected {a.len()}, got {b.len()}" reversed this.
                     self.error(
+                        Code::TypeMismatch,
                         format!(
                             "tuple length mismatch: expected {}, got {}",
                             b.len(),
@@ -1465,8 +1456,10 @@ impl TypeChecker {
 
             (Type::Record(n1, f1), Type::Record(n2, f2)) => {
                 if n1 != n2 {
+                    let (got, expected) = self.show_apart(&t1, &t2);
                     self.error(
-                        format!("record type mismatch: expected {n2}, got {n1}"),
+                        Code::TypeMismatch,
+                        format!("record type mismatch: expected {expected}, got {got}"),
                         span,
                     );
                 } else {
@@ -1483,7 +1476,7 @@ impl TypeChecker {
                         if let Some((_, t2_inner)) = f2.iter().find(|(n, _)| n == name) {
                             self.unify(t1_inner, t2_inner, span);
                         } else {
-                            self.error(
+                            self.error(Code::NoSuchField,
                                 format!(
                                     "unexpected field '{name}' in record; type '{n1}' has no such field"
                                 ),
@@ -1494,6 +1487,7 @@ impl TypeChecker {
                     for (name, _t2_inner) in f2 {
                         if !f1.iter().any(|(n, _)| n == name) {
                             self.error(
+                                Code::MissingField,
                                 format!(
                                     "missing field '{name}' in record; type '{n1}' requires it"
                                 ),
@@ -1511,8 +1505,11 @@ impl TypeChecker {
                 // `type Point { ... }` with no params — `record_param_var_ids`
                 // is absent for parameterless records, so the silent no-op
                 // path swallowed the arity violation. Reject explicitly.
-                if !self.record_param_var_ids.contains_key(n1) && self.records.contains_key(n1) {
+                if !self.tables.record_param_var_ids.contains_key(n1)
+                    && self.tables.records.contains_key(n1)
+                {
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected 0, got {}",
                             a2.len()
@@ -1522,8 +1519,8 @@ impl TypeChecker {
                     return;
                 }
                 if let (Some(rec_info), Some(param_var_ids)) = (
-                    self.records.get(n1).cloned(),
-                    self.record_param_var_ids.get(n1).cloned(),
+                    self.tables.records.get(n1).cloned(),
+                    self.tables.record_param_var_ids.get(n1).cloned(),
                 ) && param_var_ids.len() == a2.len()
                 {
                     for (field_name, field_template_ty) in &rec_info.fields {
@@ -1542,12 +1539,14 @@ impl TypeChecker {
                 // silently accepting it would let distinct uses pollute
                 // the shared template TyVars (T1 audit fix).
                 let expected = self
+                    .tables
                     .record_param_var_ids
                     .get(n1)
                     .map(|v| v.len())
                     .unwrap_or(0);
                 if expected != 0 {
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected {expected}, got 0"
                         ),
@@ -1557,8 +1556,11 @@ impl TypeChecker {
             }
             (Type::Generic(n1, a1), Type::Record(n2, f2)) if n1 == n2 && !a1.is_empty() => {
                 // B2 (round 60) mirror: parameterless record with Generic args.
-                if !self.record_param_var_ids.contains_key(n2) && self.records.contains_key(n2) {
+                if !self.tables.record_param_var_ids.contains_key(n2)
+                    && self.tables.records.contains_key(n2)
+                {
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n2}: expected 0, got {}",
                             a1.len()
@@ -1568,8 +1570,8 @@ impl TypeChecker {
                     return;
                 }
                 if let (Some(rec_info), Some(param_var_ids)) = (
-                    self.records.get(n2).cloned(),
-                    self.record_param_var_ids.get(n2).cloned(),
+                    self.tables.records.get(n2).cloned(),
+                    self.tables.record_param_var_ids.get(n2).cloned(),
                 ) && param_var_ids.len() == a1.len()
                 {
                     for (field_name, field_template_ty) in &rec_info.fields {
@@ -1584,12 +1586,14 @@ impl TypeChecker {
             (Type::Generic(n1, a1), Type::Record(n2, _)) if n1 == n2 && a1.is_empty() => {
                 // Mirror image of the Record/Generic arm above.
                 let expected = self
+                    .tables
                     .record_param_var_ids
                     .get(n2)
                     .map(|v| v.len())
                     .unwrap_or(0);
                 if expected != 0 {
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n2}: expected {expected}, got 0"
                         ),
@@ -1637,7 +1641,7 @@ impl TypeChecker {
                     tail: at,
                 },
                 Type::Generic(name, args),
-            ) if self.records.contains_key(name) => {
+            ) if self.tables.records.contains_key(name) => {
                 let nf_inst = self.instantiate_record_fields_with_args(*name, args);
                 self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, span);
             }
@@ -1647,7 +1651,7 @@ impl TypeChecker {
                     fields: af,
                     tail: at,
                 },
-            ) if self.records.contains_key(name) => {
+            ) if self.tables.records.contains_key(name) => {
                 let nf_inst = self.instantiate_record_fields_with_args(*name, args);
                 self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, span);
             }
@@ -1661,18 +1665,22 @@ impl TypeChecker {
                     // `Type` values so `Type::Display`'s args rendering
                     // and TypeOf special-casing apply (mirrors the
                     // catch-all arm at the bottom of `unify`).
-                    let mut msg = format!("type mismatch: expected {t2}, got {t1}");
-                    if let Some(hint) = Self::chain_hint(&t1, &t2) {
-                        msg.push('\n');
-                        msg.push_str(&hint);
-                    }
-                    self.error(msg, span);
+                    let (got, expected) = self.show_apart(&t1, &t2);
+                    let mut d = Diagnostic::error(
+                        Code::TypeMismatch,
+                        span,
+                        format!("type mismatch: expected {expected}, got {got}"),
+                    );
+                    d.help.extend(Self::chain_hint(&t1, &t2));
+                    Self::add_ok_wrap_fix(&mut d, &t1, &t2);
+                    self.errors.push(d);
                 } else if a1.len() != a2.len() {
                     // Directional convention: t1 (=a1) is the "got" side,
                     // t2 (=a2) is the "expected" side (see the Record arm
                     // above and the unify() callsite convention). Earlier
                     // wording had a1/a2 reversed.
                     self.error(
+                        Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected {}, got {}",
                             a2.len(),
@@ -1717,7 +1725,11 @@ impl TypeChecker {
                     // Different trait or different member: genuinely
                     // distinct abstract types. Directional convention:
                     // t1 is the "got" side, t2 the "expected" side.
-                    self.error(format!("type mismatch: expected {t2}, got {t1}"), span);
+                    self.error(
+                        Code::TypeMismatch,
+                        format!("type mismatch: expected {t2}, got {t1}"),
+                        span,
+                    );
                 }
             }
 
@@ -1735,6 +1747,7 @@ impl TypeChecker {
                 match (&t1, &t2) {
                     (Type::Var(_), other) | (other, Type::Var(_)) => {
                         self.error(
+                            Code::AmbiguousType,
                             format!(
                                 "cannot determine a consistent type here; \
                                  one side resolved to `{other}` but the other \
@@ -1744,12 +1757,15 @@ impl TypeChecker {
                         );
                     }
                     _ => {
-                        let mut msg = format!("type mismatch: expected {t2}, got {t1}");
-                        if let Some(hint) = Self::chain_hint(&t1, &t2) {
-                            msg.push('\n');
-                            msg.push_str(&hint);
-                        }
-                        self.error(msg, span);
+                        let (got, expected) = self.show_apart(&t1, &t2);
+                        let mut d = Diagnostic::error(
+                            Code::TypeMismatch,
+                            span,
+                            format!("type mismatch: expected {expected}, got {got}"),
+                        );
+                        d.help.extend(Self::chain_hint(&t1, &t2));
+                        Self::add_ok_wrap_fix(&mut d, &t1, &t2);
+                        self.errors.push(d);
                     }
                 }
             }
@@ -1777,7 +1793,7 @@ impl TypeChecker {
             .collect();
         // Collect constraints: for each entry in tyvar_trait_constraints,
         // resolve the tyvar and check if it matches a quantified var.
-        let mut constraints: Vec<(TyVar, Symbol)> = Vec::new();
+        let mut constraints: Vec<(TyVar, TraitKey)> = Vec::new();
         if !vars.is_empty() {
             for (&tv, trait_names) in &self.tyvar_trait_constraints {
                 let resolved = self.apply(&Type::Var(tv));
@@ -1828,7 +1844,7 @@ impl TypeChecker {
 
     /// Instantiate a `MethodEntry`'s template type AND its where-clause
     /// constraints through a single shared substitution, so the returned
-    /// `(Type, Vec<(TyVar, Symbol)>)` pair uses consistent fresh TyVars.
+    /// `(Type, Vec<(TyVar, TraitKey)>)` pair uses consistent fresh TyVars.
     ///
     /// Constraint TyVars that appear in `method_type`'s free-var set map
     /// through the same fresh-var substitution as the type itself; any
@@ -1844,7 +1860,7 @@ impl TypeChecker {
     pub(super) fn instantiate_method_entry(
         &mut self,
         entry: &MethodEntry,
-    ) -> (Type, Vec<(TyVar, Symbol, Vec<Type>)>) {
+    ) -> (Type, Vec<(TyVar, TraitKey, Vec<Type>)>) {
         let ty = self.apply(&entry.method_type);
         let mut fvs: Vec<TyVar> = free_vars_in(&ty);
         for (tv, _, args) in &entry.method_constraints {
@@ -1876,7 +1892,7 @@ impl TypeChecker {
             mapping.insert(v, self.fresh_var());
         }
         let new_ty = substitute_vars(&ty, &mapping);
-        let new_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = entry
+        let new_constraints: Vec<(TyVar, TraitKey, Vec<Type>)> = entry
             .method_constraints
             .iter()
             .map(|(tv, trait_name, args)| {
@@ -1910,13 +1926,13 @@ impl TypeChecker {
     pub(super) fn instantiate_with_constraints(
         &mut self,
         scheme: &Scheme,
-    ) -> (Type, Vec<(TyVar, Symbol)>) {
+    ) -> (Type, Vec<(TyVar, TraitKey)>) {
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         for &v in &scheme.vars {
             mapping.insert(v, self.fresh_var());
         }
         let ty = substitute_vars(&scheme.ty, &mapping);
-        let constraints: Vec<(TyVar, Symbol)> = scheme
+        let constraints: Vec<(TyVar, TraitKey)> = scheme
             .constraints
             .iter()
             .map(|(v, trait_name)| match mapping.get(v) {
@@ -1976,9 +1992,8 @@ impl TypeChecker {
 
     // ── Type name for trait impl matching ────────────────────────────
 
-    /// Convert a resolved Type to a type name string suitable for matching
-    /// against `TraitImplInfo.target_type`. Returns `None` if the type is
-    /// unresolved (still a type variable) or cannot be mapped to a name.
+    /// The type a resolved Type's impls are keyed by. Returns `None` if
+    /// the type is unresolved (still a type variable) or has no head.
     ///
     /// Phase B: routes through `crate::types::canonical::canonicalize` so
     /// that `Range(T)` collapses to `List(T)` before name lookup. The
@@ -1987,41 +2002,9 @@ impl TypeChecker {
     /// source of truth for the dispatch-name oracle on the typechecker
     /// side; the VM and compiler will reach the same conclusion via
     /// `canonical_name` in phase C.
-    pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<Symbol> {
-        let ty = crate::types::canonical::canonicalize(&self.resolver, ty);
+    pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<TypeRef> {
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
         match &ty {
-            Type::Int => Some(intern("Int")),
-            Type::Float => Some(intern("Float")),
-            Type::Bool => Some(intern("Bool")),
-            Type::String => Some(intern("String")),
-            // Round 75 TYPE-3: canonical name for Unit is "Unit" (not
-            // "()"). The canonical direction is `() → Unit`, set by
-            // `crate::types::canonical::canonicalize_type_name` so VM
-            // dispatch (`dispatch_name_for_value(&Value::Unit) = "Unit"`)
-            // and trait-impl registration agree on the same key.
-            Type::Unit => Some(intern("Unit")),
-            Type::Record(name, _) => Some(*name),
-            Type::Generic(name, _) => Some(*name),
-            Type::List(_) => Some(intern("List")),
-            Type::Map(_, _) => Some(intern("Map")),
-            Type::Set(_) => Some(intern("Set")),
-            Type::Channel(_) => Some(intern("Channel")),
-            Type::Tuple(_) => Some(intern("Tuple")),
-            // Function values resolve to the canonical name `"Fn"` so
-            // `where a: Trait` constraints route into the same impl table
-            // the compiler emits globals for and `dispatch_name_for_value`
-            // returns at runtime. The surface keyword is `Fn` (matching
-            // `Type::Fun`'s Display impl); `"Fun"` was a transient name
-            // chosen before the canonical-name unification (round 71
-            // follow-up). `canonicalize_type_name` collapses any user
-            // `trait T for Fun` registration onto the same `"Fn"` key.
-            Type::Fun(_, _) => Some(intern("Fn")),
-            Type::Var(_) => None, // unresolved
-            // Range was eliminated by canonicalize above; this arm is
-            // unreachable. Phase B deletion target.
-            Type::Range(_) => unreachable!(
-                "canonicalize should have collapsed Range(_) to List(_) before this match"
-            ),
             // Anonymous (structural) records are CONCRETE types — they
             // carry a definite shape — but no user impl can ever target
             // them (impls bind to nominal heads only). Round 73 B2:
@@ -2029,18 +2012,16 @@ impl TypeChecker {
             // its callers in inference.rs treat AnonRecord receivers as
             // "still polymorphic, defer", which silently bypassed
             // user-trait `where` constraints — a soundness hole.
-            // Returning a synthetic name makes the existing
+            // Returning the builtin `<anon>` type makes the existing
             // `trait_impl_set.contains(...)` check fire the correct
-            // "type '<anon>' does not implement trait 'X'" diagnostic.
-            // The synthetic name `"<anon>"` matches
-            // `crate::types::canonical::canonical_name`'s key for
-            // AnonRecord and starts with `<`, which is not a valid
-            // leading character for a surface-syntax type identifier
-            // (parser requires uppercase ASCII letters), so no user
-            // `impl Trait for X { ... }` registration can ever collide
-            // with this key.
-            Type::AnonRecord { .. } => Some(intern("<anon>")),
-            _ => None,
+            // "type '<anon>' does not implement trait 'X'" diagnostic;
+            // no program can name that type, so no impl targets it.
+            Type::AnonRecord { .. } => Some(TypeRef::builtin(crate::defs::ANON_RECORD)),
+            // Function values resolve to `Fn`, and `Unit` is `Unit`, so
+            // `where a: Trait` constraints route into the same impl
+            // table the compiler keys impl methods by and
+            // `dispatch_type_for_value` returns at runtime.
+            _ => head_of(&ty),
         }
     }
 
@@ -2056,7 +2037,7 @@ impl TypeChecker {
     /// Phase B: canonicalise the input first so a Range receiver supplies
     /// its element type via the List arm rather than a dedicated Range arm.
     pub(super) fn type_args_of(&self, ty: &Type) -> Vec<Type> {
-        let ty = crate::types::canonical::canonicalize(&self.resolver, ty);
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
         match &ty {
             Type::Generic(_, args) => args.clone(),
             Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
@@ -2104,7 +2085,7 @@ impl TypeChecker {
     /// wrapping; finite types finish in O(depth).
     pub(super) fn verify_trait_obligation(
         &mut self,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         bound_trait_args: &[Type],
         ty: &Type,
         span: Span,
@@ -2118,11 +2099,17 @@ impl TypeChecker {
             // reporting (e.g. via active_constraints or pending_where).
             return;
         };
-        if !self.trait_impl_set.contains(&(trait_name, type_name)) {
+        if !self
+            .tables
+            .trait_impl_set
+            .contains(&(trait_name, type_name))
+        {
             self.error(
+                Code::MissingTraitImpl,
                 format!(
                     "type '{}' does not implement trait '{}'",
-                    type_name, trait_name
+                    self.show_type(&Type::Generic(type_name, vec![])),
+                    self.show_trait(trait_name)
                 ),
                 span,
             );
@@ -2154,16 +2141,25 @@ impl TypeChecker {
         // verified, and the Fn in slot 1 died at the runtime Display
         // gate. `impl_self_args_consistent` threads a binding map across
         // the slots so a repeated binder must see equal types.
-        if let Some(impl_self) = self.impl_self_types.get(&(trait_name, type_name)).cloned() {
+        if let Some(impl_self) = self
+            .tables
+            .impl_self_types
+            .get(&(trait_name, type_name))
+            .cloned()
+        {
             let obligated_args = self.type_args_of(&resolved);
             let impl_args = self.type_args_of(&impl_self);
             if obligated_args.len() == impl_args.len()
                 && !self.impl_self_args_consistent(&obligated_args, &impl_args)
             {
+                let (obligated, only) = self.show_apart(&resolved, &impl_self);
                 self.error(
+                    Code::MissingTraitImpl,
                     format!(
                         "type '{}' does not implement trait '{}': the only impl is for '{}'",
-                        resolved, trait_name, impl_self
+                        obligated,
+                        self.show_trait(trait_name),
+                        only
                     ),
                     span,
                 );
@@ -2178,7 +2174,11 @@ impl TypeChecker {
         // round 58. Bare `verify_trait_obligation(trait, &[], ty, ..)`
         // (supertrait chains, old call sites) keeps the fast path.
         if !bound_trait_args.is_empty()
-            && let Some(impl_args) = self.impl_trait_args.get(&(trait_name, type_name)).cloned()
+            && let Some(impl_args) = self
+                .tables
+                .impl_trait_args
+                .get(&(trait_name, type_name))
+                .cloned()
             && impl_args.len() == bound_trait_args.len()
         {
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(impl_args.iter()) {
@@ -2186,17 +2186,18 @@ impl TypeChecker {
                 let i = self.apply(impl_arg);
                 if !self.trait_arg_compatible(&b, &i) {
                     self.error(
+                        Code::MissingTraitImpl,
                         format!(
                             "type '{}' does not implement trait '{}({})': \
                              the matched impl is '{}({})'",
-                            type_name,
-                            resolve(trait_name),
+                            self.show_type(&Type::Generic(type_name, vec![])),
+                            self.show_trait(trait_name),
                             bound_trait_args
                                 .iter()
                                 .map(|t| format!("{t}"))
                                 .collect::<Vec<_>>()
                                 .join(", "),
-                            resolve(trait_name),
+                            resolve(trait_name.name),
                             impl_args
                                 .iter()
                                 .map(|t| format!("{t}"))
@@ -2212,7 +2213,12 @@ impl TypeChecker {
         // Walk the matched impl's own where clauses against the actual
         // type arguments. Clone the obligation list so the recursive
         // `self.error` call doesn't conflict with the borrow.
-        let Some(obligations) = self.impl_constraints.get(&(trait_name, type_name)).cloned() else {
+        let Some(obligations) = self
+            .tables
+            .impl_constraints
+            .get(&(trait_name, type_name))
+            .cloned()
+        else {
             return;
         };
         let args = self.type_args_of(&resolved);
@@ -2252,8 +2258,8 @@ impl TypeChecker {
     fn impl_self_args_consistent(&self, obligated: &[Type], impl_args: &[Type]) -> bool {
         let mut bindings: HashMap<TyVar, Type> = HashMap::new();
         obligated.iter().zip(impl_args.iter()).all(|(ob, im)| {
-            let ob = crate::types::canonical::canonicalize(&self.resolver, ob);
-            let im = crate::types::canonical::canonicalize(&self.resolver, im);
+            let ob = crate::types::canonical::canonicalize(&self.tables.resolver, ob);
+            let im = crate::types::canonical::canonicalize(&self.tables.resolver, im);
             Self::impl_arg_matches_canon(&ob, &im, &mut bindings)
         })
     }
@@ -2344,8 +2350,8 @@ impl TypeChecker {
     /// then never sees `Type::Range`; the dedicated `(Range, Range)`
     /// pair-arm is unreachable and removed.
     fn trait_arg_compatible(&self, a: &Type, b: &Type) -> bool {
-        let a = crate::types::canonical::canonicalize(&self.resolver, a);
-        let b = crate::types::canonical::canonicalize(&self.resolver, b);
+        let a = crate::types::canonical::canonicalize(&self.tables.resolver, a);
+        let b = crate::types::canonical::canonicalize(&self.tables.resolver, b);
         Self::trait_arg_compatible_canon(&a, &b)
     }
 
@@ -2424,22 +2430,303 @@ impl TypeChecker {
 
     // ── Error reporting ─────────────────────────────────────────────
 
-    /// If `got` is a `Result(_, _)` or `Option(_)` but `expected` is
-    /// not, append a `help:` continuation explaining how to thread
-    /// the monadic value through. The raw "expected String, got
-    /// Result(String, _)" message is correct but doesn't tell users
-    /// how to fix it; the hint points at `?` and `result.flat_map` /
-    /// `option.flat_map`.
-    fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
-        let is_wrapper = |t: &Type, name: &str| -> bool {
-            matches!(t, Type::Generic(n, _) if resolve(*n) == name)
+    // ── Resolved names ──────────────────────────────────────────────
+
+    /// The definition a resolver slot names, if it names one.
+    pub(super) fn res_def(&self, res: Option<crate::defs::Res>) -> Option<crate::defs::Def> {
+        match res {
+            Some(crate::defs::Res::Def(id)) => self.def(id),
+            _ => None,
+        }
+    }
+
+    /// The definition `id`: the session's, or for a checker that has no
+    /// program (the builtins), a builtin's.
+    pub(super) fn def(&self, id: crate::defs::DefId) -> Option<crate::defs::Def> {
+        match &self.defs {
+            Some(defs) => Some(*defs.get(id)),
+            None => names::builtin_def(id),
+        }
+    }
+
+    /// The type of a type definition (a record, an enum, an alias). A
+    /// builtin type is known by its id alone: the builtin environment,
+    /// which the builtin definitions are made from, asks for them.
+    pub(super) fn def_type(&self, id: crate::defs::DefId) -> Option<TypeRef> {
+        if let Some((name, _)) = crate::defs::builtin_types().get(id.0 as usize) {
+            return Some(TypeRef {
+                id: crate::defs::TypeId(id),
+                name: intern(name),
+            });
+        }
+        let def = self.def(id)?;
+        match def.kind {
+            crate::defs::DefKind::Type(ty) => Some(TypeRef {
+                id: ty,
+                name: def.name,
+            }),
+            crate::defs::DefKind::TypeAlias => Some(TypeRef {
+                id: crate::defs::TypeId(id),
+                name: def.name,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The trait of a trait definition. A builtin trait is known by its
+    /// id alone (see `def_type`).
+    pub(super) fn def_trait(&self, id: crate::defs::DefId) -> Option<TraitKey> {
+        let first = crate::defs::builtin_types().len();
+        if let Some(k) = (id.0 as usize).checked_sub(first)
+            && let Some(name) = crate::defs::BUILTIN_TRAITS.get(k)
+        {
+            return Some(TraitKey::builtin(name));
+        }
+        let def = self.def(id)?;
+        match def.kind {
+            crate::defs::DefKind::Trait(t) => Some(TraitKey {
+                id: t,
+                name: def.name,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The type a resolver slot names.
+    pub(super) fn res_type(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
+        match res {
+            Some(crate::defs::Res::Def(id)) => self.def_type(id),
+            _ => None,
+        }
+    }
+
+    /// The type a name written in a type position names: its resolution;
+    /// for a name with none (the checker wrote it itself), the module's
+    /// own type of that name, else the builtin type of that name.
+    pub(super) fn named_type(
+        &self,
+        res: Option<crate::defs::Res>,
+        name: Symbol,
+    ) -> Option<TypeRef> {
+        if res.is_some() {
+            return self.res_type(res);
+        }
+        if let Some(ty) = self.own_types.get(&name) {
+            return Some(*ty);
+        }
+        let name_str = resolve(name);
+        let name_str = if name_str == "()" {
+            "Unit"
+        } else {
+            name_str.as_str()
         };
+        crate::defs::builtin_type_id(name_str).map(|id| TypeRef { id, name })
+    }
+
+    /// Whether a type name, or a variant's resolution, names a type
+    /// declaration the module's check rejected (see `rejected_types`).
+    pub(super) fn names_rejected(&self, res: Option<crate::defs::Res>, name: Symbol) -> bool {
+        if self.rejected_types.is_empty() {
+            return false;
+        }
+        self.named_type(res, name)
+            .or_else(|| self.res_variant_enum(res))
+            .is_some_and(|ty| self.rejected_types.contains(&ty))
+    }
+
+    /// The number of type parameters of a record, enum or alias type;
+    /// `None` for a type that is none of these.
+    pub(super) fn type_arity(&self, ty: TypeRef) -> Option<usize> {
+        self.tables
+            .record_param_var_ids
+            .get(&ty)
+            .map(|v| v.len())
+            .or_else(|| self.tables.enums.get(&ty).map(|e| e.params.len()))
+            .or_else(|| self.tables.records.contains_key(&ty).then_some(0))
+            .or_else(|| self.tables.type_alias_arity.get(&ty).copied())
+    }
+
+    /// The trait a trait name names: its resolution; for a name with none
+    /// (the checker wrote it itself), the module's own trait of that
+    /// name, else the builtin trait of that name.
+    pub(super) fn named_trait(
+        &self,
+        res: Option<crate::defs::Res>,
+        name: Symbol,
+    ) -> Option<TraitKey> {
+        match res {
+            Some(crate::defs::Res::Def(id)) => self.def_trait(id),
+            Some(_) => None,
+            None => self.own_traits.get(&name).copied().or_else(|| {
+                crate::defs::builtin_trait_id(&resolve(name)).map(|id| TraitKey { id, name })
+            }),
+        }
+    }
+
+    /// The trait the impl `ti` implements.
+    pub(super) fn impl_trait(&self, ti: &TraitImpl) -> Option<TraitKey> {
+        self.named_trait(ti.trait_res, ti.trait_name)
+    }
+
+    /// The type the impl `ti` is for, as impls are keyed: the canonical
+    /// head of its target (`Range` is `List`, an alias is the type it
+    /// stands for).
+    pub(super) fn impl_target(&self, ti: &TraitImpl) -> Option<TypeRef> {
+        let ty = self.named_type(ti.target_res, ti.target_type)?;
+        Some(canonical_head(&self.tables.resolver, ty))
+    }
+
+    /// What each variant of the enum `ty` resolves to, by name. The
+    /// builtin environment, which the builtin definitions are made from,
+    /// has none: its derived impls name the variants of builtin enums,
+    /// whose names are unique, by their enum (see `ctor_target`).
+    pub(super) fn variant_resolutions(&self, ty: TypeRef) -> HashMap<Symbol, crate::defs::Res> {
+        let Some(defs) = &self.defs else {
+            return HashMap::new();
+        };
+        defs.variants(ty.id.0)
+            .iter()
+            .copied()
+            .filter_map(|id| Some((self.def(id)?.name, crate::defs::Res::Def(id))))
+            .collect()
+    }
+
+    /// The enum of the variant a constructor pattern names: the one the
+    /// resolver resolved it to. The checker resolves the patterns it
+    /// makes itself as it makes them, except in the builtin environment,
+    /// whose derived impls write a variant of a builtin enum with its
+    /// enum (`Weekday.Monday`), and builtin type names are unique.
+    pub(super) fn pattern_variant_enum(
+        &self,
+        res: Option<crate::defs::Res>,
+        qualifier: &[Qualifier],
+    ) -> Option<TypeRef> {
+        match res {
+            None if self.defs.is_none() => {
+                qualifier.last().and_then(|q| self.named_type(None, q.name))
+            }
+            res => self.res_variant_enum(res),
+        }
+    }
+
+    /// The enum a resolver slot naming a variant names it of.
+    pub(super) fn res_variant_enum(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
+        let def = self.res_def(res)?;
+        match def.kind {
+            crate::defs::DefKind::Variant { ty, .. } => self.def_type(ty.0),
+            _ => None,
+        }
+    }
+
+    /// The two types of a message, rendered: two types of one name are
+    /// told apart by their modules (`a.Pt` and `b.Pt`); the module's own
+    /// type keeps its bare name.
+    pub(super) fn show_apart(&self, a: &Type, b: &Type) -> (String, String) {
+        let mut shown = self.show_types(&[a, b], false).into_iter();
+        let a = shown.next().unwrap_or_default();
+        (a, shown.next().unwrap_or_default())
+    }
+
+    /// The type of a message that names one type: a named type is
+    /// qualified by its module when another type the session knows has
+    /// its name (`other.Shape`, with `shapes.Shape` imported too).
+    pub(super) fn show_type(&self, ty: &Type) -> String {
+        self.show_types(&[ty], true).pop().unwrap_or_default()
+    }
+
+    /// The types of one message (see `show_apart`, `show_type`): a named
+    /// type that another type of the message has the name of, or, with
+    /// `session`, another type the session knows, is written with its
+    /// module; a module's own type keeps its bare name unless the other
+    /// is its own too.
+    fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
+        Type::show_all(types, |r, clash| {
+            (clash || (session && self.type_name_clashes(r))).then(|| self.qualified_type(r))
+        })
+    }
+
+    /// Whether another type the session knows has the name of `r`.
+    fn type_name_clashes(&self, r: TypeRef) -> bool {
+        let other = |o: &TypeRef| o.name == r.name && o.id != r.id;
+        self.tables.enums.keys().any(other)
+            || self.tables.records.keys().any(other)
+            || crate::defs::builtin_type_id(&resolve(r.name)).is_some_and(|id| id != r.id)
+    }
+
+    /// The name of `r` written with its module: `a.Pt`, `time.Weekday`,
+    /// `prelude.Option` for a prelude type; a module's own type keeps its
+    /// bare name.
+    fn qualified_type(&self, r: TypeRef) -> String {
+        let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, module)) => Some(intern(module.unwrap_or("prelude"))),
+            None => self
+                .def(r.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module).copied()),
+        };
+        match module {
+            Some(module) => format!("{module}.{}", r.name),
+            None => r.name.to_string(),
+        }
+    }
+
+    /// The name of the trait `t` in a message: written with its module
+    /// when another trait the session knows has its name (`a.Show`).
+    pub(super) fn show_trait(&self, t: TraitKey) -> String {
+        let clashes = self
+            .tables
+            .traits
+            .keys()
+            .any(|o| o.name == t.name && o.id != t.id);
+        if !clashes {
+            return t.name.to_string();
+        }
+        let first = crate::defs::builtin_types().len();
+        let module = if (t.id.0.0 as usize)
+            .checked_sub(first)
+            .is_some_and(|k| k < crate::defs::BUILTIN_TRAITS.len())
+        {
+            Some(intern("prelude"))
+        } else {
+            self.def(t.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module).copied())
+        };
+        match module {
+            Some(module) => format!("{module}.{}", t.name),
+            None => t.name.to_string(),
+        }
+    }
+
+    /// The quick fix for a value where a `Result` is expected: wrap the
+    /// expression in `Ok(...)`.
+    fn add_ok_wrap_fix(d: &mut Diagnostic, got: &Type, expected: &Type) {
+        let is_result = |t: &Type| matches!(t, Type::Generic(n, _) if n.is_builtin("Result"));
+        if is_result(expected) && !is_result(got) && d.span.is_in_source() {
+            let (start, end) = (
+                Span::point(d.span.file, d.span.start),
+                Span::point(d.span.file, d.span.end),
+            );
+            d.fixes.push(crate::diagnostic::Fix {
+                title: "Wrap expression in `Ok(...)`".to_string(),
+                edits: vec![(start, "Ok(".to_string()), (end, ")".to_string())],
+            });
+        }
+    }
+
+    /// If `got` is a `Result(_, _)` or `Option(_)` but `expected` is
+    /// not, the help line that explains how to thread the value
+    /// through: the raw "expected String, got Result(String, _)" is
+    /// correct but doesn't say how to fix it; the help points at `?` and
+    /// `result.flat_map` / `option.flat_map`.
+    fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
+        let is_wrapper = |t: &Type, name: &str| -> bool { t.is_builtin(name) };
         if is_wrapper(expected, "Result") || is_wrapper(expected, "Option") {
             return None;
         }
         if is_wrapper(got, "Result") {
             return Some(
-                "help: to chain through a `Result`, use `?` to propagate the \
+                "to chain through a `Result`, use `?` to propagate the \
                  error, or `|> result.flat_map { x -> ... }` to continue the \
                  pipeline on the Ok value"
                     .to_string(),
@@ -2447,7 +2734,7 @@ impl TypeChecker {
         }
         if is_wrapper(got, "Option") {
             return Some(
-                "help: to chain through an `Option`, use `?` to propagate \
+                "to chain through an `Option`, use `?` to propagate \
                  `None`, or `|> option.flat_map { x -> ... }` to continue the \
                  pipeline on the Some value"
                     .to_string(),
@@ -2456,20 +2743,35 @@ impl TypeChecker {
         None
     }
 
-    pub(super) fn error(&mut self, message: std::string::String, span: Span) {
-        self.errors.push(TypeError {
-            message,
-            span,
-            severity: Severity::Error,
-        });
+    pub(super) fn error(
+        &mut self,
+        code: Code,
+        message: impl Into<std::string::String>,
+        span: Span,
+    ) {
+        self.errors.push(Diagnostic::error(code, span, message));
     }
 
-    pub(super) fn warning(&mut self, message: std::string::String, span: Span) {
-        self.errors.push(TypeError {
-            message,
-            span,
-            severity: Severity::Warning,
-        });
+    pub(super) fn warning(
+        &mut self,
+        code: Code,
+        message: impl Into<std::string::String>,
+        span: Span,
+    ) {
+        self.errors.push(Diagnostic::warning(code, span, message));
+    }
+
+    /// An error with a message and, when there is one, a help line: what
+    /// the `*_message` helpers that suggest a close name return.
+    pub(super) fn error_help(
+        &mut self,
+        code: Code,
+        (message, help): (std::string::String, Option<std::string::String>),
+        span: Span,
+    ) {
+        let mut d = Diagnostic::error(code, span, message);
+        d.help.extend(help);
+        self.errors.push(d);
     }
 
     /// The known type that `name`, a name in a type annotation, spells
@@ -2487,9 +2789,9 @@ impl TypeChecker {
         crate::types::builtins::BUILTIN_TYPES
             .iter()
             .map(|t| t.name.to_string())
-            .chain(self.records.keys().map(|s| resolve(*s)))
-            .chain(self.enums.keys().map(|s| resolve(*s)))
-            .chain(self.type_aliases.iter().map(|s| resolve(*s)))
+            .chain(self.tables.records.keys().map(|t| resolve(t.name)))
+            .chain(self.tables.enums.keys().map(|t| resolve(t.name)))
+            .chain(self.tables.type_aliases.iter().map(|t| resolve(t.name)))
             .filter(|candidate| matches(candidate))
             .min()
     }
@@ -2507,665 +2809,299 @@ impl TypeChecker {
         }
     }
 
-    // ── Cross-module exports (round 64 item 6A) ─────────────────────
-
-    /// Merge the producer-side snapshot for `module_sym` into this
-    /// typechecker's state and the supplied env. Re-uses producer
-    /// schemes/infos by allocating fresh tyvars in this checker's
-    /// space wherever the producer's tyvars need to flow through, so
-    /// later instantiation at call sites yields fresh polymorphic vars
-    /// without colliding with producer ids.
-    ///
-    /// Caller-provided `qualified_prefix` is the symbol the consumer
-    /// uses to reach the module — `module` for `import a` (=`"a"`),
-    /// `alias` for `import a as al` (=`"al"`). Schemes are bound under
-    /// `prefix.name`. `bind_bare` controls whether to also bind the
-    /// bare name (used for `import a.{ id, add }` which copies under
-    /// the bare item name into env).
-    ///
-    /// Returns `true` if `module_sym` was found in `self.module_exports`,
-    /// `false` if the module is unknown (caller falls back to its
-    /// pre-existing "unknown module" warning).
-    pub(super) fn merge_imported_module_exports(
-        &mut self,
-        module_sym: Symbol,
-        qualified_prefix: Symbol,
-        env: &mut TypeEnv,
-    ) -> bool {
-        let Some(exports) = self.module_exports.get(&module_sym).cloned() else {
-            return false;
+    /// Report each private record or enum type of the module that a
+    /// public definition's checked type names: a `pub fn`'s or `pub let`'s
+    /// scheme (inferred parts and aliases included), a `pub trait`'s method
+    /// signatures; and each private trait a `pub trait` lists as a
+    /// supertrait. An importer could reach the value but never name its
+    /// type. A private type written in the definition's own annotations is
+    /// reported by the resolver already.
+    fn report_private_in_schemes(&mut self, program: &Program, env: &TypeEnv) {
+        let Some(defs) = self.defs.clone() else {
+            return;
         };
-
-        // Build a fresh-var remapping for every producer TyVar referenced
-        // by the snapshot, so the consumer's TyVar space stays separate
-        // from the producer's. This avoids two issues:
-        //   (a) producer ids that happen to collide with consumer ids
-        //       would alias unrelated types via `apply` chains;
-        //   (b) substitution slots in `self.subst` are sized by
-        //       `next_var`; producer ids past our `next_var` would index
-        //       out of bounds.
-        // Walk every Type in the snapshot to collect producer tyvars,
-        // then allocate fresh consumer tyvars for each.
-        let mut producer_tyvars: std::collections::BTreeSet<TyVar> =
-            std::collections::BTreeSet::new();
-        for (_, scheme) in &exports.schemes {
-            collect_tyvars_in_scheme(scheme, &mut producer_tyvars);
-        }
-        for (_, scheme) in &exports.variant_schemes {
-            collect_tyvars_in_scheme(scheme, &mut producer_tyvars);
-        }
-        for (_, scheme) in &exports.type_name_schemes {
-            collect_tyvars_in_scheme(scheme, &mut producer_tyvars);
-        }
-        for (_, info) in &exports.enums {
-            for v in &info.param_var_ids {
-                producer_tyvars.insert(*v);
-            }
-            for variant in &info.variants {
-                for ft in &variant.field_types {
-                    for v in free_vars_in(ft) {
-                        producer_tyvars.insert(v);
-                    }
+        let module = self.module;
+        let private_type = |r: &TypeRef| {
+            let def = defs.get(r.id.0);
+            def.module == module
+                && def.vis == crate::defs::Vis::Private
+                && matches!(def.kind, crate::defs::DefKind::Type(_))
+        };
+        let mut found: Vec<(TypeRef, String, Symbol, Span)> = Vec::new();
+        let leaks = |this: &Self,
+                     ty: &Type,
+                     written: &std::collections::HashSet<crate::defs::DefId>,
+                     owner: String,
+                     owner_name: Symbol,
+                     span: Span,
+                     found: &mut Vec<(TypeRef, String, Symbol, Span)>| {
+            let ty = crate::types::canonical::canonicalize(&this.tables.resolver, &this.apply(ty));
+            let mut refs = Vec::new();
+            ty.collect_refs(&mut refs);
+            let mut seen = std::collections::HashSet::new();
+            for r in refs {
+                if private_type(&r) && !written.contains(&r.id.0) && seen.insert(r.id) {
+                    found.push((r, owner.clone(), owner_name, span));
                 }
             }
-        }
-        for (_, info) in &exports.records {
-            for (_, ft) in &info.fields {
-                for v in free_vars_in(ft) {
-                    producer_tyvars.insert(v);
-                }
-            }
-        }
-        for (_, ids) in &exports.record_param_var_ids {
-            for v in ids {
-                producer_tyvars.insert(*v);
-            }
-        }
-        for (_, info) in &exports.traits {
-            for v in &info.param_var_ids {
-                producer_tyvars.insert(*v);
-            }
-            for (_, mty) in &info.methods {
-                for v in free_vars_in(mty) {
-                    producer_tyvars.insert(v);
-                }
-            }
-        }
-        for entry in &exports.trait_impl_entries {
-            for v in free_vars_in_types(&entry.impl_trait_args) {
-                producer_tyvars.insert(v);
-            }
-            if let Some(st) = &entry.self_type {
-                for v in free_vars_in(st) {
-                    producer_tyvars.insert(v);
-                }
-            }
-            for (_, m) in &entry.methods {
-                for v in free_vars_in(&m.method_type) {
-                    producer_tyvars.insert(v);
-                }
-                for (tv, _, args) in &m.method_constraints {
-                    producer_tyvars.insert(*tv);
-                    for arg in args {
-                        for v in free_vars_in(arg) {
-                            producer_tyvars.insert(v);
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut tv_remap: HashMap<TyVar, TyVar> = HashMap::new();
-        let mut ty_remap: HashMap<TyVar, Type> = HashMap::new();
-        for old_tv in &producer_tyvars {
-            let fresh = self.fresh_tyvar_id();
-            tv_remap.insert(*old_tv, fresh);
-            ty_remap.insert(*old_tv, Type::Var(fresh));
-        }
-
-        // Merge schemes under qualified prefix.
-        let prefix_str = resolve(qualified_prefix);
-        for (name, scheme) in &exports.schemes {
-            let new_scheme = remap_scheme(scheme, &tv_remap, &ty_remap);
-            let qualified = intern(&format!("{prefix_str}.{}", resolve(*name)));
-            env.define(qualified, new_scheme);
-        }
-
-        // Merge enums.
-        for (name, info) in &exports.enums {
-            let new_param_ids: Vec<TyVar> = info
-                .param_var_ids
-                .iter()
-                .map(|v| *tv_remap.get(v).unwrap_or(v))
-                .collect();
-            let new_variants: Vec<VariantInfo> = info
-                .variants
-                .iter()
-                .map(|v| VariantInfo {
-                    name: v.name,
-                    field_types: v
-                        .field_types
-                        .iter()
-                        .map(|ft| substitute_vars(ft, &ty_remap))
-                        .collect(),
-                })
-                .collect();
-            let new_info = EnumInfo {
-                params: info.params.clone(),
-                param_var_ids: new_param_ids,
-                variants: new_variants,
-                defined_in: info.defined_in,
-            };
-            // Round 94: qualified mirror first (the bare merge below
-            // moves `new_info`). `insert`, not `or_insert`: the prefix
-            // is unique per import spelling, and re-importing the same
-            // module under the same prefix re-registers identical data.
-            self.qualified_enums.insert(
-                intern(&format!("{prefix_str}.{}", resolve(*name))),
-                new_info.clone(),
-            );
-            self.enums.entry(*name).or_insert(new_info);
-        }
-
-        // Merge variant_to_enum.
-        for (variant, enum_name) in &exports.variant_to_enum {
-            // Round 94: `prefix.Variant` → bare owning-enum name, so
-            // qualified variant PATTERNS (`shapes.Circle(r)`) resolve
-            // against this module's enum even when the bare entry below
-            // was claimed by an earlier import's same-named variant.
-            self.qualified_variant_to_enum.insert(
-                intern(&format!("{prefix_str}.{}", resolve(*variant))),
-                *enum_name,
-            );
-            self.variant_to_enum.entry(*variant).or_insert(*enum_name);
-        }
-
-        // Merge variant schemes (under bare name AND qualified `prefix.Variant`).
-        for (name, scheme) in &exports.variant_schemes {
-            let new_scheme = remap_scheme(scheme, &tv_remap, &ty_remap);
-            let bare = *name;
-            // Bind bare so pattern matching `Red` still works.
-            if env.lookup(bare).is_none() {
-                env.define(bare, new_scheme.clone());
-            }
-            let qualified = intern(&format!("{prefix_str}.{}", resolve(bare)));
-            env.define(qualified, new_scheme);
-        }
-
-        // Merge type-name schemes under both bare and qualified
-        // (so `module.Color` referenced as a value works too).
-        for (name, scheme) in &exports.type_name_schemes {
-            let new_scheme = remap_scheme(scheme, &tv_remap, &ty_remap);
-            if env.lookup(*name).is_none() {
-                env.define(*name, new_scheme.clone());
-            }
-            let qualified = intern(&format!("{prefix_str}.{}", resolve(*name)));
-            env.define(qualified, new_scheme);
-        }
-
-        // Merge records.
-        for (name, info) in &exports.records {
-            let new_fields: Vec<(Symbol, Type)> = info
-                .fields
-                .iter()
-                .map(|(fname, fty)| (*fname, substitute_vars(fty, &ty_remap)))
-                .collect();
-            let new_info = RecordInfo {
-                fields: new_fields,
-                defined_in: info.defined_in,
-            };
-            // Round 94: qualified mirror so `prefix.Pt { .. }` (literal
-            // and pattern forms) resolves against THIS module's fields
-            // even when the bare entry was claimed by an earlier import.
-            self.qualified_records.insert(
-                intern(&format!("{prefix_str}.{}", resolve(*name))),
-                new_info.clone(),
-            );
-            self.records.entry(*name).or_insert(new_info);
-        }
-
-        // Merge record_param_var_ids.
-        for (name, ids) in &exports.record_param_var_ids {
-            let remapped: Vec<TyVar> = ids.iter().map(|v| *tv_remap.get(v).unwrap_or(v)).collect();
-            self.qualified_record_param_var_ids.insert(
-                intern(&format!("{prefix_str}.{}", resolve(*name))),
-                remapped.clone(),
-            );
-            self.record_param_var_ids.entry(*name).or_insert(remapped);
-        }
-
-        // Merge type aliases (just track the names + arity for the
-        // resolve-time fast-path).
-        for (i, name) in exports.aliases.iter().enumerate() {
-            self.type_aliases.insert(*name);
-            if let Some(arity) = exports.alias_arity.get(i) {
-                self.type_alias_arity.entry(*name).or_insert(*arity);
-            }
-        }
-
-        // Merge traits.
-        for (name, info) in &exports.traits {
-            let new_param_ids: Vec<TyVar> = info
-                .param_var_ids
-                .iter()
-                .map(|v| *tv_remap.get(v).unwrap_or(v))
-                .collect();
-            let new_methods: Vec<(Symbol, Type)> = info
-                .methods
-                .iter()
-                .map(|(mname, mty)| (*mname, substitute_vars(mty, &ty_remap)))
-                .collect();
-            let new_info = TraitInfo {
-                params: info.params.clone(),
-                param_var_ids: new_param_ids,
-                param_where_clauses: info.param_where_clauses.clone(),
-                supertraits: info.supertraits.clone(),
-                supertrait_args: info.supertrait_args.clone(),
-                methods: new_methods,
-                decl_span: info.decl_span,
-                default_method_bodies: info.default_method_bodies.clone(),
-                assoc_types: info.assoc_types.clone(),
-                defined_in: info.defined_in,
-            };
-            self.traits.entry(*name).or_insert(new_info);
-        }
-
-        // Merge trait impls.
-        for entry in &exports.trait_impl_entries {
-            let key = (entry.trait_name, entry.target_type);
-            // Skip if already present (e.g. duplicate via diamond
-            // imports, or auto-derive already populated).
-            if self.trait_impl_set.contains(&key) {
-                continue;
-            }
-            self.trait_impl_set.insert(key);
-            self.trait_impl_spans.insert(key, entry.span);
-            if !entry.impl_constraints.is_empty() {
-                let remapped_impl_constraints: Vec<(usize, Symbol, Vec<Type>)> = entry
-                    .impl_constraints
-                    .iter()
-                    .map(|(idx, t, args)| {
-                        let new_args: Vec<Type> =
-                            args.iter().map(|a| substitute_vars(a, &ty_remap)).collect();
-                        (*idx, *t, new_args)
-                    })
-                    .collect();
-                self.impl_constraints.insert(key, remapped_impl_constraints);
-            }
-            if !entry.impl_trait_args.is_empty() {
-                let remapped: Vec<Type> = entry
-                    .impl_trait_args
-                    .iter()
-                    .map(|t| substitute_vars(t, &ty_remap))
-                    .collect();
-                self.impl_trait_args.insert(key, remapped);
-            }
-            if let Some(st) = &entry.self_type {
-                self.impl_self_types
-                    .insert(key, substitute_vars(st, &ty_remap));
-            }
-            for (mname, m) in &entry.methods {
-                let new_method_type = substitute_vars(&m.method_type, &ty_remap);
-                let new_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = m
-                    .method_constraints
-                    .iter()
-                    .map(|(tv, t, args)| {
-                        let new_args: Vec<Type> =
-                            args.iter().map(|a| substitute_vars(a, &ty_remap)).collect();
-                        (*tv_remap.get(tv).unwrap_or(tv), *t, new_args)
-                    })
-                    .collect();
-                let new_entry = MethodEntry {
-                    method_type: new_method_type,
-                    span: m.span,
-                    is_auto_derived: m.is_auto_derived,
-                    trait_name: m.trait_name,
-                    method_constraints: new_constraints,
-                };
-                self.method_table
-                    .insert((entry.target_type, *mname), new_entry);
-
-                // Also bind a `<TargetType>.<method>` env scheme so
-                // `MyType::method` style calls and explicit
-                // `MyType.method(value)` resolve through env lookup
-                // (matching the producer's bind in register_trait_impl).
-                let bind_key = intern(&format!(
-                    "{}.{}",
-                    resolve(entry.target_type),
-                    resolve(*mname)
-                ));
-                if env.lookup(bind_key).is_none() {
-                    let scheme = self
-                        .generalize_method_template(&substitute_vars(&m.method_type, &ty_remap));
-                    env.define(bind_key, scheme);
-                }
-            }
-        }
-
-        true
-    }
-
-    /// Helper: build a scheme from a method template type, generalizing
-    /// over its free type variables. Used during cross-module merge to
-    /// register method entries under their `Type.method` env keys.
-    fn generalize_method_template(&self, ty: &Type) -> Scheme {
-        let fvs = free_vars_in(ty);
-        Scheme {
-            vars: fvs,
-            ty: ty.clone(),
-            constraints: Vec::new(),
-            optional_last_param: false,
-        }
-    }
-
-    /// Walk this TypeChecker's state at the end of `check_program` and
-    /// build a `ModuleExports` snapshot of every `pub` declaration in
-    /// `program`. Round 64 item 6A.
-    pub(super) fn collect_module_exports(&self, program: &Program, env: &TypeEnv) -> ModuleExports {
-        let mut exports = ModuleExports::new();
-        let mut pub_type_names: std::collections::HashSet<Symbol> =
-            std::collections::HashSet::new();
-        let mut pub_trait_names: std::collections::HashSet<Symbol> =
-            std::collections::HashSet::new();
-        let local_pkg = self.defining_package();
-
+        };
         for decl in &program.decls {
             match decl {
                 Decl::Fn(f) if f.is_pub => {
-                    if let Some(scheme) = env.lookup(f.name) {
-                        exports.schemes.push((f.name, scheme.clone()));
-                    }
-                }
-                Decl::Let {
-                    pattern,
-                    is_pub: true,
-                    ..
-                } => {
-                    if let PatternKind::Ident(name) = &pattern.kind
-                        && let Some(scheme) = env.lookup(*name)
+                    let mut written = std::collections::HashSet::new();
+                    for te in f
+                        .params
+                        .iter()
+                        .filter_map(|p| p.ty.as_ref())
+                        .chain(&f.return_type)
                     {
-                        exports.schemes.push((*name, scheme.clone()));
+                        written_defs(te, &mut written);
+                    }
+                    if let Some(scheme) = env.lookup(f.name) {
+                        let owner = format!("public fn '{}'", f.name);
+                        leaks(
+                            self,
+                            &scheme.ty,
+                            &written,
+                            owner,
+                            f.name,
+                            f.name_span,
+                            &mut found,
+                        );
                     }
                 }
-                Decl::Type(td) if td.is_pub => {
-                    pub_type_names.insert(td.name);
-                    match &td.body {
-                        TypeBody::Enum(_) => {
-                            if let Some(info) = self.enums.get(&td.name) {
-                                exports.enums.push((td.name, info.clone()));
-                                // Variant schemes + variant_to_enum.
-                                for variant in &info.variants {
-                                    exports.variant_to_enum.push((variant.name, td.name));
-                                    if let Some(scheme) = env.lookup(variant.name) {
-                                        exports
-                                            .variant_schemes
-                                            .push((variant.name, scheme.clone()));
-                                    }
-                                }
-                            }
-                            // Type-name scheme (TypeOf(EnumName)).
-                            if let Some(scheme) = env.lookup(td.name) {
-                                exports.type_name_schemes.push((td.name, scheme.clone()));
-                            }
-                        }
-                        TypeBody::Record(_) => {
-                            if let Some(info) = self.records.get(&td.name) {
-                                exports.records.push((td.name, info.clone()));
-                            }
-                            if let Some(ids) = self.record_param_var_ids.get(&td.name) {
-                                exports.record_param_var_ids.push((td.name, ids.clone()));
-                            }
-                            if let Some(scheme) = env.lookup(td.name) {
-                                exports.type_name_schemes.push((td.name, scheme.clone()));
-                            }
-                        }
-                        TypeBody::Alias(_) => {
-                            exports.aliases.push(td.name);
-                            exports.alias_arity.push(td.params.len());
+                Decl::Let { is_pub: true, .. } => {
+                    for (name, span, _) in crate::parser::top_level_binders(decl) {
+                        if let Some(scheme) = env.lookup(name) {
+                            let none = std::collections::HashSet::new();
+                            let owner = format!("public let '{name}'");
+                            leaks(self, &scheme.ty, &none, owner, name, span, &mut found);
                         }
                     }
                 }
-                Decl::Trait(t) => {
-                    pub_trait_names.insert(t.name);
-                    if let Some(info) = self.traits.get(&t.name) {
-                        exports.traits.push((t.name, info.clone()));
+                Decl::Trait(t) if t.is_pub => {
+                    let key = self.own_trait(t.name);
+                    let Some(info) = self.tables.traits.get(&key).cloned() else {
+                        continue;
+                    };
+                    let none = std::collections::HashSet::new();
+                    for (_, method_ty) in &info.methods {
+                        let owner = format!("public trait '{}'", t.name);
+                        leaks(
+                            self,
+                            method_ty,
+                            &none,
+                            owner,
+                            t.name,
+                            t.name_span,
+                            &mut found,
+                        );
+                    }
+                    for sup in &info.supertraits {
+                        if let Some(sup_info) = self.tables.traits.get(sup)
+                            && sup_info
+                                .private_to
+                                .is_some_and(|(owner, _)| owner == module)
+                        {
+                            let def = defs.get(sup.id.0);
+                            self.errors.push(
+                                Diagnostic::error(
+                                    Code::PrivateItem,
+                                    t.name_span,
+                                    format!(
+                                        "private trait '{}' is a supertrait of public trait '{}'",
+                                        sup.name, t.name
+                                    ),
+                                )
+                                .with_label(
+                                    def.span,
+                                    format!("'{}' is declared without `pub`", sup.name),
+                                )
+                                .with_help(format!(
+                                    "mark `{}` `pub`, or drop the `pub` of '{}'",
+                                    sup.name, t.name
+                                )),
+                            );
+                        }
                     }
                 }
                 _ => {}
             }
         }
-
-        // Trait impls: include every impl whose trait OR target type was
-        // declared in this module (i.e. defined_in == local_pkg). The
-        // orphan rule has already validated that an impl is not foreign-
-        // foreign, so any impl in this program is safe to export.
-        for (key, span) in &self.trait_impl_spans {
-            // Only export impls whose trait or target is local to this
-            // package. Avoids re-exporting the auto-derived blanket impls
-            // that register_builtin_trait_impls populated (those carry
-            // builtin-pkg defined_in).
-            let trait_local = self
-                .traits
-                .get(&key.0)
-                .map(|t| t.defined_in == local_pkg)
-                .unwrap_or(false);
-            let type_local = self
-                .enums
-                .get(&key.1)
-                .map(|e| e.defined_in == local_pkg)
-                .or_else(|| self.records.get(&key.1).map(|r| r.defined_in == local_pkg))
-                .unwrap_or(false);
-            if !trait_local && !type_local {
-                continue;
-            }
-            // Collect all methods for this (trait, type).
-            let methods: Vec<(Symbol, MethodEntry)> = self
-                .method_table
-                .iter()
-                .filter(|((t, _), _)| *t == key.1)
-                .filter_map(|((_, m), entry)| {
-                    // Only include methods that this trait declared.
-                    let trait_info = self.traits.get(&key.0)?;
-                    if trait_info.methods.iter().any(|(mn, _)| *mn == *m) {
-                        Some((*m, entry.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if methods.is_empty() {
-                continue;
-            }
-            let entry = TraitImplExport {
-                trait_name: key.0,
-                target_type: key.1,
-                span: *span,
-                impl_constraints: self.impl_constraints.get(key).cloned().unwrap_or_default(),
-                impl_trait_args: self.impl_trait_args.get(key).cloned().unwrap_or_default(),
-                self_type: self.impl_self_types.get(key).cloned(),
-                methods,
-            };
-            exports.trait_impl_entries.push(entry);
+        for (ty, owner, owner_name, span) in found {
+            let def = defs.get(ty.id.0);
+            self.errors.push(
+                Diagnostic::error(
+                    Code::PrivateItem,
+                    span,
+                    format!("private type '{}' in the type of {owner}", ty.name),
+                )
+                .with_label(def.span, format!("'{}' is declared without `pub`", ty.name))
+                .with_help(format!(
+                    "mark `{}` `pub`, or drop the `pub` of '{owner_name}'",
+                    ty.name
+                )),
+            );
         }
+    }
 
-        exports
+    /// Report each `pub let` whose type the module's check leaves partly
+    /// unknown (`pub let ch = channel.new(1)` before anything sends on
+    /// it): an importer would fix the rest, and two importers could fix it
+    /// two ways. The declaration is where it is reported, whichever
+    /// module is checked first.
+    fn report_unknown_pub_let_types(&mut self, program: &Program, env: &TypeEnv) {
+        if self.is_cell {
+            return;
+        }
+        for decl in &program.decls {
+            if !matches!(decl, Decl::Let { is_pub: true, .. }) {
+                continue;
+            }
+            for (name, span, _) in crate::parser::top_level_binders(decl) {
+                let Some(scheme) = env.lookup(name).cloned() else {
+                    continue;
+                };
+                let ty = self.apply(&scheme.ty);
+                if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
+                    continue;
+                }
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousType,
+                        span,
+                        format!(
+                            "the type of public let '{name}' is not fully known here: {}",
+                            self.show_type(&ty)
+                        ),
+                    )
+                    .with_help(format!(
+                        "annotate it, e.g. `pub let {name}: <type> = ...`: a module that \
+                         imports it cannot decide it"
+                    )),
+                );
+            }
+        }
+    }
+
+    /// Enter the scheme of each definition the module declares in the
+    /// session's tables, from the module's scope `env`: what an importer
+    /// of the module reads.
+    fn enter_schemes(&mut self, env: &TypeEnv) {
+        let Some(defs) = self.defs.clone() else {
+            return;
+        };
+        for id in defs.of_module(self.module) {
+            let def = defs.get(*id);
+            // A variant's scheme is entered when its type is.
+            if matches!(
+                def.kind,
+                crate::defs::DefKind::Variant { .. }
+                    | crate::defs::DefKind::Trait(_)
+                    | crate::defs::DefKind::TypeAlias
+            ) {
+                continue;
+            }
+            if let Some(scheme) = env.lookup(def.name) {
+                let mut scheme = scheme.clone();
+                // A `pub let` whose type is partly unknown is reported at
+                // its declaration (`report_unknown_pub_let_types`); its
+                // importers see the unknown part as an error type, so no
+                // importer fixes it.
+                if def.kind == crate::defs::DefKind::Let
+                    && def.vis == crate::defs::Vis::Pub
+                    && !self.is_cell
+                {
+                    let ty = self.apply(&scheme.ty);
+                    let mut rows = Vec::new();
+                    row_tail_vars(&ty, &mut rows);
+                    let unknown: HashMap<TyVar, Type> = free_vars_in(&ty)
+                        .into_iter()
+                        .filter(|v| !scheme.vars.contains(v) && !rows.contains(v))
+                        .map(|v| (v, Type::Error))
+                        .collect();
+                    if !unknown.is_empty() {
+                        scheme.ty = substitute_vars(&ty, &unknown);
+                    }
+                }
+                self.tables.schemes.insert(*id, scheme);
+            }
+        }
+    }
+
+    /// The scheme of a definition a name resolves to that is not one
+    /// of the module's own functions and `let`s (those are in the
+    /// module's scope): a variant's constructor, a type written as a
+    /// value, a member of another module, a builtin.
+    pub(super) fn def_scheme(
+        &self,
+        res: Option<crate::defs::Res>,
+        env: &TypeEnv,
+    ) -> Option<Scheme> {
+        let Some(crate::defs::Res::Def(id)) = res else {
+            return None;
+        };
+        let def = self.def(id)?;
+        if def.module.is_builtin() {
+            return builtin_scheme(&def);
+        }
+        if self.names_rejected(res, def.name) {
+            return Some(Scheme::mono(Type::Error));
+        }
+        if def.module == self.module && !matches!(def.kind, crate::defs::DefKind::Variant { .. }) {
+            return env.lookup(def.name).cloned();
+        }
+        self.tables.schemes.get(&id).cloned()
+    }
+
+    /// The scheme of a method called through its type (`Pt.show(p)`):
+    /// its template, generalized over its free type variables, with its
+    /// where-clause constraints.
+    pub(super) fn method_scheme(entry: &MethodEntry) -> Scheme {
+        let mut constraints: Vec<(TyVar, TraitKey)> = Vec::new();
+        for (tv, trait_name, _) in &entry.method_constraints {
+            if !constraints.contains(&(*tv, *trait_name)) {
+                constraints.push((*tv, *trait_name));
+            }
+        }
+        Scheme {
+            vars: free_vars_in(&entry.method_type),
+            ty: entry.method_type.clone(),
+            constraints,
+            optional_last_param: false,
+        }
     }
 
     // ── Check a full program ────────────────────────────────────────
 
-    pub fn check_program(&mut self, program: &mut Program) {
-        let _ = self.check_program_returning_env(program);
-    }
-
-    /// Variant of [`check_program`] that returns the final TypeEnv for
-    /// the caller (used by [`check_with_package_and_imports`] so it can
-    /// snapshot the program's exports).
-    pub(super) fn check_program_returning_env(&mut self, program: &mut Program) -> TypeEnv {
-        let mut env = TypeEnv::new();
-
-        // Built-in registration must run with `current_package = None`
-        // so every built-in trait/enum/record decl is stamped with the
-        // `__builtin__` sentinel via `defining_package()`. Without this
-        // RAII swap, calling
-        // `check_with_package_and_imports_options_resolver(prog, Some("myapp"), …)`
-        // (the production entrypoint; `check_with_package` is the
-        // test-only convenience wrapper) would stamp `Display` (and
-        // every other built-in) with `defined_in = "myapp"`, defeating
-        // the orphan rule's built-in counterparty arm: `trait Display
-        // for List(a)` in user code would then look "trait-local" and
-        // silently register. Round 63 item 5.
-        let saved_current_pkg = self.current_package.take();
-
-        // Register builtins in the type environment
-        self.register_builtins(&mut env);
-
-        // Register built-in traits and auto-derived impls (shared with
-        // `ReplTypeContext::new` so `silt check` and the REPL stay in
-        // sync on derive policy).
-        register_builtin_trait_impls(self);
-
-        // Restore the user-supplied package so subsequent decls in
-        // `program` are stamped against the real owning package.
-        self.current_package = saved_current_pkg;
-
-        // Round 56 item 4: reset the import set so a fresh check_program
-        // call doesn't inherit modules imported by a previous run.
-        self.imported_modules.clear();
-        // Round 94: the qualified type mirrors share the import set's
-        // lifecycle — they are rebuilt from the imports processed below.
-        self.qualified_records.clear();
-        self.qualified_record_param_var_ids.clear();
-        self.qualified_enums.clear();
-        self.qualified_variant_to_enum.clear();
-
-        // Process imports: register selective/aliased import names in the type environment
-        for decl in &program.decls {
-            if let Decl::Import(ImportTarget::Items(module, items), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.imported_modules.insert(*module);
-                    for item in items {
-                        let qualified = intern(&format!("{module}.{item}"));
-                        if let Some(scheme) = env.lookup(qualified).cloned() {
-                            env.define(*item, scheme);
-                        }
-                        // Gated constructors (like Monday, GET) are already
-                        // registered under their bare name — no alias needed.
-                    }
-                } else if self.merge_imported_module_exports(*module, *module, &mut env) {
-                    // Round 64 item 6A: cross-module typecheck found
-                    // the producer's exports — schemes are now bound
-                    // under `module.name`. Also alias each requested
-                    // selective `item` to the bare name in env.
-                    self.imported_modules.insert(*module);
-                    for item in items {
-                        let qualified = intern(&format!("{module}.{item}"));
-                        if let Some(scheme) = env.lookup(qualified).cloned() {
-                            env.define(*item, scheme);
-                        }
-                    }
-                } else {
-                    self.warning(
-                        format!(
-                            "unknown module '{module_str}'; imported items will not be type-checked"
-                        ),
-                        *span,
-                    );
-                }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    // Track the alias (not the original module name) — the
-                    // user chose to rename the module, so the original
-                    // symbol is no longer in scope under its bare name.
-                    self.imported_modules.insert(*alias);
-                    // Mirror every qualified `{module}.{suffix}` binding
-                    // under the alias. Before round 58, this loop iterated
-                    // `builtin_module_functions(module_str)` and copied
-                    // only names in that curated list — which excluded
-                    // schemes registered directly in the typechecker's
-                    // submodules (e.g. `list.sum`, `list.product`), so
-                    // `l.sum` under `import list as l` failed with
-                    // "undefined variable 'l'" while `list.sum` worked.
-                    // Iterating the env by prefix captures every
-                    // qualified entry regardless of which registrar
-                    // defined it.
-                    let alias_str = resolve(*alias);
-                    let prefix = format!("{module_str}.");
-                    let to_alias: Vec<(Symbol, Scheme)> = env
-                        .bindings
-                        .iter()
-                        .filter_map(|(k, scheme)| {
-                            let k_str = resolve(*k);
-                            k_str.strip_prefix(&prefix).map(|suffix| {
-                                (intern(&format!("{alias_str}.{suffix}")), scheme.clone())
-                            })
-                        })
-                        .collect();
-                    for (aliased, scheme) in to_alias {
-                        env.define(aliased, scheme);
-                    }
-                } else if self.merge_imported_module_exports(*module, *alias, &mut env) {
-                    // Round 64 item 6A: schemes registered under
-                    // `alias.name` (matching the aliased prefix the
-                    // user wrote).
-                    self.imported_modules.insert(*alias);
-                } else {
-                    self.warning(
-                        format!("unknown module '{module_str}'; aliased imports will not be type-checked"),
-                        *span,
-                    );
-                }
-            } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.imported_modules.insert(*module);
-                    // Built-in module names are already bound via register_builtins
-                    // under their `module.func` qualified form — no additional
-                    // action required here.
-                } else if self.merge_imported_module_exports(*module, *module, &mut env) {
-                    // Round 64 item 6A: producer-side exports merged.
-                    self.imported_modules.insert(*module);
-                } else {
-                    // Non-builtin (user) module without producer-side
-                    // exports available: the compiler handles these at
-                    // link time. Emit the same "unknown module" warning we use
-                    // for Items/Alias so the CLI's diagnostic-suppression
-                    // heuristic in main.rs fires, and add a minimal binding for
-                    // the module name itself so downstream `module.foo(...)`
-                    // calls don't cascade into "undefined variable" errors.
-                    self.warning(
-                        format!(
-                            "unknown module '{module_str}'; imported module will not be type-checked"
-                        ),
-                        *span,
-                    );
-                    // Bind the module name to a fresh variable so member access
-                    // on it degrades gracefully rather than failing lookup.
-                    let placeholder = self.fresh_var();
-                    env.define(*module, Scheme::mono(placeholder));
-                }
-            }
-        }
+    /// Check `program` in `env`, the module's top-level scope over the
+    /// builtin one, and return that scope. What the module imports is
+    /// in the session's tables, under each definition's id: the
+    /// resolver wrote on each name what it names.
+    pub(super) fn check_program_in(&mut self, program: &mut Program, mut env: TypeEnv) -> TypeEnv {
+        self.enter_own_types();
 
         // First pass: pre-register every type name with a placeholder
         // body. This makes recursive type references (e.g.
         // `type Expr { Add(Expr, Expr), ... }`) resolve during variant /
         // field type resolution — without this, the B3 unknown-type
         // check introduced in round 60 would reject the self-reference
-        // because `self.enums` / `self.records` don't contain the name
+        // because `self.tables.enums` / `self.tables.records` don't contain the name
         // until after the body is processed. The real registration loop
         // below overwrites the placeholders.
         for decl in &program.decls {
             if let Decl::Type(td) = decl {
-                let td_name_str = resolve(td.name);
-                if td_name_str == "TypeOf" {
+                let ty = self.own_type(td.name);
+                // A declaration `register_type_decl` rejects declares
+                // nothing: what names it or its variants is not checked.
+                if rejected_type_name(&resolve(td.name)) {
+                    self.rejected_types.insert(ty);
                     continue;
                 }
                 match &td.body {
                     TypeBody::Enum(_) => {
                         let pkg = self.defining_package();
-                        self.enums.entry(td.name).or_insert_with(|| EnumInfo {
+                        self.tables.enums.entry(ty).or_insert_with(|| EnumInfo {
                             variants: Vec::new(),
                             params: td.params.clone(),
                             param_var_ids: Vec::new(),
@@ -3182,7 +3118,7 @@ impl TypeChecker {
                     }
                     TypeBody::Record(_) => {
                         let pkg = self.defining_package();
-                        self.records.entry(td.name).or_insert_with(|| RecordInfo {
+                        self.tables.records.entry(ty).or_insert_with(|| RecordInfo {
                             fields: Vec::new(),
                             defined_in: pkg,
                         });
@@ -3196,8 +3132,8 @@ impl TypeChecker {
                         // alias's target. The arity is also recorded here
                         // (final value won't change between this pass and
                         // the real registration).
-                        self.type_aliases.insert(td.name);
-                        self.type_alias_arity.insert(td.name, td.params.len());
+                        self.tables.type_aliases.insert(ty);
+                        self.tables.type_alias_arity.insert(ty, td.params.len());
                     }
                 }
             }
@@ -3234,9 +3170,9 @@ impl TypeChecker {
         // Mutates `program.decls`. The synthesized TraitImpls flow
         // through `register_trait_impl` (step 2c below) and the
         // compiler's TraitImpl emit path identical to user-written
-        // impls — producing real `<TypeName>.<method>` globals so
-        // `Op::CallMethod`'s qualified-global lookup finds them at
-        // runtime, never falling through to `dispatch_trait_method`.
+        // impls — producing real impl methods with global slots so
+        // `Op::CallMethod`'s method lookup finds them at runtime, never
+        // falling through to `dispatch_trait_method`.
         // Hand-written impls of the sealed traits are rejected first.
         self.reject_sealed_trait_impls(&mut program.decls);
         self.synthesize_auto_derive_impls(&mut program.decls);
@@ -3254,6 +3190,7 @@ impl TypeChecker {
                 _ => {}
             }
         }
+        self.select_visible_methods();
 
         // Process top-level let bindings (after functions are registered so
         // the value expression can call functions, and before function body
@@ -3268,7 +3205,7 @@ impl TypeChecker {
             } = program.decls[i]
             {
                 let is_value = inference::is_syntactic_value(&value.kind);
-                let val_ty = self.infer_expr(value, &mut env);
+                let mut val_ty = self.infer_expr(value, &mut env);
                 if let Some(te) = ty {
                     // B2: populate the arity-error span hint with the
                     // annotation's own span so diagnostics from
@@ -3282,6 +3219,11 @@ impl TypeChecker {
                         self.resolve_type_expr(te, &mut std::collections::HashMap::new());
                     self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, span);
+                    // A value of unknown type (from a module that failed to
+                    // load) takes the declared type.
+                    if matches!(self.apply(&val_ty), Type::Error) {
+                        val_ty = declared;
+                    }
                 }
                 let scheme = if is_value {
                     self.generalize(&env, &val_ty)
@@ -3399,7 +3341,7 @@ impl TypeChecker {
                                 Decl::Fn(fd) if fd.name == *name => Some(fd.span),
                                 _ => None,
                             })
-                            .unwrap_or_else(|| Span::new(0, 0));
+                            .unwrap_or(Span::BUILTIN);
                         annotated_signature_mismatches.push((*name, fn_span));
                         continue;
                     }
@@ -3464,6 +3406,7 @@ impl TypeChecker {
         // inconsistent with the body" diagnostic.
         for (name, fn_span) in annotated_signature_mismatches {
             self.error(
+                Code::TypeMismatch,
                 format!(
                     "function '{}' has a polymorphic signature but its body uses \
                      a parameter as a concrete type; either add a `where` constraint \
@@ -3486,7 +3429,21 @@ impl TypeChecker {
         // After all passes, resolve any remaining type variables in annotations
         self.resolve_all_types(program);
 
+        self.drop_repeated_errors();
         env
+    }
+
+    /// Keep one of each diagnostic: the same message at the same span
+    /// with the same severity is reported once. The passes can reach one
+    /// node more than once (the derived impls of a type, which all carry
+    /// the type declaration's span, are checked per method), and a
+    /// repeated line tells the reader nothing new. Run once, after every
+    /// pass, so no pass sees a shortened error list.
+    fn drop_repeated_errors(&mut self) {
+        let mut seen: std::collections::HashSet<(std::string::String, Span, bool)> =
+            std::collections::HashSet::new();
+        self.errors
+            .retain(|e| seen.insert((e.message.clone(), e.span, e.severity == Severity::Warning)));
     }
 
     // ── Check declaration bodies ──────────────────────────────────────
@@ -3505,7 +3462,7 @@ impl TypeChecker {
     /// `register_trait_impl` registers a method under the canonical name
     /// of the impl's target type (`Range` and a user alias of `List(..)`
     /// collapse to `List`, `Fun` to `Fn`, `()` to `Unit`), both in
-    /// `method_table` and as the `"<Type>.<method>"` binding in `env`.
+    /// `method_table` and as the `impl_method_key` binding in `env`.
     /// The lookup key is therefore built from the canonical name too; a
     /// key built from the name as written would miss the binding for an
     /// impl written against an alias, and the body would go unchecked.
@@ -3520,6 +3477,7 @@ impl TypeChecker {
         for decl in decls.iter_mut() {
             if let Decl::Fn(f) = decl
                 && !f.is_recovery_stub
+                && !self.signatures_only
             {
                 self.check_fn_body(f, env);
             }
@@ -3528,14 +3486,16 @@ impl TypeChecker {
             let Decl::TraitImpl(ti) = decl else {
                 continue;
             };
-            let target = canonicalize_type_name(&self.resolver, ti.target_type);
+            let Some(target) = self.impl_target(ti) else {
+                continue;
+            };
             for method in ti.methods.iter_mut() {
                 let method_name = method.name;
-                let key = intern(&format!("{target}.{method_name}"));
+                let key = impl_method_key(target, method_name);
                 let Some(ty) = self.check_fn_body_with_name(method, env, key) else {
                     continue;
                 };
-                let Some(entry) = self.method_table.get_mut(&(target, method_name)) else {
+                let Some(entry) = self.tables.method_table.get_mut(&(target, method_name)) else {
                     continue;
                 };
                 if !entry.method_constraints.is_empty() {
@@ -3564,49 +3524,39 @@ impl TypeChecker {
     // ── Validate trait implementations ────────────────────────────────
 
     fn validate_trait_impls(&mut self) {
-        // (a) Validate supertrait names: every supertrait listed on every
-        // declared trait must itself be a declared trait. Done up-front so
-        // unknown-supertrait errors are surfaced even when the declaring
-        // trait has no impls. We snapshot the names+supertraits up-front
-        // because `self.error` borrows `self` mutably.
-        let trait_supertrait_pairs: Vec<(Symbol, Vec<Symbol>, Span)> = self
-            .traits
-            .iter()
-            .map(|(name, info)| (*name, info.supertraits.clone(), info.decl_span))
-            .collect();
-        for (trait_name, supertraits, decl_span) in &trait_supertrait_pairs {
-            for sup in supertraits {
-                if !self.traits.contains_key(sup) {
-                    self.error(
-                        format!("trait '{trait_name}' lists unknown supertrait '{sup}'"),
-                        *decl_span,
-                    );
-                }
-            }
-        }
+        // (a) An unknown supertrait is reported where the trait is
+        // registered (`register_trait_decl_inner`).
 
         // Validate using method_table + trait_impl_set (the new system).
-        let impl_pairs: Vec<(Symbol, Symbol)> = self.trait_impl_set.iter().cloned().collect();
+        let impl_pairs: Vec<(TraitKey, TypeRef)> =
+            self.tables.trait_impl_set.iter().cloned().collect();
         for (trait_name, type_name) in &impl_pairs {
             // GAP-2: Prefer the impl block's real span (stored at
-            // registration time) over a method span or the sentinel
-            // `Span::new(0, 0)`. Fall back to the method table only for
-            // auto-derived impls that have no user-visible source site.
+            // registration time) over a method span. Fall back to the
+            // method table only for auto-derived impls that have no
+            // user-visible source site, and to `Span::BUILTIN` for the
+            // impls silt declares itself.
             let diag_span = self
+                .tables
                 .trait_impl_spans
                 .get(&(*trait_name, *type_name))
                 .copied()
                 .or_else(|| {
-                    self.method_table
+                    self.tables
+                        .method_table
                         .iter()
                         .find(|((t, _), _)| t == type_name)
                         .map(|(_, e)| e.span)
                 })
-                .unwrap_or_else(|| Span::new(0, 0));
+                .unwrap_or(Span::BUILTIN);
 
             // Check that the trait exists first.
-            let Some(trait_info) = self.traits.get(trait_name).cloned() else {
-                self.error(format!("trait '{trait_name}' is not declared"), diag_span);
+            let Some(trait_info) = self.tables.traits.get(trait_name).cloned() else {
+                self.error(
+                    Code::UnknownTrait,
+                    format!("trait '{trait_name}' is not declared"),
+                    diag_span,
+                );
                 continue;
             };
 
@@ -3614,7 +3564,7 @@ impl TypeChecker {
             let is_auto = trait_info
                 .methods
                 .first()
-                .and_then(|(m, _)| self.method_table.get(&(*type_name, *m)))
+                .and_then(|(m, _)| self.tables.method_table.get(&(*type_name, *m)))
                 .map(|e| e.is_auto_derived)
                 .unwrap_or(false);
             if is_auto {
@@ -3638,13 +3588,18 @@ impl TypeChecker {
             // obligation for `impl Holds(Int) for Bag`, causing a
             // runtime method-resolution failure.
             let enclosing_args: Vec<Type> = self
+                .tables
                 .impl_trait_args
                 .get(&(*trait_name, *type_name))
                 .cloned()
                 .unwrap_or_default();
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
-                if !self.trait_impl_set.contains(&(*supertrait, *type_name)) {
-                    self.error(
+                if !self
+                    .tables
+                    .trait_impl_set
+                    .contains(&(*supertrait, *type_name))
+                {
+                    self.error(Code::MissingTraitImpl,
                         format!(
                             "type '{type_name}' implements '{trait_name}' but does not implement supertrait '{supertrait}'"
                         ),
@@ -3670,6 +3625,7 @@ impl TypeChecker {
                     _ => continue,
                 };
                 let actual_super_args = self
+                    .tables
                     .impl_trait_args
                     .get(&(*supertrait, *type_name))
                     .cloned()
@@ -3691,16 +3647,16 @@ impl TypeChecker {
                             .collect::<Vec<_>>()
                             .join(", ")
                     };
-                    self.error(
+                    self.error(Code::InvalidTraitImpl,
                         format!(
                             "impl {}({}) for {} requires impl {}({}) for {}, but found impl {}({}) for {}",
-                            resolve(*trait_name),
+                            resolve(trait_name.name),
                             fmt_args(&enclosing_args),
                             type_name,
-                            resolve(*supertrait),
+                            resolve(supertrait.name),
                             fmt_args(&expected_super_args),
                             type_name,
-                            resolve(*supertrait),
+                            resolve(supertrait.name),
                             fmt_args(&actual_super_args),
                             type_name,
                         ),
@@ -3738,7 +3694,7 @@ impl TypeChecker {
                 };
             for (method_name, trait_method_type) in &trait_info.methods {
                 let key = (*type_name, *method_name);
-                if let Some(entry) = self.method_table.get(&key) {
+                if let Some(entry) = self.tables.method_table.get(&key) {
                     let stored_impl_type = entry.method_type.clone();
                     let impl_span = entry.span;
                     // Instantiate BOTH the impl's stored template and the
@@ -3770,6 +3726,7 @@ impl TypeChecker {
                     // (which is the normal pre-synthesis path) — silent
                     // is correct.
                     self.error(
+                        Code::InvalidTraitImpl,
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
                             trait_name, type_name, method_name
@@ -3797,7 +3754,7 @@ impl TypeChecker {
     fn register_type_decl(&mut self, td: &TypeDecl, env: &mut TypeEnv) {
         // BROKEN #1: Reject redefinition of reserved type-system sentinel
         // names. `TypeOf` is used internally as the head of
-        // `Type::Generic(intern("TypeOf"), [..])` to represent a type
+        // `Type::builtin("TypeOf", [..])` to represent a type
         // descriptor (e.g. the runtime value produced by `Employee` when
         // used as a first-class type argument to `json.parse`). A user
         // declaring `type TypeOf(a) { Foo(a) }` would bind `Foo` as a
@@ -3810,8 +3767,9 @@ impl TypeChecker {
         let td_name_str = resolve(td.name);
         if td_name_str == "TypeOf" {
             self.error(
+                Code::InvalidTypeDeclaration,
                 format!("'{td_name_str}' is a reserved type name used by the type system"),
-                td.span,
+                td.name_span,
             );
             return;
         }
@@ -3827,52 +3785,17 @@ impl TypeChecker {
         // a single clear diagnostic. Mirrors the variant-shadow error
         // shape below.
         if crate::types::builtins::lookup(td_name_str.as_str()).is_some() {
-            self.error(
-                format!(
-                    "type '{td_name_str}' shadows builtin type '{td_name_str}'; \
-                     choose a different name"
-                ),
-                td.span,
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidTypeDeclaration,
+                    td.name_span,
+                    format!("type '{td_name_str}' shadows builtin type '{td_name_str}'"),
+                )
+                .with_help("choose a different name"),
             );
             return;
         }
-        // BROKEN T1: a type-decl whose name shadows a builtin enum's
-        // variant constructor (e.g. `type Empty {}`, `type Some { x: Int }`,
-        // `type Ok { x: Int }`, `type Closed { ... }`, `type Sent { ... }`,
-        // `type None { ... }`, `type Err { ... }`, `type Message { ... }`)
-        // used to silently overwrite the variant binding via
-        // `env.define(td.name, TypeOf(record_ty))` (record arm) or
-        // `env.define(td.name, TypeOf(enum_ty))` (enum arm with no
-        // self-referential variant), then downstream auto-derive synth
-        // or stamping unified the residual ChannelResult/Option/Result
-        // scheme against the new TypeOf and emitted up to 8 unspanned
-        // cascade errors of the shape `expected TypeOf, got ChannelResult`.
-        //
-        // The sibling case `td.name` matching the *enum* name itself
-        // (e.g. `type Option { ... }`) is handled by the existing
-        // `variant '{}' of enum '{}' shadows same-named variant of
-        // builtin enum '{}'` warning inside the enum arm — we exclude
-        // that here so we don't double-diagnose. We detect that case
-        // by `prev_enum_owner == td.name`: the variant `td.name` is
-        // owned by an enum whose name is also `td.name`, which only
-        // happens when `td.name` is a self-named variant (e.g. the
-        // builtin `Box(T)` pattern doesn't apply to any builtin, so
-        // this guard fires for user shadows of `Some`/`Ok`/`Empty`/
-        // etc. but stays out of the enum-vs-enum path).
-        if let Some(prev_enum_owner) = self.variant_to_enum.get(&td.name).copied()
-            && prev_enum_owner != td.name
-        {
-            self.error(
-                format!(
-                    "type '{}' shadows variant of builtin enum '{}'; \
-                     choose a different name or fully-qualify the variant",
-                    resolve(td.name),
-                    resolve(prev_enum_owner)
-                ),
-                td.span,
-            );
-            return;
-        }
+        let ty = self.own_type(td.name);
         // B2: populate the span hint used by `resolve_type_expr` for any
         // arity error on field / variant type annotations.
         let prev_type_span = self.current_type_anno_span.replace(td.span);
@@ -3900,6 +3823,7 @@ impl TypeChecker {
         match &td.body {
             TypeBody::Enum(variants) => {
                 let mut variant_infos = Vec::new();
+                let variant_defs = self.variant_resolutions(ty);
 
                 // Compute the TyVar ids for each type parameter once,
                 // before the variant loop (they are the same for every variant).
@@ -3918,16 +3842,24 @@ impl TypeChecker {
                 // constructor binding and no diagnostic was emitted.
                 let mut seen_variants: std::collections::HashSet<Symbol> =
                     std::collections::HashSet::new();
+                let mut first_variant: HashMap<Symbol, Span> = HashMap::new();
                 for variant in variants {
                     if !seen_variants.insert(variant.name) {
-                        self.error(
+                        let mut d = Diagnostic::error(
+                            Code::DuplicateDeclaration,
+                            variant.name_span,
                             format!("duplicate variant '{}' in enum '{}'", variant.name, td.name),
-                            td.span,
                         );
+                        if let Some(&first) = first_variant.get(&variant.name) {
+                            d = d.with_label(first, "first declared here");
+                        }
+                        self.errors.push(d);
+                    } else {
+                        first_variant.insert(variant.name, variant.name_span);
                     }
                 }
 
-                for (decl_idx, variant) in variants.iter().enumerate() {
+                for variant in variants {
                     let field_types: Vec<Type> = variant
                         .fields
                         .iter()
@@ -3939,113 +3871,32 @@ impl TypeChecker {
                         field_types: field_types.clone(),
                     });
 
-                    // Register the variant's declaration-order ordinal
-                    // into the global variant-ordinal registry that
-                    // `Value::cmp` consults. This is what makes
-                    // `cmp_gen(Red, Green)` return `-1` for
-                    // `type Color { Red, Green, Blue }` regardless of
-                    // alphabetical order — the round-60 baseline used
-                    // alphabetical comparison everywhere except a
-                    // hand-rolled Weekday special case (now removed).
-                    //
-                    // Variant names are globally unique in silt (the
-                    // duplicate-name diagnostic above + the
-                    // cross-enum-shadow warning below ensure this), so
-                    // a flat name → ordinal map is sufficient — no
-                    // need to key on the parent enum.
-                    crate::value::register_variant_ordinal(&resolve(variant.name), decl_idx as u32);
-
                     // Register the constructor in the type environment
                     let type_params: Vec<Type> =
                         td.params.iter().map(|p| param_vars[p].clone()).collect();
 
                     let result_type = if type_params.is_empty() {
-                        Type::Generic(td.name, vec![])
+                        Type::Generic(ty, vec![])
                     } else {
-                        Type::Generic(td.name, type_params)
+                        Type::Generic(ty, type_params)
                     };
 
-                    if field_types.is_empty() {
-                        // No-arg constructor is just a value
-                        env.define(
-                            variant.name,
-                            Scheme {
-                                vars: var_ids.clone(),
-                                ty: result_type,
-                                constraints: vec![],
-                                optional_last_param: false,
-                            },
-                        );
-                    } else {
-                        // Constructor function
-                        env.define(
-                            variant.name,
-                            Scheme {
-                                vars: var_ids.clone(),
-                                ty: Type::Fun(field_types, Box::new(result_type)),
-                                constraints: vec![],
-                                optional_last_param: false,
-                            },
-                        );
+                    let scheme = Scheme {
+                        vars: var_ids.clone(),
+                        ty: if field_types.is_empty() {
+                            // No-arg constructor is just a value
+                            result_type
+                        } else {
+                            Type::Fun(field_types, Box::new(result_type))
+                        },
+                        constraints: vec![],
+                        optional_last_param: false,
+                    };
+                    // The variant's definition's scheme, which a use of it
+                    // reads: two enums may have variants of one name.
+                    if let Some(crate::defs::Res::Def(id)) = variant_defs.get(&variant.name) {
+                        self.tables.schemes.insert(*id, scheme);
                     }
-
-                    // Round-23 GAP #2: detect cross-enum variant name
-                    // collisions. Previously `type A { Red }` followed by
-                    // `type B { Red }` silently overwrote the owning-enum
-                    // entry, so later `match x: A { Red -> ... }` resolved
-                    // `Red` to `B` and produced misleading "expected B,
-                    // got A" errors. The same hazard applies when a user
-                    // `type Result { ... }` shadows the builtin Result,
-                    // because builtins populate variant_to_enum first.
-                    // Emit a warning (not a hard error: the language
-                    // allows this and resolves by most-recent-wins, but
-                    // the user should know the prior variant is now
-                    // unreachable). Same-enum duplicates are caught
-                    // above as a hard error (G3).
-                    //
-                    // The shadowing case breaks into two sub-cases:
-                    //   a. prev_owner != td.name — two distinct enums,
-                    //      whether user/user or user/builtin (e.g. user
-                    //      `type X { Ok, Err }` vs builtin Result).
-                    //   b. prev_owner == td.name — same Symbol but the
-                    //      previously-registered enum entry is a builtin
-                    //      we're about to overwrite (e.g. user
-                    //      `type Result { ... }` replacing builtin Result).
-                    //      We detect this by the presence of a prior
-                    //      `self.enums[td.name]` entry at this point; the
-                    //      insert for the *current* td happens below, so
-                    //      any existing key must be a prior registration.
-                    //      Two user decls never share a name (the parser
-                    //      rejects it), so anything we see here is a
-                    //      builtin shadow.
-                    if let Some(prev_owner) = self.variant_to_enum.get(&variant.name).copied() {
-                        if prev_owner != td.name {
-                            self.warning(
-                                format!(
-                                    "variant '{}' of enum '{}' shadows same-named variant of enum '{}'; \
-                                     earlier variant is no longer resolvable by bare name",
-                                    resolve(variant.name),
-                                    resolve(td.name),
-                                    resolve(prev_owner)
-                                ),
-                                td.span,
-                            );
-                        } else if self.enums.contains_key(&td.name) {
-                            // Sub-case (b): user type shadowing a builtin
-                            // of the same name.
-                            self.warning(
-                                format!(
-                                    "variant '{}' of enum '{}' shadows same-named variant of builtin enum '{}'; \
-                                     builtin variant is no longer resolvable by bare name",
-                                    resolve(variant.name),
-                                    resolve(td.name),
-                                    resolve(prev_owner)
-                                ),
-                                td.span,
-                            );
-                        }
-                    }
-                    self.variant_to_enum.insert(variant.name, td.name);
                 }
 
                 // Register the enum type name as a value so it can be
@@ -4057,23 +3908,23 @@ impl TypeChecker {
                 let variant_shares_name = variant_infos.iter().any(|v| v.name == td.name);
                 if !variant_shares_name {
                     let enum_ty = if td.params.is_empty() {
-                        Type::Generic(td.name, vec![])
+                        Type::Generic(ty, vec![])
                     } else {
                         let args: Vec<Type> =
                             td.params.iter().map(|p| param_vars[p].clone()).collect();
-                        Type::Generic(td.name, args)
+                        Type::Generic(ty, args)
                     };
                     let scheme = Scheme {
                         vars: var_ids.clone(),
-                        ty: Type::Generic(intern("TypeOf"), vec![enum_ty]),
+                        ty: Type::type_of(enum_ty),
                         constraints: vec![],
                         optional_last_param: false,
                     };
                     env.define(td.name, scheme);
                 }
 
-                self.enums.insert(
-                    td.name,
+                self.tables.enums.insert(
+                    ty,
                     EnumInfo {
                         params: td.params.clone(),
                         param_var_ids: var_ids,
@@ -4089,12 +3940,20 @@ impl TypeChecker {
                 // by the second at the VM record layout level.
                 let mut seen_fields: std::collections::HashSet<Symbol> =
                     std::collections::HashSet::new();
+                let mut first_field: HashMap<Symbol, Span> = HashMap::new();
                 for f in fields {
                     if !seen_fields.insert(f.name) {
-                        self.error(
+                        let mut d = Diagnostic::error(
+                            Code::DuplicateRecordField,
+                            f.name_span,
                             format!("duplicate field '{}' in record type '{}'", f.name, td.name),
-                            td.span,
                         );
+                        if let Some(&first) = first_field.get(&f.name) {
+                            d = d.with_label(first, "first declared here");
+                        }
+                        self.errors.push(d);
+                    } else {
+                        first_field.insert(f.name, f.name_span);
                     }
                 }
                 let field_types: Vec<(Symbol, Type)> = fields
@@ -4115,11 +3974,11 @@ impl TypeChecker {
                             _ => unreachable!(),
                         })
                         .collect();
-                    self.record_param_var_ids.insert(td.name, var_ids);
+                    self.tables.record_param_var_ids.insert(ty, var_ids);
                 }
 
-                self.records.insert(
-                    td.name,
+                self.tables.records.insert(
+                    ty,
                     RecordInfo {
                         fields: field_types.clone(),
                         defined_in: self.defining_package(),
@@ -4139,11 +3998,11 @@ impl TypeChecker {
                 // fresh type vars are generated for each param so
                 // `json.parse(Box, ...)` can unify with a monomorphic
                 // instance at the call site.
-                let record_ty = Type::Record(td.name, field_types);
+                let record_ty = Type::Record(ty, field_types);
                 let scheme = if td.params.is_empty() {
                     Scheme {
                         vars: vec![],
-                        ty: Type::Generic(intern("TypeOf"), vec![record_ty]),
+                        ty: Type::type_of(record_ty),
                         constraints: vec![],
                         optional_last_param: false,
                     }
@@ -4161,10 +4020,10 @@ impl TypeChecker {
                         })
                         .collect();
                     let args: Vec<Type> = td.params.iter().map(|p| param_vars[p].clone()).collect();
-                    let generic_record = Type::Generic(td.name, args);
+                    let generic_record = Type::Generic(ty, args);
                     Scheme {
                         vars: var_ids,
-                        ty: Type::Generic(intern("TypeOf"), vec![generic_record]),
+                        ty: Type::type_of(generic_record),
                         constraints: vec![],
                         optional_last_param: false,
                     }
@@ -4184,8 +4043,7 @@ impl TypeChecker {
         // synthesized as real `TraitImpl` AST nodes by
         // `synthesize_auto_derive_impls`, which routes them through
         // `register_trait_impl` and the compiler emit path so
-        // `Op::CallMethod` finds a real `<TypeName>.<method>` global at
-        // dispatch time. The typecheck-stamp here remains load-bearing
+        // `Op::CallMethod` finds a real impl method at dispatch time. The typecheck-stamp here remains load-bearing
         // for two cases the synthesizer skips:
         //
         //   1. Generic types (`type Box(a) { Foo(a) }`,
@@ -4219,13 +4077,11 @@ impl TypeChecker {
         // present), and the duplicate-impl coherence check sees
         // `is_auto_derived: true` from the prior method_table entry
         // and allows the synthesized impl to overwrite it.
-        let dummy_span = Span {
-            line: 0,
-            col: 0,
-            offset: 0,
-        };
+        let dummy_span = td.span;
         for trait_name in BUILTIN_AUTO_DERIVED_TRAIT_NAMES {
-            self.trait_impl_set.insert((intern(trait_name), td.name));
+            self.tables
+                .trait_impl_set
+                .insert((TraitKey::builtin(trait_name), ty));
         }
         // Register auto-derived method entries
         let builtin_methods: &[(&str, Type)] = &[
@@ -4253,8 +4109,8 @@ impl TypeChecker {
             ),
         ];
         for (method_name, method_type) in builtin_methods {
-            self.method_table.insert(
-                (td.name, intern(method_name)),
+            self.tables.method_table.insert(
+                (ty, intern(method_name)),
                 MethodEntry {
                     method_type: method_type.clone(),
                     span: dummy_span,
@@ -4293,8 +4149,9 @@ impl TypeChecker {
         // pre-pass placeholder loop populated it). Mark it as in-
         // progress so any reference back to this alias inside its own
         // target — direct or indirect — is detected as a cycle.
-        self.type_aliases.insert(td.name);
-        self.type_alias_arity.insert(td.name, td.params.len());
+        let alias = self.own_type(td.name);
+        self.tables.type_aliases.insert(alias);
+        self.tables.type_alias_arity.insert(alias, td.params.len());
 
         // Round 74 Fix #3: snapshot the declared parameter names BEFORE
         // resolving the target so we can detect undeclared free tyvars
@@ -4335,7 +4192,7 @@ impl TypeChecker {
         undeclared.sort_by_key(|s| resolve(*s));
         for name in undeclared {
             let name_str = resolve(name);
-            self.error(
+            self.error(Code::InvalidTypeDeclaration,
                 format!(
                     "undeclared type parameter '{name_str}' in alias target — did you mean `type {}({name_str}) = ...`?",
                     resolve(td.name)
@@ -4346,13 +4203,14 @@ impl TypeChecker {
 
         // Detect cycles before registering. Build a chain that names
         // every alias visited; if `td.name` appears, report it.
-        let mut visiting: Vec<Symbol> = vec![td.name];
+        let mut visiting: Vec<TypeRef> = vec![alias];
         if let Some(cycle) = self.find_alias_cycle(&target_ty, &mut visiting) {
             // Format the cycle as `A -> B -> A` for clarity. `cycle` is
             // the Vec of names from the original `td.name` through
             // each alias in the chain that closes the loop.
-            let chain: Vec<String> = cycle.iter().map(|s| crate::intern::resolve(*s)).collect();
+            let chain: Vec<String> = cycle.iter().map(|t| resolve(t.name)).collect();
             self.error(
+                Code::InvalidTypeDeclaration,
                 format!(
                     "type alias '{}' forms a cycle: {}",
                     td.name,
@@ -4374,18 +4232,18 @@ impl TypeChecker {
             // each entry so use-site canonicalisation no longer sees
             // a half-built alias path.
             for &cycle_name in &cycle {
-                if cycle_name != td.name {
-                    self.resolver.unregister_alias(cycle_name);
-                    self.type_aliases.remove(&cycle_name);
-                    self.type_alias_arity.remove(&cycle_name);
+                if cycle_name != alias {
+                    self.tables.resolver.unregister_alias(cycle_name);
+                    self.tables.type_aliases.remove(&cycle_name);
+                    self.tables.type_alias_arity.remove(&cycle_name);
                 }
             }
             // Also drop this alias's placeholder entries — registration
             // is being skipped, and leaving the name in `type_aliases`
             // (the placeholder set) lets later passes treat A as a
             // valid alias that just happens to have no resolver entry.
-            self.type_aliases.remove(&td.name);
-            self.type_alias_arity.remove(&td.name);
+            self.tables.type_aliases.remove(&alias);
+            self.tables.type_alias_arity.remove(&alias);
             // Skip registration so the canonicaliser doesn't loop on a
             // self-referential expansion at any later use site.
             return;
@@ -4406,8 +4264,8 @@ impl TypeChecker {
             })
             .collect();
 
-        self.resolver.register_alias(
-            td.name,
+        self.tables.resolver.register_alias(
+            alias,
             crate::types::canonical::AliasInfo {
                 params: td.params.clone(),
                 param_var_ids,
@@ -4420,7 +4278,7 @@ impl TypeChecker {
     /// closes a cycle, or `None` if no cycle is reachable. The
     /// `visiting` Vec carries the alias names seen so far on this
     /// walk; the head is the alias being declared.
-    fn find_alias_cycle(&self, ty: &Type, visiting: &mut Vec<Symbol>) -> Option<Vec<Symbol>> {
+    fn find_alias_cycle(&self, ty: &Type, visiting: &mut Vec<TypeRef>) -> Option<Vec<TypeRef>> {
         match ty {
             Type::Generic(name, args) => {
                 if visiting.contains(name) {
@@ -4431,7 +4289,7 @@ impl TypeChecker {
                     chain.push(*name);
                     return Some(chain);
                 }
-                if let Some(info) = self.resolver.lookup_alias(*name) {
+                if let Some(info) = self.tables.resolver.lookup_alias(*name) {
                     visiting.push(*name);
                     let result = self.find_alias_cycle(&info.target, visiting);
                     visiting.pop();
@@ -4530,7 +4388,7 @@ impl TypeChecker {
         // the match each canonicalise their subtree, and the outer
         // call canonicalises the already-canonical result — a no-op.
         let resolved = self.resolve_type_expr_inner(te, param_vars);
-        crate::types::canonical::canonicalize(&self.resolver, &resolved)
+        crate::types::canonical::canonicalize(&self.tables.resolver, &resolved)
     }
 
     fn resolve_type_expr_inner(
@@ -4539,254 +4397,204 @@ impl TypeChecker {
         param_vars: &mut HashMap<Symbol, Type>,
     ) -> Type {
         match &te.kind {
-            TypeExprKind::Named(name) => {
-                // Check if it's a type param variable
-                if let Some(tv) = param_vars.get(name) {
+            TypeExprKind::Named { module, name, .. } => {
+                // What the name means, the resolver said: nothing (it
+                // reported why, or the type comes from a module that
+                // failed to load), a type variable, or a type.
+                if te.res == Some(crate::defs::Res::Error) {
+                    return Type::Error;
+                }
+                if module.is_none()
+                    && let Some(tv) = param_vars.get(name)
+                {
+                    // A type parameter variable.
                     return tv.clone();
                 }
                 let name_str = resolve(*name);
-                match name_str.as_str() {
-                    "Int" => Type::Int,
-                    "Float" => Type::Float,
-                    "Bool" => Type::Bool,
-                    "String" => Type::String,
-                    "()" | "Unit" => Type::Unit,
-                    "List" => {
-                        // List without explicit type param => List(fresh_var)
-                        Type::List(Box::new(self.fresh_var()))
-                    }
-                    "Range" => {
-                        // Range without explicit type param => Range(fresh_var).
-                        // Range is a nominal alias for List (see Type::Range
-                        // in src/types.rs); inference is bidirectional at
-                        // unify time.
-                        Type::Range(Box::new(self.fresh_var()))
-                    }
-                    "Map" => {
-                        // Map without explicit type params => Map(fresh_var, fresh_var)
-                        Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
-                    }
-                    "Set" => {
-                        // Set without explicit type param => Set(fresh_var)
-                        Type::Set(Box::new(self.fresh_var()))
-                    }
-                    "Channel" => {
-                        // Channel without explicit type param => Channel(fresh_var)
-                        Type::Channel(Box::new(self.fresh_var()))
-                    }
-                    // Opaque resource / value types from builtin modules
-                    // (`bytes::register`, `tcp::register`,
-                    // `crypto::register`). Round 65 added these to
-                    // `BUILTIN_TYPES` so the trait-impl-target gate
-                    // accepted `trait T for Bytes`, but the type-annotation
-                    // path (`let x: Bytes = ...`) was not extended at the
-                    // same time, leaving these names unannotatable. Resolve
-                    // them to the same `Type::Generic(name, vec![])` shape
-                    // the builtin schemes produce so unify with the
-                    // returned values succeeds. See round 72 GAP G1.
-                    "Bytes" => Type::Generic(intern("Bytes"), vec![]),
-                    "TcpListener" => Type::Generic(intern("TcpListener"), vec![]),
-                    "TcpStream" => Type::Generic(intern("TcpStream"), vec![]),
-                    _ => {
-                        // Lowercase names in type annotations are type variables
-                        // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
-                        let first_char = name_str.chars().next().unwrap_or('A');
-                        if first_char.is_lowercase() {
-                            // ... unless the name is a known type spelled
-                            // in lowercase (`x: int`): that is a typo for
-                            // the type, not a type variable.
-                            if self.case_mismatched_type_name(&name_str, false).is_some() {
-                                self.error(self.unknown_type_message(&name_str, false), te.span);
-                                return Type::Error;
-                            }
-                            let tv = self.fresh_var();
-                            param_vars.insert(*name, tv.clone());
-                            tv
-                        } else {
-                            // Uppercase: a record or enum type. If the type
-                            // is parameterized and the user wrote it bare
-                            // (no type args), instantiate a fresh type
-                            // variable for each parameter so distinct uses
-                            // don't cross-pollute through the shared
-                            // template TyVars (T1 audit fix). This mirrors
-                            // the List/Map/Set/Channel special-case paths
-                            // above and the fresh-var pattern in
-                            // check_pattern for Pattern::Record.
-                            //
-                            // B3 (round 60): reject uppercase names that
-                            // refer to nothing (no record / no enum). The
-                            // pre-fix path silently returned
-                            // `Type::Generic(name, vec![])` which then
-                            // cascaded into "does not implement Display"
-                            // and "type mismatch" diagnostics far from the
-                            // annotation site. The whitelist mirrors the
-                            // one used by the trait-impl-target check at
-                            // `register_trait_impl` (round 23 GAP #1).
-                            let is_user_record = self.records.contains_key(name);
-                            let is_user_enum = self.enums.contains_key(name);
-                            // Phase D: alias names resolve to a
-                            // `Type::Generic(name, args)` head that the
-                            // canonicaliser will expand. Bare-name
-                            // alias references with type params get
-                            // fresh TyVars per param (mirrors the
-                            // record / enum bare-name path).
-                            let is_user_alias = self.type_aliases.contains(name);
-                            if !is_user_record && !is_user_enum && !is_user_alias {
-                                self.error(self.unknown_type_message(&name_str, false), te.span);
-                                return Type::Error;
-                            }
-                            let arity = self
-                                .record_param_var_ids
-                                .get(name)
-                                .map(|v| v.len())
-                                .or_else(|| self.enums.get(name).map(|e| e.params.len()))
-                                .or_else(|| self.type_alias_arity.get(name).copied())
-                                .unwrap_or(0);
-                            if arity == 0 {
-                                Type::Generic(*name, vec![])
-                            } else {
-                                let args: Vec<Type> =
-                                    (0..arity).map(|_| self.fresh_var()).collect();
-                                Type::Generic(*name, args)
-                            }
+                if self.names_rejected(te.res, *name) {
+                    return Type::Error;
+                }
+                let Some(ty) = self.named_type(te.res, *name) else {
+                    // Lowercase names in type annotations are type variables
+                    // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
+                    let first_char = name_str.chars().next().unwrap_or('A');
+                    if first_char.is_lowercase() {
+                        // ... unless the name is a known type spelled
+                        // in lowercase (`x: int`): that is a typo for
+                        // the type, not a type variable.
+                        if self.case_mismatched_type_name(&name_str, false).is_some() {
+                            self.error(
+                                Code::UnknownType,
+                                self.unknown_type_message(&name_str, false),
+                                te.span,
+                            );
+                            return Type::Error;
                         }
+                        let tv = self.fresh_var();
+                        param_vars.insert(*name, tv.clone());
+                        return tv;
+                    }
+                    // B3 (round 60): an uppercase name that refers to
+                    // nothing is reported here rather than becoming a
+                    // ghost type that cascades into "does not implement
+                    // Display" and "type mismatch" far from the
+                    // annotation.
+                    self.error(
+                        Code::UnknownType,
+                        self.unknown_type_message(&name_str, false),
+                        te.span,
+                    );
+                    return Type::Error;
+                };
+                if let Some(builtin) = builtin_type_name(ty) {
+                    match builtin {
+                        "Int" => return Type::Int,
+                        "Float" => return Type::Float,
+                        "Bool" => return Type::Bool,
+                        "String" => return Type::String,
+                        "Unit" => return Type::Unit,
+                        // A container without explicit type params gets
+                        // a fresh variable for each. Range is a nominal
+                        // alias for List (see Type::Range in
+                        // src/types.rs); inference is bidirectional at
+                        // unify time.
+                        "List" => return Type::List(Box::new(self.fresh_var())),
+                        "Range" => return Type::Range(Box::new(self.fresh_var())),
+                        "Map" => {
+                            return Type::Map(
+                                Box::new(self.fresh_var()),
+                                Box::new(self.fresh_var()),
+                            );
+                        }
+                        "Set" => return Type::Set(Box::new(self.fresh_var())),
+                        "Channel" => return Type::Channel(Box::new(self.fresh_var())),
+                        // Opaque resource / value types from builtin
+                        // modules: the shape the builtin schemes produce
+                        // (round 72 GAP G1).
+                        _ if let Some(arity) = opaque_arity(builtin) => {
+                            let args = (0..arity).map(|_| self.fresh_var()).collect();
+                            return Type::Generic(ty, args);
+                        }
+                        _ => {}
                     }
                 }
+                // A record, enum or alias type. If the type is
+                // parameterized and the user wrote it bare (no type
+                // args), instantiate a fresh type variable for each
+                // parameter so distinct uses don't cross-pollute
+                // through the shared template TyVars (T1 audit fix).
+                // Aliases resolve to a `Type::Generic(alias, args)`
+                // head that the canonicaliser will expand.
+                let known = self.tables.records.contains_key(&ty)
+                    || self.tables.enums.contains_key(&ty)
+                    || self.tables.type_aliases.contains(&ty);
+                if !known {
+                    self.error(
+                        Code::UnknownType,
+                        self.unknown_type_message(&name_str, false),
+                        te.span,
+                    );
+                    return Type::Error;
+                }
+                let arity = self.type_arity(ty).unwrap_or(0);
+                let args: Vec<Type> = (0..arity).map(|_| self.fresh_var()).collect();
+                Type::Generic(ty, args)
             }
-            TypeExprKind::Generic(name, args) => {
+            TypeExprKind::Generic { name, args, .. } => {
+                // A type the resolver resolved to nothing takes any
+                // arguments; nothing is known about it.
+                if te.res == Some(crate::defs::Res::Error) {
+                    for arg in args {
+                        let _ = self.resolve_type_expr_inner(arg, param_vars);
+                    }
+                    return Type::Error;
+                }
                 let resolved_args: Vec<Type> = args
                     .iter()
                     .map(|a| self.resolve_type_expr(a, param_vars))
                     .collect();
                 let name_str = resolve(*name);
-                match name_str.as_str() {
-                    "List" if resolved_args.is_empty() => Type::List(Box::new(self.fresh_var())),
-                    "List" if resolved_args.len() == 1 => {
-                        Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Range" if resolved_args.is_empty() => Type::Range(Box::new(self.fresh_var())),
-                    "Range" if resolved_args.len() == 1 => {
-                        Type::Range(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Map" if resolved_args.is_empty() => {
-                        Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
-                    }
-                    "Map" if resolved_args.len() == 2 => {
-                        let mut iter = resolved_args.into_iter();
-                        Type::Map(
-                            Box::new(iter.next().unwrap()),
-                            Box::new(iter.next().unwrap()),
-                        )
-                    }
-                    "Set" if resolved_args.is_empty() => Type::Set(Box::new(self.fresh_var())),
-                    "Set" if resolved_args.len() == 1 => {
-                        Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Channel" if resolved_args.is_empty() => {
-                        Type::Channel(Box::new(self.fresh_var()))
-                    }
-                    "Channel" if resolved_args.len() == 1 => {
-                        Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    // Opaque arity-0 builtin types — accept the empty-paren
-                    // surface form `Bytes()` (mirrors `List()`/`Map()` etc.)
-                    // and emit a proper arity diagnostic for `Bytes(Int)`.
-                    // The bare-name path is handled in the `Named` arm
-                    // above. See round 72 GAP G1.
-                    "Bytes" if resolved_args.is_empty() => Type::Generic(intern("Bytes"), vec![]),
-                    "TcpListener" if resolved_args.is_empty() => {
-                        Type::Generic(intern("TcpListener"), vec![])
-                    }
-                    "TcpStream" if resolved_args.is_empty() => {
-                        Type::Generic(intern("TcpStream"), vec![])
-                    }
-                    "Bytes" | "TcpListener" | "TcpStream" => {
-                        let err_span = self.current_type_anno_span.unwrap_or(Span {
-                            line: 0,
-                            col: 0,
-                            offset: 0,
-                        });
-                        self.error(
-                            format!(
-                                "type argument count mismatch for builtin type '{}': expected 0, got {}",
-                                name_str.as_str(),
-                                resolved_args.len()
-                            ),
-                            err_span,
-                        );
-                        Type::Error
-                    }
-                    _ => {
-                        // B2: enforce arity for user-declared parameterized
-                        // records and enums. Without this check, an
-                        // annotation like `Box(Int, String)` against a
-                        // `type Box(a) { ... }` silently produced a
-                        // `Type::Generic("Box", [Int, String])` whose extra
-                        // arg was dropped at unify time (the `Record /
-                        // Generic` arms in `unify` only run when the arities
-                        // agree, so mismatched ones no-op'd), leaving the
-                        // user with no diagnostic and a runtime type
-                        // error at first use of the field.
-                        // B2 (round 60): parameterless records (`type Point { x: Int }`)
-                        // are NOT entered into `record_param_var_ids` (only
-                        // parameterized ones are; see :1935 insert-gate).
-                        // Without this `.or_else` chain, `Point(Bool)` got
-                        // `expected_arity = None` and silently became
-                        // `Type::Generic("Point", [Bool])`, which the
-                        // Record/Generic unify arms also no-op'd. Chain to
-                        // `records.contains_key` so arity-0 records emit the
-                        // standard "expected 0, got N" diagnostic.
-                        let expected_arity = self
-                            .record_param_var_ids
-                            .get(name)
-                            .map(|v| v.len())
-                            .or_else(|| self.enums.get(name).map(|e| e.params.len()))
-                            .or_else(|| self.records.contains_key(name).then_some(0))
-                            // Phase D: aliases participate in the same
-                            // arity-check flow as records and enums.
-                            .or_else(|| self.type_alias_arity.get(name).copied());
-                        // B3 (round 60): the generic form `Frobnitz(Int)`
-                        // for an undeclared `Frobnitz` should also report
-                        // "unknown type 'Frobnitz'" at the annotation span,
-                        // matching the bare-name path. Without this, the
-                        // ghost `Type::Generic("Frobnitz", [Int])` cascaded
-                        // into Display / type-mismatch noise.
-                        if expected_arity.is_none() {
-                            self.error(self.unknown_type_message(&name_str, true), te.span);
-                            return Type::Error;
+                if self.names_rejected(te.res, *name) {
+                    return Type::Error;
+                }
+                let ty = self.named_type(te.res, *name);
+                if let Some(builtin) = ty.and_then(builtin_type_name) {
+                    let n = resolved_args.len();
+                    let mut it = resolved_args.clone().into_iter();
+                    let mut arg = |this: &mut Self| it.next().unwrap_or_else(|| this.fresh_var());
+                    match (builtin, n) {
+                        ("List", 0 | 1) => return Type::List(Box::new(arg(self))),
+                        ("Range", 0 | 1) => return Type::Range(Box::new(arg(self))),
+                        ("Map", 0 | 2) => {
+                            let k = arg(self);
+                            let v = arg(self);
+                            return Type::Map(Box::new(k), Box::new(v));
                         }
-                        if let Some(expected) = expected_arity
-                            && expected != resolved_args.len()
-                        {
-                            let kind = if self.records.contains_key(name) {
-                                "record"
-                            } else if self.type_aliases.contains(name) {
-                                "alias"
-                            } else {
-                                "enum"
-                            };
-                            let err_span = self.current_type_anno_span.unwrap_or(Span {
-                                line: 0,
-                                col: 0,
-                                offset: 0,
-                            });
+                        ("Set", 0 | 1) => return Type::Set(Box::new(arg(self))),
+                        ("Channel", 0 | 1) => return Type::Channel(Box::new(arg(self))),
+                        // Opaque arity-0 builtin types accept the
+                        // empty-paren surface form `Bytes()` (mirrors
+                        // `List()`/`Map()` etc.) and report `Bytes(Int)`
+                        // (round 72 GAP G1).
+                        (b, n) if let Some(arity) = opaque_arity(b) => {
+                            if n == arity {
+                                return Type::Generic(ty.expect("a builtin type"), resolved_args);
+                            }
+                            let err_span = self.current_type_anno_span.unwrap_or(te.span);
                             self.error(
+                                Code::ArityMismatch,
                                 format!(
-                                    "type argument count mismatch for {kind} '{name}': expected {expected}, got {}",
-                                    resolved_args.len()
+                                    "type argument count mismatch for builtin type '{b}': expected {arity}, got {n}"
                                 ),
                                 err_span,
                             );
-                            // Return Error so the subsequent unify doesn't
-                            // cascade a second "arity mismatch" diagnostic
-                            // (the Generic/Generic arm would re-detect the
-                            // same problem). The first report already has
-                            // the user-facing span; extras only confuse.
                             return Type::Error;
                         }
-                        Type::Generic(*name, resolved_args)
+                        _ => {}
                     }
                 }
+                // B2: enforce arity for user-declared parameterized
+                // records, enums and aliases. A mismatched arity used to
+                // be dropped at unify time, leaving a runtime type error
+                // at first use of the field. A parameterless record has
+                // arity 0, so `Point(Bool)` is reported too.
+                // B3 (round 60): the generic form `Frobnitz(Int)` for an
+                // undeclared `Frobnitz` reports "unknown type
+                // 'Frobnitz'" at the annotation span, matching the
+                // bare-name path.
+                let Some((ty, expected)) = ty.and_then(|ty| Some((ty, self.type_arity(ty)?)))
+                else {
+                    self.error(
+                        Code::UnknownType,
+                        self.unknown_type_message(&name_str, true),
+                        te.span,
+                    );
+                    return Type::Error;
+                };
+                if expected != resolved_args.len() {
+                    let kind = if self.tables.records.contains_key(&ty) {
+                        "record"
+                    } else if self.tables.type_aliases.contains(&ty) {
+                        "alias"
+                    } else {
+                        "enum"
+                    };
+                    let err_span = self.current_type_anno_span.unwrap_or(te.span);
+                    self.error(Code::ArityMismatch,
+                        format!(
+                            "type argument count mismatch for {kind} '{name}': expected {expected}, got {}",
+                            resolved_args.len()
+                        ),
+                        err_span,
+                    );
+                    // Return Error so the subsequent unify doesn't
+                    // cascade a second "arity mismatch" diagnostic
+                    // (the Generic/Generic arm would re-detect the
+                    // same problem). The first report already has
+                    // the user-facing span; extras only confuse.
+                    return Type::Error;
+                }
+                Type::Generic(ty, resolved_args)
             }
             TypeExprKind::Tuple(elems) => {
                 // `()` is the canonical unit type — not a zero-arity tuple.
@@ -4819,7 +4627,11 @@ impl TypeChecker {
                 receiver,
                 trait_name,
                 assoc_name,
+                ..
             } => {
+                if te.res == Some(crate::defs::Res::Error) {
+                    return Type::Error;
+                }
                 // Build a `Type::AssocProj` whose receiver is the
                 // resolved receiver type. The canonicaliser at
                 // `resolve_type_expr`'s wrapper layer reduces it to
@@ -4835,6 +4647,7 @@ impl TypeChecker {
                 let recv_ty = self.resolve_type_expr_inner(receiver, param_vars);
                 if resolve(*trait_name) == "__no_enclosing_trait__" {
                     self.error(
+                        Code::InvalidTypeAnnotation,
                         "`Self::Item` is only valid inside a trait or trait-impl body; \
                          use the qualified form `<T as Trait>::Item` here"
                             .to_string(),
@@ -4850,9 +4663,17 @@ impl TypeChecker {
                 // by canonicalize. Walk the supertrait chain in DFS
                 // order (LIFO via `Vec::pop`); the first popped trait
                 // that declares the assoc-type wins.
+                let Some(trait_key) = self.named_trait(te.res, *trait_name) else {
+                    self.error(
+                        Code::UnknownTrait,
+                        format!("unknown trait '{trait_name}'"),
+                        te.span,
+                    );
+                    return Type::Error;
+                };
                 let declaring_trait = self
-                    .find_assoc_type_declaring_trait(*trait_name, *assoc_name)
-                    .unwrap_or(*trait_name);
+                    .find_assoc_type_declaring_trait(trait_key, *assoc_name)
+                    .unwrap_or(trait_key);
                 Type::AssocProj {
                     receiver: Box::new(recv_ty),
                     trait_name: declaring_trait,
@@ -4866,6 +4687,7 @@ impl TypeChecker {
                 for (n, t) in fields {
                     if !seen.insert(*n) {
                         self.error(
+                            Code::DuplicateRecordField,
                             format!("duplicate field '{}' in anon record type", n),
                             te.span,
                         );
@@ -4909,16 +4731,16 @@ impl TypeChecker {
     /// trait" diagnostic at use-site).
     fn find_assoc_type_declaring_trait(
         &self,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         assoc_name: Symbol,
-    ) -> Option<Symbol> {
-        let mut frontier: Vec<Symbol> = vec![trait_name];
-        let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+    ) -> Option<TraitKey> {
+        let mut frontier: Vec<TraitKey> = vec![trait_name];
+        let mut seen: std::collections::HashSet<TraitKey> = std::collections::HashSet::new();
         while let Some(t) = frontier.pop() {
             if !seen.insert(t) {
                 continue;
             }
-            if let Some(info) = self.traits.get(&t) {
+            if let Some(info) = self.tables.traits.get(&t) {
                 if info.assoc_types.iter().any(|a| a.name == assoc_name) {
                     return Some(t);
                 }
@@ -4955,7 +4777,7 @@ impl TypeChecker {
                     // signature and any where clauses. The parameter's own
                     // compile-time type is the runtime type descriptor
                     // `TypeOf(a)`, which unifies with record / primitive
-                    // descriptor globals at call sites.
+                    // descriptors at call sites.
                     let name = match &param.pattern.kind {
                         PatternKind::Ident(n) => *n,
                         _ => unreachable!("parser guarantees `type` params use an Ident pattern"),
@@ -4964,7 +4786,7 @@ impl TypeChecker {
                         .entry(name)
                         .or_insert_with(|| self.fresh_var())
                         .clone();
-                    Type::Generic(intern("TypeOf"), vec![var])
+                    Type::type_of(var)
                 }
                 ParamKind::Data => {
                     if let Some(te) = &param.ty {
@@ -4990,7 +4812,7 @@ impl TypeChecker {
             for name in param_map.keys() {
                 if !pre_return_keys.contains(name) {
                     let n = resolve(*name);
-                    self.error(
+                    self.error(Code::InvalidTypeAnnotation,
                         format!(
                             "type variable '{}' in return type is not introduced by any parameter; \
                              add a `type {}` parameter or anchor it on an existing parameter's type",
@@ -5038,15 +4860,18 @@ impl TypeChecker {
             let trait_args = &wc.trait_args;
             if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
-                if let Type::Var(tv) = resolved {
-                    scheme.constraints.push((tv, *trait_name));
+                // An unknown trait is reported when the body is checked.
+                if let Type::Var(tv) = resolved
+                    && let Some(trait_name) = self.named_trait(wc.trait_res, *trait_name)
+                {
+                    scheme.constraints.push((tv, trait_name));
                     if !trait_args.is_empty() {
                         let resolved_args: Vec<Type> = trait_args
                             .iter()
                             .map(|te| self.resolve_type_expr(te, &mut param_map))
                             .collect();
                         self.trait_arg_bindings
-                            .insert((tv, *trait_name), resolved_args);
+                            .insert((tv, trait_name), resolved_args);
                     }
                 }
             } else {
@@ -5058,7 +4883,7 @@ impl TypeChecker {
                         _ => "_".to_string(),
                     })
                     .unwrap_or_else(|| "_".to_string());
-                self.error(
+                self.error(Code::InvalidTypeAnnotation,
                     format!(
                         "type variable '{}' in where clause is not introduced in the function signature; \
                          use an explicit type annotation, e.g.: fn {}({}: {}) where {}: {}",
@@ -5101,8 +4926,9 @@ impl TypeChecker {
         let trait_name_str = resolve(t.name);
         if BUILTIN_TRAIT_NAMES.contains(&trait_name_str.as_str()) {
             self.error(
+                Code::InvalidTraitDeclaration,
                 format!("trait '{trait_name_str}' is a builtin trait and cannot be redefined"),
-                t.span,
+                t.name_span,
             );
             return;
         }
@@ -5113,6 +4939,51 @@ impl TypeChecker {
     /// (after the redefinition guard in `register_trait_decl_user`) and
     /// built-in synthetic decls (via `builtin_trait_decls`).
     pub(super) fn register_trait_decl_inner(&mut self, t: &TraitDecl) {
+        let key = self.own_trait(t.name);
+        // The supertraits and the associated types' bounds. A trait name
+        // that names no trait is reported here, unless the resolver
+        // reported it.
+        let mut supertraits: Vec<(TraitKey, Vec<TypeExpr>)> = Vec::new();
+        for r in &t.supertraits {
+            match self.named_trait(r.res, r.name) {
+                Some(sup) => supertraits.push((sup, r.args.clone())),
+                None if r.res == Some(crate::defs::Res::Error) => {}
+                None => self.error(
+                    Code::UnknownTrait,
+                    format!("trait '{}' lists unknown supertrait '{}'", t.name, r.name),
+                    t.span,
+                ),
+            }
+        }
+        let assoc_types: Vec<AssocTypeInfo> = t
+            .assoc_types
+            .iter()
+            .map(|a| AssocTypeInfo {
+                name: a.name,
+                bounds: a
+                    .bounds
+                    .iter()
+                    .filter_map(|b| Some((self.named_trait(b.res, b.name)?, b.args.clone())))
+                    .collect(),
+                span: a.span,
+            })
+            .collect();
+        for a in &t.assoc_types {
+            for b in &a.bounds {
+                if b.res != Some(crate::defs::Res::Error)
+                    && self.named_trait(b.res, b.name).is_none()
+                {
+                    self.error(
+                        Code::UnknownTrait,
+                        format!(
+                            "unknown trait '{}' in bound on associated type '{}::{}'",
+                            b.name, t.name, a.name
+                        ),
+                        a.span,
+                    );
+                }
+            }
+        }
         // GAP (round 35 F6): duplicate method names in a trait
         // declaration used to silently overwrite each other in the
         // trait's `methods` Vec (first entry won for method lookup but
@@ -5123,6 +4994,7 @@ impl TypeChecker {
             for m in &t.methods {
                 if !seen.insert(m.name) {
                     self.error(
+                        Code::DuplicateDeclaration,
                         format!("duplicate method '{}' in trait '{}'", m.name, t.name),
                         m.span,
                     );
@@ -5135,23 +5007,16 @@ impl TypeChecker {
         // resolve `Self::AssocName` projections inside method
         // signatures by walking the supertrait chain — e.g. a `Sub`
         // method declaring `Self::Item` (where `Item` lives on
-        // `Super`) needs `self.traits[Sub].supertraits = [Super]` to
+        // `Super`) needs `self.tables.traits[Sub].supertraits = [Super]` to
         // be visible during method-type resolution. The stub is
         // overwritten with the fully-populated TraitInfo at the end
         // of this function.
-        let pre_assoc_types: Vec<AssocTypeInfo> = t
-            .assoc_types
-            .iter()
-            .map(|a| AssocTypeInfo {
-                name: a.name,
-                bounds: a.bounds.clone(),
-                span: a.span,
-            })
-            .collect();
-        let pre_supertraits: Vec<Symbol> = t.supertraits.iter().map(|(n, _, _)| *n).collect();
+        let pre_assoc_types = assoc_types.clone();
+        let private_to = (!t.is_pub).then_some((self.module, self.module_name));
+        let pre_supertraits: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
         let pkg = self.defining_package();
-        self.traits.insert(
-            t.name,
+        self.tables.traits.insert(
+            key,
             TraitInfo {
                 params: t.params.clone(),
                 param_var_ids: Vec::new(),
@@ -5159,9 +5024,9 @@ impl TypeChecker {
                 supertrait_args: Vec::new(),
                 param_where_clauses: Vec::new(),
                 methods: Vec::new(),
-                decl_span: t.span,
                 default_method_bodies: HashMap::new(),
                 assoc_types: pre_assoc_types,
+                private_to,
                 defined_in: pkg,
             },
         );
@@ -5203,7 +5068,7 @@ impl TypeChecker {
                                 .entry(name)
                                 .or_insert_with(|| self.fresh_var())
                                 .clone();
-                            Type::Generic(intern("TypeOf"), vec![var])
+                            Type::type_of(var)
                         }
                         ParamKind::Data => {
                             if let Some(te) = &param.ty {
@@ -5250,15 +5115,20 @@ impl TypeChecker {
         // trait_name) shape is kept; trait_args on the bound are not
         // yet honored (reserved for a future extension where bounds
         // can themselves reference other trait args).
-        let param_where_clauses: Vec<(Symbol, Symbol)> = t
+        let param_where_clauses: Vec<(Symbol, TraitKey)> = t
             .param_where_clauses
             .iter()
-            .map(|wc| (wc.type_param, wc.trait_name))
+            .filter_map(|wc| {
+                Some((
+                    wc.type_param,
+                    self.named_trait(wc.trait_res, wc.trait_name)?,
+                ))
+            })
             .collect();
 
-        let supertrait_names: Vec<Symbol> = t.supertraits.iter().map(|(n, _, _)| *n).collect();
+        let supertrait_names: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
         let supertrait_args: Vec<Vec<TypeExpr>> =
-            t.supertraits.iter().map(|(_, a, _)| a.clone()).collect();
+            supertraits.into_iter().map(|(_, args)| args).collect();
 
         // Reject duplicate assoc-type names within the same trait.
         // Mirrors the duplicate-method check above.
@@ -5266,6 +5136,7 @@ impl TypeChecker {
         for a in &t.assoc_types {
             if !seen_assoc.insert(a.name) {
                 self.error(
+                    Code::DuplicateDeclaration,
                     format!(
                         "duplicate associated type '{}' in trait '{}'",
                         resolve(a.name),
@@ -5275,18 +5146,8 @@ impl TypeChecker {
                 );
             }
         }
-        let assoc_types: Vec<AssocTypeInfo> = t
-            .assoc_types
-            .iter()
-            .map(|a| AssocTypeInfo {
-                name: a.name,
-                bounds: a.bounds.clone(),
-                span: a.span,
-            })
-            .collect();
-
-        self.traits.insert(
-            t.name,
+        self.tables.traits.insert(
+            key,
             TraitInfo {
                 params: t.params.clone(),
                 param_var_ids,
@@ -5294,9 +5155,9 @@ impl TypeChecker {
                 supertrait_args,
                 param_where_clauses,
                 methods,
-                decl_span: t.span,
                 default_method_bodies,
                 assoc_types,
+                private_to,
                 defined_in: pkg,
             },
         );
@@ -5310,15 +5171,14 @@ impl TypeChecker {
     /// `trait T for Unit { ... }` impl receives a `Type::Unit` self_type
     /// rather than the `Type::Generic("Unit", [])` fallback, which never
     /// unifies with the canonical `Type::Unit` receiver.
-    fn type_from_name(name: Symbol) -> Type {
-        let name_str = resolve(name);
-        match name_str.as_str() {
-            "Int" => Type::Int,
-            "Float" => Type::Float,
-            "Bool" => Type::Bool,
-            "String" => Type::String,
-            "Unit" | "()" => Type::Unit,
-            _ => Type::Generic(name, vec![]),
+    fn type_from_name(ty: TypeRef) -> Type {
+        match builtin_type_name(ty) {
+            Some("Int") => Type::Int,
+            Some("Float") => Type::Float,
+            Some("Bool") => Type::Bool,
+            Some("String") => Type::String,
+            Some("Unit") => Type::Unit,
+            _ => Type::Generic(ty, vec![]),
         }
     }
 
@@ -5346,7 +5206,9 @@ impl TypeChecker {
         decls.retain(|decl| match decl {
             Decl::TraitImpl(ti)
                 if !ti.is_auto_derived
-                    && SEALED_TRAIT_NAMES.contains(&resolve(ti.trait_name).as_str()) =>
+                    && self
+                        .impl_trait(ti)
+                        .is_some_and(|t| SEALED_TRAIT_NAMES.iter().any(|n| t.is_builtin(n))) =>
             {
                 errors.push((ti.trait_name, ti.span));
                 false
@@ -5355,6 +5217,7 @@ impl TypeChecker {
         });
         for (trait_name, span) in errors {
             self.error(
+                Code::InvalidTraitImpl,
                 format!(
                     "trait '{trait_name}' cannot be implemented by hand: it is derived \
                      structurally for every type whose fields support it — remove this \
@@ -5389,29 +5252,43 @@ impl TypeChecker {
     /// - The `Alias` body kind (handled separately by
     ///   `register_type_alias`).
     fn synthesize_auto_derive_impls(&mut self, decls: &mut Vec<Decl>) {
-        let display_sym = intern("Display");
+        let display_sym = TraitKey::builtin("Display");
         // Scan for user-written `Display` impls so we can skip synthesis
         // for the types the user already covered. Use the canonical
         // target-type symbol so an impl on an alias skips synthesis on
         // every type under the same canonical name.
-        let mut user_display_impls: std::collections::HashSet<Symbol> =
+        let mut user_display_impls: std::collections::HashSet<TypeRef> =
             std::collections::HashSet::new();
         for decl in decls.iter() {
             if let Decl::TraitImpl(ti) = decl
                 && !ti.is_auto_derived
-                && ti.trait_name == display_sym
+                && self.named_trait(ti.trait_res, ti.trait_name) == Some(display_sym)
             {
-                user_display_impls.insert(canonicalize_type_name(&self.resolver, ti.target_type));
+                if let Some(target) = self.impl_target(ti) {
+                    user_display_impls.insert(target);
+                }
+            }
+        }
+        // And for the types whose written `Display` impl an import brought
+        // in (a module of the package, or an earlier REPL cell): deriving
+        // one again would clash with it.
+        let display_method = intern("display");
+        for ((type_name, method), entry) in &self.tables.method_table {
+            if *method == display_method
+                && !entry.is_auto_derived
+                && entry.trait_name == Some(display_sym)
+            {
+                user_display_impls.insert(*type_name);
             }
         }
 
-        let compare_sym = intern("Compare");
-        let equal_sym = intern("Equal");
-        let hash_sym = intern("Hash");
+        let compare_sym = TraitKey::builtin("Compare");
+        let equal_sym = TraitKey::builtin("Equal");
+        let hash_sym = TraitKey::builtin("Hash");
 
         // Pre-collect type names + body kind so we can check field types
         // against `trait_impl_set` without holding a borrow on
-        // `program.decls` while we mutate `self.trait_impl_set` below.
+        // `program.decls` while we mutate `self.tables.trait_impl_set` below.
         // (We don't mutate trait_impl_set here, but we do need to call
         // `type_name_for_impl` which takes `&self`.)
         //
@@ -5420,35 +5297,37 @@ impl TypeChecker {
         // where-clause `where p: <Trait>` for each `p` in `td.params`,
         // so generic-param fields trivially satisfy the trait being
         // synthesized.
-        let mut tasks: Vec<(Symbol, Vec<Symbol>, TypeBodyKind)> = Vec::new();
-        // Track which type names came from a user `Decl::Type` so the
-        // built-in walk below skips entries the user shadows. The set
-        // is keyed on the unresolved name (not canonicalized) because
-        // shadowing happens by name: a user `type Weekday { ... }`
-        // would re-register into `self.enums` under the same `Weekday`
-        // symbol, and the user task already exists in `tasks`.
-        let mut user_decl_type_names: std::collections::HashSet<Symbol> =
+        // Each task carries the span its synthesized nodes take: the type
+        // declaration's, or `Span::BUILTIN` for a builtin type.
+        let mut tasks: Vec<(TypeRef, Vec<Symbol>, TypeBodyKind, Span)> = Vec::new();
+        // The types the module declares, which the walk over the
+        // builtin types below skips.
+        let mut user_decl_type_names: std::collections::HashSet<TypeRef> =
             std::collections::HashSet::new();
         for decl in decls.iter() {
             if let Decl::Type(td) = decl {
                 match &td.body {
                     TypeBody::Enum(_) => {
-                        user_decl_type_names.insert(td.name);
-                        if let Some(info) = self.enums.get(&td.name) {
+                        let ty = self.own_type(td.name);
+                        user_decl_type_names.insert(ty);
+                        if let Some(info) = self.tables.enums.get(&ty) {
                             tasks.push((
-                                td.name,
+                                ty,
                                 td.params.clone(),
                                 TypeBodyKind::Enum(info.variants.clone()),
+                                td.span,
                             ));
                         }
                     }
                     TypeBody::Record(_) => {
-                        user_decl_type_names.insert(td.name);
-                        if let Some(info) = self.records.get(&td.name) {
+                        let ty = self.own_type(td.name);
+                        user_decl_type_names.insert(ty);
+                        if let Some(info) = self.tables.records.get(&ty) {
                             tasks.push((
-                                td.name,
+                                ty,
                                 td.params.clone(),
                                 TypeBodyKind::Record(info.fields.clone()),
+                                td.span,
                             ));
                         }
                     }
@@ -5474,15 +5353,15 @@ impl TypeChecker {
         self.enforce_auto_derive_field_gate(&user_decl_type_names);
 
         // Built-in enums and records are registered directly into
-        // `self.enums` / `self.records` from `register_builtins` and
+        // `self.tables.enums` / `self.tables.records` from `register_builtins` and
         // the per-module init paths under `src/typechecker/builtins/`
         // without ever appearing as a top-level `Decl::Type`. Walk
         // both maps to give them the same synth treatment as user
         // types: every built-in `(trait, type)` pair pre-stamped in
         // `trait_impl_set` (see `register_builtin_trait_impls`)
-        // receives a synthesized `<Type>.<method>` global, so
-        // `Op::CallMethod`'s qualified-global lookup resolves at
-        // runtime without falling through to `dispatch_trait_method`.
+        // receives a synthesized impl method, so `Op::CallMethod`'s
+        // method lookup resolves at runtime without falling through to
+        // `dispatch_trait_method`.
         //
         // This is the second half of the round-62 work: round 62
         // covered every user enum / record (generic + non-generic);
@@ -5494,67 +5373,50 @@ impl TypeChecker {
         // Iteration order: enums then records, sorted by name within
         // each map, so the synthesized AST is deterministic.
         //
-        // Round 94: only synthesize for types this package OWNS — the
-        // built-ins (`defined_in == __builtin__`) and the current
-        // package's own decls (which already arrive via
-        // `user_decl_type_names`). IMPORTED enums/records also live in
-        // `self.enums` / `self.records` (merged by `merge_module`) but
-        // their auto-derive impls were already synthesized + body-checked
-        // in their producing package and re-imported here via
-        // `trait_impl_entries` (into `trait_impl_set` / `method_table`),
-        // so `==` / `<` / `.hash()` on them already resolve. Re-
-        // synthesizing them here is both redundant AND actively wrong:
-        // the synthesized constructor patterns use bare variant names,
-        // and when two imported enums share a variant name the bare
-        // `variant_to_enum` map resolves the loser's `Red` to the
-        // winner's enum, producing spurious `type mismatch` diagnostics
-        // (with synthetic zero spans) before the user writes any code.
-        // Filtering imported types out closes that collision.
-        let builtin_pkg = Self::builtin_pkg();
-        let current_pkg = self.current_package;
-        // A type is owned-for-synthesis iff it is a built-in stamp or
-        // belongs to the current package. The REPL / scratch path
-        // (current_package == None) stamps user decls as `__builtin__`
-        // and routes them through `user_decl_type_names` already, so the
-        // `pkg == builtin_pkg` arm covers them; an imported type there
-        // still carries its real producer package and is excluded.
-        let owned_for_synth =
-            |pkg: Symbol| -> bool { pkg == builtin_pkg || current_pkg == Some(pkg) };
-        let mut builtin_enum_names: Vec<Symbol> = self
+        // Only the builtin types are derived here, besides the module's
+        // own: another module's types were derived when it was checked,
+        // and their impls are in the session's tables. The builtin types'
+        // impls are derived once, with the builtin environment (see
+        // `BuiltinEnv::build`), and are not derived again.
+        let builtin_derived = &self.tables.builtin_derived;
+        let underived_builtin = |ty: &TypeRef| -> bool {
+            builtin_type_name(*ty).is_some() && !builtin_derived.contains(ty)
+        };
+        let mut builtin_enum_names: Vec<TypeRef> = self
+            .tables
             .enums
             .iter()
-            .filter(|(n, info)| {
-                !user_decl_type_names.contains(*n) && owned_for_synth(info.defined_in)
-            })
+            .filter(|(n, _)| !user_decl_type_names.contains(*n) && underived_builtin(n))
             .map(|(n, _)| *n)
             .collect();
-        builtin_enum_names.sort_by_key(|s| resolve(*s));
+        builtin_enum_names.sort_by_key(|t| resolve(t.name));
         for type_name in builtin_enum_names {
-            if let Some(info) = self.enums.get(&type_name) {
+            if let Some(info) = self.tables.enums.get(&type_name) {
                 tasks.push((
                     type_name,
                     info.params.clone(),
                     TypeBodyKind::Enum(info.variants.clone()),
+                    Span::BUILTIN,
                 ));
             }
         }
-        let mut builtin_record_names: Vec<Symbol> = self
+        let mut builtin_record_names: Vec<TypeRef> = self
+            .tables
             .records
             .iter()
-            .filter(|(n, info)| {
-                !user_decl_type_names.contains(*n) && owned_for_synth(info.defined_in)
-            })
+            .filter(|(n, _)| !user_decl_type_names.contains(*n) && underived_builtin(n))
             .map(|(n, _)| *n)
             .collect();
-        builtin_record_names.sort_by_key(|s| resolve(*s));
+        builtin_record_names.sort_by_key(|t| resolve(t.name));
         for type_name in builtin_record_names {
-            if let Some(info) = self.records.get(&type_name) {
+            if let Some(info) = self.tables.records.get(&type_name) {
                 // Built-in records are non-generic; the params vec is
                 // empty. (Generic built-in records would need their
                 // param Symbol names tracked alongside `record_param_var_ids`
                 // — extend this branch the day a generic built-in
                 // record appears.)
                 let params = self
+                    .tables
                     .record_param_var_ids
                     .get(&type_name)
                     .map(|ids| {
@@ -5569,14 +5431,24 @@ impl TypeChecker {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                tasks.push((type_name, params, TypeBodyKind::Record(info.fields.clone())));
+                tasks.push((
+                    type_name,
+                    params,
+                    TypeBodyKind::Record(info.fields.clone()),
+                    Span::BUILTIN,
+                ));
             }
         }
 
         let mut synthesized: Vec<Decl> = Vec::new();
-        for (type_name, type_params, body) in tasks {
+        for (type_name, type_params, body, decl_span) in tasks {
+            let derive = auto_derive::Derive {
+                span: decl_span,
+                ty: type_name,
+                variants: self.variant_resolutions(type_name),
+            };
             // Helper closures to scope the synthesis decisions per-trait.
-            let key = canonicalize_type_name(&self.resolver, type_name);
+            let key = canonical_head(&self.tables.resolver, type_name);
 
             // Resolve this type's field types in the form they appear in
             // EnumInfo/RecordInfo (already-resolved Types). Use them to
@@ -5603,20 +5475,22 @@ impl TypeChecker {
             // the param_var_ids in EnumInfo/RecordInfo.
             let param_var_ids: std::collections::HashSet<TyVar> = match &body {
                 TypeBodyKind::Enum(_) => self
+                    .tables
                     .enums
                     .get(&type_name)
                     .map(|info| info.param_var_ids.iter().copied().collect())
                     .unwrap_or_default(),
                 TypeBodyKind::Record(_) => self
+                    .tables
                     .record_param_var_ids
                     .get(&type_name)
                     .map(|ids| ids.iter().copied().collect())
                     .unwrap_or_default(),
             };
-            let supports = |_trait_sym: Symbol, ty: &Type| -> bool {
+            let supports = |_trait_sym: TraitKey, ty: &Type| -> bool {
                 // Self-references — same nominal head as the type we're
                 // synthesizing for — are always allowed (the recursive
-                // body will lookup the same global we register).
+                // body calls the same method we register).
                 if let Some(name) = self.type_name_for_impl(ty)
                     && name == type_name
                 {
@@ -5669,8 +5543,9 @@ impl TypeChecker {
             // and the gate honours that exclusion — synth would
             // otherwise produce a `Compare:Option` impl that breaks
             // `tests/cli/trait_init_parity_tests.rs`.
-            let policy_allows =
-                |trait_sym: Symbol| -> bool { self.trait_impl_set.contains(&(trait_sym, key)) };
+            let policy_allows = |trait_sym: TraitKey| -> bool {
+                self.tables.trait_impl_set.contains(&(trait_sym, key))
+            };
 
             match body {
                 TypeBodyKind::Enum(variants) => {
@@ -5679,12 +5554,12 @@ impl TypeChecker {
                     // Only .name and .fields.len() matter — the synthesis
                     // just emits .compare() / .hash() / .display() /
                     // .equal() calls on positionally-named bound vars, so
-                    // name_span and the field TypeExprs are placeholders.
+                    // the field TypeExprs are placeholders.
                     let ast_variants: Vec<EnumVariant> = variants
                         .iter()
                         .map(|v| EnumVariant {
                             name: v.name,
-                            name_span: Span::synthetic(),
+                            name_span: decl_span,
                             // Synthesize `Wildcard` placeholder TypeExprs;
                             // the auto_derive helpers only count them.
                             fields: v
@@ -5692,12 +5567,12 @@ impl TypeChecker {
                                 .iter()
                                 .map(|_| {
                                     TypeExpr::new(
-                                        TypeExprKind::Named(intern("__synth_placeholder__")),
-                                        Span {
-                                            line: 0,
-                                            col: 0,
-                                            offset: 0,
+                                        TypeExprKind::Named {
+                                            module: None,
+                                            name: intern("__synth_placeholder__"),
+                                            name_span: decl_span,
                                         },
+                                        decl_span,
                                     )
                                 })
                                 .collect(),
@@ -5707,33 +5582,29 @@ impl TypeChecker {
                         && policy_allows(display_sym)
                         && !user_display_impls.contains(&key)
                     {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_display_impl_for_enum(
-                                type_name,
-                                &type_params,
-                                &ast_variants,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_display_impl_for_enum(
+                            type_name.name,
+                            &type_params,
+                            &ast_variants,
+                        )));
                     }
                     if compare_ok && policy_allows(compare_sym) {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_compare_impl_for_enum(
-                                type_name,
-                                &type_params,
-                                &ast_variants,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_compare_impl_for_enum(
+                            type_name.name,
+                            &type_params,
+                            &ast_variants,
+                        )));
                     }
                     if equal_ok && policy_allows(equal_sym) {
-                        synthesized.push(Decl::TraitImpl(auto_derive::synth_equal_impl_for_enum(
-                            type_name,
+                        synthesized.push(Decl::TraitImpl(derive.synth_equal_impl_for_enum(
+                            type_name.name,
                             &type_params,
                             &ast_variants,
                         )));
                     }
                     if hash_ok && policy_allows(hash_sym) {
-                        synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_enum(
-                            type_name,
+                        synthesized.push(Decl::TraitImpl(derive.synth_hash_impl_for_enum(
+                            type_name.name,
                             &type_params,
                             &ast_variants,
                         )));
@@ -5744,13 +5615,14 @@ impl TypeChecker {
                         .iter()
                         .map(|(name, _)| RecordField {
                             name: *name,
+                            name_span: decl_span,
                             ty: TypeExpr::new(
-                                TypeExprKind::Named(intern("__synth_placeholder__")),
-                                Span {
-                                    line: 0,
-                                    col: 0,
-                                    offset: 0,
+                                TypeExprKind::Named {
+                                    module: None,
+                                    name: intern("__synth_placeholder__"),
+                                    name_span: decl_span,
                                 },
+                                decl_span,
                             ),
                         })
                         .collect();
@@ -5758,35 +5630,29 @@ impl TypeChecker {
                         && policy_allows(display_sym)
                         && !user_display_impls.contains(&key)
                     {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_display_impl_for_record(
-                                type_name,
-                                &type_params,
-                                &ast_fields,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_display_impl_for_record(
+                            type_name.name,
+                            &type_params,
+                            &ast_fields,
+                        )));
                     }
                     if compare_ok && policy_allows(compare_sym) {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_compare_impl_for_record(
-                                type_name,
-                                &type_params,
-                                &ast_fields,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_compare_impl_for_record(
+                            type_name.name,
+                            &type_params,
+                            &ast_fields,
+                        )));
                     }
                     if equal_ok && policy_allows(equal_sym) {
-                        synthesized.push(Decl::TraitImpl(
-                            auto_derive::synth_equal_impl_for_record(
-                                type_name,
-                                &type_params,
-                                &ast_fields,
-                            ),
-                        ));
+                        synthesized.push(Decl::TraitImpl(derive.synth_equal_impl_for_record(
+                            type_name.name,
+                            &type_params,
+                            &ast_fields,
+                        )));
                     }
                     if hash_ok && policy_allows(hash_sym) {
-                        synthesized.push(Decl::TraitImpl(auto_derive::synth_hash_impl_for_record(
-                            type_name,
+                        synthesized.push(Decl::TraitImpl(derive.synth_hash_impl_for_record(
+                            type_name.name,
                             &type_params,
                             &ast_fields,
                         )));
@@ -5802,12 +5668,14 @@ impl TypeChecker {
     /// unresolved tyvars or unknown nominal heads. Used by
     /// `synthesize_auto_derive_impls` to decide whether a record / enum
     /// can have a sound auto-derived impl.
-    fn field_type_supports_trait(&self, trait_name: Symbol, ty: &Type) -> bool {
+    fn field_type_supports_trait(&self, trait_name: TraitKey, ty: &Type) -> bool {
         let Some(type_name) = self.type_name_for_impl(ty) else {
             return false;
         };
-        let canonical = canonicalize_type_name(&self.resolver, type_name);
-        self.trait_impl_set.contains(&(trait_name, canonical))
+        let canonical = canonical_head(&self.tables.resolver, type_name);
+        self.tables
+            .trait_impl_set
+            .contains(&(trait_name, canonical))
     }
 
     /// Round 93: compute honest field-aware eligibility for the three
@@ -5818,7 +5686,7 @@ impl TypeChecker {
     /// `synthesize_auto_derive_impls` for the full rationale.
     fn enforce_auto_derive_field_gate(
         &mut self,
-        user_type_names: &std::collections::HashSet<Symbol>,
+        user_type_names: &std::collections::HashSet<TypeRef>,
     ) {
         let negatives = self.compute_auto_derive_field_negatives(user_type_names);
 
@@ -5829,8 +5697,8 @@ impl TypeChecker {
         // calls are rejected instead of falling through to
         // `dispatch_trait_method`'s Value-level behaviour at runtime).
         for (trait_sym, canon) in negatives.keys() {
-            self.trait_impl_set.remove(&(*trait_sym, *canon));
-            let method_sym = match resolve(*trait_sym).as_str() {
+            self.tables.trait_impl_set.remove(&(*trait_sym, *canon));
+            let method_sym = match resolve(trait_sym.name).as_str() {
                 "Equal" => intern("equal"),
                 "Compare" => intern("compare"),
                 "Hash" => intern("hash"),
@@ -5839,10 +5707,10 @@ impl TypeChecker {
             // `method_table` is keyed on the declared (un-canonical)
             // type name; for enum/record decls the canonical name is
             // the declared name, but remove under both to be safe.
-            self.method_table.remove(&(*canon, method_sym));
+            self.tables.method_table.remove(&(*canon, method_sym));
             for name in user_type_names {
-                if canonicalize_type_name(&self.resolver, *name) == *canon {
-                    self.method_table.remove(&(*name, method_sym));
+                if canonical_head(&self.tables.resolver, *name) == *canon {
+                    self.tables.method_table.remove(&(*name, method_sym));
                 }
             }
         }
@@ -5851,13 +5719,14 @@ impl TypeChecker {
         // run before storing the fresh results (a REPL session or
         // re-check may redefine a type with now-eligible fields; a
         // leftover negative would spuriously reject it).
-        let processed: std::collections::HashSet<Symbol> = user_type_names
+        let processed: std::collections::HashSet<TypeRef> = user_type_names
             .iter()
-            .map(|n| canonicalize_type_name(&self.resolver, *n))
+            .map(|n| canonical_head(&self.tables.resolver, *n))
             .collect();
-        self.auto_derive_negatives
+        self.tables
+            .auto_derive_negatives
             .retain(|(_, canon), _| !processed.contains(canon));
-        self.auto_derive_negatives.extend(negatives);
+        self.tables.auto_derive_negatives.extend(negatives);
     }
 
     /// Round 93: fixpoint over the user-declared types computing which
@@ -5875,34 +5744,38 @@ impl TypeChecker {
     /// kids: List(Tree) }` keeps all four traits.
     fn compute_auto_derive_field_negatives(
         &self,
-        user_type_names: &std::collections::HashSet<Symbol>,
-    ) -> HashMap<(Symbol, Symbol), String> {
-        let gated_traits = [intern("Equal"), intern("Compare"), intern("Hash")];
+        user_type_names: &std::collections::HashSet<TypeRef>,
+    ) -> HashMap<(TraitKey, TypeRef), String> {
+        let gated_traits = [
+            TraitKey::builtin("Equal"),
+            TraitKey::builtin("Compare"),
+            TraitKey::builtin("Hash"),
+        ];
 
         // Owned snapshot of each user type's resolved body so the
-        // fixpoint can walk without re-borrowing `self.enums` /
-        // `self.records`. Sorted by name for deterministic results.
+        // fixpoint can walk without re-borrowing `self.tables.enums` /
+        // `self.tables.records`. Sorted by name for deterministic results.
         // (Generic-param fields resolve to `Type::Var`s, which the
         // walker treats as supporting — the synthesized impl's
         // `where p: Trait` clause covers them at instantiation.)
-        let mut entries: Vec<(Symbol, Symbol, TypeBodyKind)> = Vec::new();
+        let mut entries: Vec<(TypeRef, TypeRef, TypeBodyKind)> = Vec::new();
         for name in user_type_names {
-            let canon = canonicalize_type_name(&self.resolver, *name);
-            if let Some(info) = self.enums.get(name) {
+            let canon = canonical_head(&self.tables.resolver, *name);
+            if let Some(info) = self.tables.enums.get(name) {
                 entries.push((*name, canon, TypeBodyKind::Enum(info.variants.clone())));
-            } else if let Some(info) = self.records.get(name) {
+            } else if let Some(info) = self.tables.records.get(name) {
                 entries.push((*name, canon, TypeBodyKind::Record(info.fields.clone())));
             }
         }
-        entries.sort_by_key(|(name, ..)| resolve(*name));
+        entries.sort_by_key(|(name, ..)| resolve(name.name));
 
-        let mut negatives: HashMap<(Symbol, Symbol), String> = HashMap::new();
+        let mut negatives: HashMap<(TraitKey, TypeRef), String> = HashMap::new();
         loop {
             let mut changed = false;
             for (name, canon, body) in &entries {
                 for trait_sym in gated_traits {
                     let key = (trait_sym, *canon);
-                    if negatives.contains_key(&key) || !self.trait_impl_set.contains(&key) {
+                    if negatives.contains_key(&key) || !self.tables.trait_impl_set.contains(&key) {
                         continue;
                     }
                     let supports =
@@ -5935,8 +5808,8 @@ impl TypeChecker {
                             key,
                             format!(
                                 "type '{}' cannot derive '{}': {}, which is not {}",
-                                resolve(*name),
-                                resolve(trait_sym),
+                                resolve(name.name),
+                                resolve(trait_sym.name),
                                 field_desc,
                                 builtin_trait_adjective(trait_sym),
                             ),
@@ -5968,9 +5841,9 @@ impl TypeChecker {
     ///     rather than risk a stack overflow.
     fn gate_field_supports_trait(
         &self,
-        trait_sym: Symbol,
+        trait_sym: TraitKey,
         ty: &Type,
-        negatives: &HashMap<(Symbol, Symbol), String>,
+        negatives: &HashMap<(TraitKey, TypeRef), String>,
         depth: usize,
     ) -> bool {
         if depth > 64 {
@@ -5980,13 +5853,13 @@ impl TypeChecker {
         let recurse = |t: &Type| self.gate_field_supports_trait(trait_sym, t, negatives, depth + 1);
         // Stamp lookup for a nominal/container head, honest w.r.t. the
         // in-progress negatives.
-        let head_ok = |head: Symbol| {
-            let canon = canonicalize_type_name(&self.resolver, head);
+        let head_ok = |head: TypeRef| {
+            let canon = canonical_head(&self.tables.resolver, head);
             let key = (trait_sym, canon);
             if negatives.contains_key(&key) {
                 return false;
             }
-            self.trait_impl_set.contains(&key)
+            self.tables.trait_impl_set.contains(&key)
         };
         match &ty {
             Type::Error | Type::Never | Type::Var(_) | Type::AssocProj { .. } => true,
@@ -5998,15 +5871,15 @@ impl TypeChecker {
             // Channels carry identity-based equality (round 82:
             // `Value::Channel(a) == Value::Channel(b)` iff ids match)
             // but no ordering or hashing through the trait surface.
-            Type::Channel(_) => trait_sym == intern("Equal"),
+            Type::Channel(_) => trait_sym == TraitKey::builtin("Equal"),
             Type::List(t) | Type::Range(t) | Type::Set(t) => {
                 let head = self
                     .type_name_for_impl(&ty)
                     .expect("container head has canonical name");
                 head_ok(head) && recurse(t)
             }
-            Type::Map(k, v) => head_ok(intern("Map")) && recurse(k) && recurse(v),
-            Type::Tuple(ts) => head_ok(intern("Tuple")) && ts.iter().all(recurse),
+            Type::Map(k, v) => head_ok(TypeRef::builtin("Map")) && recurse(k) && recurse(v),
+            Type::Tuple(ts) => head_ok(TypeRef::builtin("Tuple")) && ts.iter().all(recurse),
             // Structural records: Value's PartialEq / Ord / Hash all
             // compare them element-wise (round-85 contracts), so the
             // honest answer is the conjunction over the known fields.
@@ -6038,19 +5911,20 @@ impl TypeChecker {
         is_equality: bool,
     ) -> Option<String> {
         let trait_sym = if is_equality {
-            intern("Equal")
+            TraitKey::builtin("Equal")
         } else {
-            intern("Compare")
+            TraitKey::builtin("Compare")
         };
-        let resolved = crate::types::canonical::canonicalize(&self.resolver, &self.apply(ty));
+        let resolved =
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
         let (name, args) = match &resolved {
             Type::Generic(name, args) => (*name, args.clone()),
             // Nominal records normally flow as `Type::Generic`, but a
             // `Type::Record` form carries its (instantiated) field
             // types inline — walk them directly.
             Type::Record(name, fields) => {
-                let canon = canonicalize_type_name(&self.resolver, *name);
-                if let Some(msg) = self.auto_derive_negatives.get(&(trait_sym, canon)) {
+                let canon = canonical_head(&self.tables.resolver, *name);
+                if let Some(msg) = self.tables.auto_derive_negatives.get(&(trait_sym, canon)) {
                     return Some(msg.clone());
                 }
                 let no_negatives = HashMap::new();
@@ -6059,8 +5933,8 @@ impl TypeChecker {
                         .then(|| {
                         format!(
                             "type '{}' cannot derive '{}': field '{}' has type '{}', which is not {}",
-                            resolve(*name),
-                            resolve(trait_sym),
+                            resolve(name.name),
+                            resolve(trait_sym.name),
                             resolve(*fname),
                             self.apply(fty),
                             builtin_trait_adjective(trait_sym),
@@ -6085,15 +5959,15 @@ impl TypeChecker {
                     .then(|| {
                         format!(
                             "type '{resolved}' cannot derive '{}': element type is not {}",
-                            resolve(trait_sym),
+                            resolve(trait_sym.name),
                             builtin_trait_adjective(trait_sym),
                         )
                     });
             }
             _ => return None,
         };
-        let canon = canonicalize_type_name(&self.resolver, name);
-        if let Some(msg) = self.auto_derive_negatives.get(&(trait_sym, canon)) {
+        let canon = canonical_head(&self.tables.resolver, name);
+        if let Some(msg) = self.tables.auto_derive_negatives.get(&(trait_sym, canon)) {
             return Some(msg.clone());
         }
         // Instantiation walk: substitute the concrete type args into
@@ -6105,8 +5979,9 @@ impl TypeChecker {
         // the types that actually appear in fields are walked.
         let no_negatives = HashMap::new();
         let check = |fty: &Type| self.gate_field_supports_trait(trait_sym, fty, &no_negatives, 0);
-        if let Some(info) = self.records.get(&name) {
+        if let Some(info) = self.tables.records.get(&name) {
             let mapping: HashMap<TyVar, Type> = self
+                .tables
                 .record_param_var_ids
                 .get(&name)
                 .filter(|ids| ids.len() == args.len())
@@ -6117,7 +5992,7 @@ impl TypeChecker {
                 (!check(&concrete)).then(|| {
                     format!(
                         "type '{resolved}' cannot derive '{}': field '{}' has type '{}', which is not {}",
-                        resolve(trait_sym),
+                        resolve(trait_sym.name),
                         resolve(*fname),
                         self.apply(&concrete),
                         builtin_trait_adjective(trait_sym),
@@ -6125,7 +6000,7 @@ impl TypeChecker {
                 })
             });
         }
-        if let Some(info) = self.enums.get(&name) {
+        if let Some(info) = self.tables.enums.get(&name) {
             let mapping: HashMap<TyVar, Type> = if info.param_var_ids.len() == args.len() {
                 info.param_var_ids
                     .iter()
@@ -6141,7 +6016,7 @@ impl TypeChecker {
                     (!check(&concrete)).then(|| {
                         format!(
                             "type '{resolved}' cannot derive '{}': variant '{}' payload #{} has type '{}', which is not {}",
-                            resolve(trait_sym),
+                            resolve(trait_sym.name),
                             resolve(v.name),
                             i + 1,
                             self.apply(&concrete),
@@ -6160,17 +6035,20 @@ impl TypeChecker {
     /// instead of a generic "unknown field or method".
     pub(super) fn method_auto_derive_violation(
         &self,
-        type_name: Symbol,
+        type_name: TypeRef,
         method: Symbol,
     ) -> Option<String> {
         let trait_sym = match resolve(method).as_str() {
-            "equal" => intern("Equal"),
-            "compare" => intern("Compare"),
-            "hash" => intern("Hash"),
+            "equal" => TraitKey::builtin("Equal"),
+            "compare" => TraitKey::builtin("Compare"),
+            "hash" => TraitKey::builtin("Hash"),
             _ => return None,
         };
-        let canon = canonicalize_type_name(&self.resolver, type_name);
-        self.auto_derive_negatives.get(&(trait_sym, canon)).cloned()
+        let canon = canonical_head(&self.tables.resolver, type_name);
+        self.tables
+            .auto_derive_negatives
+            .get(&(trait_sym, canon))
+            .cloned()
     }
 
     fn synthesize_default_methods(&self, decls: &mut [Decl]) {
@@ -6178,7 +6056,8 @@ impl TypeChecker {
             let Decl::TraitImpl(ti) = decl else {
                 continue;
             };
-            let Some(trait_info) = self.traits.get(&ti.trait_name) else {
+            let Some(trait_info) = self.impl_trait(ti).and_then(|t| self.tables.traits.get(&t))
+            else {
                 // Unknown trait — let validate_trait_impls / dispatch
                 // surface the diagnostic; nothing to synthesize here.
                 continue;
@@ -6202,16 +6081,19 @@ impl TypeChecker {
     /// allowed, `false` after emitting an error and signalling the
     /// caller to skip the rest of registration. See the call site in
     /// `register_trait_impl` for the rule statement.
-    fn check_orphan_rule(&mut self, ti: &TraitImpl, target_type: Symbol) -> bool {
-        let trait_pkg = self.traits.get(&ti.trait_name).map(|t| t.defined_in);
+    fn check_orphan_rule(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
+        let trait_pkg = self
+            .impl_trait(ti)
+            .and_then(|t| self.tables.traits.get(&t))
+            .map(|t| t.defined_in);
         // Compute the head-type package by reconstructing a Type from
         // the impl's target name + args. We use the canonicalised
         // `target_type` symbol because the round-23 GAP #1 unknown-
         // target check has already validated the name; for the orphan
         // walk we just need the head symbol's `defined_in`.
-        let head_pkg = if let Some(info) = self.enums.get(&target_type) {
+        let head_pkg = if let Some(info) = self.tables.enums.get(&target_type) {
             Some(info.defined_in)
-        } else if let Some(info) = self.records.get(&target_type) {
+        } else if let Some(info) = self.tables.records.get(&target_type) {
             Some(info.defined_in)
         } else {
             // Built-in head (List/Map/Set/Channel/Range/Tuple/Fn/Int/...):
@@ -6219,9 +6101,9 @@ impl TypeChecker {
             // stdlib-owned (`None`) so the trait-local arm can satisfy
             // the rule when a user package writes `trait MyTrait for
             // List(...)`.
-            let head_str = resolve(target_type);
-            if crate::types::builtins::is_primitive(head_str.as_str())
-                || crate::types::builtins::is_container(head_str.as_str())
+            let head_str = builtin_type_name(target_type).unwrap_or_default();
+            if crate::types::builtins::is_primitive(head_str)
+                || crate::types::builtins::is_container(head_str)
             {
                 None
             } else {
@@ -6281,6 +6163,7 @@ impl TypeChecker {
             .map(resolve)
             .unwrap_or_else(|| "(scratch)".to_string());
         self.error(
+            Code::OrphanImpl,
             format!(
                 "orphan impl: trait '{}' is from package '{}' and type '{}' is from package '{}'; \
                  either the trait or the type must be defined in the current package '{}'",
@@ -6296,12 +6179,20 @@ impl TypeChecker {
     }
 
     fn register_trait_impl(&mut self, ti: &TraitImpl, env: &mut TypeEnv) {
+        // An impl of a trait or for a type the resolver resolved to
+        // nothing: it reported why.
+        if ti.trait_res == Some(crate::defs::Res::Error)
+            || ti.target_res == Some(crate::defs::Res::Error)
+        {
+            self.unresolved_impl_methods
+                .extend(ti.methods.iter().map(|m| m.name));
+            return;
+        }
         // Phase B: canonicalise the target-type symbol so an impl
         // `trait Foo for Range(a)` registers under the same key
         // (`"List"`) that dispatch lookup will use for both `Range(_)`
         // and `List(_)` receivers. Round 61's
-        // `value_type_name_for_dispatch` fix collapsed receivers to
-        // `"List"` at runtime; with phase B's `type_name_for_impl`
+        // dispatch fix collapsed receivers to `List` at runtime; with phase B's `type_name_for_impl`
         // canonicalising at the lookup side too, the impl table
         // would otherwise be unreachable for an explicitly
         // Range-targeted impl. Without this canonicalisation the
@@ -6309,11 +6200,39 @@ impl TypeChecker {
         // `user_trait_method_on_list_dispatches_for_range_receiver`
         // (and its siblings) regresses to "type 'Range' does not
         // implement trait 'Foo'".
-        let target_type = canonicalize_type_name(&self.resolver, ti.target_type);
-        let impl_key = (ti.trait_name, target_type);
+        //
+        // Round-23 GAP #1: reject trait impls whose target type was never
+        // declared: `trait Greet for Widget { ... }` with no `type
+        // Widget` would attach methods to a phantom type. A lowercase
+        // target (`trait Display for a { ... }`) names a type variable,
+        // not a type: there is nothing to register it for.
+        if self.names_rejected(ti.target_res, ti.target_type) {
+            return;
+        }
+        let Some(written) = self.named_type(ti.target_res, ti.target_type) else {
+            let name_str = resolve(ti.target_type);
+            if !name_str.starts_with(|c: char| c.is_lowercase()) {
+                self.error(
+                    Code::UnknownType,
+                    format!("trait impl target '{name_str}' is not a declared type"),
+                    ti.span,
+                );
+            }
+            return;
+        };
+        let target_type = canonical_head(&self.tables.resolver, written);
+        let Some(trait_key) = self.impl_trait(ti) else {
+            self.error(
+                Code::UnknownTrait,
+                format!("trait '{}' is not declared", ti.trait_name),
+                ti.span,
+            );
+            return;
+        };
+        let impl_key = (trait_key, target_type);
 
         // Coherence check: reject duplicate user-defined impls.
-        if self.trait_impl_set.contains(&impl_key) {
+        if self.tables.trait_impl_set.contains(&impl_key) {
             // Allow overriding auto-derived impls (only `Display` can be
             // written by hand: see `reject_sealed_trait_impls`).
             let first_method = ti
@@ -6321,13 +6240,25 @@ impl TypeChecker {
                 .first()
                 .map(|m| m.name)
                 .unwrap_or_else(|| intern("display"));
-            let is_overriding_auto = self
-                .method_table
-                .get(&(target_type, first_method))
-                .map(|e| e.is_auto_derived)
-                .unwrap_or(true);
+            // The impl of this trait already registered, not a method of
+            // another trait of one name (`trait Describe for Pt { fn
+            // display }` is no impl of Display).
+            let existing = self
+                .tables
+                .trait_methods
+                .get(&(target_type, first_method, trait_key))
+                .cloned()
+                .or_else(|| {
+                    self.tables
+                        .method_table
+                        .get(&(target_type, first_method))
+                        .filter(|e| self.entry_trait(e, first_method) == Some(trait_key))
+                        .cloned()
+                });
+            let is_overriding_auto = existing.map(|e| e.is_auto_derived).unwrap_or(true);
             if !is_overriding_auto {
                 self.error(
+                    Code::DuplicateDeclaration,
                     format!(
                         "duplicate implementation of trait '{}' for type '{}'",
                         ti.trait_name, ti.target_type
@@ -6358,10 +6289,10 @@ impl TypeChecker {
             return;
         }
 
-        self.trait_impl_set.insert(impl_key);
+        self.tables.trait_impl_set.insert(impl_key);
         // GAP-2: record the impl block's real span for validate_trait_impls
         // to use when reporting missing-method diagnostics.
-        self.trait_impl_spans.insert(impl_key, ti.span);
+        self.tables.trait_impl_spans.insert(impl_key, ti.span);
 
         // Build the impl-level parameter map. For a parameterized target
         // like `trait X for Box(a)`, each lowercase binder in
@@ -6390,48 +6321,27 @@ impl TypeChecker {
         //      resolve_type_expr handles List/Map/Set/Channel/Tuple/Fn
         //      already; reuse it.
         //
-        // Round-23 GAP #1: reject trait impls whose target type was never
-        // declared. Previously `trait Greet for Widget { ... }` with no
-        // `type Widget` anywhere silently fell through to
-        // `Type::Generic("Widget", vec![])` (see type_from_name) and
-        // produced no diagnostic — `silt check` reported success even
-        // though the impl attached methods to a phantom type. This is
-        // distinct from the round-17 `type_name_for_impl` fix (which
-        // mapped Type::Fun → Some("Fn") so trait-bound verification
-        // could find user impls): here we're validating that the target
-        // name refers to *something real* at all.
-        //
-        // The check applies only to uppercase target names. Lowercase
-        // names like `trait Display for a { ... }` are the generic
-        // trait-impl form — `a` is a type variable, not a declared
-        // type, and must continue to type-check.
+        // A builtin type, or a record, enum or alias type: a target the
+        // checker does not know (a builtin type with no impls, `Tuple`
+        // aside) is reported.
         {
-            let name_str = resolve(ti.target_type);
-            let first_char = name_str.chars().next().unwrap_or('A');
-            let is_lowercase_tyvar = first_char.is_lowercase();
-            // Both checks consult the authoritative built-in type table
-            // at `crate::types::builtins`. A new built-in type added to
-            // BUILTIN_TYPES is automatically recognised here.
-            let is_primitive = crate::types::builtins::is_primitive(&name_str);
-            let is_builtin_container = crate::types::builtins::is_container(&name_str);
-            let is_user_record = self.records.contains_key(&ti.target_type);
-            let is_user_enum = self.enums.contains_key(&ti.target_type);
-            // Phase D: a `trait T for AliasName` impl is valid if
-            // `AliasName` is a registered user alias. Coherence /
-            // duplicate detection handled by the existing
-            // method_table key comparison after `canonicalize_type_name`
-            // routes the alias to its canonical head — so
-            // `trait T for List(Int)` and `trait T for Bytes` (where
-            // `Bytes = List(Int)`) collide naturally.
-            let is_user_alias = self.type_aliases.contains(&ti.target_type);
-            if !is_lowercase_tyvar
-                && !is_primitive
-                && !is_builtin_container
-                && !is_user_record
-                && !is_user_enum
-                && !is_user_alias
-            {
+            let name_str = resolve(written.name);
+            let known = match builtin_type_name(written) {
+                Some(builtin) => {
+                    crate::types::builtins::is_primitive(builtin)
+                        || crate::types::builtins::is_container(builtin)
+                        || self.tables.enums.contains_key(&written)
+                        || self.tables.records.contains_key(&written)
+                }
+                None => {
+                    self.tables.records.contains_key(&written)
+                        || self.tables.enums.contains_key(&written)
+                        || self.tables.type_aliases.contains(&written)
+                }
+            };
+            if !known {
                 self.error(
+                    Code::UnknownType,
                     format!("trait impl target '{name_str}' is not a declared type"),
                     ti.span,
                 );
@@ -6446,10 +6356,10 @@ impl TypeChecker {
             // would produce a `Generic("Bytes", [])` self-type that
             // would never unify with any concrete `List(Int)`
             // receiver. Callers downstream still see the canonical
-            // form (`canonicalize_type_name` collapses the impl_key
+            // form (`canonical_head` collapses the impl_key
             // to `"List"`), so the dispatch lookup arrives at the
-            // right global.
-            if let Some(info) = self.resolver.lookup_alias(ti.target_type) {
+            // right method.
+            if let Some(info) = self.tables.resolver.lookup_alias(written) {
                 // Build a fresh-var instantiation per alias parameter so
                 // the impl methods see polymorphic vars rather than
                 // shared template tyvars. For `Bytes = List(Int)` (no
@@ -6462,18 +6372,19 @@ impl TypeChecker {
                     mapping.insert(var_id, self.fresh_var());
                 }
                 let substituted = crate::types::substitute_vars(&info.target, &mapping);
-                crate::types::canonical::canonicalize(&self.resolver, &substituted)
+                crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
             } else {
                 let user_arity = self
+                    .tables
                     .record_param_var_ids
-                    .get(&ti.target_type)
+                    .get(&written)
                     .map(|v| v.len())
-                    .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()))
+                    .or_else(|| self.tables.enums.get(&written).map(|e| e.params.len()))
                     .unwrap_or(0);
                 if user_arity == 0 {
                     // Bare builtin-container targets (`trait T for List`,
                     // Map/Set/Channel; a bare `Range` target arrives here
-                    // as `List` via `canonicalize_type_name`) mirror
+                    // as `List` via `canonical_head`) mirror
                     // `resolve_type_expr`'s bare-name annotation
                     // semantics: synthesize a fresh var per element slot
                     // so the self_type unifies with any concrete receiver
@@ -6493,11 +6404,13 @@ impl TypeChecker {
                     // the `Generic("Tuple", [])` fallback and is matched
                     // by the bare-`Tuple` wildcard arm in `unify` (same
                     // strategy as `Fn`).
-                    match resolve(target_type).as_str() {
-                        "List" => Type::List(Box::new(self.fresh_var())),
-                        "Set" => Type::Set(Box::new(self.fresh_var())),
-                        "Channel" => Type::Channel(Box::new(self.fresh_var())),
-                        "Map" => Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var())),
+                    match builtin_type_name(target_type) {
+                        Some("List") => Type::List(Box::new(self.fresh_var())),
+                        Some("Set") => Type::Set(Box::new(self.fresh_var())),
+                        Some("Channel") => Type::Channel(Box::new(self.fresh_var())),
+                        Some("Map") => {
+                            Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
+                        }
                         // Use the canonicalised target name so the
                         // self_type built here matches the `method_table`
                         // registration key (also canonicalised). Without
@@ -6517,20 +6430,19 @@ impl TypeChecker {
             }
         } else {
             // Arity check. Covers user-declared record/enum targets via
-            // record_param_var_ids / self.enums, AND builtin parameterized
+            // record_param_var_ids / self.tables.enums, AND builtin parameterized
             // containers (List, Set, Channel, Map) whose arities are fixed
             // by the language. Without the builtin arm, `trait X for List(a, b)`
             // fell through to `_ => Type::Generic("List", [a, b])` below,
             // silently producing a phantom 2-arg List type with no diagnostic.
-            let name_str_for_arity = resolve(ti.target_type);
             // Derive fixed-arity builtin entries from the authoritative
             // table. Variadic shapes (`Tuple`, `Fn`, `Fun`, `Handle`)
             // carry `arity: None` and are intentionally skipped — they
             // do not participate in this trait-impl arity check.
-            let builtin_arity: Option<(usize, &'static str)> =
-                crate::types::builtins::lookup(name_str_for_arity.as_str())
-                    .filter(|b| b.kind == crate::types::builtins::BuiltinKind::Container)
-                    .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
+            let builtin_arity: Option<(usize, &'static str)> = builtin_type_name(written)
+                .and_then(crate::types::builtins::lookup)
+                .filter(|b| b.kind == crate::types::builtins::BuiltinKind::Container)
+                .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
             // Round 74 Fix #2: include user-declared type aliases in the
             // arity table. Without this, `trait Show for Pair(a)` where
             // `type Pair(a) = (a, a)` skipped the arity check (the alias
@@ -6539,17 +6451,20 @@ impl TypeChecker {
             // the bottom — producing an impl whose self_type never
             // unifies with any concrete `(Int, Int)` receiver.
             let alias_arity: Option<(usize, &'static str)> = self
+                .tables
                 .type_alias_arity
-                .get(&ti.target_type)
+                .get(&written)
                 .copied()
                 .map(|a| (a, "alias"));
             let expected_arity = self
+                .tables
                 .record_param_var_ids
-                .get(&ti.target_type)
+                .get(&written)
                 .map(|v| (v.len(), "record"))
                 .or_else(|| {
-                    self.enums
-                        .get(&ti.target_type)
+                    self.tables
+                        .enums
+                        .get(&written)
                         .map(|e| (e.params.len(), "enum"))
                 })
                 .or(alias_arity)
@@ -6557,10 +6472,10 @@ impl TypeChecker {
             if let Some((expected, kind)) = expected_arity
                 && expected != ti.target_type_args.len()
             {
-                self.error(
+                self.error(Code::ArityMismatch,
                     format!(
                         "type argument count mismatch for {kind} '{}' in trait impl: expected {expected}, got {}",
-                        resolve(ti.target_type),
+                        resolve(written.name),
                         ti.target_type_args.len()
                     ),
                     ti.span,
@@ -6577,7 +6492,7 @@ impl TypeChecker {
             // expand the alias by substituting `resolved_args` through
             // the alias's stored target. Mirrors the non-parametric
             // alias path at line ~5617 (which calls
-            // `self.resolver.lookup_alias(ti.target_type)` and walks
+            // `self.tables.resolver.lookup_alias(written)` and walks
             // `info.target` with each `param_var_ids[i]` mapped to a
             // fresh tyvar). Here we map `param_var_ids[i]` → the
             // user-supplied type-arg at the same index.
@@ -6589,7 +6504,7 @@ impl TypeChecker {
             // canonicalised by `resolve_type_expr` of the annotation
             // `Pair(Int)` to `(Int, Int)` — would not unify with the
             // phantom `Generic("Pair", _)`.
-            if let Some(info) = self.resolver.lookup_alias(ti.target_type) {
+            if let Some(info) = self.tables.resolver.lookup_alias(written) {
                 let mut mapping: HashMap<TyVar, Type> = HashMap::new();
                 for (i, &var_id) in info.param_var_ids.iter().enumerate() {
                     if let Some(arg_ty) = resolved_args.get(i) {
@@ -6597,10 +6512,9 @@ impl TypeChecker {
                     }
                 }
                 let substituted = crate::types::substitute_vars(&info.target, &mapping);
-                crate::types::canonical::canonicalize(&self.resolver, &substituted)
+                crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
             } else {
-                let name_str = resolve(ti.target_type);
-                match name_str.as_str() {
+                match builtin_type_name(written).unwrap_or_default() {
                     "List" if resolved_args.len() == 1 => {
                         Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
@@ -6620,7 +6534,7 @@ impl TypeChecker {
                             Box::new(iter.next().unwrap()),
                         )
                     }
-                    _ => Type::Generic(ti.target_type, resolved_args),
+                    _ => Type::Generic(written, resolved_args),
                 }
             }
         };
@@ -6633,8 +6547,9 @@ impl TypeChecker {
         // `List(T)`. Overwrites are fine: coherence rejects duplicate user
         // impls above, and the one permitted overwrite (a user Display
         // impl overriding the auto-derived one) should win here too.
-        self.impl_self_types
-            .insert((ti.trait_name, target_type), self_type.clone());
+        self.tables
+            .impl_self_types
+            .insert((trait_key, target_type), self_type.clone());
 
         // Resolve impl-level where clauses (e.g. `trait X for Box(a) where
         // a: Show`) to `(TyVar, trait)` pairs against the impl_param_map.
@@ -6647,8 +6562,8 @@ impl TypeChecker {
         // from parse_where_clauses_opt as separate (tv, trait) entries
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
-        let mut impl_level_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = Vec::new();
-        // Parallel structure used to populate self.impl_constraints below so
+        let mut impl_level_constraints: Vec<(TyVar, TraitKey, Vec<Type>)> = Vec::new();
+        // Parallel structure used to populate self.tables.impl_constraints below so
         // that call-site constraint resolution can recursively verify the
         // impl's own where clauses against the actual concrete type
         // arguments at the call site.
@@ -6673,23 +6588,31 @@ impl TypeChecker {
         // before, where `args.get(idx)` returned `None` at verify time
         // and the obligation was skipped.
         let expanded_self_args = self.type_args_of(&self_type);
-        let mut impl_obligations_by_index: Vec<(usize, Symbol, Vec<Type>)> = Vec::new();
+        let mut impl_obligations_by_index: Vec<(usize, TraitKey, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
+            // A bound the resolver resolved to nothing: it reported why.
+            if wc.trait_res == Some(crate::defs::Res::Error) {
+                continue;
+            }
             let type_param = &wc.type_param;
-            let trait_name = &wc.trait_name;
             let trait_args = &wc.trait_args;
-            if !self.traits.contains_key(trait_name) {
+            let Some(trait_key) = self
+                .named_trait(wc.trait_res, wc.trait_name)
+                .filter(|t| self.tables.traits.contains_key(t))
+            else {
                 self.error(
+                    Code::UnknownTrait,
                     format!(
                         "unknown trait '{}' in where clause on trait impl '{} for {}'",
-                        resolve(*trait_name),
+                        resolve(wc.trait_name),
                         resolve(ti.trait_name),
                         resolve(ti.target_type)
                     ),
                     ti.span,
                 );
                 continue;
-            }
+            };
+            let trait_name = &trait_key;
             // Round 101: the bound's arity must match the trait's
             // declared param count in BOTH directions (see
             // check_where_bound_arity). Skip registering the malformed
@@ -6739,7 +6662,7 @@ impl TypeChecker {
                     // and register no positional obligation.
                 }
                 None => {
-                    self.error(
+                    self.error(Code::InvalidTypeAnnotation,
                         format!(
                             "type variable '{}' in impl-level where clause is not declared in the target type arguments; \
                              declare it as a target parameter: `trait {} for {}({}, ...)`",
@@ -6754,8 +6677,9 @@ impl TypeChecker {
             }
         }
         if !impl_obligations_by_index.is_empty() {
-            self.impl_constraints
-                .insert((ti.trait_name, target_type), impl_obligations_by_index);
+            self.tables
+                .impl_constraints
+                .insert((trait_key, target_type), impl_obligations_by_index);
         }
 
         // GAP (round 35 F5): extraneous trait-impl methods — methods on
@@ -6775,11 +6699,12 @@ impl TypeChecker {
         // declared bounds — concrete types are checked now via
         // `verify_trait_obligation`; unresolved tyvars are added as
         // impl-level constraints so body checking sees them.
-        let trait_info_clone = self.traits.get(&ti.trait_name).cloned();
+        let trait_info_clone = self.tables.traits.get(&trait_key).cloned();
         if let Some(trait_info) = &trait_info_clone {
             if ti.trait_args.len() != trait_info.params.len() {
                 let expected = trait_info.params.len();
                 self.error(
+                    Code::ArityMismatch,
                     format!(
                         "trait '{}' expects {} {}, got {} in impl for '{}'",
                         resolve(ti.trait_name),
@@ -6802,8 +6727,9 @@ impl TypeChecker {
                     .iter()
                     .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
                     .collect();
-                self.impl_trait_args
-                    .insert((ti.trait_name, target_type), resolved_trait_args.clone());
+                self.tables
+                    .impl_trait_args
+                    .insert((trait_key, target_type), resolved_trait_args.clone());
                 if !trait_info.param_where_clauses.is_empty() {
                     for (param_name, bound_trait) in &trait_info.param_where_clauses {
                         let Some(idx) = trait_info.params.iter().position(|p| p == param_name)
@@ -6843,8 +6769,9 @@ impl TypeChecker {
         // every assoc-type the trait declares has a binding here, and
         // that each binding satisfies the trait's declared bounds.
         let trait_assoc_types: Vec<AssocTypeInfo> = self
+            .tables
             .traits
-            .get(&ti.trait_name)
+            .get(&trait_key)
             .map(|info| info.assoc_types.clone())
             .unwrap_or_default();
         // Index the impl's bindings by name for lookup + duplicate check.
@@ -6853,6 +6780,7 @@ impl TypeChecker {
         for binding in &ti.assoc_type_bindings {
             if !seen_binding.insert(binding.name) {
                 self.error(
+                    Code::DuplicateDeclaration,
                     format!(
                         "duplicate associated-type binding '{}' in impl of '{}' for '{}'",
                         resolve(binding.name),
@@ -6868,11 +6796,12 @@ impl TypeChecker {
             // unknown — in that case the per-impl unknown-trait error
             // already fired and we silently skip the binding.)
             let known = trait_assoc_types.iter().any(|a| a.name == binding.name);
-            if (!trait_assoc_types.is_empty() || self.traits.contains_key(&ti.trait_name))
-                && self.traits.contains_key(&ti.trait_name)
+            if (!trait_assoc_types.is_empty() || self.tables.traits.contains_key(&trait_key))
+                && self.tables.traits.contains_key(&trait_key)
                 && !known
             {
                 self.error(
+                    Code::InvalidTraitImpl,
                     format!(
                         "associated type '{}' is not declared in trait '{}'",
                         resolve(binding.name),
@@ -6886,16 +6815,16 @@ impl TypeChecker {
             // Register into the canonical assoc-binding registry. The
             // registry keys on the canonical target head (so Range and
             // List collapse), parallel to method_table's
-            // canonicalize_type_name routing above. Round 76 BROKEN T1:
+            // canonical_head routing above. Round 76 BROKEN T1:
             // the registry refuses self- or mutually-referential
             // bindings that would otherwise drive `canonicalize` into
             // infinite recursion (stack overflow). Skip the
             // `impl_binding_map` insertion on cycle so the per-method
             // signature check below reports a clean "missing required
             // assoc-type" rather than walking through a poisoned entry.
-            match self.resolver.register_assoc_binding(
-                ti.trait_name,
-                ti.target_type,
+            match self.tables.resolver.register_assoc_binding(
+                trait_key,
+                target_type,
                 binding.name,
                 resolved.clone(),
             ) {
@@ -6903,15 +6832,9 @@ impl TypeChecker {
                     impl_binding_map.insert(binding.name, resolved);
                 }
                 Err(cycle) => {
-                    let via_msg = if (
-                        cycle.via.0.as_str(),
-                        cycle.via.1.as_str(),
-                        cycle.via.2.as_str(),
-                    ) == (
-                        cycle.trait_name.as_str(),
-                        cycle.head.as_str(),
-                        cycle.assoc_name.as_str(),
-                    ) {
+                    let via_msg = if (cycle.via.0, cycle.via.1, cycle.via.2.as_str())
+                        == (cycle.trait_name, cycle.head, cycle.assoc_name.as_str())
+                    {
                         String::new()
                     } else {
                         format!(
@@ -6919,7 +6842,7 @@ impl TypeChecker {
                             cycle.via.1, cycle.via.0, cycle.via.2
                         )
                     };
-                    self.error(
+                    self.error(Code::InvalidTraitImpl,
                         format!(
                             "associated type binding for <{} as {}>::{} is self-referential{via_msg}",
                             cycle.head, cycle.trait_name, cycle.assoc_name,
@@ -6934,6 +6857,7 @@ impl TypeChecker {
         for assoc in &trait_assoc_types {
             let Some(bound_ty) = impl_binding_map.get(&assoc.name) else {
                 self.error(
+                    Code::InvalidTraitImpl,
                     format!(
                         "impl of '{}' for '{}' is missing required associated type '{}'",
                         resolve(ti.trait_name),
@@ -6946,11 +6870,12 @@ impl TypeChecker {
             };
             let applied = self.apply(bound_ty);
             for (bound_trait, bound_args) in &assoc.bounds {
-                if !self.traits.contains_key(bound_trait) {
+                if !self.tables.traits.contains_key(bound_trait) {
                     self.error(
+                        Code::UnknownTrait,
                         format!(
                             "unknown trait '{}' in bound on associated type '{}::{}'",
-                            resolve(*bound_trait),
+                            resolve(bound_trait.name),
                             resolve(ti.trait_name),
                             resolve(assoc.name),
                         ),
@@ -6979,14 +6904,16 @@ impl TypeChecker {
         }
 
         let trait_method_names: Option<std::collections::HashSet<Symbol>> = self
+            .tables
             .traits
-            .get(&ti.trait_name)
+            .get(&trait_key)
             .map(|info| info.methods.iter().map(|(n, _)| *n).collect());
         let mut seen_impl_methods: std::collections::HashSet<Symbol> =
             std::collections::HashSet::new();
         for method in &ti.methods {
             if !seen_impl_methods.insert(method.name) {
                 self.error(
+                    Code::DuplicateDeclaration,
                     format!(
                         "duplicate method '{}' in trait impl '{} for {}'",
                         method.name, ti.trait_name, ti.target_type
@@ -6998,6 +6925,7 @@ impl TypeChecker {
                 && !names.contains(&method.name)
             {
                 self.error(
+                    Code::InvalidTraitImpl,
                     format!(
                         "method '{}' is not declared in trait '{}'",
                         method.name, ti.trait_name
@@ -7029,7 +6957,7 @@ impl TypeChecker {
                             .entry(name)
                             .or_insert_with(|| self.fresh_var())
                             .clone();
-                        Type::Generic(intern("TypeOf"), vec![var])
+                        Type::type_of(var)
                     }
                     ParamKind::Data => {
                         if let Some(te) = &param.ty {
@@ -7056,26 +6984,11 @@ impl TypeChecker {
 
             let fn_type = Type::Fun(param_types, Box::new(ret_type));
 
-            // GAP (round 17 F3): method-name coherence across distinct
-            // traits on the same target. If `(target, method_name)` is
-            // already in the method table and came from a *different*
-            // user-defined trait, registering this impl would silently
-            // overwrite the earlier one and route every `.method()`
-            // call to the last-registered trait. Reject with an
-            // ambiguity error that names both traits.
-            if let Some(existing) = self.method_table.get(&(target_type, method.name))
-                && !existing.is_auto_derived
-                && let Some(existing_trait) = existing.trait_name
-                && existing_trait != ti.trait_name
-            {
-                self.error(
-                    format!(
-                        "ambiguous method '{}' on type '{}': provided by traits {}, {}",
-                        method.name, ti.target_type, existing_trait, ti.trait_name
-                    ),
-                    ti.span,
-                );
-            }
+            // Two traits may each provide a method of one name for one
+            // type (two modules' `Show` for `Int`): each impl is kept, by
+            // its trait, and a call means the one whose trait the module
+            // of the call sees (`select_visible_methods`); a call that
+            // sees both is ambiguous.
 
             // Collect constraints for this method:
             //   (a) every impl-level constraint, verbatim (they reference
@@ -7092,21 +7005,29 @@ impl TypeChecker {
             // follow-up folds that latent gap into the same code path.
             let mut method_constraints = impl_level_constraints.clone();
             for wc in &method.where_clauses {
+                // A bound the resolver resolved to nothing: it reported why.
+                if wc.trait_res == Some(crate::defs::Res::Error) {
+                    continue;
+                }
                 let type_param = &wc.type_param;
-                let trait_name = &wc.trait_name;
                 let trait_args = &wc.trait_args;
-                if !self.traits.contains_key(trait_name) {
+                let Some(trait_key) = self
+                    .named_trait(wc.trait_res, wc.trait_name)
+                    .filter(|t| self.tables.traits.contains_key(t))
+                else {
                     self.error(
+                        Code::UnknownTrait,
                         format!(
                             "unknown trait '{}' in where clause on '{}.{}'",
-                            resolve(*trait_name),
+                            resolve(wc.trait_name),
                             resolve(ti.target_type),
                             resolve(method.name)
                         ),
                         method.span,
                     );
                     continue;
-                }
+                };
+                let trait_name = &trait_key;
                 // Round 101: bound arity must match the trait's declared
                 // param count (see check_where_bound_arity — it dedupes
                 // against the identical diagnostic the method body's
@@ -7141,7 +7062,7 @@ impl TypeChecker {
                         // Give the user the full "declare it in the sig or
                         // target" hint — this is the same spirit as the
                         // register_fn_decl error at mod.rs:5276.
-                        self.error(
+                        self.error(Code::InvalidTypeAnnotation,
                             format!(
                                 "type variable '{}' in where clause on '{}.{}' is not declared in the impl target \
                                  arguments or in the method's parameter annotations",
@@ -7165,26 +7086,51 @@ impl TypeChecker {
             // points at the impl block header) so the
             // `validate_trait_impls` signature-mismatch unify error
             // lands on the offending method's signature line.
-            self.method_table.insert(
-                (target_type, method.name),
-                MethodEntry {
-                    method_type: fn_type.clone(),
-                    span: method.span,
-                    is_auto_derived: ti.is_auto_derived,
-                    trait_name: Some(ti.trait_name),
-                    method_constraints: method_constraints.clone(),
-                },
-            );
+            // The method of another trait this impl's method shares its
+            // name with, for its type, is kept by its trait: a builtin
+            // trait's method of a builtin type (`display` of Int) has no
+            // trait in the method table.
+            if let Some(existing) = self
+                .tables
+                .method_table
+                .get(&(target_type, method.name))
+                .cloned()
+                && let Some(existing_trait) = existing.trait_name.or_else(|| {
+                    crate::defs::builtin_trait_of_method(&resolve(method.name))
+                        .and_then(|t| self.trait_key(t.0))
+                })
+                && existing_trait != trait_key
+            {
+                self.tables
+                    .trait_methods
+                    .entry((target_type, method.name, existing_trait))
+                    .or_insert(MethodEntry {
+                        trait_name: Some(existing_trait),
+                        ..existing
+                    });
+            }
+            let entry = MethodEntry {
+                method_type: fn_type.clone(),
+                span: method.span,
+                is_auto_derived: ti.is_auto_derived,
+                trait_name: Some(trait_key),
+                method_constraints: method_constraints.clone(),
+            };
+            if !ti.is_auto_derived {
+                self.tables
+                    .trait_methods
+                    .insert((target_type, method.name, trait_key), entry.clone());
+            }
+            self.tables
+                .method_table
+                .insert((target_type, method.name), entry);
 
-            // Legacy: register in TypeEnv as "TypeName.method_name".
-            // Attach the same constraints to the scheme so the method
-            // body's check_fn_body_with_name sees them as active.
-            // Phase B: use the canonicalised `target_type` so a Range-
-            // targeted impl registers under "List.<m>" — matching the
-            // dispatch path in inference.rs (FieldAccess) which now
-            // looks up `(intern("List"), method)` for both List and
-            // Range receivers.
-            let key = intern(&format!("{}.{}", target_type, method.name));
+            // Bind the method in the module's scope under its impl key
+            // (`impl_method_key`), where `check_decl_bodies` checks its
+            // body; attach the same constraints to the scheme so the
+            // body's check_fn_body_with_name sees them as active. The key
+            // is built from the canonical target (`List` for `Range`).
+            let key = impl_method_key(target_type, method.name);
             let mut scheme = self.generalize(env, &fn_type);
             for (tv, trait_name, _trait_args) in &method_constraints {
                 if !scheme.constraints.contains(&(*tv, *trait_name)) {
@@ -7219,11 +7165,11 @@ impl TypeChecker {
     /// diagnostic single.
     pub(super) fn check_where_bound_arity(
         &mut self,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         got: usize,
         span: Span,
     ) -> bool {
-        let Some(info) = self.traits.get(&trait_name) else {
+        let Some(info) = self.tables.traits.get(&trait_name) else {
             return true;
         };
         let n = info.params.len();
@@ -7232,7 +7178,7 @@ impl TypeChecker {
         }
         let msg = format!(
             "trait '{}' expects {} {} in bound, got {}",
-            resolve(trait_name),
+            resolve(trait_name.name),
             n,
             inference::plural(n, "type argument", "type arguments"),
             got
@@ -7242,7 +7188,7 @@ impl TypeChecker {
             .iter()
             .any(|e| e.message == msg && e.span == span)
         {
-            self.error(msg, span);
+            self.error(Code::ArityMismatch, msg, span);
         }
         false
     }
@@ -7250,101 +7196,92 @@ impl TypeChecker {
 
 // ── Helper functions ────────────────────────────────────────────────
 
-/// Phase B helper: canonicalise a type-name [`Symbol`] so dispatch
-/// tables (`trait_impl_set`, `method_table`, `impl_constraints`,
-/// `impl_trait_args`, the legacy `"<T>.<m>"` TypeEnv key) all use the
-/// single canonical name. The collapse rules mirror the authoritative
-/// implementation in [`crate::types::canonical::canonicalize_type_name`]:
-///
-/// - `Range` -> `List` (nominal alias of `List`; the compiler emits
-///   `for List(a)` impls under the same key both List and Range
-///   receivers reach at dispatch time).
-/// - `Fun`   -> `Fn` (deprecated surface alias of the function-type
-///   name; the VM dispatches `VmClosure`/`BuiltinFn`/`VariantConstructor`
-///   under `"Fn"`, so a user `trait T for Fun { ... }` impl must
-///   register under `("T", "Fn")` or method lookup misses).
-/// - `()`    -> `Unit` (surface alias collapses onto the canonical
-///   primitive name; matches `canonical_name(Type::Unit) = "Unit"`
-///   and `dispatch_name_for_value(&Value::Unit) = "Unit"`).
-/// - Registered user aliases route to the canonical head of their
-///   target (Phase D). `type Bytes = List(Int)` collapses to `"List"`;
-///   `type Pair(a) = (a, a)` collapses to `"Tuple"`. Chained aliases
-///   (`type B = A; type A = List(Int)`) collapse fully via recursion.
-///
-/// Other names round-trip unchanged, so the function is safe to apply
-/// unconditionally to any target-type symbol.
-///
-/// Used by `register_trait_impl` so that `trait Foo for Range(a)`
-/// registers under `"List"` — the same key both List and Range
-/// receivers reach via [`Self::type_name_for_impl`] at dispatch time.
-pub(super) fn canonicalize_type_name(
-    resolver: &crate::types::canonical::Resolver,
-    name: Symbol,
-) -> Symbol {
-    let name_str = resolve(name);
-    // Built-in collapse: `Range` is a nominal alias of `List`.
-    if name_str.as_str() == "Range" {
-        return intern("List");
-    }
-    // Built-in collapse: `Fun` is a deprecated surface alias of `Fn`.
-    // Round 71 follow-up canonicalised every function-type-name dispatch
-    // site on `"Fn"` — a user `trait T for Fun` impl must register under
-    // the same `("T", "Fn")` key the compiler emits globals for and the
-    // VM dispatches under at runtime, otherwise method lookup misses.
-    // Mirror of the canonical-module copy at
-    // `src/types/canonical.rs::canonicalize_type_name`.
-    if name_str.as_str() == "Fun" {
-        return intern("Fn");
-    }
-    // Round 74 Fix #4 + Round 75 TYPE-3 LATENT correction:
-    // collapse the surface alias `"()"` onto `"Unit"` (the canonical
-    // direction matching `canonical_name(Type::Unit) = "Unit"` and
-    // the VM dispatch oracle `dispatch_name_for_value(Value::Unit)
-    // = "Unit"`). Round 74's original direction (Unit → ()) made
-    // typecheck pass but emitted compiler globals under `()` while
-    // the VM dispatched under `Unit`, leaving runtime lookups
-    // missing. Flipping to `() → Unit` lets the FieldAccess arm
-    // (inference.rs:3215) and auto-derive (`mod.rs:8173`) — both
-    // updated in this round — converge with the runtime side.
-    // The typechecker's `register_trait_impl` therefore registers a
-    // user `trait T for Unit { ... }` (or `trait T for ()`) impl
-    // under method_table[("T","Unit")], the compiler emits a global
-    // keyed `Unit.<method>`, and the VM dispatches under `Unit`.
-    // Mirror of `src/types/canonical.rs::canonicalize_type_name`.
-    if name_str.as_str() == "()" {
-        return intern("Unit");
-    }
-    // Phase D: user-declared aliases route to the canonical head of
-    // their target. `type Bytes = List(Int)` registers impls under
-    // `"List"`; `type Pair(a) = (a, a)` registers under `"Tuple"`.
-    // The lookup walks transitively until a non-alias head is reached
-    // — chained aliases (`type B = A; type A = List(Int)`) collapse
-    // to the same final head.
-    if let Some(info) = resolver.lookup_alias(name) {
-        let canon_target = crate::types::canonical::canonicalize(resolver, &info.target);
-        if let Some(head) = head_symbol_of(&canon_target) {
-            // Recurse so a chain of aliases collapses fully. The
-            // canonicaliser's expansion already follows aliases, so
-            // `head_symbol_of` returns the final non-alias head — but
-            // we still recurse defensively in case a future change to
-            // `canonicalize` introduces a partial-expansion mode.
-            return canonicalize_type_name(resolver, head);
-        }
-    }
-    name
+/// Whether a type declaration of this name is rejected: `TypeOf`, the
+/// type system's own, or a builtin scalar or container type's name.
+fn rejected_type_name(name: &str) -> bool {
+    name == "TypeOf" || crate::types::builtins::lookup(name).is_some()
 }
 
-/// Return the head symbol of `ty` for trait-impl-key registration.
-/// Built-in shapes route through their `canonical_name`; user-declared
-/// nominals carry their own name. Returns `None` for shapes that have
-/// no nominal head (raw type-variables, error / never sentinels).
-///
-/// Round 72 LATENT L2: this used to be a byte-identical local copy of
-/// `crate::types::canonical::head_symbol_of_canon`. The duplicate
-/// drift class — same as the round 71 `Fn` regression — was collapsed
-/// by re-exporting the canonical-module helper here so both call sites
-/// share one definition.
-pub(crate) use crate::types::canonical::head_symbol_of_canon as head_symbol_of;
+/// The name of a builtin type; `None` for a type a module declares.
+pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
+    crate::defs::builtin_types()
+        .get(ty.id.0.0 as usize)
+        .map(|(name, _)| *name)
+}
+
+/// The row variables of the anonymous record types in `ty`, which stand
+/// for fields, not for a type.
+fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
+    match ty {
+        Type::AnonRecord { fields, tail } => {
+            if let RowTail::Var(v) = tail {
+                out.push(*v);
+            }
+            fields.values().for_each(|t| row_tail_vars(t, out));
+        }
+        Type::Record(_, fields) => fields.iter().for_each(|(_, t)| row_tail_vars(t, out)),
+        Type::Generic(_, args) | Type::Tuple(args) => {
+            args.iter().for_each(|t| row_tail_vars(t, out))
+        }
+        Type::Fun(params, ret) => {
+            params.iter().for_each(|t| row_tail_vars(t, out));
+            row_tail_vars(ret, out);
+        }
+        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => row_tail_vars(t, out),
+        Type::Map(k, v) => {
+            row_tail_vars(k, out);
+            row_tail_vars(v, out);
+        }
+        Type::AssocProj { receiver, .. } => row_tail_vars(receiver, out),
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Var(_)
+        | Type::Error
+        | Type::Never => {}
+    }
+}
+
+/// The definitions the type names written in `te` resolve to.
+fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::DefId>) {
+    if let Some(crate::defs::Res::Def(id)) = te.res {
+        out.insert(id);
+    }
+    match &te.kind {
+        TypeExprKind::Generic { args, .. } => args.iter().for_each(|a| written_defs(a, out)),
+        TypeExprKind::Tuple(elems) => elems.iter().for_each(|e| written_defs(e, out)),
+        TypeExprKind::Function(params, ret) => {
+            params.iter().for_each(|p| written_defs(p, out));
+            written_defs(ret, out);
+        }
+        TypeExprKind::AssocProj { receiver, .. } => written_defs(receiver, out),
+        TypeExprKind::AnonRecord { fields, .. } => {
+            fields.iter().for_each(|(_, t)| written_defs(t, out))
+        }
+        TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
+    }
+}
+
+/// The key an impl's method is bound under in its module's scope, where
+/// its body is checked: the method of that type, two types of one name
+/// (a module's own `Pt` and an imported one) apart.
+fn impl_method_key(target: TypeRef, method: Symbol) -> Symbol {
+    intern(&format!("{}#{}.{method}", target.name, target.id.0.0))
+}
+
+/// The number of type arguments of the builtin type `name` when it is
+/// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
+/// has no variants and no fields. `None` for any other builtin type.
+fn opaque_arity(name: &str) -> Option<usize> {
+    crate::defs::OPAQUE_TYPE_ARITY
+        .iter()
+        .find(|(opaque, _)| *opaque == name)
+        .map(|(_, arity)| *arity)
+}
+
+pub(crate) use crate::types::canonical::{canonical_head, head_of_canon as head_of};
 
 /// Walk two types in parallel and build a mapping from `old` tyvars to
 /// `new` tyvars wherever they appear at the same structural position.
@@ -7584,7 +7521,7 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
         }
         PatternKind::Record { fields, .. } => {
             let mut vars: Vec<Symbol> = Vec::new();
-            for (field_name, sub_pat) in fields {
+            for (field_name, _, sub_pat) in fields {
                 if let Some(p) = sub_pat {
                     vars.extend(collect_pattern_vars(p));
                 } else {
@@ -7596,14 +7533,14 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
         }
         PatternKind::AnonRecord { fields, rest } => {
             let mut vars: Vec<Symbol> = Vec::new();
-            for (field_name, sub_pat) in fields {
+            for (field_name, _, sub_pat) in fields {
                 if let Some(p) = sub_pat {
                     vars.extend(collect_pattern_vars(p));
                 } else {
                     vars.push(*field_name);
                 }
             }
-            if let Some(r) = rest {
+            if let Some((r, _)) = rest {
                 vars.push(*r);
             }
             vars
@@ -7678,7 +7615,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
 ///   Carries a real default body so `synthesize_default_methods` can
 ///   clone `self.display()` into impls that omit `message`.
 fn builtin_trait_decls() -> Vec<TraitDecl> {
-    let dummy_span = Span::new(0, 0);
+    let dummy_span = Span::BUILTIN;
     let self_sym = intern("self");
     let other_sym = intern("other");
 
@@ -7703,7 +7640,14 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         Expr::new(ExprKind::Unit, span)
     }
     fn named_ret(name: &str, span: Span) -> Option<TypeExpr> {
-        Some(TypeExpr::new(TypeExprKind::Named(intern(name)), span))
+        Some(TypeExpr::new(
+            TypeExprKind::Named {
+                module: None,
+                name: intern(name),
+                name_span: span,
+            },
+            span,
+        ))
     }
     fn sig_only_method(name: &str, params: Vec<Param>, ret: &str, span: Span) -> FnDecl {
         FnDecl {
@@ -7726,7 +7670,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
     let error_default_body = {
         let self_ident = Expr::new(ExprKind::Ident(self_sym), dummy_span);
         let field_access = Expr::new(
-            ExprKind::FieldAccess(Box::new(self_ident), intern("display")),
+            ExprKind::FieldAccess(Box::new(self_ident), intern("display"), dummy_span),
             dummy_span,
         );
         Expr::new(
@@ -7764,6 +7708,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 dummy_span,
             )],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -7784,6 +7729,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 dummy_span,
             )],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -7804,6 +7750,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 dummy_span,
             )],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -7821,6 +7768,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 dummy_span,
             )],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -7829,10 +7777,17 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             name: intern("Error"),
             name_span: dummy_span,
             params: Vec::new(),
-            supertraits: vec![(intern("Display"), Vec::new(), dummy_span)],
+            supertraits: vec![TraitRef {
+                module: None,
+                name: intern("Display"),
+                args: Vec::new(),
+                span: dummy_span,
+                res: None,
+            }],
             param_where_clauses: Vec::new(),
             methods: vec![error_message_fn],
             assoc_types: Vec::new(),
+            is_pub: true,
             span: dummy_span,
             doc: None,
         },
@@ -7842,10 +7797,9 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
 /// Register built-in trait declarations (Display/Compare/Equal/Hash/Error)
 /// and their auto-derived impls for primitives and builtin containers.
 ///
-/// This is the single source of truth for derive policy. Both
-/// `TypeChecker::check_program` and `ReplTypeContext::new` call it so
-/// `silt check` and the REPL never diverge on which types implement
-/// which traits.
+/// This is the single source of truth for derive policy. The builtin
+/// environment every check starts from is built with it, so no two
+/// checks diverge on which types implement which traits.
 ///
 /// Round 62 (item 3 of type-design improvements): the trait-decl
 /// registration step now flows through the same code path as user
@@ -7890,8 +7844,8 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         checker,
         // Round 75 TYPE-3 LATENT: canonical key for the unit type is
         // "Unit" (matches canonical_name(Type::Unit) and
-        // dispatch_name_for_value(Value::Unit)). The "()" alias
-        // collapses onto "Unit" via canonicalize_type_name.
+        // dispatch_type_for_value(Value::Unit)); an impl target `()`
+        // names it too.
         &["Int", "Float", "Bool", "String", "Unit"],
         all_auto_traits,
     );
@@ -7909,7 +7863,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // record registered in `register_builtins`. Each entry below
     // pre-stamps `trait_impl_set` for the policy-permitted traits so
     // `synthesize_auto_derive_impls` knows which (trait, type) pairs
-    // are allowed to receive a synthesized `<Type>.<method>` global,
+    // are allowed to receive a synthesized impl method,
     // and `field_type_supports_trait` returns true for fields that
     // reference these types (e.g. `Option(DateTime)` on `FileStat`).
     //
@@ -7924,11 +7878,11 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     //     a misleading "no method" error.
     //
     // The synth pass (`synthesize_auto_derive_impls`) discovers these
-    // types via a uniform walk over `self.enums` / `self.records` and
+    // types via a uniform walk over `self.tables.enums` / `self.tables.records` and
     // emits the same `TraitImpl` AST that user-declared types receive,
-    // producing real `<Type>.<method>` globals at compile time. After
-    // this round, `Op::CallMethod` always finds a qualified-global
-    // entry for built-in enum/record receivers, and the Variant /
+    // producing real impl methods at compile time. After this round,
+    // `Op::CallMethod` always finds an impl method for built-in
+    // enum/record receivers, and the Variant /
     // Record arms in `dispatch_trait_method` are dead.
 
     // Built-in enums — non-generic, all four traits.
@@ -7963,7 +7917,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
 
     // ChannelOp variants carry `Channel(_)` which has no Compare /
     // Equal / Hash / Display impl. No stamps; the synth pass walks
-    // `self.enums` and skips this entry because every trait fails
+    // `self.tables.enums` and skips this entry because every trait fails
     // the field-support gate.
 
     // Bytes: Display only. The generic `dispatch_trait_method` arm at
@@ -8000,11 +7954,7 @@ pub(super) fn register_auto_derived_impls_for(
     type_names: &[&str],
     trait_names: &[&str],
 ) {
-    let dummy_span = Span {
-        line: 0,
-        col: 0,
-        offset: 0,
-    };
+    let dummy_span = Span::BUILTIN;
     let has_display = trait_names.contains(&"Display");
     let has_equal = trait_names.contains(&"Equal");
     let has_compare = trait_names.contains(&"Compare");
@@ -8012,8 +7962,9 @@ pub(super) fn register_auto_derived_impls_for(
     for type_name in type_names {
         for trait_name in trait_names {
             checker
+                .tables
                 .trait_impl_set
-                .insert((intern(trait_name), intern(type_name)));
+                .insert((TraitKey::builtin(trait_name), TypeRef::builtin(type_name)));
         }
         // Build method entries only for traits in `trait_names`.
         let mut methods: Vec<(&str, Type)> = Vec::with_capacity(4);
@@ -8048,8 +7999,8 @@ pub(super) fn register_auto_derived_impls_for(
             ));
         }
         for (method_name, method_type) in &methods {
-            checker.method_table.insert(
-                (intern(type_name), intern(method_name)),
+            checker.tables.method_table.insert(
+                (TypeRef::builtin(type_name), intern(method_name)),
                 MethodEntry {
                     method_type: method_type.clone(),
                     span: dummy_span,
@@ -8062,415 +8013,567 @@ pub(super) fn register_auto_derived_impls_for(
     }
 }
 
-/// Run the type checker on a program. Returns a list of type errors (warnings).
-pub fn check(program: &mut Program) -> Vec<TypeError> {
-    let mut checker = TypeChecker::new();
-    checker.check_program(program);
-    checker.errors
-}
+impl TypeChecker {
+    /// For each type and method name that the impls of two or more traits
+    /// provide, put in the method table the one the module checked
+    /// means: the one whose trait the module sees, by `scope`: a trait it
+    /// declares, a trait it names by an import, a trait of a module it
+    /// imports, or a builtin trait. Where it sees none or several of the
+    /// traits, a call is ambiguous (`ambiguous_methods`). Run once the
+    /// module's impls are registered.
+    fn select_visible_methods(&mut self) {
+        let mut providers: HashMap<(TypeRef, Symbol), Vec<TraitKey>> = HashMap::new();
+        for (ty, method, t) in self.tables.trait_methods.keys() {
+            providers.entry((*ty, *method)).or_default().push(*t);
+        }
+        let seen: std::collections::HashSet<TraitKey> = providers
+            .values()
+            .flatten()
+            .copied()
+            .filter(|t| self.sees_trait(*t))
+            .collect();
+        let sees = |t: &TraitKey| seen.contains(t);
+        self.ambiguous_methods.clear();
+        for ((ty, method), mut traits) in providers {
+            if traits.len() < 2 {
+                continue;
+            }
+            traits.sort_by_key(|t| self.show_trait(*t));
+            let seen: Vec<TraitKey> = traits.iter().copied().filter(|t| sees(t)).collect();
+            match seen.as_slice() {
+                [t] => {
+                    let entry = self.tables.trait_methods[&(ty, method, *t)].clone();
+                    self.tables.method_table.insert((ty, method), entry);
+                }
+                [] => {
+                    self.ambiguous_methods.insert((ty, method), traits);
+                }
+                _ => {
+                    self.ambiguous_methods.insert((ty, method), seen);
+                }
+            }
+        }
+    }
 
-/// Run the type checker on a program with an explicit owning package.
-///
-/// `package` is the package symbol whose source the program belongs to
-/// — supplied by the compiler when typechecking each module so the
-/// trait-orphan rule (round 63 item 5) can identify which traits, enums,
-/// and records were declared locally. Pass `None` for ad-hoc scripts /
-/// REPL inputs to disable orphan enforcement (every decl looks local
-/// to the scratch package).
-pub fn check_with_package(program: &mut Program, package: Option<Symbol>) -> Vec<TypeError> {
-    let mut checker = TypeChecker::new();
-    checker.current_package = package;
-    checker.check_program(program);
-    checker.errors
-}
+    /// The trait the definition `id` is, if it is one.
+    pub(super) fn trait_key(&self, id: crate::defs::DefId) -> Option<TraitKey> {
+        let first = crate::defs::builtin_types().len();
+        if let Some(k) = (id.0 as usize).checked_sub(first)
+            && let Some(name) = crate::defs::BUILTIN_TRAITS.get(k)
+        {
+            return Some(TraitKey::builtin(name));
+        }
+        let def = self.defs.as_ref()?.get(id);
+        match def.kind {
+            crate::defs::DefKind::Trait(t) => Some(TraitKey {
+                id: t,
+                name: def.name,
+            }),
+            _ => None,
+        }
+    }
 
-/// Cross-module entry point (round 64 item 6A): typecheck `program`
-/// against an explicit owning `package` AND a map of pre-typechecked
-/// sibling modules' exports. The typechecker consults `module_exports`
-/// when it encounters `import other_user_pkg` decls, merging the
-/// producer's pub schemes/types/traits/impls into the env so call
-/// sites typecheck strongly (instantiating polymorphic schemes,
-/// honouring where-clauses, dispatching trait methods).
-///
-/// Returns `(errors, this_module's exports)` so the compiler can cache
-/// the new module's exports for downstream importers.
-pub fn check_with_package_and_imports(
-    program: &mut Program,
-    package: Option<Symbol>,
-    module_exports: HashMap<Symbol, ModuleExports>,
-) -> (Vec<TypeError>, ModuleExports) {
-    let (errors, exports, _resolver) =
-        check_with_package_and_imports_resolver(program, package, module_exports, None);
-    (errors, exports)
-}
+    /// The trait a method entry is of: its own, or for a builtin trait's
+    /// method of a builtin type, which the table keeps without one, that
+    /// builtin trait.
+    pub(super) fn entry_trait(&self, entry: &MethodEntry, method: Symbol) -> Option<TraitKey> {
+        entry.trait_name.or_else(|| {
+            crate::defs::builtin_trait_of_method(&resolve(method)).and_then(|t| self.trait_key(t.0))
+        })
+    }
 
-/// Resolver-threaded cross-module entry point. Mirrors
-/// [`check_with_package_and_imports`] but accepts an optional
-/// caller-owned [`crate::types::canonical::Resolver`] so the alias /
-/// associated-type-binding registries are shared across every module
-/// typechecked in one CLI compile invocation. Returns the resolver
-/// alongside the errors / exports so the next module's call can
-/// continue threading the same instance.
-///
-/// Pass `Some(resolver)` for cross-module compile pipelines. Pass
-/// `None` for one-shot typechecks (LSP pulls, REPL inputs); a fresh
-/// resolver is allocated and dropped on return.
-///
-/// See commit 6364552 for the original migration rationale.
-pub fn check_with_package_and_imports_resolver(
-    program: &mut Program,
-    package: Option<Symbol>,
-    module_exports: HashMap<Symbol, ModuleExports>,
-    resolver: Option<crate::types::canonical::Resolver>,
-) -> (
-    Vec<TypeError>,
-    ModuleExports,
-    crate::types::canonical::Resolver,
-) {
-    let mut checker = match resolver {
-        Some(r) => TypeChecker::with_resolver(r),
-        None => TypeChecker::new(),
-    };
-    checker.current_package = package;
-    checker.module_exports = module_exports;
-    let env = checker.check_program_returning_env(program);
-    let exports = checker.collect_module_exports(program, &env);
-    let resolver = checker.take_resolver();
-    (checker.errors, exports, resolver)
-}
+    /// The entry of the method `method` of the trait `t` for the type
+    /// `ty`, when the impls of two or more traits provide the method.
+    pub(super) fn trait_method_entry(
+        &self,
+        ty: TypeRef,
+        method: Symbol,
+        t: TraitKey,
+    ) -> Option<MethodEntry> {
+        self.tables.trait_methods.get(&(ty, method, t)).cloned()
+    }
 
-// ── Persistent REPL type context ───────────────────────────────────
+    /// Whether the module checked sees the trait `t`: a builtin trait, a
+    /// trait it declares, names by an import or reaches through a module
+    /// it imports. Another module's private trait it never sees.
+    pub(super) fn sees_trait(&self, t: TraitKey) -> bool {
+        let Some(defs) = &self.defs else {
+            return true;
+        };
+        let def = defs.get(t.id.0);
+        if def.module == self.module || def.module.is_builtin() {
+            return true;
+        }
+        let private = self.tables.traits.get(&t).is_some_and(|info| {
+            info.private_to
+                .is_some_and(|(owner, _)| owner != self.module)
+        });
+        !private && (self.seen_traits.contains(&t.id.0) || self.seen_modules.contains(&def.module))
+    }
 
-/// Persistent type-checking context for the REPL.
-///
-/// Holds a `TypeChecker` and its `TypeEnv` across REPL inputs so that
-/// previously defined names (variables, functions, types) remain visible
-/// to subsequent type-checking passes.
-pub struct ReplTypeContext {
-    checker: TypeChecker,
-    env: TypeEnv,
-}
+    /// Keep what the check learned of each written impl method (its
+    /// body's type) for the modules checked later.
+    fn keep_trait_methods(&mut self) {
+        for ((ty, method), entry) in &self.tables.method_table {
+            if let Some(t) = entry.trait_name
+                && let Some(kept) = self.tables.trait_methods.get_mut(&(*ty, *method, t))
+            {
+                *kept = entry.clone();
+            }
+        }
+    }
 
-impl Default for ReplTypeContext {
-    fn default() -> Self {
-        Self::new()
+    /// Whether a call of `method` of `ty` is ambiguous here; if so, it is
+    /// reported at `span`.
+    pub(super) fn ambiguous_method_call(
+        &mut self,
+        ty: TypeRef,
+        method: Symbol,
+        span: Span,
+    ) -> bool {
+        let Some(traits) = self.ambiguous_methods.get(&(ty, method)).cloned() else {
+            return false;
+        };
+        let shown: Vec<String> = traits.iter().map(|t| self.show_trait(*t)).collect();
+        self.error(
+            Code::AmbiguousMethod,
+            format!(
+                "ambiguous method '{method}' on type '{}': provided by traits {}",
+                self.show_type(&Type::Generic(ty, vec![])),
+                shown.join(", ")
+            ),
+            span,
+        );
+        true
     }
 }
 
-impl ReplTypeContext {
-    /// Create a new REPL type context with builtins and built-in traits
-    /// already registered.
-    pub fn new() -> Self {
+/// What checking one module gives.
+pub struct ModuleCheck {
+    /// The module's errors and warnings.
+    pub diagnostics: Vec<Diagnostic>,
+    /// The inferred type of each top-level value the module binds by a
+    /// declaration: its functions, its `let`s and the items it imports.
+    pub top_level: HashMap<Symbol, Type>,
+}
+
+/// The context a module is checked in, from the session.
+pub struct ModuleContext<'a> {
+    /// The module checked.
+    pub module: crate::session::ModuleId,
+    /// Its name, for diagnostics.
+    pub module_name: Symbol,
+    /// A file, a REPL cell, or an embedder's host module, whose
+    /// functions are bodiless signatures.
+    pub kind: names::ModuleKind,
+    /// The package the module belongs to, for the trait-orphan rule
+    /// (round 63 item 5).
+    pub package: Option<Symbol>,
+    /// The module's top-level names, from the resolver.
+    pub scope: &'a names::ModuleScope,
+    /// For a REPL cell, the values it imports from the earlier cells,
+    /// with their definitions. Empty for any other module.
+    pub earlier: &'a [(Symbol, crate::defs::DefId)],
+    /// The session's definitions; the module is resolved already.
+    pub defs: std::sync::Arc<crate::defs::DefTable>,
+    /// What the checks of the session share. What the module adds to
+    /// them is recorded, see [`Tables::forget`].
+    pub tables: &'a mut Tables,
+}
+
+/// Check one module, which the resolver has resolved, against the
+/// session's tables: the module's types, traits and impls join them,
+/// and the scheme of each definition it declares is entered once it is
+/// checked.
+pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
+    let ModuleContext {
+        module,
+        module_name,
+        kind,
+        package,
+        scope,
+        earlier,
+        defs,
+        tables,
+    } = context;
+    tables.forget(module);
+    tables.vars.begin(module);
+    let before = tables.keys();
+    let (mut checker, mut env) = builtin_env().start();
+    tables.module_names.insert(module, module_name);
+    checker.tables = std::mem::take(tables);
+    // A REPL cell that binds a name an earlier cell binds reads the
+    // earlier value where its own is not bound yet (`let n = n + 1`):
+    // what it imports from the earlier cells is in its scope by name.
+    for (name, id) in earlier {
+        let def = defs.get(*id);
+        let scheme = match def.module.is_builtin() {
+            true => builtin_scheme(def),
+            false => checker.tables.schemes.get(id).cloned(),
+        };
+        if let Some(scheme) = scheme {
+            env.define(*name, scheme);
+        }
+    }
+    checker.signatures_only = kind == names::ModuleKind::Host;
+    checker.is_cell = kind == names::ModuleKind::Cell;
+    checker.current_package = package;
+    checker.defs = Some(defs);
+    checker.module = module;
+    checker.module_name = module_name;
+    for binding in scope.types.values() {
+        if let names::Binding::Def(id) = binding {
+            checker.seen_traits.insert(*id);
+        }
+    }
+    for binding in scope.values.values() {
+        if let names::Binding::Module(id) = binding {
+            checker.seen_modules.insert(*id);
+        }
+    }
+    let env = checker.check_program_in(program, env);
+    checker.keep_trait_methods();
+    checker.report_private_in_schemes(program, &env);
+    checker.report_unknown_pub_let_types(program, &env);
+    checker.enter_schemes(&env);
+    // The type of each top-level value: the module's own, by name; an
+    // imported item, by its definition.
+    let mut top_level = HashMap::new();
+    for decl in &program.decls {
+        let names: Vec<Symbol> = match decl {
+            Decl::Fn(f) => vec![f.name],
+            Decl::Let { .. } => crate::parser::top_level_binders(decl)
+                .into_iter()
+                .map(|(name, _, _)| name)
+                .collect(),
+            Decl::Import(ImportTarget::Items(_, items), _) => {
+                items.iter().map(|(item, _)| *item).collect()
+            }
+            _ => Vec::new(),
+        };
+        for name in names {
+            let scheme = match scope.values.get(&name) {
+                Some(names::Binding::Def(id)) => {
+                    checker.def_scheme(Some(crate::defs::Res::Def(*id)), &env)
+                }
+                _ => env.lookup(name).cloned(),
+            };
+            if let Some(scheme) = scheme {
+                top_level.insert(name, checker.apply(&scheme.ty));
+            }
+        }
+    }
+    *tables = std::mem::take(&mut checker.tables);
+    let rows = tables.added_since(&before);
+    tables.rows.insert(module, rows);
+    ModuleCheck {
+        diagnostics: checker.errors,
+        top_level,
+    }
+}
+
+/// What one module's check added to the session's [`Tables`].
+#[derive(Clone, Default)]
+pub struct Rows {
+    /// The earlier modules' variables the check bound.
+    trail: Vec<TyVar>,
+    types: Vec<TypeRef>,
+    traits: Vec<TraitKey>,
+    methods: Vec<(TypeRef, Symbol)>,
+    trait_methods: Vec<(TypeRef, Symbol, TraitKey)>,
+    impls: Vec<(TraitKey, TypeRef)>,
+    schemes: Vec<crate::defs::DefId>,
+}
+
+/// The keys of the session's tables, to tell what a check added.
+pub struct TableKeys {
+    types: std::collections::HashSet<TypeRef>,
+    traits: std::collections::HashSet<TraitKey>,
+    methods: std::collections::HashSet<(TypeRef, Symbol)>,
+    trait_methods: std::collections::HashSet<(TypeRef, Symbol, TraitKey)>,
+    impls: std::collections::HashSet<(TraitKey, TypeRef)>,
+    schemes: std::collections::HashSet<crate::defs::DefId>,
+}
+
+impl Tables {
+    /// The tables a session starts from: the builtins'.
+    pub fn for_session() -> Tables {
+        builtin_env().tables.clone()
+    }
+
+    /// The records of the tables: each record type with its fields.
+    pub fn record_fields(&self) -> HashMap<TypeRef, Vec<(Symbol, Type)>> {
+        self.records
+            .iter()
+            .map(|(ty, info)| (*ty, info.fields.clone()))
+            .collect()
+    }
+
+    /// Every method a value has, as (the type impls key the value's type
+    /// by, the method's name): declared, derived and builtin.
+    pub fn methods(&self) -> Vec<(TypeRef, Symbol)> {
+        self.method_table.keys().copied().collect()
+    }
+
+    /// The type aliases and associated-type bindings of the session.
+    pub fn resolver(&self) -> &crate::types::canonical::Resolver {
+        &self.resolver
+    }
+
+    fn keys(&self) -> TableKeys {
+        TableKeys {
+            types: self
+                .enums
+                .keys()
+                .chain(self.records.keys())
+                .chain(self.type_aliases.iter())
+                .copied()
+                .collect(),
+            traits: self.traits.keys().copied().collect(),
+            methods: self.method_table.keys().copied().collect(),
+            trait_methods: self.trait_methods.keys().copied().collect(),
+            impls: self.trait_impl_set.iter().copied().collect(),
+            schemes: self.schemes.keys().copied().collect(),
+        }
+    }
+
+    fn added_since(&self, before: &TableKeys) -> Rows {
+        let after = self.keys();
+        Rows {
+            trail: self.vars.trail.clone(),
+            types: after.types.difference(&before.types).copied().collect(),
+            traits: after.traits.difference(&before.traits).copied().collect(),
+            methods: after.methods.difference(&before.methods).copied().collect(),
+            trait_methods: after
+                .trait_methods
+                .difference(&before.trait_methods)
+                .copied()
+                .collect(),
+            impls: after.impls.difference(&before.impls).copied().collect(),
+            schemes: after.schemes.difference(&before.schemes).copied().collect(),
+        }
+    }
+
+    /// Forget what the check of `module` added: it is checked again, or
+    /// it was a REPL cell that is dropped.
+    pub fn forget(&mut self, module: crate::session::ModuleId) {
+        let Some(rows) = self.rows.remove(&module) else {
+            return;
+        };
+        self.vars.forget(module, &rows.trail);
+        for ty in rows.types {
+            self.enums.remove(&ty);
+            self.records.remove(&ty);
+            self.record_param_var_ids.remove(&ty);
+            self.type_aliases.remove(&ty);
+            self.type_alias_arity.remove(&ty);
+            self.resolver.unregister_alias(ty);
+        }
+        for t in rows.traits {
+            self.traits.remove(&t);
+        }
+        for key in rows.methods {
+            self.method_table.remove(&key);
+        }
+        for key in rows.trait_methods {
+            self.trait_methods.remove(&key);
+        }
+        for key in rows.impls {
+            self.trait_impl_set.remove(&key);
+            self.trait_impl_spans.remove(&key);
+            self.impl_constraints.remove(&key);
+            self.impl_trait_args.remove(&key);
+            self.impl_self_types.remove(&key);
+            self.auto_derive_negatives.remove(&key);
+        }
+        for id in rows.schemes {
+            self.schemes.remove(&id);
+        }
+    }
+}
+
+// ── The builtin environment ─────────────────────────────────────────
+
+/// What every check starts from: the checker and the environment once
+/// the builtin functions, types, traits and derived impls are registered.
+/// Built once per thread and shared by every check made on it (see
+/// [`builtin_env`]).
+struct BuiltinEnv {
+    /// A checker with no tables: what each check starts from.
+    checker: TypeChecker,
+    /// The builtin types, traits, impls and type variables: what a
+    /// session's tables start from.
+    tables: Tables,
+    /// The scope of the builtin names: the parent of every program's
+    /// top-level scope.
+    root: Rc<TypeEnv>,
+    /// The derived impls of the builtin types (`Display`, `Equal`, ...
+    /// for `IoError`, `Weekday`, ...), checked: a program compiles them
+    /// once, see [`builtin_derived_impls`].
+    impls: Rc<Vec<Decl>>,
+}
+
+impl BuiltinEnv {
+    fn build() -> Self {
         let mut checker = TypeChecker::new();
         let mut env = TypeEnv::new();
-
-        // Register builtins in the type environment
+        // With no `current_package`, every builtin decl is stamped with
+        // the `__builtin__` sentinel by `defining_package()`, which the
+        // orphan rule relies on: `trait Display for List(a)` in user code
+        // must not look trait-local.
         checker.register_builtins(&mut env);
-
-        // Register built-in traits and auto-derived impls. Shared with
-        // `check_program` so the REPL and `silt check` never drift on
-        // derive policy.
         register_builtin_trait_impls(&mut checker);
-
-        Self { checker, env }
+        // Each builtin variant is bound as `Enum.Variant` too, which is
+        // what a resolved use of it reads.
+        let mut variants: Vec<(Symbol, Scheme)> = Vec::new();
+        for (enum_name, info) in &checker.tables.enums {
+            for variant in &info.variants {
+                if let Some(scheme) = env.lookup(variant.name) {
+                    variants.push((
+                        intern(&format!("{enum_name}.{}", variant.name)),
+                        scheme.clone(),
+                    ));
+                }
+            }
+        }
+        for (name, scheme) in variants {
+            env.define(name, scheme);
+        }
+        // Every builtin scheme is generalized, so the bodies below are
+        // checked without walking the builtin scope for free variables.
+        env.closed = env.free_vars(&checker).is_empty();
+        // Derive the builtin types' impls once, as a check of a program
+        // with no declarations would, and check their bodies. They are
+        // registered in a scope over the builtin one, so the scopes their
+        // bodies open share the builtin scope instead of copying it, and
+        // what they bind is then moved into the builtin scope.
+        let root = Rc::new(env);
+        let mut scope = TypeEnv::child_of(root.clone());
+        let mut impls = Vec::new();
+        checker.synthesize_auto_derive_impls(&mut impls);
+        for decl in &impls {
+            if let Decl::TraitImpl(ti) = decl {
+                if let Some(target) = checker.impl_target(ti) {
+                    checker.tables.builtin_derived.insert(target);
+                }
+                checker.register_trait_impl(ti, &mut scope);
+            }
+        }
+        checker.check_decl_bodies(&mut impls, &scope);
+        checker.finalize_deferred_checks();
+        debug_assert!(
+            checker.errors.is_empty(),
+            "the builtin derived impls check: {:?}",
+            checker.errors
+        );
+        checker.errors.clear();
+        let bindings = std::mem::take(&mut scope.bindings);
+        drop(scope);
+        let mut env = Rc::try_unwrap(root).expect("no scope over the builtin scope is left");
+        env.bindings.extend(bindings);
+        env.closed = false;
+        env.closed = env.free_vars(&checker).is_empty();
+        let tables = std::mem::take(&mut checker.tables);
+        BuiltinEnv {
+            checker,
+            tables,
+            root: Rc::new(env),
+            impls: Rc::new(impls),
+        }
     }
 
-    /// Type-check a REPL input (one or more declarations/expressions) against
-    /// the accumulated environment.  New bindings are persisted for future inputs.
-    /// Returns any type errors from this input.
-    pub fn check(&mut self, program: &mut Program) -> Vec<TypeError> {
-        // Clear errors from the previous input
-        self.checker.errors.clear();
-
-        // Process imports. Round 56 item 4: we do NOT clear
-        // `self.checker.imported_modules` here — REPL sessions
-        // accumulate imports across inputs, so `import list` typed in
-        // one input stays in scope for subsequent inputs.
-        for decl in &program.decls {
-            if let Decl::Import(ImportTarget::Items(module, items), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.checker.imported_modules.insert(*module);
-                    for item in items {
-                        let qualified = intern(&format!("{module}.{item}"));
-                        if let Some(scheme) = self.env.lookup(qualified).cloned() {
-                            self.env.define(*item, scheme);
-                        }
-                    }
-                } else if self.checker.merge_imported_module_exports(
-                    *module,
-                    *module,
-                    &mut self.env,
-                ) {
-                    // Round 75 DEAD-DRIFT: route through the same
-                    // helper as `check_program` so the REPL sees
-                    // producer-side exports for non-builtin modules
-                    // (the `module_exports` path used by cross-module
-                    // typecheck). Pre-fix, the REPL only honored the
-                    // bare-prefix env lookup, missing schemes registered
-                    // exclusively in `module_exports`.
-                    self.checker.imported_modules.insert(*module);
-                    for item in items {
-                        let qualified = intern(&format!("{module}.{item}"));
-                        if let Some(scheme) = self.env.lookup(qualified).cloned() {
-                            self.env.define(*item, scheme);
-                        }
-                    }
-                } else {
-                    self.checker.warning(
-                        format!(
-                            "unknown module '{module_str}'; imported items will not be type-checked"
-                        ),
-                        *span,
-                    );
-                }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.checker.imported_modules.insert(*alias);
-                    // See the parallel path in `check_program` (round 58)
-                    // for the rationale — we mirror every qualified
-                    // binding with the right prefix so methods registered
-                    // outside `builtin_module_functions` (e.g. `list.sum`)
-                    // are reachable under the alias.
-                    let alias_str = resolve(*alias);
-                    let prefix = format!("{module_str}.");
-                    let to_alias: Vec<(Symbol, Scheme)> = self
-                        .env
-                        .bindings
-                        .iter()
-                        .filter_map(|(k, scheme)| {
-                            let k_str = resolve(*k);
-                            k_str.strip_prefix(&prefix).map(|suffix| {
-                                (intern(&format!("{alias_str}.{suffix}")), scheme.clone())
-                            })
-                        })
-                        .collect();
-                    for (aliased, scheme) in to_alias {
-                        self.env.define(aliased, scheme);
-                    }
-                } else if self
-                    .checker
-                    .merge_imported_module_exports(*module, *alias, &mut self.env)
-                {
-                    // Round 75 DEAD-DRIFT: parallel REPL path —
-                    // schemes registered under `alias.name` matching
-                    // the user-written prefix.
-                    self.checker.imported_modules.insert(*alias);
-                } else {
-                    self.checker.warning(
-                        format!(
-                            "unknown module '{module_str}'; aliased imports will not be type-checked"
-                        ),
-                        *span,
-                    );
-                }
-            } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.checker.imported_modules.insert(*module);
-                } else if self.checker.merge_imported_module_exports(
-                    *module,
-                    *module,
-                    &mut self.env,
-                ) {
-                    // Round 75 DEAD-DRIFT: parallel REPL path —
-                    // producer-side exports merged for non-builtin
-                    // bare-module imports.
-                    self.checker.imported_modules.insert(*module);
-                } else {
-                    self.checker.warning(
-                        format!(
-                            "unknown module '{module_str}'; imported module will not be type-checked"
-                        ),
-                        *span,
-                    );
-                    // Minimal binding so `module.foo(...)` calls don't cascade
-                    // into "undefined variable" errors downstream.
-                    let placeholder = self.checker.fresh_var();
-                    self.env.define(*module, Scheme::mono(placeholder));
-                }
-            }
-        }
-
-        // Register type declarations
-        for decl in &program.decls {
-            if let Decl::Type(td) = decl {
-                self.checker.register_type_decl(td, &mut self.env);
-            }
-        }
-
-        // Register trait declarations first so default-method synthesis
-        // sees every TraitInfo before any TraitImpl is processed.
-        for decl in &program.decls {
-            if let Decl::Trait(t) = decl {
-                self.checker.register_trait_decl_user(t);
-            }
-        }
-
-        // Synthesize default method bodies into impls that omitted them.
-        self.checker.synthesize_default_methods(&mut program.decls);
-
-        // Auto-derive Display/Compare/Equal/Hash for user types. See
-        // `check_program` for the rationale.
-        self.checker.reject_sealed_trait_impls(&mut program.decls);
-        self.checker
-            .synthesize_auto_derive_impls(&mut program.decls);
-
-        // Register fn signatures and trait impls.
-        for decl in &program.decls {
-            match decl {
-                Decl::Fn(f) => {
-                    self.checker.register_fn_decl(f, &mut self.env);
-                }
-                Decl::TraitImpl(ti) => {
-                    self.checker.register_trait_impl(ti, &mut self.env);
-                }
-                _ => {}
-            }
-        }
-
-        // Process top-level let bindings
-        for i in 0..program.decls.len() {
-            if let Decl::Let {
-                ref mut value,
-                ref pattern,
-                ref ty,
-                span,
-                ..
-            } = program.decls[i]
-            {
-                let is_value = inference::is_syntactic_value(&value.kind);
-                let val_ty = self.checker.infer_expr(value, &mut self.env);
-                if let Some(te) = ty {
-                    let declared = self
-                        .checker
-                        .resolve_type_expr(te, &mut std::collections::HashMap::new());
-                    self.checker.unify(&val_ty, &declared, span);
-                }
-                let scheme = if is_value {
-                    self.checker.generalize(&self.env, &val_ty)
-                } else {
-                    Scheme::mono(self.checker.apply(&val_ty))
-                };
-                if let PatternKind::Ident(name) = &pattern.kind {
-                    self.env.define(*name, scheme);
-                } else {
-                    // Same rule as `check_program`: a `let` pattern
-                    // must be irrefutable.
-                    self.checker.bind_irrefutable_pattern(
-                        pattern,
-                        &val_ty,
-                        &mut self.env,
-                        span,
-                        inference::BindingSite::Let,
-                    );
-                }
-            }
-        }
-
-        // Validate trait implementations
-        self.checker.validate_trait_impls();
-
-        // Check function and trait-impl method bodies.
-        self.checker
-            .check_decl_bodies(&mut program.decls, &self.env);
-
-        // Round 94 (REPL cross-turn persistence): re-generalize each
-        // top-level fn's scheme from its body-inferred type and re-define
-        // it in the persistent env. `register_fn_decl` generalizes the
-        // signature *before* the body runs, so an unannotated `fn f() { 9 }`
-        // persists as `forall a. () -> a` (the return var was fresh and got
-        // quantified). A later REPL turn's `let g = f()` then instantiates a
-        // fresh, unconstrained var and fails with "cannot infer the type of
-        // g". `check_program` fixes this in-pass via its pass-3 narrowing
-        // loop; the REPL needs the equivalent so the resolved type survives
-        // to the next turn. We mirror that loop's constraint
-        // preservation and skip annotated-recursive fns (whose authoritative
-        // polymorphic signature `check_program` deliberately leaves intact).
-        for i in 0..program.decls.len() {
-            let Decl::Fn(ref f) = program.decls[i] else {
-                continue;
-            };
-            if f.is_recovery_stub {
-                continue;
-            }
-            if self.checker.fully_annotated_fn_names.contains(&f.name)
-                && self.checker.recursive_fn_names.contains(&f.name)
-            {
-                continue;
-            }
-            let Some(constrained) = self.checker.fn_body_types.get(&f.name).cloned() else {
-                continue;
-            };
-            let new_scheme = self.checker.generalize(&self.env, &constrained);
-            let Some(original) = self.env.lookup(f.name).cloned() else {
-                continue;
-            };
-            if original.vars.len() == new_scheme.vars.len()
-                && !scheme_narrowed(&original.ty, &new_scheme.ty)
-            {
-                continue;
-            }
-            // Remap the original where-clause constraints through an
-            // old→new tyvar alignment (round-17 F1).
-            let mut final_scheme = new_scheme;
-            let remap = align_tyvars(&original.ty, &final_scheme.ty);
-            for (old_tv, trait_name) in &original.constraints {
-                if let Some(&new_tv) = remap.get(old_tv)
-                    && final_scheme.vars.contains(&new_tv)
-                    && !final_scheme.constraints.contains(&(new_tv, *trait_name))
-                {
-                    final_scheme.constraints.push((new_tv, *trait_name));
-                }
-            }
-            self.env.define(f.name, final_scheme);
-        }
-
-        // Resolve deferred checks before reporting unresolved types.
-        self.checker.finalize_deferred_checks();
-
-        // Detect unresolved type variables and resolve remaining types
-        self.checker.check_unresolved_let_types(program);
-        self.checker.resolve_all_types(program);
-
-        self.checker.errors.clone()
+    /// A fresh checker, with no tables, and an empty top-level scope over
+    /// the builtins.
+    fn start(&self) -> (TypeChecker, TypeEnv) {
+        (self.checker.clone(), TypeEnv::child_of(self.root.clone()))
     }
+}
 
-    /// Derive the compiler's enum-variant lookup tables from the persistent
-    /// type context. A fresh per-turn `Compiler` only knows the builtin
-    /// enums plus the current input's own `type` decls, so a qualified
-    /// variant constructor for an enum declared in an EARLIER turn —
-    /// `type S { C(Int) }` (turn 1) then `let c = S.C(1)` (turn 2) —
-    /// failed to resolve and compiled `S.C` to `GetGlobal("S.C")`, dying at
-    /// runtime with `undefined global: S.C`. Seeding the compiler with these
-    /// tables (derived from the accumulated `enums`, which persist across
-    /// turns) lets the qualified-variant codegen path resolve `S.C` to the
-    /// bare global constructor `C`. The first map is enum name -> variant
-    /// names; the second is the set of nullary (unit) variant names, used
-    /// for the `Red.display()` value-method-dispatch rewrite.
-    pub fn enum_variant_tables(
-        &self,
-    ) -> (
-        std::collections::HashMap<String, std::collections::HashSet<String>>,
-        std::collections::HashSet<String>,
-    ) {
-        let mut enum_variants: std::collections::HashMap<
-            String,
-            std::collections::HashSet<String>,
-        > = std::collections::HashMap::new();
-        let mut unit_variants: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for (name, info) in &self.checker.enums {
-            let set = enum_variants.entry(resolve(*name)).or_default();
-            for v in &info.variants {
-                let vname = resolve(v.name);
-                if v.field_types.is_empty() {
-                    unit_variants.insert(vname.clone());
-                }
-                set.insert(vname);
-            }
+thread_local! {
+    /// The builtin environment of this thread, with the interner
+    /// generation it was built in. Symbols are per thread, and
+    /// `intern::reset` invalidates them, so the cache is too.
+    static BUILTIN_ENV: std::cell::RefCell<Option<(u64, Rc<BuiltinEnv>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The derived impls of the builtin types, checked. Every program
+/// compiles them once (`Compiler::compile_program`), so a method call on
+/// a builtin type's value finds its method.
+pub fn builtin_derived_impls() -> Rc<Vec<Decl>> {
+    builtin_env().impls.clone()
+}
+
+/// Whether the builtin scope binds `name` (`int.parse`).
+pub(super) fn builtin_env_has(name: Symbol) -> bool {
+    builtin_env().root.bindings.contains_key(&name)
+}
+
+/// The builtin environment, built on first use and after each
+/// `intern::reset`.
+fn builtin_env() -> Rc<BuiltinEnv> {
+    let generation = crate::intern::generation();
+    if let Some(env) = BUILTIN_ENV.with(|cell| match &*cell.borrow() {
+        Some((built_in, env)) if *built_in == generation => Some(env.clone()),
+        _ => None,
+    }) {
+        return env;
+    }
+    let env = Rc::new(BuiltinEnv::build());
+    BUILTIN_ENV.with(|cell| *cell.borrow_mut() = Some((generation, env.clone())));
+    env
+}
+
+/// The scheme of the builtin definition `def`: the one the builtin scope
+/// binds under its name (`println`, `list.map`, `Weekday.Monday`,
+/// `Option`).
+fn builtin_scheme(def: &crate::defs::Def) -> Option<Scheme> {
+    let key = match def.kind {
+        crate::defs::DefKind::Variant { ty, .. } => {
+            let enum_name = names::builtin_def(ty.0)?.name;
+            format!("{enum_name}.{}", def.name)
         }
-        (enum_variants, unit_variants)
+        _ => match def.module.builtin_name() {
+            Some(module) if !def.is_type() => format!("{module}.{}", def.name),
+            _ => resolve(def.name),
+        },
+    };
+    builtin_env().root.lookup(intern(&key)).cloned()
+}
+
+/// The builtin names, as the resolver enters them: every name the builtin
+/// scope binds, each builtin enum with the arity of each variant, and the
+/// builtin traits.
+pub(super) struct BuiltinNames {
+    pub bindings: Vec<Symbol>,
+    pub enums: Vec<(Symbol, Vec<(Symbol, usize)>)>,
+    pub traits: Vec<Symbol>,
+}
+
+pub(super) fn builtin_names() -> BuiltinNames {
+    let env = builtin_env();
+    let mut bindings: Vec<Symbol> = env.root.bindings.keys().copied().collect();
+    bindings.sort_by_key(|name| resolve(*name));
+    let mut enums: Vec<(Symbol, Vec<(Symbol, usize)>)> = env
+        .tables
+        .enums
+        .iter()
+        .map(|(name, info)| {
+            let variants = info
+                .variants
+                .iter()
+                .map(|v| (v.name, v.field_types.len()))
+                .collect();
+            (name.name, variants)
+        })
+        .collect();
+    enums.sort_by_key(|(name, _)| resolve(*name));
+    let mut traits: Vec<Symbol> = env.tables.traits.keys().map(|t| t.name).collect();
+    traits.sort_by_key(|name| resolve(*name));
+    BuiltinNames {
+        bindings,
+        enums,
+        traits,
     }
 }
 
@@ -8496,8 +8599,8 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
 /// `tests/typecheck/round82_stdlib_types_registry_tests.rs` to lock the central
 /// registry (`module::BUILTIN_STDLIB_TYPE_NAMES`) against runtime
 /// state. Routes through a fresh `TypeChecker` so the snapshot reflects
-/// every per-module `register` callback's effect on `checker.records`
-/// / `checker.enums` — including the `Result`/`Option`/`Step`/
+/// every per-module `register` callback's effect on `checker.tables.records`
+/// / `checker.tables.enums` — including the `Result`/`Option`/`Step`/
 /// `ChannelResult`/`ChannelOp` prelude enums declared directly in
 /// `register_builtins` itself.
 ///
@@ -8508,11 +8611,11 @@ pub fn registered_builtin_type_names() -> Vec<(String, &'static str)> {
     let mut env = TypeEnv::new();
     checker.register_builtins(&mut env);
     let mut out: Vec<(String, &'static str)> = Vec::new();
-    for sym in checker.records.keys() {
-        out.push((resolve(*sym).to_string(), "record"));
+    for ty in checker.tables.records.keys() {
+        out.push((resolve(ty.name), "record"));
     }
-    for sym in checker.enums.keys() {
-        out.push((resolve(*sym).to_string(), "enum"));
+    for ty in checker.tables.enums.keys() {
+        out.push((resolve(ty.name), "enum"));
     }
     out.sort();
     out
@@ -8710,8 +8813,8 @@ pub fn iter_builtin_docs() -> Vec<(String, String)> {
 }
 
 /// Test-only introspection: collect the auto-derived trait-impl and
-/// method registrations produced by the two init paths so the parity
-/// test under `tests/cli/trait_init_parity_tests.rs` can assert they agree.
+/// method registrations of the builtin init, for the derive-policy locks
+/// in `tests/cli/trait_init_parity_tests.rs`.
 ///
 /// Returns `(trait_impls, method_keys)` where:
 /// - `trait_impls` is the set of `"Trait:Type"` pairs registered in
@@ -8732,39 +8835,16 @@ pub fn __trait_init_fingerprint_check_program() -> (
     checker.register_builtins(&mut env);
     register_builtin_trait_impls(&mut checker);
     let trait_impls: BTreeSet<String> = checker
+        .tables
         .trait_impl_set
         .iter()
-        .map(|(tr, ty)| format!("{}:{}", resolve(*tr), resolve(*ty)))
+        .map(|(tr, ty)| format!("{}:{}", resolve(tr.name), resolve(ty.name)))
         .collect();
     let method_keys: BTreeSet<String> = checker
+        .tables
         .method_table
         .keys()
-        .map(|(ty, m)| format!("{}.{}", resolve(*ty), resolve(*m)))
-        .collect();
-    (trait_impls, method_keys)
-}
-
-/// Test-only introspection: same as
-/// `__trait_init_fingerprint_check_program` but runs the REPL init path
-/// (`ReplTypeContext::new`).
-#[doc(hidden)]
-pub fn __trait_init_fingerprint_repl() -> (
-    std::collections::BTreeSet<String>,
-    std::collections::BTreeSet<String>,
-) {
-    use std::collections::BTreeSet;
-    let ctx = ReplTypeContext::new();
-    let trait_impls: BTreeSet<String> = ctx
-        .checker
-        .trait_impl_set
-        .iter()
-        .map(|(tr, ty)| format!("{}:{}", resolve(*tr), resolve(*ty)))
-        .collect();
-    let method_keys: BTreeSet<String> = ctx
-        .checker
-        .method_table
-        .keys()
-        .map(|(ty, m)| format!("{}.{}", resolve(*ty), resolve(*m)))
+        .map(|(ty, m)| format!("{}.{}", resolve(ty.name), resolve(*m)))
         .collect();
     (trait_impls, method_keys)
 }
@@ -8799,10 +8879,10 @@ pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     let names = ["Display", "Compare", "Equal", "Hash"];
     let mut out = Vec::new();
     for name in names {
-        let sym = intern(name);
         let info = checker
+            .tables
             .traits
-            .get(&sym)
+            .get(&TraitKey::builtin(name))
             .unwrap_or_else(|| panic!("built-in trait {name} not registered"));
         assert_eq!(
             info.methods.len(),
@@ -8851,14 +8931,8 @@ pub fn __builtin_trait_registration_fingerprint() -> Vec<(
 pub(super) mod test_helpers {
     use super::*;
 
-    pub(super) fn check_errors(input: &str) -> Vec<TypeError> {
-        let tokens = crate::lexer::Lexer::new(input)
-            .tokenize()
-            .expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens)
-            .parse_program()
-            .expect("parse error");
-        check(&mut program)
+    pub(super) fn check_errors(input: &str) -> Vec<Diagnostic> {
+        crate::session::testing::analyze_str(input).1
     }
 
     pub(super) fn assert_no_errors(input: &str) {
@@ -8871,7 +8945,7 @@ pub(super) mod test_helpers {
             hard.is_empty(),
             "expected no type errors, got:\n{}",
             hard.iter()
-                .map(|e| format!("  {e}"))
+                .map(|e| format!("  {}", e.message))
                 .collect::<Vec<_>>()
                 .join("\n")
         );
@@ -8928,10 +9002,11 @@ mod size_locks {
     #[test]
     fn trait_info_size_locked() {
         // Round 63 item 5 added `defined_in: Symbol` to track the
-        // owning package for the trait-orphan rule.
+        // owning package for the trait-orphan rule; stage 5 shrank its
+        // spans from 24 to 12 bytes.
         assert_eq!(
             std::mem::size_of::<TraitInfo>(),
-            248,
+            232,
             "TraitInfo size changed — see module doc"
         );
     }
@@ -11080,7 +11155,7 @@ fn main() -> Result {
         let mut tc = TypeChecker::new();
         let var = tc.fresh_var(); // Type::Var(0)
         let list_of_var = Type::List(Box::new(var.clone()));
-        tc.unify(&var, &list_of_var, Span::new(0, 0));
+        tc.unify(&var, &list_of_var, Span::BUILTIN);
         assert!(
             !tc.errors.is_empty(),
             "occurs check should produce an error"
@@ -11098,7 +11173,7 @@ fn main() -> Result {
         let mut tc = TypeChecker::new();
         let fn1 = Type::Fun(vec![Type::Int], Box::new(Type::Int));
         let fn2 = Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int));
-        tc.unify(&fn1, &fn2, Span::new(0, 0));
+        tc.unify(&fn1, &fn2, Span::BUILTIN);
         assert!(
             !tc.errors.is_empty(),
             "function arity mismatch should produce an error"
@@ -11115,7 +11190,7 @@ fn main() -> Result {
         // Unifying Var(0) with Int should map Var(0) -> Int
         let mut tc = TypeChecker::new();
         let var = tc.fresh_var(); // Type::Var(0)
-        tc.unify(&var, &Type::Int, Span::new(0, 0));
+        tc.unify(&var, &Type::Int, Span::BUILTIN);
         assert!(tc.errors.is_empty(), "basic unification should not error");
         let resolved = tc.apply(&var);
         assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");
@@ -11128,8 +11203,8 @@ fn main() -> Result {
         let mut tc = TypeChecker::new();
         let var0 = tc.fresh_var(); // Type::Var(0)
         let var1 = tc.fresh_var(); // Type::Var(1)
-        tc.unify(&var0, &var1, Span::new(0, 0));
-        tc.unify(&var1, &Type::String, Span::new(0, 0));
+        tc.unify(&var0, &var1, Span::BUILTIN);
+        tc.unify(&var1, &Type::String, Span::BUILTIN);
         assert!(
             tc.errors.is_empty(),
             "transitive unification should not error"
@@ -11149,7 +11224,7 @@ fn main() -> Result {
         let var = tc.fresh_var(); // Type::Var(0)
         let list_var = Type::List(Box::new(var.clone()));
         let list_int = Type::List(Box::new(Type::Int));
-        tc.unify(&list_var, &list_int, Span::new(0, 0));
+        tc.unify(&list_var, &list_int, Span::BUILTIN);
         assert!(tc.errors.is_empty(), "list unification should not error");
         let resolved = tc.apply(&var);
         assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");

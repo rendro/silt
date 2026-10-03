@@ -1,0 +1,10 @@
+-- verdict: same
+import util
+fn area(p: util.Pt) -> Int { p.x * p.y }
+fn main() {
+  -- Pt was never imported by bare name; only `import util`
+  let b = util.Pt { x: 1, y: 2 }
+  println(area(b))
+  let h = util.Hidden(3)
+  println(h)
+}

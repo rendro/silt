@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A dependency's dependency cannot be imported without declaring it.
+-- stderr-contains: cannot load module 'leaf'
+-- stderr-contains: `leaf` is a dependency of the package `mid`, not of this one
+import mid
+import leaf
+fn main() {
+  println(mid.m() + leaf.l())
+}

@@ -1,12 +1,11 @@
-//! Round 77 lock for the watch loop's initial-run mtime ordering
-//! (finding WATCH-L1).
+//! Round 77 lock for the watch loop's initial-run ordering (finding
+//! WATCH-L1).
 //!
-//! `src/watch.rs` rejects watcher events whose paths are not newer than
-//! `last_run_system`, the wall-clock time of the last run. The initial
-//! run must capture that timestamp BEFORE it starts the subprocess: if it
-//! were captured after, a save that landed while the initial run was
-//! still going would have an mtime older than `last_run_system` and be
-//! silently dropped, costing the user a recompile.
+//! `src/watch.rs` ignores watcher events for files whose content is what
+//! it was when the command last started. The initial run must read that
+//! content BEFORE it starts the subprocess: if it were read after, a save
+//! that landed while the initial run was still going would look unchanged
+//! and be silently dropped, costing the user a recompile.
 //!
 //! The test drives the real binary: the watched program prints a marker
 //! and then sleeps, and the file is rewritten while that initial run is

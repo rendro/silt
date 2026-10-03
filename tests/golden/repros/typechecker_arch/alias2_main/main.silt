@@ -1,0 +1,6 @@
+-- verdict: same
+import a
+fn g(x: Secret) -> Secret { x + 1 }
+fn main() {
+  println(g(1))
+}

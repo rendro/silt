@@ -1,0 +1,11 @@
+-- verdict: same
+fn f(x) = x + 1
+fn main() {
+  let a = f
+  (2)
+  let b = f (2)
+  println("{b}")
+  let c = [1, 2]
+  [0]
+  println("{c}")
+}

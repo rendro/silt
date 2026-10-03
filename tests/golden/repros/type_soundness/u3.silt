@@ -1,0 +1,13 @@
+-- verdict: same
+import json
+type T { a: Int }
+fn main() {
+  -- return-polymorphic builtin with no constraint
+  let r = json.parse("{\"a\": 1}", T)
+  println(r)
+  let e = Err("boom")
+  match e {
+    Ok(v) -> println(v + 1)
+    Err(s) -> println(s)
+  }
+}

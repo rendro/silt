@@ -1,0 +1,3 @@
+pub type Shape { Circle(Int), Sq }
+pub fn mk() -> Shape { Circle(5) }
+trait Display for Shape { fn display(self) -> String { "A-shape" } }

@@ -1,0 +1,12 @@
+-- verdict: same
+fn check(input: Int) -> String {
+  let wanted = 42
+  match input {
+    ^expected -> "yes"
+    _ -> "no {wanted}"
+  }
+}
+
+fn main() {
+  println(check(42))
+}

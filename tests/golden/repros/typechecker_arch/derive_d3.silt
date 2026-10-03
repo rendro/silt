@@ -1,0 +1,13 @@
+-- verdict: same
+type Temp { degrees: Int }
+trait Display for Temp {
+  fn display(self) -> String { "{self.degrees}°C" }
+}
+fn main() {
+  let t = Temp { degrees: 21 }
+  println(t.display())
+  println("{t}")
+  println(t)
+  let s = "now: {t}"
+  println(s)
+}

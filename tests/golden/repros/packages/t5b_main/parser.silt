@@ -1,0 +1,11 @@
+type Node { Leaf(Int), Branch(Int, Int) }
+trait Display for Node {
+  fn display(self) -> String { "parser-node" }
+}
+pub fn count() -> Int {
+  match Leaf(3) {
+    Leaf(n) -> n
+    Branch(a, b) -> a + b
+  }
+}
+pub fn render() -> String { "{Leaf(1)}" }

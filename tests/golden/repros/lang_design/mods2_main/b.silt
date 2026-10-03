@@ -1,0 +1,4 @@
+pub type Pt { label: String }
+pub type Kind { Big, Huge }
+pub fn mk() -> Pt { Pt { label: "from b" } }
+pub fn huge() -> Kind { Huge }

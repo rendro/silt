@@ -1,0 +1,6 @@
+-- verdict: same
+import shapes
+import other
+fn main() {
+  println("hi")
+}

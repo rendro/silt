@@ -45,7 +45,7 @@ fn program() {
     match i >= 9 {
       true -> total
       _ -> {
-        when let Message(v) = channel.receive(results) else { panic("pattern did not match") }
+        when let channel.Message(v) = channel.receive(results) else { panic("pattern did not match") }
         loop(i + 1, total + v)
       }
     }

@@ -1,0 +1,11 @@
+-- exit: 1
+-- A runtime error in a module function that has the name of a function
+-- of the entry file is shown in the module: the span names its file.
+import util
+
+fn helper(x) { x }
+
+fn main() {
+  println(helper(1))
+  util.boom(0)
+}

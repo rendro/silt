@@ -6,9 +6,9 @@ fn program() {
   let ch = channel.new(1)
   let timer = channel.timeout(50)
 
-  match channel.select([Recv(ch), Recv(timer)]) {
-    (_, Closed) -> "timeout"
-    (_, Message(_)) -> "data"
+  match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
+    (_, channel.Closed) -> "timeout"
+    (_, channel.Message(_)) -> "data"
     _ -> "other"
   }
 }

@@ -6,11 +6,11 @@ import json
 type Todo { id: Int, title: String }
 
 trait Decodable {
-    fn decode(self, type a) -> Result(a, JsonError)
+    fn decode(self, type a) -> Result(a, json.JsonError)
 }
 
 trait Decodable for String {
-    fn decode(self, type a) -> Result(a, JsonError) {
+    fn decode(self, type a) -> Result(a, json.JsonError) {
         json.parse(self, a)
     }
 }

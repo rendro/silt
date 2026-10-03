@@ -1,0 +1,11 @@
+-- verdict: same
+fn f(m: Map(String, Int)) -> Int {
+  match m {
+    #{ "k": v } -> v + 1
+    _ -> 0
+  }
+}
+
+fn main() {
+  println("{f(#{ "k": 1 })}")
+}

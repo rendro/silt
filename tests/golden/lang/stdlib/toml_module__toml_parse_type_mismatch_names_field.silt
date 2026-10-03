@@ -5,7 +5,7 @@ fn run_main() {
   let input = "name = 42\nage = 30\n"
   match toml.parse(input, User) {
     Ok(_) -> "unexpected"
-    Err(TomlTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(toml.TomlTypeMismatch(expected, actual)) -> "{expected}/{actual}"
     Err(e) -> e.message()
   }
 }

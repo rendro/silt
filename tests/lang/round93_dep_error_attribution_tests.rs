@@ -2,18 +2,12 @@
 //! must be rendered against the dependency's own source file, not the
 //! importer's.
 //!
-//! Before the fix, `cli::module_sources::collect_module_function_sources`
-//! resolved imports only as `<dir-of-entry>/<name>.silt` — manifest deps
-//! (path deps, git checkouts) were never mapped, so the error renderer
-//! fell back to the entry file's source and printed e.g.
+//! The renderer used to print e.g.
 //! `error[runtime]: division by zero --> .../proj/src/main.silt:2:3`
 //! with a caret on an unrelated (often blank) line, plus a call-stack
-//! frame `divide at .../main.silt:2:3` — wrong file in both places.
-//!
-//! The fix mirrors the compiler's `resolve_import` rules through the
-//! manifest/lockfile channel (`Lockfile::package_roots`): an import
-//! segment matching a dep package resolves to `<dep_src>/lib.silt`, and
-//! the dep's OWN sibling imports resolve against the dep's source root.
+//! frame `divide at .../main.silt:2:3` — wrong file in both places. A
+//! runtime span now names its file, so the error is shown in the file
+//! the dependency's code was read from.
 //!
 //! Sibling-module attribution within the importer's package (the prior
 //! E1 fix) must keep working — locked here by the control test.

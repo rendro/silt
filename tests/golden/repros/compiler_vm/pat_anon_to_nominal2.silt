@@ -1,0 +1,9 @@
+-- verdict: same
+type P { x: Int, y: Int }
+fn main() {
+  let a: P = { x: 1, y: 2 }
+  let r = match a {
+    P { x, y } -> x + y
+  }
+  println(r)
+}

@@ -1,0 +1,10 @@
+-- verdict: same
+fn f(x) {
+  println(match x {
+    5 -> "five"
+    _ -> "other"
+  })
+}
+fn main() {
+  f(5)
+}

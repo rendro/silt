@@ -7,18 +7,11 @@
 //! reports "module 'list' is not imported"; the discrepancy is reported to
 //! the integrator rather than captured as a golden.
 
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
-use silt::types::Severity;
-
 fn type_errors(input: &str) -> Vec<String> {
-    let tokens = Lexer::new(input).tokenize().expect("lexer");
-    let mut program = Parser::new(tokens).parse_program().expect("parse");
-    typechecker::check(&mut program)
+    silt::session::testing::check_str(input)
         .into_iter()
-        .filter(|e| e.severity == Severity::Error)
-        .map(|e| e.message)
+        .filter(|d| d.is_error())
+        .map(|d| d.message)
         .collect()
 }
 
@@ -37,7 +30,7 @@ fn aliased_import_does_not_expose_original_name() {
     );
     let joined = errs.join("\n");
     assert!(
-        joined.contains("module 'list' is not imported"),
+        joined.contains("undefined variable 'list'"),
         "aliased import should NOT expose original name, got:\n{joined}"
     );
 }

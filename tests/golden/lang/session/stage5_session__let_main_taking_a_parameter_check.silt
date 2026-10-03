@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- `main` is judged by its inferred type, not by how it is written: a
+-- `let` that binds a function taking an Int cannot be the entry point.
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it takes 1 parameter
+fn real(n: Int) {
+  println(n)
+}
+
+let main = real

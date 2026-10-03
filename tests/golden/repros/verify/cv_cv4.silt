@@ -1,0 +1,8 @@
+-- verdict: same
+type R { b: Int, a: Int }
+fn main() {
+  let x = R { b: 1, a: 2 }
+  let y = R { b: 2, a: 1 }
+  println(x < y)
+  println(x.compare(y))
+}

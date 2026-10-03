@@ -1,0 +1,7 @@
+-- verdict: same
+import util
+import list
+import string
+fn main() {
+  println(util.typed())
+}

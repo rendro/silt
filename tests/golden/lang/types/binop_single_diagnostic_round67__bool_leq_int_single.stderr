@@ -2,4 +2,4 @@ error[type]: operator '<=' requires Int, Float, String, List, Range, Record, or 
  --> binop_single_diagnostic_round67__bool_leq_int_single.silt:4:14
    |
  4 |     let x = (true <= 1)
-   |              ^ operator '<=' requires Int, Float, String, List, Range, Record, or Variant, got 'Bool'
+   |              ^^^^ operator '<=' requires Int, Float, String, List, Range, Record, or Variant, got 'Bool'

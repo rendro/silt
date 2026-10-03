@@ -1,0 +1,7 @@
+-- verdict: same
+fn main() {
+  let p = {name: "Alice"}
+  let q = {...p, age: 30}        -- {name: String, age: Int}
+  println(q.name)                -- Alice
+  println(q.age)                 -- 30
+}

@@ -1,8 +1,0 @@
-import b
-import a
-
-fn main() {
-  let q = b.Pt { label: "hi", v: 3 }
-  let p = a.Pt { x: 1, y: 2 }
-  print(p.x + q.v)
-}

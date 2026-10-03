@@ -1,0 +1,6 @@
+-- verdict: same
+import nonexistent
+fn main() {
+  let n: Int = nonexistent.foo(1)
+  println(n)
+}

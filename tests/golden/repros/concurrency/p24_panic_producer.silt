@@ -1,0 +1,19 @@
+-- verdict: same
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(0)
+  let consumer = task.spawn(fn() {
+    match channel.receive(ch) {
+      channel.Message(v) -> "got {v}"
+      channel.Closed -> "closed"
+      _ -> "other"
+    }
+  })
+  let producer = task.spawn(fn() {
+    let x = 0
+    channel.send(ch, 10 / x)
+  })
+  println(task.join(consumer))
+}

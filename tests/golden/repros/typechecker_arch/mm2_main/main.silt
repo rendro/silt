@@ -1,0 +1,6 @@
+-- verdict: same
+import a
+import b
+fn main() {
+  println(a.getx(b.mk()))
+}

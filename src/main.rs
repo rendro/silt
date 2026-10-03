@@ -60,9 +60,16 @@ fn main() {
     // head -2` spewed a raw "failed printing to stdout: Broken pipe"
     // panic (and `silt disasm … | head` exited 101). With SIG_DFL the
     // process dies quietly on SIGPIPE like every other unix CLI.
+    // A SIGPIPE blocked by the parent (the mask is inherited across
+    // exec) would turn the signal into EPIPE again: it is unblocked too.
+    // `print` and `println` also end the process quietly on EPIPE.
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGPIPE);
+        libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
     }
 
     let args: Vec<String> = env::args().collect();

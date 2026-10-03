@@ -4,7 +4,7 @@ fn run_main() {
   let input = "name = \"Alice\"\n"
   match toml.parse(input, User) {
     Ok(_) -> "unexpected"
-    Err(TomlMissingField(f)) -> f
+    Err(toml.TomlMissingField(f)) -> f
     Err(e) -> e.message()
   }
 }

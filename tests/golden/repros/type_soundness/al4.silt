@@ -1,0 +1,9 @@
+-- verdict: same
+trait Greet { fn greet(self) -> String }
+trait Greet for Float { fn greet(self) -> String { "float" } }
+trait Greet for ExtFloat { fn greet(self) -> String { "ext" } }
+fn g(x) { x / 2.0 }
+fn main() {
+  let c = g(4.0)
+  println(c.greet())
+}

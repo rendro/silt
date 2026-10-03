@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+fn total(xs) { list.fold(xs, 0) { acc, x -> acc + x } }
+fn report(xs) { total(xs) }
+fn main() {
+  let s: String = report([1, 2, 3])
+  println(s)
+  let t: List(String) = report([1,2,3])
+  println(t)
+}

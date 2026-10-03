@@ -1,0 +1,9 @@
+-- verdict: same
+import set
+fn main() {
+  let f = fn(x) { x + 1 }
+  let g = fn(x) { x + 1 }
+  let s = #[f, g, f]
+  println(set.length(s))
+  println(set.contains(s, f))
+}

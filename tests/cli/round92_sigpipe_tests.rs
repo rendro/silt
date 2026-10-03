@@ -24,15 +24,42 @@ use std::process::Command;
 /// head -1"`, returning the *pipeline's* combined stderr (sh inherits
 /// silt's stderr, so any panic text silt prints lands here).
 fn pipe_into_head(label: &str, subcmd: &str, src: &str) -> String {
-    let tmp = std::env::temp_dir().join(format!("silt_round92_sigpipe_{label}.silt"));
+    pipeline(label, subcmd, src, false)
+}
+
+/// [`pipe_into_head`], with SIGPIPE ignored and blocked in the
+/// pipeline's processes as silt starts (both are inherited across exec):
+/// silt must still end quietly at the closed pipe.
+fn pipe_into_head_with_sigpipe_blocked(label: &str, subcmd: &str, src: &str) -> String {
+    pipeline(label, subcmd, src, true)
+}
+
+fn pipeline(label: &str, subcmd: &str, src: &str, block_sigpipe: bool) -> String {
+    let tmp = std::env::temp_dir().join(format!(
+        "silt_round92_sigpipe_{label}_{}.silt",
+        std::process::id()
+    ));
     std::fs::write(&tmp, src).expect("write temp file");
     let bin = env!("CARGO_BIN_EXE_silt");
     let cmd = format!("'{bin}' {subcmd} '{}' | head -1", tmp.display(),);
-    let out = Command::new("sh")
-        .arg("-c")
-        .arg(&cmd)
-        .output()
-        .expect("spawn sh pipeline");
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(&cmd);
+    if block_sigpipe {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: only async-signal-safe calls between fork and exec.
+        unsafe {
+            command.pre_exec(|| {
+                libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+                let mut set: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut set);
+                libc::sigaddset(&mut set, libc::SIGPIPE);
+                libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+                Ok(())
+            });
+        }
+    }
+    let out = command.output().expect("spawn sh pipeline");
+    let _ = std::fs::remove_file(&tmp);
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
@@ -84,4 +111,18 @@ fn run_piped_into_head_exits_silently() {
 fn disasm_piped_into_head_exits_silently() {
     let stderr = pipe_into_head("disasm", "disasm", LOUD_PROGRAM);
     assert_no_panic_spew("disasm | head -1", &stderr);
+}
+
+/// With SIGPIPE ignored and blocked as silt starts (a parent may hand
+/// down either): the closed pipe still ends silt quietly.
+#[test]
+fn run_piped_into_head_exits_silently_with_sigpipe_blocked() {
+    let stderr = pipe_into_head_with_sigpipe_blocked("run_blocked", "run", LOUD_PROGRAM);
+    assert_no_panic_spew("run | head -1 (SIGPIPE blocked)", &stderr);
+}
+
+#[test]
+fn disasm_piped_into_head_exits_silently_with_sigpipe_blocked() {
+    let stderr = pipe_into_head_with_sigpipe_blocked("disasm_blocked", "disasm", LOUD_PROGRAM);
+    assert_no_panic_spew("disasm | head -1 (SIGPIPE blocked)", &stderr);
 }

@@ -1,0 +1,4 @@
+-- verdict: same
+trait Labelled { fn label(self) -> String }
+fn label_of(p) { p.label }
+fn main() { println(label_of(42)) }

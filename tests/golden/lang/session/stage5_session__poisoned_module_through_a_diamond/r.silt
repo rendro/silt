@@ -1,0 +1,2 @@
+import m.{ Pt }
+pub fn right(p: Pt) -> Int { p.y + 1 }

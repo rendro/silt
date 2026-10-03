@@ -6,9 +6,9 @@ fn main() {
     let out = channel.new(0)
     let inp = channel.new(1)
     channel.send(inp, 7)
-    let r = match channel.select([Send(out, 99), Recv(inp)]) {
-        (^out, Sent) -> 1
-        (^inp, Message(v)) -> v
+    let r = match channel.select([channel.Send(out, 99), channel.Recv(inp)]) {
+        (^out, channel.Sent) -> 1
+        (^inp, channel.Message(v)) -> v
         _ -> -1
     }
     println("{r}")

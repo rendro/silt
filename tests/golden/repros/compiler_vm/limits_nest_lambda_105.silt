@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let f = fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { x } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }
+  println(1)
+}

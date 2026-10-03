@@ -1,0 +1,35 @@
+-- verdict: same
+import channel
+import list
+import task
+
+-- ring of 2000 tasks on rendezvous channels; a token is passed around once
+fn main() {
+  let n = 2000
+  let chans = 0..n |> list.map { i -> channel.new() }
+  let hs = 0..(n - 1) |> list.map { i ->
+    let inp = list.get(chans, i)
+    let out = list.get(chans, i + 1)
+    task.spawn(fn() {
+      match (inp, out) {
+        (Some(a), Some(b)) -> {
+          match channel.receive(a) {
+            channel.Message(v) -> channel.send(b, v + 1)
+            _ -> ()
+          }
+        }
+        _ -> ()
+      }
+    })
+  }
+  match (list.get(chans, 0), list.get(chans, n)) {
+    (Some(first), Some(last)) -> {
+      let feeder = task.spawn(fn() { channel.send(first, 0) })
+      match channel.receive(last) {
+        channel.Message(v) -> println("token after ring: {v}")
+        _ -> println("other")
+      }
+    }
+    _ -> println("bad")
+  }
+}

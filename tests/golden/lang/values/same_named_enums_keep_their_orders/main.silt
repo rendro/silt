@@ -1,0 +1,10 @@
+-- Two modules' Shape enums declare Circle and Sq in opposite orders;
+-- each sorts by its own declaration (F1).
+import a
+import b
+import list
+fn main() {
+  println(list.sort([a.Shape.Sq, a.Shape.Circle]))
+  println(list.sort([b.Shape.Sq, b.Shape.Circle]))
+  println(a.Shape.Circle < a.Shape.Sq)
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+import set
+import string
+import list
+import map
+import channel
+fn main() {
+  println(list.sort([channel.new(1), channel.new(2)]) |> list.length)
+}

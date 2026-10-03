@@ -1,0 +1,7 @@
+-- A module's own `Result` shadows the prelude's silently: its bare
+-- variants are the module's.
+type Result { Ok, Err }
+fn main() {
+  println(Ok)
+  println(Err)
+}

@@ -5,7 +5,7 @@ import json
 
 type Todo { id: Int, title: String }
 
-fn decode(body: String, type a) -> Result(a, JsonError) {
+fn decode(body: String, type a) -> Result(a, json.JsonError) {
     json.parse(body, a)
 }
 

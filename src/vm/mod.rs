@@ -69,16 +69,14 @@ pub fn submit_panicking_io_for_test(vm: &Vm, completion: Arc<IoCompletion>) -> V
 
 use regex::Regex;
 use std::cell::Cell;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::builtins::data::FieldType;
-use crate::bytecode::{Function, VmClosure};
+use crate::bytecode::{Function, Globals, VmClosure};
 use crate::scheduler::Scheduler;
-use crate::types::canonical::dispatch_name_for_value;
-use crate::value::{FromValue, IntoValue, IoCompletion, Value};
+use crate::typeinfo::TypeTable;
+use crate::value::{IoCompletion, Value};
 use runtime::{IoPool, RegexCache, TimerManager};
 
 // ── Native stack budget ───────────────────────────────────────────
@@ -295,9 +293,14 @@ pub struct Vm {
     pub(crate) runtime: Arc<Runtime>,
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) stack: Vec<Value>,
-    pub(crate) globals: HashMap<String, Value>,
-    /// Maps record type names to their field definitions (name, type) for json.parse.
-    pub(crate) record_types: HashMap<String, Vec<(String, FieldType)>>,
+    /// The values of the program's global slots; `None` until the
+    /// definition's code has run.
+    pub(crate) globals: Vec<Option<Value>>,
+    /// What each global slot is, and the slot of each impl method.
+    pub(crate) global_slots: Arc<Globals>,
+    /// The program's types, by id: the decoders find the record types
+    /// of record fields here.
+    pub(crate) types: Arc<TypeTable>,
 
     // ── Concurrency state ────────────────────────────────────────
     next_channel_id: Arc<AtomicU64>,
@@ -366,7 +369,7 @@ pub struct Vm {
     ///
     /// Lock: tests/lang/callback_frame_capture_tests.rs
     /// `test_tail_call_chain_preserves_caller_frames_in_call_stack`.
-    pub(crate) tco_elided: Vec<(usize, String, crate::lexer::Span)>,
+    pub(crate) tco_elided: Vec<(usize, String, crate::source::Span)>,
 
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded, FIFO eviction —
@@ -582,17 +585,17 @@ impl Vm {
     }
 
     pub fn new() -> Self {
-        let mut vm = Vm {
+        Vm {
             runtime: Arc::new(Runtime {
-                foreign_fns: HashMap::new(),
                 scheduler: parking_lot::Mutex::new(None),
                 timer: TimerManager::new(),
                 io_pool: IoPool::new(runtime::resolve_io_pool_size()),
             }),
             frames: Vec::new(),
             stack: Vec::new(),
-            globals: HashMap::new(),
-            record_types: HashMap::new(),
+            globals: Vec::new(),
+            global_slots: Arc::new(Globals::default()),
+            types: Arc::new(TypeTable::default()),
             next_channel_id: Arc::new(AtomicU64::new(0)),
             next_task_id: Arc::new(AtomicU64::new(0)),
             block_reason: None,
@@ -606,118 +609,47 @@ impl Vm {
             suspended_builtin_outer: Vec::new(),
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
-        };
-        vm.register_builtins();
-        vm
+        }
     }
 
-    // ── Foreign function registration ───────────────────────────
-
-    /// Register a foreign function callable from Silt.
+    /// Run a compiled program: take in its tables, then run its script.
+    /// The value is the script's: `main`'s for a program compiled for
+    /// `Entry::Main`. This is the one way to start a [`Program`]; the
+    /// test functions of a program compiled for its tests are called
+    /// with [`Vm::call_test`] afterwards. A REPL session runs each entry's program
+    /// on one `Vm`.
     ///
-    /// The function receives `&[Value]` and returns `Result<Value, VmError>`.
-    /// Use `FromValue` / `IntoValue` traits for type-safe marshalling.
-    ///
-    /// # Panics
-    /// Panics inside `func` are caught by the dispatcher via
-    /// `std::panic::catch_unwind` and converted into a `VmError` whose
-    /// message includes the panic payload when it is a `&str` or `String`.
-    /// The scheduler worker thread survives and other tasks continue to
-    /// run. Returning `Err(VmError)` for error conditions is still
-    /// strongly preferred — panics are only caught as a safety net.
-    ///
-    /// # Errors
-    /// Returns an error if the VM's runtime has already been shared (e.g. via
-    /// task spawning). All foreign functions must be registered before running
-    /// any Silt code that spawns tasks.
-    pub fn register_fn(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn(&[Value]) -> Result<Value, VmError> + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let name = name.into();
-        let runtime = Arc::get_mut(&mut self.runtime).ok_or_else(|| {
-            VmError::new(format!(
-                "cannot register function '{}': VM runtime has already been shared \
-                 (register all foreign functions before spawning tasks)",
-                name
-            ))
-        })?;
-        runtime.foreign_fns.insert(name.clone(), Arc::new(func));
-        self.globals.insert(name.clone(), Value::BuiltinFn(name));
-        Ok(())
+    /// [`Program`]: crate::session::Program
+    pub fn run_program(&mut self, program: &crate::session::Program) -> Result<Value, VmError> {
+        self.load(program);
+        let script =
+            program.functions.first().cloned().ok_or_else(|| {
+                VmError::new("internal VM error: a program without a script".into())
+            })?;
+        self.run(Arc::new(script))
     }
 
-    /// Register a 0-argument foreign function with automatic marshalling.
-    pub fn register_fn0<R: IntoValue>(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn() -> R + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let n = name.into();
-        let n2 = n.clone();
-        self.register_fn(n, move |args: &[Value]| {
-            if !args.is_empty() {
-                return Err(VmError::new(format!(
-                    "{n2} expects 0 arguments, got {}",
-                    args.len()
-                )));
-            }
-            func()
-                .into_value()
-                .map_err(|e| VmError::new(format!("{n2}: {e}")))
-        })
+    /// Call the test function `test` of the program this VM ran with
+    /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
+    /// arguments, and give its value.
+    pub fn call_test(&mut self, test: &crate::session::TestFn) -> Result<Value, VmError> {
+        self.run(Arc::new(crate::bytecode::call_global_script(
+            test.slot, &test.name,
+        )))
     }
 
-    /// Register a 1-argument foreign function with automatic marshalling.
-    pub fn register_fn1<A: FromValue, R: IntoValue>(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn(A) -> R + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let n = name.into();
-        let n2 = n.clone();
-        self.register_fn(n, move |args: &[Value]| {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "{n2} expects 1 argument, got {}",
-                    args.len()
-                )));
-            }
-            let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: {e}")))?;
-            func(a)
-                .into_value()
-                .map_err(|e| VmError::new(format!("{n2}: {e}")))
-        })
+    /// Take in a program about to run: the descriptions its values'
+    /// types carry, which the decoders look up by id, and its global
+    /// slots and impl methods. A REPL entry's program has the slots of
+    /// the entries before it too, whose values stay.
+    pub(crate) fn load(&mut self, program: &crate::session::Program) {
+        Arc::make_mut(&mut self.types).extend(&program.types);
+        self.global_slots = program.globals.clone();
+        self.globals.resize(self.global_slots.len(), None);
     }
 
-    /// Register a 2-argument foreign function with automatic marshalling.
-    pub fn register_fn2<A: FromValue, B: FromValue, R: IntoValue>(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn(A, B) -> R + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let n = name.into();
-        let n2 = n.clone();
-        self.register_fn(n, move |args: &[Value]| {
-            if args.len() != 2 {
-                return Err(VmError::new(format!(
-                    "{n2} expects 2 arguments, got {}",
-                    args.len()
-                )));
-            }
-            let a =
-                A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
-            let b =
-                B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
-            func(a, b)
-                .into_value()
-                .map_err(|e| VmError::new(format!("{n2}: {e}")))
-        })
-    }
-
-    /// Create a child VM that shares runtime state (variant types, foreign functions)
-    /// via Arc and clones per-task state (globals, record types cache).
+    /// Create a child VM that shares runtime state (the scheduler, timers, the I/O pool)
+    /// via Arc and clones per-task state (globals, the program's types).
     /// Used for thread-per-task spawning.
     pub(crate) fn spawn_child(&self) -> Self {
         Vm {
@@ -725,7 +657,8 @@ impl Vm {
             frames: Vec::new(),
             stack: Vec::new(),
             globals: self.globals.clone(),
-            record_types: self.record_types.clone(),
+            global_slots: self.global_slots.clone(),
+            types: self.types.clone(),
             next_channel_id: self.next_channel_id.clone(),
             next_task_id: self.next_task_id.clone(),
             block_reason: None,
@@ -795,7 +728,7 @@ impl Vm {
     /// (e.g. successive REPL evaluations sharing the same persistent VM)
     /// don't render phantom call-stack frames from prior entries. See
     /// `tests/cli/repl_frame_leak_tests.rs` for the regression lock.
-    pub fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
+    pub(crate) fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
         let saved_frames_len = self.frames.len();
         let saved_stack_len = self.stack.len();
         let saved_tco_len = self.tco_elided.len();
@@ -822,8 +755,8 @@ impl Vm {
                 // the call frame pushed above (and any frames the
                 // unwinding error left behind from nested calls)
                 // remain on the VM and leak into the next `run`'s
-                // call stack as phantom `-> main at <declaration>`
-                // entries.
+                // call stack as phantom frames (the REPL runs many
+                // scripts on one VM).
                 self.frames.truncate(saved_frames_len);
                 self.stack.truncate(saved_stack_len);
                 self.tco_elided.truncate(saved_tco_len);
@@ -910,6 +843,30 @@ impl Vm {
         }
     }
 
+    /// The variant of the constructor constant at `index` (a pattern's
+    /// variant test).
+    fn read_constant_tag(&self, index: usize) -> Result<crate::typeinfo::Tag, VmError> {
+        match self.read_constant(index)? {
+            Value::VariantConstructor(tag) => Ok(tag),
+            other => Err(VmError::new(format!(
+                "expected variant constant at index {index}, got {}",
+                self.type_name(&other)
+            ))),
+        }
+    }
+
+    /// The type of the descriptor constant at `index` (a record literal's
+    /// or pattern's type).
+    fn read_constant_type(&self, index: usize) -> Result<Arc<crate::typeinfo::TypeInfo>, VmError> {
+        match self.read_constant(index)? {
+            Value::TypeDescriptor(ty) => Ok(ty),
+            other => Err(VmError::new(format!(
+                "expected type constant at index {index}, got {}",
+                self.type_name(&other)
+            ))),
+        }
+    }
+
     // ── Frame access ──────────────────────────────────────────────
 
     fn current_frame(&self) -> Result<&CallFrame, VmError> {
@@ -951,7 +908,7 @@ impl Vm {
         if let Some(frame) = self.frames.last() {
             let ip = frame.ip.saturating_sub(1);
             let span = frame.closure.function.chunk.span_at(ip);
-            if span.line > 0 {
+            if span.is_in_source() {
                 err.span = Some(span);
             }
         }
@@ -1022,9 +979,8 @@ impl Vm {
     /// user-facing display fidelity even though the dispatch layer
     /// canonicalises Range -> List).
     ///
-    /// Do NOT use this for method-dispatch keys — use
-    /// `value_type_name_for_dispatch` (which routes through the
-    /// canonical name oracle in `crate::types::canonical`) instead.
+    /// Do NOT use this for method dispatch — use
+    /// `crate::types::canonical::dispatch_type_for_value` instead.
     pub fn type_name(&self, val: &Value) -> &'static str {
         match val {
             Value::Int(_) => "Int",
@@ -1046,10 +1002,11 @@ impl Vm {
             Value::Variant(..) => "Variant",
             // Surface name matches `Type::Fun`'s Display (`Fn(...) -> R`)
             // and the canonical dispatch name returned by
-            // `dispatch_name_for_value`. Round 71 follow-up unified
+            // `dispatch_type_name`. Round 71 follow-up unified
             // `Function` / `Fun` / `Fn` on `"Fn"`.
             Value::VmClosure(_) => "Fn",
             Value::BuiltinFn(_) => "BuiltinFn",
+            Value::HostFn(_) => "HostFn",
             Value::VariantConstructor(..) => "VariantConstructor",
             Value::TypeDescriptor(_) => "TypeDescriptor",
             Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
@@ -1096,6 +1053,7 @@ impl Vm {
             val,
             Value::VmClosure(_)
                 | Value::BuiltinFn(_)
+                | Value::HostFn(_)
                 | Value::VariantConstructor(..)
                 | Value::Channel(_)
                 | Value::Handle(_)
@@ -1140,19 +1098,32 @@ impl Vm {
     /// function, and Channel / Handle / TcpListener / TcpStream stay
     /// equatable-by-identity (round-96 parity), so all fall to `false`.
     pub fn value_contains_fn(val: &Value) -> bool {
-        match val {
-            Value::VmClosure(_) | Value::BuiltinFn(_) | Value::VariantConstructor(..) => true,
-            Value::List(items) => items.iter().any(Self::value_contains_fn),
-            Value::Tuple(items) | Value::Variant(_, items) => {
-                items.iter().any(Self::value_contains_fn)
+        // A worklist, not recursion: values nest as deep as a program
+        // builds them, and the native stack a recursive walk needs per
+        // level depends on how the compiler happened to inline it.
+        let mut pending = vec![val];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::VmClosure(_)
+                | Value::BuiltinFn(_)
+                | Value::HostFn(_)
+                | Value::VariantConstructor(..) => {
+                    return true;
+                }
+                Value::List(items) => pending.extend(items.iter()),
+                Value::Tuple(items) | Value::Variant(_, items) => pending.extend(items.iter()),
+                Value::Set(items) => pending.extend(items.iter()),
+                Value::Map(entries) => {
+                    for (k, v) in entries.iter() {
+                        pending.push(k);
+                        pending.push(v);
+                    }
+                }
+                Value::Record(_, fields) => pending.extend(fields.values()),
+                _ => {}
             }
-            Value::Set(items) => items.iter().any(Self::value_contains_fn),
-            Value::Map(entries) => entries
-                .iter()
-                .any(|(k, v)| Self::value_contains_fn(k) || Self::value_contains_fn(v)),
-            Value::Record(_, fields) => fields.values().any(Self::value_contains_fn),
-            _ => false,
         }
+        false
     }
 
     /// Human-readable type name for error messages. Renders descriptor
@@ -1172,10 +1143,8 @@ impl Vm {
     /// **deliberate aliases** that carry semantic content into the
     /// diagnostic:
     ///   - `Record(name, _)` → the record's own type name
-    ///   - `Variant(tag, _)` → resolves to the parent enum type via the
-    ///     `__type_of__<tag>` global registered by the compiler, falling
-    ///     back to the bare tag.
-    ///   - `VariantConstructor(name, _)` → ``"VariantConstructor `name`"``
+    ///   - `Variant(tag, _)` → the name of the variant's enum type.
+    ///   - `VariantConstructor(tag)` → ``"VariantConstructor `name`"``
     ///     (TitleCase, no "a " article).
     ///   - `TypeDescriptor(name)` / `PrimitiveDescriptor(name)` →
     ///     ``"TypeDescriptor `name`"`` / ``"PrimitiveDescriptor `name`"``.
@@ -1188,20 +1157,13 @@ impl Vm {
         match val {
             // Variants that carry semantic content into the user-facing
             // diagnostic. Each is a deliberate alias documented above.
-            Value::Record(name, _) => name.clone(),
-            Value::Variant(tag, _) => {
-                let key = format!("__type_of__{tag}");
-                if let Some(Value::String(type_name)) = self.globals.get(&key) {
-                    type_name.clone()
-                } else {
-                    tag.clone()
-                }
+            Value::Record(ty, _) => ty.name.clone(),
+            Value::Variant(tag, _) => tag.ty().name.clone(),
+            Value::VariantConstructor(tag) => {
+                format!("VariantConstructor `{tag}`")
             }
-            Value::VariantConstructor(name, _) => {
-                format!("VariantConstructor `{name}`")
-            }
-            Value::TypeDescriptor(name) => {
-                format!("TypeDescriptor `{name}`")
+            Value::TypeDescriptor(ty) => {
+                format!("TypeDescriptor `{}`", ty.name)
             }
             Value::PrimitiveDescriptor(name) => {
                 format!("PrimitiveDescriptor `{name}`")
@@ -1210,51 +1172,6 @@ impl Vm {
             // TitleCase wording. Drift is impossible because the same
             // arms are read from the same source.
             _ => self.type_name(val).to_string(),
-        }
-    }
-
-    /// Get the type name for method dispatch. For variants, looks up the parent type.
-    ///
-    /// This name is used to build the qualified global lookup key
-    /// `"<TypeName>.<method>"` in `Op::CallMethod`. Returning the
-    /// canonical `type_name` for every variant is load-bearing: if the
-    /// name disagrees with what the compiler registers (e.g. returning
-    /// `"Unknown"` for a primitive), the qualified-global miss falls
-    /// through to `dispatch_trait_method` with a stringly-typed type
-    /// name that no fallback arm matches — producing spurious
-    /// `"no method '<m>' for type 'Unknown'"` errors. Keep this in sync
-    /// with `type_name` above and `user_facing_type_name`.
-    ///
-    /// Phase C of the canonical-type-equality refactor centralises the
-    /// shape-only mapping in `crate::types::canonical::dispatch_name_for_value`
-    /// (the single source of truth for value-shape -> dispatch-name
-    /// reduction, including the `Range -> List` collapse). This method
-    /// remains a thin wrapper because the `Value::Variant` case needs
-    /// the VM's `__type_of__<tag>` globals lookup, which the canonical
-    /// module — by design — does not have access to.
-    fn value_type_name_for_dispatch(&self, val: &Value) -> String {
-        if let Some(name) = dispatch_name_for_value(val) {
-            return name;
-        }
-        // The shape-only canonical helper returned None; the only
-        // variant that lands here is `Value::Variant`, whose dispatch
-        // name comes from the VM-side `__type_of__<tag>` global table.
-        match val {
-            Value::Variant(tag, _) => {
-                let key = format!("__type_of__{tag}");
-                if let Some(Value::String(type_name)) = self.globals.get(&key) {
-                    type_name.clone()
-                } else {
-                    tag.clone() // fallback: use the tag itself
-                }
-            }
-            // Unreachable: dispatch_name_for_value returns Some(_) for
-            // every Value variant except Variant. Defensive: if a new
-            // Value variant is added without updating dispatch_name_for_value,
-            // the unit tests in src/types/canonical.rs catch the omission;
-            // this match arm exists only so the compiler can prove
-            // exhaustiveness.
-            other => format!("{other:?}"),
         }
     }
 }

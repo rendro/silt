@@ -2,7 +2,7 @@
 -- exit: 0
 import json
 
-fn decode_list(text: String, type a) -> Result(List(a), JsonError) {
+fn decode_list(text: String, type a) -> Result(List(a), json.JsonError) {
   json.parse_list(text, a)
 }
 

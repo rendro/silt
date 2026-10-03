@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+fn main() {
+  let q = [(1, 10), (2, 20)] |> list.map { (x, y) -> x + y }
+  println(q)
+}

@@ -1,0 +1,11 @@
+-- verdict: same
+type Option(a) { Just(a), Nothing }
+import list
+fn main() {
+  let h = list.head([1])
+  println(h)
+  match h {
+    Just(x) -> println(x)
+    Nothing -> println("n")
+  }
+}

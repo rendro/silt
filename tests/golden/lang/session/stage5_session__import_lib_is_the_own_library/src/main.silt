@@ -1,0 +1,9 @@
+-- verdict: same
+-- `import lib` means the importing package's own src/lib.silt, not the
+-- library of a dependency imported before it.
+import dep
+import lib
+fn main() {
+  println(lib.f())
+  println(dep.g())
+}

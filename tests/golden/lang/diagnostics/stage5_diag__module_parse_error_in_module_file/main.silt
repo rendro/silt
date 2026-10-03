@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A parse error in an imported module is a diagnostic in the module's
+-- file, labelled with the import.
+import broken
+
+fn main() { println(broken.one()) }

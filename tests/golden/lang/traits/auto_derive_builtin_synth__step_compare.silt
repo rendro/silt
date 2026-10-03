@@ -1,5 +1,5 @@
 import list
 fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
 fn main() {
-    println(cmp_gen(Stop(1), Continue(1)))
+    println(cmp_gen(list.Stop(1), list.Continue(1)))
 }

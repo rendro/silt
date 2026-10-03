@@ -25,7 +25,7 @@ fn program() {
     match i >= 20 {
       true -> acc
       _ -> {
-        when let Message(val) = channel.receive(ch) else { panic("pattern did not match") }
+        when let channel.Message(val) = channel.receive(ch) else { panic("pattern did not match") }
         loop(i + 1, acc + val)
       }
     }

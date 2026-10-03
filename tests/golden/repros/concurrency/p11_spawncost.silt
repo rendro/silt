@@ -1,0 +1,9 @@
+-- verdict: same
+import task
+import list
+
+fn main() {
+  let hs = 1..2000 |> list.map { i -> task.spawn(fn() { i * 2 }) }
+  let total = hs |> list.fold(0) { acc, h -> acc + task.join(h) }
+  println("total {total}")
+}

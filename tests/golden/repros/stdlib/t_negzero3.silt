@@ -1,0 +1,18 @@
+-- verdict: same
+import float
+import list
+import int
+import math
+fn main() {
+  println(list.product_float([-1.0, 0.0]))
+  println(list.sum_float([list.product_float([-1.0, 0.0])]))
+  println(-1.0 * 0.0)
+  println(float.min(list.product_float([-1.0, 0.0]), 0.0))
+  println(int.to_float(0) * -1.0)
+  println(float.abs(list.product_float([-1.0, 0.0])))
+  println(float.floor(-0.5 + 0.5))
+  println(float.ceil(-0.5))
+  println(float.clamp(list.product_float([-1.0, 0.0]), -1.0, 1.0))
+  println(math.sin(list.product_float([-1.0, 0.0])))
+  println(math.atan2(list.product_float([-1.0, 0.0]), 1.0))
+}

@@ -1,0 +1,12 @@
+-- verdict: same
+import io
+import string
+
+fn main() {
+  match io.read_file("app.json") {
+    Ok(content) -> println("loaded {string.length(content)} bytes")
+    Err(io.IoNotFound(path)) -> println("file does not exist: {path}")
+    Err(io.IoPermissionDenied(path)) -> println("denied: {path}")
+    Err(e) -> println("error: {e.message()}")
+  }
+}

@@ -1,0 +1,14 @@
+-- verdict: same
+import list
+fn build(n) {
+  loop i = 0, acc = [] {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, [i, ..acc])
+    }
+  }
+}
+fn main() {
+  let a = build(4000)
+  println(list.length(a))
+}

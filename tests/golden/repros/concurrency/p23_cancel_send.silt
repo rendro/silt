@@ -1,0 +1,25 @@
+-- verdict: same
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch, 0)
+  -- task blocks in send on a full buffer
+  let h = task.spawn(fn() {
+    channel.send(ch, 99)
+    println("sender resumed (should not happen after cancel)")
+  })
+  time.sleep(time.ms(100))
+  task.cancel(h)
+  time.sleep(time.ms(50))
+  -- drain: the cancelled sender's value must not appear
+  match channel.try_receive(ch) { channel.Message(v) -> println("got {v}")  _ -> println("none") }
+  match channel.try_receive(ch) { channel.Message(v) -> println("got {v}")  _ -> println("none (cancelled send did not deliver)") }
+  -- is the channel still usable? a fresh sender/receiver pair
+  let h2 = task.spawn(fn() { channel.send(ch, 7) })
+  task.join(h2)
+  match channel.receive(ch) { channel.Message(v) -> println("fresh got {v}")  _ -> println("other") }
+  -- join cancelled
+  task.join(h)
+}

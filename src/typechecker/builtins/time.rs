@@ -39,11 +39,11 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     );
     let duration_ty =
         super::record_with_fields(checker, "Duration", vec![(intern("ns"), Type::Int)]);
-    let weekday_ty = Type::Generic(intern("Weekday"), vec![]);
+    let weekday_ty = Type::builtin("Weekday", vec![]);
 
     // Register Weekday enum
-    checker.enums.insert(
-        intern("Weekday"),
+    checker.tables.enums.insert(
+        TypeRef::builtin("Weekday"),
         EnumInfo {
             params: vec![],
             param_var_ids: vec![],
@@ -90,16 +90,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         "Sunday",
     ];
     for day in weekday_variants {
-        checker
-            .variant_to_enum
-            .insert(intern(day), intern("Weekday"));
         env.define(intern(day), Scheme::mono(weekday_ty.clone()));
     }
-    // Register declaration-order ordinals so `cmp_gen(Monday, Friday)`
-    // and `Monday < Friday` both honour the same ordering used by every
-    // other enum. Replaces the hand-rolled `weekday_ordinal` table that
-    // lived in `value.rs` before this change.
-    crate::value::register_variant_decl_order(weekday_variants);
 
     // ── Register Display (and other builtin traits) for time types ──
     // Shares `register_auto_derived_impls_for` with the primitive-type
@@ -131,9 +123,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("time.date"),
         Scheme::mono(Type::Fun(
             vec![Type::Int, Type::Int, Type::Int],
-            Box::new(Type::Generic(
-                intern("Result"),
-                vec![date_ty.clone(), Type::Generic(intern("TimeError"), vec![])],
+            Box::new(Type::builtin(
+                "Result",
+                vec![date_ty.clone(), Type::builtin("TimeError", vec![])],
             )),
         )),
     );
@@ -144,12 +136,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("time.time"),
         Scheme::mono(Type::Fun(
             vec![Type::Int, Type::Int, Type::Int],
-            Box::new(Type::Generic(
-                intern("Result"),
-                vec![
-                    time_of_day_ty.clone(),
-                    Type::Generic(intern("TimeError"), vec![]),
-                ],
+            Box::new(Type::builtin(
+                "Result",
+                vec![time_of_day_ty.clone(), Type::builtin("TimeError", vec![])],
             )),
         )),
     );
@@ -225,12 +214,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("time.parse"),
         Scheme::mono(Type::Fun(
             vec![Type::String, Type::String],
-            Box::new(Type::Generic(
-                intern("Result"),
-                vec![
-                    datetime_ty.clone(),
-                    Type::Generic(intern("TimeError"), vec![]),
-                ],
+            Box::new(Type::builtin(
+                "Result",
+                vec![datetime_ty.clone(), Type::builtin("TimeError", vec![])],
             )),
         )),
     );
@@ -241,9 +227,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("time.parse_date"),
         Scheme::mono(Type::Fun(
             vec![Type::String, Type::String],
-            Box::new(Type::Generic(
-                intern("Result"),
-                vec![date_ty.clone(), Type::Generic(intern("TimeError"), vec![])],
+            Box::new(Type::builtin(
+                "Result",
+                vec![date_ty.clone(), Type::builtin("TimeError", vec![])],
             )),
         )),
     );

@@ -139,16 +139,39 @@ fn hover_on_println_returns_globals_doc() {
 fn hover_on_io_error_variant_returns_errors_doc() {
     let mut client = LspClient::spawn();
     let uri = unique_uri();
-    let source = "import io\n\nfn main() {\n    let e = IoNotFound(\"x\")\n    e\n}\n";
+    let source = "import io\n\nfn main() {\n    let e = io.IoNotFound(\"x\")\n    e\n}\n";
     client.did_open_and_wait(&uri, source);
 
-    // Cursor on `IoNotFound` line 3 col 14.
-    let resp = client.hover(&uri, 3, 14);
+    // Cursor on `IoNotFound` line 3 col 17.
+    let resp = client.hover(&uri, 3, 17);
     let md = hover_markdown(&resp).expect("expected hover markdown for IoNotFound");
     // The IoError section in errors.md mentions the variant table.
     assert!(
         md.contains("IoNotFound") || md.contains("path") || md.contains("Variant"),
         "hover on IoNotFound should include the IoError section; got:\n{md}"
+    );
+    client.shutdown();
+}
+
+/// Hover on a builtin module's variant (`channel.Message`) shows the
+/// variant's own section, not the whole globals page.
+#[test]
+fn hover_on_channel_message_returns_its_own_section() {
+    let mut client = LspClient::spawn();
+    let uri = unique_uri();
+    let source = "import channel\n\nfn main() {\n    let m = channel.Message(1)\n    m\n}\n";
+    client.did_open_and_wait(&uri, source);
+
+    // Cursor on `Message`, line 3 col 20.
+    let resp = client.hover(&uri, 3, 20);
+    let md = hover_markdown(&resp).expect("expected hover markdown for channel.Message");
+    assert!(
+        md.contains("channel.Message(value: a)"),
+        "hover on channel.Message should show its section; got:\n{md}"
+    );
+    assert!(
+        !md.contains("## `println`") && !md.contains("Always Available"),
+        "hover on channel.Message should not show the whole globals page; got:\n{md}"
     );
     client.shutdown();
 }

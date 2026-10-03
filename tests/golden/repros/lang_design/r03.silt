@@ -1,0 +1,26 @@
+-- verdict: same
+import list
+import int
+
+fn parse_all(xs) {
+  let parsed = xs |> list.map { s -> 
+    let n = int.parse(s)?
+    Ok(n + 1)
+  }
+  parsed
+}
+
+fn first_big(xs) {
+  let f = fn(x) {
+    match x > 10 {
+      true -> return "big"
+      false -> "small"
+    }
+  }
+  xs |> list.map(f)
+}
+
+fn main() {
+  println(parse_all(["1", "x", "3"]))
+  println(first_big([1, 20]))
+}

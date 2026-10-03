@@ -1,0 +1,13 @@
+-- exit: 1
+-- Two modules each declare a trait `Show` with `fn show` and implement
+-- it for Int. A call here, which sees both traits, is ambiguous: an
+-- error at the call, naming both traits.
+-- stderr-contains: error[type]: ambiguous method 'show' on type 'Int': provided by traits a.Show, b.Show
+-- stderr-contains: --> main.silt:11:11
+-- stderr-contains: --> main.silt:12:11
+import a
+import b
+fn main() {
+  println(5.show())
+  println(Int.show(6))
+}

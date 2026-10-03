@@ -2,4 +2,4 @@ error[type]: undefined variable 'nope'
  --> caret_width__emoji_before_caret.silt:5:17
    |
  5 |   let t = ("😀", nope)
-   |                  ^ undefined variable 'nope'
+   |                  ^^^^ undefined variable 'nope'

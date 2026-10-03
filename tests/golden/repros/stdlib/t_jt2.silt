@@ -1,0 +1,13 @@
+-- verdict: same
+import json
+type Wrap(a) { value: a }
+type P { w: Wrap(Int), s: Set(Int) }
+type Q { n: Int }
+fn main() {
+  println(json.parse("\{\"value\": 1\}", Wrap))
+  println(json.parse("\{\"n\": 1\}", Q))
+  println(json.parse("\{\"n\": \"1\"\}", Q))
+  println(json.parse("\{\}", Q))
+  println(json.parse("\{\"n\": 1", Q))
+  println(json.parse("1", Int))
+}

@@ -1,0 +1,3 @@
+-- verdict: same
+import list.{ map, filter, }
+fn main() { println("x") }

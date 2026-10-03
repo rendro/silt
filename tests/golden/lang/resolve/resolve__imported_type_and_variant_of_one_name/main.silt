@@ -1,0 +1,9 @@
+-- verdict: same
+-- `import boxes.{ Box }` binds the name `Box`, which is both a type and
+-- its variant: `Box(3)` constructs, `Box(Int)` is the type.
+import boxes
+import boxes.{ Box }
+fn main() {
+  let b: Box(Int) = Box(3)
+  println(boxes.open(b))
+}

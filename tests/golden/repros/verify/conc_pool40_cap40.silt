@@ -1,0 +1,25 @@
+-- verdict: same
+import channel
+import task
+import list
+fn collect(ch, n, acc) {
+  match n {
+    0 -> acc
+    _ -> {
+      match channel.receive(ch) {
+        channel.Message(v) -> collect(ch, n - 1, acc + v)
+        _ -> acc
+      }
+    }
+  }
+}
+fn main() {
+  let results = channel.new(40)
+  let ids = 1..40
+  ids |> list.each { i ->
+    let _ = task.spawn(fn() { channel.send(results, i * i) })
+    ()
+  }
+  let total = collect(results, 40, 0)
+  println("total {total}")
+}

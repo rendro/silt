@@ -1,0 +1,16 @@
+-- verdict: same
+import list
+import map
+import string
+import io
+import test
+import float
+fn main() {
+  -- lenient runtime: filter_map / fold_until documented types only
+  println(list.filter_map([1, 2, 3]) { x -> match x { 2 -> None  _ -> Some(x * 10) } })
+  println(string.join(["a", "b"], "-"))
+  println(io.inspect(2.0))
+  println(io.inspect(2))
+  test.assert_eq(float.nan, float.nan)
+  println("assert_eq(nan, nan) passed")
+}

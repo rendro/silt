@@ -20,7 +20,7 @@ fn main() {
     "{a} | {b}"
   })
   match channel.receive(ch) {
-    Message(m) -> println(m)
+    channel.Message(m) -> println(m)
     _ -> println("no message")
   }
   println(task.join(h))

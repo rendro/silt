@@ -47,11 +47,11 @@ fn type_enum_does_not_insert_trailing_comma_when_source_has_none() {
 /// last variant has a trailing comma.
 #[test]
 fn cross_module_errors_shape_survives_fuzz_invariants() {
-    let src = "type AppError {\n  \
-              ConfigRead(IoError),\n  \
-              ConfigParse(JsonError),\n  \
-              ApiCall(HttpError),\n  \
-              ApiResponse(JsonError),\n  \
+    let src = "import http\nimport io\nimport json\n\ntype AppError {\n  \
+              ConfigRead(io.IoError),\n  \
+              ConfigParse(json.JsonError),\n  \
+              ApiCall(http.HttpError),\n  \
+              ApiResponse(json.JsonError),\n  \
               Custom(String),\n\
               }\n";
     let out = formatter::format(src).expect("format should succeed");

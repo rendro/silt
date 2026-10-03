@@ -1,0 +1,5 @@
+-- verdict: same
+import task
+fn main() {
+  println(task.join(task.spawn(fn() { 1 + 1 })))
+}

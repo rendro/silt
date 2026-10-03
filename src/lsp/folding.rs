@@ -15,10 +15,9 @@
 use lsp_types::{FoldingRange, FoldingRangeKind};
 
 use crate::ast::*;
-use crate::lexer::Span;
+use crate::source::{SourceFile, Span};
 
 use super::Server;
-use super::text_utils::{expr_extent, find_matching_close_brace};
 
 impl Server {
     pub(super) fn folding_range(
@@ -38,19 +37,17 @@ impl Server {
     }
 }
 
-fn collect_decl_folds(decl: &Decl, source: &str, out: &mut Vec<FoldingRange>) {
+fn collect_decl_folds(decl: &Decl, source: &SourceFile, out: &mut Vec<FoldingRange>) {
     match decl {
         Decl::Fn(f) => {
             // The fn body is itself an `ExprKind::Block`, and the walker's
-            // Block arm pushes the block fold for us. Calling
-            // `push_block_fold` here in addition would duplicate the fold
-            // (round-76 D1).
+            // Block arm pushes the block fold for us. Pushing one here in
+            // addition would duplicate the fold (round-76 D1).
             walk_expr_folds(&f.body, source, out);
         }
         Decl::Type(td) => {
-            // The type decl's span covers the full `type Foo { ... }`.
-            // Fold from the decl's starting line to the last line of
-            // its span by extent-scanning the source.
+            // The type decl's span covers the full `type Foo { ... }`:
+            // fold from its first line to its last.
             push_span_fold(&td.span, source, out);
         }
         Decl::Trait(t) => {
@@ -76,17 +73,17 @@ fn collect_decl_folds(decl: &Decl, source: &str, out: &mut Vec<FoldingRange>) {
     }
 }
 
-fn walk_expr_folds(expr: &Expr, source: &str, out: &mut Vec<FoldingRange>) {
+fn walk_expr_folds(expr: &Expr, source: &SourceFile, out: &mut Vec<FoldingRange>) {
     match &expr.kind {
         ExprKind::Block(_) => {
-            push_block_fold(&expr.span, expr, source, out);
+            push_span_fold(&expr.span, source, out);
             super::ast_walk::visit_expr_children(expr, |c| walk_expr_folds(c, source, out));
         }
         ExprKind::Match { arms, .. } => {
             // Fold arm bodies that are themselves blocks.
             for arm in arms {
                 if let ExprKind::Block(_) = arm.body.kind {
-                    push_block_fold(&arm.body.span, &arm.body, source, out);
+                    push_span_fold(&arm.body.span, source, out);
                 }
                 walk_expr_folds(&arm.body, source, out);
             }
@@ -97,9 +94,11 @@ fn walk_expr_folds(expr: &Expr, source: &str, out: &mut Vec<FoldingRange>) {
     }
 }
 
-fn push_span_fold(span: &Span, source: &str, out: &mut Vec<FoldingRange>) {
-    let start_line = span.line.saturating_sub(1) as u32; // LSP is 0-based
-    let end_line = compute_span_end_line(span, source);
+/// A fold over the lines of `span`, when it runs over more than one.
+fn push_span_fold(span: &Span, source: &SourceFile, out: &mut Vec<FoldingRange>) {
+    // LSP lines are 0-based.
+    let start_line = source.line_col(span.start).0 - 1;
+    let end_line = source.line_col(span.end).0 - 1;
     if end_line > start_line {
         out.push(FoldingRange {
             start_line,
@@ -110,45 +109,4 @@ fn push_span_fold(span: &Span, source: &str, out: &mut Vec<FoldingRange>) {
             collapsed_text: None,
         });
     }
-}
-
-fn push_block_fold(span: &Span, expr: &Expr, source: &str, out: &mut Vec<FoldingRange>) {
-    let end_offset = expr_extent(expr, source);
-    let start_line = span.line.saturating_sub(1) as u32;
-    let end_line = offset_to_line(source, end_offset);
-    if end_line > start_line {
-        out.push(FoldingRange {
-            start_line,
-            start_character: None,
-            end_line,
-            end_character: None,
-            kind: Some(FoldingRangeKind::Region),
-            collapsed_text: None,
-        });
-    }
-}
-
-fn compute_span_end_line(span: &Span, source: &str) -> u32 {
-    // The Span struct only records a start line/col; walk forward from
-    // `span.offset` until we hit a matching `}` at depth 0. For `trait`,
-    // `type`, `fn` the header ends at `{` and the body runs to the
-    // matching `}`. We delegate the scan to the shared
-    // `find_matching_close_brace` helper in `text_utils` so that we
-    // correctly skip `--` line comments, `{- ... -}` block comments
-    // (nestable), and `"..."` / `"""..."""` strings — anything else
-    // would let a `}` inside a comment or string close the body
-    // prematurely (round-87 LATENT fix).
-    //
-    // Fallback: if no balanced `{...}` is found from `span.offset` (e.g.
-    // a `type` with unit variants), fall back to the start line.
-    let start_line = span.line.saturating_sub(1) as u32;
-    match find_matching_close_brace(source, span.offset) {
-        Some((_offset, newlines)) => start_line + newlines,
-        None => start_line,
-    }
-}
-
-fn offset_to_line(source: &str, offset: usize) -> u32 {
-    let capped = offset.min(source.len());
-    source[..capped].bytes().filter(|&b| b == b'\n').count() as u32
 }

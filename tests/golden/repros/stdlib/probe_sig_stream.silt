@@ -1,0 +1,36 @@
+-- verdict: same
+import stream
+fn main() {
+  let v_stream_buffered: Int = stream.buffered
+  let v_stream_chunks: Int = stream.chunks
+  let v_stream_collect: Int = stream.collect
+  let v_stream_concat: Int = stream.concat
+  let v_stream_count: Int = stream.count
+  let v_stream_dedup: Int = stream.dedup
+  let v_stream_drop: Int = stream.drop
+  let v_stream_drop_while: Int = stream.drop_while
+  let v_stream_each: Int = stream.each
+  let v_stream_file_chunks: Int = stream.file_chunks
+  let v_stream_file_lines: Int = stream.file_lines
+  let v_stream_filter: Int = stream.filter
+  let v_stream_filter_ok: Int = stream.filter_ok
+  let v_stream_first: Int = stream.first
+  let v_stream_flat_map: Int = stream.flat_map
+  let v_stream_fold: Int = stream.fold
+  let v_stream_from_list: Int = stream.from_list
+  let v_stream_from_range: Int = stream.from_range
+  let v_stream_last: Int = stream.last
+  let v_stream_map: Int = stream.map
+  let v_stream_map_ok: Int = stream.map_ok
+  let v_stream_merge: Int = stream.merge
+  let v_stream_repeat: Int = stream.repeat
+  let v_stream_scan: Int = stream.scan
+  let v_stream_take: Int = stream.take
+  let v_stream_take_while: Int = stream.take_while
+  let v_stream_tcp_chunks: Int = stream.tcp_chunks
+  let v_stream_tcp_lines: Int = stream.tcp_lines
+  let v_stream_unfold: Int = stream.unfold
+  let v_stream_write_to_file: Int = stream.write_to_file
+  let v_stream_write_to_tcp: Int = stream.write_to_tcp
+  let v_stream_zip: Int = stream.zip
+}

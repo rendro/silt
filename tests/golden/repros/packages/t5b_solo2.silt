@@ -1,0 +1,8 @@
+-- verdict: same
+type Node { Leaf(String), Empty }
+trait Display for Node {
+  fn display(self) -> String { "main-node" }
+}
+fn main() {
+  println("hi")
+}

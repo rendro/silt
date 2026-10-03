@@ -1,0 +1,10 @@
+error[parse]: 'other' is bound twice at the top level: by the import and by the let binding here
+ --> main.silt:8:5
+   |
+ 8 | let other = P { year: 9 }
+   |     ^^^^^ 'other' is bound twice at the top level: by the import and by the let binding here
+ ::: main.silt:6:1
+   |
+ 6 | import other
+   | ------------ first bound here, by the import
+  = note: a top-level name can be bound only once

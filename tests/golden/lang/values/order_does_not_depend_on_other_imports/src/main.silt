@@ -1,0 +1,11 @@
+-- Repro E of the audit: a library's enum order is its declaration order,
+-- whatever else the application imports. `sb` declares the same variant
+-- names in the other order; importing it beside `sa` does not change
+-- `sa`'s order.
+import sa
+import sb
+
+fn main() {
+  println(sa.report())
+  println(sb.report())
+}

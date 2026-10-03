@@ -11,7 +11,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("env.get"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(Type::Generic(intern("Option"), vec![Type::String])),
+            Box::new(Type::option(Type::String)),
         )),
     );
 

@@ -67,8 +67,10 @@ fn handle(result) {
 
 ## Qualified Patterns
 
-Constructors and record types from another module can be named with a
-single qualifier — the module (or alias), or the owning enum:
+Constructors and record types from another module are named through
+the module (or its alias): `m.Variant`, or `m.Enum.Variant`, which
+always works, even when two enums of the module share a variant name.
+Inside the declaring module, `Enum.Variant` works too:
 
 ```silt
 -- noexec (multi-file: shapes.silt declares `pub type Shape { Circle(Float), Rect(Float, Float) }`)
@@ -77,14 +79,11 @@ import shapes
 fn describe(s) {
   match s {
     shapes.Circle(r) -> "circle {r}"
-    Shape.Rect(w, h) -> "rect {w}x{h}"
+    shapes.Shape.Rect(w, h) -> "rect {w}x{h}"
   }
 }
 ```
 
-The qualifier is naming, not identity: `shapes.Circle(r)` and
-`Circle(r)` are the **same** pattern, so spellings can be mixed freely
-across the arms of one match without affecting exhaustiveness checking.
 Qualified patterns work in every pattern position — match arms,
 `when let`, `let`, or-patterns, and nested sub-patterns — and the
 qualifier picks the right type when two imported modules export the
@@ -222,9 +221,9 @@ match input {
 Works in any pattern position. Common with `channel.select`:
 
 ```silt
-match channel.select([Recv(ch1), Recv(ch2)]) {
-  (^ch1, Message(msg)) -> handle_first(msg)
-  (^ch2, Message(msg)) -> handle_second(msg)
+match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
+  (^ch1, channel.Message(msg)) -> handle_first(msg)
+  (^ch2, channel.Message(msg)) -> handle_second(msg)
   _ -> panic("unexpected")
 }
 ```

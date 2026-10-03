@@ -234,7 +234,7 @@ fn main() {{
       let outcome = task.spawn_until(time.ms(50), {{ ->
         match tcp.read(s, 1024) {{
           Ok(_) -> "unexpected-ok"
-          Err(TcpTimeout) -> "tcp-timeout"
+          Err(tcp.TcpTimeout) -> "tcp-timeout"
           Err(other) -> "other:{{other.message()}}"
         }}
       }})

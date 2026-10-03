@@ -1,0 +1,5 @@
+-- verdict: same
+import net
+fn main() {
+  println(net.http.ping())
+}

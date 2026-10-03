@@ -1,5 +1,5 @@
 //! Audit round 83 — lock the `NO_COLOR` / `FORCE_COLOR` env-var handling in
-//! `src/errors.rs::use_color()`.
+//! `src/diagnostic.rs::use_color()`.
 //!
 //! Before this round, `use_color()` only looked at `isatty(stderr)`, ignoring
 //! the widely-adopted `NO_COLOR` convention (<https://no-color.org/>) and the
@@ -7,8 +7,8 @@
 //! wrappers, CI environments faking a tty, and accessibility tools that need
 //! to disable ANSI escapes even when stderr looks interactive.
 //!
-//! These tests exercise the actual user-visible surface — `SourceError`'s
-//! `Display` impl — by inspecting whether ANSI escapes (`\x1b[`) appear in
+//! These tests exercise the actual user-visible surface — the human
+//! rendering of a diagnostic — by inspecting whether ANSI escapes (`\x1b[`) appear in
 //! the rendered output under each env-var configuration. This is more robust
 //! than poking at `use_color()` directly: it locks the behavior the user
 //! actually sees, not the internal predicate.
@@ -28,21 +28,21 @@
 //! `FORCE_COLOR` to be affected — silt code only reads these vars from
 //! `use_color()`, and no other test exercises that path concurrently.
 
-use silt::errors::{ErrorKind, SourceError};
-use silt::lexer::Span;
+use silt::diagnostic::{Code, Diagnostic, render_human};
+use silt::source::{FileId, SourceMap, SourceName, Span};
 
-/// Build a minimal `SourceError` whose `Display` output exercises every
-/// color hook (header label, locator arrow, gutter, caret). The exact
-/// content doesn't matter — we only inspect for ANSI escape bytes.
-fn make_error() -> SourceError {
-    SourceError {
-        kind: ErrorKind::Compile,
-        message: "round83 probe".to_string(),
-        span: Span::new(1, 1),
-        source_line: Some("x".to_string()),
-        file: Some("<round83>".to_string()),
-        is_warning: false,
-    }
+/// Render a minimal diagnostic that exercises every color hook (header
+/// label, locator arrow, gutter, caret). The exact content doesn't
+/// matter — we only inspect for ANSI escape bytes.
+fn make_error() -> String {
+    let mut sources = SourceMap::new();
+    sources.add(SourceName::Path("<round83>".into()), "x".into());
+    let d = Diagnostic::error(
+        Code::CompileLimit,
+        Span::point(FileId::default(), 0),
+        "round83 probe",
+    );
+    render_human(&sources, &d)
 }
 
 /// Does the rendered output contain at least one ANSI CSI escape?
@@ -79,7 +79,7 @@ fn use_color_honors_no_color_and_force_color_env_vars() {
     // kill-switch must win regardless), NO_COLOR=<nonempty> must drop
     // escapes from the rendered output.
     set("NO_COLOR", "1");
-    let rendered = format!("{}", make_error());
+    let rendered = make_error();
     assert!(
         !has_ansi(&rendered),
         "NO_COLOR=1 must suppress ANSI escapes, got:\n{rendered}"
@@ -91,7 +91,7 @@ fn use_color_honors_no_color_and_force_color_env_vars() {
     // FORCE_COLOR branch takes over once NO_COLOR is effectively absent).
     set("NO_COLOR", "");
     set("FORCE_COLOR", "1");
-    let rendered = format!("{}", make_error());
+    let rendered = make_error();
     assert!(
         has_ansi(&rendered),
         "NO_COLOR=\"\" must NOT disable; FORCE_COLOR=1 should force escapes, got:\n{rendered}"
@@ -104,7 +104,7 @@ fn use_color_honors_no_color_and_force_color_env_vars() {
     // override that and produce escapes.
     unset("NO_COLOR");
     set("FORCE_COLOR", "1");
-    let rendered = format!("{}", make_error());
+    let rendered = make_error();
     assert!(
         has_ansi(&rendered),
         "FORCE_COLOR=1 (NO_COLOR unset) must produce escapes, got:\n{rendered}"
@@ -115,7 +115,7 @@ fn use_color_honors_no_color_and_force_color_env_vars() {
     // FORCE_COLOR even when both are set.
     set("NO_COLOR", "1");
     set("FORCE_COLOR", "1");
-    let rendered = format!("{}", make_error());
+    let rendered = make_error();
     assert!(
         !has_ansi(&rendered),
         "NO_COLOR must beat FORCE_COLOR (killswitch precedence), got:\n{rendered}"
@@ -128,7 +128,7 @@ fn use_color_honors_no_color_and_force_color_env_vars() {
     // render doesn't panic and produces *some* output.
     unset("NO_COLOR");
     unset("FORCE_COLOR");
-    let rendered = format!("{}", make_error());
+    let rendered = make_error();
     assert!(
         rendered.contains("round83 probe"),
         "fallthrough render must include the error message body, got:\n{rendered}"

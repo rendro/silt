@@ -1,0 +1,8 @@
+-- verdict: same
+import float
+fn main() {
+  println(1.5 |> float.to_string)
+  println(1.5 |> float.to_string(2))
+  let f = float.to_string
+  println(f(1.5))
+}

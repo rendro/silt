@@ -1,0 +1,7 @@
+-- verdict: same
+fn ext(p) { {...p, age: 30} }
+fn main() {
+  let q = ext({name: "A", age: "old"})
+  let s: String = q.age
+  println(s)
+}

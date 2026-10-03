@@ -1,0 +1,10 @@
+-- verdict: same
+import io
+fn direct() -> Int !{} {
+  let _ = io.write_file("/dev/null", "x")
+  1
+}
+fn main() !{} {
+  let _ = direct()
+  ()
+}

@@ -1683,29 +1683,40 @@ fn record_failed_task(inner: &SchedulerInner, handle: &Arc<TaskHandle>) {
 /// call reported, those that were counted but not kept included.
 ///
 /// The report has no file name and no source line: the scheduler knows
-/// neither. It shows what `VmError`'s own `Display` shows. A front end
+/// neither, so it renders through a source map with no files. A front end
 /// that knows the program's files collects the failures instead
 /// (`collect_unjoined_failures`) and renders them itself; the record of
 /// the scheduler stays empty then.
 fn report_unjoined_failures(inner: &SchedulerInner) -> usize {
     let (handles, not_recorded) = inner.failed_tasks.lock().take();
+    // The scheduler knows no files: the diagnostics show no place.
+    let no_files = crate::source::SourceMap::new();
     let mut reported = 0;
     let mut report = String::new();
     for handle in &handles {
-        let Some(mut error) = handle.take_unjoined_failure() else {
+        let Some(error) = handle.take_unjoined_failure() else {
             continue;
         };
         reported += 1;
-        error.message = unjoined_failure_headline(handle.id, &error.message);
-        report.push_str(&format!("{error}\n  = help: {UNJOINED_FAILURE_HELP}\n"));
+        let failure = UnjoinedFailure {
+            task_id: handle.id,
+            owner: 0,
+            error,
+        };
+        let d = failure.report_error().to_diagnostic();
+        report.push_str(&crate::diagnostic::render_human(&no_files, &d));
+        report.push('\n');
     }
     let not_recorded: usize = not_recorded.values().sum();
     if not_recorded > 0 {
         reported += not_recorded;
-        report.push_str(&format!(
-            "error[runtime]: {}\n",
-            UnjoinedFailures::not_kept_message(not_recorded)
-        ));
+        let d = crate::diagnostic::Diagnostic::error(
+            crate::diagnostic::Code::UnjoinedTaskFailure,
+            crate::source::Span::BUILTIN,
+            UnjoinedFailures::not_kept_message(not_recorded),
+        );
+        report.push_str(&crate::diagnostic::render_human(&no_files, &d));
+        report.push('\n');
     }
     if !report.is_empty() {
         // A write error is ignored: there is nowhere left to report it.
@@ -1818,16 +1829,12 @@ pub struct UnjoinedFailure {
 
 impl UnjoinedFailure {
     /// The error to report: the task's error, with a message that names
-    /// the task and says what to do. The first line of the message is
-    /// the headline; the line after it is a `help:` note, as the
-    /// diagnostic renderers expect. Span and call stack are the task's.
+    /// the task and a help line that says what to do. Span and call
+    /// stack are the task's.
     pub fn report_error(&self) -> VmError {
         let mut error = self.error.clone();
-        error.message = format!(
-            "{}\nhelp: {UNJOINED_FAILURE_HELP}",
-            unjoined_failure_headline(self.task_id, &self.error.message)
-        );
-        error
+        error.message = unjoined_failure_headline(self.task_id, &self.error.message);
+        error.with_help(UNJOINED_FAILURE_HELP)
     }
 }
 
@@ -1953,23 +1960,17 @@ fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
 mod tests {
     use super::*;
     use crate::bytecode::VmClosure;
-    use crate::compiler::Compiler;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
+    use crate::typeinfo::bv;
     use crate::vm::CallFrame;
 
     /// Compile a Silt snippet and return a VM ready for execute_slice.
     fn make_vm(src: &str) -> Vm {
-        let tokens = Lexer::new(src).tokenize().expect("lexer error");
-        let mut program = Parser::new(tokens).parse_program().expect("parse error");
-        let _ = crate::typechecker::check(&mut program);
-        let mut compiler = Compiler::new();
-        let functions = compiler.compile_program(&program).expect("compile error");
-        let script = Arc::new(functions.into_iter().next().unwrap());
+        let program = crate::session::testing::compile_str(src).expect("compile error");
         let mut vm = Vm::new();
+        vm.load(&program);
         vm.is_scheduled_task = true;
         let closure = Arc::new(VmClosure {
-            function: script,
+            function: Arc::new(program.functions[0].clone()),
             upvalues: vec![],
         });
         vm.frames.push(CallFrame {
@@ -2482,11 +2483,11 @@ fn main() {{
         // accessible via the inner `IoUnknown` variant's field.
         match result {
             Value::Variant(name, fields) => {
-                assert_eq!(name.as_str(), "Err");
+                assert_eq!(name.name(), "Err");
                 let Value::Variant(inner_name, inner_fields) = &fields[0] else {
                     panic!("expected IoError variant in Err");
                 };
-                assert_eq!(inner_name.as_str(), "IoUnknown");
+                assert_eq!(inner_name.name(), "IoUnknown");
                 let Value::String(msg) = &inner_fields[0] else {
                     panic!("expected String payload in IoUnknown");
                 };
@@ -2536,14 +2537,14 @@ fn main() {{
         let completion = IoCompletion::new();
         let past = Instant::now() - Duration::from_secs(1);
         registry.add(1, &completion, past, DeadlineSource::Global);
-        let ok_val = Value::Variant("Ok".into(), vec![Value::String("real".into())]);
+        let ok_val = Value::variant(bv::OK, vec![Value::String("real".into())]);
         assert!(completion.complete(ok_val));
         let fired = registry.scan_and_fire();
         assert_eq!(fired, 0, "no timeout should fire — I/O already completed");
         let result = completion.try_get().expect("should still have Ok");
         match result {
             Value::Variant(name, fields) => {
-                assert_eq!(name.as_str(), "Ok");
+                assert_eq!(name.name(), "Ok");
                 assert_eq!(fields[0], Value::String("real".into()));
             }
             other => panic!("expected Ok, got {other:?}"),

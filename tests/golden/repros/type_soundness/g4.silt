@@ -1,0 +1,10 @@
+-- verdict: same
+-- callees defined before callers
+fn d() { 1 }
+fn c() { d() }
+fn b() { c() }
+fn a() { b() }
+fn main() {
+  let s: String = a()
+  println(s)
+}

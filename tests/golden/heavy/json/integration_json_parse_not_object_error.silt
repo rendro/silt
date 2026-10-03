@@ -4,7 +4,7 @@ type User { name: String }
 fn program() {
   match json.parse("[1,2,3]", User) {
     Ok(_) -> "unexpected"
-    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(json.JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
     Err(e) -> e.message()
   }
 }

@@ -1,0 +1,4 @@
+-- exit: 1
+-- stderr-contains: error[package]: dependency `plain`: `deps/plain` is not a silt package (no silt.toml found)
+-- stderr-contains: --> silt.toml:6:9
+fn main() { println("unreachable") }

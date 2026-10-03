@@ -1,0 +1,6 @@
+-- verdict: same
+fn c(a: a, b: a) -> Int { a.compare(b) }
+fn main() {
+  println(c(false, true))
+  println(c((1, 2), (1, 3)))
+}

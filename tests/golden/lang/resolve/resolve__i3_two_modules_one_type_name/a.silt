@@ -1,0 +1,2 @@
+pub type Pt { x: Int }
+pub fn get_x(p: Pt) -> Int { p.x }

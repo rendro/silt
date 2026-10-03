@@ -1,0 +1,14 @@
+-- A record may be named like a variant of a builtin module's enum:
+-- `Empty` of `channel` is `channel.Empty`, never a bare name.
+import channel
+
+type Empty { n: Int }
+
+fn main() {
+  let e = Empty { n: 1 }
+  println(e.n)
+  match channel.Empty {
+    channel.Empty -> println("channel.Empty")
+    _ -> println("other")
+  }
+}

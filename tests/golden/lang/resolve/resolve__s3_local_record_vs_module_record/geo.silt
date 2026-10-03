@@ -1,0 +1,2 @@
+pub type Pt { x: Int, y: Int }
+pub fn sum(p: Pt) -> Int { p.x + p.y }

@@ -1,0 +1,7 @@
+-- verdict: same
+fn f(x: Int) -> String {
+  x + 1
+}
+fn main() {
+  println(f(1))
+}

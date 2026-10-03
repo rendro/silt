@@ -1,0 +1,6 @@
+-- verdict: same
+fn label_of(p) { p.label }
+fn main() {
+  println(label_of({label: "a", n: 1}))
+  println(label_of(42))
+}

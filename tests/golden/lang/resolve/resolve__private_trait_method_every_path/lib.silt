@@ -1,0 +1,7 @@
+trait Priv {
+  fn pm(self) -> Int
+}
+trait Priv for Int {
+  fn pm(self) -> Int { self * 10 }
+}
+pub fn via(x: Int) -> Int { x.pm() }

@@ -1,0 +1,15 @@
+-- verdict: same
+import list
+import json
+fn main() {
+  let x = []
+  let n = None
+  let m = #{}
+  println(list.length(x))
+  println(n)
+  println(x)
+  println(m)
+  println(json.stringify(n))
+  println(x == [])
+  println(n == None)
+}

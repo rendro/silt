@@ -1,0 +1,2 @@
+pub type Pt { y: String }
+pub fn mk() -> Pt { Pt { y: "s" } }

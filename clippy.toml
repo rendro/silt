@@ -1,0 +1,4 @@
+# `diagnostic::Diagnostic` is the error type of the lexer, the parser and
+# the compiler (136 bytes: a code, a span, a message and four short
+# lists). Errors are cold, so it is returned by value rather than boxed.
+large-error-threshold = 160

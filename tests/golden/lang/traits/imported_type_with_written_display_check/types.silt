@@ -1,0 +1,7 @@
+pub type Tag { name: String }
+
+trait Display for Tag {
+  fn display(self) -> String {
+    "#{self.name}"
+  }
+}

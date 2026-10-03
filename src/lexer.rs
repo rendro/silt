@@ -1,6 +1,8 @@
 use std::fmt;
 
+use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
+use crate::source::{FileId, Span};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -155,48 +157,6 @@ impl fmt::Display for Token {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Span {
-    pub line: usize,
-    pub col: usize,
-    pub offset: usize,
-}
-
-impl Span {
-    pub fn new(line: usize, col: usize) -> Self {
-        Self {
-            line,
-            col,
-            offset: 0,
-        }
-    }
-
-    pub fn with_offset(line: usize, col: usize, offset: usize) -> Self {
-        Self { line, col, offset }
-    }
-
-    /// Synthetic span for compiler-generated AST nodes that don't
-    /// correspond to any user-written source. Used by exhaustiveness
-    /// checking (witness patterns), auto-derive (synthesized impls),
-    /// and similar internal call sites. The 0-byte position signals
-    /// "compiler-synthesized" to the diagnostic renderer, which
-    /// suppresses the source-line-with-caret display.
-    ///
-    /// Single-source-of-truth for the synthetic-span shape; collapses
-    /// the previously-duplicated `synth_span` helpers in
-    /// `typechecker::exhaustiveness` and `typechecker::auto_derive`.
-    /// Lock: tests/meta/round72_bloat_cleanup_lock_tests.rs.
-    pub fn synthetic() -> Self {
-        Self::new(0, 0)
-    }
-}
-
-impl fmt::Display for Span {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.line, self.col)
-    }
-}
-
 pub type SpannedToken = (Token, Span);
 
 /// A comment the lexer skipped, as recorded by
@@ -209,20 +169,8 @@ pub struct SourceComment {
     /// The comment exactly as written, delimiters included: `-- ...` up to
     /// (not including) the line break, or `{- ... -}` with any nesting.
     pub text: String,
-    /// Position of the comment's first character.
+    /// The comment's extent, delimiters included.
     pub span: Span,
-}
-
-#[derive(Debug)]
-pub struct LexError {
-    pub message: String,
-    pub span: Span,
-}
-
-impl fmt::Display for LexError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.span, self.message)
-    }
 }
 
 /// Authoritative keyword list. Reserved words a user cannot bind as an
@@ -252,10 +200,9 @@ pub const KEYWORDS: &[&str] = &[
 pub const KEYWORD_LITERALS: &[&str] = &["true", "false"];
 
 pub struct Lexer {
+    file: FileId,
     source: Vec<char>,
     pos: usize,
-    line: usize,
-    col: usize,
     byte_offset: usize,
     /// Stack of brace depths at which string interpolations began.
     /// When we encounter `}` and brace_depth matches the top of this stack,
@@ -268,12 +215,12 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    pub fn new(source: &str) -> Self {
+    /// A lexer for `source`, the text of the file `file`.
+    pub fn new(file: FileId, source: &str) -> Self {
         let mut lexer = Self {
+            file,
             source: source.chars().collect(),
             pos: 0,
-            line: 1,
-            col: 1,
             byte_offset: 0,
             interp_stack: Vec::new(),
             brace_depth: 0,
@@ -282,9 +229,9 @@ impl Lexer {
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
         // (Notepad, PowerShell `>` redirects) prepend one by default,
         // and rustc likewise accepts it. We *skip* rather than strip so
-        // byte offsets and line/col stay relative to the original
-        // source string; the BOM counts as the first column of line 1,
-        // just like any other skipped character. A BOM anywhere else
+        // byte offsets stay relative to the original source string; the
+        // BOM counts as the first column of line 1, just like any other
+        // skipped character. A BOM anywhere else
         // in the file is still an error (reported by name, since the
         // character itself is zero-width and invisible).
         if lexer.peek() == Some('\u{FEFF}') {
@@ -293,12 +240,18 @@ impl Lexer {
         lexer
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, LexError> {
+    pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, Diagnostic> {
         let mut tokens = Vec::new();
         loop {
-            let tok = self.next_token()?;
-            let is_eof = tok.0 == Token::Eof;
-            tokens.push(tok);
+            let (tok, start) = self.next_token()?;
+            // Every scan stops right after its token, so the token ends
+            // where the lexer stands now.
+            let span = Span {
+                end: self.byte_offset as u32,
+                ..start
+            };
+            let is_eof = tok == Token::Eof;
+            tokens.push((tok, span));
             if is_eof {
                 break;
             }
@@ -311,7 +264,7 @@ impl Lexer {
     /// to the one `tokenize` produces.
     pub fn tokenize_with_comments(
         &mut self,
-    ) -> Result<(Vec<SpannedToken>, Vec<SourceComment>), LexError> {
+    ) -> Result<(Vec<SpannedToken>, Vec<SourceComment>), Diagnostic> {
         self.comments = Some(Vec::new());
         let tokens = self.tokenize()?;
         let comments = self.comments.take().unwrap_or_default();
@@ -324,12 +277,26 @@ impl Lexer {
     fn record_comment(&mut self, start_pos: usize, span: Span) {
         if let Some(comments) = self.comments.as_mut() {
             let text: String = self.source[start_pos..self.pos].iter().collect();
+            let span = Span {
+                end: self.byte_offset as u32,
+                ..span
+            };
             comments.push(SourceComment { text, span });
         }
     }
 
+    /// The span from the start of `start` to the current position: a
+    /// token the lexer has just read.
+    fn since(&self, start: Span) -> Span {
+        Span {
+            end: self.byte_offset as u32,
+            ..start
+        }
+    }
+
+    /// The empty span at the current position.
     fn span(&self) -> Span {
-        Span::with_offset(self.line, self.col, self.byte_offset)
+        Span::point(self.file, self.byte_offset as u32)
     }
 
     fn peek(&self) -> Option<char> {
@@ -344,12 +311,6 @@ impl Lexer {
         let ch = self.source.get(self.pos).copied()?;
         self.pos += 1;
         self.byte_offset += ch.len_utf8();
-        if ch == '\n' {
-            self.line += 1;
-            self.col = 1;
-        } else {
-            self.col += 1;
-        }
         Some(ch)
     }
 
@@ -379,7 +340,7 @@ impl Lexer {
         }
     }
 
-    fn skip_block_comment(&mut self) -> Result<(), LexError> {
+    fn skip_block_comment(&mut self) -> Result<(), Diagnostic> {
         // We've already consumed `{-`
         let mut depth = 1;
         let start = self.span();
@@ -395,10 +356,11 @@ impl Lexer {
                 }
                 Some(_) => {}
                 None => {
-                    return Err(LexError {
-                        message: "unterminated block comment".to_string(),
-                        span: start,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::UnterminatedComment,
+                        start,
+                        "unterminated block comment",
+                    ));
                 }
             }
         }
@@ -409,7 +371,7 @@ impl Lexer {
         &mut self,
         is_continuation: bool,
         start: Span,
-    ) -> Result<SpannedToken, LexError> {
+    ) -> Result<SpannedToken, Diagnostic> {
         let mut text = String::new();
 
         loop {
@@ -420,10 +382,7 @@ impl Lexer {
                     } else {
                         "unterminated string".to_string()
                     };
-                    return Err(LexError {
-                        message,
-                        span: start,
-                    });
+                    return Err(Diagnostic::error(Code::UnterminatedString, start, message));
                 }
                 Some('\\') => {
                     // Capture the backslash's position BEFORE consuming
@@ -447,25 +406,25 @@ impl Lexer {
                         // `unexpected character` catch-all below. Printable
                         // unknown escapes (`\q`, …) keep their plain form.
                         Some(c) if c.is_control() => {
-                            return Err(LexError {
-                                message: format!(
-                                    "unknown escape sequence: \\{}",
-                                    c.escape_default()
-                                ),
-                                span: self.span(),
-                            });
+                            return Err(Diagnostic::error(
+                                Code::InvalidEscape,
+                                self.span(),
+                                format!("unknown escape sequence: \\{}", c.escape_default()),
+                            ));
                         }
                         Some(c) => {
-                            return Err(LexError {
-                                message: format!("unknown escape sequence: \\{c}"),
-                                span: esc_span,
-                            });
+                            return Err(Diagnostic::error(
+                                Code::InvalidEscape,
+                                esc_span,
+                                format!("unknown escape sequence: \\{c}"),
+                            ));
                         }
                         None => {
-                            return Err(LexError {
-                                message: "unterminated escape sequence".to_string(),
-                                span: start,
-                            });
+                            return Err(Diagnostic::error(
+                                Code::UnterminatedString,
+                                start,
+                                "unterminated escape sequence",
+                            ));
                         }
                     }
                 }
@@ -497,7 +456,7 @@ impl Lexer {
         }
     }
 
-    fn scan_triple_string(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_triple_string(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
         // We've already consumed the opening `"""`.
         // Read raw content until closing `"""`.
         // No escape processing, no interpolation.
@@ -506,10 +465,11 @@ impl Lexer {
         loop {
             match self.peek() {
                 None => {
-                    return Err(LexError {
-                        message: "unterminated triple-quoted string".to_string(),
-                        span: start,
-                    });
+                    return Err(Diagnostic::error(
+                        Code::UnterminatedString,
+                        start,
+                        "unterminated triple-quoted string",
+                    ));
                 }
                 Some('"') if self.peek_ahead(1) == Some('"') && self.peek_ahead(2) == Some('"') => {
                     // Consume closing """
@@ -589,7 +549,7 @@ impl Lexer {
         result_lines.join("\n")
     }
 
-    fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, Diagnostic> {
         // Handle hex (0x) and binary (0b) prefixes
         if first == '0'
             && let Some(prefix) = self.peek()
@@ -654,10 +614,11 @@ impl Lexer {
             }
             // Must have at least one digit after e
             if !self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                return Err(LexError {
-                    message: "expected digit after exponent".into(),
-                    span: start,
-                });
+                return Err(Diagnostic::error(
+                    Code::InvalidNumber,
+                    self.since(start),
+                    "expected digit after exponent",
+                ));
             }
             while let Some(ch) = self.peek() {
                 if ch.is_ascii_digit() || ch == '_' {
@@ -672,27 +633,34 @@ impl Lexer {
         }
 
         if is_float {
-            let val: f64 = num.parse().map_err(|_| LexError {
-                message: "number literal too large".into(),
-                span: start,
+            let val: f64 = num.parse().map_err(|_| {
+                Diagnostic::error(
+                    Code::InvalidNumber,
+                    self.since(start),
+                    "number literal too large",
+                )
             })?;
             if !val.is_finite() {
-                return Err(LexError {
-                    message: "number literal out of range (not finite)".into(),
-                    span: start,
-                });
+                return Err(Diagnostic::error(
+                    Code::InvalidNumber,
+                    self.since(start),
+                    "number literal out of range (not finite)",
+                ));
             }
             Ok((Token::Float(val), start))
         } else {
-            let val: i64 = num.parse().map_err(|_| LexError {
-                message: "number literal too large".into(),
-                span: start,
+            let val: i64 = num.parse().map_err(|_| {
+                Diagnostic::error(
+                    Code::InvalidNumber,
+                    self.since(start),
+                    "number literal too large",
+                )
             })?;
             Ok((Token::Int(val), start))
         }
     }
 
-    fn scan_hex_int(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_hex_int(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
         let mut digits = String::new();
         while let Some(ch) = self.peek() {
             if ch.is_ascii_hexdigit() || ch == '_' {
@@ -705,19 +673,23 @@ impl Lexer {
             }
         }
         if digits.is_empty() {
-            return Err(LexError {
-                message: "expected hex digit after 0x".into(),
-                span: start,
-            });
+            return Err(Diagnostic::error(
+                Code::InvalidNumber,
+                self.since(start),
+                "expected hex digit after 0x",
+            ));
         }
-        let val = i64::from_str_radix(&digits, 16).map_err(|_| LexError {
-            message: "hex literal too large".into(),
-            span: start,
+        let val = i64::from_str_radix(&digits, 16).map_err(|_| {
+            Diagnostic::error(
+                Code::InvalidNumber,
+                self.since(start),
+                "hex literal too large",
+            )
         })?;
         Ok((Token::Int(val), start))
     }
 
-    fn scan_binary_int(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_binary_int(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
         let mut digits = String::new();
         while let Some(ch) = self.peek() {
             if ch == '0' || ch == '1' || ch == '_' {
@@ -730,14 +702,18 @@ impl Lexer {
             }
         }
         if digits.is_empty() {
-            return Err(LexError {
-                message: "expected binary digit after 0b".into(),
-                span: start,
-            });
+            return Err(Diagnostic::error(
+                Code::InvalidNumber,
+                self.since(start),
+                "expected binary digit after 0b",
+            ));
         }
-        let val = i64::from_str_radix(&digits, 2).map_err(|_| LexError {
-            message: "binary literal too large".into(),
-            span: start,
+        let val = i64::from_str_radix(&digits, 2).map_err(|_| {
+            Diagnostic::error(
+                Code::InvalidNumber,
+                self.since(start),
+                "binary literal too large",
+            )
         })?;
         Ok((Token::Int(val), start))
     }
@@ -778,7 +754,7 @@ impl Lexer {
         (tok, start)
     }
 
-    fn next_token(&mut self) -> Result<SpannedToken, LexError> {
+    fn next_token(&mut self) -> Result<SpannedToken, Diagnostic> {
         // Skip whitespace, tracking newlines
         let mut had_newline = self.skip_whitespace();
 
@@ -979,28 +955,29 @@ impl Lexer {
                     self.advance_char();
                     Ok((Token::AndAnd, start))
                 } else {
-                    Err(LexError {
-                        message: "unexpected character '&', did you mean '&&'?".to_string(),
-                        span: start,
-                    })
+                    Err(Diagnostic::error(
+                        Code::UnexpectedChar,
+                        self.since(start),
+                        "unexpected character '&', did you mean '&&'?",
+                    ))
                 }
             }
 
-            ';' => Err(LexError {
-                message: "semicolons are not used in silt — use a newline to separate statements"
-                    .to_string(),
-                span: start,
-            }),
+            ';' => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                "semicolons are not used in silt — use a newline to separate statements",
+            )),
             // A BOM after the start of the file (the leading one is
             // skipped in `Lexer::new`) is invisible and zero-width, so
             // quoting the raw char would render an empty-looking error.
             // Name it instead.
-            '\u{FEFF}' => Err(LexError {
-                message: "unexpected character: byte-order mark (U+FEFF); \
-                          a BOM is only permitted at the very start of the file"
-                    .to_string(),
-                span: start,
-            }),
+            '\u{FEFF}' => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                "unexpected character: byte-order mark (U+FEFF); \
+                          a BOM is only permitted at the very start of the file",
+            )),
             // ASCII/Unicode control characters (U+0001–U+001F, U+007F,
             // …) are invisible, so quoting the raw byte renders an
             // empty-looking error in any non-`cat -v` sink (log files,
@@ -1009,14 +986,16 @@ impl Lexer {
             // to every invisible control char. `escape_default` yields
             // `\u{1}`, `\t`, etc.; printable chars (`@`, …) are not
             // control and keep their plain quoted form.
-            _ if ch.is_control() => Err(LexError {
-                message: format!("unexpected character: '{}'", ch.escape_default()),
-                span: start,
-            }),
-            _ => Err(LexError {
-                message: format!("unexpected character: '{ch}'"),
-                span: start,
-            }),
+            _ if ch.is_control() => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                format!("unexpected character: '{}'", ch.escape_default()),
+            )),
+            _ => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                format!("unexpected character: '{ch}'"),
+            )),
         }
     }
 }
@@ -1057,7 +1036,7 @@ mod tests {
     use super::*;
 
     fn lex(input: &str) -> Vec<Token> {
-        Lexer::new(input)
+        Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap()
             .into_iter()
@@ -1346,25 +1325,25 @@ mod tests {
     #[test]
     fn test_scientific_rejects_overflow() {
         // 1e999 is not finite — must be rejected
-        let result = Lexer::new("1e999").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "1e999").tokenize();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_hex_empty_digits_error() {
-        let result = Lexer::new("0x").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "0x").tokenize();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_binary_empty_digits_error() {
-        let result = Lexer::new("0b").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "0b").tokenize();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_scientific_no_digit_after_e_error() {
-        let result = Lexer::new("1e").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "1e").tokenize();
         assert!(result.is_err());
     }
 }

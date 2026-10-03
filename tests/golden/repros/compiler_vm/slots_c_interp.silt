@@ -1,0 +1,9 @@
+-- verdict: same
+fn main() {
+  let opt = Some(41)
+  let name = "bob"
+  println("hello {name}: {match opt {
+    Some(v) -> v
+    None -> 0
+  }}")
+}

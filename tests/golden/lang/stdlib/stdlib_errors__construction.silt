@@ -1,20 +1,20 @@
 import io
-fn show(e: IoError) -> String {
+fn show(e: io.IoError) -> String {
   match e {
-    IoNotFound(p) -> "IoNotFound({p})"
-    IoInterrupted -> "IoInterrupted"
+    io.IoNotFound(p) -> "IoNotFound({p})"
+    io.IoInterrupted -> "IoInterrupted"
     _ -> "other"
   }
 }
 fn main() {
   -- bare and module-qualified construction build the same variant
-  let a: IoError = IoNotFound("config.toml")
-  let b: IoError = IoError.IoNotFound("config.toml")
+  let a: io.IoError = io.IoNotFound("config.toml")
+  let b: io.IoError = io.IoError.IoNotFound("config.toml")
   println(show(a))
   println(show(b))
   println(a == b)
   -- a nullary variant is a value, not a constructor
-  let c: IoError = IoInterrupted
+  let c: io.IoError = io.IoInterrupted
   println(show(c))
   -- Display renders the error message
   println(a)

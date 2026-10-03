@@ -1,0 +1,9 @@
+-- verdict: same
+-- A module's pub let println and pub let list are read as m.println and
+-- m.list; they do not take over the importer's println or list.
+import m
+
+fn main() {
+  println(m.println)
+  println(m.list)
+}

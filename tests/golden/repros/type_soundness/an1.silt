@@ -1,0 +1,13 @@
+-- verdict: same
+fn f(x: Option) -> Int { 1 }
+fn g(x: List) -> Int { 1 }
+fn h(x: Result(Int)) -> Int { 1 }
+fn i(x: Map(Int)) -> Int { 1 }
+fn j(x: Foo) -> Int { 1 }
+fn k(x: List(Int, Int)) -> Int { 1 }
+fn l(x: Int(String)) -> Int { 1 }
+fn main() {
+  println(f(Some(1)))
+  println(f(Some("s")))
+  println(g([1]))
+}

@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  let n = [[1], [2, 3]] |> list.map { xs -> xs
+  |> list.length } -- count
+  println("{n}")
+}

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: an impl is not exported: `pub` goes on the trait declaration
+pub trait Display for Int {
+  fn display(self) -> String {
+    "int"
+  }
+}
+
+fn main() {}

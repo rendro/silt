@@ -1,0 +1,7 @@
+import b
+pub fn even(n: Int) -> Bool {
+  match n {
+    0 -> true
+    _ -> b.odd(n - 1)
+  }
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+import json
+fn main() {
+  let r = { type_: 1 }
+  println(r.type_)
+}

@@ -1,0 +1,20 @@
+-- verdict: same
+import stream
+import channel
+import time
+fn main() {
+  -- pump is the only receiver of `gate`; main is the only sender
+  let gate = channel.new(0)
+  let out = stream.from_list([1, 2, 3])
+    |> stream.map(fn(x) {
+      time.sleep(time.ms(50))
+      match channel.receive(gate) {
+        channel.Message(v) -> x + v
+        _ -> 0 - 1
+      }
+    })
+  channel.send(gate, 100)
+  channel.send(gate, 200)
+  channel.send(gate, 300)
+  println(stream.collect(out))
+}

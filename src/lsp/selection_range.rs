@@ -12,18 +12,15 @@
 use lsp_types::SelectionRange;
 
 use crate::ast::*;
+use crate::source::{SourceFile, Span};
 
 use super::Server;
-use super::conversions::{offset_to_position, position_to_offset};
-use super::text_utils::{expr_extent, match_closing_brace};
+use super::conversions::{offsets_to_range, position_to_offset};
 
-/// A byte-offset extent `[start, end)` collected during the AST walk.
-/// Replaces the previous `Vec<Span>` representation, which only carried
-/// the start offset and forced downstream `span_to_range` to derive an
-/// end via token-length lookup — that gave a 2-byte range for `fn`
-/// decls regardless of body extent. Carrying the explicit end here
-/// produces decl-level chain elements that actually ENCLOSE the cursor
-/// (round-84 lock; tier-2 `selection_range_returns_nested_chain`).
+/// A byte-offset extent `[start, end)` collected during the AST walk:
+/// the extent of a node's span. A decl-level element of the chain
+/// encloses the cursor (round-84 lock; tier-2
+/// `selection_range_returns_nested_chain`).
 #[derive(Copy, Clone)]
 struct Extent {
     start: usize,
@@ -31,8 +28,21 @@ struct Extent {
 }
 
 impl Extent {
+    fn of(span: Span) -> Self {
+        Extent {
+            start: span.start as usize,
+            end: span.end as usize,
+        }
+    }
+
     fn width(&self) -> usize {
         self.end.saturating_sub(self.start)
+    }
+
+    /// Whether the extent holds `cursor` (its end included, so a cursor
+    /// right after the last character still selects the node).
+    fn holds(&self, cursor: usize) -> bool {
+        cursor >= self.start && cursor <= self.end
     }
 }
 
@@ -51,7 +61,7 @@ impl Server {
             let cursor = position_to_offset(source, pos);
             let mut ranges: Vec<Extent> = Vec::new();
             for decl in &program.decls {
-                collect_decl_ranges(decl, source, cursor, &mut ranges);
+                collect_decl_ranges(decl, cursor, &mut ranges);
             }
             if ranges.is_empty() {
                 // Fall back to a degenerate range at the cursor.
@@ -73,14 +83,11 @@ impl Server {
     }
 }
 
-fn build_chain(ranges: &[Extent], source: &str) -> SelectionRange {
+fn build_chain(ranges: &[Extent], source: &SourceFile) -> SelectionRange {
     let mut parent: Option<Box<SelectionRange>> = None;
     // Walk outermost → innermost, building parents as we go.
     for ext in ranges.iter().rev() {
-        let range = lsp_types::Range::new(
-            offset_to_position(source, ext.start),
-            offset_to_position(source, ext.end),
-        );
+        let range = offsets_to_range(source, ext.start, ext.end);
         parent = Some(Box::new(SelectionRange { range, parent }));
     }
     match parent {
@@ -94,111 +101,51 @@ fn build_chain(ranges: &[Extent], source: &str) -> SelectionRange {
 
 // ── Decl walkers ───────────────────────────────────────────────────
 
-fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<Extent>) {
+fn collect_decl_ranges(decl: &Decl, cursor: usize, out: &mut Vec<Extent>) {
     match decl {
-        Decl::Fn(f) => {
-            try_push_body_extent(&f.body, f.span.offset, cursor, out, source);
-        }
-        Decl::Let { value, span, .. } => {
-            try_push_body_extent(value, span.offset, cursor, out, source);
-        }
+        Decl::Fn(f) => try_push_body_extent(f.span, &f.body, cursor, out),
+        Decl::Let { value, span, .. } => try_push_body_extent(*span, value, cursor, out),
         Decl::TraitImpl(ti) => {
             if ti.is_auto_derived {
                 return;
             }
             for method in &ti.methods {
-                try_push_body_extent(&method.body, method.span.offset, cursor, out, source);
+                try_push_body_extent(method.span, &method.body, cursor, out);
             }
         }
-        Decl::Type(td) => {
-            // Round-83 GAP fix: bound the cursor on BOTH sides with the
-            // decl's actual extent. `td.span` is just the `type` keyword
-            // span (4 bytes); without an upper bound we'd push this
-            // unrelated keyword span into the chain whenever the cursor
-            // appears AFTER the decl in source order, making it the
-            // outermost element of an unrelated chain (chain parent does
-            // not enclose its child — Shift+Alt+→ semantics broken).
-            let end = type_decl_extent(td, source);
-            if cursor >= td.span.offset && cursor <= end {
-                out.push(Extent {
-                    start: td.span.offset,
-                    end,
-                });
-            }
-        }
-        Decl::Trait(t) => {
-            // Round-83 GAP fix: same as Decl::Type — `t.span` is just the
-            // `trait` keyword (5 bytes). The trait body is always
-            // brace-delimited, so scan for the matching `}`.
-            let end = match_closing_brace(source, t.span.offset).unwrap_or(source.len());
-            if cursor >= t.span.offset && cursor <= end {
-                out.push(Extent {
-                    start: t.span.offset,
-                    end,
-                });
+        // Round-83 GAP fix: the decl is pushed only when it holds the
+        // cursor, so an unrelated decl never becomes the outermost
+        // element of a chain (a chain parent encloses its child —
+        // Shift+Alt+→ semantics).
+        Decl::Type(TypeDecl { span, .. }) | Decl::Trait(TraitDecl { span, .. }) => {
+            let extent = Extent::of(*span);
+            if extent.holds(cursor) {
+                out.push(extent);
             }
         }
         _ => {}
     }
 }
 
-/// End offset (exclusive) of a `type` declaration in source.
-///
-/// For brace-bodied types (`type Foo { ... }` — records and enums) this
-/// scans forward for the matching `}`. For aliases (`type Foo = ...`)
-/// there is no brace body in source; we scan to end-of-line, which is
-/// the canonical decl terminator for single-line aliases. Multi-line
-/// aliases are rare; falling back to end-of-line on those still gives a
-/// non-zero extent that correctly excludes the rest of the file.
-fn type_decl_extent(td: &TypeDecl, source: &str) -> usize {
-    match &td.body {
-        TypeBody::Record(_) | TypeBody::Enum(_) => {
-            match_closing_brace(source, td.span.offset).unwrap_or(source.len())
-        }
-        TypeBody::Alias(_) => {
-            // Alias: scan from the `type` keyword to the next newline.
-            let bytes = source.as_bytes();
-            let start = td.span.offset.min(bytes.len());
-            let mut i = start;
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            i
-        }
-    }
-}
-
-fn collect_expr_ranges(expr: &Expr, source: &str, cursor: usize, out: &mut Vec<Extent>) {
-    let end = expr_extent(expr, source);
-    if cursor < expr.span.offset || cursor > end {
+fn collect_expr_ranges(expr: &Expr, cursor: usize, out: &mut Vec<Extent>) {
+    let extent = Extent::of(expr.span);
+    if !extent.holds(cursor) {
         return;
     }
-    out.push(Extent {
-        start: expr.span.offset,
-        end,
-    });
+    out.push(extent);
     super::ast_walk::visit_expr_children(expr, |child| {
-        collect_expr_ranges(child, source, cursor, out);
+        collect_expr_ranges(child, cursor, out);
     });
 }
 
-/// Shared body-extent boilerplate used by `Decl::Fn`, `Decl::Let`, and each
-/// `Decl::TraitImpl` method arm: compute the body's end offset, push the
-/// `[decl_start, end]` extent when the cursor is enclosed, and recurse into
-/// the body for nested expression ranges. Round-85 BLOAT-DUP fix.
-fn try_push_body_extent(
-    body: &Expr,
-    decl_start: usize,
-    cursor: usize,
-    out: &mut Vec<Extent>,
-    source: &str,
-) {
-    let end = expr_extent(body, source);
-    if cursor >= decl_start && cursor <= end {
-        out.push(Extent {
-            start: decl_start,
-            end,
-        });
-        collect_expr_ranges(body, source, cursor, out);
+/// Shared boilerplate used by `Decl::Fn`, `Decl::Let`, and each
+/// `Decl::TraitImpl` method arm: push the decl's extent when it holds
+/// the cursor, and recurse into the body for nested expression ranges.
+/// Round-85 BLOAT-DUP fix.
+fn try_push_body_extent(decl_span: Span, body: &Expr, cursor: usize, out: &mut Vec<Extent>) {
+    let extent = Extent::of(decl_span);
+    if extent.holds(cursor) {
+        out.push(extent);
+        collect_expr_ranges(body, cursor, out);
     }
 }

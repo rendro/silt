@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: error[package]: dependency key `util` is also the name of the module `src/util.silt`
+-- stderr-contains: --> silt.toml:6:1
+-- `import util` cannot mean both the dependency and src/util.silt.
+import util
+fn main() { println(util.who()) }

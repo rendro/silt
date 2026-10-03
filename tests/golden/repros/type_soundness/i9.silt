@@ -1,0 +1,8 @@
+-- verdict: same
+-- auto-derive with type parameter instantiated to a Fn through generic fn
+type Box(a) { Box(a) }
+fn same(x: Box(a), y: Box(a)) -> Bool { x == y }
+fn main() {
+  println(same(Box(1), Box(1)))
+  println(same(Box(fn(x) { x }), Box(fn(x) { x })))
+}

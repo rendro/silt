@@ -1,0 +1,23 @@
+-- verdict: same
+import channel
+import list
+import task
+import time
+import option
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch, 0)
+  let senders = [1, 2, 3] |> list.map { i ->
+    task.spawn(fn() {
+      channel.send(ch, i)
+      "sender {i} returned normally"
+    })
+  }
+  time.sleep(time.ms(100))
+  channel.close(ch)
+  time.sleep(time.ms(100))
+  -- drain what is there
+  match channel.receive(ch) { channel.Message(v) -> println("drain {v}")  channel.Closed -> println("closed")  _ -> () }
+  match channel.receive(ch) { channel.Message(v) -> println("drain {v}")  channel.Closed -> println("closed")  _ -> () }
+  println(task.join(list.get(senders, 0) |> option.unwrap_or(task.spawn(fn() { "x" }))))
+}

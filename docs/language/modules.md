@@ -19,14 +19,13 @@ pub fn add(a, b) { a + b }
 fn helper(x) { x * 2 }   -- private
 ```
 
-A file in a subdirectory is imported with a dotted path:
+A module path is one name: there is no `import net.http`, and a file in a
+subdirectory of `src/` is not a module.
 
 ```
 src/
   main.silt
   geometry.silt      -- imported as `geometry`
-  net/
-    http.silt        -- imported as `net.http`
 ```
 
 ## Visibility
@@ -37,6 +36,9 @@ Items are **private by default**. Only `pub` items are exported:
 pub fn add(a, b) { a + b }
 fn helper(x) { x * 2 }       -- not exported
 
+pub let limit = 10                  -- exported
+pub let (low, high) = (1, 99)       -- exports `low` and `high`
+
 pub type Point { x: Int, y: Int }   -- exports the type and its constructor
 pub type Shape {                     -- exports the type and all variants
   Circle(Int),
@@ -45,7 +47,31 @@ pub type Shape {                     -- exports the type and all variants
 ```
 
 When a `pub type` declares enum variants, all constructors are exported with
-it.
+it. A trait is exported with `pub trait`:
+
+```silt
+pub trait Describe {
+  fn describe(self) -> String
+}
+```
+
+The methods of a trait declared without `pub` can be called only inside
+its module, even on a value of an exported type.
+
+A public declaration cannot name a private record, enum or trait of its
+module: a `pub fn` whose parameter, return type or `where` bound, or a
+`pub type` whose field or variant, names one is an error, since an
+importer could use the declaration but never name what it uses. A
+private type alias may appear there: an alias is only another name for
+its type.
+
+An impl is never exported or imported: `trait Describe for Point { ... }`
+applies wherever the trait and the type are used.
+
+Naming a private item from another module is an error at the name:
+`import geometry.{ helper }` reports that `helper` is private to
+`geometry`, and `import geometry.{ nope }` that `geometry` has no member
+`nope`.
 
 ## Imports
 
@@ -57,15 +83,79 @@ import geometry.{ add, Point }    -- direct:     add(1, 2)
 import geometry as g              -- aliased:    g.add(1, 2)
 ```
 
-`import geometry.{ add }` brings only `add` into scope. To also use other
-items as `geometry.sub`, add a separate `import geometry`.
+`import geometry` binds one name, `geometry`, and every member of the
+module is reached through it, in every position:
 
-Qualified paths cover **types** as well as functions: enum constructors
-(`geometry.Circle(2.0)`), record literals (`geometry.Point { x: 1, y: 2 }`),
-and patterns (`geometry.Circle(r) ->`, `geometry.Point { x, .. } ->`) all
-accept the `module.Name` spelling. The qualified and bare forms build and
-match exactly the same values; qualification is how you disambiguate when
-two imported modules export the same type name.
+- functions and values: `geometry.add(1, 2)`;
+- constructors and record literals: `geometry.Circle(2.0)`,
+  `geometry.Shape.Circle(2.0)`, `geometry.Point { x: 1, y: 2 }`;
+- patterns: `geometry.Circle(r) ->`, `geometry.Shape.Circle(r) ->`,
+  `geometry.Point { x, .. } ->`;
+- types: `fn area(s: geometry.Shape)`, `List(geometry.Point)`,
+  `Fn(geometry.Point) -> Int`, `type Shapes = List(geometry.Shape)`;
+- traits: `trait geometry.Describe for Local`, `trait Display for geometry.Point`,
+  `where a: geometry.Describe`, `trait Loud: geometry.Describe`.
+
+`geometry.Circle` works when `Circle` is the only variant of that name
+among the module's exports; `geometry.Shape.Circle` always works.
+
+`import geometry.{ add, Shape }` binds exactly `add` and `Shape`, and not
+`geometry`. An enum imported this way does not bring its variants: write
+`Shape.Circle(2.0)`, or list `Circle` as well. To also use other items as
+`geometry.sub`, add a separate `import geometry`.
+
+A member used without its module is an error that says how to reach it:
+
+```
+error[type]: undefined variable 'add'
+  = help: did you mean `geometry.add`? or import the name: `import geometry.{ add }`
+```
+
+### Variants of one name
+
+Two enums may have variants of one name. `Shape.Red` and `Color.Red` say
+which; a bare `Red` where both enums are in scope is an error, with a
+label at each declaration:
+
+```silt
+type Shape { Red, Square }
+type Color { Red, Blue }
+
+fn main() {
+  let s = Shape.Red
+  let c = Color.Red
+  println("{s} {c}")     -- Red Red
+}
+```
+
+From another module, `geometry.Red` works when `Red` is the only variant of
+that name among the module's exports, and `geometry.Shape.Red` always
+works. `import geometry.{ Red }` of a name two of its enums share is an
+error: import the enum and write `Shape.Red`.
+
+### Two types of one name
+
+Two modules may each declare a type of one name. They are different
+types, kept apart by their qualifiers: `a.Pt` and `b.Pt`, or a module's
+own `Pt` and an imported `b.Pt`. A value of one is not a value of the
+other, and each has its own trait impls.
+
+A value of such a type prints qualified, as the program names the
+module: `a.Pt {x: 1}` for a module `a` of the program, `db.Pt {x: 1}`
+for the library of a dependency `db`, and `db.util.Pt {x: 1}` for its
+module `util`. A type whose name no other type of the program has
+prints bare: `Pt {x: 1}`.
+
+Two modules may also each declare a trait of one name, say `Show` with
+a method `show`, and implement it for one type. A method call means the
+method of the trait its module sees: a trait it declares, imports by
+name, or reaches through a module it imports. A call that sees both
+traits is an error at the call. The builtin traits (`Display`,
+`Compare`, `Equal`, `Hash`, `Error`) are always seen: a trait of the
+program with a method named `display` implemented for `Int` makes
+`5.display()` ambiguous; call it through a `where` bound for the
+trait. A derived impl always calls the builtin trait's methods of its
+fields.
 
 ## Module names and shadowing
 
@@ -106,13 +196,20 @@ the import.
 ## Multi-file projects
 
 `silt init` creates a package with a `silt.toml` manifest and a `src/` tree.
-The entry point is `src/main.silt`, and every `.silt` file under `src/` is a
-module in the package. Modules in subdirectories use dotted paths: `net/`,
-`util/crypto/`, etc.
+The entry point is `src/main.silt`, and every `.silt` file directly in
+`src/` is a module of the package, imported by its file name.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url>`. After adding, imports from
 the dependency package work exactly like local modules.
+
+`import x` in a module of a package means, in this order: the builtin
+module `x`; the dependency whose key under `[dependencies]` in this
+package's `silt.toml` is `x` (its `src/lib.silt`); this package's own
+`src/x.silt`. A dependency's own dependencies are its own: to import one,
+declare it in your `silt.toml` too. A module file named like a builtin
+module (`src/list.silt`) is an error, because `import list` always means
+the builtin one.
 
 A package consumed as a dependency exposes `src/lib.silt` instead of
 `src/main.silt`. Such a library-only package has nothing to execute — `silt
@@ -164,6 +261,24 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 | `tcp` | TCP listener and stream primitives |
 | `stream` | Lazy iterators backed by tasks and channels |
 | `uuid` | UUID generation and parsing |
+
+The types and enums of a built-in module are its members like any
+other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
+`channel.Closed`, `http.Request` and `http.GET`, `io.IoError` and
+`io.IoNotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`,
+`task.Handle(a)`, `postgres.PgPool` (and `PgTx`, `PgCursor`,
+`QueryResult`, `ExecResult`, `Value`). `ParseError`, the error of both
+`int.parse` and `float.parse`, is declared in `int` and reached through
+either module: `int.ParseError` and `float.ParseError` are one type. A
+selective import works for them too: `import channel.{ Message }`.
+
+The **prelude** needs no import: the primitive and container types (`Int`,
+`Float`, `Bool`, `String`, `Bytes`, `List`, `Map`, `Set`, `Channel`, ...),
+`TypeOf(a)` (the type of a type used as a value, like `Int` or a
+`type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
+`panic`. A module's own declaration or import of one of these names
+shadows the prelude: after `type Maybe { Some(a), None }`, a bare `None`
+is `Maybe.None`, and the prelude's is still `Option.None`.
 
 The order of rows matches the order of entries in `BUILTIN_MODULES`; a
 parity-lock test in `tests/meta/round74_modules_doc_lists_all_builtins_tests.rs`

@@ -32,6 +32,7 @@
 
 #![cfg(feature = "http")]
 
+use silt::typeinfo::bv;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -175,9 +176,13 @@ fn s(v: &str) -> Value {
 }
 
 fn method_variant(tag: &str) -> Value {
-    // `http.request` expects args[0] to be a Variant with no payload
-    // carrying the method name (e.g. Method::GET).
-    Value::Variant(tag.to_string(), Vec::new())
+    // `http.request` expects args[0] to be a variant of `Method`
+    // (e.g. `http.GET`).
+    let method = silt::typeinfo::builtin_type(silt::typeinfo::ty::METHOD);
+    Value::Variant(
+        silt::typeinfo::Tag::named(method, tag).expect("a method"),
+        Vec::new(),
+    )
 }
 
 #[allow(clippy::mutable_key_type)] // Value holds Channel handles; not used as keys here.
@@ -213,7 +218,9 @@ fn run_body_verb_parity(verb: &str) {
     ];
     let resp = call_request(verb, &url, &body, headers);
     match &resp {
-        Value::Variant(tag, _) => assert_eq!(tag, "Ok", "unexpected Err from {verb}: {resp:?}"),
+        Value::Variant(tag, _) => {
+            assert_eq!(tag.name(), "Ok", "unexpected Err from {verb}: {resp:?}")
+        }
         other => panic!("expected Variant, got {other:?}"),
     }
 
@@ -260,7 +267,9 @@ fn run_no_body_verb_parity(verb: &str) {
     let headers = &[("X-Silt-Verb", verb), ("X-Silt-Probe", "parity")];
     let resp = call_request(verb, &url, body, headers);
     match &resp {
-        Value::Variant(tag, _) => assert_eq!(tag, "Ok", "unexpected Err from {verb}: {resp:?}"),
+        Value::Variant(tag, _) => {
+            assert_eq!(tag.name(), "Ok", "unexpected Err from {verb}: {resp:?}")
+        }
         other => panic!("expected Variant, got {other:?}"),
     }
 
@@ -367,7 +376,7 @@ fn post_empty_body_uses_send_empty_path() {
     let url = format!("http://127.0.0.1:{port}/empty");
     let resp = call_request("POST", &url, "", &[("X-Silt-Empty", "1")]);
     match &resp {
-        Value::Variant(tag, _) => assert_eq!(tag, "Ok", "unexpected Err: {resp:?}"),
+        Value::Variant(tag, _) => assert_eq!(tag.name(), "Ok", "unexpected Err: {resp:?}"),
         other => panic!("expected Variant, got {other:?}"),
     }
     let cap = rx
@@ -381,44 +390,23 @@ fn post_empty_body_uses_send_empty_path() {
     );
 }
 
-// ── unknown verb preserves pre-refactor error shape ──────────────────
+// ── a variant of another enum is not a method ────────────────────────
 
 #[test]
-fn unknown_verb_returns_http_invalid_url_pre_refactor_shape() {
-    // The pre-refactor code's catch-all arm returned
-    // Err(HttpInvalidUrl("unknown method: <tag>")). Lock that exact
-    // variant + message prefix.
+fn a_variant_of_another_enum_is_not_a_method() {
     let mut vm = Vm::new();
     let args = vec![
-        method_variant("BREW"),
+        Value::variant(bv::NONE, Vec::new()),
         s("http://127.0.0.1:1/"),
         s(""),
         headers_map(&[]),
     ];
-    let resp = call_http(&mut vm, "request", &args).expect("call_http request");
-    match &resp {
-        Value::Variant(outer, outer_payload) => {
-            assert_eq!(outer, "Err");
-            assert_eq!(outer_payload.len(), 1);
-            match &outer_payload[0] {
-                Value::Variant(inner, inner_payload) => {
-                    assert_eq!(inner, "HttpInvalidUrl");
-                    assert_eq!(inner_payload.len(), 1);
-                    match &inner_payload[0] {
-                        Value::String(msg) => {
-                            assert!(
-                                msg.contains("unknown method: BREW"),
-                                "expected 'unknown method: BREW' in msg, got: {msg}"
-                            );
-                        }
-                        other => panic!("expected String payload, got {other:?}"),
-                    }
-                }
-                other => panic!("expected inner Variant, got {other:?}"),
-            }
-        }
-        other => panic!("expected Variant, got {other:?}"),
-    }
+    let err = call_http(&mut vm, "request", &args).expect_err("not a Method");
+    assert!(
+        err.message.contains("invalid Method variant"),
+        "{}",
+        err.message
+    );
 }
 
 // ── connect-failure phrasing preserved per verb ──────────────────────
@@ -448,7 +436,8 @@ fn assert_connect_failure_err_shape(verb: &str) {
     match &resp {
         Value::Variant(outer, outer_payload) => {
             assert_eq!(
-                outer, "Err",
+                outer.name(),
+                "Err",
                 "expected Err for {verb} connect-failure: {resp:?}"
             );
             assert_eq!(outer_payload.len(), 1);
@@ -461,7 +450,7 @@ fn assert_connect_failure_err_shape(verb: &str) {
                     // up Ok from a closed port.
                     assert!(
                         matches!(
-                            inner.as_str(),
+                            inner.name(),
                             "HttpConnect" | "HttpUnknown" | "HttpTimeout" | "HttpClosedEarly"
                         ),
                         "unexpected Err variant for {verb}: {inner}"

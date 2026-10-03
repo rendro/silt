@@ -8,7 +8,7 @@
 //!
 //! The fix skips a single *leading* BOM inside `Lexer::new` (the same
 //! policy as rustc), which covers run/check/fmt/test/REPL/LSP uniformly
-//! since every surface lexes through `Lexer::new(...).tokenize()`. The
+//! since every surface lexes through `Lexer::new(silt::source::FileId::default(), ...).tokenize()`. The
 //! BOM is skipped, not stripped: byte offsets and line/col stay relative
 //! to the original source string, with the BOM counting as the first
 //! column of line 1. A BOM anywhere *else* in the file is still an

@@ -1,0 +1,11 @@
+-- exit: 1
+-- A polymorphic call with no bound names no trait. On an Int, whose
+-- builtin `display` is native, a program trait's `display` for Int makes
+-- it ambiguous when it runs, rather than calling the program's trait.
+-- stderr-contains: error[runtime]: ambiguous method 'display' for type 'Int': two traits provide it
+trait Describe { fn display(self) -> String }
+trait Describe for Int { fn display(self) -> String { "described {self}" } }
+fn main() {
+  let g = { y -> y.display() }
+  println(g(5))
+}

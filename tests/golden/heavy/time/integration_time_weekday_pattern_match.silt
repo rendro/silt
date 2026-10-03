@@ -3,13 +3,13 @@ import time
 fn program() {
   let day = must_date(2024, 1, 1) |> time.weekday
   match day {
-    Monday -> "mon"
-    Tuesday -> "tue"
-    Wednesday -> "wed"
-    Thursday -> "thu"
-    Friday -> "fri"
-    Saturday -> "sat"
-    Sunday -> "sun"
+    time.Monday -> "mon"
+    time.Tuesday -> "tue"
+    time.Wednesday -> "wed"
+    time.Thursday -> "thu"
+    time.Friday -> "fri"
+    time.Saturday -> "sat"
+    time.Sunday -> "sun"
   }
 }
 

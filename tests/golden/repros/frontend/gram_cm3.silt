@@ -1,0 +1,10 @@
+-- verdict: same
+fn show(a, b) { println("{a} {b}") }
+fn main() {
+  let x = 5
+  show(1, match x { 5 -> "five" _ -> "other" })
+  let y = 1 + match x { 5 -> 10 _ -> 20 }
+  println("{y}")
+  let s = "a" + "{match x { 5 -> "five" _ -> "other" }}"
+  println(s)
+}

@@ -1,0 +1,21 @@
+-- verdict: same
+import channel
+import stream
+import task
+import time
+fn main() {
+  -- make a scheduler exist (one finished task)
+  task.join(task.spawn(fn() { 1 }))
+  let s = stream.unfold(0) { n ->
+    time.sleep(time.ms(500))
+    match n < 3 {
+      true -> Some((n, n + 1))
+      false -> None
+    }
+  }
+  match channel.select([channel.Recv(s)]) {
+    (_, channel.Message(v)) -> println("got {v}")
+    (_, channel.Closed) -> println("closed")
+    _ -> println("other")
+  }
+}

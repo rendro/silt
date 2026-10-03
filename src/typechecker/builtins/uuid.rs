@@ -11,9 +11,8 @@ use super::super::*;
 use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
-    let result = |ok_ty: Type, err_ty: Type| -> Type {
-        Type::Generic(intern("Result"), vec![ok_ty, err_ty])
-    };
+    let result =
+        |ok_ty: Type, err_ty: Type| -> Type { Type::builtin("Result", vec![ok_ty, err_ty]) };
 
     // uuid.v4: () -> String
     // Reads OS entropy via the rand crate.

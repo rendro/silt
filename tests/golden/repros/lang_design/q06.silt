@@ -1,0 +1,8 @@
+-- verdict: same
+fn main() {
+  let a = 5
+  -a
+  let b = 7
+  *a
+  println(b)
+}

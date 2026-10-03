@@ -1,0 +1,6 @@
+pub type Item { label: String }
+pub fn make(s: String) -> Item { Item { label: s } }
+trait Display for Item {
+  fn display(self) -> String { "B-item({self.label})" }
+}
+pub fn show(i: Item) -> String { i.display() }

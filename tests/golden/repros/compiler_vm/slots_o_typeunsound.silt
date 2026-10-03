@@ -1,0 +1,11 @@
+-- verdict: same
+import string
+fn main() {
+  let opt = Some(41)
+  let t = ("x", match opt {
+    Some(v) -> v
+    None -> 0
+  })
+  let (s, n) = t
+  println(string.length(s))
+}

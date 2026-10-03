@@ -1,0 +1,31 @@
+-- verdict: same
+import list
+import set
+type Money { cents: Int }
+
+trait Display for Money {
+  fn display(self) -> String { "USD {self.cents}" }
+}
+trait Equal for Money {
+  fn equal(self, other: Money) -> Bool { true }
+}
+trait Compare for Money {
+  fn compare(self, other: Money) -> Int { other.cents.compare(self.cents) }
+}
+trait Hash for Money {
+  fn hash(self) -> Int { 7 }
+}
+
+fn main() {
+  let a = Money { cents: 1 }
+  let b = Money { cents: 2 }
+  println("display(): {a.display()}")
+  println("interp: {a}")
+  println(a)
+  println("list interp: {[a]}")
+  println("equal(): {a.equal(b)}   ==: {a == b}")
+  println("compare(): {a.compare(b)}   <: {a < b}")
+  println("sort: {list.sort([a, b])}")
+  println("set size: {set.length(set.from_list([a, b]))}")
+  println("Some interp: {Some(a)}")
+}

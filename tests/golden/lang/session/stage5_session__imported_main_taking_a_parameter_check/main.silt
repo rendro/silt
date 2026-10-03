@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- An imported `main` is judged by its type too; the error is at the item.
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it takes 1 parameter
+-- stderr-contains: --> main.silt:6:16
+import entry.{ main }

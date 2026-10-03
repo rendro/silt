@@ -1,0 +1,6 @@
+-- verdict: same
+fn run(f) = f()
+
+fn main() {
+  run {  -> println("declared pure, does io") }
+}

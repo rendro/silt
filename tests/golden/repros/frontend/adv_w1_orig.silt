@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+fn first_big(xs) {
+  when let Some(x) = xs
+  |> list.find { v -> v > 1 } else { -- nothing big
+    return 0
+  }
+  x
+}
+fn main() { println("{first_big([1, 2, 3])}") }

@@ -1,0 +1,13 @@
+trait Describe {
+  fn describe(self) -> String
+}
+
+pub type Square { side: Int }
+
+trait Describe for Square {
+  fn describe(self) -> String { "square {self.side}" }
+}
+
+pub fn square(side: Int) -> Square { Square { side: side } }
+
+pub fn described(s: Square) -> String { s.describe() }

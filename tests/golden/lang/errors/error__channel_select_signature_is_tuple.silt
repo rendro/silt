@@ -3,7 +3,7 @@
 import channel
 fn main() {
   let ch: Channel(Int) = channel.new(1)
-  let (winner, result): (Channel(Int), ChannelResult(Int)) = channel.select([Recv(ch)])
+  let (winner, result): (Channel(Int), channel.ChannelResult(Int)) = channel.select([channel.Recv(ch)])
   let _ = winner
   let _ = result
   println("ok")

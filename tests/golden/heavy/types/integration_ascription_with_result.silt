@@ -1,7 +1,7 @@
 import io
 import int
 fn program() {
-  let r = int.parse("42") as Result(Int, ParseError)
+  let r = int.parse("42") as Result(Int, int.ParseError)
   match r {
     Ok(n) -> n
     Err(_) -> -1

@@ -1,0 +1,20 @@
+-- verdict: same
+import stream
+import list
+import channel
+import task
+fn main() {
+  -- a callback inside a pump that blocks on a channel receive
+  let gate = channel.new(1)
+  let out = stream.from_list([1, 2, 3])
+    |> stream.map(fn(x) {
+      match channel.receive(gate) {
+        channel.Message(v) -> x + v
+        _ -> 0 - 1
+      }
+    })
+  channel.send(gate, 100)
+  channel.send(gate, 200)
+  channel.send(gate, 300)
+  println(stream.collect(out))
+}

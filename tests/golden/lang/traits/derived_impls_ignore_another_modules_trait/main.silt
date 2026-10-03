@@ -1,0 +1,13 @@
+-- Two modules' trait Describe, each with a method display implemented
+-- for Int: a derived Display of this module's Pt is the builtin one,
+-- and each module's call through its own bound calls its impl.
+import a
+import helper
+type Pt { x: Int }
+fn main() {
+  println(a.f())
+  println(helper.g())
+  println(Pt { x: 1 }.display())
+  println(Pt { x: 1 } == Pt { x: 1 })
+  println("{Pt { x: 2 }}")
+}

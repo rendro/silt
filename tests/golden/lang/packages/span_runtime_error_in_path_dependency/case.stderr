@@ -1,0 +1,10 @@
+error[runtime]: division by zero
+ --> deps/dep/src/lib.silt:3:3
+   |
+ 3 |   x / 0
+   |   ^^^^^ division by zero
+
+call stack:
+  -> helper  at deps/dep/src/lib.silt:3:3
+  -> main  at deps/dep/src/lib.silt:5:24
+  -> main  at main.silt:9:11

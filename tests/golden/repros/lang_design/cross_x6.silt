@@ -1,0 +1,9 @@
+-- verdict: same
+type U { name: String, age: Int }
+type E {}
+fn main() {
+  let name = "a"
+  let age = 1
+  let u = U { name, age }
+  println(u)
+}

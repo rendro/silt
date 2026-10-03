@@ -1,0 +1,14 @@
+-- verdict: same
+import crypto
+fn main() {
+  let v_crypto_blake2b: Int = crypto.blake2b
+  let v_crypto_blake2b_hex: Int = crypto.blake2b_hex
+  let v_crypto_constant_time_eq: Int = crypto.constant_time_eq
+  let v_crypto_hmac_sha256: Int = crypto.hmac_sha256
+  let v_crypto_hmac_sha512: Int = crypto.hmac_sha512
+  let v_crypto_md5: Int = crypto.md5
+  let v_crypto_md5_hex: Int = crypto.md5_hex
+  let v_crypto_random_bytes: Int = crypto.random_bytes
+  let v_crypto_sha256: Int = crypto.sha256
+  let v_crypto_sha512: Int = crypto.sha512
+}

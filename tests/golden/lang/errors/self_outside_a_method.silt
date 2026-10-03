@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- `self` outside a trait method is an undefined name, reported where
+-- it is written, with a help that says where `self` is bound.
+-- stderr-contains: error[type]: undefined variable 'self'
+-- stderr-contains: --> self_outside_a_method.silt:9:17
+-- stderr-contains: `self` is bound only as the first parameter of a trait method
+-- stderr-not-contains: compiler bug
+fn f() -> Int { self + 1 }
+
+fn main() {
+  println(f())
+}

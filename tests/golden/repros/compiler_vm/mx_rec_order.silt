@@ -1,0 +1,11 @@
+-- verdict: same
+import list
+type Ver { major: Int, build: Int }
+fn main() {
+  let a = Ver { major: 1, build: 9 }
+  let b = Ver { major: 2, build: 0 }
+  println("a < b (operator): {a < b}")
+  println("a.compare(b) (trait): {a.compare(b)}")
+  println("sorted: {list.sort([b, a])}")
+  println("[a] < [b]: {[a] < [b]}")
+}

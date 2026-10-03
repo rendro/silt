@@ -4,8 +4,8 @@ fn program() {
   [1, 2, 3, 4, 5]
   |> list.fold_until(0) { acc, x ->
     match acc + x > 6 {
-      true -> Stop(acc)
-      _ -> Continue(acc + x)
+      true -> list.Stop(acc)
+      _ -> list.Continue(acc + x)
     }
   }
 }

@@ -1,0 +1,8 @@
+-- verdict: same
+type Shape { Circle(Int), Rect(Int, Int) }
+fn main() {
+  println(5 |> Circle)
+  println(5 |> Rect(6))
+  println(5 |> Shape.Rect(6))
+  println(5 |> Some)
+}

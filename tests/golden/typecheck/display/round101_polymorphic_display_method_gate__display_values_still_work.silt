@@ -9,6 +9,6 @@ fn show(x: a) -> String { x.display() }
 fn main() {
   println(show(42))
   println(show("hi"))
-  println(show(ParseEmpty))
+  println(show(int.ParseEmpty))
   println(show(P { name: "x", age: 3 }))
 }

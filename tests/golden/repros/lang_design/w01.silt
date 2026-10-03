@@ -1,0 +1,17 @@
+-- verdict: same
+import int
+
+fn a(s) {
+  let res = int.parse(s)
+  when let Ok(n) = res else {
+    match res {
+      Err(e) -> return Err("bad: {e.message()}")
+      Ok(_) -> panic("unreachable")
+    }
+  }
+  Ok(n + 1)
+}
+
+fn main() {
+  println(a("1"))
+}

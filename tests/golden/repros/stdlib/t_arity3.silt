@@ -1,0 +1,8 @@
+-- verdict: same
+import string
+fn main() {
+  let s: String = string.replace("aXb", "X")
+  println(s)
+  let n: Int = string.length()
+  println(n + 1)
+}

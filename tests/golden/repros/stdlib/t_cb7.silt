@@ -1,0 +1,14 @@
+-- verdict: same
+import io
+import list
+import task
+import result
+import option
+
+fn main() {
+  let worker = task.spawn { ->
+    let r = Ok("t/f1.txt") |> result.flat_map(io.read_file)
+    ("tag", r)
+  }
+  println(task.join(worker))
+}

@@ -1,0 +1,10 @@
+-- verdict: same
+fn main() {
+  let r = 1000 + loop i = 0, acc = 0 {
+    match i >= 3 {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
+  }
+  println(r)
+}

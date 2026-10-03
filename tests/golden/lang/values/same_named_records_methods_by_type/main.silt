@@ -1,0 +1,16 @@
+-- Two modules' record types of one name, Pt, each with its own impls of
+-- a builtin trait and of a trait of one name: a method call on a value
+-- and a call through the type (`a.Pt.display(p)`) run the impl of the
+-- value's own type, which the VM finds by the type's id.
+import a
+import b
+fn main() {
+  let p = a.make(1)
+  let q = b.make(2)
+  println(p.display())
+  println(q.display())
+  println(a.Pt.display(p))
+  println(b.Pt.display(q))
+  println(p.scale())
+  println(q.scale())
+}

@@ -2,16 +2,16 @@ error[type]: type mismatch: expected Int, got String
  --> cli_test_rendering_tests__check_multiple_errors_blank_separator.silt:4:16
    |
  4 |   let a: Int = "foo"
-   |                ^ type mismatch: expected Int, got String
+   |                ^^^^^ type mismatch: expected Int, got String
 
 error[type]: type mismatch: expected Int, got Bool
  --> cli_test_rendering_tests__check_multiple_errors_blank_separator.silt:5:16
    |
  5 |   let b: Int = true
-   |                ^ type mismatch: expected Int, got Bool
+   |                ^^^^ type mismatch: expected Int, got Bool
 
 error[type]: type mismatch: expected Int, got List(Int)
  --> cli_test_rendering_tests__check_multiple_errors_blank_separator.silt:6:16
    |
  6 |   let c: Int = [1]
-   |                ^ type mismatch: expected Int, got List(Int)
+   |                ^^^ type mismatch: expected Int, got List(Int)

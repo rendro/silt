@@ -1,0 +1,13 @@
+-- verdict: same
+import float
+fn main() {
+  match float.parse("inf") {
+    Ok(f) -> { let g: Float = f
+      println(g) }
+    Err(e) -> println("err")
+  }
+  match float.parse("NaN") {
+    Ok(f) -> println(f)
+    Err(e) -> println("err")
+  }
+}

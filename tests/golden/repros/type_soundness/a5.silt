@@ -1,0 +1,6 @@
+-- verdict: same
+-- lambda param annotations
+fn main() {
+  let f = fn(x: String) { x }
+  println(f(1))
+}

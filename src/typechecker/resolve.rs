@@ -32,19 +32,19 @@ impl TypeChecker {
         if self.errors.is_empty() {
             return false;
         }
-        let mut offsets: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut offsets: std::collections::HashSet<u32> = std::collections::HashSet::new();
         Self::collect_sub_spans(value, &mut offsets);
         self.errors
             .iter()
-            .any(|e| e.severity == Severity::Error && offsets.contains(&e.span.offset))
+            .any(|e| e.severity == Severity::Error && offsets.contains(&e.span.start))
     }
 
-    /// Collect the `span.offset` of every sub-expression within `expr`
+    /// Collect the start offset of every sub-expression within `expr`
     /// (including `expr` itself) into `out`. Used by `value_already_errored`
     /// to determine whether an existing diagnostic was emitted somewhere
     /// inside the value expression.
-    fn collect_sub_spans(expr: &Expr, out: &mut std::collections::HashSet<usize>) {
-        out.insert(expr.span.offset);
+    fn collect_sub_spans(expr: &Expr, out: &mut std::collections::HashSet<u32>) {
+        out.insert(expr.span.start);
         match &expr.kind {
             ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
                 Self::collect_sub_spans(l, out);
@@ -53,7 +53,7 @@ impl TypeChecker {
             ExprKind::Unary(_, e)
             | ExprKind::QuestionMark(e)
             | ExprKind::Return(Some(e))
-            | ExprKind::FieldAccess(e, _)
+            | ExprKind::FieldAccess(e, _, _)
             | ExprKind::Ascription(e, _) => {
                 Self::collect_sub_spans(e, out);
             }
@@ -132,7 +132,7 @@ impl TypeChecker {
                 }
             }
             ExprKind::Loop { bindings, body } => {
-                for (_, e) in bindings {
+                for (_, _, e) in bindings {
                     Self::collect_sub_spans(e, out);
                 }
                 Self::collect_sub_spans(body, out);
@@ -146,7 +146,7 @@ impl TypeChecker {
         }
     }
 
-    fn collect_stmt_sub_spans(stmt: &Stmt, out: &mut std::collections::HashSet<usize>) {
+    fn collect_stmt_sub_spans(stmt: &Stmt, out: &mut std::collections::HashSet<u32>) {
         match stmt {
             Stmt::Let { value, .. } => Self::collect_sub_spans(value, out),
             Stmt::When {
@@ -211,6 +211,7 @@ impl TypeChecker {
                 let bound_names = collect_pattern_vars(pattern);
                 if bound_names.is_empty() {
                     self.error(
+                        Code::AmbiguousType,
                         "cannot infer the type of this expression — \
                          add an annotation, e.g. `let x: SomeType = ...`"
                             .to_string(),
@@ -235,6 +236,7 @@ impl TypeChecker {
                 if !used_elsewhere {
                     let first = resolve(bound_names[0]);
                     self.error(
+                        Code::AmbiguousType,
                         format!(
                             "cannot infer the type of `{first}` — \
                              add an annotation, e.g. `let {first}: SomeType = ...`"
@@ -316,12 +318,12 @@ impl TypeChecker {
             ExprKind::Unary(_, e)
             | ExprKind::QuestionMark(e)
             | ExprKind::Return(Some(e))
-            | ExprKind::FieldAccess(e, _)
+            | ExprKind::FieldAccess(e, _, _)
             | ExprKind::Ascription(e, _) => {
                 self.check_unresolved_in_expr(e);
             }
             ExprKind::Loop { bindings, body } => {
-                for (_, e) in bindings {
+                for (_, _, e) in bindings {
                     self.check_unresolved_in_expr(e);
                 }
                 self.check_unresolved_in_expr(body);
@@ -447,6 +449,7 @@ impl TypeChecker {
                 if !used_later {
                     let first = resolve(bound_names[0]);
                     self.error(
+                        Code::AmbiguousType,
                         format!(
                             "cannot infer the type of `{first}` — \
                              add an annotation, e.g. `let {first}: SomeType = ...`"
@@ -489,7 +492,7 @@ impl TypeChecker {
             ExprKind::Unary(_, e)
             | ExprKind::QuestionMark(e)
             | ExprKind::Return(Some(e))
-            | ExprKind::FieldAccess(e, _)
+            | ExprKind::FieldAccess(e, _, _)
             | ExprKind::Ascription(e, _) => Self::expr_references_name(e, name),
             ExprKind::Call(callee, args) => {
                 Self::expr_references_name(callee, name)
@@ -547,7 +550,7 @@ impl TypeChecker {
             ExprKind::Loop { bindings, body } => {
                 bindings
                     .iter()
-                    .any(|(_, e)| Self::expr_references_name(e, name))
+                    .any(|(_, _, e)| Self::expr_references_name(e, name))
                     || Self::expr_references_name(body, name)
             }
             ExprKind::Recur(args) => args.iter().any(|a| Self::expr_references_name(a, name)),
@@ -592,6 +595,7 @@ impl TypeChecker {
                         self.resolve_expr_types(&mut m.body);
                     }
                 }
+                Decl::Let { value, .. } => self.resolve_expr_types(value),
                 _ => {}
             }
         }
@@ -600,6 +604,12 @@ impl TypeChecker {
     fn resolve_expr_types(&self, expr: &mut Expr) {
         if let Some(ty) = &expr.ty {
             expr.ty = Some(self.apply(ty));
+        }
+        // A method call resolved in the deferred pass: its trait.
+        if matches!(expr.kind, ExprKind::FieldAccess(..))
+            && let Some(t) = self.deferred_method_traits.get(&expr.span)
+        {
+            expr.res = Some(crate::defs::Res::Def(t.id.0));
         }
         match &mut expr.kind {
             ExprKind::Binary(l, _, r) => {
@@ -688,7 +698,7 @@ impl TypeChecker {
                 self.resolve_expr_types(l);
                 self.resolve_expr_types(r);
             }
-            ExprKind::FieldAccess(e, _) => self.resolve_expr_types(e),
+            ExprKind::FieldAccess(e, _, _) => self.resolve_expr_types(e),
             ExprKind::RecordCreate { fields, .. } => {
                 for (_, e) in fields {
                     self.resolve_expr_types(e);
@@ -716,7 +726,7 @@ impl TypeChecker {
                 }
             }
             ExprKind::Loop { bindings, body } => {
-                for (_, e) in bindings {
+                for (_, _, e) in bindings {
                     self.resolve_expr_types(e);
                 }
                 self.resolve_expr_types(body);
@@ -743,11 +753,7 @@ mod tests {
         let mut checker = TypeChecker::new();
         let tv = checker.fresh_var();
         // Unify with Int, so it's resolved
-        let span = crate::lexer::Span {
-            line: 0,
-            col: 0,
-            offset: 0,
-        };
+        let span = crate::source::Span::BUILTIN;
         checker.unify(&tv, &Type::Int, span);
         assert!(!checker.is_bare_type_var(&tv));
     }
@@ -824,13 +830,7 @@ fn main() {
 fn double(x) { x * 2 }
 fn main() { double(5) }
         "#;
-        let tokens = crate::lexer::Lexer::new(input)
-            .tokenize()
-            .expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens)
-            .parse_program()
-            .expect("parse error");
-        let errors = check(&mut program);
+        let (program, errors) = crate::session::testing::analyze_str(input);
         assert!(
             errors
                 .iter()

@@ -1,0 +1,17 @@
+-- verdict: same
+import fs
+fn main() {
+  let v_fs_copy: Int = fs.copy
+  let v_fs_exists: Int = fs.exists
+  let v_fs_glob: Int = fs.glob
+  let v_fs_is_dir: Int = fs.is_dir
+  let v_fs_is_file: Int = fs.is_file
+  let v_fs_is_symlink: Int = fs.is_symlink
+  let v_fs_list_dir: Int = fs.list_dir
+  let v_fs_mkdir: Int = fs.mkdir
+  let v_fs_read_link: Int = fs.read_link
+  let v_fs_remove: Int = fs.remove
+  let v_fs_rename: Int = fs.rename
+  let v_fs_stat: Int = fs.stat
+  let v_fs_walk: Int = fs.walk
+}

@@ -6,16 +6,15 @@ use super::super::*;
 use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
-    let bytes_ty = Type::Generic(intern("Bytes"), vec![]);
-    let io_err_ty = Type::Generic(intern("IoError"), vec![]);
+    let bytes_ty = Type::builtin("Bytes", vec![]);
+    let io_err_ty = Type::builtin("IoError", vec![]);
     #[cfg(feature = "tcp")]
-    let tcp_stream_ty = Type::Generic(intern("TcpStream"), vec![]);
+    let tcp_stream_ty = Type::builtin("TcpStream", vec![]);
     #[cfg(feature = "tcp")]
-    let tcp_err_ty = Type::Generic(intern("TcpError"), vec![]);
-    let result = |ok_ty: Type, err_ty: Type| -> Type {
-        Type::Generic(intern("Result"), vec![ok_ty, err_ty])
-    };
-    let option = |ok_ty: Type| -> Type { Type::Generic(intern("Option"), vec![ok_ty]) };
+    let tcp_err_ty = Type::builtin("TcpError", vec![]);
+    let result =
+        |ok_ty: Type, err_ty: Type| -> Type { Type::builtin("Result", vec![ok_ty, err_ty]) };
+    let option = |ok_ty: Type| -> Type { Type::option(ok_ty) };
 
     // ── Sources ──────────────────────────────────────────────────
     // stream.from_list: List(a) -> Channel(a)

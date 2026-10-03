@@ -1,0 +1,7 @@
+-- verdict: same
+-- The methods of a `pub trait` can be called wherever the value is.
+import shapes
+fn main() {
+  println(shapes.described(shapes.square(2)))
+  println(shapes.square(3).describe())
+}

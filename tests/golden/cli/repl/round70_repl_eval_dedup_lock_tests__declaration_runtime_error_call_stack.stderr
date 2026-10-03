@@ -1,7 +1,9 @@
 error[runtime]: division by zero
- --> <repl>:1:11
+ --> <repl:1>:1:11
    |
- 1 | let x: Int = shallow()
-   |           ^ division by zero
-  -> deep  at <declaration>
-  -> shallow  at <declaration>
+ 1 | fn deep(){1/0}
+   |           ^^^ division by zero
+
+call stack:
+  -> deep  at <repl:1>:1:11
+  -> shallow  at <repl:2>:1:14

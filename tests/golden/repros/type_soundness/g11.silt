@@ -1,0 +1,7 @@
+-- verdict: same
+-- fully annotated middle: is the body checked against the annotation?
+fn leaf() { 1 }
+fn mid() -> String { leaf() }
+fn main() {
+  println(mid())
+}

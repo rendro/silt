@@ -1,0 +1,7 @@
+-- verdict: same
+fn main() {
+  let x = 1
+  let s = "{
+    x }"
+  println(s)
+}

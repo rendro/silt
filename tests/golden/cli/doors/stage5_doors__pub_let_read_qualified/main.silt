@@ -1,0 +1,10 @@
+-- verdict: same
+-- `import m` reaches a `pub let` as `m.answer`. `run` used to fail with
+-- `undefined global: m.answer` although `check` passed.
+import m
+
+fn main() {
+  println(m.answer)
+  println(m.primes)
+  println(m.bump())
+}

@@ -1,0 +1,16 @@
+-- cmd: fmt --check
+-- `pub trait` is formatted as written.
+
+pub trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for Int {
+  fn describe(self) -> String {
+    "int"
+  }
+}
+
+fn main() {
+  println(1.describe())
+}

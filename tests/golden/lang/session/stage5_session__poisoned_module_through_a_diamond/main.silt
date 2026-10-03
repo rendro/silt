@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- Two modules import the broken `m`: its parse error is reported once,
+-- and nothing else.
+import l
+import r
+
+fn main() {
+  println(1)
+}

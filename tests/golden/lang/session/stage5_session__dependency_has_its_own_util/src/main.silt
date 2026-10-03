@@ -1,0 +1,9 @@
+-- verdict: same
+-- I4: the app's src/util.silt and the dependency's own src/util.silt are
+-- two modules; each package's `import util` is its own.
+import util
+import sa
+fn main() {
+  println(util.name())
+  println("sa.who() = {sa.who()}")
+}

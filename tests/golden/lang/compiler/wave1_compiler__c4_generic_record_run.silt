@@ -2,14 +2,13 @@
 -- stderr-contains: error[compile]
 -- stderr-contains: json.parse
 -- stderr-contains: Wrap
--- stderr-contains: value
--- stderr-contains: `a`
+-- stderr-contains: it is a generic record type
 import json
 
 type Wrap(a) { value: a }
 
 fn main() {
-  let r: Result(Wrap(Int), JsonError) = json.parse("\{\"value\": \"x\"\}", Wrap)
+  let r: Result(Wrap(Int), json.JsonError) = json.parse("\{\"value\": \"x\"\}", Wrap)
   match r {
     Ok(w) -> println(w.value + 1)
     Err(e) -> println("err: {e.message()}")

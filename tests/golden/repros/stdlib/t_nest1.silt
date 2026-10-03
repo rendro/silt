@@ -1,0 +1,44 @@
+-- verdict: same
+import channel
+import list
+import map
+import set
+import task
+import time
+import regex
+import result
+import option
+
+fn slow(x) {
+  time.sleep(time.ms(2))
+  x
+}
+
+fn main() {
+  let worker = task.spawn { ->
+    let a = list.map([1, 2, 3]) { x ->
+      let pre = list.map([10, 20]) { y -> y + x }
+      let inner = list.map(pre) { y -> slow(y) }
+      let post = list.fold(inner, 0) { acc, y -> acc + slow(y) }
+      (x, inner, post)
+    }
+    let b = list.sort_by([3, 1, 2]) { x -> slow(0 - x) }
+    let c = list.group_by([1, 2, 3, 4]) { x -> slow(x % 2) }
+    let d = map.map(#{1: "a", 2: "b"}) { k, v -> (slow(k) * 10, v) }
+    let e = set.map(set.from_list([1, 2, 3])) { x -> slow(x) % 2 }
+    let f = list.unfold(0) { s -> match slow(s) < 3 {
+      true -> Some((s, s + 1))
+      false -> None
+    } }
+    let g = regex.replace_all_with("[0-9]", "a1b2") { m -> slow(m) }
+    let h = Ok(1) |> result.map_ok { x -> slow(x) + 1 }
+    let i = list.fold_until([1, 2, 3, 4], 0) { acc, x -> match slow(x) > 2 {
+      true -> list.Stop(acc)
+      false -> list.Continue(acc + x)
+    } }
+    let j = list.flat_map([1, 2]) { x -> list.map([x, x]) { y -> slow(y) } }
+    let k = map.update(#{"a": 1}, "a", 0) { v -> slow(v) + 1 }
+    (a, b, c, d, e, f, g, h, i, j, k)
+  }
+  println(task.join(worker))
+}

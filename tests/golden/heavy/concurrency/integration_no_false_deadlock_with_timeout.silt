@@ -9,9 +9,9 @@ fn program() {
 
   -- Nobody sends to ch, but timer will fire
   let consumer = task.spawn({ ->
-    match channel.select([Recv(ch), Recv(timer)]) {
-      (_, Closed) -> "timeout_broke_deadlock"
-      (_, Message(v)) -> "got_message"
+    match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
+      (_, channel.Closed) -> "timeout_broke_deadlock"
+      (_, channel.Message(v)) -> "got_message"
       _ -> "other"
     }
   })

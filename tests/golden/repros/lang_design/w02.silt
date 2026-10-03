@@ -1,0 +1,37 @@
+-- verdict: same
+import int
+
+-- the plain-match spelling of `when let ... else`, with access to the error payload
+fn b(s) {
+  let n = match int.parse(s) {
+    Ok(n) -> n
+    Err(e) -> return Err("bad: {e.message()}")
+  }
+  Ok(n + 1)
+}
+
+fn c(s) {
+  when let Ok(n) = int.parse(s) else { return Err("bad") }
+  when n > 0 else { return Err("not positive") }
+  Ok(n + 1)
+}
+
+-- plain-match spelling of boolean `when`
+fn d(s) {
+  let n = match int.parse(s) {
+    Ok(n) when n > 0 -> n
+    Ok(_) -> return Err("not positive")
+    Err(_) -> return Err("bad")
+  }
+  Ok(n + 1)
+}
+
+fn main() {
+  println(b("1"))
+  println(b("x"))
+  println(c("1"))
+  println(c("-1"))
+  println(d("1"))
+  println(d("-1"))
+  println(d("x"))
+}

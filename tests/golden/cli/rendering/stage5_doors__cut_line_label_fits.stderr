@@ -1,0 +1,5 @@
+error[type]: undefined variable 'undefined_name'
+ --> stage5_doors__cut_line_label_fits.silt:6:491
+   |
+ 6 | …1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + undefined_name + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 +…
+   |                                                              ^^^^^^^^^^^^^^ undefined variable 'undefined_name'

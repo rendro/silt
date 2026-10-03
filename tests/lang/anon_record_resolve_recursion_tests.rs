@@ -27,16 +27,16 @@
 use std::collections::HashMap;
 
 use silt::ast::{Expr, ExprKind, Stmt};
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
-use silt::types::{RowTail, Severity, Type};
+use silt::diagnostic::Severity;
+use silt::types::{RowTail, Type};
 
-fn typecheck(input: &str) -> (silt::ast::Program, Vec<silt::types::TypeError>) {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let errors = typechecker::check(&mut program);
-    (program, errors)
+fn typecheck(
+    input: &str,
+) -> (
+    std::sync::Arc<silt::ast::Program>,
+    Vec<silt::diagnostic::Diagnostic>,
+) {
+    silt::session::testing::analyze_str(input)
 }
 
 // F2 (the "cannot infer" cascade) is covered by the golden cases

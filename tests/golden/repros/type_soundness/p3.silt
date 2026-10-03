@@ -1,0 +1,18 @@
+-- verdict: same
+import channel
+
+-- top-level let of a channel: generalized?
+let ch = channel.new(10)
+
+fn main() {
+  channel.send(ch, 1)
+  channel.send(ch, "hello")
+  match channel.receive(ch) {
+    channel.Message(a) -> println(a + 1)
+    _ -> ()
+  }
+  match channel.receive(ch) {
+    channel.Message(a) -> println(a + 1)
+    _ -> ()
+  }
+}

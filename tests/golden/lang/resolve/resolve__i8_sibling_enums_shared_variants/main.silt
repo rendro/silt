@@ -1,0 +1,17 @@
+-- verdict: same
+-- Audit repro I8: sibling modules whose enums share variant names. Each
+-- module's variants stay its own: `a.Red` and `b.Red` are different
+-- variants, and nothing is reported.
+import a
+import b
+fn main() {
+  println("{a.first()} {b.first()}")
+  match a.first() {
+    a.Red -> println("a.Red")
+    a.Blue -> println("a.Blue")
+  }
+  match b.first() {
+    b.ColorB.Blue -> println("b.ColorB.Blue")
+    b.ColorB.Red -> println("b.ColorB.Red")
+  }
+}

@@ -1,0 +1,9 @@
+-- verdict: same
+import io
+fn run(f: Fn() -> ()) -> Int !{} {
+  f()
+  0
+}
+fn main() !{io} {
+  println(run(fn() { println("hof") }))
+}

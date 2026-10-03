@@ -1,0 +1,5 @@
+pub type Pt { v: Int }
+pub fn make(v: Int) -> Pt { Pt { v: v } }
+trait Display for Pt { fn display(self) -> String { "a.Pt {self.v}" } }
+pub trait Scale { fn scale(self) -> Int }
+trait Scale for Pt { fn scale(self) -> Int { self.v * 2 } }

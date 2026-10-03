@@ -132,7 +132,7 @@ fn destructured_fn_param_binders_are_variable_tokens() {
     let mut line = 0u64;
     let mut start = 0u64;
     let mut vars = Vec::new();
-    for chunk in data.chunks_exact(5) {
+    for chunk in data.as_chunks::<5>().0 {
         let dl = chunk[0].as_u64().unwrap();
         let ds = chunk[1].as_u64().unwrap();
         if dl == 0 {

@@ -7,12 +7,12 @@ fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
 fn h(a: a) -> Int where a: Hash { a.hash() }
 fn d(a: a) -> String where a: Display { a.display() }
 fn main() {
-    println(cmp_gen(Monday, Friday))
-    println(eq_gen(Monday, Monday))
-    let _ = h(Tuesday)
-    println(d(Wednesday))
-    println(cmp_gen(GET, POST))
-    println(d(DELETE))
+    println(cmp_gen(time.Monday, time.Friday))
+    println(eq_gen(time.Monday, time.Monday))
+    let _ = h(time.Tuesday)
+    println(d(time.Wednesday))
+    println(cmp_gen(http.GET, http.POST))
+    println(d(http.DELETE))
     match time.date(2025, 1, 15) {
         Ok(a) -> match time.date(2025, 6, 30) {
             Ok(b) -> {

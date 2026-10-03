@@ -1,0 +1,10 @@
+-- verdict: same
+-- I1: two sibling modules each bind a private `let secret`. Each module's
+-- function reads its own (both used to read the one imported last).
+import sa
+import sb
+
+fn main() {
+  println(sa.reveal())
+  println(sb.reveal())
+}

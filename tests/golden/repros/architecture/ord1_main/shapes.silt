@@ -1,0 +1,14 @@
+import list
+pub type Color {
+  Red,
+  Green,
+  Blue
+}
+
+pub fn color_lt() -> Bool {
+  Red < Blue
+}
+
+pub fn sorted_colors() {
+  [Blue, Green, Red] |> list.sort
+}

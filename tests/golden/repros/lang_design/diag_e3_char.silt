@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let c = 'a'
+  println(c)
+}

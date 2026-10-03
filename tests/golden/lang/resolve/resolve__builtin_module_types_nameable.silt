@@ -1,0 +1,31 @@
+-- verdict: same
+-- Every builtin type can be named, through the module that offers it:
+-- `task.Handle(a)`, `int.ParseError` and `float.ParseError` (one type,
+-- reached through either module, with its variants), and the prelude's
+-- `TypeOf(a)`, the type of a type used as a value.
+import task
+import float
+import int
+fn wait(h: task.Handle(Int)) -> Int { task.join(h) }
+fn pf(s: String) -> Result(Float, float.ParseError) { float.parse(s) }
+fn pi(s: String) -> Result(Int, int.ParseError) { int.parse(s) }
+fn kind(e: float.ParseError) -> String {
+  match e {
+    float.ParseEmpty -> "empty"
+    int.ParseInvalidDigit(_) -> "digit"
+    _ -> "other"
+  }
+}
+fn desc(t: TypeOf(Int)) -> Int { 1 }
+fn main() {
+  println(wait(task.spawn({ -> 41 + 1 })))
+  match pf("") {
+    Ok(_) -> println("ok")
+    Err(e) -> println(kind(e))
+  }
+  match pi("x") {
+    Ok(_) -> println("ok")
+    Err(e) -> println(kind(e))
+  }
+  println(desc(Int))
+}

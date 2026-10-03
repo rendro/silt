@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown function 'nope' on module 'mylib'
+-- stderr-contains: module 'mylib' has no member 'nope'
 -- stderr-not-contains: undefined variable 'mylib'
 import lib as mylib
 

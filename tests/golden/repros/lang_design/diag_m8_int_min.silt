@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let a = -9223372036854775807 - 1
+  println(a)
+  println(-a)
+}

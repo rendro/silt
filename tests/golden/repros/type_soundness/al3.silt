@@ -1,0 +1,16 @@
+-- verdict: same
+-- impl for Range and List
+trait Greet { fn greet(self) -> String }
+trait Greet for List(a) { fn greet(self) -> String { "list" } }
+trait Greet for Float { fn greet(self) -> String { "float" } }
+trait Greet for ExtFloat { fn greet(self) -> String { "ext" } }
+fn g(x) { x / 2.0 }
+fn main() {
+  println((1..3).greet())
+  let a = 1.0 / 2.0
+  println(a.greet())
+  let b = 1.0 + 2.0
+  println(b.greet())
+  let c = g(4.0)
+  println(c.greet())
+}

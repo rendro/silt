@@ -1,0 +1,14 @@
+-- verdict: same
+fn f(n: Int) -> Int {
+  match n {
+    0..10 -> 1
+    _ -> 2
+  }
+}
+fn g(t: (Bool, Int)) -> Int {
+  match t {
+    (true, 0..10) -> 1
+    (false, _) -> 2
+  }
+}
+fn main() { println(f(10)) println(g((true, 50))) }

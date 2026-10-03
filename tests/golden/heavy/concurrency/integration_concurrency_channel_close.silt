@@ -6,10 +6,10 @@ fn program() {
   let ch = channel.new(10)
   channel.send(ch, 1)
   channel.close(ch)
-  when let Message(a) = channel.receive(ch) else { panic("pattern did not match") }
+  when let channel.Message(a) = channel.receive(ch) else { panic("pattern did not match") }
   let b = channel.receive(ch)
   match b {
-    Closed -> a
+    channel.Closed -> a
     _ -> -1
   }
 }

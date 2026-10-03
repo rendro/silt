@@ -1,0 +1,16 @@
+-- verdict: same
+import list
+import shapes
+
+type Signal {
+  Blue,
+  Amber,
+  Red
+}
+
+fn main() {
+  println("main: Blue < Red (decl order says true): {Blue < Red}")
+  println("shapes.color_lt() Red < Blue (decl order says true): {shapes.color_lt()}")
+  println("shapes.sorted_colors(): {shapes.sorted_colors()}")
+  println("main sorted: {[Red, Amber, Blue] |> list.sort}")
+}

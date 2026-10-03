@@ -1,0 +1,19 @@
+-- verdict: same
+import set
+import list
+type P { x: Int }
+type Q { x: Int }
+fn widen(r: { x: Int }) -> { x: Int } { r }
+fn main() {
+  let p = widen(P { x: 1 })
+  let q = widen(Q { x: 1 })
+  let a = { x: 1 }
+  println("p == a: {p == a}")
+  println("a == q: {a == q}")
+  println("p == q: {p == q}")
+  println("set [p, q, a]: {set.length(set.from_list([p, q, a]))}")
+  println("set [a, p, q]: {set.length(set.from_list([a, p, q]))}")
+  println("set [p, a, q]: {set.length(set.from_list([p, a, q]))}")
+  println("unique [p, q, a]: {list.length(list.unique([p, q, a]))}")
+  println("unique [a, p, q]: {list.length(list.unique([a, p, q]))}")
+}

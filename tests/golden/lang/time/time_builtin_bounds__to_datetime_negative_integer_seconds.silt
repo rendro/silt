@@ -1,7 +1,7 @@
 import time
 fn main() {
   -- 1.5s before the epoch is 1969-12-31T23:59:58.500
-  let dt = time.to_datetime(Instant { epoch_ns: -1500000000 }, 0)
+  let dt = time.to_datetime(time.Instant { epoch_ns: -1500000000 }, 0)
   println(dt.date.year == 1969
     && dt.date.month == 12
     && dt.date.day == 31

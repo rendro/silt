@@ -1,0 +1,7 @@
+-- verdict: same
+import string
+import list
+fn main() {
+  let xs = list.map([1, 2, 3])
+  println(xs)
+}

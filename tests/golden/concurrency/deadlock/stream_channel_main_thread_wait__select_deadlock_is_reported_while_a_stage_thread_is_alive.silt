@@ -9,7 +9,7 @@ fn main() {
   println(stream.repeat("x") |> stream.take(3) |> stream.collect)
   let a = channel.new(0)
   let b = channel.new(0)
-  match channel.select([Recv(a), Send(b, 1)]) {
+  match channel.select([channel.Recv(a), channel.Send(b, 1)]) {
     _ -> println("unreachable")
   }
 }

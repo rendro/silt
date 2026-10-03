@@ -24,8 +24,9 @@ match parse_int(input) {
 Every fallible stdlib module except `crypto`, `encoding`, `uuid`, and `regex`
 returns a typed error enum — `IoError`, `JsonError`, `TomlError`,
 `ParseError`, `HttpError`, `TcpError`, `PgError`, `TimeError`, `BytesError`,
-and `ChannelError`. Each variant is module-prefixed so pattern names never
-collide: `IoNotFound`, `JsonSyntax`, `HttpTimeout`, and so on. The full
+and `ChannelError`. Each is a member of its module (`io.IoError`), and
+so are its variants: `io.IoNotFound`, `json.JsonSyntax`,
+`http.HttpTimeout`, and so on. The full
 catalog is registered alongside the builtin signatures in the compiler;
 hover over an error type in your editor (the LSP surfaces the variants
 inline), or consult the per-module reference under `docs/language/`
@@ -42,8 +43,8 @@ import string
 fn main() {
   match io.read_file("app.json") {
     Ok(content) -> println("loaded {string.length(content)} bytes")
-    Err(IoNotFound(path)) -> println("file does not exist: {path}")
-    Err(IoPermissionDenied(path)) -> println("denied: {path}")
+    Err(io.IoNotFound(path)) -> println("file does not exist: {path}")
+    Err(io.IoPermissionDenied(path)) -> println("denied: {path}")
     Err(e) -> println("error: {e.message()}")
   }
 }
@@ -65,7 +66,7 @@ type:
 ```silt
 import io
 
-fn read_head(path: String) -> Result(String, IoError) {
+fn read_head(path: String) -> Result(String, io.IoError) {
   let content = io.read_file(path)?     -- Err(IoError) propagates
   Ok(content)
 }
@@ -80,7 +81,7 @@ needed:
 import io
 import result
 
-type Wrap { Wrap(IoError) }
+type Wrap { Wrap(io.IoError) }
 
 fn load(path: String) -> Result(String, Wrap) {
   let raw = io.read_file(path) |> result.map_err({ e -> Wrap(e) })?
@@ -131,9 +132,9 @@ import result
 type Config { api_url: String, api_key: String }
 
 type AppError {
-  ConfigRead(IoError),
-  ConfigParse(JsonError),
-  ApiCall(HttpError),
+  ConfigRead(io.IoError),
+  ConfigParse(json.JsonError),
+  ApiCall(http.HttpError),
 }
 
 fn load_and_fetch(path: String) -> Result(String, AppError) {

@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let a = true
+  println(a and not a)
+}

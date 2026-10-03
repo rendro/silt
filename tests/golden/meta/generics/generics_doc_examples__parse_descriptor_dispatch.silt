@@ -3,16 +3,16 @@
 import int
 
 trait Decode {
-    fn decode(body: String) -> Result(Self, ParseError)
+    fn decode(body: String) -> Result(Self, int.ParseError)
 }
 
 trait Decode for Int {
-    fn decode(body: String) -> Result(Int, ParseError) {
+    fn decode(body: String) -> Result(Int, int.ParseError) {
         int.parse(body)
     }
 }
 
-fn parse(body: String, type a) -> Result(a, ParseError) where a: Decode {
+fn parse(body: String, type a) -> Result(a, int.ParseError) where a: Decode {
     a.decode(body)
 }
 

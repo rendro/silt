@@ -29,8 +29,8 @@ pub(super) fn has_unresolved_vars(ty: &Type) -> bool {
 
 // ── AST walkers (offset-based) ─────────────────────────────────────
 
-pub(super) fn token_start(span: &crate::lexer::Span) -> usize {
-    span.offset
+pub(super) fn token_start(span: &crate::source::Span) -> usize {
+    span.start as usize
 }
 
 /// Find the inferred type of the deepest expression at the cursor byte offset.
@@ -46,12 +46,11 @@ pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Ty
             }
             Decl::TraitImpl(ti) => {
                 // Skip auto-derived (synthesized) impls: their AST nodes
-                // carry a sentinel `Span(line=0, col=0, offset=0)` so a
-                // depth-first cursor-vs-start walk would always treat
-                // them as "at" any cursor and pollute hover/find-type
-                // results with the synthesized body's intermediate
-                // types. The user never wrote them; LSP affordances
-                // should ignore them.
+                // all carry the span of the type declaration, so the walk
+                // would treat them as "at" any cursor in the declaration
+                // and pollute hover/find-type results with the
+                // synthesized body's intermediate types. The user never
+                // wrote them; LSP affordances should ignore them.
                 if ti.is_auto_derived {
                     continue;
                 }
@@ -66,7 +65,7 @@ pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Ty
 }
 
 /// Recurse depth-first into `expr`, updating `best` with the deepest
-/// `expr.ty` whose span starts at or before the cursor. Delegates the
+/// `expr.ty` whose span holds the cursor. Delegates the
 /// child enumeration to [`visit_expr_children`] — there is no second
 /// inlined copy of the `ExprKind::*` arms here. The pre-check on the
 /// outer expression runs first so a deeper match overwrites it.
@@ -82,55 +81,72 @@ pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Ty
 /// path) and the only caller, `find_type_at_offset`, was already
 /// `.cloned()`-ing the final result anyway.
 fn find_type_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Type>) {
-    let start = token_start(&expr.span);
-    // The cursor must be at or after this expression's start.
-    // We rely on depth-first traversal: the deepest (most specific) match wins.
-    if cursor >= start
+    // The cursor must be inside this expression's span. We rely on
+    // depth-first traversal: the deepest (most specific) match wins.
+    if (expr.span.start as usize..expr.span.end as usize).contains(&cursor)
         && let Some(ref ty) = expr.ty
     {
         *best = Some(ty.clone());
     }
+    // A match arm's pattern is inside the match but is no expression: on
+    // the head name of an arm's constructor or record pattern
+    // (`Circle(r) -> ...`), the type is the scrutinee's, the innermost
+    // node that has one. A binder inside the pattern is a local binding,
+    // which the callers look up first.
+    if let ExprKind::Match {
+        expr: Some(scrutinee),
+        arms,
+    } = &expr.kind
+    {
+        for arm in arms {
+            if let Some(head) = pattern_head_span(&arm.pattern)
+                && let Some(ref ty) = scrutinee.ty
+            {
+                if (head.start as usize..head.end as usize).contains(&cursor) {
+                    *best = Some(ty.clone());
+                }
+            }
+        }
+    }
     visit_expr_children(expr, |child| find_type_in_expr(child, cursor, best));
+}
+
+/// The span of the head name of a constructor or record pattern.
+fn pattern_head_span(pattern: &Pattern) -> Option<crate::source::Span> {
+    match &pattern.kind {
+        PatternKind::Constructor { name_span, .. }
+        | PatternKind::Record {
+            name: Some(_),
+            name_span,
+            ..
+        } => Some(*name_span),
+        _ => None,
+    }
 }
 
 /// Find the identifier name at the cursor byte offset.
 ///
 /// Visits `ExprKind::Ident` use-sites AND binding sites:
 ///   * `let xvar = ...` / `match` arm pattern binders / `fn foo(x)` params,
-///   * `fn foo(...)` declaration name (recovered from the source between the
-///     `fn` keyword and the opening `(`).
+///   * `fn foo(...)` declaration name (its `name_span`).
 ///
 /// Without the binding-site visits, `prepareRename`/`rename`/`hover` on the
 /// LHS of a let, on a `fn` parameter, or on a `fn` declaration name would
 /// silently no-op (round-60 B8 + G4).
-#[cfg(test)]
 pub(super) fn find_ident_at_offset(program: &Program, cursor: usize) -> Option<Symbol> {
-    find_ident_at_offset_with_source(program, cursor, None)
-}
-
-/// Source-aware variant. Pass `Some(source)` so binding-site lookups on
-/// `fn foo(...)` declaration names can recover the name's offset (the
-/// `FnDecl::span` sits at the `fn` keyword, not at the name). Without
-/// `source`, the fn-name binding site is not matchable but everything
-/// else works.
-pub(super) fn find_ident_at_offset_with_source(
-    program: &Program,
-    cursor: usize,
-    source: Option<&str>,
-) -> Option<Symbol> {
     let mut best: Option<Symbol> = None;
     for decl in &program.decls {
-        find_ident_in_decl(decl, cursor, source, &mut best);
+        find_ident_in_decl(decl, cursor, &mut best);
     }
     best
 }
 
-fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &mut Option<Symbol>) {
+fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
     match decl {
         Decl::Fn(f) => {
-            check_fn_decl_name(f, cursor, source, best);
+            check_span_match(f.name, f.name_span, cursor, best);
             for param in &f.params {
-                find_ident_in_pattern(&param.pattern, cursor, source, best);
+                find_ident_in_pattern(&param.pattern, cursor, best);
             }
             // Round-75 DX-4: where-clause trait references must be
             // walkable so cursor on a `where a: Greet` trait name
@@ -142,16 +158,16 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             // Round-101: type-position references in the signature
             // (param annotations, return type, where-clause args).
             find_ident_in_fn_signature(f, cursor, best);
-            find_ident_in_expr(&f.body, cursor, source, best);
+            find_ident_in_expr(&f.body, cursor, best);
         }
         Decl::Let {
             pattern, value, ty, ..
         } => {
-            find_ident_in_pattern(pattern, cursor, source, best);
+            find_ident_in_pattern(pattern, cursor, best);
             if let Some(t) = ty {
                 find_ident_in_type_expr(t, cursor, best);
             }
-            find_ident_in_expr(value, cursor, source, best);
+            find_ident_in_expr(value, cursor, best);
         }
         Decl::TraitImpl(ti) => {
             if ti.is_auto_derived {
@@ -182,9 +198,9 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
                 }
             }
             for method in &ti.methods {
-                check_fn_decl_name(method, cursor, source, best);
+                check_span_match(method.name, method.name_span, cursor, best);
                 for param in &method.params {
-                    find_ident_in_pattern(&param.pattern, cursor, source, best);
+                    find_ident_in_pattern(&param.pattern, cursor, best);
                 }
                 // Method-level where-clause trait refs (rare today but
                 // legal: `fn foo(self, x: a) where a: Compare` in an impl).
@@ -192,14 +208,14 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
                     check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
                 }
                 find_ident_in_fn_signature(method, cursor, best);
-                find_ident_in_expr(&method.body, cursor, source, best);
+                find_ident_in_expr(&method.body, cursor, best);
             }
         }
         Decl::Type(t) => {
             // Match the cursor against the type name at the `type Name`
             // binder. Phase-1 doc surfacing requires hover to identify
             // the decl binder so `DefInfo.doc` can be looked up.
-            check_decl_name_after_keyword(t.name, t.span, "type", cursor, source, best);
+            check_span_match(t.name, t.name_span, cursor, best);
             // Round-101: type-decl BODIES reference other types (record
             // field types, enum variant payload types, alias targets).
             // Enum variant NAME binders (`Circle` in `Circle(Int)`) also
@@ -226,17 +242,13 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             }
         }
         Decl::Trait(t) => {
-            // Round-75 DX-2: prefer the parser-recorded name_span when
-            // available (more precise than the source-scan fallback).
+            // Round-75 DX-2: the parser-recorded name_span.
             check_span_match(t.name, t.name_span, cursor, best);
-            // Fallback: keyword-scan path retained for synthesized trait
-            // decls that fall back to `span`.
-            check_decl_name_after_keyword(t.name, t.span, "trait", cursor, source, best);
             // Round-75 DX-4: supertrait references and trait-level
             // where-clause trait refs.
-            for (super_name, super_args, super_span) in &t.supertraits {
-                check_span_match(*super_name, *super_span, cursor, best);
-                for a in super_args {
+            for r in &t.supertraits {
+                check_span_match(r.name, r.span, cursor, best);
+                for a in &r.args {
                     find_ident_in_type_expr(a, cursor, best);
                 }
             }
@@ -246,10 +258,12 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
                     find_ident_in_type_expr(a, cursor, best);
                 }
             }
-            // Round-101: assoc-type bound ARGUMENTS are type positions.
+            // Round-101: assoc-type bounds, and their ARGUMENTS, which
+            // are type positions.
             for at in &t.assoc_types {
-                for (_, bargs) in &at.bounds {
-                    for a in bargs {
+                for bound in &at.bounds {
+                    check_span_match(bound.name, bound.span, cursor, best);
+                    for a in &bound.args {
                         find_ident_in_type_expr(a, cursor, best);
                     }
                 }
@@ -260,15 +274,15 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
             // and body identifiers too. Without this, cursor on `x` in
             // `trait T { fn foo(x: Int) -> Int { x + 1 } }` returned None.
             for method in &t.methods {
-                check_fn_decl_name(method, cursor, source, best);
+                check_span_match(method.name, method.name_span, cursor, best);
                 for param in &method.params {
-                    find_ident_in_pattern(&param.pattern, cursor, source, best);
+                    find_ident_in_pattern(&param.pattern, cursor, best);
                 }
                 for wc in &method.where_clauses {
                     check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
                 }
                 find_ident_in_fn_signature(method, cursor, best);
-                find_ident_in_expr(&method.body, cursor, source, best);
+                find_ident_in_expr(&method.body, cursor, best);
             }
         }
         _ => {}
@@ -278,22 +292,21 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, source: Option<&str>, best: &m
 /// Match the cursor against an identifier whose span is known precisely.
 /// Used by trait-name / target-type / supertrait references where the
 /// parser records the name's span directly (no source-scan fallback
-/// needed). Sentinel `Span::synthetic()` (line=0, col=0, offset=0)
-/// frames are skipped — they represent synthesized AST nodes that have
-/// no user-renameable source location.
+/// needed). Spans of silt's own declarations (`Span::BUILTIN`) are
+/// skipped — they have no user-renameable source location.
 fn check_span_match(
     name: Symbol,
-    span: crate::lexer::Span,
+    span: crate::source::Span,
     cursor: usize,
     best: &mut Option<Symbol>,
 ) {
-    // Synthetic spans (auto-derive, builtin trait decls) have offset 0
-    // and would spuriously match cursor 0 on a fresh document.
-    if span.line == 0 && span.col == 0 && span.offset == 0 {
+    // Builtin spans (builtin trait decls) are not in the document and
+    // would spuriously match cursor 0 on a fresh document.
+    if !span.is_in_source() {
         return;
     }
     let name_str = crate::intern::resolve(name);
-    let start = span.offset;
+    let start = span.start as usize;
     let end = start + name_str.len();
     if cursor >= start && cursor < end {
         *best = Some(name);
@@ -312,9 +325,16 @@ fn check_span_match(
 /// ident), so `check_span_match` applies directly.
 fn find_ident_in_type_expr(te: &TypeExpr, cursor: usize, best: &mut Option<Symbol>) {
     match &te.kind {
-        TypeExprKind::Named(n) => check_span_match(*n, te.span, cursor, best),
-        TypeExprKind::Generic(n, args) => {
-            check_span_match(*n, te.span, cursor, best);
+        TypeExprKind::Named {
+            name, name_span, ..
+        } => check_span_match(*name, *name_span, cursor, best),
+        TypeExprKind::Generic {
+            name,
+            name_span,
+            args,
+            ..
+        } => {
+            check_span_match(*name, *name_span, cursor, best);
             for a in args {
                 find_ident_in_type_expr(a, cursor, best);
             }
@@ -361,117 +381,6 @@ fn find_ident_in_fn_signature(f: &FnDecl, cursor: usize, best: &mut Option<Symbo
     }
 }
 
-/// Match the cursor against a Constructor/Record pattern's HEAD name
-/// (`Point { x }`, `Circle(r)`, `shapes.Circle(r)`). For the bare form
-/// `pattern.span` sits on the head token; for the qualified form it
-/// sits on the module qualifier, so recover the name token's offset
-/// from source. Mirrors the head matching in
-/// `workspace::collect_references_in_pattern` (round-101).
-fn check_pattern_head_name(
-    pattern: &Pattern,
-    module: Option<Symbol>,
-    head: Symbol,
-    cursor: usize,
-    source: Option<&str>,
-    best: &mut Option<Symbol>,
-) {
-    match module {
-        None => check_span_match(head, pattern.span, cursor, best),
-        Some(_) => {
-            let Some(src) = source else {
-                return;
-            };
-            let name_str = crate::intern::resolve(head);
-            if let Some(off) =
-                super::text_utils::qualified_head_name_offset(src, pattern.span.offset, &name_str)
-                && cursor >= off
-                && cursor < off + name_str.len()
-            {
-                *best = Some(head);
-            }
-        }
-    }
-}
-
-/// Match the cursor against a decl's NAME identifier located after a
-/// leading keyword (e.g. `type Name` or `trait Name`). `span` points at
-/// the keyword; scan forward through source to find the ident's byte
-/// offset and check whether the cursor sits inside it.
-fn check_decl_name_after_keyword(
-    name: Symbol,
-    span: crate::lexer::Span,
-    keyword: &str,
-    cursor: usize,
-    source: Option<&str>,
-    best: &mut Option<Symbol>,
-) {
-    let Some(source) = source else {
-        return;
-    };
-    let name_str = crate::intern::resolve(name);
-    let decl_start = span.offset;
-    if decl_start >= source.len() {
-        return;
-    }
-    // Stop scanning at the end of the name — usually `(` for generic
-    // types, `{` for the body, newline, or `=`.
-    let after = &source[decl_start..];
-    let scan_end = after
-        .find('{')
-        .or_else(|| after.find('('))
-        .or_else(|| after.find('\n'))
-        .map(|p| decl_start + p)
-        .unwrap_or(source.len());
-    // Skip past the keyword itself (e.g. `type ` / `trait `) so we don't
-    // accidentally match the keyword text.
-    let skip = keyword.len();
-    let start_search = (decl_start + skip).min(scan_end);
-    if let Some(off) =
-        super::text_utils::find_ident_in_range(source, start_search, scan_end, &name_str)
-        && cursor >= off
-        && cursor < off + name_str.len()
-    {
-        *best = Some(name);
-    }
-}
-
-/// Check whether the cursor sits on a `fn` declaration's name.
-///
-/// `FnDecl::span` points at the `fn` keyword, so we recover the name's
-/// offset by scanning the source between `fn` and the next `(`. When
-/// source is unavailable we skip — the use-site path still covers most
-/// cases, this only affects rename/hover at the binder itself.
-fn check_fn_decl_name(
-    f: &crate::ast::FnDecl,
-    cursor: usize,
-    source: Option<&str>,
-    best: &mut Option<Symbol>,
-) {
-    let Some(source) = source else {
-        return;
-    };
-    let name_str = crate::intern::resolve(f.name);
-    let fn_start = f.span.offset;
-    if fn_start >= source.len() {
-        return;
-    }
-    // Find the param-list `(` after `fn`. A malformed header without
-    // one falls back to scanning to the next `=` or end of line.
-    let after = &source[fn_start.min(source.len())..];
-    let scan_end = after
-        .find('(')
-        .or_else(|| after.find('='))
-        .or_else(|| after.find('\n'))
-        .map(|p| fn_start + p)
-        .unwrap_or(source.len());
-    if let Some(off) = super::text_utils::find_ident_in_range(source, fn_start, scan_end, &name_str)
-        && cursor >= off
-        && cursor < off + name_str.len()
-    {
-        *best = Some(f.name);
-    }
-}
-
 /// Recurse into a pattern, matching the cursor against any leaf
 /// `PatternKind::Ident` binder — and, since round-101, Constructor /
 /// nominal-record HEAD names (`Circle(r)`, `Point { x }`) so that
@@ -481,15 +390,10 @@ fn check_fn_decl_name(
 /// gate (`is_symbol_user_renameable_at_cursor` →
 /// `is_user_renameable`) still rejects them, so prepareRename keeps
 /// producing a clean `null` for builtins.
-fn find_ident_in_pattern(
-    pattern: &Pattern,
-    cursor: usize,
-    source: Option<&str>,
-    best: &mut Option<Symbol>,
-) {
+fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Symbol>) {
     match &pattern.kind {
         PatternKind::Ident(name) => {
-            let start = pattern.span.offset;
+            let start = pattern.span.start as usize;
             let name_len = crate::intern::resolve(*name).len();
             if cursor >= start && cursor < start + name_len {
                 *best = Some(*name);
@@ -497,114 +401,75 @@ fn find_ident_in_pattern(
         }
         PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
             for p in pats {
-                find_ident_in_pattern(p, cursor, source, best);
+                find_ident_in_pattern(p, cursor, best);
             }
         }
         PatternKind::Constructor {
-            module,
             name,
+            name_span,
             args: fields,
+            ..
         } => {
-            check_pattern_head_name(pattern, *module, *name, cursor, source, best);
+            check_span_match(*name, *name_span, cursor, best);
             for p in fields {
-                find_ident_in_pattern(p, cursor, source, best);
+                find_ident_in_pattern(p, cursor, best);
             }
         }
         PatternKind::Record {
-            module,
             name,
+            name_span,
             fields,
             ..
         } => {
             if let Some(head) = name {
-                check_pattern_head_name(pattern, *module, *head, cursor, source, best);
+                check_span_match(*head, *name_span, cursor, best);
             }
             // Round-62 B8: field-shorthand binders (`let Point { x, y } = p`)
-            // had no dedicated `Pattern` node, so cursor on `x` returned
-            // None. Mirror the source-scanning approach used by
-            // `definitions.rs::collect_let_pattern_defs` and
-            // `local_bindings.rs::collect_pattern_bindings`: scan the
-            // source between the pattern start and a reasonable upper
-            // bound for each shorthand field name and match the cursor
-            // against that recovered offset.
-            for (name, sub) in fields {
+            // match the cursor at the field name's own span.
+            for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
-                    find_ident_in_pattern(p, cursor, source, best);
+                    find_ident_in_pattern(p, cursor, best);
                 } else {
-                    check_shorthand_field_binder(pattern, *name, cursor, source, best);
+                    check_span_match(*name, *name_span, cursor, best);
                 }
             }
         }
         PatternKind::AnonRecord { fields, rest } => {
             // Round-62 B9: anon-record destructure `let { x, y } = p`.
-            // Same handling as nominal `Record` — recurse into present
-            // sub-patterns; for shorthand binders, scan source for the
-            // field name's offset.
-            for (name, sub) in fields {
+            // Same handling as nominal `Record`.
+            for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
-                    find_ident_in_pattern(p, cursor, source, best);
+                    find_ident_in_pattern(p, cursor, best);
                 } else {
-                    check_shorthand_field_binder(pattern, *name, cursor, source, best);
+                    check_span_match(*name, *name_span, cursor, best);
                 }
             }
             // Round-101: the named rest binder (`{ x, ...rest }`) binds
-            // `rest`. Like a shorthand field it has no dedicated Pattern
-            // node, so recover its offset with the same source scan.
-            if let Some(r) = rest {
-                check_shorthand_field_binder(pattern, *r, cursor, source, best);
+            // `rest`.
+            if let Some((r, r_span)) = rest {
+                check_span_match(*r, *r_span, cursor, best);
             }
         }
         PatternKind::List(pats, rest) => {
             for p in pats {
-                find_ident_in_pattern(p, cursor, source, best);
+                find_ident_in_pattern(p, cursor, best);
             }
             if let Some(r) = rest {
-                find_ident_in_pattern(r, cursor, source, best);
+                find_ident_in_pattern(r, cursor, best);
             }
         }
         PatternKind::Map(entries) => {
             // Round-101: map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
-                find_ident_in_pattern(p, cursor, source, best);
+                find_ident_in_pattern(p, cursor, best);
             }
         }
         _ => {}
     }
 }
 
-/// Recover the source offset of a shorthand field binder (`x` in
-/// `let Point { x, y } = ...` or `let { x, y } = ...`) by scanning the
-/// source from the pattern start. The pattern carries no dedicated
-/// `Pattern` node for the shorthand identifier; we mirror the same
-/// source-scan approach used by `definitions.rs` and `local_bindings.rs`.
-fn check_shorthand_field_binder(
-    pattern: &Pattern,
-    name: Symbol,
-    cursor: usize,
-    source: Option<&str>,
-    best: &mut Option<Symbol>,
-) {
-    let Some(source) = source else {
-        return;
-    };
-    let name_str = crate::intern::resolve(name);
-    let start = pattern.span.offset.min(source.len());
-    // Round-101 BROKEN fix: the old scan stopped at the FIRST `}` after
-    // the pattern head, so a nested braced sub-pattern before the binder
-    // (`Point { a: Inner { y }, x }`) truncated the range and blinded
-    // hover / goto-def / prepareRename to the binder. The depth-aware
-    // scan in `text_utils::find_shorthand_binder` walks the record's own
-    // braces only.
-    if let Some(off) = super::text_utils::find_shorthand_binder(source, start, &name_str)
-        && cursor >= off
-        && cursor < off + name_str.len()
-    {
-        *best = Some(name);
-    }
-}
-
-fn find_ident_in_expr(expr: &Expr, cursor: usize, source: Option<&str>, best: &mut Option<Symbol>) {
+fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
     if let ExprKind::Ident(name) = &expr.kind {
         let start = token_start(&expr.span);
         let name_len = crate::intern::resolve(*name).len();
@@ -616,12 +481,12 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, source: Option<&str>, best: &m
     // the arm/body. Visit them so the cursor on the binder resolves.
     if let ExprKind::Match { arms, .. } = &expr.kind {
         for arm in arms {
-            find_ident_in_pattern(&arm.pattern, cursor, source, best);
+            find_ident_in_pattern(&arm.pattern, cursor, best);
         }
     }
     if let ExprKind::Lambda { params, .. } = &expr.kind {
         for p in params {
-            find_ident_in_pattern(&p.pattern, cursor, source, best);
+            find_ident_in_pattern(&p.pattern, cursor, best);
             // A typed closure parameter's annotation (`{ p: Point -> ... }`)
             // is a type-position reference, like a fn param's.
             if let Some(ty) = &p.ty {
@@ -634,49 +499,32 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, source: Option<&str>, best: &m
     if let ExprKind::Ascription(_, te) = &expr.kind {
         find_ident_in_type_expr(te, cursor, best);
     }
-    // Round-101: record-construction HEAD (`Point { x: 3 }`) is a
-    // type-name reference. Bare form: `expr.span` sits on the name
-    // token. Qualified form (`util.Pt { .. }`): it sits on the module
-    // qualifier, so recover the name token's offset from source.
-    if let ExprKind::RecordCreate { module, name, .. } = &expr.kind {
-        match module {
-            None => check_span_match(*name, expr.span, cursor, best),
-            Some(_) => {
-                if let Some(src) = source {
-                    let name_str = crate::intern::resolve(*name);
-                    if let Some(off) = super::text_utils::qualified_head_name_offset(
-                        src,
-                        expr.span.offset,
-                        &name_str,
-                    ) && cursor >= off
-                        && cursor < off + name_str.len()
-                    {
-                        *best = Some(*name);
-                    }
-                }
-            }
-        }
+    // Round-101: record-construction HEAD (`Point { x: 3 }`,
+    // `util.Pt { .. }`) is a type-name reference.
+    if let ExprKind::RecordCreate {
+        name, name_span, ..
+    } = &expr.kind
+    {
+        check_span_match(*name, *name_span, cursor, best);
     }
     if let ExprKind::Block(stmts) = &expr.kind {
         for stmt in stmts {
             match stmt {
                 Stmt::Let { pattern, ty, .. } => {
-                    find_ident_in_pattern(pattern, cursor, source, best);
+                    find_ident_in_pattern(pattern, cursor, best);
                     // Round-101: `let p: Point = ...` annotation.
                     if let Some(t) = ty {
                         find_ident_in_type_expr(t, cursor, best);
                     }
                 }
                 Stmt::When { pattern, .. } => {
-                    find_ident_in_pattern(pattern, cursor, source, best);
+                    find_ident_in_pattern(pattern, cursor, best);
                 }
                 _ => {}
             }
         }
     }
-    visit_expr_children(expr, |child| {
-        find_ident_in_expr(child, cursor, source, best)
-    });
+    visit_expr_children(expr, |child| find_ident_in_expr(child, cursor, best));
 }
 
 /// Visit all child expressions of an AST node.
@@ -690,7 +538,7 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
         | ExprKind::QuestionMark(e)
         | ExprKind::Ascription(e, _)
         | ExprKind::Return(Some(e))
-        | ExprKind::FieldAccess(e, _) => f(e),
+        | ExprKind::FieldAccess(e, _, _) => f(e),
         ExprKind::Call(callee, args) => {
             f(callee);
             for a in args {
@@ -771,7 +619,7 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
             }
         }
         ExprKind::Loop { bindings, body } => {
-            for (_, init) in bindings {
+            for (_, _, init) in bindings {
                 f(init);
             }
             f(body);
@@ -848,13 +696,7 @@ fn find_ident_type_in_expr(expr: &Expr, name: Symbol, result: &mut Option<Type>)
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn parse_and_check(source: &str) -> Program {
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        program
-    }
+    use crate::lsp::testing::checked_program;
 
     // ── has_unresolved_vars ───────────────────────────────────────
 
@@ -881,11 +723,11 @@ mod tests {
     #[test]
     fn test_has_unresolved_vars_nested() {
         assert!(has_unresolved_vars(&Type::Record(
-            crate::intern::intern("Foo"),
+            crate::types::TypeRef::test("Foo"),
             vec![(crate::intern::intern("x"), Type::Var(0))]
         )));
         assert!(!has_unresolved_vars(&Type::Record(
-            crate::intern::intern("Foo"),
+            crate::types::TypeRef::test("Foo"),
             vec![(crate::intern::intern("x"), Type::Int)]
         )));
     }
@@ -915,9 +757,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_typed() {
         let source = "fn main() { 42 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         // The literal 42 should have type Int
         let ty = find_type_at_offset(&program, 13); // offset of "42"
@@ -929,9 +769,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_string() {
         let source = r#"fn main() { "hello" }"#;
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         let ty = find_type_at_offset(&program, 13);
         assert_eq!(ty, Some(Type::String));
@@ -940,9 +778,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_bool() {
         let source = "fn main() { true }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         let ty = find_type_at_offset(&program, 13);
         assert_eq!(ty, Some(Type::Bool));
@@ -951,9 +787,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_binary_expr() {
         let source = "fn main() { 1 + 2 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         // The whole binary expression should be Int
         let ty = find_type_at_offset(&program, 13);
@@ -966,9 +800,7 @@ mod tests {
         // which is the deepest expression and has type Int.
         // Use the bracket offset to find the list type.
         let source = "fn main() { [1, 2, 3] }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
+        let program = crate::lsp::testing::checked_program(source);
 
         let ty = find_type_at_offset(&program, 12);
         assert_eq!(ty, Some(Type::List(Box::new(Type::Int))));
@@ -979,7 +811,7 @@ mod tests {
     #[test]
     fn test_find_ident_at_offset_param() {
         let source = "fn add(x, y) { x + y }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // 'x' at offset 15 (inside the body)
         let name = find_ident_at_offset(&program, 15);
@@ -989,7 +821,7 @@ mod tests {
     #[test]
     fn test_find_ident_at_offset_second_param() {
         let source = "fn add(x, y) { x + y }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // 'y' at offset 19
         let name = find_ident_at_offset(&program, 19);
@@ -999,7 +831,7 @@ mod tests {
     #[test]
     fn test_find_ident_at_offset_none() {
         let source = "fn main() { 42 }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // offset 13 is the literal 42, not an ident
         let name = find_ident_at_offset(&program, 13);
@@ -1011,7 +843,7 @@ mod tests {
     #[test]
     fn test_find_type_at_offset_in_let() {
         let source = "fn main() {\n  let x = 42\n  x\n}";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // 'x' in the last expression (offset 27)
         let ty = find_type_at_offset(&program, 27);
@@ -1028,7 +860,7 @@ mod tests {
         // skip stashing `callee.ty`, so this walk fell back to the
         // enclosing Call node's result type (`Int` here).
         let source = "fn add(a: Int, b: Int) -> Int { a + b }\nfn main() { add(1, 2) }\n";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let callee_offset = source.rfind("add(").unwrap();
         let ty = find_type_at_offset(&program, callee_offset);
@@ -1045,7 +877,7 @@ mod tests {
         // `1 |> add(2)` desugars to `add(1, 2)` and the callee ident
         // must carry the fn signature.
         let source = "fn add(a: Int, b: Int) -> Int { a + b }\nfn main() { 1 |> add(2) }\n";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let callee_offset = source.rfind("add(").unwrap();
         let ty = find_type_at_offset(&program, callee_offset);

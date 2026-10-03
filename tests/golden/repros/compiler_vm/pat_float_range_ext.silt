@@ -1,0 +1,11 @@
+-- verdict: same
+fn classify(x) {
+  match x {
+    0.0..1.0 -> "unit interval"
+    _ -> "outside"
+  }
+}
+fn main() {
+  println(classify(0.5))
+  println(classify(1.0 / 2.0))
+}

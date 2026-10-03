@@ -1,0 +1,11 @@
+-- verdict: same
+import moda
+import modb
+fn main() {
+  println(moda.get())
+  println(modb.get())
+  println(moda.who())
+  println(modb.who())
+  let n: Int = moda.get() + 1
+  println(n)
+}

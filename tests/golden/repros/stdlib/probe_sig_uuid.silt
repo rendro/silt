@@ -1,0 +1,9 @@
+-- verdict: same
+import uuid
+fn main() {
+  let v_uuid_is_valid: Int = uuid.is_valid
+  let v_uuid_nil: Int = uuid.nil
+  let v_uuid_parse: Int = uuid.parse
+  let v_uuid_v4: Int = uuid.v4
+  let v_uuid_v7: Int = uuid.v7
+}

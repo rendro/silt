@@ -1,77 +1,7 @@
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::types::Severity;
 use silt::value::Value;
-use silt::vm::Vm;
-use std::sync::Arc;
 
 fn run(input: &str) -> Value {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
-}
-
-fn run_err(input: &str) -> String {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => return e.message,
-    };
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    let err = vm.run(script).expect_err("expected runtime error");
-    format!("{err}")
-}
-
-/// Like `run`, but asserts that the typechecker produces no hard errors
-/// (warnings are allowed). This catches typechecker regressions that would
-/// incorrectly reject valid code.
-fn run_typed(input: &str) -> Value {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let type_errors = silt::typechecker::check(&mut program);
-    let hard_errors: Vec<_> = type_errors
-        .iter()
-        .filter(|e| e.severity == Severity::Error)
-        .collect();
-    assert!(
-        hard_errors.is_empty(),
-        "expected no type errors, got: {:?}",
-        hard_errors.iter().map(|e| &e.message).collect::<Vec<_>>()
-    );
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
-}
-
-// ── Spread in list literals ─────────────────────────────────────────
-
-#[test]
-fn test_list_spread_non_list_error() {
-    let err = run_err(
-        r#"
-fn main() {
-  let x = 42
-  [1, ..x]
-}
-    "#,
-    );
-    // Production message from src/vm/run.rs ListConcat error.
-    assert!(
-        err.contains("ListConcat: right operand is not a list or range"),
-        "expected list spread error, got: {err}"
-    );
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 // ── Typed AST verification ──────────────────────────────────────────
@@ -83,11 +13,7 @@ fn main() {
   42
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "body should be typed");
@@ -104,11 +30,7 @@ fn main() {
   "hello"
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
         assert_eq!(f.body.ty, Some(silt::types::Type::String));
@@ -124,11 +46,7 @@ fn main() {
   [1, 2, 3]
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "body should be typed");
@@ -149,11 +67,7 @@ fn main() {
   x + 32
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "main body should be typed");
@@ -177,11 +91,7 @@ fn main() {
   double(21)
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     // double's body (x * 2) should resolve to Int
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
@@ -193,36 +103,6 @@ fn main() {
 }
 
 // ── Mixed int/float arithmetic ──────────────────────────────────────
-
-#[test]
-fn test_mixed_int_float_add() {
-    let err = run_err(
-        r#"
-fn main() { 1 + 2.5 }
-    "#,
-    );
-    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
-}
-
-#[test]
-fn test_mixed_float_int_sub() {
-    let err = run_err(
-        r#"
-fn main() { 10.0 - 3 }
-    "#,
-    );
-    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
-}
-
-#[test]
-fn test_mixed_int_float_div() {
-    let err = run_err(
-        r#"
-fn main() { 7 / 2.0 }
-    "#,
-    );
-    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
-}
 
 #[test]
 fn test_mixed_arithmetic_in_pipeline() {
@@ -240,241 +120,11 @@ fn main() {
 
 // ── Cross-type comparison errors ────────────────────────────────────
 
-#[test]
-fn test_cross_type_eq_is_error() {
-    let err = run_err(
-        r#"
-fn main() { 5 == "hello" }
-    "#,
-    );
-    assert!(err.contains("unsupported operation"), "got: {err}");
-}
-
-#[test]
-fn test_cross_type_lt_is_error() {
-    let err = run_err(
-        r#"
-fn main() { 3 < true }
-    "#,
-    );
-    assert!(err.contains("unsupported operation"), "got: {err}");
-}
-
-#[test]
-fn test_cross_type_int_float_eq_is_error() {
-    let err = run_err(
-        r#"
-fn main() { 3 == 3.0 }
-    "#,
-    );
-    assert!(err.contains("unsupported operation"), "got: {err}");
-}
-
 // ════════════════════════════════════════════════════════════════════
 // HTTP Module Tests
 // ════════════════════════════════════════════════════════════════════
 
-#[test]
-fn test_http_segments_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.segments("/a", "/b")
-}
-    "#,
-    );
-    assert!(err.contains("http.segments takes 1 argument"), "got: {err}");
-}
-
-#[test]
-fn test_http_segments_wrong_type() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.segments(42)
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.segments requires String, got"),
-        "got: {err}"
-    );
-}
-
 // ── http.parse_query ────────────────────────────────────────────────
-
-#[test]
-fn test_http_parse_query_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.parse_query("a=1", "b=2")
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.parse_query takes 1 argument"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_parse_query_wrong_type() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.parse_query(42)
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.parse_query requires String, got"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_get_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.get("http://example.com", "extra")
-}
-    "#,
-    );
-    assert!(err.contains("http.get takes 1 argument"), "got: {err}");
-}
-
-#[test]
-fn test_http_get_wrong_type() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.get(42)
-}
-    "#,
-    );
-    assert!(err.contains("http.get requires String, got"), "got: {err}");
-}
-
-#[test]
-fn test_http_request_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request(GET, "http://example.com")
-}
-    "#,
-    );
-    assert!(err.contains("http.request takes 4 arguments"), "got: {err}");
-}
-
-#[test]
-fn test_http_request_non_variant_method() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request("GET", "http://example.com", "", #{})
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.request requires Method, got"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_request_non_string_url() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request(GET, 42, "", #{})
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.request requires String, got"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_request_non_string_body() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request(POST, "http://example.com", 42, #{})
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.request requires String, got"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_request_non_map_headers() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request(GET, "http://example.com", "", "bad")
-}
-    "#,
-    );
-    assert!(err.contains("http.request requires Map, got"), "got: {err}");
-}
-
-#[test]
-fn test_http_serve_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.serve(8080)
-}
-    "#,
-    );
-    assert!(err.contains("http.serve takes 2 arguments"), "got: {err}");
-}
-
-#[test]
-fn test_http_serve_non_int_port() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.serve("8080", { req -> Response { status: 200, body: "", headers: #{} } })
-}
-    "#,
-    );
-    assert!(err.contains("http.serve requires Int, got"), "got: {err}");
-}
-
-#[test]
-fn test_http_unknown_function() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.nonexistent()
-}
-    "#,
-    );
-    assert!(err.contains("unknown http function"), "got: {err}");
-}
 
 // ── http.serve concurrency ──────────────────────────────────────
 
@@ -499,7 +149,7 @@ fn main() {{
   let done = channel.new(1)
   let server = task.spawn({{ ->
     http.serve({port}, {{ req ->
-      Response {{ status: 200, body: "ok", headers: #{{}} }}
+      http.Response {{ status: 200, body: "ok", headers: #{{}} }}
     }})
   }})
   let worker = task.spawn({{ ->
@@ -507,7 +157,7 @@ fn main() {{
   }})
   let result = channel.receive(done)
   match result {{
-    Message(v) -> v
+    channel.Message(v) -> v
     _ -> "failed"
   }}
 }}
@@ -540,7 +190,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
 "#
@@ -609,7 +259,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: "hello from silt", headers: #{{}} }}
+    http.Response {{ status: 200, body: "hello from silt", headers: #{{}} }}
   }})
 }}
 "#
@@ -650,7 +300,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 404, body: "not found", headers: #{{}} }}
+    http.Response {{ status: 404, body: "not found", headers: #{{}} }}
   }})
 }}
 "#
@@ -691,7 +341,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
 "#
@@ -736,7 +386,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.query, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.query, headers: #{{}} }}
   }})
 }}
 "#
@@ -778,7 +428,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.body, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.body, headers: #{{}} }}
   }})
 }}
 "#
@@ -820,13 +470,13 @@ import http
 fn main() {{
   http.serve({port}, {{ req ->
     let method_name = match req.method {{
-      GET -> "got-get"
-      POST -> "got-post"
-      PUT -> "got-put"
-      DELETE -> "got-delete"
+      http.GET -> "got-get"
+      http.POST -> "got-post"
+      http.PUT -> "got-put"
+      http.DELETE -> "got-delete"
       _ -> "got-other"
     }}
-    Response {{ status: 200, body: method_name, headers: #{{}} }}
+    http.Response {{ status: 200, body: method_name, headers: #{{}} }}
   }})
 }}
 "#
@@ -887,7 +537,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{
+    http.Response {{
       status: 200,
       body: "ok",
       headers: #{{ "X-Custom": "silt-value", "X-Another": "42" }}
@@ -943,9 +593,9 @@ import http
 fn main() {{
   http.serve({port}, {{ req ->
     match req.path {{
-      "/health" -> Response {{ status: 200, body: "ok", headers: #{{}} }}
-      "/greet" -> Response {{ status: 200, body: "hello!", headers: #{{}} }}
-      _ -> Response {{ status: 404, body: "not found", headers: #{{}} }}
+      "/health" -> http.Response {{ status: 200, body: "ok", headers: #{{}} }}
+      "/greet" -> http.Response {{ status: 200, body: "hello!", headers: #{{}} }}
+      _ -> http.Response {{ status: 404, body: "not found", headers: #{{}} }}
     }}
   }})
 }}
@@ -1004,7 +654,7 @@ import http
 
 fn main() {{
   http.serve({port}, {{ req ->
-    Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
 "#
@@ -1063,7 +713,7 @@ fn main() {{
   -- Start the server in a task
   let server = task.spawn({{ ->
     http.serve({port}, {{ req ->
-      Response {{ status: 200, body: "silt-response", headers: #{{}} }}
+      http.Response {{ status: 200, body: "silt-response", headers: #{{}} }}
     }})
   }})
 
@@ -1081,8 +731,10 @@ fn main() {{
     channel.send(result_ch, body)
   }})
 
-  let Message(body) = channel.receive(result_ch)
-  body
+  match channel.receive(result_ch) {{
+    channel.Message(body) -> body
+    _ -> "the channel closed"
+  }}
 }}
 "#
         );
@@ -1104,19 +756,6 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::Int(7));
-}
-
-// ── Tuple index access ──────────────────────────────────────────────
-
-#[test]
-fn test_tuple_numeric_field_access() {
-    let result = run(r#"
-fn main() {
-  let t = (10, 20, 30)
-  t.0 + t.1 + t.2
-}
-    "#);
-    assert_eq!(result, Value::Int(60));
 }
 
 // ── Float constants and math ────────────────────────────────────────

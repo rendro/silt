@@ -1,0 +1,11 @@
+-- verdict: same
+import channel
+-- lambda that creates the channel lazily? top-level let lambda + memo impossible (no mutation)
+let mk = fn() { channel.new(4) }
+fn main() {
+  let a = mk()
+  let b = mk()
+  channel.send(a, 1)
+  channel.send(b, "s")
+  println("ok")
+}

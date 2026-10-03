@@ -8,8 +8,8 @@ fn program() {
 
   let receiver = task.spawn({ ->
     match channel.receive(ch) {
-      Closed -> "woken_by_close"
-      Message(_) -> "got_message"
+      channel.Closed -> "woken_by_close"
+      channel.Message(_) -> "got_message"
       _ -> "other"
     }
   })

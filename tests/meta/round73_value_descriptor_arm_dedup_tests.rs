@@ -35,6 +35,15 @@ use std::hash::{Hash, Hasher};
 
 use silt::value::Value;
 
+/// A program's type `Foo`.
+fn foo() -> std::sync::Arc<silt::typeinfo::TypeInfo> {
+    silt::typeinfo::TypeInfo::new_record(
+        silt::defs::TypeId(silt::defs::DefId(9000)),
+        "Foo",
+        Vec::new(),
+    )
+}
+
 fn hash_of(v: &Value) -> u64 {
     let mut h = DefaultHasher::new();
     v.hash(&mut h);
@@ -43,7 +52,7 @@ fn hash_of(v: &Value) -> u64 {
 
 #[test]
 fn display_parity_type_and_primitive_descriptor() {
-    let t = Value::TypeDescriptor("Foo".to_string());
+    let t = Value::TypeDescriptor(foo());
     let p = Value::PrimitiveDescriptor("Foo".to_string());
     assert_eq!(format!("{t}"), format!("{p}"));
     assert_eq!(format!("{t}"), "<type:Foo>");
@@ -51,7 +60,7 @@ fn display_parity_type_and_primitive_descriptor() {
 
 #[test]
 fn debug_parity_type_and_primitive_descriptor() {
-    let t = Value::TypeDescriptor("Foo".to_string());
+    let t = Value::TypeDescriptor(foo());
     let p = Value::PrimitiveDescriptor("Foo".to_string());
     assert_eq!(format!("{t:?}"), format!("{p:?}"));
     assert_eq!(format!("{t:?}"), "<type:Foo>");
@@ -59,7 +68,7 @@ fn debug_parity_type_and_primitive_descriptor() {
 
 #[test]
 fn format_silt_parity_type_and_primitive_descriptor() {
-    let t = Value::TypeDescriptor("Foo".to_string());
+    let t = Value::TypeDescriptor(foo());
     let p = Value::PrimitiveDescriptor("Foo".to_string());
     assert_eq!(t.format_silt(), p.format_silt());
     assert_eq!(t.format_silt(), "<type:Foo>");
@@ -71,7 +80,7 @@ fn type_and_primitive_descriptors_are_not_equal_by_value_eq() {
     // kinds are distinct. A regression that merged them in `PartialEq`
     // would break the silt type system's distinction between
     // user-defined and primitive types.
-    let t = Value::TypeDescriptor("Foo".to_string());
+    let t = Value::TypeDescriptor(foo());
     let p = Value::PrimitiveDescriptor("Foo".to_string());
     assert_ne!(t, p);
 }
@@ -84,7 +93,7 @@ fn type_and_primitive_descriptors_hash_distinctly_via_discriminant_prefix() {
     // variants distinct in the hasher output. This test fails if a
     // future refactor drops the discriminant prefix while keeping the
     // merged arm.
-    let t = Value::TypeDescriptor("Foo".to_string());
+    let t = Value::TypeDescriptor(foo());
     let p = Value::PrimitiveDescriptor("Foo".to_string());
     assert_ne!(hash_of(&t), hash_of(&p));
 }
@@ -93,8 +102,8 @@ fn type_and_primitive_descriptors_hash_distinctly_via_discriminant_prefix() {
 fn same_kind_descriptors_with_same_name_hash_and_compare_equal() {
     // Sanity: two `TypeDescriptor("Foo")` instances must be `==` and
     // hash-equal, and the same for two `PrimitiveDescriptor("Foo")`.
-    let t1 = Value::TypeDescriptor("Foo".to_string());
-    let t2 = Value::TypeDescriptor("Foo".to_string());
+    let t1 = Value::TypeDescriptor(foo());
+    let t2 = Value::TypeDescriptor(foo());
     assert_eq!(t1, t2);
     assert_eq!(hash_of(&t1), hash_of(&t2));
 

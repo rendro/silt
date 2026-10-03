@@ -1,0 +1,14 @@
+-- verdict: same
+type Event { Message(String), Closed, Opened }
+fn describe(e: Event) -> String {
+  match e {
+    Message(s) -> "msg {s}"
+    Closed -> "closed"
+    Opened -> "opened"
+  }
+}
+fn main() {
+  println(describe(Message("hi")))
+  println(describe(Closed))
+  println(Opened < Closed)
+}

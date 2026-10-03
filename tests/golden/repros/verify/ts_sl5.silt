@@ -1,0 +1,9 @@
+-- verdict: same
+import json
+type Cfg { name: String, tags: Map(String, Int) }
+fn main() {
+  match json.parse(Cfg, "{\"name\": \"x\", \"tags\": \"oops\"}") {
+    Ok(c) -> println(c)
+    Err(e) -> println("err: {e}")
+  }
+}

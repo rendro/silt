@@ -1,0 +1,9 @@
+pub type Pt { x: Int }
+pub type Kind { Small, Big }
+pub fn get_x(p: Pt) -> Int { p.x }
+pub fn is_small(k: Kind) -> Bool {
+  match k {
+    Small -> true
+    Big -> false
+  }
+}

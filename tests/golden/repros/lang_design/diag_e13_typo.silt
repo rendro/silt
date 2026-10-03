@@ -1,0 +1,6 @@
+-- verdict: same
+import list
+fn main() {
+  let items = [1, 2, 3]
+  println(list.lenght(itms))
+}

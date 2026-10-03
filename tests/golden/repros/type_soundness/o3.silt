@@ -1,0 +1,5 @@
+-- verdict: same
+type A = B
+type B = A
+fn f(x: A) -> A { x }
+fn main() { println("x") }

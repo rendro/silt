@@ -1,0 +1,15 @@
+-- verdict: same
+import list
+type P { v: Int }
+trait Greet { fn greet(self) -> String }
+trait Greet for P { fn greet(self) -> String { "p" } }
+trait Greet for Int { fn greet(self) -> String { "i" } }
+trait Greet for List(a) { fn greet(self) -> String { "l" } }
+fn main() {
+  let ps = [P { v: 1 }]
+  println(list.map(ps) { p -> p.greet() })
+  println(list.map([1]) { p -> p.greet() })
+  println(list.map([[1]]) { p -> p.greet() })
+  println(list.map([(1, 2)]) { p -> p.display() })
+  println(list.map(["a"]) { p -> p.display() })
+}

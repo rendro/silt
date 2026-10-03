@@ -1,0 +1,8 @@
+-- verdict: same
+fn main() {
+  let a = 1 + {
+    let y = 10
+    y * 2
+  }
+  println(a)
+}

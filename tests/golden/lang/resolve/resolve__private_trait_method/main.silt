@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: method `describe` belongs to trait 'Describe', which is private to module 'shapes'
+-- stderr-contains: --> main.silt:12:11
+-- The methods of a trait declared without `pub` can be called only in
+-- its module: `shapes.described` may call `describe`, an importer may
+-- not, though the type is exported.
+import shapes
+fn main() {
+  println(shapes.described(shapes.square(2)))
+  println(shapes.square(3).describe())
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+import int
+fn main() {
+  let r = int.parse("42") as Result(String, String)
+  println(r)
+}

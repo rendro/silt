@@ -1,0 +1,14 @@
+-- verdict: same
+import channel
+fn main() {
+  let v_channel_close: Int = channel.close
+  let v_channel_each: Int = channel.each
+  let v_channel_new: Int = channel.new
+  let v_channel_receive: Int = channel.receive
+  let v_channel_recv_timeout: Int = channel.recv_timeout
+  let v_channel_select: Int = channel.select
+  let v_channel_send: Int = channel.send
+  let v_channel_timeout: Int = channel.timeout
+  let v_channel_try_receive: Int = channel.try_receive
+  let v_channel_try_send: Int = channel.try_send
+}

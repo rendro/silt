@@ -1,0 +1,13 @@
+-- verdict: same
+import channel
+
+fn main() {
+  let ch = channel.new()
+  match channel.select([channel.Recv(ch), channel.Send(ch, 7)]) {
+    (_, channel.Sent) -> println("Sent (to whom?)")
+    (_, channel.Message(v)) -> println("Message {v}")
+    (_, channel.Closed) -> println("Closed")
+    _ -> println("other")
+  }
+  println("leftover in channel: {channel.try_receive(ch)}")
+}

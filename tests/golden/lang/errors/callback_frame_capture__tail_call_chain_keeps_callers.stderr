@@ -2,7 +2,7 @@ error[runtime]: division by zero
  --> callback_frame_capture__tail_call_chain_keeps_callers.silt:2:15
    |
  2 | fn helper() { 1 / 0 }
-   |               ^ division by zero
+   |               ^^^^^ division by zero
 
 call stack:
   -> helper  at callback_frame_capture__tail_call_chain_keeps_callers.silt:2:15

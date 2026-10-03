@@ -5,31 +5,22 @@
 //! Each benchmark compiles a Silt program once, then runs it `ITERATIONS` times
 //! and reports the average. This measures VM execution, not compilation.
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
+use silt::session::Program;
 use silt::value::Value;
-use silt::vm::Vm;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const ITERATIONS: u32 = 100;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-fn compile(source: &str) -> Arc<silt::bytecode::Function> {
-    let tokens = Lexer::new(source).tokenize().expect("lex error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    Arc::new(functions.into_iter().next().unwrap())
+fn compile(source: &str) -> Program {
+    silt::session::testing::compile_str(source).expect("compile error")
 }
 
-fn run_once(script: &Arc<silt::bytecode::Function>) -> Value {
-    let mut vm = Vm::new();
-    vm.run(Arc::clone(script)).expect("runtime error")
+fn run_once(program: &Program) -> Value {
+    silt::vm::Vm::new()
+        .run_program(program)
+        .expect("runtime error")
 }
 
 fn bench(name: &str, source: &str) -> Duration {
@@ -439,12 +430,13 @@ import list
 fn main() {
   let ch = channel.new(10000)
   -- Pre-fill the channel, then read back (avoids cross-thread blocking)
-  list.each(1..10001) { n -> channel.send(ch, n) }
+  list.each(1..10000) { n -> channel.send(ch, n) }
   channel.close(ch)
   let sum = loop acc = 0 {
     match channel.receive(ch) {
-      Message(n) -> loop(acc + n)
-      Closed -> acc
+      channel.Message(n) -> loop(acc + n)
+      channel.Closed -> acc
+      _ -> acc
     }
   }
   sum
@@ -485,10 +477,11 @@ fn main() {
     match done {
       2 -> acc
       _ -> {
-        let result = channel.select([Recv(ch1), Recv(ch2)])
+        let result = channel.select([channel.Recv(ch1), channel.Recv(ch2)])
         match result {
-          (_, Message(n)) -> loop(acc + n, done)
-          (_, Closed) -> loop(acc, done + 1)
+          (_, channel.Message(n)) -> loop(acc + n, done)
+          (_, channel.Closed) -> loop(acc, done + 1)
+          _ -> acc
         }
       }
     }
@@ -542,7 +535,7 @@ fn main() { compute(100000, 0.0) }
 fn generate_large_program(num_fns: usize) -> String {
     let mut s = String::new();
     for i in 0..num_fns {
-        s.push_str(&format!("fn f{i}(x) = x + {i}\n"));
+        s.push_str(&format!("fn f{i}(x) {{ x + {i} }}\n"));
     }
     s.push_str("fn main() { f0(1) }\n");
     s

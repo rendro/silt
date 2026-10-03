@@ -1,0 +1,9 @@
+-- verdict: same
+import int
+fn parse2(a, b) {
+  let t = int.parse(a)? + int.parse(b)?
+  Ok(t)
+}
+fn main() {
+  println("{parse2("1", "2")}")
+}

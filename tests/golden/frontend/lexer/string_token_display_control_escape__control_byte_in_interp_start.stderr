@@ -2,4 +2,4 @@ error[parse]: expected declaration, found "a\u{1}{
  --> string_token_display_control_escape__control_byte_in_interp_start.silt:5:1
    |
  5 | "a{x}"
-   | ^ expected declaration, found "a\u{1}{
+   | ^^^^ expected declaration, found "a\u{1}{

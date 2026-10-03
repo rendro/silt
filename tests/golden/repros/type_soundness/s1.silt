@@ -1,0 +1,8 @@
+-- verdict: same
+type Int { Zero, Succ(Int) }
+fn f(x: Int) -> Int { x }
+fn main() {
+  println(f(Zero))
+  println(f(3))
+  println(1 + 2)
+}

@@ -1,0 +1,8 @@
+-- verdict: same
+type Wrap(a) = List(a)
+type W2 = Wrap(Wrap(Int))
+fn f(x: W2) -> Int { 1 }
+fn main() { 
+  println(f([[1]]))
+  println(f([1]))
+}

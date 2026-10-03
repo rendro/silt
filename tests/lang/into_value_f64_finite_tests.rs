@@ -1,16 +1,11 @@
 //! `IntoValue for f64` builds a `Float` only from a finite value.
 //!
-//! A silt `Float` is always finite and never `-0.0`. A foreign function
+//! A silt `Float` is always finite and never `-0.0`. A host function
 //! returning NaN or an infinity has no silt value to return, so the
-//! conversion fails, and a function registered with `register_fn0/1/2`
-//! raises a runtime error that names it.
+//! conversion fails (and the call raises a runtime error that names the
+//! function: see `host_module_tests`).
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
 use silt::value::{IntoValue, Value};
-use silt::vm::Vm;
-use std::sync::Arc;
 
 #[test]
 fn into_value_f64_finite_builds_float() {
@@ -30,22 +25,4 @@ fn into_value_f64_non_finite_fails() {
             .expect_err("a non-finite f64 has no silt value");
         assert!(err.contains("non-finite float"), "got: {err}");
     }
-}
-
-#[test]
-fn foreign_function_returning_nan_raises() {
-    let tokens = Lexer::new("fn main() { get_nan() }")
-        .tokenize()
-        .expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.register_fn0("get_nan", || f64::NAN).unwrap();
-    let err = vm.run(script).expect_err("a NaN result must raise");
-    assert!(
-        err.to_string().contains("get_nan: non-finite float result"),
-        "got: {err}"
-    );
 }

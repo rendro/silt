@@ -2,12 +2,6 @@
 //! value discriminants, so the VM rejects `==` across them even when the
 //! typechecker's verdict is discarded.
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::vm::Vm;
-use std::sync::Arc;
-
 #[test]
 fn int_float_disc_differ_rejects_mixed_eq() {
     // Locks that distinct-disc types still reject mixed equality at the
@@ -18,26 +12,8 @@ fn int_float_disc_differ_rejects_mixed_eq() {
     // We use the typechecker-permissive `run` (which ignores type
     // errors) and expect a VM runtime error, caught via expect_err.
     let input = r#"fn main() { 1 == 1.0 }"#;
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    // Compile may fail with a type error — that's also acceptable; we
-    // just want to confirm the program does NOT produce a successful
-    // `Value::Bool(_)` out of the VM. Either rejection path counts.
-    let compile_result = compiler.compile_program(&program);
-    match compile_result {
-        Err(_) => {
-            // Compile-time rejection — acceptable.
-        }
-        Ok(functions) => {
-            let script = Arc::new(functions.into_iter().next().unwrap());
-            let mut vm = Vm::new();
-            let run_result = vm.run(script);
-            assert!(
-                run_result.is_err(),
-                "Int == Float must be rejected somewhere in the pipeline"
-            );
-        }
-    }
+    assert!(
+        silt::session::testing::run_str(input).is_err(),
+        "Int == Float must be rejected somewhere in the pipeline"
+    );
 }

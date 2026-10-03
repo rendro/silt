@@ -18,15 +18,15 @@
 //!   * Generic `Type::Var(_)` placeholders — suppressed to avoid
 //!     showing `?17` to users.
 
-use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, Position};
+use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel};
 
 use crate::ast::*;
-use crate::lexer::Span;
+use crate::source::{SourceFile, Span};
 use crate::types::Type;
 
 use super::Server;
 use super::ast_walk::{has_unresolved_vars, visit_expr_children};
-use super::conversions::{position_to_offset, span_to_range};
+use super::conversions::position_to_offset;
 
 impl Server {
     pub(super) fn inlay_hints(&self, params: lsp_types::InlayHintParams) -> Option<Vec<InlayHint>> {
@@ -46,7 +46,7 @@ impl Server {
         let lsp_hints: Vec<InlayHint> = hints
             .into_iter()
             .filter(|h| {
-                let off = h.ident_span.offset;
+                let off = h.ident_span.start as usize;
                 off >= start_offset && off <= end_offset
             })
             .filter_map(|h| render_hint(h, source))
@@ -64,9 +64,8 @@ impl Server {
 
 struct HintRecord {
     /// Span of the ident the hint follows. The hint text is rendered
-    /// at `span.offset + ident_len`.
+    /// at its end.
     ident_span: Span,
-    ident_len: usize,
     ty: Type,
 }
 
@@ -115,7 +114,6 @@ fn collect_fn_hints(f: &FnDecl, out: &mut Vec<HintRecord>) {
             continue;
         }
         if let PatternKind::Ident(name) = &param.pattern.kind {
-            let name_str = crate::intern::resolve(*name);
             // Pull the inferred param type by finding the ident in the
             // typed body.
             let inferred = super::definitions::find_param_type(&f.body, *name);
@@ -124,7 +122,6 @@ fn collect_fn_hints(f: &FnDecl, out: &mut Vec<HintRecord>) {
             {
                 out.push(HintRecord {
                     ident_span: param.pattern.span,
-                    ident_len: name_str.len(),
                     ty,
                 });
             }
@@ -188,7 +185,6 @@ fn emit_ident_hint(pattern: &Pattern, ty: &Type, out: &mut Vec<HintRecord>) {
         }
         out.push(HintRecord {
             ident_span: pattern.span,
-            ident_len: name_str.len(),
             ty: ty.clone(),
         });
     }
@@ -196,22 +192,9 @@ fn emit_ident_hint(pattern: &Pattern, ty: &Type, out: &mut Vec<HintRecord>) {
     // skipped — widths aren't in the AST and hover already covers them.
 }
 
-fn render_hint(h: HintRecord, source: &str) -> Option<InlayHint> {
-    // Compute the LSP position at the end of the ident.
-    // span_to_range uses the original offset to compute both ends;
-    // we only need the start position, which we place just past the
-    // identifier. Re-use the UTF-16 conversion for correctness.
-    let ident_range = span_to_range(&h.ident_span, source);
-    // The hint sits at the position = start + ident_len in UTF-16.
-    // Recompute: advance from start by counting UTF-16 units of the ident.
-    let start_line = ident_range.start.line;
-    let start_char = ident_range.start.character;
-    let ident_text = source.get(h.ident_span.offset..h.ident_span.offset + h.ident_len)?;
-    let width_utf16: u32 = ident_text.encode_utf16().count() as u32;
-    let position = Position {
-        line: start_line,
-        character: start_char + width_utf16,
-    };
+fn render_hint(h: HintRecord, source: &SourceFile) -> Option<InlayHint> {
+    // The hint sits just past the identifier.
+    let position = source.lsp_position(h.ident_span.end);
 
     Some(InlayHint {
         position,

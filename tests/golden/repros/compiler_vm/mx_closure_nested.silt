@@ -1,0 +1,11 @@
+-- verdict: same
+fn make(a) {
+  fn(b) {
+    fn(c) {
+      fn(d) { a + b * 10 + c * 100 + d * 1000 }
+    }
+  }
+}
+fn main() {
+  println(make(1)(2)(3)(4))
+}

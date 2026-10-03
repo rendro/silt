@@ -1,0 +1,8 @@
+-- verdict: same
+-- `import a as b` names a; the module b that x imports is another one.
+import a as b
+import x
+fn main() {
+  println(b.who())
+  println(x.via())
+}

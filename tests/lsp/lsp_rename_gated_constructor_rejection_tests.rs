@@ -31,15 +31,15 @@ fn rename_on_gated_constructor_is_rejected() {
     // Even with a parse/typecheck error the rename pipeline is driven
     // by AST tokens, so `IoNotFound` mentioned in source is enough for
     // `find_ident_at_offset` to surface the symbol to the rename guard.
-    let source = "fn main() {\n  let x = IoNotFound\n  x\n}\n";
+    let source = "import io\n\nfn main() {\n  let x = io.IoNotFound\n  x\n}\n";
     client.did_open_and_wait(uri, source);
 
-    // `IoNotFound` starts at line=1, char=10.
+    // `IoNotFound` starts at line=3, char=13.
     let resp = client.request(
         "textDocument/rename",
         json!({
             "textDocument": { "uri": uri },
-            "position": { "line": 1, "character": 10 },
+            "position": { "line": 3, "character": 13 },
             "newName": "RenamedCtor"
         }),
     );
@@ -80,15 +80,15 @@ fn rename_on_gated_constructor_is_rejected() {
 fn rename_on_user_ident_in_doc_mentioning_gated_ctor_succeeds() {
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_rn_user_in_gated_doc.silt";
-    let source = "fn renamable_fn() { 0 }\nfn main() { let _ = IoNotFound\n  renamable_fn() }\n";
+    let source = "import io\n\nfn renamable_fn() { 0 }\nfn main() { let _ = io.IoNotFound\n  renamable_fn() }\n";
     client.did_open_and_wait(uri, source);
 
-    // Cursor on `renamable_fn` call site at line 2, char=2.
+    // Cursor on `renamable_fn` call site at line 4, char=2.
     let resp = client.request(
         "textDocument/rename",
         json!({
             "textDocument": { "uri": uri },
-            "position": { "line": 2, "character": 2 },
+            "position": { "line": 4, "character": 2 },
             "newName": "fresh_user_fn"
         }),
     );

@@ -7,9 +7,7 @@
 //! change in this phase — the enums simply become available.
 //!
 //! Each variant name is module-prefixed (`IoNotFound`, `JsonSyntax`,
-//! etc.) to avoid silt's one-to-one `variant_to_enum` collision, which
-//! prevents two enums from sharing a variant name. This is deliberate
-//! and final.
+//! etc.); renaming them belongs to the stdlib conventions.
 
 use super::super::*;
 use super::docs::attach_module_docs;
@@ -187,9 +185,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // The TypeChecker registration here records the impl in
     // `trait_impl_set` and `method_table` so downstream code can call
     // `err.message()` / `err.display()` and pass the error value to
-    // fns with `where e: Error` constraints. The runtime counterpart
-    // registers `<EnumName>.message` as a BuiltinFn in the VM globals.
-    let dummy_span = crate::lexer::Span::new(0, 0);
+    // fns with `where e: Error` constraints. The runtime counterpart is
+    // the VM's native `message` method (`Vm::dispatch_trait_method`).
+    let dummy_span = crate::source::Span::BUILTIN;
     // Round-64 GAP fix: `PgError`/`TcpError` only appear in this list
     // when their cargo features are enabled — the trait-impl set must
     // not advertise traits for an enum the typechecker doesn't know
@@ -217,33 +215,35 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         })
         .collect();
     for enum_name in &enum_names {
+        let enum_ty = TypeRef::builtin(enum_name);
         for trait_name in &["Error", "Display"] {
             checker
+                .tables
                 .trait_impl_set
-                .insert((intern(trait_name), intern(enum_name)));
+                .insert((TraitKey::builtin(trait_name), enum_ty));
         }
-        let self_ty = Type::Generic(intern(enum_name), vec![]);
+        let self_ty = Type::Generic(enum_ty, vec![]);
         // Error::message(self) -> String
-        checker.method_table.insert(
-            (intern(enum_name), intern("message")),
+        checker.tables.method_table.insert(
+            (enum_ty, intern("message")),
             MethodEntry {
                 method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
                 span: dummy_span,
                 is_auto_derived: false,
-                trait_name: Some(intern("Error")),
+                trait_name: Some(TraitKey::builtin("Error")),
                 method_constraints: Vec::new(),
             },
         );
         // Display::display(self) -> String — provided automatically
         // via the Error trait's Display supertrait requirement, so
         // calling `err.display()` also works.
-        checker.method_table.insert(
-            (intern(enum_name), intern("display")),
+        checker.tables.method_table.insert(
+            (enum_ty, intern("display")),
             MethodEntry {
                 method_type: Type::Fun(vec![self_ty], Box::new(Type::String)),
                 span: dummy_span,
                 is_auto_derived: false,
-                trait_name: Some(intern("Display")),
+                trait_name: Some(TraitKey::builtin("Display")),
                 method_constraints: Vec::new(),
             },
         );
@@ -298,11 +298,11 @@ fn register_enum(
     enum_name: &'static str,
     variants: &[(&'static str, &[Type])],
 ) {
-    let enum_sym = intern(enum_name);
-    let result_ty = Type::Generic(enum_sym, vec![]);
+    let enum_ty = TypeRef::builtin(enum_name);
+    let result_ty = Type::Generic(enum_ty, vec![]);
 
-    checker.enums.insert(
-        enum_sym,
+    checker.tables.enums.insert(
+        enum_ty,
         EnumInfo {
             params: vec![],
             param_var_ids: vec![],
@@ -319,7 +319,6 @@ fn register_enum(
 
     for (variant_name, fields) in variants {
         let variant_sym = intern(variant_name);
-        checker.variant_to_enum.insert(variant_sym, enum_sym);
         let scheme = if fields.is_empty() {
             // Nullary: register as a value of the enum type.
             Scheme::mono(result_ty.clone())
@@ -329,9 +328,4 @@ fn register_enum(
         };
         env.define(variant_sym, scheme);
     }
-    // Register declaration-order ordinals into the global registry that
-    // `Value::cmp` consults. Built-in error enums (IoError, JsonError,
-    // TimeError, ...) participate in declaration-order comparison just
-    // like user-defined enums.
-    crate::value::register_variant_decl_order(variants.iter().map(|(name, _)| *name));
 }

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: type mismatch: expected shapes.Shape, got Shape
+-- stderr-contains: --> main.silt:12:13
+-- A local `Shape` and `shapes.Shape` are two types: a value of the
+-- local one is not a `shapes.Shape`. The message tells the two apart.
+import shapes
+type Shape { Tri(Int) }
+fn f(s: shapes.Shape) -> Int { shapes.area(s) }
+fn main() {
+  println(f(Tri(5)))
+}

@@ -1,0 +1,10 @@
+-- verdict: same
+-- Float typed var holding infinity?
+fn mul(a: Float, b) { a * b }
+fn main() {
+  let inf = 1.0 / 0.0
+  let z: Float = mul(2.0, 3.0)
+  println(z)
+  let w = mul(2.0, inf)
+  println(w)
+}

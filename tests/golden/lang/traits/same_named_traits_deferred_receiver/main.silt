@@ -1,0 +1,11 @@
+-- A method call on a receiver that is a type variable where the call is
+-- inferred, and Int once the whole function is (the lambda's parameter
+-- `y`), calls the method of the trait this module sees: a.Show's, though
+-- b.Show's impl for Int is in the program too (through helper).
+import a
+import helper
+import list
+fn main() {
+  println([5] |> list.map { y -> y.show() })
+  println(helper.via_b(6))
+}

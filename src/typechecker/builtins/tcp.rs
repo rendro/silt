@@ -6,13 +6,12 @@ use super::super::*;
 use super::docs::{attach_module_docs, attach_module_overview};
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
-    let listener_ty = Type::Generic(intern("TcpListener"), vec![]);
-    let stream_ty = Type::Generic(intern("TcpStream"), vec![]);
-    let bytes_ty = Type::Generic(intern("Bytes"), vec![]);
-    let tcp_err_ty = Type::Generic(intern("TcpError"), vec![]);
-    let result = |ok_ty: Type, err_ty: Type| -> Type {
-        Type::Generic(intern("Result"), vec![ok_ty, err_ty])
-    };
+    let listener_ty = Type::builtin("TcpListener", vec![]);
+    let stream_ty = Type::builtin("TcpStream", vec![]);
+    let bytes_ty = Type::builtin("Bytes", vec![]);
+    let tcp_err_ty = Type::builtin("TcpError", vec![]);
+    let result =
+        |ok_ty: Type, err_ty: Type| -> Type { Type::builtin("Result", vec![ok_ty, err_ty]) };
 
     // tcp.listen: String -> Result(TcpListener, String)
     env.define(
@@ -94,10 +93,10 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     #[cfg(feature = "tcp-tls")]
     {
-        let listener_ty_tls = Type::Generic(intern("TcpListener"), vec![]);
-        let listener_ty_mtls = Type::Generic(intern("TcpListener"), vec![]);
-        let bytes_ty_tls = Type::Generic(intern("Bytes"), vec![]);
-        let bytes_ty_mtls = Type::Generic(intern("Bytes"), vec![]);
+        let listener_ty_tls = Type::builtin("TcpListener", vec![]);
+        let listener_ty_mtls = Type::builtin("TcpListener", vec![]);
+        let bytes_ty_tls = Type::builtin("Bytes", vec![]);
+        let bytes_ty_mtls = Type::builtin("Bytes", vec![]);
         // tcp.connect_tls: (String, String) -> Result(TcpStream, String)
         env.define(
             intern("tcp.connect_tls"),

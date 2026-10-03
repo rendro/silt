@@ -1,0 +1,9 @@
+Pt { x: 1 }
+true
+-1
+-1
+[Pt {x: 1}, Pt {x: 2}]
+true
+true
+false
+Some(a)

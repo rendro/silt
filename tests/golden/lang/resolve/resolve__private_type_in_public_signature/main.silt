@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: private type 'Id' in the signature of public fn 'make'
+-- stderr-contains: error[type]: private trait 'Greet' in the signature of public fn 'hello'
+-- stderr-contains: error[type]: private type 'Id' in the signature of public type 'Holder'
+-- stderr-contains: --> lib.silt:3:24
+-- stderr-not-contains: private_use
+-- A public declaration may not name a private type or trait of its
+-- module: an importer could use it but not name what it uses. A private
+-- declaration may.
+import lib
+fn main() {
+  println(1)
+}

@@ -10,9 +10,8 @@
 //! A `}` inside any of those would decrement the depth counter too early
 //! and collapse the fold range to a couple of lines — for the
 //! `--`/block-comment cases the fold would end on the very line of the
-//! stray `}`. The sibling `text_utils::match_closing_brace` already
-//! handled all three kinds; round-87 extracts a shared scanner so the
-//! folding-range path inherits the comment/string skip logic.
+//! stray `}`. A fold now runs over the lines of its node's span, which
+//! ends where the parser found the closing `}`.
 //!
 //! These tests drive the real LSP `textDocument/foldingRange` handler
 //! via subprocess (through the shared LSP client in `support.rs`).

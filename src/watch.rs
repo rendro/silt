@@ -1,26 +1,56 @@
-use notify::{RecursiveMode, Watcher};
-use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::time::{Duration, Instant, SystemTime};
+//! Watch mode: run a silt command, and run it again whenever a file of
+//! the program changes.
+//!
+//! The command runs as a child process (the same `silt` binary without
+//! `--watch`). The files watched are those of the program: every module
+//! file the session's analysis of each entry reaches (an import that
+//! names a missing file included, so creating it is a change), plus the
+//! project's `silt.toml` and `silt.lock`. A change kills the child if it
+//! is still running, then runs the command again, so a program that
+//! never ends (a server) is reloaded too.
+//!
+//! For `silt test` over a directory, the directory is watched with its
+//! subdirectories too: a test file created or removed there is a change.
+//!
+//! A change is a change of content: an event for a watched file whose
+//! text is what it was when the command last started is ignored, and so
+//! is an event for any other file. The watcher resolves the packages
+//! under the command's lockfile policy before it reads the files, so the
+//! lockfile the command would rewrite is rewritten first and is not a
+//! change.
 
-/// Banner printed after every (re)run so the user knows the watcher is
-/// armed for the next save. Round 74 hoisted this out of three
-/// duplicate `eprintln!` call sites — the previous shape risked the
-/// banner wording diverging silently if only some sites were edited.
-/// Test suites grep for `[watch] Watching for changes` (substring) to
-/// detect the watcher's signature output, so any future tweak should
-/// preserve that substring.
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::time::Duration;
+
+use notify::{RecursiveMode, Watcher};
+
+use crate::manifest::Manifest;
+use crate::package_graph::LockChange;
+use crate::session::{Config, LockPolicy, ProjectSetup, Session};
+
+/// Banner printed when the command has finished, so the user knows the
+/// watcher is armed for the next save. Test suites grep for
+/// `[watch] Watching for changes` (substring) to detect the watcher's
+/// signature output, so any future tweak should preserve that substring.
 const WATCH_BANNER: &str = "\n[watch] Watching for changes...";
+
+/// How long the watcher waits after a change for more of them (an editor
+/// writes a file in several steps), so a save runs the command once.
+const SETTLE: Duration = Duration::from_millis(100);
+
+/// How often the watcher looks whether a running command has finished.
+const POLL: Duration = Duration::from_millis(50);
 
 /// Clear-screen + cursor-home escape sequence, gated on stderr being a
 /// real terminal. When stderr is redirected (e.g. `silt run app.silt
 /// --watch 2> watch.log`), this returns `""` so the literal escape bytes
 /// (`^[[2J^[[H`) are never written into the log. Honors `NO_COLOR` for
 /// parity with the rest of silt's terminal-control gating (see
-/// `src/errors.rs`'s `is_terminal`-based color decision).
-///
-/// Behavior on a TTY is unchanged: the full sequence is emitted before
-/// every (re)run.
+/// `diagnostic::use_color`'s `is_terminal`-based color decision).
 fn clear_screen_seq() -> &'static str {
     if std::env::var_os("NO_COLOR").is_some() {
         return "";
@@ -32,169 +62,415 @@ fn clear_screen_seq() -> &'static str {
     }
 }
 
-/// Returns true if any of the given paths has a `.silt` extension.
-/// Extracted so the filtering logic can be unit-tested in isolation
-/// from the `notify` event stream and the subprocess rerun loop.
-fn any_silt_path_changed(paths: &[PathBuf]) -> bool {
-    paths
-        .iter()
-        .any(|p| p.extension().is_some_and(|ext| ext == "silt"))
+/// The files of a program and what each held: a hash of its text, or
+/// `None` for a file that cannot be read (a missing module). For a
+/// command whose entries are discovered in a directory (`silt test`), the
+/// directory and the entries found there.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WatchSet {
+    files: BTreeMap<PathBuf, Option<u64>>,
+    discovery: Option<(PathBuf, BTreeSet<PathBuf>)>,
 }
 
-/// Confirm at least one `.silt` path in the event actually has a
-/// modification time newer than `since`. macOS FSEvents can emit
-/// coalesced directory-level events that list sibling `.silt` files
-/// even when only a non-`.silt` file was modified, so an
-/// extension-only filter admits false positives. Checking mtime is a
-/// filesystem-level truth check that rejects those.
-///
-/// Paths that can't be `stat`'d (deleted, permission denied) are
-/// skipped rather than treated as modified, because a rerun can't
-/// observe a file that's gone anyway.
-fn any_silt_path_mtime_newer(paths: &[PathBuf], since: SystemTime) -> bool {
-    paths.iter().any(|p| {
-        p.extension().is_some_and(|ext| ext == "silt")
-            && p.metadata()
-                .and_then(|m| m.modified())
-                .map(|m| m > since)
-                .unwrap_or(false)
-    })
+impl WatchSet {
+    /// The files `paths`, each with what it holds now.
+    pub fn of(paths: impl IntoIterator<Item = PathBuf>) -> WatchSet {
+        WatchSet {
+            files: paths
+                .into_iter()
+                .map(|path| {
+                    let content = content_hash(&path);
+                    (path, content)
+                })
+                .collect(),
+            discovery: None,
+        }
+    }
+
+    /// The set, with `entries` discovered in the directory `dir`: a
+    /// `.silt` file created or removed under it is looked at, and when
+    /// the entries found there are no longer `entries`, that is a change.
+    pub fn discovered_in(mut self, dir: PathBuf, entries: BTreeSet<PathBuf>) -> WatchSet {
+        self.discovery = Some((dir, entries));
+        self
+    }
+
+    /// The files of the programs that start at `entries`: the files of
+    /// each one's analysis, and its project's `silt.toml` and
+    /// `silt.lock`. Each program's packages are resolved under `lock`,
+    /// the policy of the command watched: a lockfile the command would
+    /// rewrite is rewritten here, before the files are read, so the
+    /// command's own rewrite is not a change.
+    pub fn for_entries(entries: &[PathBuf], lock: LockPolicy) -> WatchSet {
+        let mut paths = BTreeSet::new();
+        for entry in entries {
+            let entry = absolute(entry);
+            let dir = entry
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
+            let mut session = Session::new(Config {
+                project: ProjectSetup::Discover(dir.clone()),
+                lock,
+                host: Vec::new(),
+            });
+            if let Ok(packages) = session.packages()
+                && packages.lock == LockChange::Updated
+            {
+                eprintln!("Updating silt.lock for new dependencies in silt.toml");
+            }
+            match session.open(&entry) {
+                Ok(file) => {
+                    session.analyze(file);
+                    paths.extend(session.files(file).into_iter().map(|p| absolute(&p)));
+                }
+                Err(_) => {
+                    paths.insert(entry.clone());
+                }
+            }
+            if let Some(root) = Manifest::find(&dir) {
+                paths.insert(root.join("silt.toml"));
+                paths.insert(root.join("silt.lock"));
+            }
+        }
+        WatchSet::of(paths)
+    }
+
+    /// The files of the set.
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        self.files.keys().map(PathBuf::as_path)
+    }
+
+    /// Whether an event for `path` is to be looked at: a file of the set,
+    /// or a `.silt` file under the discovery directory.
+    pub fn concerns(&self, path: &Path) -> bool {
+        self.files.contains_key(path)
+            || self.discovery.as_ref().is_some_and(|(dir, _)| {
+                path.starts_with(dir) && path.extension().is_some_and(|ext| ext == "silt")
+            })
+    }
+
+    /// Whether a file of the set holds something else now than it did,
+    /// or the entries discovered now (`entries()`) are others.
+    pub fn changed(&self, entries: impl FnOnce() -> BTreeSet<PathBuf>) -> bool {
+        self.files
+            .iter()
+            .any(|(path, content)| content_hash(path) != *content)
+            || self
+                .discovery
+                .as_ref()
+                .is_some_and(|(_, found)| entries() != *found)
+    }
+
+    /// The directories to watch, and whether each is watched with its
+    /// subdirectories: the directories the files are in (so a file that
+    /// an editor replaces, or that does not exist yet, is seen), and the
+    /// discovery directory with its subdirectories.
+    fn watches(&self) -> BTreeSet<(PathBuf, bool)> {
+        let discovery = self.discovery.as_ref().map(|(dir, _)| dir);
+        let mut watches: BTreeSet<(PathBuf, bool)> = self
+            .files
+            .keys()
+            .filter_map(|p| p.parent())
+            .filter(|dir| !discovery.is_some_and(|d| dir.starts_with(d)))
+            .map(|dir| (dir.to_path_buf(), false))
+            .collect();
+        if let Some(dir) = discovery {
+            watches.insert((dir.clone(), true));
+        }
+        watches
+    }
 }
 
-/// Returns true if enough time has elapsed since `last_run` to rerun
-/// immediately under the given debounce window. Isolated so the
-/// debounce decision can be unit-tested deterministically.
-fn should_rerun_now(last_run: Instant, now: Instant, debounce: Duration) -> bool {
-    now.duration_since(last_run) > debounce
+/// A hash of the text of the file at `path`, or `None` when it cannot be
+/// read.
+fn content_hash(path: &Path) -> Option<u64> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Some(hasher.finish())
 }
 
-pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
+/// `path` made absolute against the working directory, so it compares
+/// equal to the paths file events carry.
+fn absolute(path: &Path) -> PathBuf {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    // A file that does not exist (a missing module, a file just removed):
+    // its directory may.
+    match (path.parent().map(Path::canonicalize), path.file_name()) {
+        (Some(Ok(dir)), Some(name)) => dir.join(name),
+        _ => path,
+    }
+}
+
+/// The command a watcher runs and stops.
+pub trait Runner {
+    /// Start the command.
+    fn start(&mut self);
+    /// Whether the command started last has finished.
+    fn finished(&mut self) -> bool;
+    /// Stop the command if it is still running, and wait for it.
+    fn stop(&mut self);
+}
+
+/// The process id of the command the watcher runs now; 0 when none
+/// runs. The watcher's SIGTERM / SIGINT handler stops it.
+#[cfg(unix)]
+static RUNNING_CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// On SIGTERM or SIGINT, stop the command the watcher runs, wait for it,
+/// and end the watcher by the same signal: killing the watcher leaves no
+/// orphaned program behind, and its parent sees it die of the signal. A
+/// signal the watcher was started with ignored stays ignored.
+#[cfg(unix)]
+fn forward_termination_to_the_child() {
+    extern "C" fn on_signal(signal: libc::c_int) {
+        let pid = RUNNING_CHILD.load(std::sync::atomic::Ordering::SeqCst);
+        // SAFETY: kill(2), waitpid(2), signal(2) and raise(3) are
+        // async-signal-safe.
+        unsafe {
+            if pid > 0 {
+                libc::kill(pid, libc::SIGTERM);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+            libc::signal(signal, libc::SIG_DFL);
+            libc::raise(signal);
+        }
+    }
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        // SAFETY: sigaction(2) with a zeroed, then filled, action; the
+        // handler only makes async-signal-safe calls.
+        unsafe {
+            let mut old: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(signal, std::ptr::null(), &mut old) != 0
+                || old.sa_sigaction == libc::SIG_IGN
+            {
+                continue;
+            }
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(signal, &action, std::ptr::null_mut());
+        }
+    }
+}
+
+/// The `silt` binary run with `args`, as a child process.
+struct ChildRunner {
+    exe: PathBuf,
+    args: Vec<String>,
+    child: Option<Child>,
+}
+
+impl Runner for ChildRunner {
+    fn start(&mut self) {
+        eprint!("{}", clear_screen_seq());
+        match Command::new(&self.exe).args(&self.args).spawn() {
+            Ok(child) => {
+                #[cfg(unix)]
+                RUNNING_CHILD.store(
+                    i32::try_from(child.id()).unwrap_or(0),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                self.child = Some(child);
+            }
+            Err(e) => eprintln!("error: failed to run {}: {e}", self.exe.display()),
+        }
+    }
+
+    fn finished(&mut self) -> bool {
+        let finished = match &mut self.child {
+            Some(child) => !matches!(child.try_wait(), Ok(None)),
+            None => true,
+        };
+        // A reaped child's pid may be reused: the signal handler must not
+        // signal it any more.
+        #[cfg(unix)]
+        if finished {
+            RUNNING_CHILD.store(0, std::sync::atomic::Ordering::SeqCst);
+        }
+        finished
+    }
+
+    fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            #[cfg(unix)]
+            RUNNING_CHILD.store(0, std::sync::atomic::Ordering::SeqCst);
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// What a watcher watches: the programs of a command.
+pub struct Target {
+    /// The entry files of the programs, found again before each run.
+    pub entries: Box<dyn Fn() -> Vec<PathBuf>>,
+    /// The directory the entries are discovered in, for `silt test`
+    /// given a directory or none: a test file created or removed there
+    /// is a change.
+    pub discovery: Option<PathBuf>,
+    /// The lockfile policy of the command.
+    pub lock: LockPolicy,
+}
+
+impl Target {
+    /// The entries, as absolute paths.
+    fn entry_set(&self) -> BTreeSet<PathBuf> {
+        (self.entries)().iter().map(|p| absolute(p)).collect()
+    }
+
+    /// The files of the programs now.
+    fn watch_set(&self) -> WatchSet {
+        let entries = self.entry_set();
+        let set = WatchSet::for_entries(&entries.iter().cloned().collect::<Vec<_>>(), self.lock);
+        match &self.discovery {
+            Some(dir) => set.discovered_in(absolute(dir), entries),
+            None => set,
+        }
+    }
+}
+
+/// Run `silt <args>` and run it again on every change to the files of
+/// the programs of `target`.
+pub fn watch_and_rerun(target: Target, args: &[String]) {
     let (tx, rx) = mpsc::channel();
-
     // Creating the OS watcher can fail in restrictive environments: sandboxes
     // where inotify is disabled, read-only filesystems, containers that cap
     // file descriptors, or platforms where `notify`'s backend can't initialize.
     // Surface a helpful hint so users know they can fall back to a one-shot
     // compile instead of staring at a raw errno.
-    let mut watcher = notify::recommended_watcher(move |res| {
-        let _ = tx.send(res);
-    })
-    .unwrap_or_else(|e| {
+    let watcher_failed = |e: &dyn std::fmt::Display| -> ! {
         eprintln!(
-            "error: failed to start file watcher on {}: {e}. \
-             Try running without --watch to compile once.",
-            watch_dir.display()
+            "error: failed to start file watcher: {e}. Try running without --watch to compile once."
         );
         std::process::exit(1);
-    });
-
-    watcher
-        .watch(watch_dir, RecursiveMode::Recursive)
-        .unwrap_or_else(|e| {
-            eprintln!(
-                "error: failed to start file watcher on {}: {e}. \
-                 Try running without --watch to compile once.",
-                watch_dir.display()
-            );
-            std::process::exit(1);
-        });
+    };
+    let mut watcher =
+        notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
+            Ok(event) => {
+                let _ = tx.send(event.paths);
+            }
+            Err(e) => eprintln!("watch error: {e}"),
+        })
+        .unwrap_or_else(|e| watcher_failed(&e));
 
     let exe = std::env::current_exe().unwrap_or_else(|e| {
         eprintln!("error: failed to get executable path: {e}");
         std::process::exit(1);
     });
-
-    let debounce = Duration::from_millis(500);
-    // Capture timestamps BEFORE the initial subprocess so any save during
-    // the initial compile is not silently dropped. The rerun branches
-    // below set these timestamps before running the subprocess for the
-    // same reason; the initial branch must match that ordering. See
-    // `tests/cli/round77_watch_initial_mtime_ordering_tests.rs` for the lock.
-    let mut last_run = Instant::now();
-    // Wall-clock timestamp of the most recent rerun (or startup). Used
-    // to reject false-positive watcher events whose paths don't
-    // actually have a newer mtime — see `any_silt_path_mtime_newer`.
-    let mut last_run_system = SystemTime::now();
-
-    // Initial run
-    eprint!("{}", clear_screen_seq());
-    let _ = std::process::Command::new(&exe).args(args).status();
-    eprintln!("{WATCH_BANNER}");
-
-    let mut pending_rerun = false;
-
-    loop {
-        // If a save arrived during the debounce window, wait out the remainder
-        // and then trigger a rerun so no save is dropped.
-        let recv_result = if pending_rerun {
-            let elapsed = last_run.elapsed();
-            if elapsed >= debounce {
-                // Window already expired — fire immediately without blocking.
-                Ok(None)
-            } else {
-                match rx.recv_timeout(debounce - elapsed) {
-                    Ok(ev) => Ok(Some(ev)),
-                    Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-                    Err(mpsc::RecvTimeoutError::Disconnected) => Err(()),
-                }
+    let mut runner = ChildRunner {
+        exe,
+        args: args.to_vec(),
+        child: None,
+    };
+    #[cfg(unix)]
+    forward_termination_to_the_child();
+    let mut watched: BTreeSet<(PathBuf, bool)> = BTreeSet::new();
+    let mut first = true;
+    run(
+        &rx,
+        || target.watch_set(),
+        || target.entry_set(),
+        |set| {
+            let watches = set.watches();
+            for (dir, _) in watched.difference(&watches) {
+                let _ = watcher.unwatch(dir);
             }
-        } else {
-            match rx.recv() {
-                Ok(ev) => Ok(Some(ev)),
-                Err(_) => Err(()),
-            }
-        };
-
-        match recv_result {
-            Err(()) => break,
-            Ok(None) => {
-                // Debounce window expired with a pending rerun queued.
-                pending_rerun = false;
-                // Let file writes settle, then drain any events that arrived
-                // during the sleep.
-                std::thread::sleep(Duration::from_millis(100));
-                while rx.try_recv().is_ok() {}
-
-                last_run = Instant::now();
-                last_run_system = SystemTime::now();
-                eprint!("{}", clear_screen_seq());
-                let _ = std::process::Command::new(&exe).args(args).status();
-                eprintln!("{WATCH_BANNER}");
-            }
-            Ok(Some(Ok(event))) => {
-                if !any_silt_path_changed(&event.paths) {
-                    continue;
-                }
-                // Defensive mtime check: on macOS, FSEvents can report
-                // coalesced directory-level events that include sibling
-                // `.silt` files when only a non-`.silt` file was
-                // modified. The extension filter above admits those as
-                // silt-events; the mtime check rejects them.
-                if !any_silt_path_mtime_newer(&event.paths, last_run_system) {
-                    continue;
-                }
-
-                if should_rerun_now(last_run, Instant::now(), debounce) {
-                    // Outside the debounce window: rerun now.
-                    pending_rerun = false;
-                    // Let file writes settle, then drain pending events.
-                    std::thread::sleep(Duration::from_millis(100));
-                    while rx.try_recv().is_ok() {}
-
-                    last_run = Instant::now();
-                    last_run_system = SystemTime::now();
-                    eprint!("{}", clear_screen_seq());
-                    let _ = std::process::Command::new(&exe).args(args).status();
-                    eprintln!("{WATCH_BANNER}");
+            let mut watching = watched.intersection(&watches).count();
+            let mut last_error = None;
+            for (dir, recursive) in watches.difference(&watched) {
+                let mode = if *recursive {
+                    RecursiveMode::Recursive
                 } else {
-                    // Inside the debounce window: mark a pending rerun. The
-                    // next loop iteration will wait out the remainder of the
-                    // window before firing.
-                    pending_rerun = true;
+                    RecursiveMode::NonRecursive
+                };
+                match watcher.watch(dir, mode) {
+                    Ok(()) => watching += 1,
+                    Err(e) => last_error = Some(e),
                 }
             }
-            Ok(Some(Err(e))) => {
-                eprintln!("watch error: {e}");
+            // A directory that does not exist (that of a missing module)
+            // cannot be watched, but with nothing watched at all the
+            // watcher would never wake.
+            if first && watching == 0 {
+                match last_error {
+                    Some(e) => watcher_failed(&e),
+                    None => watcher_failed(&"there is no file to watch"),
+                }
+            }
+            first = false;
+            watched = watches;
+        },
+        &mut runner,
+        SETTLE,
+    );
+}
+
+/// The watch loop. Before each run it takes the program's files
+/// (`files`), has them watched (`watch`), and starts the command. Each
+/// item of `events` is the paths of one file event. An event the set
+/// concerns, once `settle` has passed with no further event, is a change
+/// if the set changed (`entries` gives the entries discovered now): the
+/// command is stopped and run again. When `events` is closed, the
+/// command is stopped and the loop returns.
+pub fn run(
+    events: &Receiver<Vec<PathBuf>>,
+    mut files: impl FnMut() -> WatchSet,
+    mut entries: impl FnMut() -> BTreeSet<PathBuf>,
+    mut watch: impl FnMut(&WatchSet),
+    runner: &mut impl Runner,
+    settle: Duration,
+) {
+    loop {
+        // The files are read before the command starts: a save made
+        // while it runs is a change.
+        let set = files();
+        watch(&set);
+        runner.start();
+        let mut finished = false;
+        loop {
+            let paths = if finished {
+                match events.recv() {
+                    Ok(paths) => paths,
+                    Err(_) => return,
+                }
+            } else {
+                match events.recv_timeout(POLL) {
+                    Ok(paths) => paths,
+                    Err(RecvTimeoutError::Timeout) => {
+                        if runner.finished() {
+                            finished = true;
+                            eprintln!("{WATCH_BANNER}");
+                        }
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        runner.stop();
+                        return;
+                    }
+                }
+            };
+            if !paths.iter().any(|p| set.concerns(&absolute(p))) {
+                continue;
+            }
+            // Let the writes settle, then take what arrived meanwhile.
+            if !settle.is_zero() {
+                std::thread::sleep(settle);
+            }
+            while events.try_recv().is_ok() {}
+            if set.changed(&mut entries) {
+                runner.stop();
+                break;
             }
         }
     }
@@ -203,177 +479,362 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc::Sender;
 
     // ── clear_screen_seq TTY guard ────────────────────────────────
     //
-    // Regression lock for round 91: the clear-screen escape must be
-    // gated so it is NOT written when stderr is redirected. Under
-    // `cargo test` stderr is captured (not a terminal), so the helper
-    // must return "" — never the raw escape. This complements the
-    // source-grep lock in
-    // `tests/cli/round91_watch_clear_tty_guard_tests.rs`.
+    // The clear-screen escape must not be written when stderr is
+    // redirected. Under `cargo test` stderr is captured (not a terminal),
+    // so the helper must return "".
     #[test]
     fn clear_screen_seq_empty_when_not_terminal() {
-        // stderr is not a TTY under the test harness; the sequence must
-        // be suppressed so redirected logs stay clean.
+        assert_eq!(clear_screen_seq(), "");
+    }
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// A fresh directory for one test.
+    fn temp_dir() -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("silt_watch_unit_{}_{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    /// A runner that records what the loop does with it and, when the
+    /// `n`th run starts, does what `on_start(n)` says: edits files and
+    /// sends the events an OS watcher would, or closes the events.
+    struct Script {
+        log: Vec<String>,
+        runs: usize,
+        running: bool,
+        on_start: Box<dyn FnMut(usize)>,
+    }
+
+    impl Runner for Script {
+        fn start(&mut self) {
+            self.runs += 1;
+            self.running = true;
+            self.log.push(format!("start {}", self.runs));
+            (self.on_start)(self.runs);
+        }
+        fn finished(&mut self) -> bool {
+            !self.running
+        }
+        fn stop(&mut self) {
+            if self.running {
+                self.log.push(format!("kill {}", self.runs));
+            }
+            self.running = false;
+        }
+    }
+
+    /// Run the loop over the files `paths` with a script: the events
+    /// channel is closed after the run `last` starts.
+    fn drive(
+        paths: Vec<PathBuf>,
+        last: usize,
+        step: impl FnMut(usize, &Sender<Vec<PathBuf>>) + 'static,
+    ) -> Vec<String> {
+        drive_with(
+            move || WatchSet::of(paths.clone()),
+            BTreeSet::new,
+            last,
+            step,
+        )
+    }
+
+    /// [`drive`] with the set taken by `files` and the entries
+    /// discovered now given by `entries`.
+    fn drive_with(
+        files: impl FnMut() -> WatchSet,
+        entries: impl FnMut() -> BTreeSet<PathBuf>,
+        last: usize,
+        mut step: impl FnMut(usize, &Sender<Vec<PathBuf>>) + 'static,
+    ) -> Vec<String> {
+        let (tx, rx) = mpsc::channel();
+        let mut tx = Some(tx);
+        let mut runner = Script {
+            log: Vec::new(),
+            runs: 0,
+            running: false,
+            on_start: Box::new(move |n| {
+                if let Some(sender) = &tx {
+                    step(n, sender);
+                }
+                if n >= last {
+                    tx = None;
+                }
+            }),
+        };
+        run(&rx, files, entries, |_| {}, &mut runner, Duration::ZERO);
+        runner.log
+    }
+
+    #[test]
+    fn a_change_while_the_command_runs_kills_it_before_the_rerun() {
+        let dir = temp_dir();
+        let main = dir.join("main.silt");
+        std::fs::write(&main, "v1").unwrap();
+        let edited = main.clone();
+        let log = drive(vec![main], 2, move |n, tx| {
+            if n == 1 {
+                std::fs::write(&edited, "v2").unwrap();
+                tx.send(vec![edited.clone()]).unwrap();
+            }
+        });
+        assert_eq!(log, ["start 1", "kill 1", "start 2", "kill 2"]);
+    }
+
+    #[test]
+    fn an_event_for_a_file_outside_the_set_is_ignored() {
+        let dir = temp_dir();
+        let main = dir.join("main.silt");
+        let notes = dir.join("notes.silt");
+        std::fs::write(&main, "v1").unwrap();
+        let log = drive(vec![main], 1, move |_, tx| {
+            std::fs::write(&notes, "x").unwrap();
+            tx.send(vec![notes.clone()]).unwrap();
+        });
+        assert_eq!(log, ["start 1", "kill 1"]);
+    }
+
+    #[test]
+    fn an_event_with_the_same_content_is_ignored() {
+        let dir = temp_dir();
+        let main = dir.join("main.silt");
+        std::fs::write(&main, "v1").unwrap();
+        let touched = main.clone();
+        let log = drive(vec![main], 1, move |_, tx| {
+            std::fs::write(&touched, "v1").unwrap();
+            tx.send(vec![touched.clone()]).unwrap();
+        });
+        assert_eq!(log, ["start 1", "kill 1"]);
+    }
+
+    #[test]
+    fn creating_a_missing_watched_file_is_a_change() {
+        let dir = temp_dir();
+        let util = dir.join("util.silt");
+        let created = util.clone();
+        let log = drive(vec![util], 2, move |n, tx| {
+            if n == 1 {
+                std::fs::write(&created, "pub fn f() { 1 }").unwrap();
+                tx.send(vec![created.clone()]).unwrap();
+            }
+        });
+        assert_eq!(log, ["start 1", "kill 1", "start 2", "kill 2"]);
+    }
+
+    #[test]
+    fn a_finished_command_is_not_killed_on_change() {
+        let dir = temp_dir();
+        let main = dir.join("main.silt");
+        std::fs::write(&main, "v1").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let edited = main.clone();
+        let mut runner = Script {
+            log: Vec::new(),
+            runs: 0,
+            running: false,
+            on_start: Box::new(|_| {}),
+        };
+        // The command finishes at once: the loop sees that, then the
+        // edit, then the end of the events.
+        let mut tx = Some(tx);
+        let mut first = true;
+        run(
+            &rx,
+            || WatchSet::of(vec![main.clone()]),
+            BTreeSet::new,
+            |_| {},
+            &mut FinishingRunner {
+                inner: &mut runner,
+                on_finished: Box::new(move || {
+                    if first {
+                        first = false;
+                        std::fs::write(&edited, "v2").unwrap();
+                        tx.as_ref().unwrap().send(vec![edited.clone()]).unwrap();
+                    } else {
+                        tx = None;
+                    }
+                }),
+            },
+            Duration::ZERO,
+        );
+        assert_eq!(runner.log, ["start 1", "start 2"]);
+    }
+
+    /// A runner whose command finishes as soon as it starts, and that
+    /// calls `on_finished` when the loop sees that.
+    struct FinishingRunner<'a> {
+        inner: &'a mut Script,
+        on_finished: Box<dyn FnMut()>,
+    }
+
+    impl Runner for FinishingRunner<'_> {
+        fn start(&mut self) {
+            self.inner.start();
+            self.inner.running = false;
+        }
+        fn finished(&mut self) -> bool {
+            (self.on_finished)();
+            true
+        }
+        fn stop(&mut self) {
+            self.inner.stop();
+        }
+    }
+
+    #[test]
+    fn the_set_is_the_files_of_the_analysis_and_the_project_files() {
+        let dir = temp_dir();
+        std::fs::write(
+            dir.join("silt.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("main.silt"),
+            "import util\nimport missing\nfn main() { util.f() }\n",
+        )
+        .unwrap();
+        std::fs::write(src.join("util.silt"), "pub fn f() { 1 }\n").unwrap();
+        std::fs::write(src.join("other.silt"), "pub fn g() { 1 }\n").unwrap();
+        let set = WatchSet::for_entries(&[src.join("main.silt")], LockPolicy::ReadOnly);
+        let paths: Vec<&Path> = set.paths().collect();
         assert_eq!(
-            clear_screen_seq(),
-            "",
-            "clear_screen_seq() must return \"\" when stderr is not a terminal"
-        );
-        // And it must never leak the raw escape in that case.
-        assert!(
-            !clear_screen_seq().contains('\x1B'),
-            "clear_screen_seq() must not emit the ANSI escape when not a terminal"
-        );
-    }
-
-    // ── any_silt_path_changed ─────────────────────────────────────
-
-    #[test]
-    fn silt_file_detected() {
-        let paths = vec![PathBuf::from("/tmp/a.silt")];
-        assert!(any_silt_path_changed(&paths));
-    }
-
-    #[test]
-    fn non_silt_file_ignored() {
-        let paths = vec![PathBuf::from("/tmp/a.txt"), PathBuf::from("/tmp/b.rs")];
-        assert!(!any_silt_path_changed(&paths));
-    }
-
-    #[test]
-    fn mixed_paths_detected() {
-        // A batch containing at least one .silt file still triggers a rerun.
-        let paths = vec![
-            PathBuf::from("/tmp/a.txt"),
-            PathBuf::from("/tmp/main.silt"),
-            PathBuf::from("/tmp/b.rs"),
-        ];
-        assert!(any_silt_path_changed(&paths));
-    }
-
-    #[test]
-    fn empty_paths_ignored() {
-        let paths: Vec<PathBuf> = vec![];
-        assert!(!any_silt_path_changed(&paths));
-    }
-
-    #[test]
-    fn extensionless_path_ignored() {
-        let paths = vec![PathBuf::from("/tmp/Makefile")];
-        assert!(!any_silt_path_changed(&paths));
-    }
-
-    #[test]
-    fn silt_substring_not_matched() {
-        // A file named `silt.txt` is NOT a .silt file.
-        let paths = vec![PathBuf::from("/tmp/silt.txt")];
-        assert!(!any_silt_path_changed(&paths));
-    }
-
-    // ── any_silt_path_mtime_newer ─────────────────────────────────
-    //
-    // Regression lock for the macOS FSEvents coalescing issue: the
-    // watcher can report a `.silt` path in an event whose root cause
-    // was a modification to a sibling non-`.silt` file. The extension
-    // filter admits those false positives; the mtime check rejects
-    // them by consulting the filesystem directly.
-    #[test]
-    fn mtime_check_rejects_stale_silt_path() {
-        use std::io::Write;
-        let path =
-            std::env::temp_dir().join(format!("silt_watch_mtime_test_{}.silt", std::process::id()));
-        let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(b"fn main() {}").unwrap();
-        drop(f);
-
-        // Sleep briefly, then capture "now" — the file's mtime is
-        // strictly earlier than this.
-        std::thread::sleep(Duration::from_millis(20));
-        let since = SystemTime::now();
-
-        assert!(
-            !any_silt_path_mtime_newer(std::slice::from_ref(&path), since),
-            "unmodified .silt file should not count as newer"
-        );
-
-        // Touch the file and verify the check flips.
-        std::thread::sleep(Duration::from_millis(20));
-        let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(b"fn main() { 1 }").unwrap();
-        drop(f);
-
-        assert!(
-            any_silt_path_mtime_newer(std::slice::from_ref(&path), since),
-            ".silt file with mtime > since should count as newer"
-        );
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn mtime_check_ignores_non_silt_paths() {
-        use std::io::Write;
-        // Even a freshly-modified .txt path must not satisfy the
-        // silt-specific mtime check.
-        let path =
-            std::env::temp_dir().join(format!("silt_watch_mtime_test_{}.txt", std::process::id()));
-        let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(b"notes").unwrap();
-        drop(f);
-
-        let since = SystemTime::UNIX_EPOCH;
-        assert!(
-            !any_silt_path_mtime_newer(std::slice::from_ref(&path), since),
-            "non-silt path must never satisfy the silt mtime check"
-        );
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    // ── should_rerun_now / debounce ───────────────────────────────
-
-    #[test]
-    fn debounce_elapsed_allows_rerun() {
-        let debounce = Duration::from_millis(500);
-        let last = Instant::now() - Duration::from_millis(600);
-        let now = Instant::now();
-        assert!(
-            should_rerun_now(last, now, debounce),
-            "after debounce elapses, a rerun should be allowed"
+            paths,
+            [
+                dir.join("silt.lock").as_path(),
+                dir.join("silt.toml").as_path(),
+                src.join("main.silt").as_path(),
+                src.join("missing.silt").as_path(),
+                src.join("util.silt").as_path(),
+            ]
         );
     }
 
-    #[test]
-    fn debounce_within_window_suppresses() {
-        let debounce = Duration::from_millis(500);
-        let last = Instant::now() - Duration::from_millis(100);
-        let now = Instant::now();
-        assert!(
-            !should_rerun_now(last, now, debounce),
-            "within the debounce window, a rerun should NOT fire immediately"
-        );
+    /// The test files under `dir`, as `silt test` finds them.
+    fn test_files(dir: &Path) -> BTreeSet<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.to_string_lossy().ends_with("_test.silt"))
+            .collect()
+    }
+
+    /// The set of a `silt test` over `dir`: its test files, discovered.
+    fn test_set(dir: &Path) -> WatchSet {
+        let entries = test_files(dir);
+        WatchSet::of(entries.clone()).discovered_in(dir.to_path_buf(), entries)
     }
 
     #[test]
-    fn debounce_exactly_at_boundary() {
-        // At exactly the debounce duration the comparison is strict `>`,
-        // so the rerun is still suppressed. Document that behavior here.
-        let debounce = Duration::from_millis(500);
-        let last = Instant::now();
-        let now = last + debounce;
-        assert!(
-            !should_rerun_now(last, now, debounce),
-            "at exactly debounce, rerun should still be suppressed (strict >)"
+    fn a_new_test_file_is_a_change() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("a_test.silt"), "fn test_a() { () }").unwrap();
+        let (set_dir, entries_dir, step_dir) = (dir.clone(), dir.clone(), dir.clone());
+        let log = drive_with(
+            move || test_set(&set_dir),
+            move || test_files(&entries_dir),
+            2,
+            move |n, tx| {
+                if n == 1 {
+                    let b = step_dir.join("b_test.silt");
+                    std::fs::write(&b, "fn test_b() { () }").unwrap();
+                    tx.send(vec![b]).unwrap();
+                }
+            },
         );
+        assert_eq!(log, ["start 1", "kill 1", "start 2", "kill 2"]);
     }
 
     #[test]
-    fn debounce_just_past_boundary_fires() {
-        let debounce = Duration::from_millis(500);
-        let last = Instant::now();
-        let now = last + debounce + Duration::from_millis(1);
-        assert!(should_rerun_now(last, now, debounce));
+    fn a_removed_test_file_is_a_change() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("a_test.silt"), "fn test_a() { () }").unwrap();
+        std::fs::write(dir.join("b_test.silt"), "fn test_b() { () }").unwrap();
+        let (set_dir, entries_dir, step_dir) = (dir.clone(), dir.clone(), dir.clone());
+        let log = drive_with(
+            move || test_set(&set_dir),
+            move || test_files(&entries_dir),
+            2,
+            move |n, tx| {
+                if n == 1 {
+                    let b = step_dir.join("b_test.silt");
+                    std::fs::remove_file(&b).unwrap();
+                    tx.send(vec![b]).unwrap();
+                }
+            },
+        );
+        assert_eq!(log, ["start 1", "kill 1", "start 2", "kill 2"]);
+    }
+
+    #[test]
+    fn a_first_test_file_in_an_empty_directory_is_a_change() {
+        let dir = temp_dir();
+        let (set_dir, entries_dir, step_dir) = (dir.clone(), dir.clone(), dir.clone());
+        let log = drive_with(
+            move || test_set(&set_dir),
+            move || test_files(&entries_dir),
+            2,
+            move |n, tx| {
+                if n == 1 {
+                    let a = step_dir.join("a_test.silt");
+                    std::fs::write(&a, "fn test_a() { () }").unwrap();
+                    tx.send(vec![a]).unwrap();
+                }
+            },
+        );
+        assert_eq!(log, ["start 1", "kill 1", "start 2", "kill 2"]);
+        // And the empty directory is watched, so the event comes.
+        let watches = test_set(&temp_dir()).watches();
+        assert_eq!(watches.len(), 1);
+        assert!(watches.iter().all(|(_, recursive)| *recursive));
+    }
+
+    #[test]
+    fn a_new_silt_file_that_is_not_a_test_is_not_a_change() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("a_test.silt"), "fn test_a() { () }").unwrap();
+        let (set_dir, entries_dir, step_dir) = (dir.clone(), dir.clone(), dir.clone());
+        let log = drive_with(
+            move || test_set(&set_dir),
+            move || test_files(&entries_dir),
+            1,
+            move |_, tx| {
+                let helper = step_dir.join("helper.silt");
+                std::fs::write(&helper, "pub fn h() { 1 }").unwrap();
+                tx.send(vec![helper]).unwrap();
+            },
+        );
+        assert_eq!(log, ["start 1", "kill 1"]);
+    }
+
+    #[test]
+    fn the_lockfile_is_brought_up_to_date_before_the_files_are_read() {
+        let dir = temp_dir();
+        std::fs::write(
+            dir.join("silt.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("main.silt"), "fn main() { 1 }\n").unwrap();
+        let lock = dir.join("silt.lock");
+        assert!(!lock.exists());
+        // Under the policy of `run`, the watcher's analysis writes the
+        // lock the command would write, then reads the files: the
+        // command finds the lock up to date and the set unchanged.
+        let set = WatchSet::for_entries(&[src.join("main.silt")], LockPolicy::Update);
+        assert!(lock.exists(), "the watcher's analysis writes silt.lock");
+        assert!(set.paths().any(|p| p == lock));
+        assert!(!set.changed(BTreeSet::new));
     }
 }

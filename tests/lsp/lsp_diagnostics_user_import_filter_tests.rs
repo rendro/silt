@@ -1,10 +1,9 @@
 //! LSP regression tests for GAP #8: `import <user_module>` must NOT
 //! produce the "unknown module" warning (nor follow-on "undefined X"
-//! errors for names imported through it) in the editor. The LSP used to
-//! publish every typechecker diagnostic unfiltered; since the checker
-//! has no filesystem access, every legitimate user-module import was
-//! flagged. These tests lock the fix in `src/lsp/diagnostics.rs`
-//! `update_document` and keep future refactors honest.
+//! errors for names imported through it) in the editor. The LSP once
+//! checked each document without its imports, so every legitimate
+//! user-module import was flagged; it now publishes the session's
+//! analysis, which loads the imported modules.
 //!
 //! Communicates with the compiled `silt lsp` subprocess end-to-end so
 //! we exercise the real pipeline.

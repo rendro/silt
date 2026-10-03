@@ -1,0 +1,7 @@
+-- verdict: same
+type T { A(Int), B(Int) }
+fn main() {
+  let v = B(3)
+  let A(x) | B(x) = v
+  println(x)
+}

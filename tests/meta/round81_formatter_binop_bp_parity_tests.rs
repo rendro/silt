@@ -24,10 +24,10 @@ fn fmt(src: &str) -> String {
 }
 
 fn assert_lex_parse_ok(src: &str) {
-    let toks = Lexer::new(src)
+    let toks = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap_or_else(|e| panic!("lex failed for `{src}`: {e:?}"));
-    Parser::new(toks)
+    Parser::new(toks, src)
         .parse_program()
         .unwrap_or_else(|e| panic!("parse failed for `{src}`: {e:?}"));
 }

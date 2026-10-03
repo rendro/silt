@@ -1,0 +1,6 @@
+error[type]: unknown trait 'Hidden'
+ --> main.silt:7:7
+   |
+ 7 | trait Hidden for String { fn hid(self) -> Int { 1 } }
+   |       ^^^^^^ unknown trait 'Hidden'
+  = help: module 'lib' has a trait 'Hidden', but it is private there

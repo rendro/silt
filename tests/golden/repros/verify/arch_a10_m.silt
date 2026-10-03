@@ -1,0 +1,10 @@
+-- verdict: same
+import json
+type Tags = List(String)
+type Post { title: String, tags: Tags }
+fn main() {
+  match json.parse("\{\"title\": \"t\", \"tags\": [\"a\"]\}", Post) {
+    Ok(p) -> println(p)
+    Err(e) -> println("err: {e}")
+  }
+}

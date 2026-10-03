@@ -21,8 +21,8 @@
 //! the binder.
 //!
 //! Fix under test:
-//!   * `text_utils::find_shorthand_binder` — brace-depth-aware scan that
-//!     only matches direct fields of the record's own braces;
+//!   * a shorthand binder is edited at its own span (the field name's
+//!     span in the pattern);
 //!   * the `None` fallback now emits NO edit instead of the head span;
 //!   * `collect_references_in_expr` walks match-arm patterns.
 //!
@@ -84,10 +84,10 @@ fn apply_edits(text: &str, edits: &[Value]) -> String {
 /// string-containment assertions in each test below pin the semantic
 /// outcome; this gate pins structural integrity.
 fn assert_parses(applied: &str) {
-    let tokens = silt::lexer::Lexer::new(applied)
+    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), applied)
         .tokenize()
         .unwrap_or_else(|e| panic!("applied rename result no longer lexes: {e:?}\n{applied}"));
-    silt::parser::Parser::new(tokens)
+    silt::parser::Parser::new(tokens, applied)
         .parse_program()
         .unwrap_or_else(|e| panic!("applied rename result no longer parses: {e:?}\n{applied}"));
 }

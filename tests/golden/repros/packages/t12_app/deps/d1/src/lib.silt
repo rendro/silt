@@ -1,0 +1,6 @@
+pub type Tok { T(Int) }
+pub fn version() -> Int { 1 }
+pub fn mk() -> Tok { T(1) }
+pub fn val(t: Tok) -> Int {
+  match t { T(n) -> n }
+}

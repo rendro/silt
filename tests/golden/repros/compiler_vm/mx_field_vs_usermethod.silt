@@ -1,0 +1,14 @@
+-- verdict: same
+type R { go: Fn(Int) -> Int, n: Int }
+trait Runner {
+  fn go(self, x: Int) -> Int
+}
+trait Runner for R {
+  fn go(self, x: Int) -> Int { x + 1 }
+}
+fn main() {
+  let r = R { go: fn(x) { x * 100 }, n: 1 }
+  println(r.go(5))
+  let f = r.go
+  println(f(5))
+}

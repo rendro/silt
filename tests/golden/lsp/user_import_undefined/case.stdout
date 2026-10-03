@@ -1,0 +1,2 @@
+8:26 error undefined variable 'undefined_name'
+9:13 error module 'helper' has no member 'thrice'\nhelp: did you mean `twice`?

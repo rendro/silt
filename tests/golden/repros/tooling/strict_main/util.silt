@@ -1,0 +1,6 @@
+import io
+
+pub fn shout(s: String) -> String {
+  println(s)
+  s
+}

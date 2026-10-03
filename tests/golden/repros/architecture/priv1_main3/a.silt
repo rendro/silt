@@ -1,0 +1,4 @@
+fn helper() -> String = "a-helper"
+let secret = "a-secret"
+pub fn who() -> String = "{helper()} {secret}"
+pub fn later() -> Fn() -> String = fn() { helper() }

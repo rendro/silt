@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[parse]: 'f' is bound twice at the top level: by the import and by the import here
+-- Two imports binding one name to two definitions are a clash.
+import a.{ f }
+import b.{ f }
+fn main() {
+  println(f())
+}

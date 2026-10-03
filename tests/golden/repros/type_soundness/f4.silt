@@ -1,0 +1,6 @@
+-- verdict: same
+fn f(x: a) -> List(a) { [x, 1] }
+fn main() {
+  println(f(1))
+  println(f("s"))
+}

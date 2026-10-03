@@ -14,7 +14,7 @@ fn main() {
     channel.send(x, 1)
   })
   match channel.receive(x) {
-    Message(v) -> println("main got: {v}")
+    channel.Message(v) -> println("main got: {v}")
     _ -> println("main got no message")
   }
   task.join(h)

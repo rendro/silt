@@ -1,0 +1,8 @@
+-- verdict: same
+fn add(a, b) = a + b
+
+fn main() {
+  let b = add(1, {- the second
+     argument -} 2)
+  println("{b}")
+}

@@ -1,0 +1,30 @@
+-- verdict: same
+import stream
+import list
+fn main() {
+  let out = stream.from_list([1, 2, 3, 4, 5])
+    |> stream.map(fn(x) {
+      match x {
+        3 -> panic("boom at 3")
+        _ -> x * 10
+      }
+    })
+    |> stream.collect
+  println(out)
+  let out2 = stream.from_list([1, 2, 0, 4])
+    |> stream.map(fn(x) { 100 / x })
+    |> stream.collect
+  println(out2)
+  let n = stream.from_list([1, 2, 0, 4])
+    |> stream.filter(fn(x) { 100 / x > 0 })
+    |> stream.count
+  println(n)
+  let u = stream.unfold(0, fn(s) {
+    match s {
+      3 -> panic("unfold boom")
+      _ -> Some((s, s + 1))
+    }
+  }) |> stream.collect
+  println(u)
+  println("program finished normally")
+}

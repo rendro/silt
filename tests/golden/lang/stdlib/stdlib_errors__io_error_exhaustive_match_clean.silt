@@ -1,14 +1,14 @@
 import io
-fn describe(e: IoError) -> String {
+fn describe(e: io.IoError) -> String {
   match e {
-    IoNotFound(p) -> "not found"
-    IoPermissionDenied(p) -> "denied"
-    IoAlreadyExists(p) -> "exists"
-    IoInvalidInput(p) -> "invalid"
-    IoInterrupted -> "interrupted"
-    IoUnexpectedEof -> "eof"
-    IoWriteZero -> "write zero"
-    IoUnknown(m) -> "unknown"
+    io.IoNotFound(p) -> "not found"
+    io.IoPermissionDenied(p) -> "denied"
+    io.IoAlreadyExists(p) -> "exists"
+    io.IoInvalidInput(p) -> "invalid"
+    io.IoInterrupted -> "interrupted"
+    io.IoUnexpectedEof -> "eof"
+    io.IoWriteZero -> "write zero"
+    io.IoUnknown(m) -> "unknown"
   }
 }
-fn main() { println(describe(IoNotFound("x"))) }
+fn main() { println(describe(io.IoNotFound("x"))) }

@@ -1,0 +1,14 @@
+-- verdict: same
+fn grow(n) {
+  match n {
+    0 -> []
+    _ -> [grow(n - 1)]
+  }
+}
+fn main() {
+  let xs: List(Int) = grow(2)
+  match xs {
+    [x, ..rest] -> println(x + 1)
+    _ -> println("empty")
+  }
+}

@@ -1,0 +1,4 @@
+pub let limit = 10
+pub let (low, high) = (1, 99)
+let hidden = 5
+pub fn span() -> Int { high - low + hidden }

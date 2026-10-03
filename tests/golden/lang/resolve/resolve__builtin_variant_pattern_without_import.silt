@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: module 'time' is not imported
+-- stderr-contains: help: add `import time` at the top of the file
+-- A qualified pattern through a builtin module that is not imported says
+-- so, as a type or an expression does.
+fn f(d) -> Int {
+  match d {
+    time.Monday -> 1
+    _ -> 2
+  }
+}
+fn main() {
+  println(1)
+}

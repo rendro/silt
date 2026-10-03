@@ -1,0 +1,6 @@
+-- verdict: same
+trait Foo { fn foo(self) -> Int }
+trait Foo for Range(a) {
+  fn foo(self) -> Int { "not an int" }
+}
+fn main() { println([1, 2].foo()) }

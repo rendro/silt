@@ -6,8 +6,8 @@ fn program() {
   let ch = channel.new(5)
   channel.close(ch)
   match channel.receive(ch) {
-    Closed -> "got_closed"
-    Message(_) -> "unexpected_message"
+    channel.Closed -> "got_closed"
+    channel.Message(_) -> "unexpected_message"
     _ -> "unexpected_other"
   }
 }

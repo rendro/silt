@@ -8,9 +8,6 @@
 //! stays in Rust because each probe may legitimately succeed OR fail;
 //! it only asserts that no panic text leaks.
 
-use silt::vm::Vm;
-use std::sync::Arc;
-
 #[test]
 fn test_time_to_datetime_extremal_probes_never_panic() {
     let probes: &[(&str, i64, i64)] = &[
@@ -41,7 +38,7 @@ fn test_time_to_datetime_extremal_probes_never_panic() {
             r#"
 import time
 fn main() -> Int {{
-  let inst = Instant {{ epoch_ns: {epoch_ns} }}
+  let inst = time.Instant {{ epoch_ns: {epoch_ns} }}
   let dt = time.to_datetime(inst, {offset})
   dt.date.year
 }}
@@ -50,21 +47,10 @@ fn main() -> Int {{
         // Use the error path (this may succeed or fail; we just care
         // that no panic noise surfaces). Drive the VM manually so we
         // tolerate both success and VmError outcomes.
-        let tokens = silt::lexer::Lexer::new(&src)
-            .tokenize()
-            .expect("lexer error");
-        let mut program = silt::parser::Parser::new(tokens)
-            .parse_program()
-            .expect("parse error");
-        let _ = silt::typechecker::check(&mut program);
-        let mut compiler = silt::compiler::Compiler::new();
-        let functions = compiler.compile_program(&program).expect("compile error");
-        let script = Arc::new(functions.into_iter().next().unwrap());
-        let mut vm = Vm::new();
-        match vm.run(script) {
+        match silt::session::testing::run_str(&src) {
             Ok(_) => { /* valid datetime — fine */ }
             Err(e) => {
-                let msg = format!("{e}");
+                let msg = e;
                 assert!(
                     !msg.contains("panicked"),
                     "{label}: to_datetime surfaced a panic string: {msg}"

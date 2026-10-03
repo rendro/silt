@@ -1,0 +1,4 @@
+let counter = "two hundred"
+fn helper() { "helper-from-modb" }
+pub fn get() { counter }
+pub fn who() { helper() }

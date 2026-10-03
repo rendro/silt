@@ -1,0 +1,3 @@
+pub type Pt { label: String }
+pub fn mk() -> Pt = Pt { label: "hello" }
+pub fn get_label(p: Pt) -> String = p.label

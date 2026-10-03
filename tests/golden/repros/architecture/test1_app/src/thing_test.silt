@@ -1,0 +1,13 @@
+import dep
+import test
+
+fn test_ok() {
+  test.assert_eq(dep.twice(2), 4)
+}
+
+fn test_never_called_branch() {
+  match dep.twice(1) {
+    2 -> test.assert_eq(1, 1)
+    _ -> test.assert_eq(undefined_name, 1)
+  }
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+type Time { h: Int, m: Int }
+fn main() {
+  let t = Time { h: 1, m: 2 }
+  println(t)
+}

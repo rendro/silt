@@ -130,11 +130,11 @@ state variable and recur with `loop(...)` from inside the body:
 ```silt
 loop _ = () {
   match channel.receive(ch) {
-    Message(val) -> {
+    channel.Message(val) -> {
       process(val)
       loop(())          -- re-enter to keep going
     }
-    Closed -> ()        -- fall through; loop returns
+    channel.Closed -> ()        -- fall through; loop returns
     _ -> loop(())
   }
 }
@@ -146,11 +146,11 @@ for "infinite loop" semantics, a recursive `fn` is often clearer:
 ```silt
 fn drain(ch) {
   match channel.receive(ch) {
-    Message(val) -> {
+    channel.Message(val) -> {
       process(val)
       drain(ch)
     }
-    Closed -> ()
+    channel.Closed -> ()
     _ -> drain(ch)
   }
 }
@@ -226,7 +226,7 @@ state:
 ```silt
 -- fold_until: accumulator IS the result
 [1, 2, 3] |> list.fold_until(0) { acc, x ->
-  match acc + x > 6 { true -> Stop(acc), _ -> Continue(acc + x) }
+  match acc + x > 6 { true -> list.Stop(acc), _ -> list.Continue(acc + x) }
 }
 
 -- loop: state is (queue, visited) but result is Option(node)

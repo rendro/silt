@@ -1,0 +1,2 @@
+pub type Shape { Circle(Int), Square(Int) }
+pub fn area(s: Shape) -> Int { 1 }

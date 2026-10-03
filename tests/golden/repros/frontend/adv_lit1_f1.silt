@@ -1,0 +1,24 @@
+-- verdict: same
+fn main() {
+  let a = 255
+  let b = 10
+  let c = 1000000
+  let d = 10000000000.0
+  let e = 0.00000015
+  let f = 100000000000000000000.0
+  let g = 0.1
+  let h = 1.0
+  let i = 171
+  let j = 10.5
+  let k = 9223372036854775807
+  let l = 0.000001
+  let m = 123456789.12345679
+  let n = 100000.0
+  let s1 = "tab\there \{brace\} quote\" backslash\\ nl\n"
+  let s2 = "unicode é ✓ \\"
+  let s3 = "{a}\{{b}\}"
+  println("{a} {b} {c} {d} {e} {f} {g} {h} {i} {j} {k} {l} {m} {n}")
+  println(s1)
+  println(s2)
+  println(s3)
+}

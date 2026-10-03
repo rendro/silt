@@ -1,0 +1,3 @@
+-- verdict: same
+fn name_of(p) { p.name }
+fn main() { println(name_of({name: "a", age: 3}) + 1) }

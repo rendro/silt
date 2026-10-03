@@ -1,0 +1,13 @@
+-- A module's own declaration of a prelude name shadows the prelude:
+-- `Some` is the record here, and the prelude's variant is
+-- `Option.Some`.
+type Some { x: Int }
+
+fn main() {
+  let s = Some { x: 1 }
+  println(s.x)
+  match Option.Some(2) {
+    Option.Some(n) -> println(n)
+    Option.None -> println("none")
+  }
+}

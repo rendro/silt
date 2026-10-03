@@ -3,17 +3,20 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::*;
+use crate::diagnostic::Diagnostic;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::{LexError, Lexer, Span};
-use crate::parser::{ParseError, Parser};
+use crate::lexer::Lexer;
+use crate::parser::Parser;
+use crate::source::{FileId, SourceFile, SourceName, Span};
 
 const INDENT: &str = "  ";
 
 thread_local! {
-    /// The source text of the file currently being formatted, used by
-    /// `format_triple_string` to copy multi-line `"""..."""` content
+    /// The source of the file currently being formatted: the lines the
+    /// spans of its syntax tree are on (`line_of`), and the text
+    /// `format_triple_string` copies multi-line `"""..."""` content from
     /// verbatim instead of reflowing it.
-    static CURRENT_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
+    static CURRENT_SOURCE: RefCell<Option<SourceFile>> = const { RefCell::new(None) };
 
     /// Shared comment delivery state for the declaration currently being
     /// formatted. Tracks every standalone and trailing comment that lives
@@ -144,7 +147,7 @@ fn block_body_has_trailing_comma(body_start_line: usize, close_line: usize) -> b
 /// unambiguously `,`.
 /// Convenience helper for single-line (and generally inline) emitters:
 /// locate the `open`/`close` delimiter pair belonging to this `Expr`
-/// by scanning forward from `expr.span.offset` (the byte offset of
+/// by scanning forward from `(expr.span.start as usize)` (the byte offset of
 /// the expression's first token), find the matching close, and
 /// return whether the source had a `,` immediately before the close
 /// (ignoring whitespace, line comments, and block comments).
@@ -152,9 +155,9 @@ fn block_body_has_trailing_comma(body_start_line: usize, close_line: usize) -> b
 /// The byte-offset anchor matters because multiple `(`/`[`/`{` can
 /// legitimately appear on the same source line — e.g. a call
 /// `fn main() { add(1, 2) }` has both the fn's `()` and the call's
-/// `()`. Using `compute_bracket_end_line(expr.span.line, ...)` would
+/// `()`. Using `compute_bracket_end_line(line_of(expr.span), ...)` would
 /// latch onto the first `(` on the line (the fn's), not the call's.
-/// Scanning from `expr.span.offset` skips over any same-line prefix
+/// Scanning from `(expr.span.start as usize)` skips over any same-line prefix
 /// that is NOT part of this expression.
 fn source_has_trailing_comma(expr: &Expr, open: char, close: char) -> bool {
     source_has_trailing_comma_at_offset(expr.span, open, close)
@@ -167,7 +170,7 @@ fn source_has_trailing_comma(expr: &Expr, open: char, close: char) -> bool {
 /// `foo()(x,)`. Anchoring on the first arg's offset lets us skip the
 /// entire callee (whatever its shape — `Ident`, `FieldAccess`, nested
 /// `Call`, etc.). From there the call's `(` is the LAST `(` that
-/// appears strictly before `args[0].span.offset` at top level; the
+/// appears strictly before `args[0].(span.start as usize)` at top level; the
 /// matching `)` is found by the standard forward scan.
 ///
 /// Returns `false` for empty arg lists (a call with no args cannot
@@ -183,10 +186,10 @@ fn call_args_source_has_trailing_comma(args: &[Expr]) -> bool {
         };
         let source: String = state.source_lines.join("\n");
         let bytes = source.as_bytes();
-        if first.span.offset >= bytes.len() {
+        if (first.span.start as usize) >= bytes.len() {
             return false;
         }
-        // Walk backward from first.span.offset to find the nearest
+        // Walk backward from (first.span.start as usize) to find the nearest
         // `(`. The call's `(` immediately precedes the first arg
         // modulo whitespace and comments. We do a conservative
         // backward search that only steps through whitespace and line
@@ -194,7 +197,7 @@ fn call_args_source_has_trailing_comma(args: &[Expr]) -> bool {
         // characters). For robustness, skip any `--...` line comments
         // that start on lines above by not going back past a newline
         // that has `--` on it.
-        let mut k = first.span.offset;
+        let mut k = first.span.start as usize;
         // Step back over whitespace.
         while k > 0 {
             let prev = bytes[k - 1];
@@ -322,7 +325,7 @@ fn scan_trailing_comma_from_open(source: &str, open_offset: usize, close: char) 
 }
 
 /// Byte-offset-anchored check: scan the source starting at
-/// `span.offset` forward, find the first `open` at bracket-depth 0
+/// `(span.start as usize)` forward, find the first `open` at bracket-depth 0
 /// (ignoring strings / comments / enclosing-bracket nesting), then
 /// find the matching `close`. Return whether the last non-whitespace,
 /// non-comment byte between that `open` and `close` is `,`.
@@ -338,16 +341,16 @@ fn source_has_trailing_comma_at_offset(span: Span, open: char, close: char) -> b
         // quirks (silt uses LF per its lexer, see `Lexer::new`).
         let source: String = state.source_lines.join("\n");
         let bytes = source.as_bytes();
-        if span.offset >= bytes.len() {
+        if (span.start as usize) >= bytes.len() {
             return false;
         }
-        let start = span.offset;
+        let start = span.start as usize;
 
         // Walk forward from `start`, tracking string/comment state and
         // bracket depth, to locate the target `open` at depth 0. The
         // scan state mirrors the logic of `compute_bracket_end_line`
         // (the canonical whole-line scanner) but operates at byte
-        // granularity to honor `span.offset` mid-line. The two are
+        // granularity to honor `(span.start as usize)` mid-line. The two are
         // intentionally separate scaffolds: the line-based scanner
         // walks `Vec<char>` per line and tracks string-interp `{}`
         // depth across lines, while this byte scanner is a flat
@@ -710,10 +713,10 @@ fn take_comments_between(after_line: usize, before_line: usize) -> Vec<Comment> 
 /// opening `{` is at `span`. Thin wrapper over the unified
 /// [`compute_bracket_end_line`] scanner — see its body for the full
 /// state-machine rationale (string / triple-string / block-comment /
-/// interpolation tracking). Returns `span.line` as a safe fallback
+/// interpolation tracking). Returns `line_of(span)` as a safe fallback
 /// when the scan cannot find a matching brace.
 fn compute_block_end_line(span: Span) -> usize {
-    compute_bracket_end_line(span.line, '{', '}')
+    compute_bracket_end_line(line_of(span), '{', '}')
 }
 
 /// String/comment scan state used by the per-block / per-bracket
@@ -1099,10 +1102,34 @@ fn render_comments(comments: &[Comment], depth: usize) -> String {
 }
 
 fn with_current_source<R>(source: &str, f: impl FnOnce() -> R) -> R {
-    CURRENT_SOURCE.with(|cell| *cell.borrow_mut() = Some(source.to_string()));
+    let file = SourceFile::new(SourceName::Builtin, source.into());
+    CURRENT_SOURCE.with(|cell| *cell.borrow_mut() = Some(file));
     let result = f();
     CURRENT_SOURCE.with(|cell| *cell.borrow_mut() = None);
     result
+}
+
+/// The 1-based line and column `span` starts at, in the source being
+/// formatted.
+fn line_col_of(span: Span) -> (usize, usize) {
+    CURRENT_SOURCE.with(|cell| {
+        let cell = cell.borrow();
+        let file = cell
+            .as_ref()
+            .expect("a span's line is asked for while a source is formatted");
+        let (line, col) = file.line_col(span.start);
+        (line as usize, col as usize)
+    })
+}
+
+/// The 1-based line `span` starts on, in the source being formatted.
+fn line_of(span: Span) -> usize {
+    line_col_of(span).0
+}
+
+/// The 1-based column `span` starts at, in the source being formatted.
+fn col_of(span: Span) -> usize {
+    line_col_of(span).1
 }
 
 /// Extract the raw bytes of a triple-quoted string from the stashed source,
@@ -1111,7 +1138,7 @@ fn with_current_source<R>(source: &str, f: impl FnOnce() -> R) -> R {
 fn extract_triple_string_raw(offset: usize) -> Option<String> {
     CURRENT_SOURCE.with(|cell| {
         let cell = cell.borrow();
-        let source = cell.as_ref()?;
+        let source = &cell.as_ref()?.text;
         let bytes = source.as_bytes();
         // Verify the span starts at `"""`.
         if offset + 3 > bytes.len() || &bytes[offset..offset + 3] != b"\"\"\"" {
@@ -1213,7 +1240,7 @@ enum LineKind {
 /// We use the LEXER's authoritative parse to identify which source lines
 /// fall inside a regular string token (StringLit or StringStart/Middle/
 /// End — the interp-aware variants). For each such token, the line range
-/// it covers is `[span.line, span.line + newline_count_in_content]`. Lines
+/// it covers is `[line_of(span), line_of(span) + newline_count_in_content]`. Lines
 /// strictly inside that range are marked `InsideRegular`. Lines at the
 /// END of the range (where the closing `"` lives) are marked
 /// `RegularEnds`. The opener line stays `Code` because the line up to the
@@ -2435,22 +2462,22 @@ fn extract_collection_interior_trailing_comment_from_line(line: &str) -> Option<
 /// Get the start line (1-based) of a declaration from its span, if available.
 fn decl_start_line(decl: &Decl) -> Option<usize> {
     match decl {
-        Decl::Fn(f) => Some(f.span.line),
-        Decl::Type(t) => Some(t.span.line),
-        Decl::Trait(t) => Some(t.span.line),
-        Decl::TraitImpl(t) => Some(t.span.line),
-        Decl::Import(_, span) => Some(span.line),
-        Decl::Let { span, .. } => Some(span.line),
+        Decl::Fn(f) => Some(line_of(f.span)),
+        Decl::Type(t) => Some(line_of(t.span)),
+        Decl::Trait(t) => Some(line_of(t.span)),
+        Decl::TraitImpl(t) => Some(line_of(t.span)),
+        Decl::Import(_, span) => Some(line_of(*span)),
+        Decl::Let { span, .. } => Some(line_of(*span)),
     }
 }
 
 /// Get the start line (1-based) of a statement from its contained expression spans.
 fn stmt_start_line(stmt: &Stmt) -> usize {
     match stmt {
-        Stmt::Let { value, .. } => value.span.line,
-        Stmt::Expr(expr) => expr.span.line,
-        Stmt::When { expr, .. } => expr.span.line,
-        Stmt::WhenBool { condition, .. } => condition.span.line,
+        Stmt::Let { value, .. } => line_of(value.span),
+        Stmt::Expr(expr) => line_of(expr.span),
+        Stmt::When { expr, .. } => line_of(expr.span),
+        Stmt::WhenBool { condition, .. } => line_of(condition.span),
     }
 }
 
@@ -2473,7 +2500,7 @@ fn stmt_start_line(stmt: &Stmt) -> usize {
 /// recursively and only consider comments STRICTLY AFTER that line as
 /// candidates for the next statement.
 fn expr_max_line(expr: &Expr) -> usize {
-    let mut max = expr.span.line;
+    let mut max = line_of(expr.span);
     let mut visit = |e: &Expr| {
         let m = expr_max_line(e);
         if m > max {
@@ -2506,7 +2533,7 @@ fn expr_max_line(expr: &Expr) -> usize {
             // `[\n  1\n] -- note`) — which no element occupies — is
             // reachable to the outer statement drain and not orphaned in
             // `trailing_map`. Mirrors the Lambda/Block handling below.
-            let close = compute_bracket_end_line_opts(expr.span.line, '[', ']', true);
+            let close = compute_bracket_end_line_opts(line_of(expr.span), '[', ']', true);
             if close > max {
                 max = close;
             }
@@ -2516,7 +2543,7 @@ fn expr_max_line(expr: &Expr) -> usize {
                 visit(k);
                 visit(v);
             }
-            let close = compute_bracket_end_line_opts(expr.span.line, '{', '}', true);
+            let close = compute_bracket_end_line_opts(line_of(expr.span), '{', '}', true);
             if close > max {
                 max = close;
             }
@@ -2527,7 +2554,7 @@ fn expr_max_line(expr: &Expr) -> usize {
             }
             // `#[ ... ]` — the `#` is a scalar the scanner skips; the
             // bracket pair is `[`/`]`.
-            let close = compute_bracket_end_line_opts(expr.span.line, '[', ']', true);
+            let close = compute_bracket_end_line_opts(line_of(expr.span), '[', ']', true);
             if close > max {
                 max = close;
             }
@@ -2536,12 +2563,12 @@ fn expr_max_line(expr: &Expr) -> usize {
             for e in elems {
                 visit(e);
             }
-            let close = compute_bracket_end_line_opts(expr.span.line, '(', ')', true);
+            let close = compute_bracket_end_line_opts(line_of(expr.span), '(', ')', true);
             if close > max {
                 max = close;
             }
         }
-        ExprKind::FieldAccess(e, _) => visit(e),
+        ExprKind::FieldAccess(e, _, _) => visit(e),
         ExprKind::Binary(l, _, r) => {
             visit(l);
             visit(r);
@@ -2561,7 +2588,7 @@ fn expr_max_line(expr: &Expr) -> usize {
             // reachable to the outer statement drain rather than orphaned
             // in `trailing_map`. The call's span is at the callee and the
             // opening `(` lives on the same line. Mirrors Lambda/Block.
-            let close = compute_bracket_end_line_opts(expr.span.line, '(', ')', true);
+            let close = compute_bracket_end_line_opts(line_of(expr.span), '(', ')', true);
             if close > max {
                 max = close;
             }
@@ -2589,7 +2616,7 @@ fn expr_max_line(expr: &Expr) -> usize {
             // Include the record's `}` close line so a trailing comment on
             // the close-brace line is reachable to the outer statement
             // drain. Mirrors Lambda/Block.
-            let close = compute_bracket_end_line_opts(expr.span.line, '{', '}', true);
+            let close = compute_bracket_end_line_opts(line_of(expr.span), '{', '}', true);
             if close > max {
                 max = close;
             }
@@ -2601,7 +2628,7 @@ fn expr_max_line(expr: &Expr) -> usize {
             }
             // `RecordUpdate.span` is the receiver's span; the update brace
             // is the first `{` at or after that line. Reach its close `}`.
-            let close = compute_bracket_end_line_opts(expr.span.line, '{', '}', true);
+            let close = compute_bracket_end_line_opts(line_of(expr.span), '{', '}', true);
             if close > max {
                 max = close;
             }
@@ -2613,7 +2640,7 @@ fn expr_max_line(expr: &Expr) -> usize {
             for (_, v) in fields {
                 visit(v);
             }
-            let close = compute_bracket_end_line_opts(expr.span.line, '{', '}', true);
+            let close = compute_bracket_end_line_opts(line_of(expr.span), '{', '}', true);
             if close > max {
                 max = close;
             }
@@ -2650,7 +2677,7 @@ fn expr_max_line(expr: &Expr) -> usize {
             }
         }
         ExprKind::Loop { bindings, body } => {
-            for (_, e) in bindings {
+            for (_, _, e) in bindings {
                 visit(e);
             }
             visit(body);
@@ -2930,16 +2957,12 @@ fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) ->
 // ── Public entry point ──────────────────────────────────────────────
 
 /// A failure surfaced from the formatter: the input does not lex or
-/// parse, or the formatter's own result failed the self-check. Callers
-/// can downcast via the enum to render a proper source-line snippet
-/// through `SourceError::from_lex_error` / `from_parse_error`. The
-/// `Display` impl preserves the bare `"lex error: ..."` /
-/// `"parse error: ..."` shape so test-helper callers that just format
-/// the error keep working.
+/// parse, or the formatter's own result failed the self-check. The
+/// `Display` impl gives the phase and the message, `"parse error: ..."`.
 #[derive(Debug)]
 pub enum FmtError {
-    Lex(LexError),
-    Parse(ParseError),
+    /// The input does not lex or parse.
+    Syntax(Diagnostic),
     /// The input is fine, but the text the formatter produced for it
     /// would not parse, would be a different program, or would not carry
     /// the same comments. Nothing is returned for such an input, so the
@@ -2963,12 +2986,8 @@ pub struct InternalError {
 impl fmt::Display for FmtError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FmtError::Lex(e) => write!(f, "lex error: {e}"),
-            FmtError::Parse(e) => write!(f, "parse error: {e}"),
-            FmtError::Internal(e) => match e.span {
-                Some(span) => write!(f, "[{span}] formatting refused: {}", e.message),
-                None => write!(f, "formatting refused: {}", e.message),
-            },
+            FmtError::Syntax(e) => write!(f, "{} error: {}", e.phase().word(), e.message),
+            FmtError::Internal(e) => write!(f, "formatting refused: {}", e.message),
         }
     }
 }
@@ -2982,12 +3001,12 @@ impl std::error::Error for FmtError {}
 /// `self_check`). If it fails the check, the error is
 /// [`FmtError::Internal`] and no text is returned.
 pub fn format(source: &str) -> Result<String, FmtError> {
-    let (tokens, comments) = Lexer::new(source)
+    let (tokens, comments) = Lexer::new(FileId::default(), source)
         .tokenize_with_comments()
-        .map_err(FmtError::Lex)?;
-    let program = Parser::new(tokens.clone())
+        .map_err(FmtError::Syntax)?;
+    let program = Parser::new(tokens.clone(), source)
         .parse_program()
-        .map_err(FmtError::Parse)?;
+        .map_err(FmtError::Syntax)?;
     let formatted = with_current_source(source, || format_program_with_comments(&program, source));
     let output = splice_inline_block_comments(source, &tokens, formatted);
     // Text that is returned unchanged needs no check.
@@ -3035,8 +3054,9 @@ mod self_check {
 
     use crate::ast::*;
     use crate::intern::{Symbol, resolve};
-    use crate::lexer::{Lexer, SourceComment, Span};
+    use crate::lexer::{Lexer, SourceComment};
     use crate::parser::Parser;
+    use crate::source::{FileId, SourceFile, SourceName, Span};
 
     use super::InternalError;
 
@@ -3047,10 +3067,10 @@ mod self_check {
         source_comments: &[SourceComment],
         output: &str,
     ) -> Result<(), InternalError> {
-        let (tokens, output_comments) = Lexer::new(output)
+        let (tokens, output_comments) = Lexer::new(FileId::default(), output)
             .tokenize_with_comments()
             .map_err(|e| unparseable(&e.message, e.span, output))?;
-        let output_program = Parser::new(tokens)
+        let output_program = Parser::new(tokens, output)
             .parse_program()
             .map_err(|e| unparseable(&e.message, e.span, output))?;
 
@@ -3059,15 +3079,12 @@ mod self_check {
     }
 
     fn unparseable(message: &str, span: Span, output: &str) -> InternalError {
-        let line = output
-            .lines()
-            .nth(span.line.saturating_sub(1))
-            .unwrap_or("")
-            .trim();
+        let file = SourceFile::new(SourceName::Builtin, output.into());
+        let line_number = file.line_col(span.start).0;
+        let line = file.line_text(line_number).unwrap_or("").trim();
         InternalError {
             message: format!(
-                "the result would not parse ({message}, at line {} of the result: `{}`)",
-                span.line,
+                "the result would not parse ({message}, at line {line_number} of the result: `{}`)",
                 excerpt(line)
             ),
             span: None,
@@ -3130,7 +3147,7 @@ mod self_check {
                 let module = match target {
                     ImportTarget::Module(m)
                     | ImportTarget::Items(m, _)
-                    | ImportTarget::Alias(m, _) => m,
+                    | ImportTarget::Alias(m, ..) => m,
                 };
                 (format!("the import of `{module}`"), *span)
             }
@@ -3305,6 +3322,10 @@ mod self_check {
             }
         }
 
+        fn qualifier(&mut self, module: Option<Qualifier>) {
+            self.opt_sym(module.map(|m| m.name));
+        }
+
         fn text(&mut self, text: &str) {
             let _ = write!(self.out, " {text:?}");
         }
@@ -3363,6 +3384,7 @@ mod self_check {
                 }
                 Decl::Trait(t) => {
                     self.open("trait");
+                    self.flag(t.is_pub);
                     self.sym(t.name);
                     self.open("params");
                     for param in &t.params {
@@ -3370,8 +3392,8 @@ mod self_check {
                     }
                     self.close();
                     self.open("supertraits");
-                    for (name, args, _) in &t.supertraits {
-                        self.bound(*name, args);
+                    for r in &t.supertraits {
+                        self.bound(r.module, r.name, &r.args);
                     }
                     self.close();
                     self.where_clauses(&t.param_where_clauses);
@@ -3379,8 +3401,8 @@ mod self_check {
                     for assoc in &t.assoc_types {
                         self.open("type");
                         self.sym(assoc.name);
-                        for (name, args) in &assoc.bounds {
-                            self.bound(*name, args);
+                        for r in &assoc.bounds {
+                            self.bound(r.module, r.name, &r.args);
                         }
                         self.close();
                     }
@@ -3394,8 +3416,9 @@ mod self_check {
                 }
                 Decl::TraitImpl(t) => {
                     self.open("impl");
-                    self.bound(t.trait_name, &t.trait_args);
+                    self.bound(t.trait_module, t.trait_name, &t.trait_args);
                     self.open("for");
+                    self.qualifier(t.target_module);
                     self.sym(t.target_type);
                     for arg in &t.target_type_args {
                         self.type_expr(arg);
@@ -3426,11 +3449,11 @@ mod self_check {
                         ImportTarget::Items(module, items) => {
                             self.open("import-items");
                             self.sym(*module);
-                            for item in items {
+                            for (item, _) in items {
                                 self.sym(*item);
                             }
                         }
-                        ImportTarget::Alias(module, alias) => {
+                        ImportTarget::Alias(module, alias, _) => {
                             self.open("import-as");
                             self.sym(*module);
                             self.sym(*alias);
@@ -3485,8 +3508,9 @@ mod self_check {
         }
 
         /// A trait with its arguments: `Display`, `TryInto(Int)`.
-        fn bound(&mut self, name: Symbol, args: &[TypeExpr]) {
+        fn bound(&mut self, module: Option<Qualifier>, name: Symbol, args: &[TypeExpr]) {
             self.open("bound");
+            self.qualifier(module);
             self.sym(name);
             for arg in args {
                 self.type_expr(arg);
@@ -3508,7 +3532,7 @@ mod self_check {
                 self.open("var");
                 self.sym(variable);
                 for clause in clauses.iter().filter(|c| c.type_param == variable) {
-                    self.bound(clause.trait_name, &clause.trait_args);
+                    self.bound(clause.trait_module, clause.trait_name, &clause.trait_args);
                 }
                 self.close();
             }
@@ -3524,12 +3548,16 @@ mod self_check {
 
         fn type_expr(&mut self, ty: &TypeExpr) {
             match &ty.kind {
-                TypeExprKind::Named(name) => {
+                TypeExprKind::Named { module, name, .. } => {
                     self.open("named");
+                    self.qualifier(*module);
                     self.sym(*name);
                 }
-                TypeExprKind::Generic(name, args) => {
+                TypeExprKind::Generic {
+                    module, name, args, ..
+                } => {
                     self.open("generic");
+                    self.qualifier(*module);
                     self.sym(*name);
                     for arg in args {
                         self.type_expr(arg);
@@ -3553,11 +3581,13 @@ mod self_check {
                 TypeExprKind::SelfType => self.open("self"),
                 TypeExprKind::AssocProj {
                     receiver,
+                    trait_module,
                     trait_name,
                     assoc_name,
                 } => {
                     self.open("projection");
                     self.type_expr(receiver);
+                    self.qualifier(*trait_module);
                     self.sym(*trait_name);
                     self.sym(*assoc_name);
                 }
@@ -3582,8 +3612,8 @@ mod self_check {
             }
         }
 
-        fn field_patterns(&mut self, fields: &[(Symbol, Option<Pattern>)]) {
-            for (name, sub) in fields {
+        fn field_patterns(&mut self, fields: &[(Symbol, Span, Option<Pattern>)]) {
+            for (name, _, sub) in fields {
                 self.open("field");
                 self.sym(*name);
                 self.opt_pattern(sub.as_ref());
@@ -3630,9 +3660,18 @@ mod self_check {
                         self.pattern(elem);
                     }
                 }
-                PatternKind::Constructor { module, name, args } => {
+                PatternKind::Constructor {
+                    qualifier,
+                    name,
+                    args,
+                    ..
+                } => {
                     self.open("constructor");
-                    self.opt_sym(*module);
+                    self.open("qualifier");
+                    for segment in qualifier {
+                        self.sym(segment.name);
+                    }
+                    self.close();
                     self.sym(*name);
                     for arg in args {
                         self.pattern(arg);
@@ -3643,16 +3682,17 @@ mod self_check {
                     name,
                     fields,
                     has_rest,
+                    ..
                 } => {
                     self.open("record");
-                    self.opt_sym(*module);
+                    self.qualifier(*module);
                     self.opt_sym(*name);
                     self.flag(*has_rest);
                     self.field_patterns(fields);
                 }
                 PatternKind::AnonRecord { fields, rest } => {
                     self.open("anon-record");
-                    self.opt_sym(*rest);
+                    self.opt_sym(rest.map(|(r, _)| r));
                     self.field_patterns(fields);
                 }
                 PatternKind::List(elems, rest) => {
@@ -3826,7 +3866,7 @@ mod self_check {
                     self.open("name");
                     self.sym(*name);
                 }
-                ExprKind::FieldAccess(target, field) => {
+                ExprKind::FieldAccess(target, field, _) => {
                     self.open("field-access");
                     self.expr(target);
                     self.sym(*field);
@@ -3879,9 +3919,10 @@ mod self_check {
                     module,
                     name,
                     fields,
+                    ..
                 } => {
                     self.open("record");
-                    self.opt_sym(*module);
+                    self.qualifier(*module);
                     self.sym(*name);
                     self.field_values(fields);
                 }
@@ -3918,7 +3959,7 @@ mod self_check {
                 }
                 ExprKind::Loop { bindings, body } => {
                     self.open("loop");
-                    for (name, init) in bindings {
+                    for (name, _, init) in bindings {
                         self.open("binding");
                         self.sym(*name);
                         self.expr(init);
@@ -3985,7 +4026,8 @@ fn splice_inline_block_comments(
     if src_tokens.is_empty() {
         return output;
     }
-    let src_token_offsets: Vec<usize> = src_tokens.iter().map(|(_, sp)| sp.offset).collect();
+    let src_token_offsets: Vec<usize> =
+        src_tokens.iter().map(|(_, sp)| sp.start as usize).collect();
 
     // Gap index semantics:
     //   gap_index in 0..src_tokens.len()-1 => "between src_tokens[gap]
@@ -4014,7 +4056,7 @@ fn splice_inline_block_comments(
     // sequence as the source (modulo comments/whitespace). If re-lexing
     // fails for any reason, fall back to returning the output unchanged
     // (never corrupt a working format by panicking on a splice).
-    let out_tokens = match Lexer::new(&output).tokenize() {
+    let out_tokens = match Lexer::new(FileId::default(), &output).tokenize() {
         Ok(t) => t,
         Err(_) => return output,
     };
@@ -4034,7 +4076,8 @@ fn splice_inline_block_comments(
         Some(m) => m,
         None => return output,
     };
-    let out_token_offsets: Vec<usize> = out_tokens.iter().map(|(_, sp)| sp.offset).collect();
+    let out_token_offsets: Vec<usize> =
+        out_tokens.iter().map(|(_, sp)| sp.start as usize).collect();
 
     // Group comments by gap index in source order. Within a single gap,
     // multiple block comments keep their source order.
@@ -4665,7 +4708,7 @@ fn format_decl_with_comments(decl: &Decl, depth: usize) -> String {
                 String::new()
             };
             let val = format_expr(value, depth);
-            let trailing = take_trailing_for_line(span.line)
+            let trailing = take_trailing_for_line(line_of(*span))
                 .map(|c| format!(" {c}"))
                 .unwrap_or_default();
             format!("{indent}{pub_prefix}let {pat}{ty_str} = {val}{trailing}")
@@ -4683,7 +4726,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     // Resolve per-param source lines so we can attach any trailing `--`
     // comment the user wrote after a param and detect interior standalone
     // comments that force a multi-line layout.
-    let fn_start_line = f.span.line;
+    let fn_start_line = line_of(f.span);
     let params_close_line = compute_bracket_end_line(fn_start_line, '(', ')');
     let param_lines: Vec<Option<usize>> =
         compute_param_lines(fn_start_line, params_close_line, f.params.len());
@@ -4806,14 +4849,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
         for wc in &f.where_clauses {
             let name = &wc.type_param;
-            let trait_name = &wc.trait_name;
-            let trait_args = &wc.trait_args;
-            let rendered = if trait_args.is_empty() {
-                format!("{trait_name}")
-            } else {
-                let args: Vec<String> = trait_args.iter().map(format_type_expr).collect();
-                format!("{trait_name}({})", args.join(", "))
-            };
+            let rendered = format_trait_ref(wc.trait_module, wc.trait_name, &wc.trait_args);
             if let Some(entry) = grouped.iter_mut().find(|(n, _)| n == name) {
                 entry.1.push(rendered);
             } else {
@@ -4833,7 +4869,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     // and thus not eligible to be filled in by a default — and would
     // also drop the abstract-method semantic). Emit just the signature.
     if f.is_signature_only {
-        let trailing = take_trailing_for_line(f.span.line)
+        let trailing = take_trailing_for_line(line_of(f.span))
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
         return format!(
@@ -4871,7 +4907,7 @@ fn format_param(p: &Param) -> String {
 fn format_body(expr: &Expr, depth: usize) -> String {
     match &expr.kind {
         ExprKind::Block(stmts) => {
-            let open_line = expr.span.line;
+            let open_line = line_of(expr.span);
             let close_line = compute_block_end_line(expr.span);
             // A multi-line block may carry a trailing `-- comment` on the
             // line containing its `}`. Only consume it when multi-line so
@@ -5113,7 +5149,7 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
     // treats `,` as significant, so stripping a trailing comma the user
     // wrote (or adding one they didn't) corrupts the token count and
     // trips the fuzz harness.
-    let source_has_trailing_comma = block_body_has_trailing_comma(t.span.line, close_line);
+    let source_has_trailing_comma = block_body_has_trailing_comma(line_of(t.span), close_line);
     match &t.body {
         TypeBody::Enum(variants) => {
             // Map each variant to its source line so we can fetch any
@@ -5121,7 +5157,7 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
             // starts just after the type's opening line and walks forward
             // in order, which matches how the parser produced the
             // variants list.
-            let mut cursor = t.span.line + 1;
+            let mut cursor = line_of(t.span) + 1;
             let mut lines: Vec<String> = Vec::with_capacity(variants.len());
             let last_idx = variants.len().saturating_sub(1);
             for (i, v) in variants.iter().enumerate() {
@@ -5157,7 +5193,7 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
             )
         }
         TypeBody::Record(fields) => {
-            let mut cursor = t.span.line + 1;
+            let mut cursor = line_of(t.span) + 1;
             let mut lines: Vec<String> = Vec::with_capacity(fields.len());
             let last_idx = fields.len().saturating_sub(1);
             for (i, f) in fields.iter().enumerate() {
@@ -5217,12 +5253,7 @@ fn format_where_clauses(clauses: &[crate::ast::WhereClause]) -> String {
     }
     let mut grouped: Vec<(crate::intern::Symbol, Vec<String>)> = Vec::new();
     for wc in clauses {
-        let rendered = if wc.trait_args.is_empty() {
-            format!("{}", wc.trait_name)
-        } else {
-            let args: Vec<String> = wc.trait_args.iter().map(format_type_expr).collect();
-            format!("{}({})", wc.trait_name, args.join(", "))
-        };
+        let rendered = format_trait_ref(wc.trait_module, wc.trait_name, &wc.trait_args);
         if let Some(entry) = grouped.iter_mut().find(|(n, _)| *n == wc.type_param) {
             entry.1.push(rendered);
         } else {
@@ -5236,8 +5267,20 @@ fn format_where_clauses(clauses: &[crate::ast::WhereClause]) -> String {
     format!(" where {}", parts.join(", "))
 }
 
+/// A trait reference as written: `Display`, `m.Describe`, `TryInto(Int)`.
+fn format_trait_ref(module: Option<Qualifier>, name: Symbol, args: &[TypeExpr]) -> String {
+    let head = Qualifier::written(module, name);
+    if args.is_empty() {
+        head
+    } else {
+        let rendered: Vec<String> = args.iter().map(format_type_expr).collect();
+        format!("{head}({})", rendered.join(", "))
+    }
+}
+
 fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
     let prefix = indent(depth);
+    let pub_prefix = if t.is_pub { "pub " } else { "" };
     let close_line = compute_block_end_line(t.span);
     let body = format_trait_methods(&t.methods, depth + 1, close_line);
     let params = if t.params.is_empty() {
@@ -5253,14 +5296,7 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
             ": {}",
             t.supertraits
                 .iter()
-                .map(|(name, args, _)| {
-                    if args.is_empty() {
-                        name.to_string()
-                    } else {
-                        let rendered: Vec<String> = args.iter().map(format_type_expr).collect();
-                        format!("{name}({})", rendered.join(", "))
-                    }
-                })
+                .map(|r| format_trait_ref(r.module, r.name, &r.args))
                 .collect::<Vec<_>>()
                 .join(" + ")
         )
@@ -5285,15 +5321,7 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
                         ": {}",
                         a.bounds
                             .iter()
-                            .map(|(n, args)| {
-                                if args.is_empty() {
-                                    resolve(*n)
-                                } else {
-                                    let rendered: Vec<String> =
-                                        args.iter().map(format_type_expr).collect();
-                                    format!("{}({})", resolve(*n), rendered.join(", "))
-                                }
-                            })
+                            .map(|r| format_trait_ref(r.module, r.name, &r.args))
                             .collect::<Vec<_>>()
                             .join(" + ")
                     )
@@ -5304,12 +5332,12 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
     };
     if assoc_lines.is_empty() {
         format!(
-            "{prefix}trait {}{params}{supers}{where_clause} {{\n{}\n{prefix}}}",
+            "{prefix}{pub_prefix}trait {}{params}{supers}{where_clause} {{\n{}\n{prefix}}}",
             t.name, body
         )
     } else {
         format!(
-            "{prefix}trait {}{params}{supers}{where_clause} {{\n{}{}\n{prefix}}}",
+            "{prefix}{pub_prefix}trait {}{params}{supers}{where_clause} {{\n{}{}\n{prefix}}}",
             t.name, assoc_lines, body
         )
     }
@@ -5330,8 +5358,10 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
     // just `Head`. Reuses format_type_expr so nested tuple/fn/generic
     // targets (unreachable today per parser rules but cheap future-proof)
     // all render consistently with the rest of the formatter's type path.
+    let target_head = Qualifier::written(t.target_module, t.target_type);
+    let trait_head = Qualifier::written(t.trait_module, t.trait_name);
     let target = if t.target_type_args.is_empty() {
-        t.target_type.to_string()
+        target_head
     } else {
         let args = t
             .target_type_args
@@ -5339,7 +5369,7 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
             .map(format_type_expr)
             .collect::<Vec<_>>()
             .join(", ");
-        format!("{}({args})", t.target_type)
+        format!("{target_head}({args})")
     };
     let assoc_lines = if t.assoc_type_bindings.is_empty() {
         String::new()
@@ -5360,12 +5390,12 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
     if assoc_lines.is_empty() {
         format!(
             "{prefix}trait {}{trait_args_str} for {target}{where_clause} {{\n{}\n{prefix}}}",
-            t.trait_name, body
+            trait_head, body
         )
     } else {
         format!(
             "{prefix}trait {}{trait_args_str} for {target}{where_clause} {{\n{}{}\n{prefix}}}",
-            t.trait_name, assoc_lines, body
+            trait_head, assoc_lines, body
         )
     }
 }
@@ -5387,7 +5417,7 @@ fn format_trait_methods(methods: &[FnDecl], depth: usize, close_line: usize) -> 
             out.push_str("\n\n");
         }
         // Emit any comments that come before this method's `fn` line.
-        let pre = take_comments_before(m.span.line);
+        let pre = take_comments_before(line_of(m.span));
         for c in &pre {
             out.push_str(&indent(depth));
             out.push_str(c.text.trim());
@@ -5414,14 +5444,14 @@ fn format_import(i: &ImportTarget, span: Span, depth: usize) -> String {
     match i {
         ImportTarget::Module(name) => format!("{prefix}import {name}"),
         ImportTarget::Items(module, items) => {
-            let item_strs: Vec<String> = items.iter().map(|i| resolve(*i)).collect();
+            let item_strs: Vec<String> = items.iter().map(|(i, _)| resolve(*i)).collect();
             // Round-52 trailing-comma preservation for selective
             // import lists (`import mod.{ a, b, }`). The `import`
-            // keyword lives at `span.line`; the `{` follows on the
+            // keyword lives at `line_of(span)`; the `{` follows on the
             // same line (no intervening newline in silt's grammar).
-            let close_line = compute_bracket_end_line(span.line, '{', '}');
+            let close_line = compute_bracket_end_line(line_of(span), '{', '}');
             let trailing = if !items.is_empty()
-                && bracket_body_has_trailing_comma(span.line, close_line, '}')
+                && bracket_body_has_trailing_comma(line_of(span), close_line, '}')
             {
                 ","
             } else {
@@ -5432,7 +5462,7 @@ fn format_import(i: &ImportTarget, span: Span, depth: usize) -> String {
                 item_strs.join(", ")
             )
         }
-        ImportTarget::Alias(module, alias) => {
+        ImportTarget::Alias(module, alias, _) => {
             format!("{prefix}import {module} as {alias}")
         }
     }
@@ -5484,7 +5514,7 @@ fn format_expr(expr: &Expr, depth: usize) -> String {
     // formatting unchanged.
     if let ExprKind::StringLit(s, true) = &expr.kind
         && s.contains('\n')
-        && let Some(raw) = extract_triple_string_raw(expr.span.offset)
+        && let Some(raw) = extract_triple_string_raw(expr.span.start as usize)
     {
         return raw;
     }
@@ -5602,7 +5632,7 @@ fn format_delimited_collection<'a>(
     if items.is_empty() {
         return None;
     }
-    let open_line = expr_span.line;
+    let open_line = line_of(expr_span);
     let close_line = compute_bracket_end_line(open_line, open_char, close_char);
     // Include BOTH the anchor line (e.g. a map key) and the end line
     // (e.g. a map value, or the last element on a shared source line)
@@ -5703,7 +5733,7 @@ fn format_list_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
         .iter()
         .map(|e| {
             let line = match e {
-                ListElem::Single(x) | ListElem::Spread(x) => x.span.line,
+                ListElem::Single(x) | ListElem::Spread(x) => line_of(x.span),
             };
             CollectionItemSpec {
                 anchor_line: line,
@@ -5728,8 +5758,8 @@ fn format_tuple_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     let items: Vec<CollectionItemSpec<'_>> = elems
         .iter()
         .map(|elem| CollectionItemSpec {
-            anchor_line: elem.span.line,
-            end_line: elem.span.line,
+            anchor_line: line_of(elem.span),
+            end_line: line_of(elem.span),
             render: Box::new(move || format_expr(elem, depth + 1)),
         })
         .collect();
@@ -5764,9 +5794,9 @@ fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     // The call's span is at the callee, not the `(`. The opening `(`
     // lives on the same line (the parser ties calls with no newline
     // between callee and `(`).
-    let open_line = expr.span.line;
+    let open_line = line_of(expr.span);
     let close_line = compute_bracket_end_line(open_line, '(', ')');
-    let arg_lines: Vec<usize> = args.iter().map(|a| a.span.line).collect();
+    let arg_lines: Vec<usize> = args.iter().map(|a| line_of(a.span)).collect();
     if !should_layout_multiline(open_line, close_line, &arg_lines) {
         return None;
     }
@@ -5829,23 +5859,21 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
         module,
         name,
         fields,
+        ..
     } = &expr.kind
     else {
         return None;
     };
     // Qualified head (`util.Pt { ... }`) renders the module prefix the
     // user wrote; the literal is otherwise identical to the bare form.
-    let head = match module {
-        Some(m) => format!("{m}.{name}"),
-        None => format!("{name}"),
-    };
+    let head = Qualifier::written(*module, *name);
     if fields.is_empty() {
         return None;
     }
-    let open_line = expr.span.line;
+    let open_line = line_of(expr.span);
     // The record opener is the first `{` at or after the `Name` line.
     let close_line = compute_bracket_end_line(open_line, '{', '}');
-    let field_lines: Vec<usize> = fields.iter().map(|(_, e)| e.span.line).collect();
+    let field_lines: Vec<usize> = fields.iter().map(|(_, e)| line_of(e.span)).collect();
     if !should_layout_multiline(open_line, close_line, &field_lines) {
         return None;
     }
@@ -5899,7 +5927,7 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
 /// fallback to feed the recorded comment into.
 ///
 /// The opener is `{` immediately after the `.`; `compute_bracket_end_line`
-/// scans forward from `expr.span.line` (the receiver's line, since
+/// scans forward from `line_of(expr.span)` (the receiver's line, since
 /// `RecordUpdate.span` is the receiver's span — see parser.rs at the
 /// `Token::Dot` arm) and latches onto the first `{`, which (modulo
 /// receivers that contain unmatched `{`) is the record-update brace.
@@ -5910,9 +5938,9 @@ fn format_record_update_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
     if fields.is_empty() {
         return None;
     }
-    let open_line = expr.span.line;
+    let open_line = line_of(expr.span);
     let close_line = compute_bracket_end_line(open_line, '{', '}');
-    let field_lines: Vec<usize> = fields.iter().map(|(_, e)| e.span.line).collect();
+    let field_lines: Vec<usize> = fields.iter().map(|(_, e)| line_of(e.span)).collect();
     if !should_layout_multiline(open_line, close_line, &field_lines) {
         return None;
     }
@@ -5971,16 +5999,16 @@ fn format_anon_record_expr_if_multiline(expr: &Expr, depth: usize) -> Option<Str
     if fields.is_empty() && spread.is_none() {
         return None;
     }
-    let open_line = expr.span.line;
+    let open_line = line_of(expr.span);
     let close_line = compute_bracket_end_line(open_line, '{', '}');
     // Anchor lines for layout decisions: include the spread's line (if
     // present) so a multi-line `{ ...other,\n  x: 1\n}` is detected as
     // multi-line by the trailing-comment check.
     let mut anchor_lines: Vec<usize> = Vec::new();
     if let Some(s) = spread {
-        anchor_lines.push(s.span.line);
+        anchor_lines.push(line_of(s.span));
     }
-    anchor_lines.extend(fields.iter().map(|(_, e)| e.span.line));
+    anchor_lines.extend(fields.iter().map(|(_, e)| line_of(e.span)));
     if !should_layout_multiline(open_line, close_line, &anchor_lines) {
         return None;
     }
@@ -5991,7 +6019,7 @@ fn format_anon_record_expr_if_multiline(expr: &Expr, depth: usize) -> Option<Str
     let mut prev_line = open_line.saturating_sub(1);
     let mut item_idx = 0usize;
     if let Some(s) = spread {
-        let sline = s.span.line;
+        let sline = line_of(s.span);
         let pre = take_comments_between(prev_line, sline);
         for c in &pre {
             lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
@@ -6007,7 +6035,7 @@ fn format_anon_record_expr_if_multiline(expr: &Expr, depth: usize) -> Option<Str
         item_idx += 1;
     }
     for (fname, fexpr) in fields.iter() {
-        let fline = fexpr.span.line;
+        let fline = line_of(fexpr.span);
         let pre = take_comments_between(prev_line, fline);
         for c in &pre {
             lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
@@ -6050,8 +6078,8 @@ fn format_map_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
             // lives on the value's source line, not the key's. For multi-
             // line entries (key on one line, value on another) the value
             // line is the one whose tail can carry a trailing comment.
-            anchor_line: k.span.line,
-            end_line: v.span.line,
+            anchor_line: line_of(k.span),
+            end_line: line_of(v.span),
             render: Box::new(move || {
                 format!(
                     "{}: {}",
@@ -6074,8 +6102,8 @@ fn format_set_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     let items: Vec<CollectionItemSpec<'_>> = elems
         .iter()
         .map(|elem| CollectionItemSpec {
-            anchor_line: elem.span.line,
-            end_line: elem.span.line,
+            anchor_line: line_of(elem.span),
+            end_line: line_of(elem.span),
             render: Box::new(move || format_expr(elem, depth + 1)),
         })
         .collect();
@@ -6133,13 +6161,13 @@ fn format_pipe_chain_expr(expr: &Expr, depth: usize) -> String {
     let first = format_expr(stages[0], depth);
     let mut result = first;
     // Trailing comment on the first stage's source line.
-    if let Some(tc) = take_trailing_for_line(stages[0].span.line) {
+    if let Some(tc) = take_trailing_for_line(line_of(stages[0].span)) {
         result.push(' ');
         result.push_str(&tc);
     }
-    let mut prev_line = stages[0].span.line;
+    let mut prev_line = line_of(stages[0].span);
     for stage in &stages[1..] {
-        let stage_line = stage.span.line;
+        let stage_line = line_of(stage.span);
         // Drain any standalone comments that live strictly between the
         // previous stage's line and this stage's line, emitting them on
         // their own indented lines just before the `|>` continuation.
@@ -6214,7 +6242,7 @@ fn compute_match_arm_trailing_commas(
 /// `compute_match_arm_trailing_commas` to mirror the source's comma
 /// distribution on re-format so the fuzz invariant holds.
 ///
-/// The scan starts at `match_span.offset` (the `m` of `match`),
+/// The scan starts at `(match_span.start as usize)` (the `m` of `match`),
 /// skips the keyword + the scrutinee (if any) by tracking bracket
 /// depth, locks onto the FIRST `{` that is at depth 0 — that's the
 /// body opener, NOT any `{` inside the scrutinee or preceding
@@ -6227,7 +6255,7 @@ fn count_toplevel_commas_in_match_body(match_span: Span, match_close_line: usize
             return 0;
         };
         let lines = &state.source_lines;
-        let start_line = match_span.line;
+        let start_line = line_of(match_span);
         if start_line == 0
             || match_close_line == 0
             || start_line > lines.len()
@@ -6245,8 +6273,8 @@ fn count_toplevel_commas_in_match_body(match_span: Span, match_close_line: usize
         // Determine which column on `start_line` the `match` keyword
         // begins at, so a leading `|> list.fold(first) { acc, x -> match {`
         // doesn't trick the scanner into treating the lambda's `{` as
-        // the match body. The column is `match_span.col` (1-based).
-        let start_col = match_span.col.saturating_sub(1);
+        // the match body. The column is `col_of(match_span)` (1-based).
+        let start_col = col_of(match_span).saturating_sub(1);
         for (line_idx, line) in lines
             .iter()
             .enumerate()
@@ -6396,7 +6424,7 @@ fn format_match_expr(expr: &Expr, depth: usize) -> String {
     else {
         unreachable!()
     };
-    let open_line = expr.span.line;
+    let open_line = line_of(expr.span);
     let close_line = compute_block_end_line(expr.span);
     let header = match scrutinee {
         Some(s) => format!("match {} ", format_expr(s, depth)),
@@ -6415,7 +6443,7 @@ fn format_match_expr(expr: &Expr, depth: usize) -> String {
     let mut lines: Vec<String> = Vec::new();
     let mut last_arm_line = 0usize;
     for (i, arm) in arms.iter().enumerate() {
-        let arm_line = arm.body.span.line;
+        let arm_line = line_of(arm.body.span);
         // Standalone comments before this arm become leading comment lines.
         let pre = take_comments_before(arm_line);
         for c in &pre {
@@ -6689,7 +6717,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
 
         ExprKind::Lambda { params, body } => format_closure_lambda(params, body, outer.span, depth),
 
-        ExprKind::FieldAccess(expr, field) => {
+        ExprKind::FieldAccess(expr, field, _) => {
             format!("{}.{field}", format_expr(expr, depth))
         }
 
@@ -6697,6 +6725,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             module,
             name,
             fields,
+            ..
         } => {
             let field_strs: Vec<String> = fields
                 .iter()
@@ -6708,10 +6737,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
                 ""
             };
             // Round 94: preserve the module qualifier the user wrote.
-            let head = match module {
-                Some(m) => format!("{m}.{name}"),
-                None => format!("{name}"),
-            };
+            let head = Qualifier::written(*module, *name);
             format!("{head} {{ {}{trailing} }}", field_strs.join(", "))
         }
 
@@ -6789,7 +6815,7 @@ fn format_expr_inner(outer: &Expr, depth: usize) -> String {
             } else {
                 let binding_strs: Vec<String> = bindings
                     .iter()
-                    .map(|(name, init)| format!("{name} = {}", format_expr(init, depth)))
+                    .map(|(name, _, init)| format!("{name} = {}", format_expr(init, depth)))
                     .collect();
                 format!("loop {} {body_str}", binding_strs.join(", "))
             }
@@ -6840,7 +6866,7 @@ fn format_closure_lambda(params: &[Param], body: &Expr, span: Span, depth: usize
     // A single body expression with standalone comments around it inside
     // the braces: keep the comments inside, one statement per line.
     let close_line = compute_block_end_line(span);
-    if close_line > span.line && has_comments_between(span.line, close_line) {
+    if close_line > line_of(span) && has_comments_between(line_of(span), close_line) {
         let stmts = [Stmt::Expr(body.clone())];
         let inner = format_stmts_with_comments(&stmts, depth + 1, close_line);
         return format!("{{ {params_str}->\n{}\n{}}}", inner, indent(depth));
@@ -6901,16 +6927,22 @@ fn format_pattern(pattern: &Pattern) -> String {
                 format!("({})", items.join(", "))
             }
         }
-        PatternKind::Constructor { module, name, args } => {
+        PatternKind::Constructor {
+            qualifier,
+            name,
+            args,
+            ..
+        } => {
             // Round 94: preserve the qualifier spelling (`Shape.Circle(r)`
-            // / `shapes.Circle(r)`); it round-trips through the parser and
-            // is validated by the typechecker, so dropping it here would
-            // reformat working code into a different (though equivalent)
-            // spelling.
-            let head = match module {
-                Some(m) => format!("{m}.{name}"),
-                None => resolve(*name),
-            };
+            // / `shapes.Circle(r)` / `shapes.Shape.Circle(r)`); it
+            // round-trips through the parser and is validated by the
+            // typechecker, so dropping it here would reformat working code
+            // into a different (though equivalent) spelling.
+            let mut head = String::new();
+            for segment in qualifier {
+                head.push_str(&format!("{}.", segment.name));
+            }
+            head.push_str(&resolve(*name));
             if args.is_empty() {
                 head
             } else {
@@ -6923,10 +6955,11 @@ fn format_pattern(pattern: &Pattern) -> String {
             name,
             fields,
             has_rest,
+            ..
         } => {
             let field_strs: Vec<String> = fields
                 .iter()
-                .map(|(fname, sub)| {
+                .map(|(fname, _, sub)| {
                     if let Some(p) = sub {
                         format!("{fname}: {}", format_pattern(p))
                     } else {
@@ -6936,7 +6969,9 @@ fn format_pattern(pattern: &Pattern) -> String {
                 .collect();
             let rest = if *has_rest { ", .." } else { "" };
             match (module, name) {
-                (Some(m), Some(n)) => format!("{m}.{n} {{ {}{rest} }}", field_strs.join(", ")),
+                (Some(m), Some(n)) => {
+                    format!("{}.{n} {{ {}{rest} }}", m.name, field_strs.join(", "))
+                }
                 (_, Some(n)) => format!("{n} {{ {}{rest} }}", field_strs.join(", ")),
                 (_, None) => format!("{{ {}{rest} }}", field_strs.join(", ")),
             }
@@ -6965,7 +7000,7 @@ fn format_pattern(pattern: &Pattern) -> String {
         PatternKind::AnonRecord { fields, rest } => {
             let mut items: Vec<String> = fields
                 .iter()
-                .map(|(fname, sub)| {
+                .map(|(fname, _, sub)| {
                     if let Some(p) = sub {
                         format!("{fname}: {}", format_pattern(p))
                     } else {
@@ -6973,7 +7008,7 @@ fn format_pattern(pattern: &Pattern) -> String {
                     }
                 })
                 .collect();
-            if let Some(rname) = rest {
+            if let Some((rname, _)) = rest {
                 items.push(format!("...{}", resolve(*rname)));
             }
             format!("{{ {} }}", items.join(", "))
@@ -6983,10 +7018,16 @@ fn format_pattern(pattern: &Pattern) -> String {
 
 pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
     match &ty.kind {
-        TypeExprKind::Named(name) => resolve(*name),
-        TypeExprKind::Generic(name, args) => {
+        TypeExprKind::Named { module, name, .. } => Qualifier::written(*module, *name),
+        TypeExprKind::Generic {
+            module, name, args, ..
+        } => {
             let arg_strs: Vec<String> = args.iter().map(format_type_expr).collect();
-            format!("{name}({})", arg_strs.join(", "))
+            format!(
+                "{}({})",
+                Qualifier::written(*module, *name),
+                arg_strs.join(", ")
+            )
         }
         TypeExprKind::Tuple(elems) => {
             let items: Vec<String> = elems.iter().map(format_type_expr).collect();
@@ -6999,6 +7040,7 @@ pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
         TypeExprKind::SelfType => "Self".to_string(),
         TypeExprKind::AssocProj {
             receiver,
+            trait_module,
             trait_name,
             assoc_name,
         } => {
@@ -7012,7 +7054,7 @@ pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
                 format!(
                     "<{} as {}>::{}",
                     format_type_expr(receiver),
-                    resolve(*trait_name),
+                    Qualifier::written(*trait_module, *trait_name),
                     resolve(*assoc_name)
                 )
             }
@@ -9363,7 +9405,8 @@ mod self_check_tests {
 
     #[test]
     fn a_lost_line_comment_is_refused_and_located() {
-        let e = refusal("fn main() {\n  let x = -- why one\n    1\n  x\n}\n");
+        let src = "fn main() {\n  let x = -- why one\n    1\n  x\n}\n";
+        let e = refusal(src);
         assert!(
             e.message.contains("lose the comment `-- why one`"),
             "{}",
@@ -9372,7 +9415,8 @@ mod self_check_tests {
         let span = e
             .span
             .expect("the refusal must carry the comment's position");
-        assert_eq!((span.line, span.col), (2, 11));
+        let file = SourceFile::new(SourceName::Builtin, src.into());
+        assert_eq!(file.line_col(span.start), (2, 11));
     }
 
     #[test]
@@ -9393,8 +9437,10 @@ mod self_check_tests {
         // No input is known to make the printer produce text that does
         // not parse, so the check is fed such a result directly.
         let src = "fn main() {\n  1\n}\n";
-        let (tokens, comments) = Lexer::new(src).tokenize_with_comments().unwrap();
-        let program = Parser::new(tokens).parse_program().unwrap();
+        let (tokens, comments) = Lexer::new(FileId::default(), src)
+            .tokenize_with_comments()
+            .unwrap();
+        let program = Parser::new(tokens, src).parse_program().unwrap();
         let e = self_check::verify(&program, &comments, "fn main() {\n  (1\n}\n")
             .expect_err("an unparseable result must be refused");
         assert!(e.message.contains("would not parse"), "{}", e.message);
@@ -9403,7 +9449,8 @@ mod self_check_tests {
 
     #[test]
     fn a_result_with_a_different_tree_is_refused() {
-        let e = refusal("fn main() {\n  match 1.5 {\n    1.0..10.0 -> 1\n    _ -> 2\n  }\n}\n");
+        let src = "fn main() {\n  match 1.5 {\n    1.0..10.0 -> 1\n    _ -> 2\n  }\n}\n";
+        let e = refusal(src);
         assert!(
             e.message
                 .contains("would change the program: function `main`"),
@@ -9413,7 +9460,8 @@ mod self_check_tests {
         let span = e
             .span
             .expect("the refusal must carry the declaration's position");
-        assert_eq!(span.line, 1);
+        let file = SourceFile::new(SourceName::Builtin, src.into());
+        assert_eq!(file.line_col(span.start).0, 1);
     }
 
     #[test]
@@ -9461,13 +9509,14 @@ mod self_check_tests {
     #[test]
     fn a_top_level_name_bound_twice_does_not_parse() {
         // Sorting imports can never change which declaration a name
-        // refers to: a top-level name is bound only once.
+        // refers to: a top-level name is bound only once. (Two items of
+        // one name are the resolver's: one binding if they name one
+        // definition, an error if not, in either order.)
         for src in [
-            "import zeta.{ name }\nimport alpha.{ name }\n\nfn main() {\n  println(name())\n}\n",
             "fn name() {\n  \"local\"\n}\n\nimport zeta.{ name }\n\nfn main() {\n  println(name())\n}\n",
         ] {
             match format(src) {
-                Err(FmtError::Parse(e)) => assert!(
+                Err(FmtError::Syntax(e)) => assert!(
                     e.message.contains("'name' is bound twice at the top level"),
                     "{}",
                     e.message

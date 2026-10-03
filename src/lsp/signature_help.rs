@@ -25,7 +25,7 @@ impl Server {
 
         // Walk backwards from cursor to find the function name before `(`.
         let cursor = position_to_offset(&doc.source, &pos);
-        let before = &doc.source[..cursor];
+        let before = &doc.source.text[..cursor];
 
         // Forward-scan `before` to find the active call site: the last `(`
         // at nesting depth 0, and count commas at depth 1 from there.
@@ -48,39 +48,50 @@ impl Server {
 
         // Look up in definitions first, then builtins.
         let fn_sym = intern(&fn_name);
-        let (label, params_info, doc_text) = if let Some(def) = doc.definitions.get(&fn_sym) {
-            let (label, params_info) = build_signature_from_def(&fn_name, def);
-            (label, params_info, def.doc.clone())
-        } else {
-            let sig = self.builtin_sigs.get(&fn_name)?;
-            // Show builtin type signature with per-parameter info when
-            // the registry covers this builtin. Round-71 DX-4 fix: the
-            // pre-round implementation always emitted `vec![]` here,
-            // breaking active-arg highlighting across the entire
-            // stdlib surface. The names come from
-            // `typechecker::builtin_param_names()` — see that registry
-            // for which builtins have coverage. Builtins not in the
-            // registry continue to emit `vec![]` (sigless behavior).
-            //
-            // Phase-2 builtin docs: surface stdlib markdown alongside
-            // the signature so signature-help is a real documentation
-            // surface for builtins, not just a type.
-            let doc_text = self.builtin_docs.get(&fn_name).cloned();
-            let params_info = self
-                .builtin_param_names
-                .get(fn_name.as_str())
-                .map(|names| {
-                    names
-                        .iter()
-                        .map(|n| ParameterInformation {
-                            label: ParameterLabel::Simple((*n).to_string()),
-                            documentation: None,
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            (format!("{fn_name}: {sig}"), params_info, doc_text)
+        // A member of an imported module: `m.f(`, or `f(` with `f` from
+        // `import m.{ f }`.
+        let imported = match fn_name.split_once('.') {
+            Some((module, member)) => self
+                .imported_module(doc, intern(module))
+                .and_then(|mut view| view.definitions.remove(&intern(member))),
+            None => self
+                .item_module(doc, fn_sym)
+                .and_then(|mut view| view.definitions.remove(&fn_sym)),
         };
+        let (label, params_info, doc_text) =
+            if let Some(def) = doc.definitions.get(&fn_sym).or(imported.as_ref()) {
+                let (label, params_info) = build_signature_from_def(&fn_name, def);
+                (label, params_info, def.doc.clone())
+            } else {
+                let sig = self.builtin_sigs.get(&fn_name)?;
+                // Show builtin type signature with per-parameter info when
+                // the registry covers this builtin. Round-71 DX-4 fix: the
+                // pre-round implementation always emitted `vec![]` here,
+                // breaking active-arg highlighting across the entire
+                // stdlib surface. The names come from
+                // `typechecker::builtin_param_names()` — see that registry
+                // for which builtins have coverage. Builtins not in the
+                // registry continue to emit `vec![]` (sigless behavior).
+                //
+                // Phase-2 builtin docs: surface stdlib markdown alongside
+                // the signature so signature-help is a real documentation
+                // surface for builtins, not just a type.
+                let doc_text = self.builtin_docs.get(&fn_name).cloned();
+                let params_info = self
+                    .builtin_param_names
+                    .get(fn_name.as_str())
+                    .map(|names| {
+                        names
+                            .iter()
+                            .map(|n| ParameterInformation {
+                                label: ParameterLabel::Simple((*n).to_string()),
+                                documentation: None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                (format!("{fn_name}: {sig}"), params_info, doc_text)
+            };
 
         let documentation = doc_text.map(|d| {
             Documentation::MarkupContent(MarkupContent {
@@ -119,7 +130,7 @@ pub(super) fn build_signature_from_def(
             // internal descriptor name.
             let param_label = match pty {
                 Type::Generic(sym, args)
-                    if crate::intern::resolve(*sym) == "TypeOf" && args.len() == 1 =>
+                    if sym.is_builtin(crate::defs::TYPE_OF) && args.len() == 1 =>
                 {
                     format!("type {pname}")
                 }
@@ -307,18 +318,14 @@ pub(super) fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::Span;
+    use crate::source::Span;
 
     // ── build_signature_from_def ─────────────────────────────────
 
     #[test]
     fn test_build_signature_simple() {
         let def = DefInfo {
-            span: Span {
-                line: 1,
-                col: 1,
-                offset: 0,
-            },
+            span: Span::point(crate::source::FileId::default(), 0),
             ty: Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
             params: vec!["a".into(), "b".into()],
             doc: None,
@@ -332,11 +339,7 @@ mod tests {
     #[test]
     fn test_build_signature_no_type() {
         let def = DefInfo {
-            span: Span {
-                line: 1,
-                col: 1,
-                offset: 0,
-            },
+            span: Span::point(crate::source::FileId::default(), 0),
             ty: None,
             params: vec!["x".into(), "y".into()],
             doc: None,

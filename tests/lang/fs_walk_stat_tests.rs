@@ -10,14 +10,10 @@
 //! `tests/heavy/integration.rs` so the typechecker signature registrations
 //! (FileStat record, new function schemes) are exercised end-to-end.
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
+use silt::typeinfo::bv;
 use silt::value::Value;
-use silt::vm::Vm;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -56,20 +52,13 @@ impl Drop for TempDir {
 }
 
 fn run(input: &str) -> Value {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Expect an `Ok(inner)` variant; return `inner`.
 fn ok_inner(v: Value) -> Value {
     match v {
-        Value::Variant(tag, args) if tag == "Ok" => {
+        Value::Variant(tag, args) if tag.is(bv::OK) => {
             assert_eq!(args.len(), 1, "Ok variant should carry one payload");
             args.into_iter().next().unwrap()
         }
@@ -87,7 +76,7 @@ fn ok_inner(v: Value) -> Value {
 /// `trait Error for IoError` does at runtime.
 fn err_msg(v: Value) -> String {
     match v {
-        Value::Variant(tag, args) if tag == "Err" => match args.into_iter().next() {
+        Value::Variant(tag, args) if tag.is(bv::ERR) => match args.into_iter().next() {
             // Still accept bare strings in case any caller ever hands us
             // one, but the modern path is the IoError variant arm below.
             Some(Value::String(s)) => s,
@@ -98,7 +87,7 @@ fn err_msg(v: Value) -> String {
                         other => format!("<non-string payload: {other:?}>"),
                     }
                 };
-                match inner_tag.as_str() {
+                match inner_tag.name() {
                     "IoNotFound" => format!("file not found: {}", first_str(inner_args)),
                     "IoPermissionDenied" => {
                         format!("permission denied: {}", first_str(inner_args))
@@ -121,7 +110,7 @@ fn err_msg(v: Value) -> String {
 /// Extract the BTreeMap backing a Record value.
 fn record_fields(v: Value) -> (String, BTreeMap<String, Value>) {
     match v {
-        Value::Record(name, fields) => (name, (*fields).clone()),
+        Value::Record(ty, fields) => (ty.name.clone(), (*fields).clone()),
         other => panic!("expected Record, got {other:?}"),
     }
 }
@@ -207,7 +196,7 @@ fn main() {{
     match fields.get("accessed") {
         Some(Value::Variant(tag, _)) => {
             assert!(
-                tag == "Some" || tag == "None",
+                tag.is(bv::SOME) || tag.is(bv::NONE),
                 "accessed should be Option variant, got tag {tag}"
             );
         }
@@ -218,7 +207,7 @@ fn main() {{
     match fields.get("created") {
         Some(Value::Variant(tag, _)) => {
             assert!(
-                tag == "Some" || tag == "None",
+                tag.is(bv::SOME) || tag.is(bv::NONE),
                 "created should be Option variant, got tag {tag}"
             );
         }

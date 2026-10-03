@@ -6,7 +6,7 @@ import channel
 import time
 fn main() {
   let ch = channel.new(4)
-  match channel.recv_timeout(ch, Duration { ns: -1 }) {
+  match channel.recv_timeout(ch, time.Duration { ns: -1 }) {
     Ok(_) -> println("ok")
     Err(_) -> println("err")
   }

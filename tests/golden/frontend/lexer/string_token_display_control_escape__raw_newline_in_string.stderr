@@ -2,4 +2,4 @@ error[parse]: expected declaration, found "a\nb"
  --> string_token_display_control_escape__raw_newline_in_string.silt:5:1
    |
  5 | "a
-   | ^ expected declaration, found "a\nb"
+   | ^^ expected declaration, found "a\nb"

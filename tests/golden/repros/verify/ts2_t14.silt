@@ -1,0 +1,5 @@
+-- verdict: same
+import list
+fn main() {
+  println([Some(1), None] |> list.map { Some(x) -> x + 1 })
+}

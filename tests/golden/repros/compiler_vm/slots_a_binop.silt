@@ -1,0 +1,9 @@
+-- verdict: same
+fn main() {
+  let opt = Some(41)
+  let r = 100 + match opt {
+    Some(v) -> v + 1
+    None -> 0
+  }
+  println(r)
+}

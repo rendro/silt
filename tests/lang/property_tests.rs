@@ -152,14 +152,14 @@ proptest! {
     #[test]
     fn lexer_never_panics(input in "\\PC{0,200}") {
         // We only care that it doesn't panic — errors are fine.
-        let _ = Lexer::new(&input).tokenize();
+        let _ = Lexer::new(silt::source::FileId::default(), &input).tokenize();
     }
 
     /// The parser must never panic on arbitrary strings.
     #[test]
     fn parser_never_panics(input in "\\PC{0,200}") {
-        if let Ok(tokens) = Lexer::new(&input).tokenize() {
-            let mut parser = Parser::new(tokens);
+        if let Ok(tokens) = Lexer::new(silt::source::FileId::default(), &input).tokenize() {
+            let mut parser = Parser::new(tokens, &input);
             let _ = parser.parse_program();
         }
     }
@@ -167,8 +167,8 @@ proptest! {
     /// The parser's error-recovering mode must never panic.
     #[test]
     fn parser_recovery_never_panics(input in "\\PC{0,200}") {
-        if let Ok(tokens) = Lexer::new(&input).tokenize() {
-            let mut parser = Parser::new(tokens);
+        if let Ok(tokens) = Lexer::new(silt::source::FileId::default(), &input).tokenize() {
+            let mut parser = Parser::new(tokens, &input);
             let _ = parser.parse_program_recovering();
         }
     }
@@ -200,18 +200,18 @@ proptest! {
     /// if s parses, then format(s) also parses.
     #[test]
     fn formatter_preserves_parseability(source in arb_formattable_program()) {
-        let tokens = Lexer::new(&source).tokenize();
+        let tokens = Lexer::new(silt::source::FileId::default(), &source).tokenize();
         if tokens.is_err() { return Ok(()); }
         let tokens = tokens.unwrap();
-        let result = Parser::new(tokens).parse_program();
+        let result = Parser::new(tokens, &source).parse_program();
         if result.is_err() { return Ok(()); }
 
         // Source parses — formatted version must also parse.
         if let Ok(formatted) = formatter::format(&source) {
-            let tokens2 = Lexer::new(&formatted).tokenize()
-                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {e}").into()))?;
-            Parser::new(tokens2).parse_program()
-                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to parse: {e}").into()))?;
+            let tokens2 = Lexer::new(silt::source::FileId::default(), &formatted).tokenize()
+                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {}", e.message).into()))?;
+            Parser::new(tokens2, &formatted).parse_program()
+                .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to parse: {}", e.message).into()))?;
         }
     }
 }
@@ -225,37 +225,31 @@ proptest! {
     /// parses without errors. Type errors are fine, panics are not.
     #[test]
     fn typechecker_never_panics(input in "\\PC{0,200}") {
-        let tokens = match Lexer::new(&input).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let mut program = match Parser::new(tokens).parse_program() {
-            Ok(p) => p,
-            Err(_) => return Ok(()),
-        };
+        if Parser::new(tokens, &input).parse_program().is_err() {
+            return Ok(());
+        }
         // Must not panic — type errors are acceptable.
-        let _ = silt::typechecker::check(&mut program);
+        let _ = silt::session::testing::analyze_str(&input);
     }
 
     /// The compiler must never panic on arbitrary input that lexes, parses,
     /// and typechecks without errors. Compile errors are fine, panics are not.
     #[test]
     fn compiler_never_panics(input in "\\PC{0,200}") {
-        let tokens = match Lexer::new(&input).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let mut program = match Parser::new(tokens).parse_program() {
-            Ok(p) => p,
-            Err(_) => return Ok(()),
-        };
-        let type_errors = silt::typechecker::check(&mut program);
-        if !type_errors.is_empty() {
+        if Parser::new(tokens, &input).parse_program().is_err() {
             return Ok(());
         }
-        // Must not panic — compile errors are acceptable.
-        let mut compiler = silt::compiler::Compiler::new();
-        let _ = compiler.compile_program(&program);
+        // Must not panic — type and compile errors are acceptable (a
+        // program with a type error is not compiled).
+        let _ = silt::session::testing::compile_decls_str(&input);
     }
 }
 
@@ -275,27 +269,16 @@ proptest! {
         b in -1000i64..1000,
         op in prop_oneof![Just("+"), Just("-"), Just("*")],
     ) {
-        let source = format!("{a} {op} {b}");
-        let tokens = match Lexer::new(&source).tokenize() {
-            Ok(t) => t,
-            Err(_) => return Ok(()),
-        };
-        let mut program = match Parser::new(tokens).parse_program() {
+        let source = format!("fn main() {{ {a} {op} {b} }}");
+        let program = match silt::session::testing::compile_str(&source) {
             Ok(p) => p,
-            Err(_) => return Ok(()),
+            Err(errors) => {
+                return Err(TestCaseError::Fail(
+                    format!("silt {a} {op} {b} did not compile: {errors:?}").into(),
+                ));
+            }
         };
-        let _ = silt::typechecker::check(&mut program);
-        let mut compiler = silt::compiler::Compiler::new();
-        let functions = match compiler.compile_program(&program) {
-            Ok(f) => f,
-            Err(_) => return Ok(()),
-        };
-        let script = match functions.into_iter().next() {
-            Some(s) => s,
-            None => return Ok(()),
-        };
-        let mut vm = silt::vm::Vm::new();
-        let vm_result = vm.run(std::sync::Arc::new(script));
+        let vm_result = silt::vm::Vm::new().run_program(&program);
 
         // Reference semantics via Rust's checked arithmetic.
         let expected = match op {

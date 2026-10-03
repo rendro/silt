@@ -1,0 +1,5 @@
+error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ --> stage5_diag__carets_cover_the_expression.silt:5:15
+   |
+ 5 |   let total = 1 + compute(2, 3)
+   |               ^^^^^^^^^^^^^^^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"

@@ -2,13 +2,13 @@ error[type]: type mismatch: expected Int, got String
  --> cli_test_rendering_tests__test_multi_type_error_blank_separator.silt:4:16
    |
  4 |   let a: Int = "hello"
-   |                ^ type mismatch: expected Int, got String
+   |                ^^^^^^^ type mismatch: expected Int, got String
 
 error[type]: type mismatch: expected String, got Int
  --> cli_test_rendering_tests__test_multi_type_error_blank_separator.silt:5:19
    |
  5 |   let b: String = 42
-   |                   ^ type mismatch: expected String, got Int
+   |                   ^^ type mismatch: expected String, got Int
 cli_test_rendering_tests__test_multi_type_error_blank_separator.silt: failed to compile — type errors (see above)
 
 0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)

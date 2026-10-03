@@ -1,0 +1,19 @@
+-- verdict: same
+import list
+import io
+
+fn sneaky(xs) !{} {
+  xs |> list.each { x -> println("printed from a pure fn: {x}") }
+}
+
+fn writes(paths) !{} {
+  paths |> list.each { p ->
+    let _r = io.write_file(p, "written by a function declared pure")
+    ()
+  }
+}
+
+fn main() !{} {
+  sneaky([1, 2])
+  writes(["./e06_out.txt"])
+}

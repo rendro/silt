@@ -1,0 +1,16 @@
+-- verdict: same
+import channel
+
+fn main() {
+  -- local let generalization of an application
+  let mk = fn() { channel.new(10) }
+  let ch = mk()
+  let pair = (ch, ch)
+  let (a, b) = pair
+  channel.send(a, 1)
+  channel.send(b, "hello")
+  match channel.receive(ch) {
+    channel.Message(v) -> println(v)
+    _ -> ()
+  }
+}

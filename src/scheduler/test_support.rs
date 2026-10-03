@@ -81,15 +81,10 @@
 //!   `task.spawn`), and tears everything down before returning.
 //!   Tests that want N trials loop over `run_trial`.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::compiler::Compiler;
-use crate::lexer::Lexer;
-use crate::parser::Parser;
 use crate::value::Value;
-use crate::vm::Vm;
 
 /// Outcome of a single in-process trial.
 ///
@@ -309,35 +304,17 @@ impl InProcessRunner {
 /// the latter approach; see `scheduler_deadlock_detector_tests.rs`.
 fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) {
     let stdout = String::new();
-    let tokens = match Lexer::new(source).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            return (
-                stdout,
-                Err(crate::vm::VmError::new(format!("lexer error: {e:?}"))),
-            );
-        }
-    };
-    let mut program = match Parser::new(tokens).parse_program() {
+    let program = match crate::session::testing::compile_str(source) {
         Ok(p) => p,
-        Err(e) => {
-            return (
-                stdout,
-                Err(crate::vm::VmError::new(format!("parse error: {e:?}"))),
-            );
+        Err(errors) => {
+            let message = errors
+                .first()
+                .map(|d| d.message.clone())
+                .unwrap_or_default();
+            return (stdout, Err(crate::vm::VmError::new(message)));
         }
     };
-    let _ = crate::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => {
-            return (stdout, Err(crate::vm::VmError::new(e.message)));
-        }
-    };
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    let result = vm.run(script);
+    let result = crate::vm::Vm::new().run_program(&program);
     (stdout, result)
 }
 
@@ -472,7 +449,7 @@ import channel
 fn main() {
   let ch = channel.new(0)
   match channel.receive(ch) {
-    Message(_) -> 0
+    channel.Message(_) -> 0
     _ -> 0
   }
 }
@@ -529,7 +506,7 @@ fn main() {
     match c >= 16 {
       true -> acc
       _ -> match channel.receive(ch) {
-        Message(v) -> loop(c + 1, acc + v)
+        channel.Message(v) -> loop(c + 1, acc + v)
         _ -> acc
       }
     }

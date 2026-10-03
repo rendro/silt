@@ -1,0 +1,7 @@
+-- verdict: same
+import shapes
+type Sq { side: Int }
+trait shapes.Area for Sq {
+  fn area(self) -> Int { self.side * self.side }
+}
+fn main() { println(Sq { side: 3 }.area()) }

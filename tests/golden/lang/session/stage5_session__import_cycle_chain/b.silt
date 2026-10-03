@@ -1,0 +1,2 @@
+import c
+pub fn g() { c.h() }

@@ -1,0 +1,9 @@
+-- verdict: same
+type P { name: String, age: Int }
+fn older(r) { r.{ age: "old" } }
+fn older2(r: P) -> P { r.{ age: 99 } }
+fn main() {
+  let p = P { name: "p", age: 1 }
+  let p2 = older(p)
+  println(p2.age + 1)
+}

@@ -1,0 +1,4 @@
+-- A top-level `let` may destructure: each name it binds is a
+-- top-level name.
+let (a, b) = (1, 2)
+fn main() { println(a + b) }

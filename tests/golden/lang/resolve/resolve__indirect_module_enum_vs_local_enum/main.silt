@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: type mismatch: expected b.Color, got Color
+-- a.get returns b's Color: comparing it with this module's own Color.Red
+-- is a type error, not a comparison of two Reds.
+import a
+type Color { Red, Blue }
+fn main() {
+  let c = a.get()
+  println(c == Color.Red)
+  match c {
+    Color.Red -> println("red")
+    Color.Blue -> println("blue")
+  }
+}

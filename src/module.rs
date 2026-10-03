@@ -1,6 +1,6 @@
 /// Module system utilities.
-/// Known builtin module names whose functions are registered as `module.func`
-/// in the global environment rather than loaded from files.
+/// Known builtin module names: their functions (`module.func`) are
+/// builtins, not loaded from files.
 pub const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
     "regex", "json", "toml", "set", "math", "time", "http", "fs", "env", "postgres", "bytes",
@@ -9,34 +9,22 @@ pub const BUILTIN_MODULES: &[&str] = &[
 
 /// Names of the built-in primitive type descriptors (uppercase) usable
 /// as `type a` arguments and for static-style trait dispatch
-/// (`Int.parse(...)`, etc.). The runtime emits each one as a
-/// `Value::PrimitiveDescriptor("<Name>")` global; the typechecker
-/// registers each as `TypeOf(<inner>)`.
+/// (`Int.parse(...)`, etc.). The compiler emits each one, used as a
+/// value, as a `Value::PrimitiveDescriptor("<Name>")` constant; the
+/// typechecker registers each as `TypeOf(<inner>)`.
 ///
-/// Round-73 BLOAT-2 fix: hoisted from hand-rolled lists at
-/// `src/vm/dispatch.rs::register_builtins` and
-/// `src/typechecker/builtins.rs::register_builtins` so adding a new
-/// primitive descriptor only requires touching this constant. Per-name
-/// behavior (the `Type` mapping in the typechecker, the
-/// `Value::PrimitiveDescriptor` shape in the VM) still lives at the
-/// call sites — only the NAME set is hoisted to prevent drift.
+/// Round-73 BLOAT-2 fix: the name set is hoisted here so the compiler
+/// and `src/typechecker/builtins.rs::register_builtins` cannot drift.
 ///
 /// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
 pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "String", "Bool"];
 
 /// Names of the built-in generic container type descriptors (uppercase)
 /// usable as `type a` arguments and for static-style trait dispatch
-/// (`List.empty()`, etc.). The runtime emits each one as a
-/// `Value::TypeDescriptor("<Name>")` global; the typechecker registers
-/// each as a polymorphic `TypeOf(Container(...))` scheme with arity
-/// matching the container's generic parameter count.
-///
-/// Round-73 BLOAT-2 fix: hoisted from hand-rolled lists at
-/// `src/vm/dispatch.rs::register_builtins` and
-/// `src/typechecker/builtins.rs::register_builtins`. Each container
-/// still has its own per-name code path (different generic arity for
-/// `Map(k,v)` vs the others), but the NAME set is centralised so the
-/// two sites cannot drift.
+/// (`List.empty()`, etc.). The compiler emits each one, used as a value,
+/// as a `Value::TypeDescriptor` constant of the builtin type; the
+/// typechecker registers each as a polymorphic `TypeOf(Container(...))`
+/// scheme with arity matching the container's generic parameter count.
 ///
 /// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
 pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Channel", "Tuple"];
@@ -119,186 +107,77 @@ pub fn feature_gated_stdlib_type(name: &str) -> Option<&'static str> {
     }
 }
 
+/// The builtin module that declares the stdlib type `name` (an enum or a
+/// record of [`BUILTIN_STDLIB_TYPE_NAMES`], or one of the non-error
+/// enums `Step`, `ChannelResult` and `ChannelOp`): `time` for `Weekday`,
+/// `http` for `Request`. `None` for the prelude types and for any other
+/// name. A module's types are reached as `time.Weekday`; their variants
+/// as `time.Monday` (see [`builtin_variant_module`]).
+pub fn builtin_type_module(name: &str) -> Option<&'static str> {
+    match name {
+        "Step" => Some("list"),
+        "ChannelResult" | "ChannelOp" | "ChannelError" => Some("channel"),
+        "Instant" | "Date" | "Time" | "DateTime" | "Duration" | "Weekday" | "TimeError" => {
+            Some("time")
+        }
+        "Method" | "Response" | "Request" | "HttpError" => Some("http"),
+        "FileStat" => Some("fs"),
+        "IoError" => Some("io"),
+        "JsonError" => Some("json"),
+        "TomlError" => Some("toml"),
+        "ParseError" => Some("int"),
+        "RegexError" => Some("regex"),
+        "BytesError" => Some("bytes"),
+        "PgError" => Some("postgres"),
+        "TcpError" => Some("tcp"),
+        _ => None,
+    }
+}
+
+/// The stdlib types the builtin module `module` declares (see
+/// [`builtin_type_module`]), including the feature-gated ones.
+pub fn builtin_module_type_names(module: &str) -> impl Iterator<Item = &'static str> + '_ {
+    BUILTIN_STDLIB_TYPE_NAMES
+        .iter()
+        .copied()
+        .chain(["Step", "ChannelResult", "ChannelOp"])
+        .filter(move |name| builtin_type_module(name) == Some(module))
+}
+
+/// The builtin module whose enum declares the variant `name`, which is
+/// how the variant is reached qualified: `channel` for `Message` and for
+/// `Recv`, `time` for `Monday`. `None` for the prelude variants and for
+/// any other name.
+pub fn builtin_variant_module(name: &str) -> Option<&'static str> {
+    builtin_enum_variants()
+        .iter()
+        .find(|(_, variants)| variants.contains(&name))
+        .and_then(|(enum_name, _)| builtin_type_module(enum_name))
+}
+
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)
 }
 
-/// Returns the module that must be imported for a gated constructor to be available.
-/// Returns `None` for prelude constructors (Ok, Err, Some, None) that are always available.
-pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
-    match name {
-        "Stop" | "Continue" => Some("list"),
-        "Message" | "Closed" | "Empty" | "Sent" => Some("channel"),
-        "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" => {
-            Some("time")
-        }
-        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => Some("http"),
-        // Stdlib typed-error enums. Each module's error variants
-        // require that module to be imported before they can be
-        // constructed. See
-        // `module.rs::builtin_error_enum_variants_with_arity` for
-        // Phase 0 background.
-        "IoNotFound" | "IoPermissionDenied" | "IoAlreadyExists" | "IoInvalidInput"
-        | "IoInterrupted" | "IoUnexpectedEof" | "IoWriteZero" | "IoUnknown" => Some("io"),
-        "JsonSyntax" | "JsonTypeMismatch" | "JsonMissingField" | "JsonUnknown" => Some("json"),
-        "TomlSyntax" | "TomlTypeMismatch" | "TomlMissingField" | "TomlUnknown" => Some("toml"),
-        // ParseError is shared between int and float. Arbitrary
-        // routing pick: int. Users importing `float` can still
-        // destructure these variants in a match once constructed.
-        "ParseEmpty" | "ParseInvalidDigit" | "ParseOverflow" | "ParseUnderflow" => Some("int"),
-        "HttpConnect"
-        | "HttpTls"
-        | "HttpTimeout"
-        | "HttpInvalidUrl"
-        | "HttpInvalidResponse"
-        | "HttpClosedEarly"
-        | "HttpStatusCode"
-        | "HttpUnknown" => Some("http"),
-        "RegexInvalidPattern" | "RegexTooBig" => Some("regex"),
-        "PgConnect" | "PgTls" | "PgAuthFailed" | "PgQuery" | "PgTypeMismatch"
-        | "PgNoSuchColumn" | "PgClosed" | "PgTimeout" | "PgTxnAborted" | "PgUnknown" => {
-            Some("postgres")
-        }
-        "TcpConnect" | "TcpTls" | "TcpClosed" | "TcpTimeout" | "TcpUnknown" => Some("tcp"),
-        "TimeParseFormat" | "TimeOutOfRange" => Some("time"),
-        "BytesInvalidUtf8"
-        | "BytesInvalidHex"
-        | "BytesInvalidBase64"
-        | "BytesByteOutOfRange"
-        | "BytesOutOfBounds" => Some("bytes"),
-        "ChannelTimeout" | "ChannelClosed" => Some("channel"),
-        _ => None,
-    }
-}
-
-/// Returns the set of builtin enums known to the compiler as
-/// `(enum_name, variant_names)` pairs. Seeds the compiler's
-/// `known_enum_variants` map so `EnumName.Variant` qualifier syntax
-/// compiles to a bare `GetGlobal("Variant")`, matching how the same
-/// rewrite already works for user-declared enums.
-///
-/// Includes both prelude enums (Result, Option) and gated enums.
-/// Keep in sync with `src/typechecker/builtins/errors.rs` enum registrations
-/// and `src/vm/dispatch.rs` variant globals.
-pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static str])] {
-    &[
-        ("Result", &["Ok", "Err"]),
-        ("Option", &["Some", "None"]),
-        ("Step", &["Stop", "Continue"]),
-        ("ChannelResult", &["Message", "Closed", "Empty", "Sent"]),
-        ("ChannelOp", &["Recv", "Send"]),
-        (
-            "Weekday",
-            &[
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday",
-            ],
-        ),
-        (
-            "Method",
-            &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-        ),
-        // Stdlib typed-error enums. See
-        // `module.rs::builtin_error_enum_variants_with_arity` for
-        // Phase 0 background.
-        (
-            "IoError",
-            &[
-                "IoNotFound",
-                "IoPermissionDenied",
-                "IoAlreadyExists",
-                "IoInvalidInput",
-                "IoInterrupted",
-                "IoUnexpectedEof",
-                "IoWriteZero",
-                "IoUnknown",
-            ],
-        ),
-        (
-            "JsonError",
-            &[
-                "JsonSyntax",
-                "JsonTypeMismatch",
-                "JsonMissingField",
-                "JsonUnknown",
-            ],
-        ),
-        (
-            "TomlError",
-            &[
-                "TomlSyntax",
-                "TomlTypeMismatch",
-                "TomlMissingField",
-                "TomlUnknown",
-            ],
-        ),
-        (
-            "ParseError",
-            &[
-                "ParseEmpty",
-                "ParseInvalidDigit",
-                "ParseOverflow",
-                "ParseUnderflow",
-            ],
-        ),
-        (
-            "HttpError",
-            &[
-                "HttpConnect",
-                "HttpTls",
-                "HttpTimeout",
-                "HttpInvalidUrl",
-                "HttpInvalidResponse",
-                "HttpClosedEarly",
-                "HttpStatusCode",
-                "HttpUnknown",
-            ],
-        ),
-        ("RegexError", &["RegexInvalidPattern", "RegexTooBig"]),
-        (
-            "PgError",
-            &[
-                "PgConnect",
-                "PgTls",
-                "PgAuthFailed",
-                "PgQuery",
-                "PgTypeMismatch",
-                "PgNoSuchColumn",
-                "PgClosed",
-                "PgTimeout",
-                "PgTxnAborted",
-                "PgUnknown",
-            ],
-        ),
-        (
-            "TcpError",
-            &[
-                "TcpConnect",
-                "TcpTls",
-                "TcpClosed",
-                "TcpTimeout",
-                "TcpUnknown",
-            ],
-        ),
-        ("TimeError", &["TimeParseFormat", "TimeOutOfRange"]),
-        (
-            "BytesError",
-            &[
-                "BytesInvalidUtf8",
-                "BytesInvalidHex",
-                "BytesInvalidBase64",
-                "BytesByteOutOfRange",
-                "BytesOutOfBounds",
-            ],
-        ),
-        ("ChannelError", &["ChannelTimeout", "ChannelClosed"]),
-    ]
+/// The builtin enums as `(enum_name, variant_names)` pairs: the prelude
+/// enums (Result, Option) and the enums of the builtin modules, from the
+/// one listing of their variants
+/// ([`builtin_prelude_enum_variants_with_arity`] and
+/// [`builtin_error_enum_variants_with_arity`]). The compiler finds a
+/// builtin variant by its name here in the derived impls of the builtin
+/// types, which name variants unresolved; it also names the module of
+/// each variant (`builtin_variant_module`).
+pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
+    static ENUMS: std::sync::OnceLock<Vec<(&'static str, Vec<&'static str>)>> =
+        std::sync::OnceLock::new();
+    ENUMS.get_or_init(|| {
+        builtin_prelude_enum_variants_with_arity()
+            .iter()
+            .chain(builtin_error_enum_variants_with_arity())
+            .map(|(name, variants)| (*name, variants.iter().map(|(v, _)| *v).collect()))
+            .collect()
+    })
 }
 
 /// Iterator over every builtin enum variant name across all builtin enums
@@ -319,8 +198,7 @@ pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
 /// a module prefix: `print(...)`, not `io.print(...)`. These are the
 /// non-constructor identifiers `register_builtins` (in
 /// `src/typechecker/builtins.rs`) defines unqualified at the top of the
-/// type environment, plus the matching `BuiltinFn` globals seeded by
-/// `src/vm/dispatch.rs::register_builtins`.
+/// type environment; used as a value, each is a `BuiltinFn` constant.
 ///
 /// Authoritative for: REPL completion, LSP completion/rename, the
 /// typechecker's "did you mean" candidate set for unqualified
@@ -340,11 +218,8 @@ pub fn builtin_free_function_names() -> &'static [&'static str] {
 }
 
 /// Authoritative `(variant_name, arity)` listings for every stdlib
-/// typed-error enum. Single source of truth consulted by
-/// `src/vm/dispatch.rs::register_builtins` to seed the global
-/// `VariantConstructor` / `Variant` entries — collapsing the
-/// previously hand-rolled per-family loops at dispatch.rs:142-275 into
-/// one data-driven loop.
+/// typed-error enum. Single source of truth for the builtin types'
+/// variants (`crate::typeinfo`) and the typechecker's error enums.
 ///
 /// Phase 0 of the stdlib error redesign (implemented and proposal
 /// removed in commit 7680536) — this is the canonical doc-mention.
@@ -488,18 +363,10 @@ pub fn variant_to_error_enum(tag: &str) -> Option<&'static str> {
 
 /// Authoritative `(variant_name, arity)` listings for every builtin
 /// non-error enum: `Result`, `Option`, `Step`, `ChannelResult`,
-/// `ChannelOp`, `Weekday`, `Method`. Single source of truth consulted
-/// by `src/vm/dispatch.rs::register_builtins` to seed the global
-/// `VariantConstructor` / `Variant` entries — collapsing the
-/// previously hand-rolled per-family blocks in `register_builtins` (an
-/// `insert()` pair per variant) into one data-driven loop, mirroring
-/// the round-64 collapse done for the typed-error enums via
-/// `builtin_error_enum_variants_with_arity`.
-///
-/// Round-71 PARALLEL-ARRAY-DRIFT fix: this helper exists so adding a
-/// new variant to e.g. `ChannelOp` no longer requires a hand-rolled
-/// `globals.insert(...)` pair next to the existing ones — the loop
-/// at dispatch.rs picks up the arity automatically.
+/// `ChannelOp`, `Weekday`, `Method`. Single source of truth for the
+/// builtin types' variants (`crate::typeinfo`), as
+/// `builtin_error_enum_variants_with_arity` is for the typed-error
+/// enums.
 ///
 /// A parity-lock test at
 /// `tests/meta/round71_dispatch_collapse_and_parity_tests.rs` asserts these
@@ -513,7 +380,7 @@ pub fn builtin_prelude_enum_variants_with_arity()
         ("Step", &[("Stop", 1), ("Continue", 1)]),
         (
             "ChannelResult",
-            &[("Message", 1), ("Closed", 0), ("Empty", 0), ("Sent", 0)],
+            &[("Message", 1), ("Closed", 0), ("Sent", 0), ("Empty", 0)],
         ),
         // ChannelOp constructors for `channel.select`. `Recv(ch)` and
         // `Send(ch, value)` are the one-and-only shapes accepted by the
@@ -619,11 +486,6 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "group_by",
             // Round-72 widen: typechecker registrations these names had
             // schemes for, but `builtin_module_functions` did not enumerate.
-            // Without these entries, `Vm::register_builtins` never seeded
-            // a global for `list.sum` (etc.), so first-class value access
-            // (`let f = list.sum`) blew up at runtime with `undefined
-            // global: list.sum` even though the call form `list.sum(xs)`
-            // worked via `Op::CallBuiltin`.
             "sum",
             "sum_float",
             "product",
@@ -903,55 +765,44 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
     }
 }
 
-/// Round 93 (fix G1): build the enriched "cannot load module" diagnostic
-/// used by the compiler when an `import` resolves to a file path that
-/// cannot be read. Previously the raw OS error surfaced alone
-/// (`cannot load module 'x': No such file or directory (os error 2)`),
-/// with no mention of WHICH path was attempted, no did-you-mean against
-/// sibling `.silt` files, and no pointer at the manifest dependency
-/// channel — the other way an import can resolve.
-///
-/// The first line keeps the historical
-/// `cannot load module '<name>': <io error>` shape (asserted by
-/// tests/lang/modules.rs and tests/lang/round92_test_import_filter_e2e_tests.rs);
-/// the lines after it render as `= note:` / `= help:` continuations via
-/// `SourceError::Display` (see src/errors.rs — a body line beginning
-/// with `help: ` becomes `= help:`):
-///   - the path that was actually attempted (`attempted_display`, the
-///     CWD-relative form the caller already computes for snippets),
-///   - a did-you-mean hint when a near-miss sibling `.silt` file exists
-///     (threshold policy shared with the typechecker via
-///     `crate::typechecker::suggest::suggest_similar`),
-///   - a pointer at `silt.toml [dependencies]` / `silt add`.
-///
-/// The two help lines are only added for NotFound — a permission or
-/// encoding error on an existing file should not invite a rename hunt.
-///
-/// Lock: tests/lang/round93_module_load_hint_tests.rs.
-pub fn format_module_load_error(
+/// The diagnostic for an `import` at `span` whose module file, at
+/// `attempted_path`, cannot be read: the I/O error, a note naming the
+/// path that was tried (`attempted_display`, as it is shown), and, when
+/// the file is not there, a did-you-mean for a near-miss sibling `.silt`
+/// file and a pointer at `[dependencies]` in silt.toml. A permission or
+/// encoding error on an existing file does not invite a rename hunt.
+pub fn module_load_error(
     module_name: &str,
     attempted_path: &std::path::Path,
     attempted_display: &str,
     err: &std::io::Error,
-) -> String {
-    let mut out = format!("cannot load module '{module_name}': {err}");
-    out.push_str(&format!("\nlooked for `{attempted_display}`"));
+    span: crate::source::Span,
+) -> crate::diagnostic::Diagnostic {
+    let mut d = crate::diagnostic::Diagnostic::error(
+        crate::diagnostic::Code::ModuleNotFound,
+        span,
+        format!(
+            "cannot load module '{module_name}': {}",
+            crate::diagnostic::io_error_text(err)
+        ),
+    )
+    .with_note(format!("looked for `{attempted_display}`"));
     if err.kind() == std::io::ErrorKind::NotFound {
         if let Some(hint) = sibling_module_suggestion(module_name, attempted_path) {
             // The file name comes from a directory the program does not
             // control (a dependency's), so it is shown through the
             // display rule like the path above.
             let hint = crate::git::escape_for_display(&hint);
-            out.push_str(&format!(
-                "\nhelp: did you mean `{hint}`? (`{hint}.silt` exists in the same directory)"
+            d = d.with_help(format!(
+                "did you mean `{hint}`? (`{hint}.silt` exists in the same directory)"
             ));
         }
-        out.push_str(&format!(
-            "\nhelp: if '{module_name}' is a separate package, declare it under \
+        d = d.with_help(format!(
+            "if '{module_name}' is a separate package, declare it under \
              `[dependencies]` in silt.toml (e.g. `silt add {module_name}`)"
         ));
     }
-    out
+    d
 }
 
 /// Scan the directory the failed import resolved against for sibling
@@ -996,4 +847,19 @@ pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
         "float" => vec!["max_value", "min_value", "epsilon", "min_positive"],
         _ => vec![],
     }
+}
+
+/// The value of the builtin module constant `qualified` (`math.pi`);
+/// `None` for any other name.
+pub fn builtin_constant_value(qualified: &str) -> Option<crate::value::Value> {
+    let value = match qualified {
+        "math.pi" => std::f64::consts::PI,
+        "math.e" => std::f64::consts::E,
+        "float.max_value" => f64::MAX,
+        "float.min_value" => f64::MIN,
+        "float.epsilon" => f64::EPSILON,
+        "float.min_positive" => f64::MIN_POSITIVE,
+        _ => return None,
+    };
+    Some(crate::value::Value::Float(value))
 }

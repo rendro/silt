@@ -1,0 +1,9 @@
+-- verdict: same
+-- with params
+fn leaf(x: Int) -> Int { x }
+fn mid(x) { leaf(x) }
+fn top(x) { mid(x) }
+fn main() {
+  let s: String = top("str")
+  println(s)
+}

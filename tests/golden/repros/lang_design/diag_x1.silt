@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let n = 1
+  let s = "total: " + n
+  println(s)
+}

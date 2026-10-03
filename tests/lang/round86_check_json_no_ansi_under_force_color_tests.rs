@@ -1,20 +1,9 @@
 //! Round 86 — B1: `silt check --format json` must never emit ANSI
-//! escapes regardless of upstream color signals.
-//!
-//! `format_module_source_error` (`src/compiler/mod.rs:218-239`) routes
-//! its inner snippet glyphs through `crate::errors::active_colors()`,
-//! which honors `FORCE_COLOR=1` (or a real TTY). Those ANSI codes get
-//! baked into the resulting message string and previously leaked into
-//! the `hints` array of `silt check --format json` output, corrupting
-//! the machine-readable contract that editor plugins / LSP front-ends
-//! / CI scripts depend on.
-//!
-//! Fix: strip ANSI at the JSON boundary in `print_json_errors`
-//! (`src/cli/check.rs`). This lock runs `silt check --format json`
-//! against a module-import-with-lex-error fixture under `FORCE_COLOR=1`
-//! (which the golden harness cannot set) and asserts the stdout contains
-//! zero `\x1b` bytes. The `NO_COLOR=1` half is the golden case
-//! `tests/golden/lang/diagnostics/round86_check_json_no_ansi__no_color`.
+//! escapes regardless of upstream color signals. A diagnostic holds no
+//! rendered text, and the JSON renderer writes none, so `FORCE_COLOR=1`
+//! (which the golden harness cannot set) must not reach the output. The
+//! fixture is a module import with a lex error. The `NO_COLOR=1` half is
+//! the golden case `tests/golden/lang/diagnostics/round86_check_json_no_ansi__no_color`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -22,10 +11,9 @@ use std::process::Command;
 
 /// Build a fixture: a `main.silt` that imports a `badlex` module whose
 /// source contains an illegal character (`@`) that triggers a lex
-/// error inside `format_module_source_error`. Returns the path to
-/// `main.silt`; the temp dir is intentionally leaked so the subprocess
-/// can read the files (the OS reaps on test-process exit, same shape
-/// as `tests/lang/round85_followup_deferred_close_tests.rs`).
+/// error. Returns the path to `main.silt`; the temp dir is
+/// intentionally leaked so the subprocess can read the files (the OS
+/// reaps on test-process exit).
 fn write_broken_import_fixture() -> PathBuf {
     let tmp = std::env::temp_dir().join(format!(
         "silt-round86-b1-fixture-{}-{}",
@@ -86,11 +74,11 @@ fn json_output_has_no_ansi_under_force_color() {
         "silt check should exit 1 on lex error in imported module; \
          got code={code}\nstdout={stdout}\nstderr={stderr}"
     );
-    // Sanity: the JSON shape is what we expect — a `hints` array is
-    // present and references the broken module's filename.
+    // Sanity: the JSON shape is what we expect — `notes` and `help`
+    // arrays are present and the diagnostic is in the broken module.
     assert!(
-        stdout.contains("\"hints\""),
-        "expected JSON to contain a `hints` field; got stdout:\n{stdout}"
+        stdout.contains("\"notes\"") && stdout.contains("\"help\""),
+        "expected JSON to contain `notes` and `help` fields; got stdout:\n{stdout}"
     );
     assert!(
         stdout.contains("badlex.silt"),
@@ -98,10 +86,8 @@ fn json_output_has_no_ansi_under_force_color() {
          got stdout:\n{stdout}"
     );
     // The actual lock: zero ANSI escape sequences anywhere in stdout,
-    // regardless of FORCE_COLOR=1. The B1 bug was that the cyan
-    // `\x1b[36m-->\x1b[0m` and bold-red `\x1b[1m\x1b[31m^\x1b[0m`
-    // sequences from `format_module_source_error` leaked into the
-    // `hints` strings here.
+    // regardless of FORCE_COLOR=1. The B1 bug was that colored snippet
+    // text baked into a message leaked into the JSON strings.
     //
     // Two flavors to check:
     //   - Raw `\x1b` bytes (if serde ever changes to keep them raw).

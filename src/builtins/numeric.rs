@@ -1,6 +1,7 @@
 //! Numeric builtin functions (`int.*`, `float.*`, `math.*`).
 
 use super::common::{require_int, require_string, value_kind};
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
 
@@ -42,9 +43,9 @@ fn find_first_invalid_digit(s: &str, allow_decimal: bool) -> usize {
 fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
     use std::num::IntErrorKind;
     match err.kind() {
-        IntErrorKind::Empty => Value::Variant("ParseEmpty".into(), vec![]),
-        IntErrorKind::PosOverflow => Value::Variant("ParseOverflow".into(), vec![]),
-        IntErrorKind::NegOverflow => Value::Variant("ParseUnderflow".into(), vec![]),
+        IntErrorKind::Empty => Value::variant(bv::PARSE_EMPTY, vec![]),
+        IntErrorKind::PosOverflow => Value::variant(bv::PARSE_OVERFLOW, vec![]),
+        IntErrorKind::NegOverflow => Value::variant(bv::PARSE_UNDERFLOW, vec![]),
         // InvalidDigit, Zero, and any future-added kinds fall through
         // to `ParseInvalidDigit(offset)`: it's the only variant that
         // carries data, so it doubles as the "anything else" sink.
@@ -52,7 +53,7 @@ fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
         // `_` arm is not dead code even today.
         _ => {
             let offset = find_first_invalid_digit(s.trim(), false) as i64;
-            Value::Variant("ParseInvalidDigit".into(), vec![Value::Int(offset)])
+            Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(offset)])
         }
     }
 }
@@ -66,14 +67,14 @@ fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
 fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Value {
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        return Value::Variant("ParseEmpty".into(), vec![]);
+        return Value::variant(bv::PARSE_EMPTY, vec![]);
     }
     // A string that's only a sign has no digits → treat as empty.
     if trimmed == "+" || trimmed == "-" {
-        return Value::Variant("ParseEmpty".into(), vec![]);
+        return Value::variant(bv::PARSE_EMPTY, vec![]);
     }
     let offset = find_first_invalid_digit(trimmed, true) as i64;
-    Value::Variant("ParseInvalidDigit".into(), vec![Value::Int(offset)])
+    Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(offset)])
 }
 
 /// Dispatch the builtin `trait Error for ParseError` method table.
@@ -104,9 +105,9 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let s = require_string(&args[0], "int.parse")?;
             match s.trim().parse::<i64>() {
-                Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Int(n)])),
-                Err(e) => Ok(Value::Variant(
-                    "Err".into(),
+                Ok(n) => Ok(Value::variant(bv::OK, vec![Value::Int(n)])),
+                Err(e) => Ok(Value::variant(
+                    bv::ERR,
                     vec![classify_int_parse_error(&e, &s)],
                 )),
             }
@@ -220,17 +221,17 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Ok(n) if !n.is_finite() => {
                     let spelled = s.trim().trim_start_matches(['+', '-']);
                     let err = if !spelled.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
-                        Value::Variant("ParseInvalidDigit".into(), vec![Value::Int(0)])
+                        Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(0)])
                     } else if n < 0.0 {
-                        Value::Variant("ParseUnderflow".into(), vec![])
+                        Value::variant(bv::PARSE_UNDERFLOW, vec![])
                     } else {
-                        Value::Variant("ParseOverflow".into(), vec![])
+                        Value::variant(bv::PARSE_OVERFLOW, vec![])
                     };
-                    Ok(Value::Variant("Err".into(), vec![err]))
+                    Ok(Value::variant(bv::ERR, vec![err]))
                 }
-                Ok(n) => Ok(Value::Variant("Ok".into(), vec![float_value(n)])),
-                Err(e) => Ok(Value::Variant(
-                    "Err".into(),
+                Ok(n) => Ok(Value::variant(bv::OK, vec![float_value(n)])),
+                Err(e) => Ok(Value::variant(
+                    bv::ERR,
                     vec![classify_float_parse_error(&e, &s)],
                 )),
             }

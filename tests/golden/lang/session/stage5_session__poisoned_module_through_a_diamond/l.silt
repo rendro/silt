@@ -1,0 +1,2 @@
+import m.{ Box, Pt }
+pub fn left(b: Box(Int), p: Pt) -> Int { p.x }

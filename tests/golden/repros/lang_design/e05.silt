@@ -1,0 +1,14 @@
+-- verdict: same
+import task
+import channel
+import io
+
+fn spawn_reader() !{} {
+  let t = task.spawn(fn() { io.read_file("/etc/hostname") })
+  task.join(t)
+}
+
+fn main() !{} {
+  let _r = spawn_reader()
+  ()
+}

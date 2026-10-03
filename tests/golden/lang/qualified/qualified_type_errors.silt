@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined type 'nope.Shape' — no module 'nope' in scope
+-- stderr-contains: module 'time' has no type 'Weekdy'
+-- stderr-contains: did you mean `Weekday`?
+-- stderr-contains: module 'http' is not imported
+-- stderr-contains: enum 'time.Weekday' has no variant 'Circle'
+import time
+
+fn a(s: nope.Shape) -> Int { 1 }
+fn b(d: time.Weekdy) -> Int { 1 }
+fn c(r: http.Request) -> Int { 1 }
+
+fn main() {
+  match time.Monday {
+    time.Weekday.Circle -> println(0)
+    _ -> println(1)
+  }
+}

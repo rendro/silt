@@ -1,0 +1,9 @@
+-- verdict: same
+fn b(x) { x }
+fn a(x) { b(x) }
+fn main() {
+  let s: String = a(1)
+  println(s)
+  let f: Fn(Int) -> Int = a("oops")
+  println(f(3))
+}

@@ -1,0 +1,11 @@
+-- verdict: same
+-- chain of unannotated functions; callers defined BEFORE callees
+fn main() {
+  let s: String = a()
+  println(s)
+  println(a() + 1)
+}
+fn a() { b() }
+fn b() { c() }
+fn c() { d() }
+fn d() { 1 }

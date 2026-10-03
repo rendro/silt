@@ -1,0 +1,9 @@
+-- verdict: same
+import list
+import set
+fn f(x: ExtFloat) -> ExtFloat { x }
+fn main() {
+  let a = f(1.0)
+  let b = 1.0 / 1.0
+  println(list.sort([a, b, f(-1.0), -2.0 / 1.0, f(0.5)]))
+}

@@ -357,9 +357,15 @@ fn an_empty_line_of_git_output_has_no_trailing_space() {
         lines.len() >= 2 && lines[0].contains("git command failed"),
         "expected silt's line and git's output; {out:?}"
     );
-    for line in &lines[1..] {
+    // git's lines are the notes of the diagnostic.
+    let notes: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| line.strip_prefix("  = note: "))
+        .collect();
+    assert!(notes.len() >= 2, "expected git's output; {out:?}");
+    for line in notes {
         assert!(
-            line.starts_with("  git: ") || *line == "  git:",
+            line.starts_with("git: ") || line == "git:",
             "the line {line:?} of git's output is not marked; {out:?}"
         );
     }

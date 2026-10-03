@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: error[type]: undefined constructor 'Monday' in pattern
+-- stderr-contains: help: `Monday` is in module `time`: write `time.Monday` after `import time`, or add `import time.{ Monday }`
+-- The pattern is the only error: `d` can be a Weekday.
+fn day_name(d) {
+  match d {
+    Monday -> "mon"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  println("x")
+}

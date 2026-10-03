@@ -1,0 +1,12 @@
+-- verdict: same
+type P { x: Int }
+fn main() {
+  let r = match P { x: 1 } {
+    P { x } -> x
+  }
+  println(r)
+  let q = match { x: 1 } {
+    { x: v } -> v
+  }
+  println(q)
+}

@@ -16,9 +16,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![kv, vv],
                 ty: Type::Fun(
                     vec![Type::Map(Box::new(k.clone()), Box::new(v.clone())), k],
-                    Box::new(Type::Generic(intern("Option"), vec![v])),
+                    Box::new(Type::option(v)),
                 ),
-                constraints: vec![(kv, intern("Hash"))],
+                constraints: vec![(kv, TraitKey::builtin("Hash"))],
                 optional_last_param: false,
             },
         );
@@ -40,7 +40,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     ],
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
-                constraints: vec![(kv, intern("Hash"))],
+                constraints: vec![(kv, TraitKey::builtin("Hash"))],
                 optional_last_param: false,
             },
         );
@@ -61,7 +61,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     ],
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
-                constraints: vec![(kv, intern("Hash"))],
+                constraints: vec![(kv, TraitKey::builtin("Hash"))],
                 optional_last_param: false,
             },
         );
@@ -79,7 +79,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     vec![Type::Map(Box::new(k.clone()), Box::new(v)), k],
                     Box::new(Type::Bool),
                 ),
-                constraints: vec![(kv, intern("Hash"))],
+                constraints: vec![(kv, TraitKey::builtin("Hash"))],
                 optional_last_param: false,
             },
         );
@@ -97,7 +97,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     vec![Type::Map(Box::new(k.clone()), Box::new(v))],
                     Box::new(Type::List(Box::new(k))),
                 ),
-                constraints: vec![(kv, intern("Hash"))],
+                constraints: vec![(kv, TraitKey::builtin("Hash"))],
                 optional_last_param: false,
             },
         );
@@ -115,7 +115,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     vec![Type::Map(Box::new(k), Box::new(v.clone()))],
                     Box::new(Type::List(Box::new(v))),
                 ),
-                constraints: vec![(kv, intern("Hash"))],
+                constraints: vec![(kv, TraitKey::builtin("Hash"))],
                 optional_last_param: false,
             },
         );
@@ -136,7 +136,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     ],
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
-                constraints: vec![(kv, intern("Hash"))],
+                constraints: vec![(kv, TraitKey::builtin("Hash"))],
                 optional_last_param: false,
             },
         );
@@ -154,7 +154,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     vec![Type::Map(Box::new(k), Box::new(v))],
                     Box::new(Type::Int),
                 ),
-                constraints: vec![(kv, intern("Hash"))],
+                constraints: vec![(kv, TraitKey::builtin("Hash"))],
                 optional_last_param: false,
             },
         );

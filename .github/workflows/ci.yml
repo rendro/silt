@@ -104,7 +104,25 @@ jobs:
       - name: cargo nextest (default features)
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
-            cargo nextest run --lib --bin silt --test golden
+            cargo nextest run --no-fail-fast --lib --bin silt --test golden
+
+  test-release-deep-values:
+    # The tests whose limits depend on native stack frames in a release
+    # build (deep value comparison, ordering and hashing); they are
+    # ignored in the debug builds every other job runs.
+    name: Test release (deep values)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-release
+      - name: cargo test --release (deep values)
+        run: cargo test --release --all-features --test lang deep_value_stack_tests
 
   test-macos:
     name: Test macOS (${{ matrix.partition }})
@@ -171,6 +189,9 @@ jobs:
         shell: pwsh
         run: |
           $env:CI = "1"
+          # The verdict shards start four processes per case; Windows is
+          # too slow at that for its cap, and verdicts are platform-independent.
+          $env:SILT_GOLDEN_SKIP_VERDICT = "1"
           $process = Start-Process -FilePath "bash" `
             -ArgumentList ".github/scripts/run-test-partition.sh","${{ matrix.partition }}" `
             -NoNewWindow -PassThru

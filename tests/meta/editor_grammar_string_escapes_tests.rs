@@ -54,7 +54,9 @@ fn read_grammar(rel: &str) -> String {
 /// error, so `is_ok()` is exactly "this escape is valid".
 fn lexer_accepts_escape(c: char) -> bool {
     let src = format!("\"\\{c}\"");
-    silt::lexer::Lexer::new(&src).tokenize().is_ok()
+    silt::lexer::Lexer::new(silt::source::FileId::default(), &src)
+        .tokenize()
+        .is_ok()
 }
 
 /// The lexer's accepted escape set, discovered empirically over all

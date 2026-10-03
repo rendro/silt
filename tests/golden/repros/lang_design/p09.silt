@@ -1,0 +1,24 @@
+-- verdict: same
+fn h(x) {
+  1 + match x { 5 -> 10, _ -> 20 }
+}
+fn h2(x) {
+  let r = 100 + match x {
+    5 -> 10
+    _ -> 20
+  }
+  r
+}
+fn h3(x) {
+  100 + { let a = x
+          a }
+}
+fn main() {
+  println(h(5))
+  println(h2(5))
+  println(h3(7))
+  let t = (1, match 2 { 2 -> "two", _ -> "other" })
+  println(t)
+  let l = [1, match 2 { 2 -> 22, _ -> 0 }]
+  println(l)
+}

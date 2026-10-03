@@ -1,0 +1,11 @@
+-- verdict: same
+import env
+import task
+fn main() {
+  let h = task.spawn { ->
+    env.set("", "x")
+    1
+  }
+  println(task.join(h))
+  println("after")
+}

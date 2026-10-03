@@ -1,0 +1,12 @@
+-- verdict: same
+import stream
+import channel
+fn main() {
+  let gate = channel.new(0)
+  let out = stream.from_list([1, 2, 3])
+    |> stream.map(fn(x) { match channel.receive(gate) { channel.Message(v) -> x + v  _ -> 0 - 1 } })
+  channel.send(gate, 100)
+  channel.send(gate, 200)
+  channel.send(gate, 300)
+  println(stream.collect(out))
+}

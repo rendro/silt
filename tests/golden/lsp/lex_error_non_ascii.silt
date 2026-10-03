@@ -1,0 +1,8 @@
+-- cmd: lsp
+-- A character the lexer rejects, after a multi-byte one on the same line:
+-- the server does not crash, and the diagnostic sits on the rejected
+-- character (column counted in characters).
+
+fn main() {
+  let s = "é" “oops”
+}

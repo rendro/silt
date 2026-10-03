@@ -1,0 +1,8 @@
+-- verdict: same
+import list
+import shapes
+
+fn main() {
+  println("shapes.color_lt() Red < Blue (decl order says true): {shapes.color_lt()}")
+  println("shapes.sorted_colors(): {shapes.sorted_colors()}")
+}

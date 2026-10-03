@@ -1,0 +1,6 @@
+-- exit: 1
+-- A panic's text is shown as it is: a line of it that starts with
+-- `help:` is a note, not silt's help.
+fn main() {
+  panic("first\nhelp: injected\nthird")
+}

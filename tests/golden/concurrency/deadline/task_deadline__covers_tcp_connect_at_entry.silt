@@ -10,7 +10,7 @@ fn main() {
   })
   match outcome {
     Ok(_) -> println("unexpected ok")
-    Err(TcpTimeout) -> println("tcp-timeout")
+    Err(tcp.TcpTimeout) -> println("tcp-timeout")
     Err(other) -> println("other: {other.message()}")
   }
 }

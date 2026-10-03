@@ -1,0 +1,17 @@
+-- cmd: disasm
+-- GetGlobal and SetGlobal name a global slot, shown with its
+-- definition: the entry's own names bare, a module's qualified by the
+-- module, an impl method by its type.
+-- stdout-contains: ; main
+-- stdout-contains: ; limit
+-- stdout-contains: ; util.helper
+-- stdout-contains: ; util.secret
+-- stdout-contains: ; Pt.display
+import util
+type Pt { x: Int }
+trait Display for Pt { fn display(self) -> String { "pt" } }
+let limit = 3
+fn main() {
+  println(util.helper(limit))
+  println(Pt { x: 1 }.display())
+}

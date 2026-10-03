@@ -30,6 +30,9 @@ impl fmt::Display for Symbol {
 struct Interner {
     strings: Vec<String>,
     lookup: HashMap<String, Symbol>,
+    /// How many times the interner was cleared: a value that holds
+    /// symbols is valid only for the generation it was made in.
+    generation: u64,
 }
 
 impl Interner {
@@ -37,6 +40,7 @@ impl Interner {
         Interner {
             strings: Vec::new(),
             lookup: HashMap::new(),
+            generation: 0,
         }
     }
 }
@@ -76,7 +80,14 @@ pub fn reset() {
         let mut interner = cell.borrow_mut();
         interner.strings.clear();
         interner.lookup.clear();
+        interner.generation += 1;
     });
+}
+
+/// The number of times this thread's interner was cleared by [`reset`].
+/// Whatever caches symbols compares it to tell that they are stale.
+pub fn generation() -> u64 {
+    INTERNER.with(|cell| cell.borrow().generation)
 }
 
 #[cfg(test)]

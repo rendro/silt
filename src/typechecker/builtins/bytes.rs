@@ -8,11 +8,10 @@ use super::docs::{attach_module_docs, attach_module_overview};
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // The opaque Bytes type. Forward-compat: when promoted to a
     // language-level Type::Bytes, only this construction site changes.
-    let bytes_ty = Type::Generic(intern("Bytes"), vec![]);
-    let bytes_error_ty = Type::Generic(intern("BytesError"), vec![]);
-    let result = |ok_ty: Type, err_ty: Type| -> Type {
-        Type::Generic(intern("Result"), vec![ok_ty, err_ty])
-    };
+    let bytes_ty = Type::builtin("Bytes", vec![]);
+    let bytes_error_ty = Type::builtin("BytesError", vec![]);
+    let result =
+        |ok_ty: Type, err_ty: Type| -> Type { Type::builtin("Result", vec![ok_ty, err_ty]) };
 
     // bytes.empty: () -> Bytes
     env.define(
@@ -139,7 +138,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("bytes.index_of"),
         Scheme::mono(Type::Fun(
             vec![bytes_ty.clone(), bytes_ty.clone()],
-            Box::new(Type::Generic(intern("Option"), vec![Type::Int])),
+            Box::new(Type::option(Type::Int)),
         )),
     );
 

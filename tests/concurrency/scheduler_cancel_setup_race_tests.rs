@@ -228,10 +228,10 @@ fn main() {
   let ch = channel.new(0)
   let h = task.spawn({ ->
     match channel.receive(ch) {
-      Message(_) -> 0
-      Closed -> 0
-      Empty -> 0
-      Sent -> 0
+      channel.Message(_) -> 0
+      channel.Closed -> 0
+      channel.Empty -> 0
+      channel.Sent -> 0
     }
   })
   -- Give the worker time to reach the Blocked-arm setup and enter
@@ -308,9 +308,9 @@ fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
   let h = task.spawn({ ->
-    match channel.select([Recv(a), Recv(b)]) {
-      (_, Message(_v)) -> 0
-      (_, Closed) -> 0
+    match channel.select([channel.Recv(a), channel.Recv(b)]) {
+      (_, channel.Message(_v)) -> 0
+      (_, channel.Closed) -> 0
       _ -> 0
     }
   })

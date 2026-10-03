@@ -1,0 +1,11 @@
+-- exit: 1
+-- A top-level `let` initializer that calls code reading a `let`
+-- initialized after it fails at run time, naming the `let`.
+-- stderr-contains: error[runtime]: 'b' is used before its top-level definition has run
+-- stderr-contains: --> slots__let_read_before_its_definition_ran.silt:9:10
+let a = f()
+let b = 1
+
+fn f() { b }
+
+fn main() { println(a) }

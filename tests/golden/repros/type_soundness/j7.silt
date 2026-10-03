@@ -1,0 +1,13 @@
+-- verdict: same
+type A { Foo(Int), Bar }
+type B { Foo(String), Baz }
+fn main() {
+  let a = A.Foo(1)
+  let b = B.Foo("s")
+  println(a)
+  println(b)
+  match a {
+    A.Foo(n) -> println(n)
+    A.Bar -> println("bar")
+  }
+}

@@ -1,0 +1,15 @@
+-- verdict: same
+import list
+import map
+import set
+import string
+type P { x: Int, y: Int }
+type Q { x: Int, y: Int }
+type C { Red, Green, Blue }
+fn f(a) { a }
+fn g(a) { a }
+fn main() {
+  let nan = 0.0 / 0.0
+  let inf = 1.0 / 0.0
+  println(true.display())
+}

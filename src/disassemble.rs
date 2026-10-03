@@ -4,7 +4,7 @@
 
 use std::fmt::Write;
 
-use crate::bytecode::{Chunk, Function, Op};
+use crate::bytecode::{Chunk, Function, Globals, Op};
 
 // ── Op decoding ───────────────────────────────────────────────────
 
@@ -47,12 +47,10 @@ fn op_name(op: Op) -> &'static str {
         Op::MakeMap => "MakeMap",
         Op::MakeSet => "MakeSet",
         Op::MakeRecord => "MakeRecord",
-        Op::MakeVariant => "MakeVariant",
         Op::RecordUpdate => "RecordUpdate",
         Op::MakeRange => "MakeRange",
         Op::ListConcat => "ListConcat",
         Op::GetField => "GetField",
-        Op::GetIndex => "GetIndex",
         Op::Jump => "Jump",
         Op::JumpBack => "JumpBack",
         Op::JumpIfFalse => "JumpIfFalse",
@@ -103,7 +101,7 @@ fn constant_comment(chunk: &Chunk, index: u16) -> String {
 }
 
 /// Format an instruction whose operands are a u16 constant-index followed by
-/// a u8 (e.g. `CallMethod`, `CallBuiltin`, `MakeVariant`). The u16 is
+/// a u8 (`CallMethod`, `CallBuiltin`). The u16 is
 /// commented with the resolved constant; the u8 is printed as a bare number.
 ///
 /// Returns `(formatted_line, next_offset)`. The next offset is `offset + 4`.
@@ -152,7 +150,7 @@ fn fmt_u8_count_then_u16_names(
 /// Disassemble a single instruction at `offset`.
 ///
 /// Returns `(formatted_line, next_offset)`.
-fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
+fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (String, usize) {
     let code = &chunk.code;
     let byte = code[offset];
 
@@ -198,7 +196,6 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         | Op::TailCall
         | Op::MakeTuple
         | Op::PopN
-        | Op::GetIndex
         | Op::TestTupleLen
         | Op::TestListMin
         | Op::TestListExact
@@ -232,10 +229,21 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         }
 
         // ── u16 operand with constant comment ─────────────────
+        // TestTag: the variant the test is for (its operand is the
+        // variant's tag, kept as a constructor constant).
+        Op::TestTag => {
+            let index = read_u16(code, offset + 1);
+            let comment = match chunk.constants.get(index as usize) {
+                Some(crate::value::Value::VariantConstructor(tag)) => format!("<variant:{tag}>"),
+                _ => constant_comment(chunk, index),
+            };
+            (
+                format!("{offset:04}  {name:<20} {index:<5} ; {comment}"),
+                offset + 3,
+            )
+        }
+
         Op::Constant
-        | Op::GetGlobal
-        | Op::SetGlobal
-        | Op::TestTag
         | Op::TestEqual
         | Op::GetField
         | Op::DestructRecordField
@@ -246,6 +254,15 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
             let comment = constant_comment(chunk, index);
             (
                 format!("{offset:04}  {name:<20} {index:<5} ; {comment}"),
+                offset + 3,
+            )
+        }
+
+        // ── u16 global slot, commented with its definition ────
+        Op::GetGlobal | Op::SetGlobal => {
+            let slot = read_u16(code, offset + 1);
+            (
+                format!("{offset:04}  {name:<20} {slot:<5} ; {}", globals.name(slot)),
                 offset + 3,
             )
         }
@@ -298,11 +315,19 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         // ── u16 + u8 (with constant comment on the u16) ──────
         //   CallMethod(method_name_index, argc)
         //   CallBuiltin(name_index, argc)
-        //   MakeVariant(name_index, field_count)
-        // The three arms shared a byte-identical operand-decode shape
+        // The two arms shared a byte-identical operand-decode shape
         // (round 84 audit): consolidated into `fmt_u16_u8_with_const`.
-        Op::CallMethod | Op::CallBuiltin | Op::MakeVariant => {
-            fmt_u16_u8_with_const(chunk, code, offset, name)
+        Op::CallBuiltin => fmt_u16_u8_with_const(chunk, code, offset, name),
+        // CallMethod: the method name, argc, and the trait whose method
+        // it calls (shown after the name when the call names one).
+        Op::CallMethod => {
+            let (line, next) = fmt_u16_u8_with_const(chunk, code, offset, name);
+            let trait_index = read_u16(code, next);
+            let line = match globals.trait_name(trait_index) {
+                Some(t) => format!("{line} of {t}"),
+                None => line,
+            };
+            (line, next + 2)
         }
 
         // ── MakeClosure: u16 func_index, u8 upvalue_count, then descriptors
@@ -323,7 +348,7 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
             (line, next)
         }
 
-        // ── MakeRecord: u16 type_name_index, u8 field_count, then field names
+        // ── MakeRecord: u16 type_index, u8 field_count, then field names
         Op::MakeRecord => {
             let type_name_index = read_u16(code, offset + 1);
             let field_count = code[offset + 3];
@@ -356,11 +381,12 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
 // ── Chunk disassembly ─────────────────────────────────────────────
 
 /// Disassemble a complete `Chunk`, returning the formatted output.
-fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
+/// Global slots are named by `globals`.
+fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
     let mut output = format!("== {name} ==\n");
     let mut offset = 0;
     while offset < chunk.code.len() {
-        let (line, next) = disassemble_instruction(chunk, offset);
+        let (line, next) = disassemble_instruction(chunk, globals, offset);
         output.push_str(&line);
         output.push('\n');
         offset = next;
@@ -369,20 +395,21 @@ fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
 }
 
 /// Disassemble a compiled `Function`, returning the formatted output.
+/// Global slots are named by `globals`, the program's.
 ///
 /// Recursively disassembles nested functions found as `VmClosure` constants.
-pub fn disassemble_function(func: &Function) -> String {
+pub fn disassemble_function(func: &Function, globals: &Globals) -> String {
     let header = format!(
         "{} (arity={}, upvalues={})",
         func.name, func.arity, func.upvalue_count
     );
-    let mut output = disassemble_chunk(&func.chunk, &header);
+    let mut output = disassemble_chunk(&func.chunk, globals, &header);
 
     // Recurse into nested functions stored as VmClosure constants.
     for constant in &func.chunk.constants {
         if let crate::value::Value::VmClosure(closure) = constant {
             output.push('\n');
-            output.push_str(&disassemble_function(&closure.function));
+            output.push_str(&disassemble_function(&closure.function, globals));
         }
     }
 
@@ -395,11 +422,11 @@ pub fn disassemble_function(func: &Function) -> String {
 mod tests {
     use super::*;
     use crate::bytecode::{Chunk, Function, Op};
-    use crate::lexer::Span;
+    use crate::source::Span;
     use crate::value::Value;
 
     fn dummy_span() -> Span {
-        Span::new(0, 0)
+        Span::BUILTIN
     }
 
     #[test]
@@ -411,7 +438,7 @@ mod tests {
         chunk.emit_op(Op::Add, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "test");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "test");
         assert!(output.contains("== test =="));
         assert!(output.contains("0000  True"));
         assert!(output.contains("0001  False"));
@@ -428,7 +455,7 @@ mod tests {
         chunk.emit_u16(idx, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "constants");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "constants");
         assert!(output.contains("Constant"));
         assert!(output.contains("42"));
     }
@@ -442,7 +469,7 @@ mod tests {
         chunk.emit_u16(10, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "jumps");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "jumps");
         assert!(output.contains("Jump"));
         assert!(output.contains("-> 0013"));
     }
@@ -460,7 +487,7 @@ mod tests {
         chunk.emit_op(Op::JumpBack, span);
         chunk.emit_u16(5, span);
 
-        let output = disassemble_chunk(&chunk, "jumpback");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "jumpback");
         assert!(output.contains("JumpBack"));
         assert!(output.contains("-> 0002"));
     }
@@ -485,7 +512,7 @@ mod tests {
         chunk.emit_u8(0, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "closure");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "closure");
         assert!(output.contains("MakeClosure"));
         assert!(output.contains("local 3"));
         assert!(output.contains("upvalue 0"));
@@ -507,7 +534,7 @@ mod tests {
         chunk.emit_u16(y_idx, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "record");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "record");
         assert!(output.contains("MakeRecord"));
         assert!(output.contains("\"Point\""));
         assert!(output.contains("\"x\""));
@@ -525,7 +552,7 @@ mod tests {
         chunk.emit_u8(1, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "builtin");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "builtin");
         assert!(output.contains("CallBuiltin"));
         assert!(output.contains("\"print\""));
     }
@@ -542,7 +569,7 @@ mod tests {
         func.chunk.emit_op(Op::Add, span);
         func.chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_function(&func);
+        let output = disassemble_function(&func, &Globals::default());
         assert!(output.contains("== add (arity=2, upvalues=1) =="));
         assert!(output.contains("GetLocal"));
         assert!(output.contains("Add"));
@@ -560,7 +587,7 @@ mod tests {
         chunk.emit_op(Op::PopN, span);
         chunk.emit_u8(5, span);
 
-        let output = disassemble_chunk(&chunk, "u8ops");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "u8ops");
         assert!(output.contains("MakeTuple"));
         assert!(output.contains("Call"));
         assert!(output.contains("PopN"));
@@ -573,7 +600,7 @@ mod tests {
         chunk.emit_op_u16(Op::Slide, 3, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "slide");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "slide");
         assert!(output.contains("0000  Slide"));
         assert!(output.contains("0003  Return"));
     }
@@ -590,7 +617,7 @@ mod tests {
         chunk.emit_u16(x_idx, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "update");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "update");
         assert!(output.contains("RecordUpdate"));
         assert!(output.contains("\"x\""));
         // Round 84: the operand decode for RecordUpdate uses
@@ -617,7 +644,7 @@ mod tests {
         chunk.emit_u16(name_idx, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "rest");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "rest");
         assert!(output.contains("DestructRecordRest"));
         assert!(output.contains("exclude "));
         // Must NOT use the sibling label — guards against the helper
@@ -632,7 +659,7 @@ mod tests {
     fn test_call_method_format() {
         // Round 84: locks the formatted output for `Op::CallMethod`,
         // which now shares the operand-decode helper
-        // `fmt_u16_u8_with_const` with `CallBuiltin` and `MakeVariant`.
+        // `fmt_u16_u8_with_const` with `CallBuiltin`.
         let mut chunk = Chunk::new();
         let span = dummy_span();
 
@@ -641,31 +668,14 @@ mod tests {
         chunk.emit_op(Op::CallMethod, span);
         chunk.emit_u16(method_idx, span);
         chunk.emit_u8(0, span); // argc = 0
+        chunk.emit_u16(crate::bytecode::NO_TRAIT, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "method");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "method");
         assert!(output.contains("CallMethod"));
         assert!(output.contains("\"len\""));
-    }
-
-    #[test]
-    fn test_make_variant_format() {
-        // Round 84: locks the formatted output for `Op::MakeVariant`,
-        // which now shares the operand-decode helper
-        // `fmt_u16_u8_with_const` with `CallMethod` and `CallBuiltin`.
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        let name_idx = chunk.add_constant(Value::String("Some".into())).unwrap();
-
-        chunk.emit_op(Op::MakeVariant, span);
-        chunk.emit_u16(name_idx, span);
-        chunk.emit_u8(1, span); // field_count = 1
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, "variant");
-        assert!(output.contains("MakeVariant"));
-        assert!(output.contains("\"Some\""));
+        // The next instruction is decoded after the trait operand.
+        assert!(output.contains("0006  Return"), "{output}");
     }
 
     #[test]
@@ -673,8 +683,8 @@ mod tests {
         // Hand-locked count of Op variants. Bumping the Op enum without
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 72 variants.
-        const EXPECTED_OP_COUNT: usize = 72;
+        // tables. Last verified: 70 variants.
+        const EXPECTED_OP_COUNT: usize = 70;
 
         // Sweep every possible byte value. For each one that decodes,
         // verify the round-trip discriminant matches. This catches both

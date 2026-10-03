@@ -1,0 +1,7 @@
+-- verdict: same
+type Color { Red, Green }
+let c = pick()
+fn pick() -> Color { Green }
+fn main() {
+  println(c)
+}

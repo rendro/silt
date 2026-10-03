@@ -1,0 +1,20 @@
+-- verdict: same
+import channel
+import stream
+import time
+fn main() {
+  -- a slow stream source: one element every 300ms
+  let s = stream.unfold(0) { n ->
+    time.sleep(time.ms(300))
+    match n < 3 {
+      true -> Some((n, n + 1))
+      false -> None
+    }
+  }
+  -- streams ARE channels, so channel.receive is a legal consumer
+  match channel.receive(s) {
+    channel.Message(v) -> println("got {v}")
+    channel.Closed -> println("closed")
+    _ -> println("other")
+  }
+}

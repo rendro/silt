@@ -1,0 +1,10 @@
+-- verdict: same
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(Int) for String { fn conv(self) -> Int { 0 } }
+fn into(x: a, type b) -> b where a: Conv(b) { x.conv() }
+fn main() {
+  let s: String = into("42", String)
+  println(s)
+  let n = into("42", Int)
+  println(n + 1)
+}

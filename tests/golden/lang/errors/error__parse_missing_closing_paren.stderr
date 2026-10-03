@@ -1,0 +1,9 @@
+error[parse]: expected ')' to close parenthesized expression, found }
+ --> error__parse_missing_closing_paren.silt:4:20
+   |
+ 4 | fn main() { (1 + 2 }
+   |                    ^ expected ')' to close parenthesized expression, found }
+ ::: error__parse_missing_closing_paren.silt:4:13
+   |
+ 4 | fn main() { (1 + 2 }
+   |             - the parenthesized expression starts here

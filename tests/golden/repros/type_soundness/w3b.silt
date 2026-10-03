@@ -1,0 +1,9 @@
+-- verdict: same
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+fn main() {
+  let t = (hello, 1)
+  let (g, _) = t
+  println(g("str"))
+}

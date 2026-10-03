@@ -1,0 +1,15 @@
+-- verdict: same
+type Box(a) { Box(a) }
+fn same(x, y) { x == y }
+fn less(x, y) { x < y }
+fn main() {
+  let b = Box(fn(x) { x })
+  let c = Box(fn(x) { x })
+  println(same(b, b))
+  println(same(b, c))
+  println(less(b, c))
+  println(less(c, b))
+  println(same([fn(x) { x }], [fn(x) { x }]))
+  println(same((1, fn(x) { x }), (1, fn(x) { x })))
+  println(less([fn(x) { x }], [fn(x) { x }]))
+}

@@ -1,58 +1,74 @@
 //! `textDocument/completion` handler and its dot-completion helpers.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, Documentation, MarkupContent,
-    MarkupKind, Position,
+    MarkupKind, Position, Uri,
 };
 
 use crate::ast::*;
-use crate::intern::{intern, resolve};
+use crate::defs::DefKind;
+use crate::intern::{Symbol, intern, resolve};
 use crate::lexer::{KEYWORD_LITERALS, KEYWORDS};
 use crate::module;
+use crate::typechecker::names::Binding;
 use crate::types::Type;
-use crate::types::canonical::canonical_name;
 
 use super::Server;
 use super::ast_walk::find_ident_type_by_name;
 use super::conversions::position_to_offset;
-use super::fields::{record_fields_from_type, type_expr_to_type};
+use super::fields::{RecordFields, record_fields_from_type};
 use super::locals::locals_at_offset;
+use super::modules::{MemberKind, ModuleView};
 use super::state::Document;
 
 impl Server {
     // ── Completion ─────────────────────────────────────────────────
 
     pub(super) fn completion(
-        &self,
+        &mut self,
         params: lsp_types::CompletionParams,
     ) -> Option<CompletionResponse> {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
-        let doc = self.documents.get(uri);
-
         // Detect dot-completion context: extract the identifier before the `.`
-        if let Some(doc) = doc
-            && let Some(prefix) = extract_dot_prefix(&doc.source, &pos)
-        {
+        let prefix = self
+            .documents
+            .get(uri)
+            .and_then(|doc| extract_dot_prefix(&doc.source.text, &pos));
+        if let Some(prefix) = prefix {
+            let doc = self.documents.get(uri)?;
             let cursor = position_to_offset(&doc.source, &pos);
-            // Round 81: the cached `doc.program` was parsed from the
-            // user's exact source. A partial expression at the cursor
-            // (`xs.|`) is a parse error that the parser's recovery
-            // currently turns into an empty function-body stub — every
-            // earlier `let` inside that fn vanishes from `program.decls`,
-            // so `locals_at_offset` returns nothing and the
-            // type-narrowing path can't find the receiver's inferred
-            // type. Reparse a fix-up source where the partial dot is
-            // completed with a placeholder identifier so the surrounding
-            // statements (and the receiver's `let` binding) survive.
-            // Falls back to the cached program when the fix-up doesn't
-            // change anything (no parse error to recover from).
-            let fixup_program = self.dot_completion_fixup_program(doc, &pos);
-            let items = self.dot_completions(doc, fixup_program.as_ref(), &prefix, cursor);
+            // A module before the dot: its members.
+            if let Some(items) = self.module_member_completions(doc, &prefix, cursor) {
+                return Some(CompletionResponse::Array(items));
+            }
+            // An enum's name before the dot: its variants.
+            if let Some(items) = self.enum_variant_completions(doc, &prefix, cursor) {
+                return Some(CompletionResponse::Array(items));
+            }
+            let builtin = self.bound_builtin_module(doc, &prefix, cursor);
+            // Round 81: the document's program was parsed from the user's
+            // exact source. A partial expression at the cursor (`xs.|`)
+            // is a parse error that the parser's recovery currently turns
+            // into an empty function-body stub — every earlier `let`
+            // inside that fn vanishes from `program.decls`, so
+            // `locals_at_offset` returns nothing and the type-narrowing
+            // path can't find the receiver's inferred type. Analyse a
+            // fix-up source where the partial dot is completed with a
+            // placeholder identifier so the surrounding statements (and
+            // the receiver's `let` binding) survive. Falls back to the
+            // document's analysis when the fix-up doesn't apply (no `.`
+            // right before the cursor, or the text parses).
+            let fixed = self.dot_completion_fixup(uri, &pos);
+            let doc = self.documents.get(uri)?;
+            let checked = fixed.or_else(|| self.checked_facts(doc));
+            let items = self.dot_completions(checked.as_ref(), &prefix, builtin, cursor);
             return Some(CompletionResponse::Array(items));
         }
+        let doc = self.documents.get(uri);
 
         let mut items: Vec<CompletionItem> = Vec::new();
 
@@ -65,17 +81,68 @@ impl Server {
             });
         }
 
-        // Builtins (globals + stdlib)
-        for (name, kind) in builtins() {
-            let detail = self.builtin_sigs.get(&name).cloned();
-            let documentation = self.builtin_docs.get(&name).map(|d| {
+        for kw in KEYWORD_LITERALS {
+            items.push(CompletionItem {
+                label: kw.to_string(),
+                kind: Some(CompletionItemKind::CONSTANT),
+                ..CompletionItem::default()
+            });
+        }
+
+        // The names in scope at the top level: the prelude, and the
+        // names the module's declarations and imports bind (a module by
+        // `import m`), as the resolver bound them.
+        let (_, builtin_scopes) = crate::typechecker::names::builtins();
+        let scope = doc
+            .and_then(|doc| self.checked_module(doc))
+            .map(|m| &m.scope);
+        let defs = doc
+            .and_then(|doc| doc.module.as_ref())
+            .and_then(|m| self.projects.get(&m.project))
+            .map(|p| p.session.defs());
+        let mut names: Vec<(Symbol, CompletionItemKind)> = Vec::new();
+        let prelude = &builtin_scopes.prelude;
+        let layers = scope
+            .into_iter()
+            .flat_map(|s| [&s.values, &s.types])
+            .chain([&prelude.values, &prelude.types]);
+        for layer in layers {
+            for (name, binding) in layer {
+                if let Some(kind) = Self::binding_kind(defs, binding) {
+                    names.push((*name, kind));
+                }
+            }
+        }
+        names.sort_by_key(|(name, _)| resolve(*name));
+        names.dedup_by_key(|(name, _)| *name);
+        // The document's own definitions and the items of its
+        // `import m.{ ... }` are offered below, with their types.
+        let mut own: HashSet<String> = doc
+            .map(|doc| doc.definitions.keys().map(|n| n.to_string()).collect())
+            .unwrap_or_default();
+        if let Some(program) = doc.and_then(|doc| doc.program.as_ref()) {
+            for decl in &program.decls {
+                if let Decl::Import(ImportTarget::Items(module, imported), _) = decl
+                    && !module::is_builtin_module(&resolve(*module))
+                {
+                    own.extend(imported.iter().map(|(item, _)| item.to_string()));
+                }
+            }
+        }
+        for (name, kind) in names {
+            let label = resolve(name);
+            if own.contains(&label) {
+                continue;
+            }
+            let detail = self.builtin_sigs.get(&label).cloned();
+            let documentation = self.builtin_docs.get(&label).map(|d| {
                 Documentation::MarkupContent(MarkupContent {
                     kind: MarkupKind::Markdown,
                     value: d.clone(),
                 })
             });
             items.push(CompletionItem {
-                label: name,
+                label,
                 kind: Some(kind),
                 detail,
                 documentation,
@@ -104,6 +171,23 @@ impl Server {
                     documentation,
                     ..CompletionItem::default()
                 });
+            }
+
+            // The items of `import m.{ a, B }`, as their module has them.
+            if let Some(program) = &doc.program {
+                for decl in &program.decls {
+                    let Decl::Import(ImportTarget::Items(_, imported), _) = decl else {
+                        continue;
+                    };
+                    for (item, _) in imported {
+                        let Some(view) = self.item_module(doc, *item) else {
+                            continue;
+                        };
+                        if let Some((_, kind)) = view.members.iter().find(|(m, _)| m == item) {
+                            items.push(member_item(&view, *item, *kind));
+                        }
+                    }
+                }
             }
 
             // Local variables in scope at the cursor position
@@ -137,9 +221,9 @@ impl Server {
     /// hiding completions.
     fn dot_completions(
         &self,
-        doc: &Document,
-        fixup_program: Option<&Program>,
+        checked: Option<&Checked>,
         prefix: &str,
+        builtin: Option<&str>,
         cursor: usize,
     ) -> Vec<CompletionItem> {
         let mut items = Vec::new();
@@ -148,7 +232,7 @@ impl Server {
         //    Module constants (e.g. `math.pi`, `float.max_value`) are distinct from
         //    functions and must be surfaced here so editor autocompletion after
         //    `math.` / `float.` offers them alongside `sin`, `cos`, `parse`, etc.
-        if module::is_builtin_module(prefix) {
+        if let Some(prefix) = builtin {
             for func in module::builtin_module_functions(prefix) {
                 let qualified = format!("{prefix}.{func}");
                 let detail = self.builtin_sigs.get(&qualified).cloned();
@@ -183,26 +267,33 @@ impl Server {
                     ..CompletionItem::default()
                 });
             }
-            // Gated enum constructors that belong to this module
-            // (e.g. `io.IoNotFound`, `http.GET`, `channel.Recv`,
-            // `time.Monday`, `postgres.PgConnect`). Emitted as
-            // CONSTRUCTOR entries so editors distinguish them from
+            // The variants of the module's enums (e.g. `io.IoNotFound`,
+            // `http.GET`, `channel.Recv`, `time.Monday`,
+            // `postgres.PgConnect`), reached as `module.Variant`. Emitted
+            // as CONSTRUCTOR entries so editors distinguish them from
             // module functions / constants.
-            //
-            // Silt does not expose gated constructors via `module.Name`
-            // at the runtime binding level — they bind as bare globals
-            // once the module is imported — but surfacing them after a
-            // `.` is the most intuitive discovery affordance for users
-            // exploring the API.
             for (_enum_name, variants) in module::builtin_enum_variants() {
-                for &variant in *variants {
-                    if module::gated_constructor_module(variant) == Some(prefix) {
+                for &variant in variants {
+                    if module::builtin_variant_module(variant) == Some(prefix) {
                         items.push(CompletionItem {
                             label: variant.to_string(),
                             kind: Some(CompletionItemKind::CONSTRUCTOR),
                             ..CompletionItem::default()
                         });
                     }
+                }
+            }
+            // The module's types (`time.Weekday`, `task.Handle`).
+            let (_, scopes) = crate::typechecker::names::builtins();
+            if let Some(exports) =
+                crate::session::ModuleId::builtin(prefix).and_then(|id| scopes.modules.get(&id))
+            {
+                for ty in exports.types.keys() {
+                    items.push(CompletionItem {
+                        label: resolve(*ty),
+                        kind: Some(CompletionItemKind::CLASS),
+                        ..CompletionItem::default()
+                    });
                 }
             }
             // Deterministic ordering so clients/tests see a stable list, and
@@ -212,14 +303,14 @@ impl Server {
             return items;
         }
 
-        let program = match &doc.program {
-            Some(p) => p,
-            None => return items,
+        let Some(checked) = checked else {
+            return items;
         };
+        let program = &*checked.program;
 
         // Resolve the receiver's inferred type once. Used both for the
-        // (existing) record-field path and the (new, round 81 DX-G4)
-        // method-narrowing path below. Two narrow sources are tried:
+        // record-field path and the method-narrowing path below. Two
+        // narrow sources are tried:
         //
         //   (a) a let-bound local in scope at the cursor whose type was
         //       recovered from the value expression (annotation included);
@@ -229,31 +320,20 @@ impl Server {
         //
         // Anything else (complex expressions, generics with unresolved
         // tyvars, non-identifier prefixes) leaves `receiver_ty = None`
-        // and the method path falls back to the full registry — the
-        // task's "narrow when safe, never silently lose completions"
-        // contract.
-        //
-        // When a `fixup_program` is supplied (the common case in real
-        // editor use: the user is mid-edit at `xs.|`), prefer it for
-        // the local-binding scan. The cached `doc.program` was parsed
-        // from a source that already had the partial dot expression and
-        // the parser's recovery may have collapsed the entire enclosing
-        // function body to an empty stub, hiding `xs`. The fix-up
-        // program reparses with the partial dot completed by a
-        // placeholder so the prior `let xs: ...` survives.
-        let lookup_program = fixup_program.unwrap_or(program);
-        let locals = locals_at_offset(lookup_program, cursor);
+        // and the method path falls back to every method the module
+        // knows — "narrow when safe, never silently lose completions".
+        let locals = locals_at_offset(program, cursor);
         let receiver_ty: Option<Type> = locals
             .iter()
             .rev()
             .find(|l| l.name == prefix)
             .and_then(|l| l.ty.clone())
-            .or_else(|| find_ident_type_by_name(lookup_program, prefix));
+            .or_else(|| find_ident_type_by_name(program, prefix));
 
         // 2. Record fields, if the receiver is a record-shaped type.
         let mut emitted_field_labels: HashSet<String> = HashSet::new();
         if let Some(ref ty) = receiver_ty
-            && let Some(fields) = record_fields_from_type(ty, lookup_program)
+            && let Some(fields) = record_fields_from_type(ty, &checked.record_fields)
         {
             for (name, field_ty) in &fields {
                 items.push(CompletionItem {
@@ -266,45 +346,32 @@ impl Server {
             }
         }
 
-        // 3. Fallback for type-name prefix (`Point.|`): offer its fields
-        //    even when the prefix is not a value binding. Same behaviour
-        //    as before — guarded by `emitted_field_labels` so we never
-        //    duplicate a field already surfaced via the value path.
-        if receiver_ty.is_none() {
-            let prefix_sym = intern(prefix);
-            for decl in &lookup_program.decls {
-                if let Decl::Type(td) = decl
-                    && td.name == prefix_sym
-                    && let TypeBody::Record(fields) = &td.body
-                {
-                    for field in fields {
-                        let label = field.name.to_string();
-                        if emitted_field_labels.insert(label.clone()) {
-                            items.push(CompletionItem {
-                                label,
-                                kind: Some(CompletionItemKind::FIELD),
-                                detail: Some(format!("{}", type_expr_to_type(&field.ty))),
-                                ..CompletionItem::default()
-                            });
-                        }
-                    }
+        // 3. A record type's name as the prefix (`Point.|`): offer its
+        //    fields even though the prefix is not a value binding.
+        if receiver_ty.is_none()
+            && let Some(fields) = checked
+                .record_fields
+                .iter()
+                .find(|(ty, _)| resolve(ty.name) == prefix)
+                .map(|(_, fields)| fields)
+        {
+            for (name, field_ty) in fields {
+                let label = resolve(*name);
+                if emitted_field_labels.insert(label.clone()) {
+                    items.push(CompletionItem {
+                        label,
+                        kind: Some(CompletionItemKind::FIELD),
+                        detail: Some(format!("{field_ty}")),
+                        ..CompletionItem::default()
+                    });
                 }
             }
         }
 
-        // 4. Method completions (round 81 DX-G4).
-        //
-        // When the receiver type is known, narrow to methods declared
-        // for that type's canonical head name (so `xs: List(Int)`
-        // surfaces only List methods, not String methods). When the
-        // type is unknown, emit the union of every method name declared
-        // anywhere in the program — discoverable but unfiltered.
-        //
-        // Use `lookup_program` here (the fix-up program when supplied)
-        // so a partial dot expression doesn't collapse the enclosing
-        // function and hide every TraitImpl declared after it. Falls
-        // back to the cached `program` when no fix-up was needed.
-        let methods = methods_for_receiver(lookup_program, receiver_ty.as_ref());
+        // 4. Method completions: the methods the checker knows for the
+        //    receiver type's canonical name, or every method it knows
+        //    when the type is unknown.
+        let methods = methods_for_receiver(&checked.methods, receiver_ty.as_ref());
         for label in methods {
             // Don't duplicate a name that already came through as a
             // field — fields and methods occupy the same `name.` slot.
@@ -323,226 +390,289 @@ impl Server {
         items
     }
 
-    /// Reparse the document with the partial dot expression at `pos`
-    /// completed by a placeholder identifier so the surrounding
+    /// The variants of the enum `prefix` names in the open document `doc`
+    /// (declared there or imported by name), unless a local binding of
+    /// that name shadows it.
+    fn enum_variant_completions(
+        &self,
+        doc: &Document,
+        prefix: &str,
+        cursor: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        if doc.program.as_ref().is_some_and(|program| {
+            locals_at_offset(program, cursor)
+                .iter()
+                .any(|local| local.name == prefix)
+        }) {
+            return None;
+        }
+        let scope = &self.checked_module(doc)?.scope;
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        let defs = session.defs();
+        // `T.` or `m.T.` (a type of an imported module).
+        let (_, builtin) = crate::typechecker::names::builtins();
+        let binding = match prefix.split_once('.') {
+            None => scope.types.get(&intern(prefix)),
+            Some((m, t)) => {
+                let Some(Binding::Module(id)) = scope.values.get(&intern(m)) else {
+                    return None;
+                };
+                let exports = if id.is_builtin() {
+                    builtin.modules.get(id)
+                } else {
+                    session.module_analysis(*id).map(|a| &a.scope.exports)
+                };
+                exports?.types.get(&intern(t))
+            }
+        };
+        let Some(Binding::Def(ty)) = binding else {
+            return None;
+        };
+        let variants = defs.variants(*ty);
+        if variants.is_empty() {
+            return None;
+        }
+        Some(
+            variants
+                .iter()
+                .map(|v| CompletionItem {
+                    label: resolve(defs.get(*v).name),
+                    kind: Some(CompletionItemKind::CONSTRUCTOR),
+                    ..CompletionItem::default()
+                })
+                .collect(),
+        )
+    }
+
+    /// The builtin module `prefix` is bound to in the open document `doc`
+    /// (by `import m` or `import m as prefix`), unless a local binding
+    /// shadows it. A document with no analysis yet takes a builtin
+    /// module's name for the module.
+    fn bound_builtin_module(
+        &self,
+        doc: &Document,
+        prefix: &str,
+        cursor: usize,
+    ) -> Option<&'static str> {
+        if doc.program.as_ref().is_some_and(|program| {
+            locals_at_offset(program, cursor)
+                .iter()
+                .any(|local| local.name == prefix)
+        }) {
+            return None;
+        }
+        match self.checked_module(doc) {
+            Some(checked) => match checked.scope.values.get(&intern(prefix)) {
+                Some(Binding::Module(id)) => id.builtin_name(),
+                _ => None,
+            },
+            None => module::BUILTIN_MODULES
+                .iter()
+                .copied()
+                .find(|m| *m == prefix),
+        }
+    }
+
+    /// The completion kind of a name bound at the top level: `None` for a
+    /// name a bare use of which is an error (an ambiguous variant, a name
+    /// of a module that failed to load).
+    fn binding_kind(
+        defs: Option<&crate::defs::DefTable>,
+        binding: &Binding,
+    ) -> Option<CompletionItemKind> {
+        let id = match binding {
+            Binding::Module(_) => return Some(CompletionItemKind::MODULE),
+            Binding::Def(id) => *id,
+            Binding::Ambiguous(_) | Binding::Poisoned => return None,
+        };
+        let def = match defs {
+            Some(defs) => *defs.get(id),
+            None => crate::typechecker::names::builtin_def(id)?,
+        };
+        Some(match def.kind {
+            DefKind::Fn | DefKind::Host => CompletionItemKind::FUNCTION,
+            DefKind::Let => CompletionItemKind::VARIABLE,
+            DefKind::Variant { .. } => CompletionItemKind::CONSTRUCTOR,
+            DefKind::Trait(_) => CompletionItemKind::INTERFACE,
+            DefKind::Type(_) | DefKind::TypeAlias => CompletionItemKind::CLASS,
+        })
+    }
+
+    /// What dot completion reads about the open document `doc`: the
+    /// session's analysis of its module.
+    fn checked_facts(&self, doc: &Document) -> Option<Checked> {
+        let checked = self.checked_module(doc)?;
+        let tables = self.checked_tables(doc)?;
+        Some(Checked {
+            program: checked.ast.clone(),
+            methods: tables.methods(),
+            record_fields: tables.record_fields(),
+        })
+    }
+
+    /// The members of the imported module `prefix` names (`geo.`, or
+    /// `g.` for `import geo as g`), unless a local binding of that name
+    /// shadows it.
+    fn module_member_completions(
+        &self,
+        doc: &Document,
+        prefix: &str,
+        cursor: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        let name = intern(prefix);
+        if doc.program.as_ref().is_some_and(|program| {
+            locals_at_offset(program, cursor)
+                .iter()
+                .any(|local| local.name == prefix)
+        }) {
+            return None;
+        }
+        let view = self.imported_module(doc, name)?;
+        let mut items: Vec<CompletionItem> = view
+            .members
+            .iter()
+            .map(|(member, kind)| member_item(&view, *member, *kind))
+            .collect();
+        items.sort_by(|a, b| a.label.cmp(&b.label));
+        items.dedup_by(|a, b| a.label == b.label);
+        Some(items)
+    }
+
+    /// Analyse the document `uri` with the partial dot expression at
+    /// `pos` completed by a placeholder identifier, so the surrounding
     /// statements survive parser recovery.
     ///
-    /// Background (round 81 DX-G4): the cached `doc.program` was
-    /// produced by parsing the user's exact source. When the cursor
-    /// sits at a partial `xs.|`, the parser's `expect_ident()` after
-    /// the `.` errors out, and `parse_let_stmt`'s `?` propagates the
-    /// failure all the way to `parse_fn_decl_recovering`, which
-    /// salvages a *recovery stub* for the enclosing function — an
-    /// `FnDecl` with an empty body. Every prior `let` in that
-    /// function disappears from the AST, which means `locals_at_offset`
-    /// returns nothing for the receiver `xs` and the type-narrowing
-    /// path can't pin down its type.
+    /// Background (round 81 DX-G4): when the cursor sits at a partial
+    /// `xs.|`, the parser's `expect_ident()` after the `.` errors out,
+    /// and `parse_let_stmt`'s `?` propagates the failure all the way to
+    /// `parse_fn_decl_recovering`, which salvages a *recovery stub* for
+    /// the enclosing function — an `FnDecl` with an empty body. Every
+    /// prior `let` in that function disappears from the AST, which means
+    /// `locals_at_offset` returns nothing for the receiver `xs` and the
+    /// type-narrowing path can't pin down its type.
     ///
-    /// The fix-up reparses a one-token-edited copy of the source where
-    /// the partial dot is followed by a placeholder identifier
-    /// (`silt_lsp_completion_placeholder`). This makes the surrounding
-    /// `let _ = xs.silt_lsp_completion_placeholder` parse as a normal
-    /// FieldAccess (which the typechecker will reject with an "unknown
-    /// field" diagnostic, but that diagnostic is harmless inside this
-    /// throwaway program — we only consume the AST shape, not the
-    /// errors). The receiver's `let xs: List(Int) = ...` survives
-    /// inside the function body, and `locals_at_offset` returns it
-    /// with its inferred type.
+    /// The fix-up gives the project's session, for a moment, a copy of
+    /// the text where the partial dot is followed by a placeholder
+    /// identifier (`silt_lsp_completion_placeholder`), so
+    /// `let _ = xs.silt_lsp_completion_placeholder` parses as a normal
+    /// field access and the receiver keeps its type; the other modules
+    /// are the session's, unsaved texts included. The document's text is
+    /// given back and the open documents are analysed again (only the
+    /// document's module and its importers are checked again).
     ///
-    /// Returns `None` if there's no `.` immediately before the cursor
-    /// (so the standard non-fix-up path runs) or if reparsing somehow
-    /// fails to produce a usable Program (defensive).
-    fn dot_completion_fixup_program(&self, doc: &Document, pos: &Position) -> Option<Program> {
+    /// Returns `None` if there's no `.` immediately before the cursor or
+    /// the document parses (its own analysis is used then).
+    fn dot_completion_fixup(&mut self, uri: &Uri, pos: &Position) -> Option<Checked> {
+        let doc = self.documents.get(uri)?;
         let cursor = position_to_offset(&doc.source, pos);
         // Sanity: the byte just before the cursor must be `.`. If not,
         // the dot-completion context was extracted from a different
         // configuration (e.g. `xs.first().` chained-call walk reached
         // back through a `)`) and the fix-up isn't needed.
-        if cursor == 0 || !doc.source.is_char_boundary(cursor) {
+        if cursor == 0 || !doc.source.text.is_char_boundary(cursor) {
             return None;
         }
-        let bytes = doc.source.as_bytes();
+        let bytes = doc.source.text.as_bytes();
         if bytes.get(cursor.checked_sub(1)?) != Some(&b'.') {
             return None;
         }
-        // Build the fix-up source: insert a placeholder identifier
-        // right after the cursor (which sits one past the `.`). The
-        // placeholder is intentionally long-and-prefixed so it can't
+        let module = doc.module.clone()?;
+        let project = self.projects.get_mut(&module.project)?;
+        if project
+            .session
+            .graph()
+            .module(module.id)
+            .problems
+            .is_empty()
+        {
+            return None;
+        }
+        // The placeholder is intentionally long-and-prefixed so it can't
         // accidentally collide with a real user method name.
         const PLACEHOLDER: &str = "silt_lsp_completion_placeholder";
-        let mut fixed = String::with_capacity(doc.source.len() + PLACEHOLDER.len());
-        fixed.push_str(&doc.source[..cursor]);
+        let mut fixed = String::with_capacity(doc.source.text.len() + PLACEHOLDER.len());
+        fixed.push_str(&doc.source.text[..cursor]);
         fixed.push_str(PLACEHOLDER);
-        fixed.push_str(&doc.source[cursor..]);
+        fixed.push_str(&doc.source.text[cursor..]);
+        let original = doc.source.text.clone();
+        let path = doc.path.clone();
+        let open: Vec<_> = self
+            .documents
+            .values()
+            .filter_map(|d| d.module.as_ref().filter(|m| m.project == module.project))
+            .map(|m| m.id)
+            .collect();
 
-        // Lex / parse / typecheck the fix-up source. We discard parse
-        // and typecheck errors — the goal is "AST that locates the
-        // receiver's binding," not "clean diagnostics."
-        let tokens = match crate::lexer::Lexer::new(&fixed).tokenize() {
-            Ok(t) => t,
-            Err(_) => return None,
-        };
-        let (mut program, _parse_errs) =
-            crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _type_errs = crate::typechecker::check(&mut program);
-        Some(program)
+        let id = project.set_text(&path, &Arc::from(fixed))?;
+        let file = project.file(id);
+        project.session.analyze(file);
+        let tables = project.session.tables();
+        let checked = project.session.module_analysis(id).map(|checked| Checked {
+            program: checked.ast.clone(),
+            methods: tables.methods(),
+            record_fields: tables.record_fields(),
+        });
+        project.set_text(&path, &original);
+        for id in open {
+            let file = project.file(id);
+            project.session.analyze(file);
+        }
+        checked
     }
+}
+
+/// The completion item of the member `member` of the imported module
+/// `view`.
+fn member_item(view: &ModuleView, member: Symbol, kind: MemberKind) -> CompletionItem {
+    let def = view.definitions.get(&member);
+    CompletionItem {
+        label: resolve(member),
+        kind: Some(match kind {
+            MemberKind::Function => CompletionItemKind::FUNCTION,
+            MemberKind::Value => CompletionItemKind::VARIABLE,
+            MemberKind::Type => CompletionItemKind::CLASS,
+            MemberKind::Variant => CompletionItemKind::CONSTRUCTOR,
+        }),
+        detail: def.and_then(|d| d.ty.as_ref()).map(|t| format!("{t}")),
+        documentation: def.and_then(|d| d.doc.clone()).map(|d| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: d,
+            })
+        }),
+        ..CompletionItem::default()
+    }
+}
+
+/// What dot completion reads about a module: the session's analysis of
+/// it.
+struct Checked {
+    program: Arc<Program>,
+    methods: Vec<(crate::types::TypeRef, Symbol)>,
+    record_fields: RecordFields,
 }
 
 // ── Method enumeration for dot-completion ──────────────────────────
 
-/// Auto-derived built-in trait method names for primitive + container
-/// types. Mirrors `register_auto_derived_impls_for` in
-/// `src/typechecker/mod.rs::register_builtin_trait_impls`. Each entry
-/// maps the canonical type-name string (matching `canonical_name(&ty)`
-/// in `src/types/canonical.rs`) to the methods that the auto-derive
-/// pass stamps for that type.
-///
-/// These methods are never written into `program.decls` as `TraitImpl`
-/// nodes — the typechecker registers them directly into `method_table`
-/// via `register_auto_derived_impls_for`. The LSP cannot reach
-/// `method_table` (it's owned by the typechecker and dropped after
-/// `check`), so the canonical knowledge is mirrored here.
-///
-/// Non-primitive types (user records / enums and built-in enums like
-/// `Option`, `Result`, `Weekday`) DO get auto-derive impls synthesized
-/// into the AST (see `synthesize_auto_derive_impls`), so they flow
-/// through `program.decls` naturally — no entry needed here.
-fn auto_derived_methods_for(canon_name: &str) -> &'static [&'static str] {
-    // Source: src/typechecker/mod.rs::register_builtin_trait_impls
-    //   - Int/Float/Bool/String/Unit + List → all four traits
-    //     (Equal, Compare, Hash, Display).
-    //   - Tuple/Map/Set → Equal/Hash/Display only (no Compare).
-    //
-    // Trait method names are sourced from `builtin_trait_decls`
-    // (src/typechecker/mod.rs:7940):
-    //   Display → display, Compare → compare, Equal → equal, Hash → hash.
-    //
-    // `Bytes` is a stdlib alias for `List(Int)` and thus collapses onto
-    // `"List"` via `canonicalize_type_name`; see `register_auto_derived
-    // _impls_for(checker, &["Bytes"], &["Display"])`. Display is the
-    // only trait registered for the bytes-specific stamp; the rest
-    // route through List's entry below.
-    match canon_name {
-        "Int" | "Float" | "Bool" | "String" | "Unit" | "List" => {
-            &["display", "compare", "equal", "hash"]
-        }
-        "Tuple" | "Map" | "Set" => &["display", "equal", "hash"],
-        _ => &[],
-    }
-}
-
-/// Fallback set of built-in trait method names used when the receiver
-/// type cannot be inferred. Hoisted as a module-level const so the
-/// parity test (`fallback_builtin_methods_covers_auto_derive_union`)
-/// can compare it against the union of every RHS in
-/// `auto_derived_methods_for`. `message` is included because it comes
-/// from the `Error` builtin trait, which is NOT covered by
-/// `auto_derived_methods_for` (those arms only mirror
-/// Display/Compare/Equal/Hash for primitives/containers).
-const FALLBACK_BUILTIN_METHODS: &[&str] = &["display", "compare", "equal", "hash", "message"];
-
-/// Return the method names available on a value whose canonical type
-/// name is `canon_name`. Walks `program.decls` for `TraitImpl` entries
-/// targeting the canonical name (both user-written and synthesized
-/// auto-derive impls land in `program.decls`), then unions in any
-/// auto-derived built-in trait methods that aren't carried by the AST
-/// (primitives / containers — see `auto_derived_methods_for`).
-fn methods_for_canon_name(program: &Program, canon_name: &str) -> Vec<String> {
-    let mut out: HashSet<String> = HashSet::new();
-    for decl in &program.decls {
-        if let Decl::TraitImpl(ti) = decl {
-            // Compare against the canonical form of the impl's target
-            // (so `Range -> List` and `() -> Unit` collapses match
-            // expectations the same way the typechecker routes them at
-            // dispatch time). Note: `Bytes` is NOT canonicalized here;
-            // user aliases such as `type Bytes = List(Int)` are missed
-            // by this LSP-side mirror — see `canonicalize_target_name`
-            // at the function below for the exact set of rewrites.
-            let target_name = resolve(ti.target_type);
-            let target_canon = canonicalize_target_name(&target_name);
-            if target_canon == canon_name {
-                for m in &ti.methods {
-                    out.insert(resolve(m.name).to_string());
-                }
-            }
-        }
-    }
-    for m in auto_derived_methods_for(canon_name) {
-        out.insert((*m).to_string());
-    }
-    let mut v: Vec<String> = out.into_iter().collect();
-    v.sort();
-    v
-}
-
-/// Mirror of the canonicalization rules in
-/// `src/types/canonical.rs::canonicalize_type_name` for the cases the
-/// LSP needs to recognise. Keeps the LSP side in lock-step with the
-/// typechecker's dispatch-key reduction without dragging in the full
-/// `Resolver` (user aliases like `type Bytes = List(Int)` ARE missed
-/// here — handling those would require routing the LSP through the
-/// typechecker's `Resolver`, which is out of scope for round 81's
-/// minimum-viable narrowing pass).
-fn canonicalize_target_name(name: &str) -> &str {
-    match name {
-        "Range" => "List",
-        "Fun" => "Fn",
-        "()" => "Unit",
-        other => other,
-    }
-}
-
-/// Union of every method name declared anywhere in the program plus
-/// every auto-derived built-in trait method name. Used as the fallback
-/// when the receiver's type cannot be confidently inferred — preserves
-/// the contract that narrowing only ever reduces noise, never silently
-/// hides a completion.
-fn all_known_method_names(program: &Program) -> Vec<String> {
-    let mut out: HashSet<String> = HashSet::new();
-    for decl in &program.decls {
-        if let Decl::TraitImpl(ti) = decl {
-            for m in &ti.methods {
-                out.insert(resolve(m.name).to_string());
-            }
-        }
-    }
-    // Always include the auto-derived built-in trait methods. They are
-    // never written into the AST for primitives, but a user might be
-    // typing on any of the primitive heads, so include them here.
-    // Sourced from `FALLBACK_BUILTIN_METHODS`; the parity test
-    // `fallback_builtin_methods_covers_auto_derive_union` locks that
-    // const against the union of `auto_derived_methods_for`'s arms,
-    // so adding a 6th auto-derived method without updating the const
-    // fails CI.
-    for m in FALLBACK_BUILTIN_METHODS {
-        out.insert((*m).to_string());
-    }
-    let mut v: Vec<String> = out.into_iter().collect();
-    v.sort();
-    v
-}
-
-/// Dispatch shim: returns the narrowed method set when `receiver_ty`
-/// is `Some(_)`, or the full union when it is `None`.
-fn methods_for_receiver(program: &Program, receiver_ty: Option<&Type>) -> Vec<String> {
-    match receiver_ty {
-        Some(ty) => {
-            let canon = canonical_name(ty);
-            // `_` / `<anon>` / `Never` are placeholder canonical names
-            // emitted for unresolved variables, anonymous records, and
-            // bottom-typed expressions (see canonical.rs:583-602). None
-            // of them should narrow — they signal "type unknown / no
-            // dispatch head", so we fall back to the full set rather
-            // than emitting an empty completion list.
-            if canon == "_" || canon == "<anon>" || canon == "Never" {
-                all_known_method_names(program)
-            } else {
-                methods_for_canon_name(program, &canon)
-            }
-        }
-        None => all_known_method_names(program),
-    }
+/// The names of the methods a value of type `receiver_ty` has, from the
+/// checker's `methods` (the type impls key it by, method name): those of
+/// the type's head, or every method when the type is unknown.
+fn methods_for_receiver(
+    methods: &[(crate::types::TypeRef, Symbol)],
+    receiver_ty: Option<&Type>,
+) -> Vec<String> {
+    // Unresolved variables, anonymous records and bottom-typed
+    // expressions have no dispatch head: they do not narrow.
+    let head = receiver_ty.and_then(crate::types::canonical::head_of_canon);
+    let mut names: Vec<String> = methods
+        .iter()
+        .filter(|(ty, _)| head.is_none_or(|head| *ty == head))
+        .map(|(_, method)| resolve(*method))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 // ── Dot-completion helpers ─────────────────────────────────────────
@@ -575,7 +705,9 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
         }
         utf16_offset += ch.len_utf16();
     }
-    let before = &line[..byte_offset];
+    // A word being typed after the dot (`time.Weekday.T`) is the
+    // client's to filter by.
+    let before = line[..byte_offset].trim_end_matches(|c: char| c.is_alphanumeric() || c == '_');
     // The last character should be '.' (cursor is right after it)
     if !before.ends_with('.') {
         return None;
@@ -648,412 +780,48 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
 // list maintained alongside the lexer's keyword match arms. Re-introducing
 // a hand-rolled list here is guarded by `tests/meta/lexer_keyword_parity_tests.rs`.
 
-/// Build the builtins completion list dynamically from the module registry
-/// so it never falls out of sync with `module.rs`.
-///
-/// `pub` so integration tests (see `tests/meta/builtin_constructor_parity_tests.rs`)
-/// can assert every gated constructor from
-/// `module::all_builtin_constructor_names` is emitted here.
-pub fn builtins() -> Vec<(String, CompletionItemKind)> {
-    // Globals (not part of any module). Sourced from
-    // `module::builtin_free_function_names()` so adding a new free
-    // function (e.g. `eprintln`, `assert`) flows through automatically.
-    // Parity lock: `tests/meta/builtin_free_function_parity_tests.rs`.
-    let mut items: Vec<(String, CompletionItemKind)> = module::builtin_free_function_names()
-        .iter()
-        .map(|name| ((*name).to_string(), CompletionItemKind::FUNCTION))
-        .collect();
-
-    // Reserved-word-shaped boolean literals. Sourced from
-    // `crate::lexer::KEYWORD_LITERALS` so additions there flow through
-    // automatically — mirrors the round-63 pattern used for `KEYWORDS`
-    // above and the round-64 G4 fix in `src/repl.rs`. Parity lock:
-    // `tests/meta/lexer_keyword_parity_tests.rs`.
-    for kw in KEYWORD_LITERALS {
-        items.push((kw.to_string(), CompletionItemKind::CONSTANT));
-    }
-
-    // Round-62 G6: primitive + container type names from the
-    // authoritative `BUILTIN_TYPES` constant. Surfaced as completion
-    // items so an editor offers `Int`, `Bool`, `List`, etc. wherever
-    // identifier completion runs (notably in type-annotation positions
-    // like `let x: B|`). Derived from
-    // `crate::types::builtins::iter_all` so additions flow through.
-    for entry in crate::types::builtins::iter_all() {
-        // Skip the surface-alias `()` — completion items must be valid
-        // identifiers users would type to commit.
-        if entry.name == "()" {
-            continue;
-        }
-        items.push((entry.name.to_string(), CompletionItemKind::CLASS));
-    }
-
-    // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
-    // every gated variant (Recv/Send, IoNotFound, PgConnect, Monday,
-    // GET/POST/…, etc.). Sourced from the authoritative module helper
-    // so new variants flow through without editing this list.
-    for name in module::all_builtin_constructor_names() {
-        items.push((name.to_string(), CompletionItemKind::CONSTRUCTOR));
-    }
-
-    for &m in module::BUILTIN_MODULES {
-        for func in module::builtin_module_functions(m) {
-            items.push((format!("{m}.{func}"), CompletionItemKind::FUNCTION));
-        }
-        for constant in module::builtin_module_constants(m) {
-            items.push((format!("{m}.{constant}"), CompletionItemKind::CONSTANT));
-        }
-    }
-
-    items
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse_check(source: &str) -> Program {
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut prog, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut prog);
-        prog
+    /// The methods of a user impl and of the builtin derives, as the
+    /// session's analysis of `source` has them.
+    fn methods(source: &str) -> Vec<(crate::types::TypeRef, Symbol)> {
+        let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
+        session.analyze(file);
+        session.tables().methods()
     }
 
-    /// `methods_for_canon_name` filters TraitImpl methods by the
-    /// receiver's canonical type name. With the source declaring two
-    /// user impls — one on String (`UpperCaser.to_upper`) and one on
-    /// List (`IntListHead.head_int`) — querying for "List" must return
-    /// the List-impl's method plus the auto-derived built-in trait
-    /// methods, and must NOT leak the String-impl's method.
+    const IMPLS: &str = "trait UpperCaser { fn to_upper(self) -> String }\n\
+                         trait UpperCaser for String { fn to_upper(self) -> String { \"X\" } }\n\
+                         trait IntListHead { fn head_int(self) -> Int }\n\
+                         trait IntListHead for List(a) { fn head_int(self) -> Int { 0 } }\n\
+                         fn main() { 0 }\n";
+
+    /// A known receiver type narrows the methods to those of its
+    /// canonical name, the builtin derived ones included.
     #[test]
-    fn methods_for_canon_name_filters_by_target_type() {
-        let source = "trait UpperCaser { fn to_upper(self) -> String }\n\
-                      trait UpperCaser for String { fn to_upper(self) -> String { \"X\" } }\n\
-                      trait IntListHead { fn head_int(self) -> Int }\n\
-                      trait IntListHead for List { fn head_int(self) -> Int { 0 } }\n\
-                      fn main() { 0 }\n";
-        let prog = parse_check(source);
-        let m_list = methods_for_canon_name(&prog, "List");
-        assert!(m_list.contains(&"head_int".to_string()), "got: {m_list:?}");
-        assert!(m_list.contains(&"display".to_string()), "got: {m_list:?}");
-        assert!(!m_list.contains(&"to_upper".to_string()), "got: {m_list:?}");
-
-        let m_string = methods_for_canon_name(&prog, "String");
-        assert!(
-            m_string.contains(&"to_upper".to_string()),
-            "got: {m_string:?}"
-        );
-        assert!(
-            m_string.contains(&"display".to_string()),
-            "got: {m_string:?}"
-        );
-        assert!(
-            !m_string.contains(&"head_int".to_string()),
-            "got: {m_string:?}"
-        );
+    fn methods_narrow_to_the_receiver_type() {
+        let methods = methods(IMPLS);
+        let list = methods_for_receiver(&methods, Some(&Type::List(Box::new(Type::Int))));
+        assert!(list.contains(&"head_int".to_string()), "{list:?}");
+        assert!(list.contains(&"display".to_string()), "{list:?}");
+        assert!(!list.contains(&"to_upper".to_string()), "{list:?}");
+        let string = methods_for_receiver(&methods, Some(&Type::String));
+        assert!(string.contains(&"to_upper".to_string()), "{string:?}");
+        assert!(!string.contains(&"head_int".to_string()), "{string:?}");
     }
 
-    /// `all_known_method_names` is the fallback path's source — every
-    /// method name declared anywhere in the program plus the auto-
-    /// derived built-in trait method names. Asserts both are present
-    /// so the contract "narrowing only ever reduces noise, never hides
-    /// completions on an unknown receiver" is observably maintained.
+    /// An unknown receiver type offers every method the module knows.
     #[test]
-    fn all_known_method_names_unions_user_and_builtin() {
-        let source = "trait UpperCaser { fn to_upper(self) -> String }\n\
-                      trait UpperCaser for String { fn to_upper(self) -> String { \"X\" } }\n\
-                      fn main() { 0 }\n";
-        let prog = parse_check(source);
-        let all = all_known_method_names(&prog);
-        // User-declared impl method.
-        assert!(all.contains(&"to_upper".to_string()), "got: {all:?}");
-        // Auto-derived built-in trait methods. `message` is part of the
-        // fallback list at the call site (src/lsp/completion.rs ~512)
-        // because the `Error` builtin trait exposes a `message` method;
-        // earlier rounds asserted only `display`/`compare`/`equal`/`hash`
-        // and dropped `message` silently when the trait registry was
-        // out of sync. Lock it explicitly so any future rename or
-        // accidental deletion fails this test.
-        assert!(all.contains(&"display".to_string()), "got: {all:?}");
-        assert!(all.contains(&"compare".to_string()), "got: {all:?}");
-        assert!(all.contains(&"equal".to_string()), "got: {all:?}");
-        assert!(all.contains(&"hash".to_string()), "got: {all:?}");
-        assert!(all.contains(&"message".to_string()), "got: {all:?}");
-    }
-
-    /// Source of `src/lsp/completion.rs` itself, used by the round-88
-    /// structural parity lock below to derive `canon_names` from the
-    /// **actual match arms** of `auto_derived_methods_for` rather than
-    /// a hand-rolled list. See
-    /// `fallback_builtin_methods_covers_auto_derive_union`.
-    const COMPLETION_RS_SRC: &str = include_str!("./completion.rs");
-
-    /// Extract every quoted canonical-name literal from the body of
-    /// `fn auto_derived_methods_for` in this file's source text. Returns
-    /// the set of names that appear on the LHS of a match arm (i.e.
-    /// every `"X"` token between the `match canon_name {` line and the
-    /// closing `_ => &[]` arm).
-    ///
-    /// Round-88 hardening: previously, `canon_names` in the parity test
-    /// was a hand-written `const &[&str]` of 10 names. If a new arm was
-    /// added to `auto_derived_methods_for` (e.g. `"Channel" => &["wakable"]`)
-    /// without updating `canon_names`, the union below would be computed
-    /// over the stale list and miss the new method — the equality check
-    /// against `FALLBACK_BUILTIN_METHODS` would still pass against an
-    /// equally stale const, and the regression would slip through.
-    /// Deriving `canon_names` from the source ensures the two sides
-    /// can't drift independently.
-    fn auto_derive_arm_names_from_source() -> Vec<String> {
-        let needle = "fn auto_derived_methods_for(canon_name: &str) -> &'static [&'static str] {";
-        let start = COMPLETION_RS_SRC.find(needle).expect(
-            "completion.rs no longer contains `fn auto_derived_methods_for(...)` — \
-             has the function been renamed or its signature changed? Update this lock.",
-        );
-        // Walk brace depth from the opening `{` to find the function's
-        // closing `}` so we only scan within the function body.
-        let bytes = COMPLETION_RS_SRC.as_bytes();
-        let mut i = start + needle.len() - 1; // points at the opening `{`
-        let mut depth = 0i32;
-        let mut end = i;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = i + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
+    fn an_unknown_receiver_gets_every_method() {
+        let methods = methods(IMPLS);
+        let all = methods_for_receiver(&methods, None);
+        for name in [
+            "to_upper", "head_int", "display", "equal", "compare", "hash",
+        ] {
+            assert!(all.contains(&name.to_string()), "{name} missing: {all:?}");
         }
-        assert!(
-            end > start,
-            "could not locate closing brace of `auto_derived_methods_for`"
-        );
-        let body = &COMPLETION_RS_SRC[start..end];
-        // The body contains a `match canon_name { ... }`. We want only
-        // the names on the LHS (between `match canon_name {` and the
-        // `_ => &[]` wildcard arm); the RHS arrays hold method names
-        // like `"display"` which we must NOT mis-classify as canonical
-        // type names. Slice between the match-block braces explicitly.
-        let match_head = "match canon_name {";
-        let match_start = body.find(match_head).expect(
-            "auto_derived_methods_for no longer contains `match canon_name {` — update this lock.",
-        );
-        // Find the matching `}` for the match block.
-        let mbytes = body.as_bytes();
-        let mut j = match_start + match_head.len() - 1; // points at `{`
-        let mut d = 0i32;
-        let mut match_end = j;
-        while j < mbytes.len() {
-            match mbytes[j] {
-                b'{' => d += 1,
-                b'}' => {
-                    d -= 1;
-                    if d == 0 {
-                        match_end = j + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            j += 1;
-        }
-        let match_body = &body[match_start..match_end];
-
-        // Walk the match body line by line. For every line whose
-        // arm-LHS ends with `=>`, extract every `"Foo"` literal on the
-        // LHS as a canonical name. Skip the wildcard `_ => &[]` arm.
-        let mut out = Vec::new();
-        for line in match_body.lines() {
-            let trimmed = line.trim();
-            // Only arm-head lines (those containing `=>`) carry LHS
-            // type-name literals. RHS-only lines like `&["display", ...]`
-            // never appear above `=>`, so a simple split is safe.
-            let Some(arrow_at) = trimmed.find("=>") else {
-                continue;
-            };
-            let lhs = &trimmed[..arrow_at];
-            // Skip wildcard arm.
-            if lhs.trim().starts_with('_') {
-                continue;
-            }
-            // Extract every `"..."` token on the LHS.
-            let mut chars = lhs.char_indices().peekable();
-            while let Some((idx, c)) = chars.next() {
-                if c == '"' {
-                    // Scan until the closing quote.
-                    let rest = &lhs[idx + 1..];
-                    if let Some(close) = rest.find('"') {
-                        let name = &rest[..close];
-                        if !name.is_empty() {
-                            out.push(name.to_string());
-                        }
-                        // Advance the iterator past the closing quote.
-                        for _ in 0..close + 1 {
-                            chars.next();
-                        }
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    /// Parity lock: `FALLBACK_BUILTIN_METHODS` must equal the union of
-    /// every method name returned by `auto_derived_methods_for` across
-    /// every canonical-name arm, plus `"message"` (which comes from
-    /// the `Error` builtin trait — NOT covered by
-    /// `auto_derived_methods_for`, whose arms only mirror
-    /// Display/Compare/Equal/Hash for primitives/containers).
-    ///
-    /// Why this exists: prior rounds had a hardcoded 5-string fallback
-    /// list at the call site in `all_known_method_names`. If a 6th
-    /// auto-derive (e.g. `read`) was added to `auto_derived_methods_for`,
-    /// the fallback would silently fail to expose it on unknown
-    /// receivers, breaking the "narrowing only ever reduces, never
-    /// hides" contract — and no existing test would fail (the original
-    /// 5 strings would still be present). Computing the expected union
-    /// dynamically from `auto_derived_methods_for` and comparing to
-    /// the static const closes that gap: adding to either side without
-    /// the other now fails this test.
-    ///
-    /// Round-88 hardening: `canon_names` is no longer a hand-written
-    /// list — it is parsed from the **actual match arms** of
-    /// `auto_derived_methods_for` via `include_str!`. If a new arm is
-    /// added (e.g. `"Channel" => &["wakable"]`) without updating any
-    /// hand-rolled list, the parsed `canon_names` automatically grows
-    /// to include `"Channel"`, the union picks up `"wakable"`, and the
-    /// equality check against `FALLBACK_BUILTIN_METHODS` fails until
-    /// the const is updated. The two sides cannot drift independently.
-    #[test]
-    fn fallback_builtin_methods_covers_auto_derive_union() {
-        // Drive `canon_names` from the source of `auto_derived_methods_for`
-        // rather than a hand-rolled list (round-88 LATENT-lock fix).
-        let canon_names = auto_derive_arm_names_from_source();
-        assert!(
-            !canon_names.is_empty(),
-            "auto_derive_arm_names_from_source returned no names — \
-             the source-scan parser is broken or the match has been removed."
-        );
-
-        let mut expected: HashSet<String> = HashSet::new();
-        for name in &canon_names {
-            let methods = auto_derived_methods_for(name);
-            assert!(
-                !methods.is_empty(),
-                "source-scanned canonical name `{name}` resolves to an \
-                 empty arm in auto_derived_methods_for — the parser \
-                 picked up a stray string literal (bug in \
-                 auto_derive_arm_names_from_source)."
-            );
-            for m in methods {
-                expected.insert((*m).to_string());
-            }
-        }
-        // `message` is the Error-trait method; not covered by
-        // `auto_derived_methods_for` arms, but the fallback list must
-        // still expose it so completion on an unknown receiver doesn't
-        // hide it.
-        expected.insert("message".to_string());
-
-        let actual: HashSet<String> = FALLBACK_BUILTIN_METHODS
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-
-        assert_eq!(
-            actual, expected,
-            "FALLBACK_BUILTIN_METHODS must equal union(auto_derived_methods_for arms) ∪ {{\"message\"}}.\n\
-             canon_names (source-scanned): {canon_names:?}\n\
-             actual:   {actual:?}\n\
-             expected: {expected:?}"
-        );
-    }
-
-    /// Round-88 meta-lock for `fallback_builtin_methods_covers_auto_derive_union`.
-    ///
-    /// Demonstrates that the source-scan-driven parity check would
-    /// reject a new arm if it isn't reflected in `FALLBACK_BUILTIN_METHODS`.
-    /// We simulate the drift scenario by:
-    ///   1. Taking the real source-scanned `canon_names`.
-    ///   2. Pretending a new arm `"Channel" => &["wakable"]` has been
-    ///      added by computing what the expected union would look like
-    ///      if `auto_derived_methods_for("Channel")` returned a new
-    ///      method `"wakable"`.
-    ///   3. Asserting that union ≠ current `FALLBACK_BUILTIN_METHODS`
-    ///      — i.e. the drift would be caught by the parity lock above.
-    ///
-    /// If this test ever fails, it means either:
-    ///   * `"wakable"` was legitimately added to the fallback const
-    ///     (rename the simulated method here), OR
-    ///   * the source-scan parser is silently returning an empty list
-    ///     and the parity lock above is no longer load-bearing.
-    #[test]
-    fn auto_derive_arm_source_scan_would_catch_new_arm_drift() {
-        let canon_names = auto_derive_arm_names_from_source();
-        assert!(
-            !canon_names.is_empty(),
-            "source-scan returned no names — parser is broken; the \
-             parity lock would silently pass against any stale const."
-        );
-
-        // Sanity: every scanned name resolves to a real (non-empty)
-        // arm. Catches false-positive extractions (e.g. picking up a
-        // string literal from a comment or a doc reference).
-        for name in &canon_names {
-            assert!(
-                !auto_derived_methods_for(name).is_empty(),
-                "source-scanned name `{name}` does not correspond to a \
-                 real arm in auto_derived_methods_for — the parser is \
-                 picking up stray string literals."
-            );
-        }
-
-        // Simulate adding a new arm `"Channel" => &["wakable"]` without
-        // touching `FALLBACK_BUILTIN_METHODS`. The simulated union must
-        // differ from the current const, proving the parity lock above
-        // would catch the drift.
-        let mut simulated: HashSet<String> = HashSet::new();
-        for name in &canon_names {
-            for m in auto_derived_methods_for(name) {
-                simulated.insert((*m).to_string());
-            }
-        }
-        simulated.insert("message".to_string());
-        // Pretend a future arm added `"wakable"` as a method.
-        simulated.insert("wakable".to_string());
-
-        let actual: HashSet<String> = FALLBACK_BUILTIN_METHODS
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-
-        assert_ne!(
-            simulated, actual,
-            "Meta-lock failure: a simulated new method `\"wakable\"` was \
-             added to the expected union, but `FALLBACK_BUILTIN_METHODS` \
-             already contains it. Either the fallback const is now a \
-             superset of the auto-derive union (the parity lock above \
-             would still pass against drift in that direction — fix \
-             the lock to assert strict equality, not just superset), \
-             or `\"wakable\"` was legitimately added and this meta-lock \
-             needs a different placeholder method name."
-        );
-    }
-
-    /// `canonicalize_target_name` mirrors the typechecker's reduction
-    /// rules used when keying `method_table` entries. Range collapses
-    /// to List, Fun to Fn, () to Unit; everything else round-trips.
-    #[test]
-    fn canonicalize_target_name_mirrors_typechecker_rules() {
-        assert_eq!(canonicalize_target_name("Range"), "List");
-        assert_eq!(canonicalize_target_name("Fun"), "Fn");
-        assert_eq!(canonicalize_target_name("()"), "Unit");
-        assert_eq!(canonicalize_target_name("List"), "List");
-        assert_eq!(canonicalize_target_name("MyType"), "MyType");
+        assert_eq!(all, methods_for_receiver(&methods, Some(&Type::Var(0))));
     }
 }

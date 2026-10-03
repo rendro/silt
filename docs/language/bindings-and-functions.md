@@ -36,12 +36,11 @@ namespace clean and avoids the PHP problem of too many bare globals.
 The following names are always available without an import: `print`,
 `println`, `panic`, `Ok`, `Err`, `Some`, `None`, plus the primitive type
 descriptors `Int`, `Float`, `String`, and `Bool` (used with
-type-directed APIs like `json.parse_map`). Additional constructors become available with
-imports: `Stop`/`Continue` (require `import list`),
-`Message`/`Closed`/`Empty`/`Sent` (require `import channel`), the
-`Weekday` variants (require `import time`), and the HTTP method constructors
-`GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`HEAD`/`OPTIONS` (require `import http`).
-Everything else requires module qualification.
+type-directed APIs like `json.parse_map`). Everything else is reached
+through its module, the stdlib's types and constructors included:
+`list.Stop(acc)`, `channel.Message(v)`, `time.Monday`, `http.GET` (after
+`import list`, `import channel`, ...), or listed in a selective import
+(`import channel.{ Message }`).
 
 What is _not_ a keyword matters too. `true`/`false` are builtin literals.
 `Ok`, `Err`, `Some`, `None` are builtin variant constructors -- ordinary

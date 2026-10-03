@@ -1,0 +1,12 @@
+-- verdict: same
+fn fact(n) {
+  loop i = n {
+    match i {
+      0 -> 1
+      _ -> i * loop(i - 1)
+    }
+  }
+}
+fn main() {
+  println(fact(5))
+}

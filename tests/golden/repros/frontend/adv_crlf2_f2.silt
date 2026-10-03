@@ -1,0 +1,12 @@
+-- verdict: same
+fn main() {
+  let a = 1
+  let b = 2
+  let c = 3
+  let xs = [
+    a, -- one
+    b
+  ]
+  let ys = [a, b, c, c]
+  println("{xs} {ys}")
+}

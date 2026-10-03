@@ -6,7 +6,7 @@ fn program() {
   let timer = channel.timeout(50)
   let result = channel.receive(timer)
   match result {
-    Closed -> "timed_out"
+    channel.Closed -> "timed_out"
     _ -> "unexpected"
   }
 }

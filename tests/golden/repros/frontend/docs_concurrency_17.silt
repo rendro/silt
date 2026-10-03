@@ -1,0 +1,14 @@
+-- verdict: same
+import io
+import task
+import time
+
+fn main() {
+  let h = task.spawn_until(time.seconds(2), fn() {
+    io.read_file("/tmp/maybe_slow.txt")
+  })
+  match task.join(h) {
+    Ok(contents) -> println(contents)
+    Err(msg) -> println("io error or timeout")
+  }
+}

@@ -1,0 +1,14 @@
+-- verdict: same
+import regex
+fn main() {
+  let v_regex_captures: Int = regex.captures
+  let v_regex_captures_all: Int = regex.captures_all
+  let v_regex_captures_named: Int = regex.captures_named
+  let v_regex_find: Int = regex.find
+  let v_regex_find_all: Int = regex.find_all
+  let v_regex_is_match: Int = regex.is_match
+  let v_regex_replace: Int = regex.replace
+  let v_regex_replace_all: Int = regex.replace_all
+  let v_regex_replace_all_with: Int = regex.replace_all_with
+  let v_regex_split: Int = regex.split
+}

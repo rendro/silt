@@ -1,0 +1,12 @@
+-- verdict: same
+import shapes
+import other
+fn describe(s: Shape) -> Int {
+  match s {
+    Circle(r) -> r
+    shapes.Square(x) -> x
+  }
+}
+fn main() {
+  println(describe(other.mk()))
+}

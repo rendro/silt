@@ -1,0 +1,6 @@
+-- verdict: same
+import broken
+
+fn main() {
+  println("{broken.double(2)}")
+}

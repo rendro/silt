@@ -1,0 +1,8 @@
+-- verdict: same
+fn f(pair: (Bool, Bool), t: Bool) -> Int {
+  match pair {
+    (^t, _) -> 1
+    (false, _) -> 2
+  }
+}
+fn main() { println(f((true, true), false)) }

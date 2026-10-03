@@ -1,0 +1,26 @@
+-- verdict: same
+type P { x: Int, y: String }
+type B(a) { v: a, w: Int }
+type E { A(Int, String), C }
+type G(a) { Wrap(a, String), Nil }
+trait Display for E {
+  fn display(self) -> String { "custom-E" }
+}
+fn main() {
+  let p = P { x: 1, y: "s" }
+  let b = B { v: 1, w: 2 }
+  println(p)
+  println(p.display())
+  println("{p}")
+  println(b)
+  println(b.display())
+  println("{b}")
+  println(Wrap(1, "q"))
+  println(Wrap(1, "q").display())
+  println("{Wrap(1, "q")}")
+  println(A(1, "z"))
+  println(A(1, "z").display())
+  println("{A(1, "z")}")
+  println([A(1, "z")])
+  println([p])
+}

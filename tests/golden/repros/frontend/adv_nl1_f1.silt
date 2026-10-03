@@ -1,0 +1,10 @@
+-- verdict: same
+fn f(x) = x + 1
+
+fn main() {
+  let a = f(2)
+  let b = 10 - 3
+  let c = f -- call next line?
+  5
+  println("{a} {b} {c}")
+}

@@ -1,0 +1,7 @@
+-- verdict: same
+type Light { Stop, Go }
+fn main() {
+  let l = Go
+  println(l)
+  println(Stop < Go)
+}

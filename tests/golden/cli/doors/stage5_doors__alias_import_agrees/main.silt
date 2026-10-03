@@ -1,0 +1,13 @@
+-- verdict: same
+-- AUDIT 3.2: an imported `pub type` alias is a type, not a value. Every
+-- door accepts the program, and `run` runs it (it used to fail with
+-- `undefined global: units.Meters`).
+import units.{ Meters, mk }
+
+fn show(m: Meters) -> String {
+  "{m} m"
+}
+
+fn main() {
+  println(show(mk(3)))
+}

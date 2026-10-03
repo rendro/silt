@@ -1,0 +1,4 @@
+Maybe.None
+Maybe.Some 1
+Option.None
+Option.Some 2

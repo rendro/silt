@@ -2,7 +2,7 @@ error[runtime]: division by zero
  --> callback_frame_capture__list_map.silt:3:17
    |
  3 | fn divider(x) { 1 / 0 }
-   |                 ^ division by zero
+   |                 ^^^^^ division by zero
 
 call stack:
   -> divider  at callback_frame_capture__list_map.silt:3:17

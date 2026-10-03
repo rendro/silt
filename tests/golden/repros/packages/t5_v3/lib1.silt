@@ -1,0 +1,14 @@
+type Secret { S(Int), Other }
+type Rec { a: Int, b: String }
+pub trait Peek { fn peek(self) -> Int }
+trait Peek for Secret {
+  fn peek(self) -> Int {
+    match self {
+      S(n) -> n
+      Other -> 0
+    }
+  }
+}
+pub fn mk() { S(42) }
+pub fn mk_rec() { Rec { a: 1, b: "bee" } }
+fn private_fn() { 1 }

@@ -42,7 +42,7 @@ impl Server {
         let locations: Vec<Location> = hits
             .into_iter()
             .filter_map(|(hit_uri, span)| {
-                let src = self.documents.get(&hit_uri).map(|d| d.source.as_str())?;
+                let src = self.documents.get(&hit_uri).map(|d| &d.source)?;
                 Some(Location::new(hit_uri, span_to_range(&span, src)))
             })
             .collect();
@@ -65,7 +65,7 @@ impl Server {
 /// and primitives return `None`.
 fn type_head_name(ty: &Type) -> Option<Symbol> {
     match ty {
-        Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
+        Type::Record(name, _) | Type::Generic(name, _) => Some(name.name),
         _ => None,
     }
 }

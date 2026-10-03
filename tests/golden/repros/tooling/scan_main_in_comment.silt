@@ -1,0 +1,6 @@
+-- verdict: same
+{-
+fn main() {
+}
+-}
+fn helper() { 1 }

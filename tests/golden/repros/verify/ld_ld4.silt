@@ -1,0 +1,7 @@
+-- verdict: same
+fn double(x: int) -> int { x + x }
+fn f(x) { x.nonexistent(1, 2, 3) }
+fn main() {
+  println(double("ab"))
+  println(double(4))
+}

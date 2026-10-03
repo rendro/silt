@@ -1,0 +1,6 @@
+-- verdict: same
+import lim
+let limit = "ten"
+fn main() {
+  println(lim.remaining(3))
+}

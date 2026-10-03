@@ -1,0 +1,18 @@
+-- verdict: same
+import map
+fn main() {
+  let v_map_contains: Int = map.contains
+  let v_map_delete: Int = map.delete
+  let v_map_each: Int = map.each
+  let v_map_entries: Int = map.entries
+  let v_map_filter: Int = map.filter
+  let v_map_from_entries: Int = map.from_entries
+  let v_map_get: Int = map.get
+  let v_map_keys: Int = map.keys
+  let v_map_length: Int = map.length
+  let v_map_map: Int = map.map
+  let v_map_merge: Int = map.merge
+  let v_map_set: Int = map.set
+  let v_map_update: Int = map.update
+  let v_map_values: Int = map.values
+}

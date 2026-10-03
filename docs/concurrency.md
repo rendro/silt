@@ -107,7 +107,7 @@ Returns `Unit`.
 ### Receiving: `channel.receive(ch)`
 
 ```silt
-when let Message(msg) = channel.receive(ch) else { return }
+when let channel.Message(msg) = channel.receive(ch) else { return }
 ```
 
 `channel.receive` takes one value from the channel's buffer. Its result type
@@ -242,7 +242,7 @@ task.spawn({ ->
 })
 
 -- this blocks until the spawned task calls channel.send
-when let Message(msg) = channel.receive(ch) else { return }
+when let channel.Message(msg) = channel.receive(ch) else { return }
 println(msg)  -- hello
 ```
 
@@ -256,9 +256,9 @@ given number of milliseconds. It is useful for adding deadlines to
 let ch = channel.new(10)
 let timer = channel.timeout(5000)  -- closes after 5 seconds
 
-match channel.select([Recv(ch), Recv(timer)]) {
-  (^ch, Message(val))  -> println("got: {val}")
-  (^timer, Closed)     -> println("timed out after 5s")
+match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
+  (^ch, channel.Message(val))  -> println("got: {val}")
+  (^timer, channel.Closed)     -> println("timed out after 5s")
   _                    -> ()
 }
 ```
@@ -284,8 +284,8 @@ task.spawn({ ->
 
 match channel.recv_timeout(ch, time.ms(500)) {
   Ok(val)             -> println("got: {val}")
-  Err(ChannelTimeout) -> println("timed out")
-  Err(ChannelClosed)  -> println("channel closed")
+  Err(channel.ChannelTimeout) -> println("timed out")
+  Err(channel.ChannelClosed)  -> println("channel closed")
 }
 ```
 
@@ -327,7 +327,7 @@ let handle = task.spawn({ ->
 
 `task.spawn` takes a zero-argument function and submits it as a lightweight task
 to the thread pool. Spawning is cheap -- it allocates a stack and frames, not an
-OS thread. It returns a `Handle` value immediately.
+OS thread. It returns a `task.Handle` value immediately.
 
 The function is a closure: it captures variables from the surrounding scope.
 Since all values in silt are immutable, sharing captured variables between the
@@ -344,7 +344,7 @@ let h = task.spawn({ ->
 })
 
 task.join(h)
-when let Message(val) = channel.receive(ch) else { return }  -- val = 20
+when let channel.Message(val) = channel.receive(ch) else { return }  -- val = 20
 ```
 
 ### Joining: `task.join(handle)`
@@ -528,7 +528,7 @@ fn main() {
   })
   match outcome {
     Ok(contents) -> println(contents)
-    Err(IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
+    Err(io.IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
     Err(_) -> println("other io error")
   }
 }
@@ -547,7 +547,7 @@ let h = task.spawn_until(time.seconds(2), { ->
 `task.spawn_until(dur, f)` spawns `f` as a task with a bounded
 wall-clock deadline. It is equivalent to
 `task.spawn({ -> task.deadline(dur, f) })` but with one less closure
-wrapper. The returned `Handle(a)` resolves to the function's result if
+wrapper. The returned `task.Handle(a)` resolves to the function's result if
 it finishes in time, or to the deadline error inside any I/O builtin
 the task was blocked on when the deadline fired — the same typed
 timeout shapes as `task.deadline`:
@@ -575,7 +575,7 @@ fn main() {
 }
 ```
 
-Signature: `task.spawn_until(dur: Duration, f: () -> a) -> Handle(a)`.
+Signature: `task.spawn_until(dur: Duration, f: () -> a) -> task.Handle(a)`.
 
 
 ## 4. Select
@@ -593,10 +593,10 @@ two constructors:
   capacity or a rendezvous receiver parked on it.
 
 ```silt
-match channel.select([Recv(ch1), Recv(ch2)]) {
-  (^ch1, Message(val))  -> handle_input(val)
-  (^ch2, Message(val))  -> handle_other(val)
-  (_, Closed)           -> println("all done")
+match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
+  (^ch1, channel.Message(val))  -> handle_input(val)
+  (^ch2, channel.Message(val))  -> handle_other(val)
+  (_, channel.Closed)           -> println("all done")
   _                     -> ()
 }
 ```
@@ -622,10 +622,10 @@ let normal = channel.new(5)
 channel.send(urgent, "alert!")
 channel.send(normal, "status ok")
 
-match channel.select([Recv(urgent), Recv(normal)]) {
-  (^urgent, Message(msg)) -> println("URGENT: {msg}")
-  (^normal, Message(msg)) -> println("normal: {msg}")
-  (_, Closed)             -> println("all closed")
+match channel.select([channel.Recv(urgent), channel.Recv(normal)]) {
+  (^urgent, channel.Message(msg)) -> println("URGENT: {msg}")
+  (^normal, channel.Message(msg)) -> println("normal: {msg}")
+  (_, channel.Closed)             -> println("all closed")
   _                       -> println("no message")
 }
 ```
@@ -639,9 +639,9 @@ position, not just with `channel.select`.
 You do not always care which channel fired. Use `_` to match any channel:
 
 ```silt
-match channel.select([Recv(ch1), Recv(ch2)]) {
-  (_, Message(val)) -> println("got {val} from somewhere")
-  (_, Closed)       -> println("all done")
+match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
+  (_, channel.Message(val)) -> println("got {val} from somewhere")
+  (_, channel.Closed)       -> println("all done")
   _                 -> ()
 }
 ```
@@ -653,9 +653,9 @@ do not auto-derive `Display`, so log the payload (or a counter) instead of the
 channel itself:
 
 ```silt
-match channel.select([Recv(ch1), Recv(ch2)]) {
-  (_source, Message(val)) -> println("got {val}")
-  (_, Closed)             -> println("all done")
+match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
+  (_source, channel.Message(val)) -> println("got {val}")
+  (_, channel.Closed)             -> println("all done")
   _                       -> ()
 }
 ```
@@ -866,16 +866,16 @@ fn main() {
   -- `loop _ = () { ... loop(()) }` re-enters explicitly; a bare `loop {}`
   -- without a `loop(...)` recursion runs its body only once.
   loop _ = () {
-    match channel.select([Recv(alerts), Recv(logs)]) {
-      (^alerts, Message(msg)) -> {
+    match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
+      (^alerts, channel.Message(msg)) -> {
         println("alert: {msg}")
         loop(())
       }
-      (^logs,   Message(msg)) -> {
+      (^logs,   channel.Message(msg)) -> {
         println("log: {msg}")
         loop(())
       }
-      (_, Closed) -> {
+      (_, channel.Closed) -> {
         println("a channel closed")
         return ()
       }
@@ -920,7 +920,7 @@ fn main() {
 
   -- Wait for the worker to finish
   task.join(worker)
-  when let Message(status) = channel.receive(done) else { return }
+  when let channel.Message(status) = channel.receive(done) else { return }
   println(status)
 }
 -- prints:
@@ -953,9 +953,9 @@ fn main() {
   workers |> list.each { w -> task.join(w) }
   channel.close(results)
 
-  when let Message(r1) = channel.receive(results) else { return }
-  when let Message(r2) = channel.receive(results) else { return }
-  when let Message(r3) = channel.receive(results) else { return }
+  when let channel.Message(r1) = channel.receive(results) else { return }
+  when let channel.Message(r2) = channel.receive(results) else { return }
+  when let channel.Message(r3) = channel.receive(results) else { return }
   println("results: {r1}, {r2}, {r3}")
   -- output: results: 10, 20, 30 (in some order — the receive order is
   -- a permutation of the spawn order, since the workers race to send)
@@ -971,12 +971,12 @@ knowing the exact count:
 import channel
 fn drain(ch) {
   match channel.try_receive(ch) {
-    Message(val) -> {
+    channel.Message(val) -> {
       println("got: {val}")
       drain(ch)
     }
-    Empty  -> println("no more data (channel still open)")
-    Closed -> println("channel closed, all done")
+    channel.Empty  -> println("no more data (channel still open)")
+    channel.Closed -> println("channel closed, all done")
     _ -> ()
   }
 }
@@ -1034,7 +1034,7 @@ fn spawn_worker(id, jobs, outcomes) {
 
 fn supervise(jobs, outcomes, outstanding, remaining_restarts) {
   when outstanding > 0 else { return }
-  when let Message((id, outcome)) = channel.receive(outcomes) else { return }
+  when let channel.Message((id, outcome)) = channel.receive(outcomes) else { return }
   match outcome {
     Finished -> supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
     Crashed(msg) -> {
@@ -1298,19 +1298,19 @@ tasks that are stuck while `main` is not waiting on them stay parked.
 |---|---|---|
 | Create channel | `channel.new()` / `channel.new(n)` | `Channel` |
 | Send (blocking) | `channel.send(ch, val)` | `Unit` |
-| Receive (blocking) | `channel.receive(ch)` | `ChannelResult(a)` -- `Message(val)` or `Closed` in practice; `Empty`/`Sent` are unreachable here but still required by exhaustiveness |
+| Receive (blocking) | `channel.receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)` or `channel.Closed` in practice; `channel.Empty`/`channel.Sent` are unreachable here but still required by exhaustiveness |
 | Close | `channel.close(ch)` | `Unit` |
 | Try send | `channel.try_send(ch, val)` | `true` or `false` |
-| Try receive | `channel.try_receive(ch)` | `ChannelResult(a)` -- `Message(val)`, `Empty`, or `Closed` in practice; `Sent` is unreachable here but still required by exhaustiveness |
+| Try receive | `channel.try_receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)`, `channel.Empty`, or `channel.Closed` in practice; `channel.Sent` is unreachable here but still required by exhaustiveness |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
-| Select | `channel.select([Recv(ch1), Send(ch2, v)])` | `(channel, Message(val))`, `(channel, Closed)`, `(channel, Sent)` |
+| Select | `channel.select([channel.Recv(ch1), channel.Send(ch2, v)])` | `(channel, channel.Message(val))`, `(channel, channel.Closed)`, `(channel, channel.Sent)` |
 | Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
-| Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, ChannelError)` -- `Ok(val)`, `Err(ChannelTimeout)`, or `Err(ChannelClosed)`; a buffered value wins over an expired timer |
-| Spawn task | `task.spawn({ -> ... })` | `Handle` |
+| Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, channel.ChannelError)` -- `Ok(val)`, `Err(channel.ChannelTimeout)`, or `Err(channel.ChannelClosed)`; a buffered value wins over an expired timer |
+| Spawn task | `task.spawn({ -> ... })` | `task.Handle(a)` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
 | Cancel task | `task.cancel(handle)` | `Unit` (a failure of the task is then not reported) |
 | Scoped deadline | `task.deadline(dur, { -> ... })` | Callback's return value (typed timeout variant if I/O exceeds `dur`) |
-| Bounded spawn | `task.spawn_until(dur, { -> ... })` | `Handle(a)` (typed timeout variant if I/O exceeds `dur`) |
+| Bounded spawn | `task.spawn_until(dur, { -> ... })` | `task.Handle(a)` (typed timeout variant if I/O exceeds `dur`) |
 
 The mental model: tasks are independent workers, channels are the pipes between
 them, `channel.select` is a multiplexer, and `task.join` is a synchronization

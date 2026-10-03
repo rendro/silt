@@ -1,0 +1,13 @@
+-- verdict: same
+-- recursive type auto-derive
+type Tree(a) { Leaf, Node(Tree(a), a, Tree(a)) }
+fn main() {
+  let t = Node(Node(Leaf, 1, Leaf), 2, Leaf)
+  let u = Node(Node(Leaf, 1, Leaf), 2, Leaf)
+  println(t == u)
+  println(t < u)
+  println(t.hash() == u.hash())
+  println(t)
+  let ft = Node(Leaf, fn(x) { x }, Leaf)
+  println(ft == ft)
+}

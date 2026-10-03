@@ -1,0 +1,11 @@
+-- verdict: same
+trait Shape { fn area(self) -> Int }
+type Sq { s: Int }
+trait Shape for Sq { fn area(self) -> Int { self.s * self.s } }
+
+fn total(a, b) { a.area() + b.area() }
+
+fn main() {
+  println(total(Sq { s: 2 }, Sq { s: 3 }))
+  println(total(1, 2))
+}

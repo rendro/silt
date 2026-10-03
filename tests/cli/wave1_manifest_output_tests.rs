@@ -51,6 +51,9 @@ const HOSTILE: &str = "x\nerror: FORGED all checks passed\u{1b}[2K\u{202e}";
 /// [`HOSTILE`] as silt must show it.
 const HOSTILE_ESCAPED: &str = "x\\nerror: FORGED all checks passed\\u{1b}[2K\\u{202e}";
 
+/// A full commit id, the one shape a lockfile `rev` has.
+const FULL_REV: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+
 /// What a line of output starts with if [`HOSTILE`] forged it.
 const FORGED_LINE: &str = "error: FORGED";
 
@@ -349,9 +352,16 @@ fn assert_hostile_value_is_escaped(out: &Outcome, expected: &str, times: usize, 
         out.stderr.contains(expected),
         "{context}: expected `{expected}` on stderr; {out:?}"
     );
+    // The header and the lines below the snippet: the marks under the
+    // snippet repeat the message.
+    let shown = out
+        .stderr
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('|'))
+        .map(|line| line.matches(HOSTILE_ESCAPED).count())
+        .sum::<usize>();
     assert_eq!(
-        out.stderr.matches(HOSTILE_ESCAPED).count(),
-        times,
+        shown, times,
         "{context}: the escaped value must be shown {times} time(s); {out:?}"
     );
     assert_no_forged_line(out, context);
@@ -361,7 +371,8 @@ fn assert_hostile_value_is_escaped(out: &Outcome, expected: &str, times: usize, 
 /// line of it starts with the forged words, indented or not.
 fn assert_no_forged_line(out: &Outcome, context: &str) {
     assert!(
-        out.stderr.starts_with("error: ") && !out.stderr.starts_with(FORGED_LINE),
+        (out.stderr.starts_with("error: ") || out.stderr.starts_with("error[package]: "))
+            && !out.stderr.starts_with(FORGED_LINE),
         "{context}: stderr must start with silt's error line; {out:?}"
     );
     for line in out.stderr.lines() {
@@ -404,8 +415,9 @@ fn assert_check_escapes_lockfile(tag: &str, lockfile_text: &str, expected: &str,
 
     assert_hostile_value_is_escaped(&out, expected, times, tag);
     assert!(
-        out.stderr.starts_with("error: invalid lockfile "),
-        "{tag}: expected a lockfile error; {out:?}"
+        out.stderr.starts_with("error[package]: invalid lockfile: ")
+            && out.stderr.contains(" --> silt.lock:"),
+        "{tag}: expected a lockfile error in silt.lock; {out:?}"
     );
     assert_eq!(
         fs::read_to_string(app.join("silt.lock")).unwrap(),
@@ -522,15 +534,15 @@ fn duplicate_manifest_key_is_escaped() {
 }
 
 /// The value of a `path` dependency that does not exist is shown twice:
-/// as the name of the dependency and as the path. FAILS on the base
-/// commit: both are printed as they are.
+/// as the path in the message and in the path it resolves to. FAILS on
+/// the base commit: both are printed as they are.
 #[test]
 fn path_dependency_value_is_escaped() {
     let line = format!("dep = {{ path = {} }}", toml_str(&format!("../{HOSTILE}")));
     assert_check_escapes(
         "path_value",
         &manifest("app", &dependencies(&line)),
-        &format!("dependency `{HOSTILE_ESCAPED}` path does not exist: "),
+        &format!("dependency `dep`: path `../{HOSTILE_ESCAPED}` does not exist"),
         2,
     );
 }
@@ -551,8 +563,8 @@ fn path_dependency_without_a_manifest_is_escaped() {
 
     assert_hostile_value_is_escaped(
         &out,
-        &format!("error: dependency `{HOSTILE_ESCAPED}` at "),
-        2,
+        &format!("error[package]: dependency `dep`: `../{HOSTILE_ESCAPED}` is not"),
+        1,
         "path_no_manifest",
     );
     assert!(
@@ -579,7 +591,7 @@ fn path_of_a_dependency_manifest_is_escaped() {
 
     assert_hostile_value_is_escaped(
         &out,
-        &format!("{HOSTILE_ESCAPED}/silt.toml: invalid package version `not-a-version`"),
+        &format!("--> ../{HOSTILE_ESCAPED}/silt.toml:3:11"),
         1,
         "dep_manifest_path",
     );
@@ -625,9 +637,8 @@ fn value_in_a_transitive_manifest_is_escaped() {
             &context,
         );
         assert!(
-            out.stderr.starts_with("error: invalid manifest ")
-                && out.stderr.contains("inner")
-                && out.stderr.contains("silt.toml"),
+            out.stderr.starts_with("error[package]: invalid manifest: ")
+                && out.stderr.contains(" --> ../inner/silt.toml:3:11"),
             "{context}: the error must point at the manifest of `inner`; {out:?}"
         );
         let _ = fs::remove_dir_all(&ws);
@@ -660,9 +671,21 @@ fn ref_value_with_once_missed_characters_is_escaped() {
 
         let context = format!("{key} with U+{:04X}", c as u32);
         assert_printable_outcome(&out, 1, &context);
-        let shown = format!("{key} = `main\\u{{{:x}}}x`", c as u32);
+        // A rev that is not a commit id is the manifest's error; a
+        // branch or a tag reaches git.
+        let (first, shown) = if key == "rev" {
+            (
+                "error[package]: invalid manifest: ",
+                format!("got `main\\u{{{:x}}}x`", c as u32),
+            )
+        } else {
+            (
+                "error[package]: git dependency ",
+                format!("{key} = `main\\u{{{:x}}}x`", c as u32),
+            )
+        };
         assert!(
-            out.stderr.starts_with("error: git dependency ") && out.stderr.contains(&shown),
+            out.stderr.starts_with(first) && out.stderr.contains(&shown),
             "{context}: expected `{shown}` on stderr; {out:?}"
         );
         let _ = fs::remove_dir_all(&ws);
@@ -696,14 +719,14 @@ fn lockfile_package_name_is_escaped() {
         ),
         (
             "lock_git_without_checksum",
-            format!("version = \"0.1.0\"\nsource = {{ {url}, rev = \"abc1234\" }}\n"),
+            format!("version = \"0.1.0\"\nsource = {{ {url}, rev = \"{FULL_REV}\" }}\n"),
             "has source but no checksum",
         ),
         (
             "lock_branch_and_tag",
             format!(
                 "version = \"0.1.0\"\n\
-                 source = {{ {url}, rev = \"abc1234\", branch = \"a\", tag = \"b\" }}\n"
+                 source = {{ {url}, rev = \"{FULL_REV}\", branch = \"a\", tag = \"b\" }}\n"
             ),
             "git source has both `branch` and `tag`",
         ),
@@ -756,16 +779,16 @@ fn duplicate_lockfile_key_is_escaped() {
     assert_check_escapes_lockfile(
         "lock_duplicate_key",
         &lockfile,
-        &format!("line 3, column 1: duplicate key `{HOSTILE_ESCAPED}`"),
+        &format!("duplicate key `{HOSTILE_ESCAPED}`"),
         1,
     );
 }
 
 /// A lockfile that is not TOML: the line the parser stops at holds an
-/// escape character and U+202E as they are. The error gives the
-/// position and the parser's message, on the parser's two lines, and
-/// does not quote the line of the file. FAILS on the base commit: the
-/// line is quoted as it is.
+/// escape character and U+202E as they are. The error points at the
+/// position, gives the parser's message on the parser's two lines, and
+/// shows the line of the file by the display rule. FAILS on the base
+/// commit: the line is quoted as it is.
 #[test]
 fn lockfile_syntax_error_does_not_quote_the_file() {
     let ws = fresh_workspace("lock_syntax");
@@ -779,18 +802,21 @@ fn lockfile_syntax_error_does_not_quote_the_file() {
     assert_printable_outcome(&out, 1, "lock_syntax");
     assert_no_forged_line(&out, "lock_syntax");
     assert!(
-        !out.stderr.contains("FORGED"),
-        "the error must not quote the line of the file; {out:?}"
+        out.stderr
+            .contains("name = oops\\u{1b}[2K\\u{202e} error: FORGED"),
+        "the line of the file must be shown escaped; {out:?}"
     );
     let lines: Vec<&str> = out.stderr.lines().collect();
-    assert_eq!(lines.len(), 2, "expected the parser's two lines; {out:?}");
-    assert!(
-        lines[0].starts_with("error: invalid lockfile ")
-            && lines[0].ends_with("silt.lock: line 4, column 8: invalid string"),
-        "expected a lockfile error with the position; {out:?}"
+    assert_eq!(
+        lines[0], "error[package]: invalid lockfile: invalid string",
+        "expected a lockfile error with the parser's first line; {out:?}"
+    );
+    assert_eq!(
+        lines[1], " --> silt.lock:4:8",
+        "expected the position; {out:?}"
     );
     assert!(
-        lines[1].starts_with("expected "),
+        lines.iter().any(|l| l.starts_with("  = note: expected ")),
         "expected the parser's second line; {out:?}"
     );
     assert_eq!(
@@ -821,15 +847,14 @@ fn manifest_syntax_error_keeps_the_lines_of_the_parser() {
 
     assert_printable_outcome(&out, 1, "manifest_syntax");
     let lines: Vec<&str> = out.stderr.lines().collect();
-    assert_eq!(lines.len(), 2, "expected the parser's two lines; {out:?}");
-    assert!(
-        lines[0].starts_with("error: invalid manifest ")
-            && lines[0].ends_with("silt.toml: invalid string"),
+    assert_eq!(
+        lines[0], "error[package]: invalid manifest: invalid string",
         "expected the parser's first line; {out:?}"
     );
+    assert_eq!(lines[1], " --> silt.toml:2:8", "{out:?}");
     assert!(
-        lines[1].starts_with("expected "),
-        "expected the parser's second line; {out:?}"
+        lines.last().unwrap().starts_with("  = note: expected "),
+        "expected the parser's second line as a note; {out:?}"
     );
     let _ = fs::remove_dir_all(&ws);
 }
@@ -854,15 +879,14 @@ fn manifest_syntax_error_is_one_line_if_a_value_can_hold_a_line_break() {
         let out = silt(&ws, &app, &["check"]);
 
         assert_printable_outcome(&out, 1, tag);
-        assert_eq!(
-            out.stderr.lines().count(),
-            1,
-            "{tag}: the error must be one line; {out:?}"
+        assert!(
+            out.stderr
+                .starts_with("error[package]: invalid manifest: invalid string\\nexpected "),
+            "{tag}: expected the parser's message on one line; {out:?}"
         );
         assert!(
-            out.stderr.starts_with("error: invalid manifest ")
-                && out.stderr.contains("silt.toml: invalid string\\nexpected "),
-            "{tag}: expected the parser's message on one line; {out:?}"
+            !out.stderr.contains("= note:"),
+            "{tag}: the message must not go on; {out:?}"
         );
         let _ = fs::remove_dir_all(&ws);
     }
@@ -891,7 +915,7 @@ fn visible_characters_in_a_path_value_are_printed_as_they_are() {
     assert_printable_outcome(&out, 1, "visible_path_value");
     assert!(
         out.stderr
-            .starts_with("error: dependency `\u{65e5}\u{672c}` path does not exist: "),
+            .starts_with("error[package]: dependency `dep`: path `../Projekte"),
         "expected the missing dependency to be reported; {out:?}"
     );
     for name in VISIBLE_NAMES {
@@ -900,15 +924,14 @@ fn visible_characters_in_a_path_value_are_printed_as_they_are() {
             "expected {name:?} as it is on stderr; {out:?}"
         );
     }
-    assert!(
-        !out.stderr.contains("\\u{"),
-        "nothing in this path is to be shown as an escape; {out:?}"
-    );
-    assert_eq!(
-        out.stderr.lines().count(),
-        1,
-        "the error must be one line; {out:?}"
-    );
+    // The snippet shows the file's text, where TOML escapes are the
+    // file's own; the message and the note show the decoded path.
+    for line in out.stderr.lines().filter(|l| !l.contains(" | ")) {
+        assert!(
+            !line.contains("\\u{"),
+            "nothing in this path is to be shown as an escape: {line:?}; {out:?}"
+        );
+    }
     let _ = fs::remove_dir_all(&ws);
 }
 
@@ -925,15 +948,18 @@ fn visible_characters_in_the_path_of_a_manifest_are_printed_as_they_are() {
         "[package]\nname = \"app\"\nversion = \"not-a-version\"\n",
     );
 
-    let out = silt(&ws, &app, &["check"]);
+    // From the workspace, the manifest is named by a path through the
+    // directory.
+    let entry = format!("{dir_name}/app/src/main.silt");
+    let out = silt(&ws, &ws, &["check", &entry]);
 
     assert_printable_outcome(&out, 1, "visible_manifest_path");
     assert!(
-        out.stderr.starts_with("error: invalid manifest ")
-            && out.stderr.contains(&dir_name)
-            && out
-                .stderr
-                .contains("silt.toml: invalid package version `not-a-version`: "),
+        out.stderr.starts_with(
+            "error[package]: invalid manifest: invalid package version `not-a-version`: "
+        ) && out
+            .stderr
+            .contains(&format!(" --> {dir_name}/app/silt.toml:3:11")),
         "expected the manifest error with the directory name as it is; {out:?}"
     );
     assert!(
@@ -1119,19 +1145,17 @@ fn assert_url_rejected(url: &str, rule: &str) {
     let context = format!("git URL {url:?}");
     assert_printable_outcome(&out, 1, &context);
     assert!(
-        out.stderr.starts_with("error: invalid manifest "),
+        out.stderr.starts_with("error[package]: invalid manifest: "),
         "{context}: the URL must be rejected; {out:?}"
     );
     let shown_url: String = url.chars().map(shown).collect();
     let expected = format!("dependency `remote`: invalid git URL `{shown_url}`: {rule}");
     assert!(
-        out.stderr.contains(&expected),
-        "{context}: expected `{expected}` on stderr; {out:?}"
-    );
-    assert_eq!(
-        out.stderr.lines().count(),
-        1,
-        "{context}: the error must be one line; {out:?}"
+        out.stderr
+            .lines()
+            .next()
+            .is_some_and(|l| l.contains(&expected)),
+        "{context}: expected `{expected}` on the first line; {out:?}"
     );
 }
 
@@ -1270,12 +1294,17 @@ fn unaccepted_scheme_names_the_replacement() {
 
 // ── 3. git's own output ───────────────────────────────────────────────
 
-/// What every line of git's output starts with.
+/// What every line of git's output starts with, as a line of a message.
 const GIT_LINE: &str = "  git: ";
+
+/// What a line of git's output starts with as a diagnostic's note, after
+/// `= note: `: the mark without the indent.
+const GIT_NOTE: &str = "git: ";
 
 /// Assert that `stderr` is one line of silt's, starting with `first`
 /// and showing the git command as it was run, followed by at least two
-/// lines of git's, each one marked.
+/// lines of git's, each one marked. A diagnostic's place (the `-->` line
+/// and the snippet) may come between, and git's lines may be its notes.
 fn assert_git_output_is_marked(out: &Outcome, first: &str, command: &str, context: &str) {
     assert_printable_outcome(out, 1, context);
     let lines: Vec<&str> = out.stderr.lines().collect();
@@ -1291,14 +1320,32 @@ fn assert_git_output_is_marked(out: &Outcome, first: &str, command: &str, contex
         lines[0].contains(command),
         "{context}: expected the command `{command}` on the first line; {out:?}"
     );
-    for line in &lines[1..] {
+    let is_place = |line: &str| {
+        line.starts_with(" --> ")
+            || line
+                .trim_start()
+                .trim_start_matches(|c: char| c.is_ascii_digit())
+                .trim_start()
+                .starts_with('|')
+    };
+    let mut marked = 0;
+    for line in lines[1..].iter().filter(|l| !is_place(l)) {
         // An empty line of git's is the mark alone, without its
         // trailing space.
+        let mark = match line.strip_prefix("  = note: ") {
+            Some(note) => note.starts_with(GIT_NOTE) || note == GIT_NOTE.trim_end(),
+            None => line.starts_with(GIT_LINE) || *line == GIT_LINE.trim_end(),
+        };
         assert!(
-            line.starts_with(GIT_LINE) || *line == GIT_LINE.trim_end(),
+            mark,
             "{context}: the line {line:?} of git's output is not marked; {out:?}"
         );
+        marked += 1;
     }
+    assert!(
+        marked >= 2,
+        "{context}: expected two lines of git's; {out:?}"
+    );
 }
 
 /// git fails on a repository that does not exist, and says so on
@@ -1322,7 +1369,10 @@ fn every_line_of_git_output_is_marked() {
 
         assert_git_output_is_marked(
             &out,
-            &format!("error: git dependency `{url}` (branch = `main`): git command failed"),
+            &format!(
+                "error[package]: git dependency `remote` (`{url}`, branch = `main`): \
+                 git command failed"
+            ),
             &format!("`git -c protocol.ext.allow=never ls-remote -- {url} refs/heads/main`"),
             &format!("silt {subcommand}"),
         );
@@ -1495,16 +1545,13 @@ fn version_with_a_malformed_build_part_is_rejected() {
             let context = format!("{tag}, run {run}");
             assert_printable_outcome(&out, 1, &context);
             assert_no_forged_line(&out, &context);
-            let expected = format!("silt.toml: invalid package version `1.0.0+{shown_build}`: ");
-            assert!(
-                out.stderr.starts_with("error: invalid manifest ")
-                    && out.stderr.contains(&expected),
-                "{context}: expected `{expected}` on stderr; {out:?}"
+            let expected = format!(
+                "error[package]: invalid manifest: invalid package version `1.0.0+{shown_build}`: "
             );
-            assert_eq!(
-                out.stderr.lines().count(),
-                1,
-                "{context}: the error must be one line; {out:?}"
+            assert!(
+                out.stderr.starts_with(&expected)
+                    && out.stderr.contains(" --> ../dep/silt.toml:3:"),
+                "{context}: expected `{expected}` at the dependency's manifest; {out:?}"
             );
             assert!(
                 !app.join("silt.lock").exists(),

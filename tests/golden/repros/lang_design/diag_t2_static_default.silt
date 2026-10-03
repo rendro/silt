@@ -1,0 +1,22 @@
+-- verdict: same
+trait Default {
+  fn default() -> Self
+}
+trait Default for Int {
+  fn default() -> Self { 0 }
+}
+type P { x: Int }
+trait Default for P {
+  fn default() -> Self { P { x: 7 } }
+}
+fn make(type a) -> a where a: Default {
+  a.default()
+}
+fn main() {
+  println(make(Int))
+  println(make(P))
+  println(P.default())
+  let t = P
+  println(make(t))
+  println(make(String))
+}

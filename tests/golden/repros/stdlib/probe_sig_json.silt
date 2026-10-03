@@ -1,0 +1,9 @@
+-- verdict: same
+import json
+fn main() {
+  let v_json_parse: Int = json.parse
+  let v_json_parse_list: Int = json.parse_list
+  let v_json_parse_map: Int = json.parse_map
+  let v_json_pretty: Int = json.pretty
+  let v_json_stringify: Int = json.stringify
+}

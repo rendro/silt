@@ -1,7 +1,7 @@
 import io
 import json
 import time
-type Event { name: String, date: Date }
+type Event { name: String, date: time.Date }
 fn program() { json.parse("\{\"name\": \"x\", \"date\": \"not-a-date\"\}", Event) }
 
 fn main() {

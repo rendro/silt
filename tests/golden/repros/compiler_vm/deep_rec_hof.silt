@@ -1,0 +1,20 @@
+-- verdict: same
+import list
+fn go(n) {
+  match n {
+    0 -> 0
+    _ -> {
+      let r = [n - 1] |> list.map { x -> go(x) }
+      match r {
+        [v] -> v + 1
+        _ -> 0
+      }
+    }
+  }
+}
+fn main() {
+  println(go(1000))
+  println(go(5000))
+  println(go(20000))
+  println(go(90000))
+}

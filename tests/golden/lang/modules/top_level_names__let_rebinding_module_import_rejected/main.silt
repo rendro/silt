@@ -2,7 +2,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[parse]
--- stderr-contains: 'other' is bound twice at the top level: by the import at line 6 and by the let binding here
+-- stderr-contains: 'other' is bound twice at the top level: by the import and by the let binding here
 import other
 type P { year: Int }
 let other = P { year: 9 }

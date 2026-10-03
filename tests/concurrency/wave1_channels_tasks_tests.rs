@@ -203,16 +203,16 @@ fn main() {
   })
 
   loop _ = () {
-    match channel.select([Recv(alerts), Recv(logs)]) {
-      (^alerts, Message(msg)) -> {
+    match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
+      (^alerts, channel.Message(msg)) -> {
         println("alert: {msg}")
         loop(())
       }
-      (^logs,   Message(msg)) -> {
+      (^logs,   channel.Message(msg)) -> {
         println("log: {msg}")
         loop(())
       }
-      (_, Closed) -> {
+      (_, channel.Closed) -> {
         println("a channel closed")
         return ()
       }
@@ -309,7 +309,7 @@ fn collect(ch, n, acc) {
   match n {
     0 -> acc
     _ -> match channel.receive(ch) {
-      Message(v) -> collect(ch, n - 1, acc + v)
+      channel.Message(v) -> collect(ch, n - 1, acc + v)
       _ -> acc
     }
   }

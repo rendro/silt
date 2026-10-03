@@ -1,0 +1,7 @@
+-- verdict: same
+-- Adds one to its argument.
+fn inc(x) = x + 1
+
+fn main() {
+  println("{inc(1)}")
+}

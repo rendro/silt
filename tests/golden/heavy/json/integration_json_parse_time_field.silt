@@ -1,7 +1,7 @@
 import io
 import json
 import time
-type Alarm { label: String, at: Time }
+type Alarm { label: String, at: time.Time }
 fn program() {
   when let Ok(a) = json.parse("\{\"label\": \"wake up\", \"at\": \"07:30:00\"\}", Alarm) else { panic("unexpected Err") }
   (a.at.hour, a.at.minute)

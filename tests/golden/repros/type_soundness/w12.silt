@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+import map
+fn keyed(k: a) -> Map(a, Int) where a: Hash { #{ k: 1 } }
+fn main() {
+  let ms = list.map([fn(x) { x }], keyed)
+  println(list.length(ms))
+  let sorted = [fn(x) { x + 1 }] |> list.map(fn(f) { f }) |> list.sort
+  println(list.length(sorted))
+}

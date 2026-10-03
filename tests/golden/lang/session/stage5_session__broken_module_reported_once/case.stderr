@@ -1,0 +1,13 @@
+error[parse]: expected '}' to close block, found EOF
+ --> broken.silt:4:2
+   |
+ 4 | }
+   |  ^ expected '}' to close block, found EOF
+ ::: broken.silt:2:30
+   |
+ 2 | pub fn area(s: Shape) -> Int {
+   |                              - the block starts here
+ ::: main.silt:5:1
+   |
+ 5 | import broken
+   | ------------- module 'broken' is imported here

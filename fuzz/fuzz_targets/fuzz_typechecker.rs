@@ -2,7 +2,6 @@
 use libfuzzer_sys::fuzz_target;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
-use silt::typechecker;
 
 /// Cap on the number of diagnostics any single typecheck pass may
 /// emit before we treat it as a runaway. Real programs (even the
@@ -22,7 +21,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     // 2. Lex — typechecker only sees token streams that lexed cleanly.
-    let Ok(tokens) = Lexer::new(s).tokenize() else {
+    let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() else {
         return;
     };
 
@@ -30,13 +29,13 @@ fuzz_target!(|data: &[u8]| {
     //    parser's own panic-freedom is the subject of fuzz_parser; here
     //    we skip parse errors so this driver focuses on the
     //    typechecker.
-    let Ok(mut program) = Parser::new(tokens).parse_program() else {
+    let Ok(_) = Parser::new(tokens, s).parse_program() else {
         return;
     };
 
-    // 4. Run the typechecker. Must never panic / unwind on any input
-    //    that lexed and parsed.
-    let errors = typechecker::check(&mut program);
+    // 4. Analyse it as every front door does. Must never panic /
+    //    unwind on any input that lexed and parsed.
+    let errors = silt::session::testing::analyze_str(s).1;
 
     // 5. Diagnostic count must be bounded — runaway diagnostic
     //    generation indicates a cascade-reporting bug.
@@ -50,8 +49,8 @@ fuzz_target!(|data: &[u8]| {
     // 6. Every diagnostic must be well-formed:
     //    a. Non-empty message (an empty string would render as a blank
     //       line in the CLI / LSP and is always a bug).
-    //    b. Span byte-offset must lie within the source (or be 0 for
-    //       compiler-synthesized nodes per `Span::synthetic()`). A
+    //    b. The span must end within the source (`Span::BUILTIN`, for
+    //       what silt declares itself, is the empty span at 0). A
     //       diagnostic pointing past EOF would mis-render the caret.
     let src_len = s.len();
     for (idx, err) in errors.iter().enumerate() {
@@ -60,10 +59,10 @@ fuzz_target!(|data: &[u8]| {
             "diagnostic #{idx} has empty message: {err:?}"
         );
         assert!(
-            err.span.offset <= src_len,
-            "diagnostic #{idx} span.offset {} exceeds source length {} \
+            err.span.end as usize <= src_len,
+            "diagnostic #{idx} span end {} exceeds source length {} \
              (message: {:?})",
-            err.span.offset,
+            err.span.end,
             src_len,
             err.message
         );

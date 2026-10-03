@@ -1,0 +1,7 @@
+-- verdict: same
+let a = b + 1
+let b = 10
+
+fn main() {
+  println(a)
+}

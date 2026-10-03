@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let s = match 5 { 1..5 -> "in", _ -> "out" }
+  println(s)
+}

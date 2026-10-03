@@ -1,0 +1,5 @@
+-- verdict: same
+fn neg(x) {-x}
+fn main() {
+  println("{neg(3)}")
+}

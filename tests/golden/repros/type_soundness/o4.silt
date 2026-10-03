@@ -1,0 +1,4 @@
+-- verdict: same
+type L = List(L)
+fn f(x: L) -> Int { 1 }
+fn main() { println(f([])) }

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]: a trait declaration's name has no qualifier
+trait m.Describe {
+  fn describe(self) -> String
+}
+
+fn main() {}

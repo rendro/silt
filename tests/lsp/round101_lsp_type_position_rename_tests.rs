@@ -82,26 +82,20 @@ fn pos_of(text: &str, needle: &str, occurrence: usize) -> (u64, u64) {
     (line, (off - line_start) as u64)
 }
 
-/// Full front-end gate: the source must lex, parse without recovery
-/// errors, and typecheck cleanly. This is the load-bearing assertion —
+/// Full front-end gate: the source must check cleanly (lex, parse,
+/// typecheck and compile, through the session). This is the load-bearing assertion —
 /// the round-101 bug produced WorkspaceEdits whose application yielded
 /// `unknown type` errors, i.e. this function returning an Err.
 fn front_end_errors(source: &str) -> Result<(), String> {
-    let tokens = silt::lexer::Lexer::new(source)
-        .tokenize()
-        .map_err(|e| format!("lex error: {e:?}"))?;
-    let (mut program, parse_errors) = silt::parser::Parser::new(tokens).parse_program_recovering();
-    if !parse_errors.is_empty() {
-        return Err(format!("parse errors: {parse_errors:?}"));
-    }
-    let type_errors: Vec<_> = silt::typechecker::check(&mut program)
+    let errors: Vec<_> = silt::session::testing::check_str(source)
         .into_iter()
-        .filter(|e| e.severity == silt::types::Severity::Error)
+        .filter(|e| e.is_error())
         .collect();
-    if !type_errors.is_empty() {
-        return Err(format!("type errors: {type_errors:?}"));
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("errors: {errors:?}"))
     }
-    Ok(())
 }
 
 /// One `Point` reference per type-position class:

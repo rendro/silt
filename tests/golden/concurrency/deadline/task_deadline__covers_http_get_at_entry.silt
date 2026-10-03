@@ -10,7 +10,7 @@ fn main() {
   })
   match outcome {
     Ok(_) -> println("unexpected ok")
-    Err(HttpTimeout) -> println("http-timeout")
+    Err(http.HttpTimeout) -> println("http-timeout")
     Err(other) -> println("other: {other.message()}")
   }
 }

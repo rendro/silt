@@ -1,0 +1,6 @@
+import calc
+pub fn go() -> Int {
+  let y = totally_undefined_name + 1
+  calc.nonexistent(y)
+}
+pub fn bad() -> String { calc.f() }

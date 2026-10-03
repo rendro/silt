@@ -1,0 +1,12 @@
+-- verdict: same
+type String { S }
+type Bool { Yes, No }
+fn main() {
+  let b: Bool = true
+  let s: String = "x"
+  println(s)
+  match 1 == 1 {
+    true -> println("t")
+    false -> println("f")
+  }
+}

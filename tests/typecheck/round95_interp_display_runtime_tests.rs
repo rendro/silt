@@ -97,7 +97,11 @@ fn value_implements_display_predicate_covers_every_no_display_value() {
     // they hold live sockets — so the runtime tests above cover the live
     // path; here we cover the cheaply-constructible no-Display values.)
     let handle = Value::Handle(Arc::new(TaskHandle::new(0)));
-    let type_desc = Value::TypeDescriptor("Int".to_string());
+    let type_desc = Value::TypeDescriptor(
+        silt::typeinfo::builtin_type_named("List")
+            .expect("List")
+            .clone(),
+    );
     let prim_desc = Value::PrimitiveDescriptor("Int".to_string());
     for v in [&handle, &type_desc, &prim_desc] {
         assert!(

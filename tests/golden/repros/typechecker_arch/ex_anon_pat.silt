@@ -1,0 +1,8 @@
+-- verdict: same
+fn f(r: {a: Bool, b: Bool}) -> Int {
+  match r {
+    {a: true, b} -> 1
+    {a: false, b: true} -> 2
+  }
+}
+fn main() { println(f({a: false, b: false})) }

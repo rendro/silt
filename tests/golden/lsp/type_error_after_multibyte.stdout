@@ -1,0 +1,1 @@
+8:22 error operator '+' requires Int or Float, got 'Bool'

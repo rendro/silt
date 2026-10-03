@@ -1,0 +1,7 @@
+-- verdict: same
+import task
+fn main() {
+  let h = task.spawn(fn() { 1 / 0 })
+  let r = task.join(h)
+  println("after join: {r}")
+}

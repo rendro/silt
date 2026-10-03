@@ -21,9 +21,9 @@ fn program() {
     match i >= 3 {
       true -> total
       _ -> {
-        let (_, msg) = channel.select([Recv(ch1), Recv(ch2), Recv(ch3)])
+        let (_, msg) = channel.select([channel.Recv(ch1), channel.Recv(ch2), channel.Recv(ch3)])
         match msg {
-          Message(val) -> loop(i + 1, total + val)
+          channel.Message(val) -> loop(i + 1, total + val)
           _ -> total
         }
       }

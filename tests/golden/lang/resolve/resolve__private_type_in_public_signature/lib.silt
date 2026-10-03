@@ -1,0 +1,6 @@
+type Id { Id(Int) }
+trait Greet { fn greet(self) -> String }
+pub fn make(n: Int) -> Id { Id(n) }
+pub fn hello(x: a) -> String where a: Greet { x.greet() }
+pub type Holder { id: Id }
+fn private_use(i: Id) -> Int { 1 }

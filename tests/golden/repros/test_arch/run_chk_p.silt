@@ -1,0 +1,6 @@
+-- verdict: same
+
+fn main() {
+  let [a, b, ..rest] = [1]
+  println(a)
+}

@@ -11,9 +11,9 @@ fn program() {
   let ch = channel.new(5)
   channel.send(ch, 100)
 
-  let outcome = match channel.select([Recv(ch), Send(ch, 200)]) {
-    (_, Message(val)) -> val
-    (_, Sent) -> -1
+  let outcome = match channel.select([channel.Recv(ch), channel.Send(ch, 200)]) {
+    (_, channel.Message(val)) -> val
+    (_, channel.Sent) -> -1
     _ -> -2
   }
   outcome == 100 || outcome == -1

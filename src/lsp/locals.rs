@@ -19,7 +19,7 @@ pub(super) fn locals_at_offset(program: &Program, cursor: usize) -> Vec<LocalVar
     let mut locals = Vec::new();
     for decl in &program.decls {
         if let Decl::Fn(f) = decl {
-            let fn_start = f.span.offset;
+            let fn_start = f.span.start as usize;
             // Rough check: cursor must be after the fn starts
             if cursor >= fn_start {
                 // Add function parameters
@@ -57,7 +57,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
             }
         }
         PatternKind::Record { fields, .. } => {
-            for (name, sub) in fields {
+            for (name, _, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, locals);
                 } else {
@@ -73,7 +73,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
             // also binds shorthand fields. Round-101: the named rest
             // binder (`{ x, ...rest }`) binds too — mirror the
             // typechecker's `collect_pattern_vars`.
-            for (name, sub) in fields {
+            for (name, _, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, locals);
                 } else {
@@ -83,7 +83,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                     });
                 }
             }
-            if let Some(r) = rest {
+            if let Some((r, _)) = rest {
                 locals.push(LocalVar {
                     name: r.to_string(),
                     ty: None,
@@ -124,7 +124,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                 match stmt {
                     Stmt::Let { pattern, value, .. } => {
                         // The binding is only visible if defined before cursor
-                        if value.span.offset <= cursor {
+                        if (value.span.start as usize) <= cursor {
                             collect_pattern_names_typed(pattern, value.ty.as_ref(), locals);
                         }
                         collect_locals_in_expr(value, cursor, locals);
@@ -136,7 +136,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                         ..
                     } => {
                         // The pattern binding is visible after the when statement
-                        if expr.span.offset <= cursor {
+                        if (expr.span.start as usize) <= cursor {
                             collect_pattern_names(pattern, locals);
                             // Try to resolve types from the expression
                             // For `when let Ok(x) = expr`, if expr has type Result(T, E),
@@ -164,7 +164,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                 collect_locals_in_expr(e, cursor, locals);
             }
             for arm in arms {
-                if arm.body.span.offset <= cursor {
+                if (arm.body.span.start as usize) <= cursor {
                     collect_pattern_names(&arm.pattern, locals);
                 }
                 collect_locals_in_expr(&arm.body, cursor, locals);
@@ -177,8 +177,8 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
             collect_locals_in_expr(body, cursor, locals);
         }
         ExprKind::Loop { bindings, body } => {
-            for (name, init) in bindings {
-                if init.span.offset <= cursor {
+            for (name, _, init) in bindings {
+                if (init.span.start as usize) <= cursor {
                     locals.push(LocalVar {
                         name: name.to_string(),
                         ty: init.ty.clone(),
@@ -246,20 +246,14 @@ fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals:
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn parse_and_check(source: &str) -> Program {
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        program
-    }
+    use crate::lsp::testing::checked_program;
 
     // ── locals_at_offset ─────────────────────────────────────────
 
     #[test]
     fn test_locals_at_offset_params() {
         let source = "fn greet(name, age) { name }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let locals = locals_at_offset(&program, 22); // inside body
         let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
@@ -270,7 +264,7 @@ mod tests {
     #[test]
     fn test_locals_at_offset_let_binding() {
         let source = "fn main() {\n  let x = 10\n  let y = 20\n  x + y\n}";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // After both let bindings
         let locals = locals_at_offset(&program, 40);
@@ -286,7 +280,7 @@ mod tests {
         // the AnonRecord arm destructured `{ fields, .. }` and dropped
         // the rest symbol, so completion never offered `rest`.
         let source = "fn f(p) {\n  when let {x, ...rest} = p else { return 0 }\n  0\n}";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let locals = locals_at_offset(&program, source.len() - 2);
         let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
@@ -306,7 +300,7 @@ mod tests {
         // Or patterns (`A(v) | B(v)`) bind `v`; both previously fell to
         // the `_ => {}` catch-all so completion missed the binder.
         let source = "type T { A(Int), B(Int) }\nfn g(m, x) {\n  let a = match m { #{\"k\": v} -> v, _ -> 0 }\n  let b = match x { A(v2) | B(v2) -> v2 }\n  a + b\n}";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         let locals = locals_at_offset(&program, source.len() - 2);
         let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
@@ -323,7 +317,7 @@ mod tests {
     #[test]
     fn test_locals_at_offset_empty_outside_fn() {
         let source = "let x = 42\nfn main() { 0 }";
-        let program = parse_and_check(source);
+        let program = checked_program(source);
 
         // Outside any function (offset 0)
         let locals = locals_at_offset(&program, 0);

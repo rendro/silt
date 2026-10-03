@@ -1,0 +1,15 @@
+-- verdict: same
+import channel
+import map
+import set
+type H { run: Fn(Int) -> Int }
+type C { ch: Channel(Int) }
+type W(a) { W(a) }
+fn main() {
+  let h1 = H { run: fn(x) { x } }
+  let h2 = H { run: fn(x) { x } }
+  let w1 = W(fn(x) { x + 1 })
+  let w2 = W(fn(x) { x + 1 })
+  println(w1 == w2)
+  println(w1 < w2)
+}

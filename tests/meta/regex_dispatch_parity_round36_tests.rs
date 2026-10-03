@@ -99,7 +99,7 @@ fn find_valid_and_parity_errors() {
     // Valid call — match.
     match ok("find", vec![s(r"\d+"), s("abc 123 def")]) {
         Value::Variant(tag, payload) => {
-            assert_eq!(tag, "Some");
+            assert_eq!(tag.name(), "Some");
             assert_eq!(payload.len(), 1);
             match &payload[0] {
                 Value::String(m) => assert_eq!(m, "123"),
@@ -111,7 +111,7 @@ fn find_valid_and_parity_errors() {
     // Valid call — no match.
     match ok("find", vec![s(r"\d+"), s("no digits here")]) {
         Value::Variant(tag, payload) => {
-            assert_eq!(tag, "None");
+            assert_eq!(tag.name(), "None");
             assert!(payload.is_empty());
         }
         other => panic!("expected Variant, got {other:?}"),
@@ -216,7 +216,7 @@ fn captures_valid_and_parity_errors() {
     // Valid call — match.
     match ok("captures", vec![s(r"(\d+)-(\w+)"), s("42-foo tail")]) {
         Value::Variant(tag, payload) => {
-            assert_eq!(tag, "Some");
+            assert_eq!(tag.name(), "Some");
             match &payload[0] {
                 Value::List(groups) => {
                     // 3 groups: whole match, (\d+), (\w+).
@@ -286,7 +286,7 @@ fn captures_named_valid_and_parity_errors() {
         vec![s(r"(?P<year>\d{4})-(?P<month>\d{2})"), s("2026-04 tail")],
     ) {
         Value::Variant(tag, payload) => {
-            assert_eq!(tag, "Some");
+            assert_eq!(tag.name(), "Some");
             match &payload[0] {
                 Value::Map(map) => {
                     assert_eq!(map.len(), 2);
@@ -300,7 +300,7 @@ fn captures_named_valid_and_parity_errors() {
     // Valid call — no named groups → None.
     match ok("captures_named", vec![s(r"\d+"), s("42")]) {
         Value::Variant(tag, payload) => {
-            assert_eq!(tag, "None");
+            assert_eq!(tag.name(), "None");
             assert!(payload.is_empty());
         }
         other => panic!("expected Variant, got {other:?}"),

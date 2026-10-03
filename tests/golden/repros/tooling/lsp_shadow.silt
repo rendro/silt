@@ -1,0 +1,9 @@
+-- verdict: same
+fn shadow(x) {
+  let x = "shadow"
+  x
+}
+
+fn main() {
+  println("{shadow(2)} {shadow(true)}")
+}

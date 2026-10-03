@@ -1,0 +1,14 @@
+-- verdict: same
+type P { v: Int }
+trait Get { fn get(self) -> Int }
+trait Get for P {
+  fn get(self) -> Int {
+    let f = fn() { self.v + 1 }
+    f()
+  }
+}
+fn main() {
+  println(P { v: 1 }.get())
+  let g = fn(x) { self }
+  println(1)
+}

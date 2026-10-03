@@ -1,0 +1,6 @@
+-- verdict: same
+type S { A(Int), B(Int) }
+fn main() {
+  let A(n) = B(7)
+  println(n)
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+import a2
+type Hidden { Mine(String) }
+fn main() {
+  println(a2.use_h(Mine("s")))
+}

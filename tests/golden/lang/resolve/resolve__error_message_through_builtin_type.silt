@@ -1,0 +1,18 @@
+-- verdict: same
+-- The Error trait's `message` of a builtin error type is reached through
+-- the type as `display` is: qualified (`io.IoError.message(e)`), through
+-- an imported name (`IoError.message(e)`), and as a function value.
+import io
+import io.{ IoError }
+fn main() {
+  match io.read_file("/nonexistent/silt/r5") {
+    Ok(_) -> println("ok")
+    Err(e) -> {
+      println(io.IoError.message(e) == e.message())
+      println(IoError.message(e) == e.message())
+      println(IoError.display(e) == e.display())
+      let m = io.IoError.message
+      println(m(e) == e.message())
+    }
+  }
+}

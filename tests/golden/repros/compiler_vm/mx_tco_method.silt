@@ -1,0 +1,18 @@
+-- verdict: same
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+trait Counter {
+  fn run(self) -> Int
+}
+trait Counter for Int {
+  fn run(self) -> Int { count(self, 0) }
+}
+fn plain(n) { count(n, 0) }
+fn main() {
+  println(5.run())
+  println(plain(5))
+}

@@ -1,0 +1,15 @@
+-- verdict: same
+import stream
+import time
+import list
+fn main() {
+  -- 20 pipelines, each: infinite source |> take(3) |> collect
+  let outs = 1..20 |> list.map { i ->
+    stream.repeat(i) |> stream.take(3) |> stream.collect
+  }
+  println(list.length(outs))
+  println("READY")
+  -- all results are collected; program is now "idle" for 3 seconds
+  time.sleep(time.ms(3000))
+  println("done")
+}

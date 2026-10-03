@@ -1,2 +1,0 @@
--- cmd: repl
--- stdin: fn a() { 1 / 0 }\nfn b() { a() + 1 }\nfn c() { b() + 2 }\nc()\n:quit\n

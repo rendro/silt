@@ -1,0 +1,8 @@
+-- verdict: same
+type A { x: B }
+type B { y: Int }
+
+fn main() {
+  let a = A { x: B { y: 1 } }
+  println("{a.x.y}")
+}

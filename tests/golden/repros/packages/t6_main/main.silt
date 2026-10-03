@@ -1,0 +1,5 @@
+-- verdict: same
+import a
+fn main() {
+  println(a.even(10))
+}

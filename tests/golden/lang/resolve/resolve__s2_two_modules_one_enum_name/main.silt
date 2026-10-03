@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: type mismatch: expected a.Shape, got b.Shape
+-- stderr-contains: --> main.silt:13:14
+-- Two modules each export an enum `Shape`: each annotation names its
+-- module's, and passing b's to a function of a's is a type error.
+import a
+import b
+fn fa(s: a.Shape) -> Int { match s { a.Circle(n) -> n } }
+fn fb(s: b.Shape) -> String { match s { b.Square(t) -> t } }
+fn main() {
+  println(fa(b.mk()))
+  println(fb(b.mk()))
+}

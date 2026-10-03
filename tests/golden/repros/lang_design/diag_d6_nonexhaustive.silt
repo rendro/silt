@@ -1,0 +1,13 @@
+-- verdict: same
+type Color { Red, Green, Blue }
+fn name(c) {
+  match c {
+    Red -> "red"
+    Green -> "green"
+  }
+}
+fn main() {
+  println(name(Blue))
+  let n = 5
+  println(match n { 1 -> "one", 2 -> "two" })
+}

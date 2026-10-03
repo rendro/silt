@@ -1,3 +1,6 @@
+-- verdict: same
+-- Two imported types of one name are two types: each qualified use
+-- (`a.Pt { .. }`, `b.Pt { .. }`, a `b.Pt` pattern) names its module's.
 import a
 import b
 

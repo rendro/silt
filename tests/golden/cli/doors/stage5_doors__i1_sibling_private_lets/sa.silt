@@ -1,0 +1,5 @@
+let secret = "red"
+
+pub fn reveal() -> String {
+  secret
+}

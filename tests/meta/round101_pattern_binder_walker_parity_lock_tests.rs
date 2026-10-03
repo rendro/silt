@@ -1,57 +1,40 @@
 //! Round-101 GAP lock: binders introduced by every binding-capable
-//! pattern form must reach REPL tab completion.
-//!
-//! Pre-round-101 the binder walkers in the LSP and the REPL drifted from
-//! the typechecker's authoritative `collect_pattern_vars`: the AnonRecord
-//! `...rest` binder, `Map` value binders, `Or` alternative binders and the
-//! `List` rest sub-pattern were invisible to tooling. These tests drive
-//! `repl::collect_decl_completion_names` (the function the REPL calls
-//! after each declaration). The LSP-side behavioural locks live in the
-//! walkers' own unit-test modules (src/lsp/locals.rs,
-//! src/lsp/semantic_tokens.rs).
+//! pattern form of a top-level `let` reach REPL tab completion. The REPL
+//! offers the names of the session's scope of an input
+//! (`repl::scope_completion_names`), which the resolver builds from the
+//! patterns' binders; these tests read it for a program of one `let`.
 
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::repl::collect_decl_completion_names;
+use silt::session::testing::session_with;
 
 fn completion_names(src: &str) -> Vec<String> {
-    let tokens = Lexer::new(src)
-        .tokenize()
-        .unwrap_or_else(|e| panic!("fixture failed to lex: {}", e.message));
-    let program = Parser::new(tokens)
-        .parse_program()
-        .unwrap_or_else(|e| panic!("fixture failed to parse: {}", e.message));
-    collect_decl_completion_names(&program.decls)
+    let (mut session, file) = session_with(&[("main.silt", src)]);
+    session.analyze(file);
+    let module = session.module_of(file);
+    let analysis = session.module_analysis(module).expect("analysed");
+    silt::repl::scope_completion_names(&analysis.scope, session.defs(), |_| None)
+}
+
+fn assert_names(src: &str, expected: &[&str]) {
+    let names = completion_names(src);
+    for name in expected {
+        assert!(
+            names.iter().any(|n| n == name),
+            "`{src}` must offer `{name}`: {names:?}"
+        );
+    }
 }
 
 #[test]
 fn repl_completion_names_include_anon_record_rest_binder() {
-    // Round-101 repro 4: after `let {x, ...rest} = r`, REPL tab
-    // completion offered `x` but not `rest`. This drives the exact
-    // helper `eval_declaration` uses to populate its completion list.
-    let names = completion_names("let {x, ...rest} = r");
-    assert_eq!(
-        names,
-        vec!["x".to_string(), "rest".to_string()],
-        "`let {{x, ...rest}} = r` must surface BOTH the shorthand field \
-         and the rest binder to REPL completion"
-    );
+    assert_names("let {x, ...rest} = r", &["x", "rest"]);
 }
 
 #[test]
 fn repl_completion_names_include_list_rest_binder() {
-    assert_eq!(
-        completion_names("let [h, ..t] = xs"),
-        vec!["h".to_string(), "t".to_string()],
-        "`let [h, ..t] = xs` must surface both the head and the rest binder"
-    );
+    assert_names("let [h, ..t] = xs", &["h", "t"]);
 }
 
 #[test]
 fn repl_completion_names_include_map_value_binder() {
-    assert_eq!(
-        completion_names("let #{\"k\": v} = m"),
-        vec!["v".to_string()],
-        "`let #{{\"k\": v}} = m` must surface the map-value binder"
-    );
+    assert_names("let #{\"k\": v} = m", &["v"]);
 }

@@ -13,14 +13,14 @@ import bytes
 import channel
 
 fn main() {
-  println(IoNotFound("missing.txt").message())
-  println(JsonMissingField("name").message())
-  println(TomlMissingField("key").message())
-  println(ParseEmpty.message())
-  println(HttpTimeout.message())
-  println(RegexTooBig.message())
-  println(TcpClosed.message())
-  println(TimeOutOfRange("month 13").message())
-  println(BytesInvalidHex("zz").message())
-  println(ChannelClosed.message())
+  println(io.IoNotFound("missing.txt").message())
+  println(json.JsonMissingField("name").message())
+  println(toml.TomlMissingField("key").message())
+  println(int.ParseEmpty.message())
+  println(http.HttpTimeout.message())
+  println(regex.RegexTooBig.message())
+  println(tcp.TcpClosed.message())
+  println(time.TimeOutOfRange("month 13").message())
+  println(bytes.BytesInvalidHex("zz").message())
+  println(channel.ChannelClosed.message())
 }

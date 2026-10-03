@@ -1,0 +1,5 @@
+-- verdict: same
+type Mine { First(Int), None }
+fn main() {
+  println("hi")
+}

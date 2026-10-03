@@ -2,4 +2,4 @@ error[runtime]: division by zero
  --> bad_mod.silt:1:13
    |
  1 | pub let x = 1 / 0
-   |             ^ division by zero
+   |             ^^^^^ division by zero

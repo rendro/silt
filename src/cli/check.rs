@@ -1,18 +1,14 @@
-//! `silt check [--format json] <file>` — run the full compile pipeline
-//! without executing, reporting diagnostics.
+//! `silt check [--format json] <file>` — analyse and compile a program
+//! without executing it, reporting diagnostics.
 
 use std::process;
 
-use silt::errors::SourceError;
+use silt::diagnostic::{Diagnostic, SourceView};
+use silt::session::{Entry, LockPolicy, looks_like_library_module, looks_like_test_file};
 
 use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
-use crate::cli::pipeline::{
-    pipeline_has_real_hard_errors, reportable_diagnostics, run_compile_pipeline_with_options,
-};
-use crate::cli::source_scan::{
-    looks_like_library_module, looks_like_test_file, missing_main_error, program_has_main,
-};
+use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
 /// Output format for `silt check` — human-readable by default, or
 /// machine-readable JSON when `--format json` is passed.
@@ -94,6 +90,9 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
+    if format == OutputFormat::Json {
+        crate::cli::package::print_manifest_errors_as_json();
+    }
     let path = match file {
         Some(p) => p,
         // Round 93: `silt check` accepts a lib-only package
@@ -113,152 +112,39 @@ pub(crate) fn dispatch(args: &[String]) {
 
 pub(crate) fn check_file(path: &str, format: OutputFormat) {
     silt::intern::reset();
-    // `silt check` must match `silt run` diagnostics exactly, minus
-    // execution. That means (a) running the compile step so the compiler
-    // surfaces real module-resolution errors, and (b) filtering out the
-    // type checker's "unknown module" warnings — which the compiler
-    // resolves later — so we don't cry wolf on every valid file-backed
-    // import. Previously this path skipped compile entirely AND emitted
-    // every warning, which produced spurious "unknown module" warnings
-    // on programs that `silt run` handles cleanly.
-    let result = run_compile_pipeline_with_options(path, false, true, true);
-
-    // Filter per-entry: drop the "unknown module" warnings the compiler
-    // will resolve, but keep every other diagnostic so real errors still
-    // surface. See `reportable_type_errors` for the rationale.
-    let mut errors: Vec<&SourceError> = reportable_diagnostics(&result);
-
-    // If compilation succeeded but the program defines no `main` AND the
-    // file is neither a library module nor a test file, surface the same
-    // missing-main diagnostic that `silt run` emits — exit 1 with
-    // `error[compile]: program has no main() function`. Without this, an
-    // empty / no-main "script" file would pass `silt check` cleanly and
-    // then fail at `silt run`, which is off-spec.
-    //
-    // We deliberately exclude library modules and test files because
-    // those files legitimately never define `main` and are consumed by
-    // importers / by `silt test` respectively. `silt run` still rejects
-    // both — `check` is the "does this file compile standalone" answer,
-    // and neither a library nor a test file should be invoked standalone.
-    //
-    // All three questions are answered from the parsed declarations
-    // (`cli::source_scan`), the same ones `silt run` and `silt test`
-    // consult.
-    //
-    // Lock: tests/lang/empty_program_diagnostic_tests.rs and
-    // tests/lang/examples_check.rs (every_example_type_checks_and_has_no_warnings).
-    let missing_main_err: Option<SourceError> = match &result.program {
-        Some(program)
-            if errors.is_empty()
-                && result.functions.is_some()
-                && !program_has_main(program)
-                && !looks_like_library_module(program)
-                && !looks_like_test_file(program) =>
-        {
-            Some(missing_main_error(program, &result.source, path, false))
+    // `silt check` reports what `silt run` reports before it runs: the
+    // session's analysis and the compile step. A library module or a
+    // test file has no `main` on purpose, so it is compiled for its tests
+    // and not asked for one.
+    let (mut session, file) = open_entry_or_exit(path, LockPolicy::Update);
+    let target = match &session.graph().module(session.module_of(file)).ast {
+        Some(ast) if looks_like_library_module(ast) || looks_like_test_file(ast) => {
+            Entry::Tests { filter: None }
         }
-        _ => None,
+        _ => Entry::Main,
     };
-    if let Some(ref err) = missing_main_err {
-        errors.push(err);
-    }
+    let compiled = session.compile(file, target);
+    let errors = door_diagnostics(&mut session, file, &compiled);
 
+    let files = ProgramFiles::new(path, session.sources());
     if format == OutputFormat::Json {
-        print_json_errors(&errors);
+        print_json_errors(&files, &errors);
     } else {
         // F14 (audit round 17): separate diagnostics with blank lines.
-        silt::errors::eprintln_errors_with_separator(&errors);
+        silt::diagnostic::eprint_all(&files, &errors);
     }
 
-    // A hard error is real only if it's a parse/compile error or a
-    // non-suppressed type error with severity Error — the gate of
-    // `compile_file`, plus the missing `main`.
-    let has_real_hard_errors = pipeline_has_real_hard_errors(&result) || missing_main_err.is_some();
-    if has_real_hard_errors {
+    if errors.iter().any(Diagnostic::is_error) {
         process::exit(1);
     }
 }
 
-fn print_json_errors(errors: &[&SourceError]) {
+/// `errors` as one JSON array on stdout (see `diagnostic::render_json`).
+/// Nothing in it is colored: the renderer writes no escape sequences.
+fn print_json_errors(files: &dyn SourceView, errors: &[Diagnostic]) {
     let json_errors: Vec<serde_json::Value> = errors
         .iter()
-        .map(|e| {
-            // Round-36 fix: the human renderer emits `= help:` / `= note:`
-            // continuation lines below the caret for any `\nhelp: ...` or
-            // `\nnote: ...` suffix a diagnostic tacks onto its message
-            // (see `src/typechecker/inference.rs` — did-you-mean hints are
-            // appended as `\nhelp: did you mean ...?`). The JSON emitter
-            // used to keep the first line as the `message` and drop the
-            // rest, which meant `--format json` consumers (editors,
-            // LSP front-ends, CI scripts) never saw the hints. We now
-            // preserve the first line as `message` (backward compat) and
-            // add a `hints` array extracted from the remaining lines.
-            //
-            // Round-77 fix (GAP ERR-1): the human renderer (`SourceError::
-            // Display` at `src/errors.rs:366-389`) prepends `= note:` to
-            // ANY unprefixed first body line, so structural notes like
-            // `add one as the entry point` (emitted alongside
-            // `program has no main() function`) showed in stderr but
-            // were silently dropped from JSON output. We now mirror the
-            // renderer: an unprefixed first body line is emitted as a
-            // `note:` hint, and subsequent unprefixed lines (continuation
-            // of an existing note/help) are appended verbatim — matching
-            // the human form's `       <line>` continuation indent.
-            let mut lines = e.message.lines();
-            let head = lines.next().unwrap_or(&e.message);
-            let mut hints: Vec<String> = Vec::new();
-            let mut first_body_line = true;
-            for ln in lines {
-                let t = ln.trim_start();
-                if t.starts_with("help:") || t.starts_with("note:") {
-                    // Already prefixed — keep as-is (after trimming
-                    // leading whitespace, matching the prior behavior).
-                    hints.push(t.to_string());
-                    first_body_line = false;
-                } else if first_body_line {
-                    // Unprefixed first body line: human renderer treats
-                    // this as `= note: <line>`. Mirror that here so JSON
-                    // consumers see the same hint.
-                    hints.push(format!("note: {t}"));
-                    first_body_line = false;
-                } else {
-                    // Unprefixed continuation of a prior hint: append to
-                    // the most recent hint so multi-line notes round-trip
-                    // as a single logical entry (matching the renderer's
-                    // 7-space continuation indent under `= note:`).
-                    if let Some(last) = hints.last_mut() {
-                        last.push('\n');
-                        last.push_str(t);
-                    } else {
-                        // No prior hint to attach to — fall back to a
-                        // bare `note:` so the line isn't dropped.
-                        hints.push(format!("note: {t}"));
-                    }
-                }
-            }
-            // Round-86 fix (B1): JSON output is machine-readable; it must
-            // never carry ANSI escape sequences regardless of upstream
-            // signal (TTY, FORCE_COLOR, etc). `format_module_source_error`
-            // at `src/compiler/mod.rs:218-239` routes its inner snippet
-            // through `active_colors()` and bakes ANSI codes into the
-            // message string under FORCE_COLOR=1 or a real TTY — which
-            // then leak into `head` and `hints` here, corrupting output
-            // for editor plugins / LSP / CI. Strip at the boundary: this
-            // is the only place JSON crosses out of the process, so a
-            // single defensive sweep keeps the contract simple and
-            // covers any future color sources we forget about.
-            let head_clean = strip_ansi(head);
-            let hints_clean: Vec<String> = hints.iter().map(|h| strip_ansi(h)).collect();
-            serde_json::json!({
-                "file": e.file.as_deref().unwrap_or("<unknown>"),
-                "line": e.span.line,
-                "col": e.span.col,
-                "message": head_clean,
-                "hints": hints_clean,
-                "severity": if e.is_warning { "warning" } else { "error" },
-                "kind": e.kind.to_string(),
-            })
-        })
+        .map(|d| silt::diagnostic::render_json(files, d))
         .collect();
     match serde_json::to_string(&json_errors) {
         Ok(json) => println!("{json}"),
@@ -266,112 +152,5 @@ fn print_json_errors(errors: &[&SourceError]) {
             eprintln!("internal error: failed to serialize diagnostics: {e}");
             process::exit(1);
         }
-    }
-}
-
-/// Strip ANSI SGR escape sequences (`ESC [ ... m`) from `s`.
-///
-/// Round-86 fix (B1): JSON-formatted diagnostics must be plain text so
-/// editor plugins / LSP / CI consumers can parse them safely. Upstream
-/// renderers like `format_module_source_error`
-/// (`src/compiler/mod.rs:218-239`) honor FORCE_COLOR / TTY and bake
-/// ANSI codes into the message string; we sweep them out here at the
-/// JSON boundary to keep that surface contract simple.
-///
-/// Recognizes the CSI-SGR form we actually emit: `\x1b[` followed by
-/// any run of digits and `;`, terminated by `m`. Anything that isn't a
-/// well-formed SGR is passed through unchanged so unrelated `\x1b`
-/// bytes (if any ever leak in) are still visible to the consumer
-/// rather than silently absorbed.
-fn strip_ansi(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
-            // Scan params: digits and `;` until terminator `m`.
-            let mut j = i + 2;
-            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b';') {
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j] == b'm' {
-                // Consume the entire `\x1b[...m` sequence.
-                i = j + 1;
-                continue;
-            }
-            // Malformed / non-SGR — emit the ESC byte literally and
-            // advance one. The next iteration will pick up `[` etc as
-            // normal text.
-            out.push(bytes[i] as char);
-            i += 1;
-        } else {
-            // Push the byte as a char. All our color sequences operate
-            // on plain ASCII surrounding text, so direct byte-as-char
-            // is safe for ASCII; for any non-ASCII bytes we'd need to
-            // reconstruct the UTF-8 boundary. Since `s` is `&str`
-            // (already valid UTF-8) and we only skip whole ASCII SGR
-            // sequences, the surviving bytes still form valid UTF-8.
-            // Push the raw byte through `str::from_utf8` of a slice to
-            // preserve multi-byte chars.
-            // Find the next UTF-8 char boundary and copy that slice.
-            let ch_len = utf8_char_len(bytes[i]);
-            let end = (i + ch_len).min(bytes.len());
-            // Safety: `s` is valid UTF-8 and `i` is on a char boundary
-            // (we only ever advance by full `\x1b[...m` (ASCII) or by
-            // `ch_len`). So `&s[i..end]` is a valid str slice.
-            out.push_str(&s[i..end]);
-            i = end;
-        }
-    }
-    out
-}
-
-/// Length in bytes of the UTF-8 char starting at `b` (the leading byte).
-/// Falls back to 1 for any byte that doesn't look like a valid leader,
-/// so a malformed input degrades gracefully rather than panicking.
-fn utf8_char_len(b: u8) -> usize {
-    if b < 0xC0 {
-        // ASCII (< 0x80) or a UTF-8 continuation byte (0x80..0xC0):
-        // either way advance by 1 — for a continuation byte this treats
-        // malformed input as a single byte to avoid stalling.
-        1
-    } else if b < 0xE0 {
-        2
-    } else if b < 0xF0 {
-        3
-    } else {
-        4
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Round-90 lock: `utf8_char_len` collapses the ASCII (< 0x80) and
-    // continuation-byte (0x80..0xC0) cases into a single `b < 0xC0 => 1`
-    // arm. They were two adjacent identical arms that clippy 1.96 flags as
-    // `if_same_then_else` (an error under CI's `-D warnings`). This pins the
-    // full leading-byte → width mapping so the merge stays a behavioural
-    // no-op and a future edit can't silently widen the continuation-byte
-    // case to a different length.
-    #[test]
-    fn utf8_char_len_maps_leading_bytes_to_widths() {
-        // ASCII (< 0x80) → 1
-        assert_eq!(utf8_char_len(0x00), 1);
-        assert_eq!(utf8_char_len(b'a'), 1);
-        assert_eq!(utf8_char_len(0x7F), 1);
-        // Continuation bytes (0x80..0xC0) → 1 (malformed-input guard)
-        assert_eq!(utf8_char_len(0x80), 1);
-        assert_eq!(utf8_char_len(0xBF), 1);
-        // 2-byte leader (0xC0..0xE0)
-        assert_eq!(utf8_char_len(0xC0), 2);
-        assert_eq!(utf8_char_len(0xDF), 2);
-        // 3-byte leader (0xE0..0xF0)
-        assert_eq!(utf8_char_len(0xE0), 3);
-        assert_eq!(utf8_char_len(0xEF), 3);
-        // 4-byte leader (>= 0xF0)
-        assert_eq!(utf8_char_len(0xF0), 4);
-        assert_eq!(utf8_char_len(0xFF), 4);
     }
 }

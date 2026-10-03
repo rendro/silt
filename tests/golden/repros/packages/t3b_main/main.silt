@@ -1,0 +1,7 @@
+-- verdict: same
+import moda
+import modb
+fn main() {
+  println(moda.describe())
+  println(modb.describe())
+}

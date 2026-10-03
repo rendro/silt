@@ -1,0 +1,5 @@
+-- verdict: same
+fn lt(a, b) { a < b }
+fn main() {
+  println(lt((1, 2), (1, 3)))
+}

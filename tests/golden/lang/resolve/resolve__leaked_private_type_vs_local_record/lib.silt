@@ -1,0 +1,2 @@
+type Hidden { a: Int }
+pub fn leak() -> Hidden { Hidden { a: 3 } }

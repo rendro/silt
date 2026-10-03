@@ -20,21 +20,16 @@
 //! test at u16::MAX locks the boundary so an off-by-one tightening
 //! would also be caught.
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-
 /// Attempt to compile `source`. Returns `Ok(())` if compilation
 /// succeeded, or the `CompileError.message` string on failure. Parse /
 /// lex errors panic — we only care about the compiler stage here.
 fn try_compile(source: &str) -> Result<(), String> {
-    let tokens = Lexer::new(source).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    match compiler.compile_program(&program) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e.message),
+    match silt::session::testing::check_str(source)
+        .into_iter()
+        .find(|d| d.is_error())
+    {
+        Some(d) => Err(d.message),
+        None => Ok(()),
     }
 }
 

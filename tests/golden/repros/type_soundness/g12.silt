@@ -1,0 +1,8 @@
+-- verdict: same
+-- fully annotated function calling depth-2 unannotated chain
+fn leaf() { 1 }
+fn mid() { leaf() }
+fn top() -> String { mid() }
+fn main() {
+  println(top())
+}

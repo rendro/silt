@@ -1,0 +1,9 @@
+-- verdict: same
+fn main() {
+  let x = 5
+  println("a { "b { "c {x}" } d" } e")
+  println("brace: \{ and \} and {x}")
+  println("{ {- comment in interp -} x }")
+  println("{ match x { 5 -> "five" _ -> "other" } }")
+  println("{#{"k": 1}}")
+}

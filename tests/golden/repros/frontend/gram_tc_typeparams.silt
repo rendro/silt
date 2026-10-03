@@ -1,0 +1,3 @@
+-- verdict: same
+type Box(a,) { Box(a) }
+fn main() { println("x") }

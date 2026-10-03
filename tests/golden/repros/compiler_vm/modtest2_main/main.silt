@@ -1,0 +1,10 @@
+-- verdict: same
+import ma
+import mb
+
+fn main() {
+  let a = ma.make(1)
+  let b = mb.make("x")
+  println(ma.show(a))
+  println(mb.show(b))
+}

@@ -1,0 +1,8 @@
+-- verdict: same
+type R { on: Bool, n: Int }
+fn main() {
+  let R { on: true, n } = R { on: false, n: 3 }
+  println(n)
+  let {k: 1} = {k: 2}
+  println("z")
+}

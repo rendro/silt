@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stdin: import greet.{ hello }\nhello("silt")\nimport greet as g\ng.hello("again")\n:quit\n
+-- The REPL started in a directory without a silt.toml can import the
+-- modules beside it, as a script there can.
+fn main() {
+  println("not run")
+}

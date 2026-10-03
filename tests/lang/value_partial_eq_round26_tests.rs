@@ -20,6 +20,7 @@
 use std::sync::Arc;
 
 use silt::bytecode::{Function, VmClosure};
+use silt::typeinfo::bv;
 use silt::value::{TaskHandle, Value};
 
 // ── Rust-level unit tests ──────────────────────────────────────────
@@ -102,18 +103,24 @@ fn partial_eq_builtin_fn_different_names() {
 /// Same name + arity → equal.
 #[test]
 fn partial_eq_variant_constructor_same_name_and_arity() {
-    let a = Value::VariantConstructor("Some".into(), 1);
-    let b = Value::VariantConstructor("Some".into(), 1);
+    let a = Value::VariantConstructor(bv::SOME.tag());
+    let b = Value::VariantConstructor(bv::SOME.tag());
     assert_eq!(a, b);
     assert_eq!(a, a.clone());
 }
 
-/// Different name or arity → not equal.
+/// Another variant, or a variant of one name in another enum → not
+/// equal.
 #[test]
 fn partial_eq_variant_constructor_differences() {
-    let some_1 = Value::VariantConstructor("Some".into(), 1);
-    let none_0 = Value::VariantConstructor("None".into(), 0);
-    let some_2 = Value::VariantConstructor("Some".into(), 2);
+    let some_1 = Value::VariantConstructor(bv::SOME.tag());
+    let none_0 = Value::VariantConstructor(bv::NONE.tag());
+    let other = silt::typeinfo::TypeInfo::new_enum(
+        silt::defs::TypeId(silt::defs::DefId(9000)),
+        "Maybe",
+        &[("Some", 2)],
+    );
+    let some_2 = Value::VariantConstructor(silt::typeinfo::Tag::new(other, 0));
     assert_ne!(some_1, none_0);
     assert_ne!(some_1, some_2);
     assert_ne!(none_0, some_2);
@@ -137,12 +144,16 @@ fn partial_eq_reflexivity_every_variant() {
         Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)])),
         Value::Range(1, 5),
         Value::Tuple(vec![Value::Int(1), Value::String("x".into())]),
-        Value::Variant("Ok".into(), vec![Value::Int(1)]),
-        Value::VariantConstructor("Some".into(), 1),
+        Value::variant(bv::OK, vec![Value::Int(1)]),
+        Value::VariantConstructor(bv::SOME.tag()),
         Value::BuiltinFn("println".into()),
         Value::VmClosure(closure_arc),
         Value::Handle(handle_arc),
-        Value::TypeDescriptor("Point".into()),
+        Value::TypeDescriptor(silt::typeinfo::TypeInfo::new_record(
+            silt::defs::TypeId(silt::defs::DefId(9001)),
+            "Point",
+            Vec::new(),
+        )),
         Value::PrimitiveDescriptor("Int".into()),
     ];
     for v in &values {
@@ -163,7 +174,7 @@ fn partial_eq_cross_kind_still_false() {
     let h = Value::Handle(Arc::new(TaskHandle::new(1)));
     let c = Value::VmClosure(mk_closure("f"));
     let b = Value::BuiltinFn("println".into());
-    let vc = Value::VariantConstructor("Some".into(), 1);
+    let vc = Value::VariantConstructor(bv::SOME.tag());
 
     assert_ne!(h, c);
     assert_ne!(h, b);

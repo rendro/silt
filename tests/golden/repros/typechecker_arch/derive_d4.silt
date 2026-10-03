@@ -1,0 +1,21 @@
+-- verdict: same
+import list
+import set
+type Name { s: String }
+trait Equal for Name {
+  fn equal(self, other: Name) -> Bool { true }
+}
+trait Compare for Name {
+  fn compare(self, other: Name) -> Int { 0 }
+}
+fn main() {
+  let a = Name { s: "a" }
+  let b = Name { s: "b" }
+  println(a.equal(b))
+  println(a == b)
+  println(a.compare(b))
+  println(a < b)
+  println(list.sort([b, a]))
+  println(set.length(set.from_list([a, b])))
+  println(list.contains([a], b))
+}

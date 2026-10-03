@@ -1,0 +1,6 @@
+-- verdict: same
+fn show(x) { "{x}" }
+fn id(x) { x }
+fn main() {
+  println(show(id))
+}

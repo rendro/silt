@@ -5,7 +5,7 @@ import a
 
 type Box(t) { Wrap(t) }
 
-trait Describe for Box(t) where t: Display {
+trait a.Describe for Box(t) where t: Display {
     fn describe(self) -> String {
       match self {
           Wrap(x) -> "Box({x})"

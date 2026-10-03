@@ -1,0 +1,5 @@
+-- verdict: same
+import time
+
+fn f(x: time.Instant) -> Int { 1 }
+fn main() { println("ok") }

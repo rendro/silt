@@ -1,0 +1,6 @@
+-- verdict: same
+import main2helper
+pub fn shared() -> Int { 5 }
+fn main() {
+  println(main2helper.g())
+}

@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: let x = 10\nlet x = x + 1\nx\nlet xs = [1]\nlet xs = [0, ..xs]\nxs\nlet total = 0\nlet total = {\n  let step = 5\n  total + step\n}\ntotal\nfn f(n: Int) -> Int { n * 10 }\nlet f = { n -> f(n) + 1 }\nf(2)\n:quit\n
+-- A `let` that binds a name again reads the name's old value in its
+-- initializer: an expression, a list spread, a block, and a closure that
+-- calls the function the name was before. Only a function sees itself.

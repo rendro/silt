@@ -1,0 +1,10 @@
+-- verdict: same
+import int
+
+fn both(a: String, b: String) -> Result(Bool, int.ParseError) {
+  Ok(int.parse(a)? == int.parse(b)?)
+}
+
+fn main() {
+  println(both("1", "1"))
+}

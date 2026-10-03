@@ -1,0 +1,15 @@
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: duplicate implementation of trait 'Display' for type 'Tag'
+-- A second written Display impl for an imported type is a duplicate.
+import types.{ Tag }
+
+trait Display for Tag {
+  fn display(self) -> String {
+    "again"
+  }
+}
+
+fn main() {
+  println(Tag { name: "silt" }.display())
+}

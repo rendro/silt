@@ -1,0 +1,6 @@
+-- verdict: same
+import string
+
+fn main() {
+  println("{string.length("{")}")
+}

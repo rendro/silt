@@ -1,0 +1,10 @@
+-- verdict: same
+import io
+type Ops { run: Fn() -> () }
+fn quiet(o: Ops) -> Int !{} {
+  o.run()
+  0
+}
+fn main() !{io} {
+  println(quiet(Ops { run: fn() { println("laundered") } }))
+}

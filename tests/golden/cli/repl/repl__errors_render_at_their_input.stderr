@@ -1,0 +1,19 @@
+error[type]: type mismatch: expected String, got Int
+ --> <repl:2>:2:19
+   |
+ 2 |   let s: String = a
+   |                   ^ type mismatch: expected String, got Int
+error[parse]: expected expression, found EOF
+ --> <repl:3>:1:4
+   |
+ 1 | 1 +
+   |    ^ expected expression, found EOF
+error[runtime]: division by zero
+ --> <repl:4>:2:3
+   |
+ 2 |   10 / n
+   |   ^^^^^^ division by zero
+
+call stack:
+  -> d  at <repl:4>:2:3
+  -> <repl:5>  at <repl:5>:1:1

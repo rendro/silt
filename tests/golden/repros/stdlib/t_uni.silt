@@ -1,0 +1,53 @@
+-- verdict: same
+import string
+import list
+fn show(label, s) {
+  println("{label}: len={string.length(s)} bytes={string.byte_length(s)} chars={string.chars(s)}")
+}
+fn main() {
+  let e_acute_nfc = "é"
+  let e_acute_nfd = "é"
+  let family = "👨‍👩‍👧"
+  let flag = "🇩🇪"
+  let thumbs = "👍🏽"
+  show("nfc", e_acute_nfc)
+  show("nfd", e_acute_nfd)
+  show("family", family)
+  show("flag", flag)
+  show("thumbs", thumbs)
+  println(e_acute_nfc == e_acute_nfd)
+  println(string.slice(e_acute_nfd, 0, 1))
+  println(string.slice(family, 0, 1))
+  println(string.slice(flag, 0, 1))
+  println(string.index_of("a👍🏽b", "b"))
+  println(string.last_index_of("a👍🏽b", "b"))
+  println(string.pad_left(e_acute_nfd, 3, "*"))
+  println(string.pad_left("日本", 4, "*"))
+  println(string.pad_right(family, 6, "."))
+  println(string.to_upper("straße"))
+  println(string.length(string.to_upper("straße")))
+  println(string.to_lower("İ"))
+  println(string.length(string.to_lower("İ")))
+  println(string.split_at(flag, 1))
+  println(string.char_code(thumbs))
+  println(string.is_alpha(e_acute_nfd))
+  println(string.is_alpha(e_acute_nfc))
+  println(string.is_upper("ABC1"))
+  println(string.is_upper(""))
+  println(string.is_alpha(""))
+  println(string.is_digit("٣"))
+  println(string.is_alnum("٣"))
+  println(string.is_whitespace(" "))
+  println("[{string.trim("  x  ")}]")
+  println(string.chars(e_acute_nfd) |> list.reverse |> string.join(""))
+  println(string.starts_with_at(flag, 1, "🇪"))
+  println("[{string.repeat("ab", 0)}]")
+  println(string.split("abc", ""))
+  println(string.split("", ","))
+  println(string.lines(""))
+  println(string.lines("a\n\nb\n"))
+  println(string.replace("aaa", "", "-"))
+  println(string.index_of("abc", ""))
+  println(string.contains("abc", ""))
+  println(string.from_char_code(55357))
+}

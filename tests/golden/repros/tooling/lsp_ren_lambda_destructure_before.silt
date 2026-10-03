@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+
+fn main() {
+  let pairs = [(1, "a"), (2, "b")]
+  pairs |> list.each { (n, word) -> println("{n} is {word}") }
+}

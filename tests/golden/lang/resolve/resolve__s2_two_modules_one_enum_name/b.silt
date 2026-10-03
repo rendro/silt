@@ -1,0 +1,2 @@
+pub type Shape { Square(String) }
+pub fn mk() -> Shape { Square("s") }

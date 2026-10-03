@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  let f = fn(x) { x * 2 }
+  [1, 2, 3] |> list.map(f) |> println
+  f |> list.map([1, 2, 3])
+}

@@ -1,0 +1,28 @@
+-- verdict: same
+-- Audit repro I6: two enums of one file both declare `Red`. `C.Red` and
+-- `D.Red` say which, in expressions and in patterns.
+type C { Red, Green }
+type D { Red, Blue }
+
+fn name_c(c: C) -> String {
+  match c {
+    C.Red -> "C.Red"
+    C.Green -> "C.Green"
+  }
+}
+
+fn name_d(d: D) -> String {
+  match d {
+    D.Red -> "D.Red"
+    D.Blue -> "D.Blue"
+  }
+}
+
+fn main() {
+  let x = C.Red
+  let y = D.Red
+  println("{x} {y}")
+  println(name_c(x))
+  println(name_d(y))
+  println(name_c(C.Green))
+}

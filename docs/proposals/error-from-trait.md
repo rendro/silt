@@ -105,17 +105,17 @@ provides one.
 
 ```silt
 type AppError {
-  IoProblem(IoError),
-  JsonProblem(JsonError),
+  IoProblem(io.IoError),
+  JsonProblem(json.JsonError),
   Custom(String),
 }
 
-impl From(IoError) for AppError {
-  fn from(e: IoError) -> AppError { IoProblem(e) }
+impl From(io.IoError) for AppError {
+  fn from(e: io.IoError) -> AppError { IoProblem(e) }
 }
 
-impl From(JsonError) for AppError {
-  fn from(e: JsonError) -> AppError { JsonProblem(e) }
+impl From(json.JsonError) for AppError {
+  fn from(e: json.JsonError) -> AppError { JsonProblem(e) }
 }
 ```
 
@@ -215,16 +215,16 @@ trait IntoAppError {
   fn into_app_error(self) -> AppError
 }
 
-trait IntoAppError for IoError {
+trait IntoAppError for io.IoError {
   fn into_app_error(self) -> AppError { IoProblem(self) }
 }
 
-trait IntoAppError for JsonError {
+trait IntoAppError for json.JsonError {
   fn into_app_error(self) -> AppError { JsonProblem(self) }
 }
 
 fn load_config(path: String) -> Result(Config, AppError) {
-  let raw    = result.map_err(io.read_file(path),      IoError.into_app_error)?
+  let raw    = result.map_err(io.read_file(path),      io.IoError.into_app_error)?
   -- OR using a closure to make the conversion name visible on the value side:
   let cfg    = result.map_err(json.parse(raw, Config), { e -> e.into_app_error() })?
   Ok(cfg)

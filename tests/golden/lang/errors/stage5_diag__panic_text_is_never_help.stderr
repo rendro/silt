@@ -1,0 +1,7 @@
+error[runtime]: panic: first
+ --> stage5_diag__panic_text_is_never_help.silt:5:3
+   |
+ 5 |   panic("first\nhelp: injected\nthird")
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: first
+  = note: help: injected
+          third

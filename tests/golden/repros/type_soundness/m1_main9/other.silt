@@ -1,0 +1,2 @@
+pub type Pt { label: String }
+pub fn show(p: Pt) -> String { p.label }

@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let mod = 7 % 2
+  println(mod)
+}

@@ -1,0 +1,34 @@
+-- verdict: same
+import list
+import map
+import set
+import float
+import math
+fn main() {
+  let nan = float.nan
+  let nz = -0.0
+  let pz = 0.0
+  println(nz == pz)
+  println(nz)
+  let m = #{nz: "neg", pz: "pos"}
+  println(map.length(m))
+  println(m)
+  println(map.get(m, 0.0))
+  println(map.get(m, -0.0))
+  let s = set.from_list([0.0, -0.0])
+  println(set.length(s))
+  println(list.unique([0.0, -0.0]))
+  println(list.contains([0.0], -0.0))
+  println(list.index_of([0.0], -0.0))
+  println(list.sort([1.0, -0.0, 0.0, -1.0]))
+  println(list.group_by([0.0, -0.0, 1.0]) { x -> x })
+  let z = 0.0 * -1.0
+  println(z)
+  println(map.get(#{z: 1}, 0.0))
+  println(float.to_string(nz))
+  println(float.min(0.0, -0.0))
+  println(float.abs(-0.0))
+  println(float.round(-0.4))
+  println(float.ceil(-0.5))
+  println(float.to_string(float.ceil(-0.5)))
+}

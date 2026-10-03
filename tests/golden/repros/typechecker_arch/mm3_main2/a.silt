@@ -1,0 +1,4 @@
+trait Speak { fn speak(self) -> String }
+pub type Dog { name: String }
+trait Speak for Dog { fn speak(self) -> String { "woof" } }
+pub fn talk(x: t) -> String where t: Speak { x.speak() }

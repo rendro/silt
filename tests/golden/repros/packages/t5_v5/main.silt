@@ -1,0 +1,7 @@
+-- verdict: same
+import lib1
+fn take(x: Secret) -> Int { 1 }
+fn main() {
+  println(take(lib1.mk()))
+  println(lib1.private_fn())
+}

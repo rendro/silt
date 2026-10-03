@@ -1,0 +1,11 @@
+-- verdict: same
+import list
+
+fn main() {
+  let found = [1, 2]
+  |> list.find { w -> match w {
+    1 -> true
+    _ -> false
+  } -- note }
+  println("{found}")
+}

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A missing module is reported at its import; a real error elsewhere in
+-- the importer is still reported.
+-- stderr-contains: cannot load module 'ghost'
+-- stderr-contains: undefined variable 'zzz_not_defined'
+import ghost
+
+fn main() {
+  println(ghost.answer())
+  println(zzz_not_defined)
+}

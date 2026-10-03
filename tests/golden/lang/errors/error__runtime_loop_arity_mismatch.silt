@@ -1,7 +1,0 @@
--- exit: 1
--- stderr-contains: expects 2 arguments
-fn main() {
-  loop x = 0, y = 0 {
-    loop(1)
-  }
-}

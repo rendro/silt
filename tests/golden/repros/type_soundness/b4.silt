@@ -1,0 +1,6 @@
+-- verdict: same
+fn add(a, b) { a + b }
+type P { x: Int }
+fn main() {
+  println(add(P { x: 1 }, P { x: 2 }))
+}

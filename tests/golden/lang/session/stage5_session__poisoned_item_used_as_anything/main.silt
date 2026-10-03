@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- An item of a missing module has no known type: an Int use and a
+-- String use of it are both accepted, and only the import is reported.
+import string
+import missing.{ x }
+
+fn main() {
+  println(x + 1)
+  println(string.length(x))
+}

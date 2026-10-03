@@ -54,12 +54,12 @@ fn program() {
   task.join(w3)
 
   -- Collect all results into a list
-  when let Message(a) = channel.receive(results) else { panic("expected a result") }
-  when let Message(b) = channel.receive(results) else { panic("expected a result") }
-  when let Message(c) = channel.receive(results) else { panic("expected a result") }
-  when let Message(d) = channel.receive(results) else { panic("expected a result") }
-  when let Message(e) = channel.receive(results) else { panic("expected a result") }
-  when let Message(f) = channel.receive(results) else { panic("expected a result") }
+  when let channel.Message(a) = channel.receive(results) else { panic("expected a result") }
+  when let channel.Message(b) = channel.receive(results) else { panic("expected a result") }
+  when let channel.Message(c) = channel.receive(results) else { panic("expected a result") }
+  when let channel.Message(d) = channel.receive(results) else { panic("expected a result") }
+  when let channel.Message(e) = channel.receive(results) else { panic("expected a result") }
+  when let channel.Message(f) = channel.receive(results) else { panic("expected a result") }
 
   let values = [a, b, c, d, e, f]
   -- Results are tagged by worker: 1xx from w1, 2xx from w2, 3xx from w3.

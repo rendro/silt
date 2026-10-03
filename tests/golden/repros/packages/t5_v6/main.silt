@@ -1,0 +1,6 @@
+-- verdict: same
+import lib1
+fn main() {
+  let s = lib1.S(7)
+  println(s)
+}

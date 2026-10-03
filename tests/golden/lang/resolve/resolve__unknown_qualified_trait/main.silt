@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: module 'lib' has no trait 'Nope'
+-- stderr-contains: --> main.silt:11:11
+-- stderr-contains: --> main.silt:12:32
+-- stderr-not-contains: unknown trait
+-- A trait a module does not have is reported at the name, naming the
+-- module, once per use and with no follow-up error.
+import lib
+trait lib.Nope for Int { fn x(self) -> Int { 1 } }
+fn f(a: a) -> Int where a: lib.Nope { 1 }
+fn main() {
+  println(1)
+}

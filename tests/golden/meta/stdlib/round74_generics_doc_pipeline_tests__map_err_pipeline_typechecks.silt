@@ -9,8 +9,8 @@ import result
 type Config { name: String }
 
 type LoadError {
-  Decode(BytesError),
-  Parse(JsonError),
+  Decode(bytes.BytesError),
+  Parse(json.JsonError),
 }
 
 fn load_config(raw_bytes) -> Result(Config, LoadError) {

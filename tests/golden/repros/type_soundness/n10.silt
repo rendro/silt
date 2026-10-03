@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [1.0, 2.0, 0.0]
+  let total: Float = list.fold(xs, 1.0) { acc, x -> acc / x }
+  println(total)
+}

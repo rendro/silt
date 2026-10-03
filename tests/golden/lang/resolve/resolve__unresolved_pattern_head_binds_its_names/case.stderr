@@ -1,0 +1,13 @@
+error[type]: undefined record type 'Pt' in pattern
+ --> main.silt:10:5
+    |
+ 10 |     Pt { x, .. } -> println(x)
+    |     ^^ undefined record type 'Pt' in pattern
+  = help: did you mean `lib.Pt`? or import the name: `import lib.{ Pt }`
+
+error[type]: undefined constructor 'Circle' in pattern
+ --> main.silt:12:7
+    |
+ 12 |   let Circle(r) = lib.Shape.Circle(3)
+    |       ^^^^^^^^^ undefined constructor 'Circle' in pattern
+  = help: did you mean `lib.Circle`? or import the name: `import lib.{ Circle }`

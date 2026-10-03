@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: error[package]: invalid manifest: invalid package version `one`
+-- stderr-contains: --> deps/bad/silt.toml:3:11
+-- A dependency's own manifest error points into that manifest.
+fn main() { println("unreachable") }

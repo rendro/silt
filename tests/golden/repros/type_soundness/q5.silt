@@ -1,0 +1,10 @@
+-- verdict: same
+type Pair(a, b) { first: a, second: b }
+fn fst(p: Pair(a, b)) -> a { p.first }
+fn bad(p: Pair(Int, Int)) -> Int { p.first + p.second }
+fn main() {
+  let p = Pair { first: 1, second: "s" }
+  println(bad(p))
+  let u = p.{ second: 5 }
+  println(bad(u))
+}

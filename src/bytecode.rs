@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::lexer::Span;
+use crate::defs::{DefId, TraitId, TypeId};
+use crate::source::Span;
+use crate::typeinfo::TypeInfo;
 use crate::value::Value;
 
 /// A dedup key for simple constant types.  Using a dedicated enum avoids
@@ -17,24 +19,183 @@ enum ConstantKey {
     Bool(bool),
     String(String),
     Float(u64), // f64::to_bits()
+    /// A variant constructor (a pattern's variant test): its type and
+    /// ordinal.
+    Variant(TypeId, u16),
+    /// A variant without fields.
+    Nullary(TypeId, u16),
+    /// A type descriptor (a record literal's or pattern's type).
+    Type(TypeId),
+    /// A builtin function used as a value (`println`), by its name.
+    Builtin(String),
+    /// A primitive type's descriptor (`Int` as a value), by its name.
+    Primitive(String),
 }
 
-// ── Record tags ────────────────────────────────────────────────────
+// ── Global slots ───────────────────────────────────────────────────
 
-/// Runtime type name carried by a record built from an anonymous record
-/// literal (`{x: 1}`) or bound by a record rest pattern. The typechecker
-/// lets such a value flow wherever a nominal record of the same shape is
-/// expected, so at run time `<anon>` stands for "whatever record type the
-/// typechecker decided this is".
-pub const ANON_RECORD_TAG: &str = "<anon>";
+/// The global slots of a program. Every top-level function, `let` and
+/// host function of its modules has one, and so has every method of an
+/// impl, by the impl's trait, the type it is for and the method's name.
+/// A REPL session keeps one `Globals` for all its entries: a definition
+/// an entry makes again is a new definition with a slot of its own.
+#[derive(Debug, Clone, Default)]
+pub struct Globals {
+    /// The name of each slot's definition, as disassembly and errors
+    /// show it.
+    names: Vec<String>,
+    defs: HashMap<DefId, u16>,
+    methods: HashMap<(TraitId, TypeId), HashMap<String, u16>>,
+    /// The methods of each type whatever their trait, for a call whose
+    /// trait is not known where it is compiled (a call in a polymorphic
+    /// function with no bound for the receiver), with the trait of each.
+    /// `None` where two traits provide the method for the type: such a
+    /// call is ambiguous.
+    by_type: HashMap<TypeId, HashMap<String, Option<(u16, TraitId)>>>,
+    /// The traits a `CallMethod` names, by the index its operand holds,
+    /// each with its name.
+    traits: Vec<(TraitId, String)>,
+}
 
-/// Whether a record whose runtime type name is `tag` satisfies a check for
-/// the nominal record type `expected`. An `<anon>` record satisfies every
-/// check: the typechecker has already proved the shapes agree. This is the
-/// one rule every run-time record-tag check uses (pattern tag tests,
-/// equality, builtins that accept a `Date`/`Response`/... record).
-pub fn record_tag_matches(tag: &str, expected: &str) -> bool {
-    tag == expected || tag == ANON_RECORD_TAG
+/// The `CallMethod` trait operand of a call whose trait is not known
+/// where it is compiled.
+pub const NO_TRAIT: u16 = u16::MAX;
+
+impl Globals {
+    /// The number of slots.
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// The slot of the definition `def`.
+    pub fn def(&self, def: DefId) -> Option<u16> {
+        self.defs.get(&def).copied()
+    }
+
+    /// The slot of the method `method` of the impl of the trait `t` (any
+    /// trait's, for `None`) for the type `ty`.
+    pub fn method(&self, t: Option<TraitId>, ty: TypeId, method: &str) -> Option<u16> {
+        match t {
+            Some(t) => self.methods.get(&(t, ty))?.get(method).copied(),
+            None => self
+                .by_type
+                .get(&ty)?
+                .get(method)
+                .copied()
+                .flatten()
+                .map(|(slot, _)| slot),
+        }
+    }
+
+    /// Whether a call of `method` on a value of the type `ty` that names
+    /// no trait is ambiguous: two traits' impls provide the method for
+    /// the type, or one trait's impl and, for a type whose builtin trait
+    /// methods are native (`native`: `Int`, `List`, ...), the builtin
+    /// trait the method is of (`display` of Display).
+    pub fn ambiguous(&self, ty: TypeId, method: &str, native: bool) -> bool {
+        match self.by_type.get(&ty).and_then(|m| m.get(method)) {
+            Some(None) => true,
+            Some(Some((_, t))) => {
+                native && crate::defs::builtin_trait_of_method(method).is_some_and(|b| b != *t)
+            }
+            None => false,
+        }
+    }
+
+    /// [`Globals::method`] for a `CallMethod` trait operand.
+    pub fn call_method(&self, trait_index: u16, ty: TypeId, method: &str) -> Option<u16> {
+        let t = self.traits.get(trait_index as usize).map(|(t, _)| *t);
+        self.method(t, ty, method)
+    }
+
+    /// The name of slot `slot`.
+    pub fn name(&self, slot: u16) -> &str {
+        self.names.get(slot as usize).map_or("?", String::as_str)
+    }
+
+    /// The name of the trait a `CallMethod` operand names.
+    pub fn trait_name(&self, trait_index: u16) -> Option<&str> {
+        self.traits
+            .get(trait_index as usize)
+            .map(|(_, n)| n.as_str())
+    }
+
+    /// The `CallMethod` operand of the trait `t`, named `name`; `None`
+    /// when 65,535 traits are named already.
+    pub fn trait_index(&mut self, t: TraitId, name: String) -> Option<u16> {
+        if let Some(k) = self.traits.iter().position(|(known, _)| *known == t) {
+            return Some(k as u16);
+        }
+        let k = u16::try_from(self.traits.len())
+            .ok()
+            .filter(|k| *k != NO_TRAIT)?;
+        self.traits.push((t, name));
+        Some(k)
+    }
+
+    /// A new slot named `name`; `None` when all 65,536 slots are taken.
+    fn add(&mut self, name: String) -> Option<u16> {
+        let slot = u16::try_from(self.names.len()).ok()?;
+        self.names.push(name);
+        Some(slot)
+    }
+
+    /// The slot of the definition `def`, named `name`: a new one the
+    /// first time.
+    pub fn add_def(&mut self, def: DefId, name: String) -> Option<u16> {
+        if let Some(slot) = self.def(def) {
+            return Some(slot);
+        }
+        let slot = self.add(name)?;
+        self.defs.insert(def, slot);
+        Some(slot)
+    }
+
+    /// The slot of the method `method` of the impl of the trait `t` for
+    /// the type `ty`, named `name`: a new one the first time. A later
+    /// impl of the trait for the type (a REPL entry's) takes the slot
+    /// over.
+    pub fn add_method(
+        &mut self,
+        t: TraitId,
+        ty: TypeId,
+        method: &str,
+        name: String,
+    ) -> Option<u16> {
+        if let Some(slot) = self.method(Some(t), ty, method) {
+            return Some(slot);
+        }
+        let slot = self.add(name)?;
+        self.methods
+            .entry((t, ty))
+            .or_default()
+            .insert(method.to_string(), slot);
+        self.by_type
+            .entry(ty)
+            .or_default()
+            .entry(method.to_string())
+            .and_modify(|known| *known = None)
+            .or_insert(Some((slot, t)));
+        Some(slot)
+    }
+}
+
+// ── Record types ───────────────────────────────────────────────────
+
+/// Whether a record of the type `ty` satisfies a check for the nominal
+/// record type `expected`. A record built from an anonymous record
+/// literal (`{x: 1}`) or bound by a record rest pattern satisfies every
+/// check: the typechecker lets such a value flow wherever a nominal
+/// record of the same shape is expected, and has already proved the
+/// shapes agree. This is the one rule every run-time record-type check
+/// uses (pattern tests, builtins that accept a `Date`/`Response`/...
+/// record).
+pub fn record_type_matches(ty: &TypeInfo, expected: TypeId) -> bool {
+    ty.id == expected || ty.is_anon()
 }
 
 // ── Opcodes ────────────────────────────────────────────────────────
@@ -90,10 +251,10 @@ pub enum Op {
     GetLocal, // operand: u16 slot
     /// Store TOS into `stack[frame_base + u16]`. Does NOT pop.
     SetLocal, // operand: u16 slot
-    /// Push `globals[constants[u16]]`.
-    GetGlobal, // operand: u16 name_index
-    /// Store TOS into globals.
-    SetGlobal, // operand: u16 name_index
+    /// Push the value of global slot `u16` (see [`Globals`]).
+    GetGlobal, // operand: u16 slot
+    /// Store TOS into global slot `u16`. Does NOT pop.
+    SetGlobal, // operand: u16 slot
 
     // ── Upvalues (closures) ────────────────────────────────────
     /// Push captured upvalue at index.
@@ -123,11 +284,9 @@ pub enum Op {
     MakeMap, // operand: u16 pair_count
     /// Create a set from `u16` values.
     MakeSet, // operand: u16 count
-    /// Create a record: `u16` type name, `u8` field count,
-    /// then `u8 field_count` × `u16 field_name_index`.
-    MakeRecord, // operands: u16 type_name_index, u8 field_count, then field names
-    /// Create a variant value.
-    MakeVariant, // operands: u16 name_index, u8 field_count
+    /// Create a record: `u16` index of the type's descriptor constant,
+    /// `u8` field count, then `u8 field_count` × `u16 field_name_index`.
+    MakeRecord, // operands: u16 type_index, u8 field_count, then field names
     /// Functional record update.
     RecordUpdate, // operand: u8 field_count, then field_count × u16 field_name_index
     //
@@ -150,8 +309,6 @@ pub enum Op {
     // ── Field access ───────────────────────────────────────────
     /// Access a field by name from TOS.
     GetField, // operand: u16 name_index
-    /// Access a tuple element by index.
-    GetIndex, // operand: u8 index
 
     // ── Control flow ───────────────────────────────────────────
     /// Jump forward by `u16` offset.
@@ -170,8 +327,9 @@ pub enum Op {
     Dup,
 
     // ── Pattern matching ───────────────────────────────────────
-    /// Test if TOS variant has tag `constants[u16]`. Peek, push bool.
-    TestTag, // operand: u16 name_index
+    /// Test if TOS is the variant whose constructor is `constants[u16]`.
+    /// Peek, push bool.
+    TestTag, // operand: u16 const_index
     /// Test if TOS equals `constants[u16]`. Peek, push bool.
     TestEqual, // operand: u16 const_index
     /// Test if TOS tuple has length `u8`. Peek, push bool.
@@ -198,14 +356,15 @@ pub enum Op {
     DestructRecordField, // operand: u16 name_index
     /// Construct a new record from TOS by removing the listed field
     /// names. The record on TOS is consumed (popped) and a new
-    /// `Value::Record(synthetic_name, fields_map_minus_excluded)` is
+    /// anonymous `Value::Record` of the fields minus the excluded ones is
     /// pushed. Used by row-polymorphic anon-record patterns to bind
     /// the `...rest` portion. Layout: u8 count, then count u16 name
     /// indices into the constant pool (string).
     DestructRecordRest, // operand: u8 count, count*u16 name indices
-    /// Test if TOS is a record with given type name, or an `<anon>` record
-    /// (see [`record_tag_matches`]). Peek, push bool.
-    TestRecordTag, // operand: u16 name_index
+    /// Test if TOS is a record of the type whose descriptor is
+    /// `constants[u16]`, or an anonymous record (see
+    /// [`record_type_matches`]). Peek, push bool.
+    TestRecordTag, // operand: u16 const_index
     /// Test if TOS map contains key. Peek, push bool.
     TestMapHasKey, // operand: u16 const_index (string key)
     /// Extract map value by key. Peek map, push value.
@@ -228,8 +387,13 @@ pub enum Op {
     /// Panic with message string on TOS.
     Panic,
 
-    /// Runtime method dispatch: pop receiver, look up "TypeName.method" global, call.
-    /// operands: u16 method_name_index, u8 argc (including receiver)
+    /// Runtime method dispatch: the method named by the constant, of the
+    /// impl of the trait the third operand names (see
+    /// [`Globals::call_method`]; [`NO_TRAIT`] for any trait's) for the
+    /// receiver's type, else a builtin trait method or a record field
+    /// holding a function; call it.
+    /// operands: u16 method_name_index, u8 argc (including receiver),
+    /// u16 trait
     CallMethod,
 
     /// Move TOS down to `stack[frame_base + u16]` and drop every value that
@@ -283,12 +447,10 @@ impl Op {
             b if b == Op::MakeMap as u8 => Some(Op::MakeMap),
             b if b == Op::MakeSet as u8 => Some(Op::MakeSet),
             b if b == Op::MakeRecord as u8 => Some(Op::MakeRecord),
-            b if b == Op::MakeVariant as u8 => Some(Op::MakeVariant),
             b if b == Op::RecordUpdate as u8 => Some(Op::RecordUpdate),
             b if b == Op::MakeRange as u8 => Some(Op::MakeRange),
             b if b == Op::ListConcat as u8 => Some(Op::ListConcat),
             b if b == Op::GetField as u8 => Some(Op::GetField),
-            b if b == Op::GetIndex as u8 => Some(Op::GetIndex),
             b if b == Op::Jump as u8 => Some(Op::Jump),
             b if b == Op::JumpBack as u8 => Some(Op::JumpBack),
             b if b == Op::JumpIfFalse as u8 => Some(Op::JumpIfFalse),
@@ -403,6 +565,15 @@ impl Chunk {
             Value::Bool(b) => Some(ConstantKey::Bool(*b)),
             Value::String(s) => Some(ConstantKey::String(s.clone())),
             Value::Float(f) => Some(ConstantKey::Float(f.to_bits())),
+            Value::VariantConstructor(tag) => {
+                Some(ConstantKey::Variant(tag.type_id(), tag.ordinal()))
+            }
+            Value::Variant(tag, fields) if fields.is_empty() => {
+                Some(ConstantKey::Nullary(tag.type_id(), tag.ordinal()))
+            }
+            Value::TypeDescriptor(ty) => Some(ConstantKey::Type(ty.id)),
+            Value::BuiltinFn(name) => Some(ConstantKey::Builtin(name.clone())),
+            Value::PrimitiveDescriptor(name) => Some(ConstantKey::Primitive(name.clone())),
             _ => None,
         };
 
@@ -455,14 +626,15 @@ impl Chunk {
         Ok(())
     }
 
-    /// Get the source span for a bytecode offset.
+    /// Get the source span for a bytecode offset: `Span::BUILTIN` before
+    /// the first recorded span.
     pub fn span_at(&self, offset: usize) -> Span {
         // Linear scan for the last span entry <= offset. The spans table is
         // appended in strictly ascending offset order during emission, so a
         // forward scan that breaks on the first entry past `offset` is
         // correct; it's deliberately linear to keep the common (near-end)
         // case fast and to avoid binary-search bookkeeping overhead.
-        let mut result = Span::new(0, 0);
+        let mut result = Span::BUILTIN;
         for &(off, span) in &self.spans {
             if off <= offset {
                 result = span;
@@ -512,17 +684,15 @@ impl Function {
 
 // ── VmClosure ──────────────────────────────────────────────────────
 
-/// Build a tiny script that calls a named global function with no arguments
-/// and returns the result.  Useful for the test runner and REPL.
-pub fn call_global_script(name: &str) -> Function {
-    let span = Span::new(0, 0);
+/// Build a tiny script that calls the function in global slot `slot`,
+/// `name`, with no arguments and returns the result: the test runner
+/// calls each test so. The call is silt's own, so its code has
+/// `Span::BUILTIN`.
+pub(crate) fn call_global_script(slot: u16, name: &str) -> Function {
+    let span = Span::BUILTIN;
     let mut func = Function::new(format!("<call:{name}>"), 0);
-    let idx = func
-        .chunk
-        .add_constant(Value::String(name.into()))
-        .expect("constant pool overflow in call_global_script");
     func.chunk.emit_op(Op::GetGlobal, span);
-    func.chunk.emit_u16(idx, span);
+    func.chunk.emit_u16(slot, span);
     func.chunk.emit_op(Op::Call, span);
     func.chunk.emit_u8(0, span);
     func.chunk.emit_op(Op::Return, span);

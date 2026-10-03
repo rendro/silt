@@ -1,0 +1,1 @@
+pub fn f4(x: Int) -> Int = x + 4

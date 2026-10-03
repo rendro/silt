@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [1, 2, 3]
+  let r = xs |> list.map { x -> x.frobnicate() }
+  println(r)
+}

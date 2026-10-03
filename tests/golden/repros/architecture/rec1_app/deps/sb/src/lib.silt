@@ -1,0 +1,6 @@
+pub type Pt { x: Int }
+trait Display for Pt {
+  fn display(self) -> String { "sb.Pt<{self.x}>" }
+}
+pub fn mk() -> Pt = Pt { x: 2 }
+pub fn show(p: Pt) -> String = p.display()

@@ -11,8 +11,8 @@ fn program() {
   })
 
   task.join(producer)
-  when let Message(msg1) = channel.receive(ch) else { panic("pattern did not match") }
-  when let Message(msg2) = channel.receive(ch) else { panic("pattern did not match") }
+  when let channel.Message(msg1) = channel.receive(ch) else { panic("pattern did not match") }
+  when let channel.Message(msg2) = channel.receive(ch) else { panic("pattern did not match") }
   "{msg1} {msg2}"
 }
 

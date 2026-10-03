@@ -12,13 +12,14 @@
 //!
 //!   * DUP — the typed-error variant set lived in three independent
 //!     registries (`src/module.rs`, `src/typechecker/builtins/errors.rs`,
-//!     and `src/vm/dispatch.rs`). The dispatch-side list is now
-//!     data-driven from `module::builtin_error_enum_variants_with_arity`;
-//!     the typechecker's registration is checked against it by
-//!     behaviour below.
+//!     and `src/vm/dispatch.rs`). The run-time builtin types
+//!     (`crate::typeinfo`) take their variants from
+//!     `module::builtin_error_enum_variants_with_arity`; the
+//!     typechecker's registration is checked against it by behaviour
+//!     below.
 
-use silt::module::{builtin_enum_variants, builtin_error_enum_variants_with_arity};
-use silt::types::Severity;
+use silt::diagnostic::Severity;
+use silt::module::builtin_error_enum_variants_with_arity;
 
 // ── Finding 1 — feature-gate lock ────────────────────────────────────
 
@@ -32,15 +33,13 @@ use silt::types::Severity;
 #[test]
 fn pg_error_typecheck_rejects_when_postgres_feature_off() {
     let src = r#"
+import postgres
+
 fn main() {
-    let _ = PgError.PgConnect("nope")
+    let _ = postgres.PgError.PgConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
-    let errors = silt::typechecker::check(&mut program);
+    let (_, errors) = silt::session::testing::analyze_str(src);
     let messages: Vec<String> = errors
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
@@ -64,15 +63,13 @@ fn main() {
 #[test]
 fn tcp_error_typecheck_rejects_when_tcp_feature_off() {
     let src = r#"
+import tcp
+
 fn main() {
-    let _ = TcpError.TcpConnect("nope")
+    let _ = tcp.TcpError.TcpConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src).tokenize().expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
-    let errors = silt::typechecker::check(&mut program);
+    let (_, errors) = silt::session::testing::analyze_str(&src);
     let messages: Vec<String> = errors
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
@@ -88,48 +85,6 @@ fn main() {
 
 // ── Finding 3 — variant/arity parity ─────────────────────────────────
 
-/// Source-level lock: the variant set in
-/// `module::builtin_enum_variants` (names only) must be a perfect
-/// subset of `builtin_error_enum_variants_with_arity` for every
-/// stdlib error enum. Catches the simplest form of drift — adding a
-/// variant in one helper and forgetting the other.
-#[test]
-fn module_helpers_agree_on_error_enum_variant_names() {
-    // Collect (enum_name -> variants) from each helper.
-    let with_arity = builtin_error_enum_variants_with_arity();
-    let names_only = builtin_enum_variants();
-
-    let mut mismatches: Vec<String> = Vec::new();
-    for (enum_name, arity_variants) in with_arity {
-        let arity_names: Vec<&str> = arity_variants.iter().map(|(n, _)| *n).collect();
-        let names = names_only
-            .iter()
-            .find(|(e, _)| e == enum_name)
-            .map(|(_, vs)| vs.to_vec());
-        match names {
-            Some(names) => {
-                if names != arity_names {
-                    mismatches.push(format!(
-                        "{enum_name}: names-only={names:?} vs with-arity={arity_names:?}"
-                    ));
-                }
-            }
-            None => {
-                mismatches.push(format!(
-                    "{enum_name}: present in builtin_error_enum_variants_with_arity \
-                     but missing from builtin_enum_variants"
-                ));
-            }
-        }
-    }
-
-    assert!(
-        mismatches.is_empty(),
-        "module.rs helpers disagree on stdlib error enum variants:\n  - {}",
-        mismatches.join("\n  - ")
-    );
-}
-
 /// The typechecker's registration of every stdlib error enum must
 /// agree with `builtin_error_enum_variants_with_arity` on the variant
 /// names and arities. Probed by behaviour: for each enum, an exhaustive
@@ -140,6 +95,7 @@ fn module_helpers_agree_on_error_enum_variant_names() {
 #[test]
 fn typechecker_error_enums_match_arity_registry() {
     let mut src = String::new();
+    let mut imports = std::collections::BTreeSet::new();
     for (enum_name, variants) in builtin_error_enum_variants_with_arity() {
         // Feature-gated enums are registered only when the feature is on.
         if (*enum_name == "PgError" && !cfg!(feature = "postgres"))
@@ -147,27 +103,33 @@ fn typechecker_error_enums_match_arity_registry() {
         {
             continue;
         }
+        // Each enum is reached through the builtin module declaring it.
+        let module = silt::module::builtin_type_module(enum_name)
+            .expect("every stdlib error enum belongs to a module");
+        imports.insert(module);
         src.push_str(&format!(
-            "fn probe_{}(e: {enum_name}) -> Int {{\n  match e {{\n",
+            "fn probe_{}(e: {module}.{enum_name}) -> Int {{\n  match e {{\n",
             enum_name.to_lowercase()
         ));
         for (variant, arity) in variants.iter() {
             let pattern = if *arity == 0 {
-                (*variant).to_string()
+                format!("{module}.{variant}")
             } else {
-                format!("{variant}({})", vec!["_"; *arity].join(", "))
+                format!("{module}.{variant}({})", vec!["_"; *arity].join(", "))
             };
             src.push_str(&format!("    {pattern} -> 0\n"));
         }
         src.push_str("  }\n}\n");
     }
     src.push_str("fn main() { () }\n");
+    let src = imports
+        .iter()
+        .map(|m| format!("import {m}\n"))
+        .collect::<String>()
+        + &src;
 
-    let tokens = silt::lexer::Lexer::new(&src).tokenize().expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
-    let errors: Vec<String> = silt::typechecker::check(&mut program)
+    let errors: Vec<String> = silt::session::testing::analyze_str(&src)
+        .1
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
         .map(|e| e.message)

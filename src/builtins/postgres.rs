@@ -36,6 +36,7 @@ use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
 
 use super::common::{ok, value_kind};
+use crate::typeinfo::{bv, ty};
 use crate::value::{Channel, IoCompletion, TrySendResult, Value};
 use crate::vm::{Vm, VmError};
 
@@ -46,10 +47,7 @@ use crate::vm::{Vm, VmError};
 /// `PgTimeout` is a nullary variant; `e.message()` still produces a
 /// helpful string via the trait impl.
 fn pg_timeout_err(_msg: &str) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant("PgTimeout".into(), vec![])],
-    )
+    Value::variant(bv::ERR, vec![Value::variant(bv::PG_TIMEOUT, vec![])])
 }
 
 /// Build a fresh `IoCompletion` whose watchdog-timeout factory is
@@ -273,7 +271,7 @@ fn drain_cursors_for_tx(tx_id: u64) {
 // ── Result / error builders ─────────────────────────────────────────
 
 fn err(v: Value) -> Value {
-    Value::Variant("Err".into(), vec![v])
+    Value::variant(bv::ERR, vec![v])
 }
 
 /// Scrub a Postgres error message before it crosses the VM boundary
@@ -345,24 +343,24 @@ pub fn redact_pg_message(s: &str) -> String {
 
 /// Build a bare `PgConnect(msg)` variant (no Err wrapper).
 fn pg_connect(msg: impl Into<String>) -> Value {
-    Value::Variant(
-        "PgConnect".into(),
+    Value::variant(
+        bv::PG_CONNECT,
         vec![Value::String(redact_pg_message(&msg.into()))],
     )
 }
 
 /// Build a bare `PgTls(msg)` variant (no Err wrapper).
 fn pg_tls(msg: impl Into<String>) -> Value {
-    Value::Variant(
-        "PgTls".into(),
+    Value::variant(
+        bv::PG_TLS,
         vec![Value::String(redact_pg_message(&msg.into()))],
     )
 }
 
 /// Build a bare `PgUnknown(msg)` variant (no Err wrapper).
 fn pg_unknown(msg: impl Into<String>) -> Value {
-    Value::Variant(
-        "PgUnknown".into(),
+    Value::variant(
+        bv::PG_UNKNOWN,
         vec![Value::String(redact_pg_message(&msg.into()))],
     )
 }
@@ -376,19 +374,19 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         let sqlstate = db.code().code().to_string();
         match sqlstate.as_str() {
             // 25P02: in_failed_sql_transaction.
-            "25P02" => Value::Variant("PgTxnAborted".into(), vec![]),
+            "25P02" => Value::variant(bv::PG_TXN_ABORTED, vec![]),
             // 57014: query_canceled (statement_timeout fires with this).
-            "57014" => Value::Variant("PgTimeout".into(), vec![]),
+            "57014" => Value::variant(bv::PG_TIMEOUT, vec![]),
             // 42703: undefined_column.
-            "42703" => Value::Variant("PgNoSuchColumn".into(), vec![Value::String(message)]),
+            "42703" => Value::variant(bv::PG_NO_SUCH_COLUMN, vec![Value::String(message)]),
             code if code.starts_with("28") => {
-                Value::Variant("PgAuthFailed".into(), vec![Value::String(message)])
+                Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(message)])
             }
             code if code.starts_with("08") => {
-                Value::Variant("PgConnect".into(), vec![Value::String(message)])
+                Value::variant(bv::PG_CONNECT, vec![Value::String(message)])
             }
-            code => Value::Variant(
-                "PgQuery".into(),
+            code => Value::variant(
+                bv::PG_QUERY,
                 vec![Value::String(message), Value::String(code.to_string())],
             ),
         }
@@ -399,15 +397,15 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         let lc = raw.to_ascii_lowercase();
         let scrubbed = redact_pg_message(&raw);
         if lc.contains("timed out") || lc.contains("timeout") {
-            Value::Variant("PgTimeout".into(), vec![])
+            Value::variant(bv::PG_TIMEOUT, vec![])
         } else if lc.contains("closed")
             || lc.contains("broken pipe")
             || lc.contains("eof")
             || lc.contains("reset by peer")
         {
-            Value::Variant("PgClosed".into(), vec![])
+            Value::variant(bv::PG_CLOSED, vec![])
         } else {
-            Value::Variant("PgUnknown".into(), vec![Value::String(scrubbed)])
+            Value::variant(bv::PG_UNKNOWN, vec![Value::String(scrubbed)])
         }
     }
 }
@@ -420,7 +418,7 @@ fn pool_error_value(e: &r2d2::Error) -> Value {
     let raw = format!("{e}");
     let lc = raw.to_ascii_lowercase();
     if lc.contains("timed out") || lc.contains("timeout") {
-        Value::Variant("PgTimeout".into(), vec![])
+        Value::variant(bv::PG_TIMEOUT, vec![])
     } else {
         pg_connect(raw)
     }
@@ -439,13 +437,13 @@ fn other_error(detail: impl Into<String>) -> Value {
 /// Wrap a converted column value in the silt-side `Value` ADT
 /// (`VInt`/`VStr`/`VBool`/`VFloat`/`VNull`/`VList`).
 fn wrap_v_int(n: i64) -> Value {
-    Value::Variant("VInt".into(), vec![Value::Int(n)])
+    Value::variant(bv::V_INT, vec![Value::Int(n)])
 }
 fn wrap_v_str(s: String) -> Value {
-    Value::Variant("VStr".into(), vec![Value::String(s)])
+    Value::variant(bv::V_STR, vec![Value::String(s)])
 }
 fn wrap_v_bool(b: bool) -> Value {
-    Value::Variant("VBool".into(), vec![Value::Bool(b)])
+    Value::variant(bv::V_BOOL, vec![Value::Bool(b)])
 }
 /// A silt `Float` is always finite, so a column holding `NaN` or
 /// `±Infinity` decodes like any other value that has no silt form.
@@ -453,16 +451,13 @@ fn wrap_v_float(f: f64) -> Value {
     if !f.is_finite() {
         return wrap_v_str(format!("<decode error: non-finite float {f}>"));
     }
-    Value::Variant(
-        "VFloat".into(),
-        vec![crate::builtins::numeric::float_value(f)],
-    )
+    Value::variant(bv::V_FLOAT, vec![crate::builtins::numeric::float_value(f)])
 }
 fn wrap_v_null() -> Value {
-    Value::Variant("VNull".into(), vec![])
+    Value::variant(bv::V_NULL, vec![])
 }
 fn wrap_v_list(xs: Vec<Value>) -> Value {
-    Value::Variant("VList".into(), vec![Value::List(Arc::new(xs))])
+    Value::variant(bv::V_LIST, vec![Value::List(Arc::new(xs))])
 }
 
 /// Convert a Postgres column cell to a silt-side wrapped `VXxx` `Value`.
@@ -713,7 +708,13 @@ fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
             value_kind(v)
         ));
     };
-    match tag.as_str() {
+    if !tag.of(ty::PG_VALUE) {
+        return Err(format!(
+            "postgres requires Value variant (VInt/VStr/...), got {}",
+            tag.ty().name
+        ));
+    }
+    match tag.name() {
         "VNull" => Ok(SqlParam::Null),
         "VInt" => match payload.first() {
             Some(Value::Int(n)) => Ok(SqlParam::Int8(*n)),
@@ -759,9 +760,9 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
     let mut elem_kind: Option<&str> = None;
     for x in xs {
         if let Value::Variant(tag, _) = x
-            && tag != "VNull"
+            && !tag.is(bv::V_NULL)
         {
-            elem_kind = Some(tag.as_str());
+            elem_kind = Some(tag.name());
             break;
         }
     }
@@ -771,11 +772,11 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
             let mut out: Vec<Option<bool>> = Vec::with_capacity(xs.len());
             for x in xs {
                 match x {
-                    Value::Variant(t, p) if t == "VBool" => match p.first() {
+                    Value::Variant(t, p) if t.is(bv::V_BOOL) => match p.first() {
                         Some(Value::Bool(b)) => out.push(Some(*b)),
                         _ => return Err("postgres: bad VBool in array".into()),
                     },
-                    Value::Variant(t, _) if t == "VNull" => out.push(None),
+                    Value::Variant(t, _) if t.is(bv::V_NULL) => out.push(None),
                     _ => return Err("postgres: mixed-type array (expected Bool)".into()),
                 }
             }
@@ -785,11 +786,11 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
             let mut out: Vec<Option<i64>> = Vec::with_capacity(xs.len());
             for x in xs {
                 match x {
-                    Value::Variant(t, p) if t == "VInt" => match p.first() {
+                    Value::Variant(t, p) if t.is(bv::V_INT) => match p.first() {
                         Some(Value::Int(n)) => out.push(Some(*n)),
                         _ => return Err("postgres: bad VInt in array".into()),
                     },
-                    Value::Variant(t, _) if t == "VNull" => out.push(None),
+                    Value::Variant(t, _) if t.is(bv::V_NULL) => out.push(None),
                     _ => return Err("postgres: mixed-type array (expected Int)".into()),
                 }
             }
@@ -799,12 +800,12 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
             let mut out: Vec<Option<f64>> = Vec::with_capacity(xs.len());
             for x in xs {
                 match x {
-                    Value::Variant(t, p) if t == "VFloat" => match p.first() {
+                    Value::Variant(t, p) if t.is(bv::V_FLOAT) => match p.first() {
                         Some(Value::Float(f)) => out.push(Some(*f)),
                         Some(Value::Int(n)) => out.push(Some(*n as f64)),
                         _ => return Err("postgres: bad VFloat in array".into()),
                     },
-                    Value::Variant(t, _) if t == "VNull" => out.push(None),
+                    Value::Variant(t, _) if t.is(bv::V_NULL) => out.push(None),
                     _ => return Err("postgres: mixed-type array (expected Float)".into()),
                 }
             }
@@ -815,11 +816,11 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
             let mut out: Vec<Option<String>> = Vec::with_capacity(xs.len());
             for x in xs {
                 match x {
-                    Value::Variant(t, p) if t == "VStr" => match p.first() {
+                    Value::Variant(t, p) if t.is(bv::V_STR) => match p.first() {
                         Some(Value::String(s)) => out.push(Some(s.clone())),
                         _ => return Err("postgres: bad VStr in array".into()),
                     },
-                    Value::Variant(t, _) if t == "VNull" => out.push(None),
+                    Value::Variant(t, _) if t.is(bv::V_NULL) => out.push(None),
                     _ => {
                         return Err("postgres: nested arrays / mixed types not supported".into());
                     }
@@ -846,28 +847,28 @@ fn make_query_result(rows: Vec<Value>) -> Value {
     let mut fields: BTreeMap<String, Value> = BTreeMap::new();
     fields.insert("rows".to_string(), Value::List(Arc::new(rows)));
     fields.insert("row_count".to_string(), Value::Int(row_count));
-    Value::Record("QueryResult".to_string(), Arc::new(fields))
+    Value::builtin_record(ty::QUERY_RESULT, fields)
 }
 
 fn make_exec_result(affected: u64, returning: Vec<Value>) -> Value {
     let mut fields: BTreeMap<String, Value> = BTreeMap::new();
     fields.insert("affected".to_string(), Value::Int(affected as i64));
     fields.insert("returning".to_string(), Value::List(Arc::new(returning)));
-    Value::Record("ExecResult".to_string(), Arc::new(fields))
+    Value::builtin_record(ty::EXEC_RESULT, fields)
 }
 
 // ── Handle helpers ──────────────────────────────────────────────────
 
 fn make_pool_handle(id: u64) -> Value {
-    Value::Variant("PgPool".into(), vec![Value::Int(id as i64)])
+    Value::variant(bv::PG_POOL, vec![Value::Int(id as i64)])
 }
 
 fn make_tx_handle(id: u64) -> Value {
-    Value::Variant("PgTx".into(), vec![Value::Int(id as i64)])
+    Value::variant(bv::PG_TX, vec![Value::Int(id as i64)])
 }
 
 fn make_cursor_handle(id: u64) -> Value {
-    Value::Variant("PgCursor".into(), vec![Value::Int(id as i64)])
+    Value::variant(bv::PG_CURSOR, vec![Value::Int(id as i64)])
 }
 
 fn extract_cursor_id(v: &Value) -> Result<u64, Value> {
@@ -877,7 +878,7 @@ fn extract_cursor_id(v: &Value) -> Result<u64, Value> {
             value_kind(v)
         )));
     };
-    if tag != "PgCursor" {
+    if !tag.is(bv::PG_CURSOR) {
         return Err(other_error(format!(
             "postgres requires PgCursor, got {tag}"
         )));
@@ -897,7 +898,7 @@ fn extract_pool_id(v: &Value) -> Result<u64, VmError> {
             value_kind(v)
         )));
     };
-    if tag != "PgPool" {
+    if !tag.is(bv::PG_POOL) {
         return Err(VmError::new(format!("postgres requires PgPool, got {tag}")));
     }
     match payload.first() {
@@ -915,7 +916,7 @@ fn extract_tx_id(v: &Value) -> Result<u64, VmError> {
             value_kind(v)
         )));
     };
-    if tag != "PgTx" {
+    if !tag.is(bv::PG_TX) {
         return Err(VmError::new(format!("postgres requires PgTx, got {tag}")));
     }
     match payload.first() {
@@ -952,9 +953,9 @@ fn resolve_executor(v: &Value) -> Result<ExecutorRef, Value> {
             value_kind(v)
         )));
     };
-    match tag.as_str() {
-        "PgPool" => extract_pool(v).map(ExecutorRef::Pool),
-        "PgTx" => {
+    match tag {
+        _ if tag.is(bv::PG_POOL) => extract_pool(v).map(ExecutorRef::Pool),
+        _ if tag.is(bv::PG_TX) => {
             let id = extract_tx_id(v).map_err(|e| other_error(e.message))?;
             match lookup_tx(id) {
                 Some(cell) => Ok(ExecutorRef::Tx(cell)),
@@ -964,7 +965,8 @@ fn resolve_executor(v: &Value) -> Result<ExecutorRef, Value> {
             }
         }
         other => Err(other_error(format!(
-            "postgres requires PgPool or PgTx, got {other}"
+            "postgres requires PgPool or PgTx, got {}",
+            other.name()
         ))),
     }
 }
@@ -1440,21 +1442,21 @@ fn do_stream_worker(target: ExecutorRef, sql: String, params: Vec<SqlParam>, ch:
             }
             match iter.next() {
                 Ok(Some(row)) => {
-                    let wrapped = Value::Variant("Ok".into(), vec![row_to_map(&row)]);
+                    let wrapped = Value::variant(bv::OK, vec![row_to_map(&row)]);
                     if !send_or_stop(wrapped) {
                         break;
                     }
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    let wrapped = Value::Variant("Err".into(), vec![pg_error_to_variant(&e)]);
+                    let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
                     let _ = send_or_stop(wrapped);
                     break;
                 }
             }
         },
         Err(e) => {
-            let wrapped = Value::Variant("Err".into(), vec![pg_error_to_variant(&e)]);
+            let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
             let _ = send_or_stop(wrapped);
         }
     };
@@ -1463,7 +1465,7 @@ fn do_stream_worker(target: ExecutorRef, sql: String, params: Vec<SqlParam>, ch:
         ExecutorRef::Pool(pool) => match pool.get() {
             Ok(mut conn) => pump(conn.client_mut(), &sql, &bind),
             Err(e) => {
-                let wrapped = Value::Variant("Err".into(), vec![pool_error_value(&e)]);
+                let wrapped = Value::variant(bv::ERR, vec![pool_error_value(&e)]);
                 let _ = send_or_stop(wrapped);
             }
         },
@@ -1628,7 +1630,7 @@ fn notification_to_record(n: &postgres::Notification) -> Value {
         Value::String(n.payload().to_string()),
     );
     fields.insert("pid".to_string(), Value::Int(n.process_id() as i64));
-    Value::Record("Notification".to_string(), Arc::new(fields))
+    Value::builtin_record(ty::NOTIFICATION, fields)
 }
 
 /// Long-lived worker for `listen`. Owns the `PooledConnection` for the
@@ -1993,7 +1995,7 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let tx_id: u64 = if is_resume {
         // Resumption: args[0] must be the PgTx we pushed last time.
         match &args[0] {
-            Value::Variant(tag, _) if tag == "PgTx" => extract_tx_id(&args[0])?,
+            Value::Variant(tag, _) if tag.is(bv::PG_TX) => extract_tx_id(&args[0])?,
             _ => {
                 return Err(VmError::new(
                     "postgres.transact: internal VM error: resume without PgTx handle".into(),
@@ -2005,7 +2007,7 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         // We don't model SAVEPOINTs yet — surface an Err so the caller
         // can fall back to raw SQL.
         if let Value::Variant(tag, _) = &args[0]
-            && tag == "PgTx"
+            && tag.is(bv::PG_TX)
         {
             return Ok(err(other_error(
                 "postgres.transact: nested transactions are not supported — \
@@ -2094,14 +2096,14 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 
     match cb_result {
         Ok(v) => match &v {
-            Value::Variant(tag, _) if tag == "Ok" => {
+            Value::Variant(tag, _) if tag.is(bv::OK) => {
                 if let Some(e) = finalise("COMMIT", cell) {
                     Ok(e)
                 } else {
                     Ok(v)
                 }
             }
-            Value::Variant(tag, _) if tag == "Err" => {
+            Value::Variant(tag, _) if tag.is(bv::ERR) => {
                 let _ = finalise("ROLLBACK", cell);
                 Ok(v)
             }
@@ -2190,13 +2192,13 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     // Cursors require a PgTx — reject PgPool here up front.
     let tx_id = match &args[0] {
-        Value::Variant(tag, _) if tag == "PgTx" => match extract_tx_id(&args[0]) {
+        Value::Variant(tag, _) if tag.is(bv::PG_TX) => match extract_tx_id(&args[0]) {
             Ok(id) => id,
             Err(e) => {
                 return Ok(err(other_error(e.message)));
             }
         },
-        Value::Variant(tag, _) if tag == "PgPool" => {
+        Value::Variant(tag, _) if tag.is(bv::PG_POOL) => {
             return Ok(err(other_error(
                 "postgres.cursor requires PgTx, got PgPool (cursors live inside a transaction)"
                     .to_string(),
@@ -2535,7 +2537,7 @@ mod tests {
         let Value::Variant(tag, payload) = &result else {
             panic!("expected Variant, got {result:?}");
         };
-        assert_eq!(tag, "Err", "expected Err, got {tag}");
+        assert_eq!(tag.name(), "Err", "expected Err, got {tag}");
         let inner = payload.first().expect("err payload");
         let Value::Variant(etag, epayload) = inner else {
             panic!("expected inner Variant, got {inner:?}");
@@ -2544,7 +2546,7 @@ mod tests {
         // TLS now surface `PgTls(msg)` instead of the legacy
         // `ConnectionError`. The message text still mentions TLS /
         // postgres-tls so operators see the feature-flag hint.
-        assert_eq!(etag, "PgTls");
+        assert_eq!(etag.name(), "PgTls");
         let Some(Value::String(msg)) = epayload.first() else {
             panic!("expected message string");
         };
@@ -2562,7 +2564,7 @@ mod tests {
             let Value::Variant(tag, payload) = &result else {
                 panic!("expected Variant for {mode}");
             };
-            assert_eq!(tag, "Err", "{mode} should Err");
+            assert_eq!(tag.name(), "Err", "{mode} should Err");
             let inner = payload.first().expect("err payload");
             let Value::Variant(_, epayload) = inner else {
                 panic!("expected inner Variant for {mode}");
@@ -2670,7 +2672,7 @@ mod tests {
         let Value::Variant(tag, payload) = &result else {
             panic!("expected Variant, got {result:?}");
         };
-        assert_eq!(tag, "Ok", "connect failed: {result:?}");
+        assert_eq!(tag.name(), "Ok", "connect failed: {result:?}");
         let handle = payload.first().cloned().expect("pool handle");
         let pool_id = extract_pool_id(&handle).expect("pool id");
         let pool = lookup_pool(pool_id).expect("registered");
@@ -2679,7 +2681,7 @@ mod tests {
         let Value::Variant(qtag, qpayload) = &q else {
             panic!("expected Variant from query: {q:?}");
         };
-        assert_eq!(qtag, "Ok", "query failed: {q:?}");
+        assert_eq!(qtag.name(), "Ok", "query failed: {q:?}");
         // Payload is `QueryResult { rows: [...] }`. Pull out the rows
         // list and confirm one row with `?column?` = 1.
         let record = qpayload.first().expect("query result record");
@@ -2702,7 +2704,7 @@ mod tests {
         let Value::Variant(vtag, vpayload) = col else {
             panic!("expected VInt variant, got {col:?}");
         };
-        assert_eq!(vtag, "VInt");
+        assert_eq!(vtag.name(), "VInt");
         assert_eq!(vpayload.first(), Some(&Value::Int(1)));
 
         let _ = remove_pool(pool_id);

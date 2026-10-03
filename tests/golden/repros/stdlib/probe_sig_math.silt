@@ -1,0 +1,19 @@
+-- verdict: same
+import math
+fn main() {
+  let v_math_acos: Int = math.acos
+  let v_math_asin: Int = math.asin
+  let v_math_atan: Int = math.atan
+  let v_math_atan2: Int = math.atan2
+  let v_math_cos: Int = math.cos
+  let v_math_e: Int = math.e
+  let v_math_exp: Int = math.exp
+  let v_math_log: Int = math.log
+  let v_math_log10: Int = math.log10
+  let v_math_pi: Int = math.pi
+  let v_math_pow: Int = math.pow
+  let v_math_random: Int = math.random
+  let v_math_sin: Int = math.sin
+  let v_math_sqrt: Int = math.sqrt
+  let v_math_tan: Int = math.tan
+}

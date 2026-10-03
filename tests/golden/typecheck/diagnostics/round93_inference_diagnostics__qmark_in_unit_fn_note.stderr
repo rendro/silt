@@ -1,0 +1,9 @@
+error[type]: type mismatch: expected Result(_, String), got ()
+ --> round93_inference_diagnostics__qmark_in_unit_fn_note.silt:10:10
+    |
+ 10 | fn get() {
+    |          ^ type mismatch: expected Result(_, String), got ()
+ ::: round93_inference_diagnostics__qmark_in_unit_fn_note.silt:11:11
+    |
+ 11 |   let x = parse()?
+    |           -------- this `?` requires this function to return Result(_, String)

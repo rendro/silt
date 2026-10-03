@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: type mismatch: expected Node, got b.Node
+-- a.get returns b's Node, which is not this module's own Node.
+import a
+type Node { n: String }
+fn show(x: Node) -> String { x.n }
+fn main() { println(show(a.get())) }

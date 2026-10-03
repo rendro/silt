@@ -1,0 +1,24 @@
+-- verdict: same
+fn f(x) {
+  let y = match x {
+    1 -> panic("a")
+    _ -> panic("b")
+  }
+  y + 1
+}
+fn g(x) -> Int {
+  match x {
+    1 -> return 1
+    _ -> return 2
+  }
+}
+fn h(x) {
+  when x > 0 else {
+    match x { 0 -> return "zero", _ -> return "neg" }
+  }
+  "pos"
+}
+fn main() {
+  println(g(1))
+  println(h(1))
+}

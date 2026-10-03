@@ -1,0 +1,6 @@
+-- verdict: same
+fn f(x: a, y: b) -> a { y }
+fn main() {
+  let s: String = f("hello", 42)
+  println(s)
+}

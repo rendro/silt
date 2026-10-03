@@ -1,0 +1,12 @@
+-- verdict: same
+fn main() {
+  let xs = []
+  let ys: List(Int) = xs
+  let zs: List(String) = xs
+  println(ys)
+  println(zs)
+  let e = Err("x")
+  let a: Result(Int, String) = e
+  let b: Result(String, String) = e
+  println(a)
+}

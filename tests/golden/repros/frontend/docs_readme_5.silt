@@ -1,0 +1,15 @@
+-- verdict: same
+type User {
+  name: String,
+  age: Int,
+}
+
+fn greet(user) {
+  "hello, {user.name} ({user.age})"
+}
+
+fn main() {
+  let u = User { name: "alice", age: 30 }
+  println(greet(u))
+  println(greet(u.{ age: 31 }))  -- record update
+}

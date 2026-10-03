@@ -11,9 +11,6 @@ use crate::value::{Channel, IoCompletion, TaskHandle, Value};
 
 use super::VmError;
 
-/// Type alias for foreign (Rust-side) functions registered with the VM.
-pub(crate) type ForeignFn = Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>;
-
 // ── Call frame ────────────────────────────────────────────────────
 
 pub(crate) struct CallFrame {
@@ -385,9 +382,6 @@ impl IoPool {
 /// Shared, read-only-after-init state for a Silt program.
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub struct Runtime {
-    // ── Foreign function interface ──────────────────────────────
-    pub(super) foreign_fns: HashMap<String, ForeignFn>,
-
     // ── M:N scheduler ──────────────────────────────────────────
     /// The shared scheduler for spawned tasks (None until first task.spawn).
     pub(super) scheduler: parking_lot::Mutex<Option<Arc<crate::scheduler::Scheduler>>>,

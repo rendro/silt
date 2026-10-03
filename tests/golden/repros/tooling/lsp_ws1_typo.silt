@@ -1,0 +1,6 @@
+-- verdict: same
+import hlper_typo
+
+fn main() {
+  undefined_thing(1)
+}

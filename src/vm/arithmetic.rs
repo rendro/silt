@@ -124,10 +124,10 @@ impl Vm {
             // anon-shaped records, but this is defensive for cases
             // where a nominal flows through `unify_anon_nominal` and
             // ends up compared against an anon-typed value at runtime —
-            // the `na == nb` guard alone would skip the dispatch and
+            // the same-type guard alone would skip the dispatch and
             // fall to the catch-all error.
-            (Value::Record(na, _), Value::Record(nb, _))
-                if na == nb || na.as_str() == "<anon>" || nb.as_str() == "<anon>" =>
+            (Value::Record(ta, _), Value::Record(tb, _))
+                if ta.id == tb.id || ta.is_anon() || tb.is_anon() =>
             {
                 Self::ordering_with_fn_gate(&a, &b)?
             }
@@ -198,7 +198,7 @@ impl Vm {
             Value::Channel(_) => 11,
             Value::Handle(_) => 12,
             Value::VmClosure(_) => 13,
-            Value::BuiltinFn(_) => 14,
+            Value::BuiltinFn(_) | Value::HostFn(_) => 14,
             Value::VariantConstructor(..) => 15,
             Value::TypeDescriptor(_) => 16,
             Value::PrimitiveDescriptor(_) => 17,

@@ -3,7 +3,7 @@ fn main() {
   let ch = channel.new(10)
   channel.close(ch)
   println(match channel.try_receive(ch) {
-    Closed -> "closed"
+    channel.Closed -> "closed"
     _ -> "unexpected"
   })
 }

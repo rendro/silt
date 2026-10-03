@@ -1,0 +1,4 @@
+pub type Tag { Red, Green }
+pub fn red() -> Tag { Red }
+pub fn green() -> Tag { Green }
+pub fn show(t: Tag) -> String { t.display() }

@@ -1,0 +1,22 @@
+-- verdict: same
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new()
+  println("try_send, no receiver: {channel.try_send(ch, 1)}")
+  let r = task.spawn(fn() {
+    match channel.receive(ch) { channel.Message(v) -> v  _ -> 0 - 1 }
+  })
+  time.sleep(time.ms(100))
+  println("try_send, receiver parked: {channel.try_send(ch, 2)}")
+  println("second try_send (one receiver only): {channel.try_send(ch, 3)}")
+  println("receiver got {task.join(r)}")
+  println("try_receive on rendezvous, no sender: {channel.try_receive(ch)}")
+  -- parked sender + try_receive
+  let s = task.spawn(fn() { channel.send(ch, 42) })
+  time.sleep(time.ms(100))
+  println("try_receive with parked sender: {channel.try_receive(ch)}")
+  time.sleep(time.ms(100))
+  println("try_receive again: {channel.try_receive(ch)}")
+}

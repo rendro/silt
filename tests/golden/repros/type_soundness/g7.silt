@@ -1,0 +1,9 @@
+-- verdict: same
+-- with return annotation on the leaf only
+fn leaf() -> Int { 1 }
+fn mid() { leaf() }
+fn top() { mid() }
+fn main() {
+  let s: String = top()
+  println(s)
+}

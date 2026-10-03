@@ -6,8 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use silt::diagnostic::{Code, Diagnostic};
 use silt::intern;
-use silt::manifest::{Dependency, GitRef, Manifest, ManifestError};
+use silt::manifest::{Dependency, GitRef, Manifest};
+use silt::source::SourceMap;
 
 // ── Test scaffolding ──────────────────────────────────────────────────
 
@@ -31,10 +33,22 @@ fn write_manifest(dir: &Path, contents: &str) -> PathBuf {
     path
 }
 
-fn load_err(contents: &str) -> ManifestError {
+fn load(path: &Path) -> Result<Manifest, Diagnostic> {
+    Manifest::load(path, &mut SourceMap::new())
+}
+
+fn load_err(contents: &str) -> Diagnostic {
     let dir = tempdir();
     let path = write_manifest(&dir, contents);
-    Manifest::load(&path).expect_err("expected manifest load to fail")
+    load(&path).expect_err("expected manifest load to fail")
+}
+
+/// The message and the notes of a diagnostic, one per line.
+fn text(d: &Diagnostic) -> String {
+    std::iter::once(d.message.as_str())
+        .chain(d.notes.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // ── Happy path ────────────────────────────────────────────────────────
@@ -50,7 +64,7 @@ name = "foo"
 version = "0.1.0"
 "#,
     );
-    let manifest = Manifest::load(&path).expect("load");
+    let manifest = load(&path).expect("load");
     assert_eq!(intern::resolve(manifest.package.name), "foo");
     assert_eq!(manifest.package.version, "0.1.0");
     assert!(manifest.package.edition.is_none());
@@ -71,13 +85,13 @@ version = "0.1.0"
 bar = { path = "../bar" }
 "#,
     );
-    let manifest = Manifest::load(&path).expect("load");
+    let manifest = load(&path).expect("load");
     let bar_sym = intern::intern("bar");
     let dep = manifest
         .dependencies
         .get(&bar_sym)
         .expect("expected `bar` dependency");
-    match dep {
+    match &dep.source {
         Dependency::Path { path } => {
             assert_eq!(path, &PathBuf::from("../bar"));
         }
@@ -97,7 +111,7 @@ version = "0.1.0"
 edition = "2026"
 "#,
     );
-    let manifest = Manifest::load(&path).expect("load");
+    let manifest = load(&path).expect("load");
     assert_eq!(manifest.package.edition.as_deref(), Some("2026"));
 }
 
@@ -111,7 +125,7 @@ fn test_missing_name_is_error() {
 version = "0.1.0"
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(
         msg.contains("missing field `name`"),
         "expected missing-name error, got: {msg}"
@@ -126,7 +140,7 @@ fn test_missing_version_is_error() {
 name = "foo"
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(
         msg.contains("missing field `version`"),
         "expected missing-version error, got: {msg}"
@@ -144,7 +158,7 @@ name = "Foo"
 version = "0.1.0"
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(msg.contains("Foo"), "{msg}");
     assert!(
         msg.to_lowercase().contains("lowercase"),
@@ -161,7 +175,7 @@ name = "foo.bar"
 version = "0.1.0"
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(msg.contains("foo.bar"), "{msg}");
     assert!(
         msg.to_lowercase().contains("lowercase letters")
@@ -179,7 +193,7 @@ name = "1foo"
 version = "0.1.0"
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(
         msg.contains("1foo")
             && (msg.to_lowercase().contains("digit") || msg.to_lowercase().contains("identifier")),
@@ -199,7 +213,7 @@ name = "foo"
 version = "{bad}"
 "#
         ));
-        let msg = err.to_string();
+        let msg = text(&err);
         assert!(
             msg.to_lowercase().contains("version"),
             "expected version error for `{bad}`, got: {msg}"
@@ -221,7 +235,7 @@ version = "0.1.0"
 bar = { path = "../bar", branch = "main" }
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(
         msg.contains("branch") && msg.to_lowercase().contains("unknown"),
         "expected unknown-key error, got: {msg}"
@@ -244,13 +258,13 @@ version = "0.1.0"
 bar = { git = "https://example.com/bar.git", rev = "abc123def456" }
 "#,
     );
-    let manifest = Manifest::load(&path).expect("load");
+    let manifest = load(&path).expect("load");
     let bar_sym = intern::intern("bar");
     let dep = manifest
         .dependencies
         .get(&bar_sym)
         .expect("expected bar dependency");
-    match dep {
+    match &dep.source {
         Dependency::Git { url, ref_spec } => {
             assert_eq!(url, "https://example.com/bar.git");
             match ref_spec {
@@ -276,13 +290,13 @@ version = "0.1.0"
 bar = { git = "https://example.com/bar.git", branch = "main" }
 "#,
     );
-    let manifest = Manifest::load(&path).expect("load");
+    let manifest = load(&path).expect("load");
     let bar_sym = intern::intern("bar");
     let dep = manifest
         .dependencies
         .get(&bar_sym)
         .expect("expected bar dependency");
-    match dep {
+    match &dep.source {
         Dependency::Git { url, ref_spec } => {
             assert_eq!(url, "https://example.com/bar.git");
             match ref_spec {
@@ -308,13 +322,13 @@ version = "0.1.0"
 bar = { git = "https://example.com/bar.git", tag = "v1.2.3" }
 "#,
     );
-    let manifest = Manifest::load(&path).expect("load");
+    let manifest = load(&path).expect("load");
     let bar_sym = intern::intern("bar");
     let dep = manifest
         .dependencies
         .get(&bar_sym)
         .expect("expected bar dependency");
-    match dep {
+    match &dep.source {
         Dependency::Git { url, ref_spec } => {
             assert_eq!(url, "https://example.com/bar.git");
             match ref_spec {
@@ -338,7 +352,7 @@ version = "0.1.0"
 bar = { git = "https://example.com/bar.git" }
 "#,
     );
-    let msg = err.to_string().to_lowercase();
+    let msg = text(&err).to_lowercase();
     assert!(
         msg.contains("rev") && msg.contains("branch") && msg.contains("tag"),
         "expected message naming rev/branch/tag, got: {msg}"
@@ -357,7 +371,7 @@ version = "0.1.0"
 bar = { git = "https://example.com/bar.git", rev = "abc123", branch = "main" }
 "#,
     );
-    let msg = err.to_string().to_lowercase();
+    let msg = text(&err).to_lowercase();
     assert!(
         msg.contains("exactly one"),
         "expected the 'exactly one' phrase (locked to the emission site in src/manifest.rs), got: {msg}"
@@ -381,7 +395,7 @@ version = "0.1.0"
 bar = { git = "https://example.com/bar.git", rev = "abc123", path = "../bar" }
 "#,
     );
-    let msg = err.to_string().to_lowercase();
+    let msg = text(&err).to_lowercase();
     assert!(
         msg.contains("path") && msg.contains("git"),
         "expected message about both path and git, got: {msg}"
@@ -397,10 +411,10 @@ name = "foo"
 version = "0.1.0"
 
 [dependencies]
-bar = { git = "https://example.com/bar.git", rev = "abc123", branch_pattern = "main-*" }
+bar = { git = "https://example.com/bar.git", rev = "abc1234", branch_pattern = "main-*" }
 "#,
     );
-    let msg = err.to_string().to_lowercase();
+    let msg = text(&err).to_lowercase();
     assert!(
         msg.contains("branch_pattern") && msg.contains("unknown"),
         "expected unknown-key error mentioning branch_pattern, got: {msg}"
@@ -423,13 +437,13 @@ version = "0.1.0"
 bar = { path = "../bar" }
 "#,
     );
-    let manifest = Manifest::load(&path).expect("load");
+    let manifest = load(&path).expect("load");
     let bar_sym = intern::intern("bar");
     let dep = manifest
         .dependencies
         .get(&bar_sym)
         .expect("expected bar dependency");
-    match dep {
+    match &dep.source {
         Dependency::Path { path } => assert_eq!(path, &PathBuf::from("../bar")),
         other => panic!("expected Path dep, got {other:?}"),
     }
@@ -447,7 +461,7 @@ version = "0.1.0"
 bar = { }
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(
         msg.contains("path"),
         "expected message about missing `path` key, got: {msg}"
@@ -466,7 +480,7 @@ version = "0.1.0"
 list = { path = "../list" }
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(
         msg.contains("list") && msg.to_lowercase().contains("builtin"),
         "expected builtin-collision error, got: {msg}"
@@ -485,7 +499,7 @@ version = "0.1.0"
 "Foo" = { path = "../foo" }
 "#,
     );
-    let msg = err.to_string();
+    let msg = text(&err);
     assert!(
         msg.to_lowercase().contains("dependency name") && msg.to_lowercase().contains("lowercase"),
         "expected invalid dep name error, got: {msg}"
@@ -501,8 +515,10 @@ fn test_malformed_toml() {
     // Lock the message shape so a future regression that swaps in a
     // generic "parse failed" string (or an empty one) is caught.
     let err = load_err("[[broken");
-    match err {
-        ManifestError::Parse { message, span, .. } => {
+    assert_eq!(err.code, Code::ManifestInvalid);
+    let message = text(&err);
+    {
+        {
             assert!(!message.is_empty(), "expected non-empty parse message");
             let lower = message.to_lowercase();
             // The underlying TOML parser uses phrases like "invalid",
@@ -524,14 +540,13 @@ fn test_malformed_toml() {
                 "expected table-header-specific diagnostic, got: {message:?}"
             );
             // The toml 0.8 parser populates a byte-span for the failure
-            // site; that's what downstream diagnostic rendering depends
-            // on, so make sure we don't regress to None.
+            // site; the diagnostic points there, not at the start.
             assert!(
-                span.is_some(),
-                "expected toml parser to supply a byte span, got None"
+                err.span.start > 0,
+                "expected the diagnostic at the parser's byte span, got {:?}",
+                err.span
             );
         }
-        other => panic!("expected Parse error, got {other:?}"),
     }
 }
 
@@ -548,7 +563,7 @@ name = "foo"
 version = "0.1.0"
 "#,
     );
-    let manifest = Manifest::load(&path).expect("load");
+    let manifest = load(&path).expect("load");
     assert!(
         manifest.manifest_path.is_absolute(),
         "manifest_path should be absolute, got {:?}",
@@ -565,16 +580,8 @@ version = "0.1.0"
 fn test_io_error_when_missing() {
     let dir = tempdir();
     let path = dir.join("silt.toml"); // never written
-    let err = Manifest::load(&path).expect_err("expected IO error");
-    match err {
-        ManifestError::Io(_, p) => {
-            assert!(
-                p.is_absolute(),
-                "expected absolute path in IO error, got {p:?}"
-            );
-        }
-        other => panic!("expected Io error, got {other:?}"),
-    }
+    let err = load(&path).expect_err("expected IO error");
+    assert_eq!(err.code, Code::PackageIo, "{err:?}");
 }
 
 #[test]
@@ -656,13 +663,13 @@ version = "0.2.1"
 helper = { path = "../helper" }
 "#,
     );
-    let manifest = Manifest::discover(&nested)
+    let manifest = Manifest::discover(&nested, &mut SourceMap::new())
         .expect("discover ok")
         .expect("manifest found");
     assert_eq!(intern::resolve(manifest.package.name), "demo_pkg");
     assert_eq!(manifest.package.version, "0.2.1");
     let helper = intern::intern("helper");
-    match manifest.dependencies.get(&helper) {
+    match manifest.dependencies.get(&helper).map(|e| &e.source) {
         Some(Dependency::Path { path }) => assert_eq!(path, &PathBuf::from("../helper")),
         other => panic!("expected helper path dep, got {other:?}"),
     }
@@ -675,7 +682,7 @@ fn test_discover_returns_none_when_no_manifest() {
     fs::create_dir_all(&nested).expect("mkdir -p");
     // Same caveat as `test_find_returns_none` — don't fail the suite if
     // an enclosing silt.toml exists outside our control.
-    match Manifest::discover(&nested) {
+    match Manifest::discover(&nested, &mut SourceMap::new()) {
         Ok(None) => {}
         Ok(Some(m)) => {
             let temp_root = std::env::temp_dir();
@@ -685,6 +692,6 @@ fn test_discover_returns_none_when_no_manifest() {
                 m.manifest_path
             );
         }
-        Err(e) => panic!("discover failed: {e}"),
+        Err(e) => panic!("discover failed: {e:?}"),
     }
 }

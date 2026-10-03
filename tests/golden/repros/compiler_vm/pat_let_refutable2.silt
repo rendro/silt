@@ -1,0 +1,5 @@
+-- verdict: same
+fn main() {
+  let [a, b] = [1]
+  println(a + b)
+}

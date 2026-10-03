@@ -1,0 +1,45 @@
+-- verdict: same
+import list
+fn main() {
+  let v_list_all: Int = list.all
+  let v_list_any: Int = list.any
+  let v_list_append: Int = list.append
+  let v_list_concat: Int = list.concat
+  let v_list_contains: Int = list.contains
+  let v_list_drop: Int = list.drop
+  let v_list_each: Int = list.each
+  let v_list_enumerate: Int = list.enumerate
+  let v_list_filter: Int = list.filter
+  let v_list_filter_map: Int = list.filter_map
+  let v_list_find: Int = list.find
+  let v_list_flat_map: Int = list.flat_map
+  let v_list_flatten: Int = list.flatten
+  let v_list_fold: Int = list.fold
+  let v_list_fold_until: Int = list.fold_until
+  let v_list_get: Int = list.get
+  let v_list_group_by: Int = list.group_by
+  let v_list_head: Int = list.head
+  let v_list_index_of: Int = list.index_of
+  let v_list_intersperse: Int = list.intersperse
+  let v_list_last: Int = list.last
+  let v_list_length: Int = list.length
+  let v_list_map: Int = list.map
+  let v_list_max_by: Int = list.max_by
+  let v_list_min_by: Int = list.min_by
+  let v_list_prepend: Int = list.prepend
+  let v_list_product: Int = list.product
+  let v_list_product_float: Int = list.product_float
+  let v_list_remove_at: Int = list.remove_at
+  let v_list_reverse: Int = list.reverse
+  let v_list_scan: Int = list.scan
+  let v_list_set: Int = list.set
+  let v_list_sort: Int = list.sort
+  let v_list_sort_by: Int = list.sort_by
+  let v_list_sum: Int = list.sum
+  let v_list_sum_float: Int = list.sum_float
+  let v_list_tail: Int = list.tail
+  let v_list_take: Int = list.take
+  let v_list_unfold: Int = list.unfold
+  let v_list_unique: Int = list.unique
+  let v_list_zip: Int = list.zip
+}

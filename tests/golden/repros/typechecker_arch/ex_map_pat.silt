@@ -1,0 +1,8 @@
+-- verdict: same
+fn f(m: Map(String, Bool)) -> Int {
+  match m {
+    #{"a": true} -> 1
+    #{"a": false} -> 2
+  }
+}
+fn main() { println(f(#{"b": true})) }

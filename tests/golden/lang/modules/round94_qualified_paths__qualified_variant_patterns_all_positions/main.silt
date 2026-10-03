@@ -13,7 +13,7 @@ fn main() {
   let single.Only(n) = single.Only(7)
   print(n)
   let o = match shapes.Rect(3.0, 4.0) {
-    shapes.Circle(x) | Rect(x, _) -> x,
+    shapes.Circle(x) | shapes.Rect(x, _) -> x,
   }
   print(o)
   let t = match (c, 5) {

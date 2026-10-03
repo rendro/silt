@@ -1,0 +1,3 @@
+import a
+import channel
+pub fn go() { channel.send(a.ch, 1) }

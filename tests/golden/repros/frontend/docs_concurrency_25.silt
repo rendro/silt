@@ -1,0 +1,35 @@
+-- verdict: same
+import channel
+import list
+import task
+fn main() {
+  let jobs = channel.new(10)
+  let results = channel.new(10)
+
+  -- Enqueue work
+  channel.send(jobs, 10)
+  channel.send(jobs, 20)
+  channel.send(jobs, 30)
+  channel.send(jobs, 40)
+  channel.send(jobs, 50)
+  channel.send(jobs, 60)
+  channel.close(jobs)
+
+  -- Spawn three workers
+  let workers = [1, 2, 3] |> list.map { id ->
+    task.spawn(fn() {
+      channel.each(jobs) { n ->
+        channel.send(results, n * 2)
+      }
+    })
+  }
+
+  -- Wait for all workers to finish, then close results
+  workers |> list.each { w -> task.join(w) }
+  channel.close(results)
+
+  -- Collect
+  channel.each(results) { r ->
+    println(r)
+  }
+}

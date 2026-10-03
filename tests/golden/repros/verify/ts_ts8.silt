@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+import string
+fn main() {
+  println(list.map([1, 2]))
+  println(string.trim())
+}

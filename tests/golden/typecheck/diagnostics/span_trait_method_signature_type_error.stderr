@@ -1,0 +1,5 @@
+error[type]: type argument count mismatch for record 'Box': expected 1, got 2
+ --> span_trait_method_signature_type_error.silt:7:18
+   |
+ 7 |   fn go(self, b: Box(Int, String)) -> Int
+   |                  ^^^^^^^^^^^^^^^^ type argument count mismatch for record 'Box': expected 1, got 2

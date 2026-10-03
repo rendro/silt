@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+fn describe(x: a) -> String where a: Display { x.display() }
+fn biggest(xs: List(a)) -> List(a) where a: Compare { list.sort(xs) }
+fn id(x) { x }
+fn main() {
+  println(describe(1))
+  println(describe(id))
+  println(biggest([id]))
+}

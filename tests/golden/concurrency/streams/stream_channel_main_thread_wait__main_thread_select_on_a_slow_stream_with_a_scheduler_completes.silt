@@ -16,9 +16,9 @@ fn main() {
     time.sleep(time.ms(300))
     x * 10
   }
-  match channel.select([Recv(out)]) {
-    (_, Message(v)) -> println("got {v}")
-    (_, Closed) -> println("closed")
+  match channel.select([channel.Recv(out)]) {
+    (_, channel.Message(v)) -> println("got {v}")
+    (_, channel.Closed) -> println("closed")
     _ -> println("other")
   }
 }

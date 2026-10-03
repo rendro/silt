@@ -1,0 +1,7 @@
+-- verdict: same
+fn main() {
+  let r = loop Some(x) = Some(1) {
+    x
+  }
+  println(r)
+}

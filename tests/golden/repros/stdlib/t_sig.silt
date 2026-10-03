@@ -1,0 +1,15 @@
+-- verdict: same
+import string
+import list
+import float
+import channel
+import json
+fn main() {
+  let a: Int = string.trim
+  let b: Int = list.map
+  let c: Int = float.to_string
+  let d: Int = channel.new
+  let e: Int = json.parse
+  let f: Int = list.nope
+  let g: Int = float.round
+}

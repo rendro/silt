@@ -1,0 +1,13 @@
+-- verdict: same
+import task
+import list
+fn go(n) {
+  match n {
+    0 -> 0
+    _ -> list.fold([n - 1], 0) { acc, x -> acc + 1 + go(x) }
+  }
+}
+fn main() {
+  let h = task.spawn(fn() { go(160) })
+  println(task.join(h))
+}

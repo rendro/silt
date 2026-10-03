@@ -1,0 +1,8 @@
+-- dép 😀
+pub fn helper(x: Int) -> Int {
+  x / 0
+}
+pub fn main() -> Int { helper(1) }
+
+
+

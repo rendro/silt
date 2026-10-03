@@ -1,0 +1,3 @@
+-- verdict: same
+fn f(x: Strng) { x }
+fn main() { println(f("a")) }

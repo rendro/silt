@@ -1,0 +1,6 @@
+-- verdict: same
+fn lt(a: a, b: a) -> Bool { a < b }
+fn main() {
+  println(lt(false, true))
+  println(lt((1, 2), (1, 3)))
+}

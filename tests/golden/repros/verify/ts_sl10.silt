@@ -1,0 +1,6 @@
+-- verdict: same
+import regex
+fn main() {
+  println("caaat" |> regex.replace("a+", "X"))
+  println(regex.replace("a+", "caaat", "X"))
+}

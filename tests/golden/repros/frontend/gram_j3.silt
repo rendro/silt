@@ -1,0 +1,7 @@
+-- verdict: same
+fn f(x: (Int)) = x
+fn g(x: (Int,)) = x
+fn main() {
+  println("{g((1,))}")
+  println("{f(1)}")
+}

@@ -1,0 +1,6 @@
+-- verdict: same
+import ca
+import cb
+fn main() {
+  println("hi")
+}

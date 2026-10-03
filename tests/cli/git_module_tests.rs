@@ -26,12 +26,15 @@ fn test_cache_dir_is_under_xdg_or_home() {
 
 #[test]
 fn test_cache_for_includes_url_hash_and_sha() {
-    let dir =
-        git::cache_for("https://example.com/foo", "abc123def4567890").expect("cache_for succeeds");
+    let dir = git::cache_for(
+        "https://example.com/foo",
+        "abc123def4567890000000000000000000000000",
+    )
+    .expect("cache_for succeeds");
     let s = dir.to_string_lossy();
     // The resolved SHA appears verbatim as the leaf component.
     assert!(
-        s.contains("abc123def4567890"),
+        s.contains("abc123def4567890000000000000000000000000"),
         "expected resolved SHA in path, got {s}"
     );
     // The URL hash isn't the URL itself, but the result is deterministic
@@ -55,12 +58,28 @@ fn test_cache_for_includes_url_hash_and_sha() {
 
 #[test]
 fn test_cache_for_consistent_for_same_url_and_sha() {
-    let a = git::cache_for("https://example.com/foo", "deadbeef0000000").unwrap();
-    let b = git::cache_for("https://example.com/foo", "deadbeef0000000").unwrap();
+    let a = git::cache_for(
+        "https://example.com/foo",
+        "deadbeef00000000000000000000000000000000",
+    )
+    .unwrap();
+    let b = git::cache_for(
+        "https://example.com/foo",
+        "deadbeef00000000000000000000000000000000",
+    )
+    .unwrap();
     assert_eq!(a, b);
-    let c = git::cache_for("https://example.com/bar", "deadbeef0000000").unwrap();
+    let c = git::cache_for(
+        "https://example.com/bar",
+        "deadbeef00000000000000000000000000000000",
+    )
+    .unwrap();
     assert_ne!(a, c, "different URLs must produce different cache paths");
-    let d = git::cache_for("https://example.com/foo", "facefeed0000000").unwrap();
+    let d = git::cache_for(
+        "https://example.com/foo",
+        "facefeed00000000000000000000000000000000",
+    )
+    .unwrap();
     assert_ne!(a, d, "different SHAs must produce different cache paths");
 }
 
@@ -82,15 +101,20 @@ fn test_resolve_ref_rev_validates_format() {
         "expected RefNotFound-shaped error naming the rev `notahex`, got: {err}"
     );
 
-    // 7-hex SHA is the minimum acceptable shape; this should succeed
-    // (returning the lowercased SHA verbatim) without any network call
-    // because Rev resolution is offline.
-    let ok = git::resolve_ref(
-        "https://example.invalid/repo",
-        &GitRef::Rev("AbC1234".into()),
-    )
-    .expect("7-hex SHA should resolve offline");
-    assert_eq!(ok, "abc1234", "expected lowercased SHA");
+    // A full commit id resolves (lowercased) without any network call.
+    // A shorter rev is resolved in a clone, so it is not tried here.
+    let full = "AbC1234".to_string() + &"0".repeat(33);
+    let ok = git::resolve_ref("https://example.invalid/repo", &GitRef::Rev(full.clone()))
+        .expect("a full commit id should resolve offline");
+    assert_eq!(ok, full.to_lowercase(), "expected lowercased SHA");
+}
+
+#[test]
+fn test_cache_for_rejects_a_commit_prefix() {
+    // One commit, one directory: a prefix would give it several.
+    let err = git::cache_for("https://example.com/foo", "abc1234")
+        .expect_err("a commit prefix must not name a cache directory");
+    assert!(err.to_string().contains("40 or 64"), "{err}");
 }
 
 // ── Network-gated tests ───────────────────────────────────────────────

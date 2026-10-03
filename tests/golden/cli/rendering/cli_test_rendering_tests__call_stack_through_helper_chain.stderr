@@ -3,7 +3,7 @@
      --> cli_test_rendering_tests__call_stack_through_helper_chain.silt:12:3
         |
      12 |   test.assert_eq(x, 99)
-        |   ^ assertion failed: 5 != 99
+        |   ^^^^^^^^^^^^^^^^^^^^^ assertion failed: 5 != 99
 
     call stack:
       -> inner  at cli_test_rendering_tests__call_stack_through_helper_chain.silt:12:3

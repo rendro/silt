@@ -1,0 +1,15 @@
+-- verdict: same
+import set
+type P { x: Int }
+type Q { x: Int }
+fn widen(r: {x: Int}) -> {x: Int} { r }
+fn main() {
+  let p = widen(P { x: 1 })
+  let q = widen(Q { x: 1 })
+  let a = {x: 1}
+  println(p == a)
+  println(a == q)
+  println(p == q)
+  println(set.length(set.from_list([p, q, a])))
+  println(set.length(set.from_list([p, a, q])))
+}

@@ -1,0 +1,16 @@
+-- verdict: same
+import units.{ Meters, mk }
+
+type Wrapper {
+  inner: Meters,
+}
+
+fn show(w: Wrapper) -> Int {
+  match w {
+    Wrapper { inner, .. } -> inner
+  }
+}
+
+fn main() {
+  println("{show(Wrapper { inner: mk(3) })}")
+}

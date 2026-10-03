@@ -1,0 +1,12 @@
+-- verdict: same
+-- mutual recursion generalization
+fn even(n) { match n { 0 -> true, _ -> odd(n - 1) } }
+fn odd(n) { match n { 0 -> false, _ -> even(n - 1) } }
+fn idd(x) { x }
+fn use1() { idd(1) }
+fn use2() { idd("s") }
+fn main() {
+  println(even(10))
+  println(use1())
+  println(use2())
+}

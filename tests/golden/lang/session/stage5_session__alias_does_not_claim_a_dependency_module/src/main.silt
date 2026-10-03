@@ -1,0 +1,9 @@
+-- verdict: same
+-- The app's alias `util` and the dependency's own module `util` are
+-- two different things.
+import helper as util
+import sa
+fn main() {
+  println(util.name())
+  println(sa.who())
+}

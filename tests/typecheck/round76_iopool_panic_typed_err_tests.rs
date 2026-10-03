@@ -5,7 +5,7 @@
 //!
 //! Pre-fix (src/vm/runtime.rs:344): when the closure submitted to
 //! `IoPool::submit_with` panicked, the recovery branch unconditionally
-//! built `Value::Variant("Err".into(), vec![Value::String(msg)])` —
+//! built `Value::variant(bv::ERR, vec![Value::String(msg)])` —
 //! the legacy untyped shape. Module-specific completions (postgres,
 //! tcp, http) typecheck their callers as `Result(T, PgError)` /
 //! `Result(T, TcpError)` / `Result(T, IoError)` etc, so user `match`
@@ -45,6 +45,7 @@
 
 use std::sync::Arc;
 
+use silt::typeinfo::bv;
 use silt::value::{IoCompletion, Value};
 use silt::vm::{Vm, submit_panicking_io_for_test};
 
@@ -54,10 +55,17 @@ use silt::vm::{Vm, submit_panicking_io_for_test};
 /// (and therefore through `build_timeout_err` rather than the legacy
 /// untyped `Err(String)` path).
 fn synthetic_typed_factory(msg: &str) -> Value {
-    Value::Variant(
-        "Err".into(),
+    Value::variant(
+        bv::ERR,
         vec![Value::Variant(
-            "SyntheticTypedTimeout".into(),
+            silt::typeinfo::Tag::new(
+                silt::typeinfo::TypeInfo::new_enum(
+                    silt::defs::TypeId(silt::defs::DefId(9000)),
+                    "Synthetic",
+                    &[("SyntheticTypedTimeout", 1)],
+                ),
+                0,
+            ),
             vec![Value::String(msg.to_string())],
         )],
     )
@@ -73,7 +81,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
     // Pre-fix shape: Err(String("<msg>")) — fails the outer-arm
     // pattern match below.
     let inner = match &result {
-        Value::Variant(tag, args) if tag.as_str() == "Err" && args.len() == 1 => &args[0],
+        Value::Variant(tag, args) if tag.is(bv::ERR) && args.len() == 1 => &args[0],
         other => panic!(
             "expected Err(_) variant from IoPool worker-panic recovery, got {:?}",
             other
@@ -81,7 +89,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
     };
 
     let (typed_tag, typed_args) = match inner {
-        Value::Variant(tag, args) => (tag.as_str(), args),
+        Value::Variant(tag, args) => (tag.name(), args),
         Value::String(_) => panic!(
             "REGRESSION: IoPool worker-panic recovery produced legacy untyped \
              Err(String) shape — typed callers' match arms will not fire. \
@@ -129,23 +137,21 @@ fn iopool_worker_panic_with_default_completion_produces_io_unknown() {
     let result = submit_panicking_io_for_test(&vm, completion);
 
     let inner = match &result {
-        Value::Variant(tag, args) if tag.as_str() == "Err" && args.len() == 1 => &args[0],
+        Value::Variant(tag, args) if tag.is(bv::ERR) && args.len() == 1 => &args[0],
         other => panic!("expected Err(_), got {:?}", other),
     };
 
     match inner {
-        Value::Variant(tag, args) if tag.as_str() == "IoUnknown" && args.len() == 1 => {
-            match &args[0] {
-                Value::String(s) => {
-                    assert!(
-                        s.starts_with("panic: "),
-                        "expected 'panic: ' prefix; got {:?}",
-                        s
-                    );
-                }
-                other => panic!("expected String inside IoUnknown, got {:?}", other),
+        Value::Variant(tag, args) if tag.is(bv::IO_UNKNOWN) && args.len() == 1 => match &args[0] {
+            Value::String(s) => {
+                assert!(
+                    s.starts_with("panic: "),
+                    "expected 'panic: ' prefix; got {:?}",
+                    s
+                );
             }
-        }
+            other => panic!("expected String inside IoUnknown, got {:?}", other),
+        },
         Value::String(_) => panic!(
             "REGRESSION: default IoCompletion panic recovery produced legacy \
              untyped Err(String) shape. Got: {:?}",

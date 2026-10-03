@@ -1,0 +1,14 @@
+-- A record field whose type is the program's own Date, not the builtin
+-- time.Date: it decodes from an object, and a date string is a type
+-- mismatch (stage 5 verifier F3).
+import json
+type Date { d: Int }
+type Ev { at: Date, n: Int }
+fn main() {
+  println(json.parse("\{\"at\": \{\"d\": 1\}, \"n\": 2\}", Ev))
+  println(json.parse("\{\"at\": \"2024-01-02\", \"n\": 2\}", Ev))
+  match json.parse("\{\"at\": \"2024-01-02\", \"n\": 2\}", Ev) {
+    Ok(e) -> println(e.at.d + 1)
+    Err(e) -> println(e)
+  }
+}

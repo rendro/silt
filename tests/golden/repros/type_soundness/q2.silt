@@ -1,0 +1,17 @@
+-- verdict: same
+import list
+-- ? inside lambda
+fn f(xs: List(Int)) -> Result(Int, String) {
+  let ys = list.map(xs) { x ->
+    let v = check(x)?
+    v + 1
+  }
+  Ok(list.length(ys))
+}
+fn check(x: Int) -> Result(Int, String) {
+  match x { 0 -> Err("zero"), _ -> Ok(x) }
+}
+fn main() {
+  println(f([1, 2]))
+  println(f([1, 0]))
+}

@@ -2,4 +2,4 @@ error[runtime]: division by zero
  --> main.silt:8:3
    |
  8 |   1 / 0
-   |   ^ division by zero
+   |   ^^^^^ division by zero

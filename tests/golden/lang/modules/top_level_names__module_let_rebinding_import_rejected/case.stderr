@@ -1,0 +1,14 @@
+error[parse]: 'parse_list' is bound twice at the top level: by the import and by the let binding here
+ --> util.silt:3:5
+   |
+ 3 | let parse_list = { s, t -> s }
+   |     ^^^^^^^^^^ 'parse_list' is bound twice at the top level: by the import and by the let binding here
+ ::: util.silt:1:15
+   |
+ 1 | import json.{ parse_list }
+   |               ---------- first bound here, by the import
+ ::: main.silt:4:1
+   |
+ 4 | import util
+   | ----------- module 'util' is imported here
+  = note: a top-level name can be bound only once

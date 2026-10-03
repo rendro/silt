@@ -1,0 +1,8 @@
+-- verdict: same
+fn main() {
+  let price = 100
+  let discount = 60
+  let total = price
+    - discount
+  println(total)
+}

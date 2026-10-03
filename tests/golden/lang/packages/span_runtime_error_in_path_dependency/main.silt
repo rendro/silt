@@ -1,0 +1,10 @@
+-- exit: 1
+-- A path dependency defines `helper` and `main`, as the entry file
+-- does; its `helper` fails, and the error and its frames are shown in
+-- the dependency's lib.silt.
+import dep
+fn helper() -> Int { 5 }
+fn main() {
+  println(helper())
+  println(dep.main())
+}

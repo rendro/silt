@@ -1,0 +1,12 @@
+-- verdict: same
+-- A variant named like a builtin module's variant is the file's own:
+-- `list.Stop` and `channel.Message` are no bare names to collide with.
+type T { Stop, Go }
+type U { Message(Int), Other }
+fn main() {
+  println(Stop)
+  match Message(3) {
+    Message(n) -> println(n)
+    Other -> println("other")
+  }
+}

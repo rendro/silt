@@ -1,0 +1,11 @@
+-- verdict: same
+fn sign(n) {
+  match {
+    n > 0 -> "pos"
+    n < 0 -> "neg"
+  }
+}
+fn main() {
+  println(sign(1))
+  println(sign(0))
+}

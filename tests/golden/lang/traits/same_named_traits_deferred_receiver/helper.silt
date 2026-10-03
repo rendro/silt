@@ -1,0 +1,2 @@
+import b
+pub fn via_b(x: Int) -> String { x.show() }

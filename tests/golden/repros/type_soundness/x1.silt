@@ -1,0 +1,11 @@
+-- verdict: same
+import list
+import io
+-- declared pure, launders io through list.each + lambda
+fn quiet(xs: List(Int)) -> Int !{} {
+  list.each(xs) { x -> println(x) }
+  0
+}
+fn main() !{io} {
+  println(quiet([1, 2]))
+}

@@ -1,0 +1,16 @@
+-- verdict: same
+-- A local `trait Describe` beside `lib.Describe`: `trait lib.Describe
+-- for X` implements lib's (its method returns a String, the local one's
+-- an Int), and both traits are used in one module.
+import lib
+trait Describe { fn describe(self) -> Int }
+type X { X(Int) }
+type Y { Y(Int) }
+trait lib.Describe for X { fn describe(self) -> String { "lib" } }
+trait Describe for Y { fn describe(self) -> Int { 7 } }
+fn show(a: a) -> String where a: lib.Describe { a.describe() }
+fn count(a: a) -> Int where a: Describe { a.describe() }
+fn main() {
+  println(show(X(1)))
+  println(count(Y(2)) + 1)
+}

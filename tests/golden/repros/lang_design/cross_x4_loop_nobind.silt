@@ -1,0 +1,7 @@
+-- verdict: same
+fn main() {
+  let r = loop {
+    loop()
+  }
+  println(r)
+}

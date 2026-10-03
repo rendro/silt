@@ -1,0 +1,26 @@
+-- verdict: same
+-- A module's own `Result` (and `Response`, a type of the builtin http
+-- module) shadows the builtin type for its own names; the builtins that
+-- return the builtin `Result` keep returning it.
+import int
+import http
+type Result { Good(Int), Bad }
+type Response { code: Int }
+fn pick(n: Int) -> Result {
+  match n > 0 {
+    true -> Good(n)
+    false -> Bad
+  }
+}
+fn main() {
+  match pick(3) {
+    Good(n) -> println("good {n}")
+    Bad -> println("bad")
+  }
+  let resp = Response { code: 200 }
+  println(resp.code)
+  match int.parse("12") {
+    Ok(n) -> println(n + 1)
+    Err(_) -> println("err")
+  }
+}

@@ -1,0 +1,9 @@
+error[type]: duplicate field 'x' in record type 'Point'
+ --> stage5_diag__duplicate_record_field_at_the_field.silt:5:30
+   |
+ 5 | type Point { x: Int, y: Int, x: Int }
+   |                              ^ duplicate field 'x' in record type 'Point'
+ ::: stage5_diag__duplicate_record_field_at_the_field.silt:5:14
+   |
+ 5 | type Point { x: Int, y: Int, x: Int }
+   |              - first declared here

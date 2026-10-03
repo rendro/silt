@@ -4,6 +4,6 @@
 -- stderr-not-contains: panicked
 import time
 fn main() {
-  let d = Date { year: 2024, month: 1, day: 1 }
+  let d = time.Date { year: 2024, month: 1, day: 1 }
   println(time.format_date(d, "%Q"))
 }

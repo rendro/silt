@@ -101,7 +101,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         Type::List(Box::new(a.clone())),
                         Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
                     ],
-                    Box::new(Type::Generic(intern("Option"), vec![a])),
+                    Box::new(Type::option(a)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -200,10 +200,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 ty: Type::Fun(
                     vec![
                         Type::List(Box::new(a.clone())),
-                        Type::Fun(
-                            vec![a],
-                            Box::new(Type::Generic(intern("Option"), vec![b.clone()])),
-                        ),
+                        Type::Fun(vec![a], Box::new(Type::option(b.clone()))),
                     ],
                     Box::new(Type::List(Box::new(b))),
                 ),
@@ -267,7 +264,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         b.clone(),
                         Type::Fun(
                             vec![b.clone(), a],
-                            Box::new(Type::Generic(intern("Step"), vec![b.clone()])),
+                            Box::new(Type::builtin("Step", vec![b.clone()])),
                         ),
                     ],
                     Box::new(b),
@@ -291,8 +288,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         a.clone(),
                         Type::Fun(
                             vec![a.clone()],
-                            Box::new(Type::Generic(
-                                intern("Option"),
+                            Box::new(Type::builtin(
+                                "Option",
                                 vec![Type::Tuple(vec![b.clone(), a])],
                             )),
                         ),
@@ -368,7 +365,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(
                     vec![Type::List(Box::new(a.clone())), Type::Int],
-                    Box::new(Type::Generic(intern("Option"), vec![a])),
+                    Box::new(Type::option(a)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -453,7 +450,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(
                     vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::Generic(intern("Option"), vec![a])),
+                    Box::new(Type::option(a)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -487,7 +484,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(
                     vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::Generic(intern("Option"), vec![a])),
+                    Box::new(Type::option(a)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -607,7 +604,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(
                     vec![Type::List(Box::new(a.clone())), a],
-                    Box::new(Type::Generic(intern("Option"), vec![Type::Int])),
+                    Box::new(Type::option(Type::Int)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -645,7 +642,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         Type::List(Box::new(a.clone())),
                         Type::Fun(vec![a.clone()], Box::new(b)),
                     ],
-                    Box::new(Type::Generic(intern("Option"), vec![a])),
+                    Box::new(Type::option(a)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -666,7 +663,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         Type::List(Box::new(a.clone())),
                         Type::Fun(vec![a.clone()], Box::new(b)),
                     ],
-                    Box::new(Type::Generic(intern("Option"), vec![a])),
+                    Box::new(Type::option(a)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,

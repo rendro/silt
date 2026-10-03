@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::Span;
+use crate::source::Span;
 use crate::types::Type;
 
 use super::ast_walk::visit_expr_children;
@@ -14,12 +14,18 @@ use super::state::DefInfo;
 
 // ── Build definitions map from declarations ────────────────────────
 
-pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
+/// `top_level` is the checker's type of each top-level value (`None`
+/// for a workspace file that is only parsed).
+pub(super) fn build_definitions(
+    program: &Program,
+    top_level: Option<&HashMap<Symbol, Type>>,
+) -> HashMap<Symbol, DefInfo> {
+    let checked = |name: Symbol| top_level.and_then(|types| types.get(&name)).cloned();
     let mut defs = HashMap::new();
     for decl in &program.decls {
         match decl {
             Decl::Fn(f) => {
-                let fn_ty = build_fn_type(f);
+                let fn_ty = checked(f.name);
                 let params = fn_param_names(f);
                 defs.insert(
                     f.name,
@@ -90,7 +96,6 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
             }
             Decl::Let {
                 pattern,
-                span,
                 name_span,
                 value,
                 doc,
@@ -100,13 +105,15 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 // (`let (a, b) = ...`, `let P { x, y } = ...`, etc.) also
                 // registers each leaf identifier as a definition. Each leaf
                 // of a compound pattern uses its own ident span; a bare
-                // `let x = ...` preserves the old behaviour of using the
-                // enclosing decl span so goto-def still lands on `let`.
+                // `let x = ...` uses its name span.
+                let value_ty = match &pattern.kind {
+                    PatternKind::Ident(name) => checked(*name).or_else(|| value.ty.clone()),
+                    _ => value.ty.clone(),
+                };
                 collect_let_pattern_defs(
                     pattern,
-                    *span,
                     *name_span,
-                    value.ty.as_ref(),
+                    value_ty.as_ref(),
                     doc.as_deref(),
                     true,
                     &mut defs,
@@ -124,13 +131,12 @@ pub(super) fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
 /// destructured top-level bindings (e.g. `let (a, b) = (1, 2)`) show up in
 /// goto-def just like bare `let x = ...`.
 ///
-/// `decl_span` is the enclosing decl's span (used as the goto-def target
-/// for the bare `let x = ...` case). `value_ty` is the value expression's
+/// `name_span` is the bare `let x = ...` binding's name span. `value_ty`
+/// is the value expression's
 /// type; when it matches the pattern's shape we propagate component types
 /// to leaves so hover can render `Int` for `a` in `let (a, b) = (1, 2)`.
 fn collect_let_pattern_defs(
     pattern: &Pattern,
-    decl_span: Span,
     name_span: Option<Span>,
     value_ty: Option<&Type>,
     doc: Option<&str>,
@@ -179,12 +185,12 @@ fn collect_let_pattern_defs(
             };
             for (i, p) in pats.iter().enumerate() {
                 let inner = elem_tys.as_ref().and_then(|t| t.get(i));
-                collect_let_pattern_defs(p, decl_span, None, inner, None, false, defs);
+                collect_let_pattern_defs(p, None, inner, None, false, defs);
             }
         }
         PatternKind::Or(pats) => {
             for p in pats {
-                collect_let_pattern_defs(p, decl_span, None, value_ty, None, false, defs);
+                collect_let_pattern_defs(p, None, value_ty, None, false, defs);
             }
         }
         PatternKind::Constructor {
@@ -199,7 +205,7 @@ fn collect_let_pattern_defs(
                 _ => None,
             };
             for p in fields {
-                collect_let_pattern_defs(p, decl_span, None, inner_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(p, None, inner_ty.as_ref(), None, false, defs);
             }
         }
         PatternKind::Record { fields, .. } => {
@@ -212,17 +218,17 @@ fn collect_let_pattern_defs(
                     .as_ref()
                     .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
             };
-            for (name, sub) in fields {
+            for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, decl_span, None, ty.as_ref(), None, false, defs);
+                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
                         DefInfo {
-                            // No dedicated Pattern node for the shorthand
-                            // field binding; fall back to the decl span.
-                            span: decl_span,
+                            // The shorthand field binding is at the field
+                            // name.
+                            span: *name_span,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -244,15 +250,15 @@ fn collect_let_pattern_defs(
                     .as_ref()
                     .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
             };
-            for (name, sub) in fields {
+            for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, decl_span, None, ty.as_ref(), None, false, defs);
+                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
                         DefInfo {
-                            span: decl_span,
+                            span: *name_span,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -262,15 +268,13 @@ fn collect_let_pattern_defs(
             }
             // Round-101: the named rest binder (`{ x, ...rest }`) binds
             // `rest` — mirror the typechecker's `collect_pattern_vars`.
-            // Like a shorthand field, it has no dedicated Pattern node,
-            // so fall back to the decl span.
-            if let Some(r) = rest
+            if let Some((r, r_span)) = rest
                 && resolve(*r) != "_"
             {
                 defs.insert(
                     *r,
                     DefInfo {
-                        span: decl_span,
+                        span: *r_span,
                         ty: None,
                         params: vec![],
                         doc: None,
@@ -282,7 +286,7 @@ fn collect_let_pattern_defs(
             // Round-101: map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
-                collect_let_pattern_defs(p, decl_span, None, None, None, false, defs);
+                collect_let_pattern_defs(p, None, None, None, false, defs);
             }
         }
         PatternKind::List(pats, rest) => {
@@ -291,10 +295,10 @@ fn collect_let_pattern_defs(
                 _ => (None, None),
             };
             for p in pats {
-                collect_let_pattern_defs(p, decl_span, None, elem_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(p, None, elem_ty.as_ref(), None, false, defs);
             }
             if let Some(r) = rest {
-                collect_let_pattern_defs(r, decl_span, None, list_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(r, None, list_ty.as_ref(), None, false, defs);
             }
         }
         _ => {}
@@ -309,59 +313,6 @@ pub(super) fn fn_param_names(f: &FnDecl) -> Vec<String> {
             _ => "_".to_string(),
         })
         .collect()
-}
-
-/// Build a function's type signature from its typed body.
-///
-/// For each param, the lookup order is:
-///   1. The user-written type annotation on the param (`a: Int`) — lowered
-///      via `super::fields::type_expr_to_type`. This is the authoritative
-///      source whenever the user wrote one.
-///   2. A body walk that finds an `Ident` reference to the param and grabs
-///      its inferred type. Catches the case where the param is unannotated
-///      but the typechecker pinned it through body usage.
-///   3. A `Type::Var(0)` placeholder — rendered as `_` by the type
-///      formatter — so signatureHelp / hover still show *something* for
-///      a fully unconstrained, unused, unannotated param.
-///
-/// Round-80 L4: the prior implementation walked the body for every param
-/// and returned `None` if any param was unused inside the body. That
-/// dropped the entire fn signature for `fn ignore(a: Int, b: Int) -> Int
-/// = 42` — hover returned null and signatureHelp lost the param types.
-/// The new lookup order prefers the user's annotation so fully-annotated
-/// signatures with unused params now produce a complete `Type::Fun(..)`.
-pub(super) fn build_fn_type(f: &FnDecl) -> Option<Type> {
-    // After type checking, the body has a resolved type (the return type).
-    let ret_ty = f.body.ty.as_ref()?;
-
-    let mut param_types = Vec::with_capacity(f.params.len());
-    for param in &f.params {
-        // 1. Prefer the user-written annotation on this param.
-        if let Some(te) = &param.ty {
-            param_types.push(super::fields::type_expr_to_type(te));
-            continue;
-        }
-        // 2. Body walk for inferred type from a usage site.
-        let name_opt = if let PatternKind::Ident(name) = &param.pattern.kind {
-            Some(*name)
-        } else {
-            None
-        };
-        if let Some(name) = name_opt
-            && let Some(ty) = find_param_type(&f.body, name)
-        {
-            param_types.push(ty);
-            continue;
-        }
-        // 3. Fully unconstrained — render as `_` rather than dropping
-        //    the entire signature. `Type::Var(0)` formats as `_` per
-        //    `impl Display for Type` (src/types/mod.rs:110), matching
-        //    silt's "I don't care about this type" rendering used
-        //    elsewhere in diagnostics.
-        param_types.push(Type::Var(0));
-    }
-
-    Some(Type::Fun(param_types, Box::new(ret_ty.clone())))
 }
 
 /// Find the type of the first Ident expression matching `name` in the body.
@@ -394,10 +345,8 @@ mod tests {
     fn test_build_definitions_from_program() {
         let source =
             "fn add(a, b) { a + b }\ntype Color {\n  Red,\n  Green,\n  Blue,\n}\nlet x = 42";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        let defs = build_definitions(&program);
+        let (program, top_level) = crate::lsp::testing::checked(source);
+        let defs = build_definitions(&program, Some(&top_level));
 
         assert!(defs.contains_key(&intern("add")), "should have fn 'add'");
         assert!(
@@ -425,9 +374,8 @@ mod tests {
     #[test]
     fn test_build_definitions_fn_has_params() {
         let source = "fn greet(name, times) { name }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let defs = build_definitions(&program);
+        let program = crate::lsp::testing::parsed(source);
+        let defs = build_definitions(&program, None);
 
         let def = defs.get(&intern("greet")).unwrap();
         assert_eq!(def.params, vec!["name", "times"]);
@@ -438,10 +386,8 @@ mod tests {
     #[test]
     fn test_build_definitions_trait() {
         let source = "trait Printable {\n  fn show(self) -> String\n}\nfn main() { 0 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        let defs = build_definitions(&program);
+        let (program, top_level) = crate::lsp::testing::checked(source);
+        let defs = build_definitions(&program, Some(&top_level));
 
         assert!(
             defs.contains_key(&intern("Printable")),
@@ -452,10 +398,8 @@ mod tests {
     #[test]
     fn test_build_definitions_let_type() {
         let source = "let x = 42\nfn main() { x }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        let defs = build_definitions(&program);
+        let (program, top_level) = crate::lsp::testing::checked(source);
+        let defs = build_definitions(&program, Some(&top_level));
 
         let def = defs.get(&intern("x")).expect("should have 'x'");
         assert_eq!(def.ty, Some(Type::Int));
@@ -466,10 +410,8 @@ mod tests {
     #[test]
     fn test_build_definitions_enum_variants() {
         let source = "type Shape {\n  Circle(Float),\n  Rect(Float, Float),\n}\nfn main() { 0 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        let defs = build_definitions(&program);
+        let (program, top_level) = crate::lsp::testing::checked(source);
+        let defs = build_definitions(&program, Some(&top_level));
 
         assert!(defs.contains_key(&intern("Shape")));
         assert!(defs.contains_key(&intern("Circle")));
@@ -479,10 +421,8 @@ mod tests {
     #[test]
     fn test_build_definitions_multiple_functions() {
         let source = "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { 0 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-        let defs = build_definitions(&program);
+        let (program, top_level) = crate::lsp::testing::checked(source);
+        let defs = build_definitions(&program, Some(&top_level));
 
         assert!(defs.contains_key(&intern("add")));
         assert!(defs.contains_key(&intern("sub")));
@@ -492,28 +432,22 @@ mod tests {
         assert!(add.ty.is_some());
     }
 
-    // ── build_fn_type ────────────────────────────────────────────
-
+    /// A function's type is the checker's.
     #[test]
-    fn test_build_fn_type_simple() {
+    fn a_function_has_the_checker_type() {
         let source = "fn double(n) { n * 2 }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
-        let _ = crate::typechecker::check(&mut program);
-
-        if let Decl::Fn(f) = &program.decls[0] {
-            let ty = build_fn_type(f);
-            assert_eq!(ty, Some(Type::Fun(vec![Type::Int], Box::new(Type::Int))));
-        } else {
-            panic!("expected Fn decl");
-        }
+        let (program, top_level) = crate::lsp::testing::checked(source);
+        let defs = build_definitions(&program, Some(&top_level));
+        assert_eq!(
+            defs[&intern("double")].ty,
+            Some(Type::Fun(vec![Type::Int], Box::new(Type::Int)))
+        );
     }
 
     #[test]
     fn test_fn_param_names() {
         let source = "fn add(x, y) { x + y }";
-        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
-        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let program = crate::lsp::testing::parsed(source);
 
         if let Decl::Fn(f) = &program.decls[0] {
             let names = fn_param_names(f);

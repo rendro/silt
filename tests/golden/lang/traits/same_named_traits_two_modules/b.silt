@@ -1,0 +1,4 @@
+pub trait Show { fn show(self) -> String }
+trait Show for Int { fn show(self) -> String { "b-int {self}" } }
+pub fn show_int(x: Int) -> String { x.show() }
+pub fn use_show(x: t) -> String where t: Show { x.show() }

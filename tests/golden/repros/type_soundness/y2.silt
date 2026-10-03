@@ -1,0 +1,12 @@
+-- verdict: same
+trait Default { fn default() -> Self }
+trait Default for Int { fn default() -> Self { 0 } }
+trait Default for String { fn default() -> Self { "" } }
+fn dflt(type a) -> a where a: Default { a.default() }
+fn pass(t) { dflt(t) }
+fn main() {
+  let n: Int = dflt(Int)
+  println(n)
+  let s: String = dflt(Int)
+  println(s)
+}

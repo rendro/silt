@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+import task
+import time
+
+fn main() {
+  let h = task.spawn(fn() { 1..2000000 |> list.fold(0) { acc, n -> acc + n } })
+  time.sleep(time.ms(50))
+  println("main returns now")
+}

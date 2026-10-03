@@ -1,0 +1,9 @@
+-- verdict: same
+import a
+
+let secret = "main-secret"
+
+fn main() {
+  println("a.who() = {a.who()}")
+  println("main secret = {secret}")
+}

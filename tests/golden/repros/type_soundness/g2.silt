@@ -1,0 +1,7 @@
+-- verdict: same
+fn main() {
+  let s: String = a()
+  println(s)
+}
+fn a() { b() }
+fn b() { 1 }

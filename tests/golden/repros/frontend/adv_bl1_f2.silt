@@ -1,0 +1,28 @@
+-- verdict: same
+-- file header
+-- second paragraph of header
+
+import list
+import string
+
+fn helper() = 1
+
+-- about main
+
+fn main() {
+  let a = 1
+  let b = 2
+  -- paragraph two
+  let c = 3
+  let d = 4
+  println("{a} {b} {c} {d}")
+}
+
+type T {
+  A,
+  B
+}
+
+let top = 5
+
+-- trailing file comment

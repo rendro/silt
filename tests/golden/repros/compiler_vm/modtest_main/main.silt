@@ -1,0 +1,16 @@
+-- verdict: same
+import shapes
+import other
+import set
+import list
+
+fn main() {
+  let r = shapes.red()
+  let g = shapes.green()
+  println("r < g: {r < g}")
+  println("r == g: {r == g}")
+  println("sorted: {list.sort([g, r])}")
+  println("set size: {set.length(set.from_list([r, g]))}")
+  println("compare: {r.compare(g)}")
+  println("display: {shapes.show(r)}")
+}

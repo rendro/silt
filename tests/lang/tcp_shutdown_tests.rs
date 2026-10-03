@@ -12,25 +12,13 @@
 
 #![cfg(feature = "tcp")]
 
-use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use silt::value::Value;
 
 fn run(input: &str) -> Value {
-    let tokens = silt::lexer::Lexer::new(input)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = silt::compiler::Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = silt::vm::Vm::new();
-    vm.run(script).expect("runtime error")
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Run a silt program on a worker thread and return either its return

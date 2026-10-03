@@ -1,0 +1,7 @@
+-- verdict: same
+type Money { Dollars(Int), Cents(Int) }
+fn cents(Dollars(n)) { n * 100 }
+fn main() {
+  println(cents(Dollars(5)))
+  println(cents(Cents(250)))
+}

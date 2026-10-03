@@ -1,0 +1,20 @@
+-- verdict: same
+import list
+fn list_len(list) { 0 }
+fn f(x) {
+  let x = x + 1
+  let x = "now a string {x}"
+  x
+}
+fn println2(s) { println(s) }
+fn main() {
+  println(f(1))
+  let println = 5
+  println2(println)
+  let f = 3
+  println2(f)
+  let main = 1
+  println2(main)
+  let Some = 1
+  println2(Some)
+}

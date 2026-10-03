@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stdin: fn f(x: Int) -> Int { x + 1 }\nfn g(y: Int) -> Int { f(y) * 2 }\nlet h = { y -> f(y) }\nfn f(x: Int) -> String { "str{x}" }\ng(1)\nh(1)\nf(1)\nlet x = 5\nfn uses_x() { x + 1 }\nlet x = "shadow"\nuses_x()\nx\n:quit\n
+-- Redefinition is early-bound: a name defined again is a new definition
+-- for the inputs after it, and the code of the inputs before (the
+-- function `g`, the closure `h`, the function `uses_x`) keeps the
+-- definition it was checked against, even when the new one has another
+-- type.

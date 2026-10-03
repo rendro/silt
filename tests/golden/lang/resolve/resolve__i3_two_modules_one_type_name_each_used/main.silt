@@ -1,0 +1,17 @@
+-- exit: 0
+-- verdict: same
+-- Two modules each export a type `Pt`: one module uses both, each with
+-- its own module's functions and fields.
+import a
+import b
+fn main() {
+  println(a.get_x(a.mk()))
+  println(b.get_y(b.mk()))
+  let p = a.Pt { x: 5 }
+  let q = b.Pt { y: "t" }
+  println(p.x)
+  println(q.y)
+  match q {
+    b.Pt { y } -> println(y)
+  }
+}

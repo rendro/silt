@@ -1,0 +1,4 @@
+-- verdict: same
+fn main() -> Result(Int, String) {
+  Err("boom")
+}

@@ -9,11 +9,13 @@ use silt::parser::Parser;
 /// Parse a source string with the strict entry point; Ok(()) when the
 /// whole program parses cleanly.
 fn parse_ok(input: &str) -> Result<(), String> {
-    let tokens = Lexer::new(input).tokenize().map_err(|e| format!("{e:?}"))?;
-    Parser::new(tokens)
+    let tokens = Lexer::new(silt::source::FileId::default(), input)
+        .tokenize()
+        .map_err(|e| format!("{e:?}"))?;
+    Parser::new(tokens, input)
         .parse_program()
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.message)
 }
 
 // ────────────────────────────────────────────────────────────────────

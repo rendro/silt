@@ -3,17 +3,15 @@
 //! These tests drive `watch_and_rerun` through the real binary: they spawn
 //! `silt run -w <file.silt>`, capture stdout in a background reader thread,
 //! mutate files on disk, and assert that the subprocess reruns (or does not)
-//! as expected. The unit tests in `src/watch.rs` already cover the pure
-//! helpers (`any_silt_path_changed`, `should_rerun_now`); these tests cover
-//! the outer event-loop: file-watcher filtering, debounce window, and
-//! subprocess rerun coordination.
+//! as expected. The unit tests in `src/watch.rs` drive the watch loop with
+//! scripted events and a scripted command; these tests cover the real OS
+//! watcher and child process.
 //!
-//! Timing notes: the debounce window in `watch.rs` is 500ms. Each test that
-//! triggers a rerun waits strictly longer than that before modifying the
-//! watched file, so the edit falls outside the previous debounce window and
-//! fires immediately (modulo the fixed 100ms settle sleep in the rerun path).
-//! Output is collected by polling a shared buffer with a bounded total
-//! timeout, so tests do not hang if watch mode misbehaves.
+//! An edit is made as soon as the previous run's output is seen: the
+//! watcher compares file contents with what they were when the command
+//! started, so no edit has to wait for a window to pass. Output is
+//! collected by polling a shared buffer with a bounded total timeout, so
+//! tests do not hang if watch mode misbehaves.
 
 use std::fs;
 use std::io::Read;
@@ -56,8 +54,9 @@ impl Drop for TempDir {
 }
 
 /// RAII handle around a spawned `silt -w` subprocess that collects its
-/// stdout into a shared buffer on a background thread. Kills the child on
-/// drop so tests never leak processes, even on panic.
+/// stdout into a shared buffer on a background thread. Kills the child,
+/// and the program it runs, on drop so tests never leak processes, even
+/// on panic (a process group on Unix, the process tree on Windows).
 struct WatchProc {
     child: Child,
     stdout: Arc<Mutex<Vec<u8>>>,
@@ -67,15 +66,25 @@ impl WatchProc {
     /// Spawn `silt run -w <file>` with piped stdout and start a reader
     /// thread that drains stdout into `self.stdout` until EOF.
     fn spawn(file: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
-            .arg("run")
-            .arg("-w")
-            .arg(file)
+        let dir = file.parent().expect("a file has a directory");
+        Self::spawn_with(&["run", "-w", &file.to_string_lossy()], dir)
+    }
+
+    /// Spawn `silt <args>` in the directory `cwd`.
+    fn spawn_with(args: &[&str], cwd: &Path) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_silt"));
+        command
+            .args(args)
+            .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("failed to spawn silt -w");
+            .stderr(Stdio::null());
+        // The watcher and the program it runs share a process group of
+        // their own, which drop kills whole: the program does not
+        // outlive the test.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let mut child = command.spawn().expect("failed to spawn silt -w");
 
         let stdout = Arc::new(Mutex::new(Vec::<u8>::new()));
         let mut child_stdout = child.stdout.take().expect("piped stdout");
@@ -129,6 +138,23 @@ impl WatchProc {
 
 impl Drop for WatchProc {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Ok(pid) = libc::pid_t::try_from(self.child.id()) {
+            // SAFETY: kill(2) with a negative pid signals the process
+            // group the watcher leads (set up in `spawn_with`).
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
+        // Windows has no process groups to signal: end the watcher's
+        // process tree, the program it runs included, which would
+        // otherwise keep the stdout pipe open.
+        #[cfg(windows)]
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &self.child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -153,11 +179,6 @@ fn count_occurrences(haystack: &str, needle: &str) -> usize {
 fn program_printing(marker: &str) -> String {
     format!("fn main() {{\n  println(\"{marker}\")\n}}\n")
 }
-
-/// The debounce window in `watch.rs` is 500ms. Tests wait a little longer
-/// than this between the initial run and a subsequent edit so the edit
-/// is outside the debounce window and fires without additional waiting.
-const PAST_DEBOUNCE: Duration = Duration::from_millis(800);
 
 // ── 1. Initial run executes the file and prints its output ─────────
 
@@ -192,9 +213,6 @@ fn watch_rerun_on_modification() {
         Duration::from_secs(10),
         |snap| snap.contains("before-edit-xyz"),
     );
-
-    // Sleep past the debounce window so the next save fires immediately.
-    thread::sleep(PAST_DEBOUNCE);
 
     // Modify the file with new content.
     fs::write(&file, program_printing("after-edit-xyz")).unwrap();
@@ -234,12 +252,8 @@ fn watch_ignores_non_silt_changes() {
         "expected exactly one initial print, got {initial_count}"
     );
 
-    // Sleep past the debounce window so any subsequent file event would
-    // be allowed to fire immediately under watch mode's rules.
-    thread::sleep(PAST_DEBOUNCE);
-
-    // Create and then modify a non-.silt file in the same dir. These
-    // should be filtered out by `any_silt_path_changed`.
+    // Create and then modify a file of the same directory that is not a
+    // file of the program. Its events are ignored.
     let txt = dir.path().join("notes.txt");
     fs::write(&txt, "some notes").unwrap();
     thread::sleep(Duration::from_millis(200));
@@ -276,14 +290,13 @@ fn watch_recovers_from_syntax_error() {
 
     // Edit to a syntactically invalid program. Watch mode should print a
     // parse error (to stderr, which we're discarding) but keep running.
-    thread::sleep(PAST_DEBOUNCE);
     fs::write(&file, "fn { this is not valid silt !!!").unwrap();
 
     // Give watch mode time to observe the broken file and attempt to run it.
     // We can't easily assert on the error message (stderr is /dev/null), but
     // we *can* verify the subprocess is still alive by issuing another valid
     // edit and observing that it is picked up.
-    thread::sleep(PAST_DEBOUNCE);
+    thread::sleep(Duration::from_millis(800));
 
     // Now write a valid program again with a fresh marker.
     fs::write(&file, program_printing("good-v2-pqr")).unwrap();
@@ -296,7 +309,221 @@ fn watch_recovers_from_syntax_error() {
     );
 }
 
-// ── 5. count_occurrences sanity check ──────────────────────────────
+// ── 5. A change reloads a program that never ends ─────────────────
+
+/// A program that prints `marker` and then never ends.
+fn endless_program_printing(marker: &str) -> String {
+    format!(
+        "import time\n\nfn spin() {{\n  time.sleep(time.ms(50))\n  spin()\n}}\n\nfn main() {{\n  println(\"{marker}\")\n  spin()\n}}\n"
+    )
+}
+
+#[test]
+fn watch_kills_a_running_program_on_change() {
+    let dir = TempDir::new("kill");
+    let file = dir.path().join("main.silt");
+    fs::write(&file, endless_program_printing("endless-v1")).unwrap();
+
+    let proc = WatchProc::spawn(&file);
+    proc.wait_until("first 'endless-v1'", Duration::from_secs(10), |snap| {
+        snap.contains("endless-v1")
+    });
+
+    // The first run never ends: only killing it lets the edit run.
+    fs::write(&file, endless_program_printing("endless-v2")).unwrap();
+    proc.wait_until(
+        "'endless-v2' after the running program was killed",
+        Duration::from_secs(10),
+        |snap| snap.contains("endless-v2"),
+    );
+}
+
+/// SIGTERM to the watcher alone stops the program it runs too: nothing
+/// of the watcher's process group is left.
+#[cfg(unix)]
+#[test]
+fn watch_terminated_stops_its_running_program() {
+    let dir = TempDir::new("sigterm");
+    let file = dir.path().join("main.silt");
+    fs::write(&file, endless_program_printing("endless")).unwrap();
+
+    let mut proc = WatchProc::spawn(&file);
+    proc.wait_until("'endless'", Duration::from_secs(10), |snap| {
+        snap.contains("endless")
+    });
+    let pid = libc::pid_t::try_from(proc.child.id()).expect("a pid");
+    // SAFETY: signals the watcher, our child.
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    let status = proc.child.wait().expect("the watcher ends");
+    // It dies of the signal, as its parent should see.
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(libc::SIGTERM)
+    );
+    // The watcher leads its process group (see `spawn_with`); once its
+    // program is gone too, signalling the group finds no process.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        // SAFETY: signal 0 only checks that the group has a process.
+        let alive = unsafe { libc::kill(-pid, 0) } == 0;
+        if !alive {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the program the watcher ran outlived the watcher"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// After its program ended on its own, SIGTERM ends the watcher by the
+/// signal (its handler signals no stale child).
+#[cfg(unix)]
+#[test]
+fn watch_terminated_after_its_program_ended() {
+    let dir = TempDir::new("sigterm-done");
+    let file = dir.path().join("main.silt");
+    fs::write(&file, "fn main() { println(\"done-once\") }\n").unwrap();
+
+    let mut proc = WatchProc::spawn(&file);
+    proc.wait_until("'done-once'", Duration::from_secs(10), |snap| {
+        snap.contains("done-once")
+    });
+    // Let the watcher see that its program finished.
+    thread::sleep(Duration::from_millis(500));
+    let pid = libc::pid_t::try_from(proc.child.id()).expect("a pid");
+    // SAFETY: signals the watcher, our child.
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    let status = proc.child.wait().expect("the watcher ends");
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(libc::SIGTERM)
+    );
+}
+
+// ── 6. A change to an imported module reruns ─────────────────────
+
+#[test]
+fn watch_reruns_on_a_change_to_an_imported_module() {
+    let dir = TempDir::new("import");
+    fs::write(
+        dir.path().join("silt.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    let main = src.join("main.silt");
+    fs::write(
+        &main,
+        "import util\n\nfn main() {\n  println(util.marker())\n}\n",
+    )
+    .unwrap();
+    let util = src.join("util.silt");
+    fs::write(&util, "pub fn marker() {\n  \"util-v1\"\n}\n").unwrap();
+
+    let proc = WatchProc::spawn(&main);
+    proc.wait_until("first 'util-v1'", Duration::from_secs(10), |snap| {
+        snap.contains("util-v1")
+    });
+
+    fs::write(&util, "pub fn marker() {\n  \"util-v2\"\n}\n").unwrap();
+    proc.wait_until("rerun 'util-v2'", Duration::from_secs(10), |snap| {
+        snap.contains("util-v2")
+    });
+}
+
+// ── 7. `silt test --watch` reruns when a test file is added ──────────
+
+#[test]
+fn watch_test_reruns_when_a_test_file_is_added() {
+    let dir = TempDir::new("newtest");
+    fs::write(
+        dir.path().join("a_test.silt"),
+        "fn test_a() {\n  println(\"test-a-ran\")\n}\n",
+    )
+    .unwrap();
+
+    let proc = WatchProc::spawn_with(&["test", "-w"], dir.path());
+    proc.wait_until("first 'test-a-ran'", Duration::from_secs(10), |snap| {
+        snap.contains("test-a-ran")
+    });
+
+    fs::write(
+        dir.path().join("b_test.silt"),
+        "fn test_b() {\n  println(\"test-b-ran\")\n}\n",
+    )
+    .unwrap();
+    proc.wait_until(
+        "'test-b-ran' after b_test.silt was created",
+        Duration::from_secs(10),
+        |snap| snap.contains("test-b-ran"),
+    );
+}
+
+#[test]
+fn watch_test_in_a_directory_with_no_tests_wakes_for_the_first() {
+    let dir = TempDir::new("notests");
+    let proc = WatchProc::spawn_with(&["test", "-w"], dir.path());
+    // The first run finds no test files; then one is created.
+    thread::sleep(Duration::from_millis(500));
+    fs::write(
+        dir.path().join("a_test.silt"),
+        "fn test_a() {\n  println(\"first-test-ran\")\n}\n",
+    )
+    .unwrap();
+    proc.wait_until("'first-test-ran'", Duration::from_secs(10), |snap| {
+        snap.contains("first-test-ran")
+    });
+}
+
+// ── 8. One silt.toml edit reruns once ─────────────────────────────────
+
+#[test]
+fn watch_one_manifest_edit_reruns_once() {
+    let dir = TempDir::new("manifest");
+    let manifest = dir.path().join("silt.toml");
+    fs::write(
+        &manifest,
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    let main = src.join("main.silt");
+    fs::write(&main, endless_program_printing("manifest-run")).unwrap();
+
+    let proc = WatchProc::spawn(&main);
+    proc.wait_until("first 'manifest-run'", Duration::from_secs(10), |snap| {
+        snap.contains("manifest-run")
+    });
+
+    // A new version: the command rewrites silt.lock for it, and that
+    // rewrite must not count as a second change.
+    fs::write(
+        &manifest,
+        "[package]\nname = \"app\"\nversion = \"0.1.1\"\n",
+    )
+    .unwrap();
+    proc.wait_until("second 'manifest-run'", Duration::from_secs(10), |snap| {
+        count_occurrences(snap, "manifest-run") >= 2
+    });
+    thread::sleep(Duration::from_millis(1500));
+    let runs = count_occurrences(&proc.stdout_snapshot(), "manifest-run");
+    assert_eq!(
+        runs,
+        2,
+        "one manifest edit must rerun once:\n{}",
+        proc.stdout_snapshot()
+    );
+}
+
+// ── 9. count_occurrences sanity check ──────────────────────────────
 
 #[test]
 fn count_occurrences_helper_is_correct() {

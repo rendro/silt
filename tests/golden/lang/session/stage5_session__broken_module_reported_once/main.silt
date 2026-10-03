@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A module that does not parse is reported once, in its own file; what
+-- the importer uses from it (a call, an item, a type) is not reported.
+import broken
+import broken.{ Shape, area }
+
+fn describe(s: Shape) -> Int {
+  area(s) + broken.perimeter(s)
+}
+
+fn main() {
+  println(describe(broken.unit()))
+}

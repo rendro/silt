@@ -1,0 +1,14 @@
+-- A module's private trait is never a candidate for a call in another
+-- module: here main's own Show and helper's private Show, both for
+-- Int; main's calls, concrete or polymorphic, call main's.
+import helper
+trait Show { fn show(self) -> String }
+trait Show for Int { fn show(self) -> String { "main {self}" } }
+fn apply(f: Fn(a) -> String, x: a) -> String { f(x) }
+fn main() {
+  println(helper.h())
+  println(2.show())
+  let g = { y -> y.show() }
+  println(g(3))
+  println(apply({ y -> y.show() }, 4))
+}

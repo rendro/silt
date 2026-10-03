@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: module 'time' is not imported
+-- stderr-contains: error[type]: module 'channel' is not imported
+-- stderr-contains: error[type]: unknown type 'Date'
+-- stderr-contains: help: `Date` is in module `time`: write `time.Date` after `import time`, or add `import time.{ Date }`
+-- A builtin module's type is reached through the module, which must be
+-- imported: qualified or bare, the annotation names the missing import.
+fn day(d: time.Date) -> Int { 1 }
+fn recv(r: channel.ChannelResult(Int)) -> Int { 1 }
+fn bare(d: Date) -> Int { 1 }
+fn main() {
+  println(1)
+}

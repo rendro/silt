@@ -1,0 +1,11 @@
+-- verdict: same
+fn f(v: Option(Int)) -> Int {
+  match v {
+    Some(k) -> n + 1
+    None -> 0
+  }
+}
+
+fn main() {
+  println("{f(Some(1))}")
+}

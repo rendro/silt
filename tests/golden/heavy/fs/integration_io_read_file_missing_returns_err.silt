@@ -3,7 +3,7 @@
 import io
 fn main() {
   let outcome = match io.read_file("missing_file.txt") {
-    Err(IoNotFound(path)) -> "IoNotFound({path})"
+    Err(io.IoNotFound(path)) -> "IoNotFound({path})"
     Err(_) -> "other error"
     Ok(_) -> "unexpected Ok"
   }

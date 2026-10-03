@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- `m` does not parse: its parse error is the only error. The types it
+-- would supply take any type arguments and any field.
+import m.{ Box, Pt }
+
+fn f(b: Box(Int)) -> Int {
+  match b {
+    _ -> 1
+  }
+}
+
+fn g(p: Pt) -> Int {
+  p.x
+}
+
+fn main() {
+  println(1)
+}

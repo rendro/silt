@@ -1,0 +1,13 @@
+pub fn add(a, b) { a + b }
+fn helper(x) { x * 2 }
+pub fn twice(x) { helper(x) }
+pub type Point { x: Int, y: Int }
+pub type Shape {
+  Circle(Int),
+  Square(Int),
+}
+type Hidden { H(Int) }
+pub fn mk_hidden() { H(7) }
+pub let answer = 42
+let secret = 99
+pub fn get_secret() { secret }

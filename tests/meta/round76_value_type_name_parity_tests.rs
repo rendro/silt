@@ -40,12 +40,13 @@
 //! COMPILE time, forcing the new variant into the three-way parity check
 //! (`three_way_kind_parity_holds_for_every_value_variant`).
 
+use silt::typeinfo::bv;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use silt::builtins::value_kind;
 use silt::bytecode::{Function, VmClosure};
-use silt::value::{Channel, FromValue, TaskHandle, Value};
+use silt::value::{Channel, FromValue, HostFn, HostShape, TaskHandle, Value};
 use silt::vm::Vm;
 
 // ── Builders mirroring tests/typecheck/round75_kind_naming_canonical_tests.rs ──
@@ -64,6 +65,7 @@ struct AllVariants {
     variant: Value,
     vm_closure: Value,
     builtin_fn: Value,
+    host_fn: Value,
     variant_constructor: Value,
     type_descriptor: Value,
     primitive_descriptor: Value,
@@ -118,15 +120,20 @@ fn build_all_variants() -> AllVariants {
             s
         })),
         tuple: Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
-        record: Value::Record("Point".to_string(), Arc::new(record_fields)),
-        variant: Value::Variant("MyVariantR76".to_string(), vec![Value::Int(1)]),
+        record: Value::Record(record_type("Point"), Arc::new(record_fields)),
+        variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
         vm_closure: Value::VmClosure(Arc::new(VmClosure {
             function: Arc::new(Function::new("f".to_string(), 0)),
             upvalues: Vec::new(),
         })),
         builtin_fn: Value::BuiltinFn("println".to_string()),
-        variant_constructor: Value::VariantConstructor("Some".to_string(), 1),
-        type_descriptor: Value::TypeDescriptor("Point".to_string()),
+        host_fn: Value::HostFn(Arc::new(HostFn {
+            name: "mylib.double".to_string(),
+            call: Arc::new(|_: &[Value]| Ok(Value::Unit)),
+            returns: HostShape::Any,
+        })),
+        variant_constructor: Value::VariantConstructor(bv::SOME.tag()),
+        type_descriptor: Value::TypeDescriptor(record_type("Point")),
         primitive_descriptor: Value::PrimitiveDescriptor("Int".to_string()),
         channel: Value::Channel(Arc::new(Channel::new(0, 0))),
         handle: Value::Handle(Arc::new(TaskHandle::new(0))),
@@ -165,6 +172,7 @@ fn expected_kind(v: &Value) -> &'static str {
         Value::Variant(..) => "Variant",
         Value::VmClosure(_) => "Fn",
         Value::BuiltinFn(_) => "BuiltinFn",
+        Value::HostFn(_) => "HostFn",
         Value::VariantConstructor(..) => "VariantConstructor",
         Value::TypeDescriptor(_) => "TypeDescriptor",
         Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
@@ -189,7 +197,7 @@ fn expected_kind(v: &Value) -> &'static str {
 /// variant added to `Value` makes `expected_kind` fail to compile, so this
 /// lock cannot go green while a variant is uncovered.
 fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) {
-    let samples: [&Value; 22] = [
+    let samples: [&Value; 23] = [
         &av.int,
         &av.float,
         &av.bool_,
@@ -203,6 +211,7 @@ fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) 
         &av.variant,
         &av.vm_closure,
         &av.builtin_fn,
+        &av.host_fn,
         &av.variant_constructor,
         &av.type_descriptor,
         &av.primitive_descriptor,
@@ -518,9 +527,23 @@ fn three_way_kind_parity_holds_for_every_value_variant() {
     // exhaustive `expected_kind` match; if a variant is added it must be
     // enrolled there (compile error) and here, keeping the lock honest.
     assert_eq!(
-        covered, 22,
-        "expected to cover all 22 Value variants; covered {covered}. \
+        covered, 23,
+        "expected to cover all 23 Value variants; covered {covered}. \
          If Value grew, enroll the new variant in expected_kind, \
          build_all_variants, and the samples array."
     );
+}
+
+/// A program's record type named `name`, with an id of its own.
+fn record_type(name: &str) -> std::sync::Arc<silt::typeinfo::TypeInfo> {
+    let id = name
+        .bytes()
+        .fold(9000u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+        % 100_000
+        + 10_000;
+    silt::typeinfo::TypeInfo::new_record(
+        silt::defs::TypeId(silt::defs::DefId(id)),
+        name,
+        Vec::new(),
+    )
 }

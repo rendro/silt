@@ -1,0 +1,8 @@
+-- verdict: same
+type T { Stop, Go }
+import list
+fn main() {
+  let r = list.fold_until([1,2,3], 0) { acc, x -> match x { 2 -> Stop(acc), _ -> list.Continue(acc + x) } }
+  println(r)
+  println(Stop)
+}

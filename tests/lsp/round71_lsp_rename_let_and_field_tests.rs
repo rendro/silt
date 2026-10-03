@@ -5,7 +5,7 @@
 //!   stored `let span = self.span()` before consuming `let`).
 //!   `build_definitions` recorded that span as the binding's
 //!   `DefInfo.span`; LSP rename applied the new name as a TextEdit over
-//!   `token_len_at(source, span.offset)` bytes, so renaming `counter`
+//!   the token at that span, so renaming `counter`
 //!   in `let counter = 42` produced `ctr ctr = 42` (clobbering `let`),
 //!   and renaming through `pub let counter = 42` clobbered `pub`. The
 //!   fix mirrors round-63 B1: add a `name_span` field on `Decl::Let`

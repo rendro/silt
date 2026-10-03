@@ -1,0 +1,13 @@
+-- verdict: same
+import list
+import string
+import int
+type P { a: Int, b: Int }
+type W { Wrap(Int, Int) }
+fn add(a, b) { a + b }
+fn one(a) { a }
+fn main() {
+  let x = 5
+  let r = [match x { 5 -> 50, _ -> 0 }]
+  println(r)
+}

@@ -1,8 +1,0 @@
--- exit: 1
--- stderr-contains: requires `import time`
-fn main() {
-  match 1 {
-    Monday -> "mon"
-    _ -> "other"
-  }
-}

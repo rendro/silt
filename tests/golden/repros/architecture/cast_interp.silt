@@ -1,0 +1,7 @@
+-- verdict: same
+import string
+fn main() {
+  let x = 1
+  let s = "{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}{x}"
+  println("{string.length(s)}")
+}

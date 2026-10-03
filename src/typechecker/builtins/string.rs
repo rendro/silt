@@ -151,7 +151,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("string.index_of"),
         Scheme::mono(Type::Fun(
             vec![Type::String, Type::String],
-            Box::new(Type::Generic(intern("Option"), vec![Type::Int])),
+            Box::new(Type::option(Type::Int)),
         )),
     );
 
@@ -160,7 +160,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("string.last_index_of"),
         Scheme::mono(Type::Fun(
             vec![Type::String, Type::String],
-            Box::new(Type::Generic(intern("Option"), vec![Type::Int])),
+            Box::new(Type::option(Type::Int)),
         )),
     );
 

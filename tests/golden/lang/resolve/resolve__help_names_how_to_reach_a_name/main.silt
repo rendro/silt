@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: help: module `lib` is imported as `l` here: write `l.<name>`
+-- stderr-contains: help: did you mean `l.Shape`? or import the name: `import lib.{ Shape }`
+-- stderr-contains: help: `map` is in module `list`: write `list.map` after `import list`, or add `import list.{ map }`
+-- stderr-contains: error[type]: module 'l' has no member 'aree'
+-- stderr-contains: help: did you mean `area`?
+-- stderr-contains: error[type]: module 'lib' has no member 'nope'
+-- Each help says how the name can be reached here: through the alias
+-- the module is bound as, through the module that declares it, or by
+-- importing a builtin module's function. A missing member is one error,
+-- however it is asked for.
+import lib as l
+import lib.{ nope }
+fn main() {
+  println(lib.area(l.Shape.Circle(1)))
+  match l.Shape.Circle(1) {
+    Shape.Circle(r) -> println(r)
+    _ -> println(0)
+  }
+  let xs = map([1], { x -> x })
+  println(l.aree(l.Shape.Square(2)))
+}

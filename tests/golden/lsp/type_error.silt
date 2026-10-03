@@ -1,0 +1,11 @@
+-- cmd: lsp
+-- verdict: same
+-- A type error, at the line and column the CLI prints for it.
+
+fn double(x: Int) -> Int {
+  x * 2
+}
+
+fn main() {
+  println("{double("two")}")
+}

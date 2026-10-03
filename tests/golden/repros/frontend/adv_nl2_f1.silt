@@ -1,0 +1,12 @@
+-- verdict: same
+fn f(x) = x + 1
+
+fn main() {
+  let a = 10
+  {- lead -} -3
+  let b = a {- mid -}
+  -3
+  let c = [1, 2] {- x -}
+  {- y -} [0]
+  println("{a} {b} {c}")
+}

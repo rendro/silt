@@ -1,0 +1,11 @@
+error[runtime]: division by zero
+ --> <repl:1>:1:10
+   |
+ 1 | fn a() { 1 / 0 }
+   |          ^^^^^ division by zero
+
+call stack:
+  -> a  at <repl:1>:1:10
+  -> b  at <repl:2>:1:10
+  -> c  at <repl:3>:1:10
+  -> <repl:4>  at <repl:4>:1:1

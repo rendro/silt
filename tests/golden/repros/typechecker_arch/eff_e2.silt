@@ -1,0 +1,5 @@
+-- verdict: same
+fn quiet() -> () !{} {
+  println("direct")
+}
+fn main() { quiet() }

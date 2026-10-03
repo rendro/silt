@@ -1,0 +1,9 @@
+-- verdict: same
+import io
+import int
+
+fn main() {
+  io.write_file("/nonexistent-dir/x.txt", "data")
+  int.parse("zzz")
+  println("all good")
+}

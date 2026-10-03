@@ -37,7 +37,7 @@ fn shape(e: &Expr) -> String {
         ExprKind::Float(n) => format!("{n}"),
         ExprKind::Bool(b) => b.to_string(),
         ExprKind::Ident(s) => intern::resolve(*s),
-        ExprKind::FieldAccess(b, f) => format!("{}.{}", shape(b), intern::resolve(*f)),
+        ExprKind::FieldAccess(b, f, _) => format!("{}.{}", shape(b), intern::resolve(*f)),
         ExprKind::Binary(l, op, r) => format!("({} {} {})", shape(l), op, shape(r)),
         ExprKind::Pipe(l, r) => format!("({} |> {})", shape(l), shape(r)),
         ExprKind::Range(l, r) => format!("({} .. {})", shape(l), shape(r)),
@@ -53,10 +53,10 @@ fn shape(e: &Expr) -> String {
 }
 
 fn expr_shape(src: &str) -> String {
-    let tokens = Lexer::new(src)
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap_or_else(|e| panic!("lex {src}: {e:?}"));
-    let expr = Parser::new(tokens)
+    let expr = Parser::new(tokens, src)
         .parse_expr()
         .unwrap_or_else(|e| panic!("parse {src}: {e:?}"));
     shape(&expr)

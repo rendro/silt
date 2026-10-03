@@ -8,13 +8,13 @@ error[type]: refutable pattern in `let`: constructor 'Some' is only one of 2 var
  --> wave1_typechecker__guard_refutable_let_patterns.silt:22:22
     |
  22 |   let (a, Some(b)) = (1, Some(2))
-    |                      ^ refutable pattern in `let`: constructor 'Some' is only one of 2 variants of enum 'Option'; use a `match` or `when let ... else` instead
+    |                      ^^^^^^^^^^^^ refutable pattern in `let`: constructor 'Some' is only one of 2 variants of enum 'Option'; use a `match` or `when let ... else` instead
 
 error[type]: refutable pattern in `let`: list patterns can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:23:7
     |
  23 |   let [x, y] = [1, 2]
-    |       ^ refutable pattern in `let`: list patterns can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^^^ refutable pattern in `let`: list patterns can fail to match; use a `match` or `when let ... else` instead
 
 error[type]: refutable pattern in `let`: integer literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:24:7
@@ -26,25 +26,25 @@ error[type]: refutable pattern in `let`: boolean literal patterns test a runtime
  --> wave1_typechecker__guard_refutable_let_patterns.silt:25:7
     |
  25 |   let true = false
-    |       ^ refutable pattern in `let`: boolean literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^ refutable pattern in `let`: boolean literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
 
 error[type]: refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:26:7
     |
  26 |   let 1..10 = 999
-    |       ^ refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^^ refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
 
 error[type]: refutable pattern in `let`: map patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:27:7
     |
  27 |   let #{ "k": kv } = #{ "k": 1 }
-    |       ^ refutable pattern in `let`: map patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^^^^^^^^^ refutable pattern in `let`: map patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
 
 error[type]: refutable pattern in `let`: pin patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:28:7
     |
  28 |   let ^pinned = 99
-    |       ^ refutable pattern in `let`: pin patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
+    |       ^^^^^^^ refutable pattern in `let`: pin patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
 
 error[type]: refutable pattern in `let`: integer literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead
  --> wave1_typechecker__guard_refutable_let_patterns.silt:29:15

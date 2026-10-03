@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn first((a, b)) { a }
+fn main() {
+  println(first((1, 2)))
+  println([[1, 2], [3]] |> list.map { [a, b] -> a + b })
+}

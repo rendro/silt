@@ -1,0 +1,9 @@
+-- verdict: same
+-- store's Error and this module's own Error are two types; each is used
+-- through its own name.
+import store
+type Error { Bad(String) }
+fn main() {
+  println(store.fail())
+  println(Error.Bad("x"))
+}

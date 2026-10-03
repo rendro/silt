@@ -3,4 +3,4 @@
 -- stderr-contains: error[runtime]:
 -- stderr-not-contains: __repl_eval
 -- stderr-contains: -> boom
--- stderr-contains: -> <repl>
+-- stderr-contains: -> <repl:2>  at <repl:2>:1:1

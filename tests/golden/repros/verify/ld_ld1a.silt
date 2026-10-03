@@ -1,0 +1,19 @@
+-- verdict: same
+fn main() {
+  let x = 5
+  let a = 1 + match x {
+    5 -> 10
+    _ -> 20
+  }
+  println(a)
+  let b = match x {
+    5 -> 10
+    _ -> 20
+  } + 1
+  println(b)
+  let t = (1, match 2 {
+    2 -> "two"
+    _ -> "other"
+  })
+  println(t)
+}

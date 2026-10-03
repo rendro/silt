@@ -46,18 +46,11 @@
 //! pipe-into-returned-closure).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
-use silt::types::Severity;
 use silt::value::Value;
-use silt::vm::Vm;
 
 // ── Knobs ─────────────────────────────────────────────────────────────
 
@@ -91,48 +84,24 @@ fn compile_and_run_capped(source: &str) -> Result<RunOutcome, TestCaseError> {
     use std::thread;
     use std::time::Duration;
 
-    // Pipeline front-half: lex / parse / typecheck / compile.  All errors
-    // here are bucketed as generator rejects.
-    let tokens = match Lexer::new(source).tokenize() {
-        Ok(t) => t,
-        Err(e) => return Ok(RunOutcome::GeneratorReject(format!("lex: {e:?}"))),
-    };
-    let mut program = match Parser::new(tokens).parse_program() {
+    // Pipeline front-half: analysis and compile.  All errors here are
+    // bucketed as generator rejects.
+    let program = match silt::session::testing::compile_str(source) {
         Ok(p) => p,
-        Err(e) => return Ok(RunOutcome::GeneratorReject(format!("parse: {e:?}"))),
-    };
-
-    let diagnostics = typechecker::check(&mut program);
-    let hard_errors: Vec<String> = diagnostics
-        .into_iter()
-        .filter(|d| d.severity == Severity::Error)
-        .map(|d| d.message)
-        .collect();
-    if !hard_errors.is_empty() {
-        return Ok(RunOutcome::GeneratorReject(format!(
-            "typecheck: {hard_errors:?}\nsource:\n{source}"
-        )));
-    }
-
-    let mut compiler = Compiler::new();
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => {
+        Err(errors) => {
+            let messages: Vec<String> = errors.into_iter().map(|d| d.message).collect();
             return Ok(RunOutcome::GeneratorReject(format!(
-                "compile: {e:?}\nsource:\n{source}"
+                "analysis or compile: {messages:?}\nsource:\n{source}"
             )));
         }
     };
-
-    let script = Arc::new(functions.into_iter().next().expect("empty script"));
 
     // Run on a worker thread so we can enforce a wall-clock deadline.
     // The worker catches its own panic and reports it via the channel.
     let (tx, rx) = mpsc::sync_channel::<Result<Result<Value, String>, String>>(1);
     let handle = thread::spawn(move || {
         let result = catch_unwind(AssertUnwindSafe(move || {
-            let mut vm = Vm::new();
-            vm.run(script)
+            silt::vm::Vm::new().run_program(&program)
         }));
         let payload = match result {
             Ok(Ok(v)) => Ok(Ok(v)),

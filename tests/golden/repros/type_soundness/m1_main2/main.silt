@@ -1,0 +1,5 @@
+-- verdict: same
+import util
+fn main() {
+  println(util.secret_fn())
+}

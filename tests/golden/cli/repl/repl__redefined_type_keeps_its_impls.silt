@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: type P { x: Int }\ntrait Display for P { fn display(self) -> String { "old P" } }\nlet a = P { x: 1 }\ntype P { x: Int }\ntrait Display for P { fn display(self) -> String { "new P" } }\nlet b = P { x: 2 }\na.display()\nb.display()\n:quit\n
+-- Redefinition is early-bound (stage 5 decision D4): a type declared
+-- again is a new type with impls of its own, so a value of the old type
+-- keeps the old type's Display impl.

@@ -1,0 +1,13 @@
+-- cmd: disasm
+-- A TestTag operand is the variant the pattern tests for, a unit
+-- variant or one with fields alike.
+-- stdout-contains: ; <variant:None>
+-- stdout-contains: ; <variant:Some>
+fn f(x: Option(Int)) -> Int {
+  match x {
+    None -> 0
+    Some(n) -> n
+  }
+}
+
+fn main() { println(f(None)) }

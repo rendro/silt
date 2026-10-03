@@ -1,0 +1,8 @@
+-- verdict: same
+type Box(a) { Box(a) }
+trait Get { fn get(self) -> Int }
+trait Get for Box { fn get(self) -> Int { match self { Box(v) -> v } } }
+fn main() {
+  println(Box(1).get())
+  println(Box("s").get() + 1)
+}

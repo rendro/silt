@@ -1,0 +1,32 @@
+-- verdict: same
+import time
+fn main() {
+  let v_time_add: Int = time.add
+  let v_time_add_days: Int = time.add_days
+  let v_time_add_months: Int = time.add_months
+  let v_time_date: Int = time.date
+  let v_time_datetime: Int = time.datetime
+  let v_time_days_between: Int = time.days_between
+  let v_time_days_in_month: Int = time.days_in_month
+  let v_time_format: Int = time.format
+  let v_time_format_date: Int = time.format_date
+  let v_time_from_utc: Int = time.from_utc
+  let v_time_hours: Int = time.hours
+  let v_time_is_leap_year: Int = time.is_leap_year
+  let v_time_micros: Int = time.micros
+  let v_time_minutes: Int = time.minutes
+  let v_time_ms: Int = time.ms
+  let v_time_nanos: Int = time.nanos
+  let v_time_now: Int = time.now
+  let v_time_parse: Int = time.parse
+  let v_time_parse_date: Int = time.parse_date
+  let v_time_seconds: Int = time.seconds
+  let v_time_since: Int = time.since
+  let v_time_sleep: Int = time.sleep
+  let v_time_time: Int = time.time
+  let v_time_to_datetime: Int = time.to_datetime
+  let v_time_to_instant: Int = time.to_instant
+  let v_time_to_utc: Int = time.to_utc
+  let v_time_today: Int = time.today
+  let v_time_weekday: Int = time.weekday
+}

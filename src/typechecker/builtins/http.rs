@@ -9,10 +9,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // ── HTTP module type definitions ─────────────────────────────
 
     // Method enum
-    let method_ty = Type::Generic(intern("Method"), vec![]);
+    let method_ty = Type::builtin("Method", vec![]);
 
-    checker.enums.insert(
-        intern("Method"),
+    checker.tables.enums.insert(
+        TypeRef::builtin("Method"),
         EnumInfo {
             params: vec![],
             param_var_ids: vec![],
@@ -51,18 +51,14 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     );
     let method_variants = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
     for variant in method_variants {
-        checker
-            .variant_to_enum
-            .insert(intern(variant), intern("Method"));
         env.define(intern(variant), Scheme::mono(method_ty.clone()));
     }
-    crate::value::register_variant_decl_order(method_variants);
 
     // Response record
     let map_ss = Type::Map(Box::new(Type::String), Box::new(Type::String));
 
     let response_ty = Type::Record(
-        intern("Response"),
+        TypeRef::builtin("Response"),
         vec![
             (intern("status"), Type::Int),
             (intern("body"), Type::String),
@@ -70,8 +66,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
 
-    checker.records.insert(
-        intern("Response"),
+    checker.tables.records.insert(
+        TypeRef::builtin("Response"),
         RecordInfo {
             fields: vec![
                 (intern("status"), Type::Int),
@@ -84,7 +80,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // Request record
     let request_ty = Type::Record(
-        intern("Request"),
+        TypeRef::builtin("Request"),
         vec![
             (intern("method"), method_ty.clone()),
             (intern("path"), Type::String),
@@ -94,8 +90,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
 
-    checker.records.insert(
-        intern("Request"),
+    checker.tables.records.insert(
+        TypeRef::builtin("Request"),
         RecordInfo {
             fields: vec![
                 (intern("method"), method_ty.clone()),
@@ -110,8 +106,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // ── Function signatures ──────────────────────────────────────
 
-    let http_error_ty = Type::Generic(intern("HttpError"), vec![]);
-    let result_response = Type::Generic(intern("Result"), vec![response_ty.clone(), http_error_ty]);
+    let http_error_ty = Type::builtin("HttpError", vec![]);
+    let result_response = Type::builtin("Result", vec![response_ty.clone(), http_error_ty]);
 
     // http.get: (String) -> Result(Response, String)
     env.define(

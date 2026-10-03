@@ -1,0 +1,8 @@
+-- verdict: same
+import float
+import list
+import int
+fn main() {
+  println(list.map([1, 2], int.to_string))
+  println(list.map([1.5, 2.5], float.to_string))
+}

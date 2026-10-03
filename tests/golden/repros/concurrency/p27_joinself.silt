@@ -1,0 +1,22 @@
+-- verdict: same
+import channel
+import task
+import time
+fn main() {
+  let hch = channel.new(1)
+  let h = task.spawn(fn() {
+    match channel.receive(hch) {
+      channel.Message(me) -> {
+        println("task: joining myself")
+        task.join(me)
+        println("task: join-self returned")
+        1
+      }
+      _ -> 0
+    }
+  })
+  channel.send(hch, h)
+  time.sleep(time.ms(300))
+  println("main: slept; now joining")
+  println(task.join(h))
+}

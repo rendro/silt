@@ -14,15 +14,16 @@
 
 use std::sync::Arc;
 
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
 
 pub(crate) fn ok(v: Value) -> Value {
-    Value::Variant("Ok".into(), vec![v])
+    Value::variant(bv::OK, vec![v])
 }
 
 pub(super) fn err(s: impl Into<String>) -> Value {
-    Value::Variant("Err".into(), vec![Value::String(s.into())])
+    Value::variant(bv::ERR, vec![Value::String(s.into())])
 }
 
 pub(super) fn require_string(arg: &Value, fn_label: &str) -> Result<String, VmError> {
@@ -99,6 +100,7 @@ pub(crate) fn value_kind(v: &Value) -> &'static str {
         // canonical dispatch name) — round 71 follow-up unification.
         Value::VmClosure(_) => "Fn",
         Value::BuiltinFn(_) => "BuiltinFn",
+        Value::HostFn(_) => "HostFn",
         Value::VariantConstructor(..) => "VariantConstructor",
         Value::TypeDescriptor(_) => "TypeDescriptor",
         Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",

@@ -1,0 +1,4 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must be a function that takes no parameters, but it is a value of type Int
+let main = 3

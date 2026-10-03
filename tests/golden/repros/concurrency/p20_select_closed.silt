@@ -1,0 +1,28 @@
+-- verdict: same
+import channel
+fn main() {
+  let a = channel.new(1)
+  let b = channel.new(1)
+  channel.close(a)
+  channel.close(b)
+  match channel.select([channel.Recv(a), channel.Recv(b)]) {
+    (^a, channel.Closed) -> println("a closed")
+    (^b, channel.Closed) -> println("b closed")
+    _ -> println("other")
+  }
+  -- Send arm on closed channel
+  match channel.select([channel.Send(a, 1)]) {
+    (_, channel.Closed) -> println("send arm -> Closed")
+    (_, channel.Sent) -> println("send arm -> Sent")
+    _ -> println("other")
+  }
+  -- double close
+  channel.close(a)
+  println("double close ok")
+  -- try_send on closed
+  println(channel.try_send(a, 5))
+  -- empty select
+  match channel.select([]) {
+    _ -> println("empty select returned")
+  }
+}

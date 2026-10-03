@@ -454,10 +454,10 @@ mod genp {
 
 fn emit_match_channel_result(indent: &str, _suffix: &str) -> String {
     format!(
-        "{i}    Message(_v) -> ()\n\
-         {i}    Empty -> ()\n\
-         {i}    Closed -> ()\n\
-         {i}    Sent -> ()\n",
+        "{i}    channel.Message(_v) -> ()\n\
+         {i}    channel.Empty -> ()\n\
+         {i}    channel.Closed -> ()\n\
+         {i}    channel.Sent -> ()\n",
         i = indent
     )
 }
@@ -490,15 +490,15 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
         genp::Op::Select { chs } => {
             let list = chs
                 .iter()
-                .map(|c| format!("Recv(ch{c})"))
+                .map(|c| format!("channel.Recv(ch{c})"))
                 .collect::<Vec<_>>()
                 .join(", ");
             let mut s = String::new();
             s.push_str(&format!("{indent}match channel.select([{list}]) {{\n"));
-            s.push_str(&format!("{indent}    (_, Message(_v)) -> ()\n"));
-            s.push_str(&format!("{indent}    (_, Empty) -> ()\n"));
-            s.push_str(&format!("{indent}    (_, Closed) -> ()\n"));
-            s.push_str(&format!("{indent}    (_, Sent) -> ()\n"));
+            s.push_str(&format!("{indent}    (_, channel.Message(_v)) -> ()\n"));
+            s.push_str(&format!("{indent}    (_, channel.Empty) -> ()\n"));
+            s.push_str(&format!("{indent}    (_, channel.Closed) -> ()\n"));
+            s.push_str(&format!("{indent}    (_, channel.Sent) -> ()\n"));
             s.push_str(&format!("{indent}}}\n"));
             s
         }
@@ -580,11 +580,11 @@ fn emit_program(p: &genp::Program) -> String {
          \x20   match c >= {} {{\n\
          \x20     true -> c\n\
          \x20     _ -> {{\n\
-         \x20       match channel.select([Recv(done), Recv(timer)]) {{\n\
-         \x20         (_, Message(_v)) -> loop(c + 1)\n\
-         \x20         (_, Closed) -> c\n\
-         \x20         (_, Empty) -> c\n\
-         \x20         (_, Sent) -> c\n\
+         \x20       match channel.select([channel.Recv(done), channel.Recv(timer)]) {{\n\
+         \x20         (_, channel.Message(_v)) -> loop(c + 1)\n\
+         \x20         (_, channel.Closed) -> c\n\
+         \x20         (_, channel.Empty) -> c\n\
+         \x20         (_, channel.Sent) -> c\n\
          \x20       }}\n\
          \x20     }}\n\
          \x20   }}\n\
@@ -753,10 +753,10 @@ fn main() {
   -- Give them a chance to finish.
   time.sleep(time.ms(200))
   match channel.try_receive(tick) {
-    Message(v) -> println("c_ran={v}")
-    Empty -> println("c_did_not_run")
-    Closed -> println("tick_closed")
-    Sent -> println("tick_sent")
+    channel.Message(v) -> println("c_ran={v}")
+    channel.Empty -> println("c_did_not_run")
+    channel.Closed -> println("tick_closed")
+    channel.Sent -> println("tick_sent")
   }
 }
 "#;

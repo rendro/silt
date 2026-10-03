@@ -3,10 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::bytecode::{ANON_RECORD_TAG, Op, VmClosure, record_tag_matches};
+use crate::bytecode::{Op, VmClosure, record_type_matches};
 use crate::scheduler::SliceResult;
+use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
+use super::dispatch::invoke_host_fn;
 use super::runtime::{BuiltinAcc, CallFrame, SuspendedBuiltin, SuspendedInvoke};
 use super::{NativeDepthGuard, Vm, VmError, native_depth_limit};
 
@@ -24,8 +26,11 @@ const MAX_FRAMES: usize = 100_000;
 /// position" is not actionable advice for recursive trait methods.
 fn stack_overflow_error() -> VmError {
     VmError::new(format!(
-        "stack overflow: recursion depth exceeded {MAX_FRAMES} frames (tip: tail-call elimination applies to plain function calls in tail position; method and builtin calls always consume a frame)"
+        "stack overflow: recursion depth exceeded {MAX_FRAMES} frames"
     ))
+    .with_help(
+        "tail-call elimination applies to plain function calls in tail position; method and builtin calls always consume a frame",
+    )
 }
 
 /// Build the user-facing stack-overflow error reported when method calls
@@ -37,7 +42,10 @@ fn stack_overflow_error() -> VmError {
 fn native_stack_overflow_error() -> VmError {
     let limit = native_depth_limit();
     VmError::new(format!(
-        "stack overflow: recursion depth exceeded {limit} nested method or callback calls (tip: a method call, or a function passed to a builtin such as list.map, uses the host stack for every level of nesting; for deep recursion use a plain function call, which is limited to {MAX_FRAMES} frames, or a loop)"
+        "stack overflow: recursion depth exceeded {limit} nested method or callback calls"
+    ))
+    .with_help(format!(
+        "a method call, or a function passed to a builtin such as list.map, uses the host stack for every level of nesting; for deep recursion use a plain function call, which is limited to {MAX_FRAMES} frames, or a loop"
     ))
 }
 
@@ -339,10 +347,12 @@ fn apply_callback_result(
         BuiltinIterKind::ListFilterMap => {
             if let BuiltinAcc::List(v) = acc {
                 match result {
-                    Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
+                    Value::Variant(ref tag, ref fields)
+                        if tag.is(bv::SOME) && fields.len() == 1 =>
+                    {
                         v.push(fields[0].clone());
                     }
-                    Value::Variant(ref tag, _) if tag == "None" => {}
+                    Value::Variant(ref tag, _) if tag.is(bv::NONE) => {}
                     other => v.push(other),
                 }
             }
@@ -350,10 +360,7 @@ fn apply_callback_result(
         }
         BuiltinIterKind::ListFind => {
             if value_is_truthy(&result) {
-                return Ok(ControlFlow::Short(Value::Variant(
-                    "Some".into(),
-                    vec![item],
-                )));
+                return Ok(ControlFlow::Short(Value::variant(bv::SOME, vec![item])));
             }
             Ok(ControlFlow::Continue)
         }
@@ -403,13 +410,13 @@ fn apply_callback_result(
             Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListFoldUntil => match result {
-            Value::Variant(ref tag, ref fields) if tag == "Continue" && fields.len() == 1 => {
+            Value::Variant(ref tag, ref fields) if tag.is(bv::CONTINUE) && fields.len() == 1 => {
                 if let BuiltinAcc::Fold(v) = acc {
                     *v = fields[0].clone();
                 }
                 Ok(ControlFlow::Continue)
             }
-            Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
+            Value::Variant(ref tag, ref fields) if tag.is(bv::STOP) && fields.len() == 1 => {
                 Ok(ControlFlow::Short(fields[0].clone()))
             }
             other => {
@@ -511,8 +518,8 @@ fn apply_callback_result(
                     // a Variant that the caller will catch post-iteration.
                     // But we can't return an error from here, so we stash an
                     // error marker by inserting a sentinel and short-circuit.
-                    return Ok(ControlFlow::Short(Value::Variant(
-                        "__MapMapTypeError__".into(),
+                    return Ok(ControlFlow::Short(Value::variant(
+                        bv::MAP_ERROR,
                         Vec::new(),
                     )));
                 }
@@ -550,7 +557,7 @@ fn finalize_acc(kind: BuiltinIterKind, acc: BuiltinAcc) -> Value {
         }
         BuiltinIterKind::ListFind => {
             // If we reach finalize (didn't short-circuit), no item matched.
-            Value::Variant("None".into(), Vec::new())
+            Value::variant(bv::NONE, Vec::new())
         }
         BuiltinIterKind::ListAny => Value::Bool(false),
         BuiltinIterKind::ListAll => Value::Bool(true),
@@ -585,9 +592,9 @@ fn finalize_acc(kind: BuiltinIterKind, acc: BuiltinAcc) -> Value {
         }
         BuiltinIterKind::ListMinBy | BuiltinIterKind::ListMaxBy => {
             if let BuiltinAcc::Best(Some((_, v))) = acc {
-                Value::Variant("Some".into(), vec![v])
+                Value::variant(bv::SOME, vec![v])
             } else {
-                Value::Variant("None".into(), Vec::new())
+                Value::variant(bv::NONE, Vec::new())
             }
         }
         BuiltinIterKind::ListScan => {
@@ -806,16 +813,24 @@ impl Vm {
                     }
                 }
             }
-            Value::VariantConstructor(name, arity) => {
+            Value::HostFn(host) => {
+                let start = func_slot + 1;
+                let result = invoke_host_fn(&host, &self.stack[start..start + argc]);
+                self.stack.truncate(func_slot);
+                self.push(result?);
+                Ok(())
+            }
+            Value::VariantConstructor(tag) => {
+                let arity = tag.arity();
                 if argc != arity {
                     return Err(VmError::new(format!(
-                        "variant constructor '{name}' expects {arity} arguments, got {argc}"
+                        "variant constructor '{tag}' expects {arity} arguments, got {argc}"
                     )));
                 }
                 let start = func_slot + 1;
                 let fields: Vec<Value> = self.stack[start..start + argc].to_vec();
                 self.stack.truncate(func_slot);
-                self.push(Value::Variant(name, fields));
+                self.push(Value::Variant(tag, fields));
                 Ok(())
             }
             _ => Err(VmError::new(format!(
@@ -1089,14 +1104,16 @@ impl Vm {
                 }
             }
             Value::BuiltinFn(name) => self.invoke_builtin_value(name, args),
-            Value::VariantConstructor(name, arity) => {
-                if args.len() != *arity {
+            Value::HostFn(host) => invoke_host_fn(host, args),
+            Value::VariantConstructor(tag) => {
+                let arity = tag.arity();
+                if args.len() != arity {
                     return Err(VmError::new(format!(
-                        "variant constructor '{name}' expects {arity} arguments, got {}",
+                        "variant constructor '{tag}' expects {arity} arguments, got {}",
                         args.len()
                     )));
                 }
-                Ok(Value::Variant(name.clone(), args.to_vec()))
+                Ok(Value::Variant(tag.clone(), args.to_vec()))
             }
             _ => Err(VmError::new(format!(
                 "cannot call value of type {}",
@@ -1552,7 +1569,7 @@ impl Vm {
                         // `BuiltinFn` / `VariantConstructor` tags). Function-
                         // shaped values, Channel, Handle and the Tcp resources
                         // collapse to their canonical name via
-                        // `dispatch_name_for_value`; the descriptor values
+                        // `dispatch_type_name`; the descriptor values
                         // (whose canonical name is the *carried* type name)
                         // fall back to their `type_name` so the diagnostic
                         // names the descriptor kind, not the reflected type.
@@ -1560,8 +1577,7 @@ impl Vm {
                             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
                                 self.type_name(&val).to_string()
                             }
-                            _ => crate::types::canonical::dispatch_name_for_value(&val)
-                                .unwrap_or_else(|| self.type_name(&val).to_string()),
+                            _ => crate::types::canonical::dispatch_type_name(&val),
                         };
                         return Err(VmError::new(format!(
                             "type '{name}' does not implement Display \
@@ -1635,20 +1651,30 @@ impl Vm {
                 self.stack[target] = value;
             }
             Op::GetGlobal => {
-                let name_index = self.read_u16()? as usize;
-                let name = self.read_constant_string(name_index)?;
-                let value = self
-                    .globals
-                    .get(&name)
-                    .cloned()
-                    .ok_or_else(|| VmError::new(format!("undefined global: {name}")))?;
+                let slot = self.read_u16()?;
+                let value = match self.globals.get(slot as usize) {
+                    Some(Some(value)) => value.clone(),
+                    // A top-level `let` initializer that calls code which
+                    // reads a `let` initialized after it.
+                    _ => {
+                        return Err(VmError::new(format!(
+                            "'{}' is used before its top-level definition has run",
+                            self.global_slots.name(slot)
+                        )));
+                    }
+                };
                 self.push(value);
             }
             Op::SetGlobal => {
-                let name_index = self.read_u16()? as usize;
-                let name = self.read_constant_string(name_index)?;
+                let slot = self.read_u16()? as usize;
                 let value = self.peek()?.clone();
-                self.globals.insert(name, value);
+                let Some(global) = self.globals.get_mut(slot) else {
+                    return Err(VmError::new(format!(
+                        "internal VM error: global slot {slot} out of range ({} slots)",
+                        self.globals.len()
+                    )));
+                };
+                *global = Some(value);
             }
             Op::GetUpvalue => {
                 let index = self.read_u8()? as usize;
@@ -1881,7 +1907,7 @@ impl Vm {
                     let name_index = self.read_u16()? as usize;
                     field_names.push(self.read_constant_string(name_index)?);
                 }
-                let type_name = self.read_constant_string(type_name_index)?;
+                let ty = self.read_constant_type(type_name_index)?;
                 if field_count > self.stack.len() {
                     return Err(VmError::new(format!(
                         "MakeRecord: field count {field_count} exceeds stack size {}",
@@ -1894,22 +1920,7 @@ impl Vm {
                     fields.insert(name, self.stack[start + i].clone());
                 }
                 self.stack.truncate(start);
-                self.push(Value::Record(type_name, Arc::new(fields)));
-            }
-            Op::MakeVariant => {
-                let name_index = self.read_u16()? as usize;
-                let field_count = self.read_u8()? as usize;
-                let name = self.read_constant_string(name_index)?;
-                if field_count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "MakeVariant: field count {field_count} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
-                let start = self.stack.len() - field_count;
-                let fields: Vec<Value> = self.stack[start..].to_vec();
-                self.stack.truncate(start);
-                self.push(Value::Variant(name, fields));
+                self.push(Value::Record(ty, Arc::new(fields)));
             }
             Op::RecordUpdate => {
                 // Functional record update: preserves the base's
@@ -2034,22 +2045,6 @@ impl Vm {
                     }
                 }
             }
-            Op::GetIndex => {
-                let index = self.read_u8()? as usize;
-                let target = self.pop()?;
-                if let Value::Tuple(ref elems) = target {
-                    let val = elems
-                        .get(index)
-                        .cloned()
-                        .ok_or_else(|| VmError::new("tuple index out of bounds".to_string()))?;
-                    self.push(val);
-                } else {
-                    return Err(VmError::new(format!(
-                        "cannot index into {}",
-                        self.user_facing_type_name(&target)
-                    )));
-                }
-            }
             Op::Jump => {
                 let offset = self.read_u16()? as usize;
                 self.current_frame_mut()?.ip += offset;
@@ -2101,9 +2096,9 @@ impl Vm {
             }
             Op::TestTag => {
                 let ni = self.read_u16()? as usize;
-                let name = self.read_constant_string(ni)?;
+                let expected = self.read_constant_tag(ni)?;
                 let val = self.peek()?;
-                let result = matches!(val, Value::Variant(tag, _) if *tag == name);
+                let result = matches!(val, Value::Variant(tag, _) if *tag == expected);
                 self.push(Value::Bool(result));
             }
             Op::TestEqual => {
@@ -2299,9 +2294,9 @@ impl Vm {
                             rest_fields.insert(k.clone(), v.clone());
                         }
                     }
-                    self.push(Value::Record(
-                        ANON_RECORD_TAG.to_string(),
-                        std::sync::Arc::new(rest_fields),
+                    self.push(Value::builtin_record(
+                        crate::typeinfo::ty::ANON_RECORD,
+                        rest_fields,
                     ));
                 } else {
                     return Err(VmError::new(format!(
@@ -2312,9 +2307,10 @@ impl Vm {
             }
             Op::TestRecordTag => {
                 let ni = self.read_u16()? as usize;
-                let name = self.read_constant_string(ni)?;
+                let expected = self.read_constant_type(ni)?;
                 let val = self.peek()?;
-                let result = matches!(val, Value::Record(tag, _) if record_tag_matches(tag, &name));
+                let result =
+                    matches!(val, Value::Record(ty, _) if record_type_matches(ty, expected.id));
                 self.push(Value::Bool(result));
             }
             Op::TestMapHasKey => {
@@ -2379,8 +2375,8 @@ impl Vm {
             Op::QuestionMark => {
                 let val = self.peek()?.clone();
                 match val {
-                    Value::Variant(ref tag, ref fields) => match tag.as_str() {
-                        "Ok" | "Some" => {
+                    Value::Variant(ref tag, ref fields) => match tag {
+                        _ if tag.is(bv::OK) || tag.is(bv::SOME) => {
                             self.pop()?;
                             self.push(if fields.len() == 1 {
                                 fields[0].clone()
@@ -2388,7 +2384,7 @@ impl Vm {
                                 Value::Unit
                             });
                         }
-                        "Err" | "None" => {
+                        _ if tag.is(bv::ERR) || tag.is(bv::NONE) => {
                             let value = self.pop()?;
                             let finished_base = self.current_frame()?.base_slot;
                             self.frames.pop();
@@ -2418,6 +2414,7 @@ impl Vm {
             Op::CallMethod => {
                 let method_name_index = self.read_u16()? as usize;
                 let argc = self.read_u8()? as usize;
+                let trait_index = self.read_u16()?;
                 let method_name = self.read_constant_string(method_name_index)?;
                 // Defense-in-depth: the compiler always emits
                 // `argc = (args.len() + 1) as u8` (the receiver counts
@@ -2436,7 +2433,7 @@ impl Vm {
                 }
                 let receiver_slot = self.stack.len() - argc;
                 let receiver = self.stack[receiver_slot].clone();
-                let type_name = self.value_type_name_for_dispatch(&receiver);
+                let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
                 // Descriptor-as-receiver (e.g. `Int.default()`,
                 // `body.decode(Todo)` where the descriptor is piped in) is
                 // a dispatch key, not a value argument. The method's
@@ -2446,8 +2443,24 @@ impl Vm {
                     &receiver,
                     Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
                 );
-                let qualified = format!("{type_name}.{method_name}");
-                if let Some(func) = self.globals.get(&qualified).cloned() {
+                if trait_index == crate::bytecode::NO_TRAIT
+                    && self.global_slots.ambiguous(
+                        receiver_type,
+                        &method_name,
+                        !matches!(receiver, Value::Record(..) | Value::Variant(..)),
+                    )
+                {
+                    return Err(VmError::new(format!(
+                        "ambiguous method '{method_name}' for type '{}': two traits provide it, \
+                         and this call names neither; add a `where` bound for the receiver",
+                        crate::types::canonical::dispatch_type_name(&receiver)
+                    )));
+                }
+                let method = self
+                    .global_slots
+                    .call_method(trait_index, receiver_type, &method_name)
+                    .and_then(|slot| self.globals.get(slot as usize).cloned().flatten());
+                if let Some(func) = method {
                     let args: Vec<Value> = if descriptor_receiver {
                         self.stack[receiver_slot + 1..].to_vec()
                     } else {
@@ -2459,7 +2472,7 @@ impl Vm {
                     // restores the suspended invoke state rather than
                     // re-running the method body from ip=0 — which would
                     // duplicate side effects like println, mutation, and
-                    // foreign-fn calls. The "original args" we re-push
+                    // host function calls. The "original args" we re-push
                     // on yield must reproduce the stack layout that
                     // `Op::CallMethod` will consume when this same
                     // instruction re-executes after resume: descriptor
@@ -2486,7 +2499,7 @@ impl Vm {
                         if let Some(field_val) = fields.get(&method_name) {
                             let callable = field_val.clone();
                             self.stack.truncate(receiver_slot);
-                            // Resumable invoke: see qualified-global arm
+                            // Resumable invoke: see the impl-method arm
                             // above. On yield the original args we re-push
                             // are receiver + extra_args, so the same
                             // CallMethod instruction reads them again on
@@ -2505,12 +2518,14 @@ impl Vm {
                             self.push(result);
                         } else {
                             return Err(VmError::new(format!(
-                                "no method '{method_name}' for type '{type_name}'"
+                                "no method '{method_name}' for type '{}'",
+                                crate::types::canonical::dispatch_type_name(&receiver)
                             )));
                         }
                     } else {
                         return Err(VmError::new(format!(
-                            "no method '{method_name}' for type '{type_name}'"
+                            "no method '{method_name}' for type '{}'",
+                            crate::types::canonical::dispatch_type_name(&receiver)
                         )));
                     }
                 }

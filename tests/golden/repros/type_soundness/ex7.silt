@@ -1,0 +1,14 @@
+-- verdict: same
+fn p(x: Int, o: Option(Int)) -> Int {
+  match o {
+    Some(^x) -> 1
+    None -> 0
+  }
+}
+fn q(x: Bool, y: Bool) -> Int {
+  match y {
+    ^x -> 1
+    true -> 2
+  }
+}
+fn main() { println(p(1, Some(2))) println(q(true, false)) }

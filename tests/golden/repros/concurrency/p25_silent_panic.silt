@@ -1,0 +1,12 @@
+-- verdict: same
+import task
+import time
+fn main() {
+  let h = task.spawn(fn() {
+    let x = 0
+    println("task: about to fail")
+    10 / x
+  })
+  time.sleep(time.ms(200))
+  println("main: done, exit 0?")
+}

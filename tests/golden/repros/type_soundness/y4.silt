@@ -1,0 +1,7 @@
+-- verdict: same
+trait Default { fn default() -> Self }
+trait Default for Int { fn default() -> Self { "not an int" } }
+fn main() {
+  let n: Int = Int.default()
+  println(n)
+}

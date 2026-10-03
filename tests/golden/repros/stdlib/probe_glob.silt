@@ -1,0 +1,6 @@
+-- verdict: same
+import uuid
+fn main() {
+  let f = uuid.v7
+  println("present")
+}

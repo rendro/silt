@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [Some(1), None]
+  let ys = xs |> list.map { Some(x) -> x + 1 }
+  println(ys)
+}

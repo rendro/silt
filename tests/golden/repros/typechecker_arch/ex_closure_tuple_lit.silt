@@ -1,0 +1,7 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [(true, 1), (false, 2)]
+  let ys = xs |> list.map { (true, n) -> n + 1 }
+  println(ys)
+}

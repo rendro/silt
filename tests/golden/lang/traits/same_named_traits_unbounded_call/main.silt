@@ -1,0 +1,12 @@
+-- exit: 1
+-- A method call in a polymorphic function with no bound for the
+-- receiver names no trait. Where two traits provide the method for the
+-- receiver's type, it is ambiguous when it runs, rather than calling
+-- whichever impl was installed last.
+-- stderr-contains: error[runtime]: ambiguous method 'show' for type 'Int': two traits provide it
+import a
+import b
+fn main() {
+  let g = { y -> y.show() }
+  println(g(5))
+}

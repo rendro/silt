@@ -1,0 +1,5 @@
+-- verdict: same
+fn half(x) { x / 2.0 }
+fn main() {
+  println("no call")
+}

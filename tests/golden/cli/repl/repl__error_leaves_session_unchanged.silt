@@ -1,0 +1,16 @@
+-- cmd: repl
+-- stdin: type K { Aa, Bb, Cc, Dd, Ee }\ntype Other { Ee, Dd, Cc, Bb, Aa }\nAa\n1 + 1\nimport map\nlet m = #{"a": 1}\nmap.length(m)\nlet y = 1\nlet y = 1 + "a"\ny\nlet r = 1 / 0\nr\ntype A { x: B }\nA\nlet (p, q) = (1, 2, 3)\np\n:quit\n
+-- stderr-contains: error[type]: 'Aa' is ambiguous: it is a variant of 'K' and 'Other'
+-- stderr-contains: error[type]: operator '+' requires Int or Float, got 'String'
+-- stderr-contains: error[runtime]: division by zero
+-- stderr-contains: error[type]: undefined variable 'r'
+-- stderr-contains: error[type]: unknown type 'B'
+-- stderr-contains: error[type]: undefined variable 'A'
+-- stderr-contains: error[type]: tuple length mismatch: expected 2, got 3
+-- stderr-contains: error[type]: undefined variable 'p'
+-- An input with an error, static or at run time, is dropped: the session
+-- is as it was before it. Audit repro G: after a type declaration the
+-- checker rejects, every later input still works. Two types may share
+-- variant names; a bare use of a shared one is an error and dropped. An
+-- input whose redefinition of `y` is rejected leaves `y` as it was, and
+-- the names of an input that failed (`r`, `A`, `p`) are not bound.

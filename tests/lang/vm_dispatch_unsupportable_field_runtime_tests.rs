@@ -31,17 +31,11 @@ fn main() {
     println(h(p))
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(src)
-        .tokenize()
-        .expect("lexer error");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
-    let errors = silt::typechecker::check(&mut program);
+    let (program, errors) = silt::session::testing::analyze_str(src);
     assert!(
         errors
             .iter()
-            .all(|e| e.severity != silt::types::Severity::Error),
+            .all(|e| e.severity != silt::diagnostic::Severity::Error),
         "tuple-field record Hash program must typecheck cleanly: {errors:?}"
     );
 

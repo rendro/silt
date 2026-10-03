@@ -1,0 +1,30 @@
+-- verdict: same
+import channel
+import list
+import task
+import time
+
+-- A correct program: task A selects over N channels; task S sends one
+-- value on the last channel; main joins A. Expected output: "A got 1".
+fn main() {
+  let n = 200000
+  let chans = 1..n |> list.map { i -> channel.new(1) }
+  let ops = chans |> list.map { c -> channel.Recv(c) }
+  match list.last(chans) {
+    None -> println("no channels")
+    Some(last_ch) -> {
+      let a = task.spawn(fn() {
+        match channel.select(ops) {
+          (_, channel.Message(v)) -> "A got {v}"
+          _ -> "A other"
+        }
+      })
+      let s = task.spawn(fn() {
+        time.sleep(time.ms(150))
+        channel.send(last_ch, 1)
+      })
+      time.sleep(time.ms(6000))
+      println(task.join(a))
+    }
+  }
+}

@@ -1,0 +1,8 @@
+-- verdict: same
+import list
+fn main() {
+  let xs = [1, 2, 3]
+  let ys = list.map(xs, fn(x: Int) { x.display() })
+  println(ys)
+  println(1.display())
+}

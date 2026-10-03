@@ -1,5 +1,5 @@
 error[type]: trait 'Display' is a builtin trait and cannot be redefined
- --> trait_builtin_redefinition__redefine_display.silt:6:1
+ --> trait_builtin_redefinition__redefine_display.silt:6:7
    |
  6 | trait Display { fn foo(self) -> Bool }
-   | ^ trait 'Display' is a builtin trait and cannot be redefined
+   |       ^^^^^^^ trait 'Display' is a builtin trait and cannot be redefined

@@ -1,0 +1,13 @@
+-- verdict: same
+import shapes
+import other
+fn main() {
+  let a = shapes.Circle(5)
+  let b = other.Circle("five")
+  let c = other.mk()
+  println(a)
+  println(b)
+  println(a == b)
+  println(a.area())
+  println(c.area())
+}

@@ -1,0 +1,18 @@
+-- verdict: same
+fn first( {
+  1
+}
+
+fn second() {
+  let q: Int = "str"
+  q
+}
+
+type T { A, B
+
+fn third() { 3 }
+
+fn main() {
+  first()
+  third()
+}

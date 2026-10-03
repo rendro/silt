@@ -1,0 +1,7 @@
+-- verdict: same
+import float
+import list
+fn main() {
+  let b: Float = list.product([1.0e308, 10.0])
+  println(b)
+}

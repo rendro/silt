@@ -1,0 +1,55 @@
+-- verdict: same
+import json
+import toml
+import map
+import list
+type Inner { a: Int }
+type Color { Red, Green, Rgb(Int, Int, Int) }
+type R {
+  n: Int,
+  f: Float,
+  s: String,
+  b: Bool,
+  o: Option(Int),
+  xs: List(Int),
+  i: Inner,
+}
+type E { c: Color }
+type T { t: (Int, String) }
+type M { m: Map(String, Int) }
+fn main() {
+  println(json.parse("\{\"n\":1,\"f\":2,\"s\":\"x\",\"b\":true,\"xs\":[1],\"i\":\{\"a\":1\}\}", R))
+  println(toml.parse("n = 1\nf = 2\ns = \"x\"\nb = true\nxs = [1]\n[i]\na = 1\n", R))
+  println(json.parse("\{\"n\":1.0,\"f\":2.5,\"s\":\"x\",\"b\":true,\"o\":null,\"xs\":[],\"i\":\{\"a\":1\}\}", R))
+  println(toml.parse("n = 1.0\nf = 2.5\ns = \"x\"\nb = true\nxs = []\n[i]\na = 1\n", R))
+  println(json.parse("\{\"n\":1,\"f\":2.5,\"s\":\"x\",\"b\":true,\"xs\":[],\"i\":\{\"a\":1\},\"extra\":9\}", R))
+  println(json.parse("\{\"c\":\"Red\"\}", E))
+  println(toml.parse("c = \"Red\"", E))
+  println(json.parse("\{\"c\":\{\"Rgb\":[1,2,3]\}\}", E))
+  println(json.stringify(E { c: Rgb(1, 2, 3) }))
+  println(json.stringify(E { c: Red }))
+  println(toml.stringify(E { c: Rgb(1, 2, 3) }))
+  println(toml.stringify(E { c: Red }))
+  println(json.stringify(T { t: (1, "a") }))
+  println(json.parse("\{\"t\":[1,\"a\"]\}", T))
+  println(json.parse("\{\"m\":\{\"k\":1\}\}", M))
+  println(toml.parse("[m]\nk = 1\n", M))
+  let r = R { n: 1, f: 2.0, s: "x", b: true, o: None, xs: [1], i: Inner { a: 1 } }
+  println(json.stringify(r))
+  println(json.parse(json.stringify(r), R) == Ok(r))
+  println(toml.stringify(r))
+  let r2 = R { n: 1, f: 2.0, s: "x", b: true, o: Some(5), xs: [1], i: Inner { a: 1 } }
+  println(json.parse(json.stringify(r2), R) == Ok(r2))
+  match toml.stringify(r2) {
+    Ok(t) -> println(toml.parse(t, R) == Ok(r2))
+    Err(e) -> println(e)
+  }
+  match toml.stringify(r) {
+    Ok(t) -> println(toml.parse(t, R) == Ok(r))
+    Err(e) -> println(e)
+  }
+  println(json.parse("[1,2]", R))
+  println(json.parse_list("[1,2]", Int))
+  println(json.parse_map("\{\"a\":[1]\}", List))
+  println(json.parse("1", Int))
+}

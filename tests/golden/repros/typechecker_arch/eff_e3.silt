@@ -1,0 +1,7 @@
+-- verdict: same
+fn get() { println }
+fn quiet() -> () !{} {
+  let f = get()
+  f("via returned fn")
+}
+fn main() { quiet() }

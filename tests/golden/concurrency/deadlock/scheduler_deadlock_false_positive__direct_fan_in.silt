@@ -15,7 +15,7 @@ fn main() {
     match c >= 16 {
       true -> acc
       _ -> match channel.receive(ch) {
-        Message(v) -> loop(c + 1, acc + v)
+        channel.Message(v) -> loop(c + 1, acc + v)
         _ -> acc
       }
     }

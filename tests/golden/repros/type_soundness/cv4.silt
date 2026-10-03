@@ -1,0 +1,11 @@
+-- verdict: same
+fn u(x: ()) -> Int { match x { () -> 1 } }
+fn main() {
+  println(u(()))
+  let v: Result((), String) = Ok(())
+  let r = match v {
+    Ok(()) -> "ok"
+    Err(e) -> e
+  }
+  println(r)
+}

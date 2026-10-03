@@ -1,0 +1,7 @@
+-- verdict: same
+import util
+fn main() {
+  let s: String = util.mid()
+  println(s)
+  println(util.viahelper("str"))
+}

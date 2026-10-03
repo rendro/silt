@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let x = 1 + -- why two
+    2
+  println("{x}")
+}

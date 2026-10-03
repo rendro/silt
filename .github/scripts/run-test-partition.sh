@@ -32,7 +32,7 @@ set -x
 case "$partition" in
   heavy)
     if $nextest; then
-      exec cargo nextest run --all-features --test heavy
+      exec cargo nextest run --no-fail-fast --all-features --test heavy
     else
       exec cargo test --all-features --test heavy
     fi
@@ -41,7 +41,7 @@ case "$partition" in
     # At most 4 tests at once, as .config/nextest.toml does for nextest:
     # all at once oversubscribes the CPU and the timing tests fail.
     if $nextest; then
-      exec cargo nextest run --all-features --test concurrency
+      exec cargo nextest run --no-fail-fast --all-features --test concurrency
     else
       exec cargo test --all-features --test concurrency -- --test-threads=4
     fi
@@ -49,7 +49,7 @@ case "$partition" in
   rest1 | rest2 | rest3)
     if $nextest; then
       shard="${partition#rest}"
-      exec cargo nextest run --all-features -E "$rest_filter" --partition "hash:${shard}/3"
+      exec cargo nextest run --no-fail-fast --all-features -E "$rest_filter" --partition "hash:${shard}/3"
     else
       # Without nextest there is no hash partitioning: rest1 runs
       # everything outside heavy and concurrency, rest2 and rest3 nothing.

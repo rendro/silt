@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'P' does not implement trait 'b.Show'
+-- stderr-not-contains: ambiguous method
+-- Two modules' traits named Show: messages that name one write it with
+-- its module; a module's own keeps its bare name. Each module's impl
+-- of its own Show for Int is no ambiguity.
+import a
+import b
+type P { v: Int }
+trait a.Show for P { fn show(self) -> String { "P-a" } }
+fn main() {
+  println(b.use_show(P { v: 1 }))
+}

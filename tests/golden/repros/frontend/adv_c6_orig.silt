@@ -1,0 +1,24 @@
+-- verdict: same
+type P { x: Int, y: Int }
+fn main() {
+  let p = P { x: 1, y: 2 }
+  let q = p.{ -- c1
+    x: 5, -- c2
+    -- c3
+    y: 6 -- c4
+  } -- c5
+  when q.x > 0 -- c6
+  else { -- c7
+    return -- c8
+  } -- c9
+  let s = "{ q.x -- c10
+  }"
+  let t = "{ {- c11 -} q.y }"
+  match q { -- c12
+    P { x, -- c13
+        y } -- c14
+      when x > 0 -- c15
+      -> println("{x} {y} {s} {t}") -- c16
+    _ -> () -- c17
+  }
+}

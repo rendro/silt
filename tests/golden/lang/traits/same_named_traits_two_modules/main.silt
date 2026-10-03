@@ -1,0 +1,16 @@
+-- Two modules each declare a trait `Show` with `fn show` and implement
+-- it for Int. Both impls exist; a call means the method of the trait
+-- its module sees: a's `x.show()` calls a.Show's, b's calls b.Show's,
+-- concretely and through a `where t: Show` bound. An impl of a.Show for
+-- a type of this module is called through a's function.
+import a
+import b
+type P { v: Int }
+trait a.Show for P { fn show(self) -> String { "P-a {self.v}" } }
+fn main() {
+  println(a.show_int(1))
+  println(b.show_int(2))
+  println(a.use_show(3))
+  println(b.use_show(4))
+  println(a.use_show(P { v: 5 }))
+}

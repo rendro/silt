@@ -1,0 +1,12 @@
+-- Two modules' enums of different names share the variant Circle; each
+-- value runs its own type's impls (F1).
+import a
+import b
+fn show(x: t) -> String where t: Display { x.display() }
+fn main() {
+  println(a.mk().display())
+  println(b.mk().display())
+  println(show(a.mk()))
+  println(show(b.mk()))
+  println(a.mk() == a.mk())
+}

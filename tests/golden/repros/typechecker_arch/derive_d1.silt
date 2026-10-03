@@ -1,0 +1,23 @@
+-- verdict: same
+type P { x: Int, y: String }
+type B(a) { v: a, w: Int }
+type E { A(Int), C }
+type G(a) { Wrap(a), Nil }
+fn main() {
+  let p = P { x: 1, y: "s" }
+  let b = B { v: 1, w: 2 }
+  println(p.display())
+  println(b.display())
+  println(A(1).display())
+  println(Wrap(1).display())
+  println("{p} {b}")
+  println(p.equal(p))
+  println(b.equal(b))
+  println(p.compare(P { x: 2, y: "a" }))
+  println(b.compare(B { v: 2, w: 0 }))
+  println(p.hash() == p.hash())
+  println(b.hash() == b.hash())
+  println(p < P { x: 2, y: "a" })
+  println(Wrap(1).compare(Nil))
+  println(A(1).compare(C))
+}

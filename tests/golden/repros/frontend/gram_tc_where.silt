@@ -1,0 +1,3 @@
+-- verdict: same
+fn show(x) where x: Display, { println("{x}") }
+fn main() { show(1) }

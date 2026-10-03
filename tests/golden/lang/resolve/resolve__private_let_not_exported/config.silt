@@ -1,0 +1,2 @@
+let hidden = 5
+pub let shown = 6

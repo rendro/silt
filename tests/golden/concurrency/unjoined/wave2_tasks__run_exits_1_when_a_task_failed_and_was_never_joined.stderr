@@ -2,5 +2,5 @@ error[runtime]: task <handle:0> failed and was never joined: division by zero
  --> wave2_tasks__run_exits_1_when_a_task_failed_and_was_never_joined.silt:17:5
     |
  17 |     10 / zero
-    |     ^ task <handle:0> failed and was never joined: division by zero
+    |     ^^^^^^^^^ task <handle:0> failed and was never joined: division by zero
   = help: join the task with task.join to handle its error, or cancel it with task.cancel

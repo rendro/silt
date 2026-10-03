@@ -1,0 +1,7 @@
+-- verdict: same
+type P { x: Int, y: Int }
+fn main() {
+  let p = P { x: 5, y: 6 }
+  let P { x: 1, y } = p
+  println(y)
+}

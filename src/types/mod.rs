@@ -8,8 +8,8 @@ pub mod canonical;
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::intern::Symbol;
-use crate::lexer::Span;
+use crate::defs::{TraitId, TypeId};
+use crate::intern::{Symbol, intern};
 
 // ── Type representation ─────────────────────────────────────────────
 
@@ -26,6 +26,117 @@ pub enum RowTail {
     /// The record may have additional fields. The TyVar is a row variable
     /// that unification can bind to a record carrying the leftover fields.
     Var(TyVar),
+}
+
+/// A record, enum or alias type, or a builtin type that has no variant of
+/// its own in [`Type`] (`Option`, `time.Duration`): its definition, and
+/// the name it is declared with, for display. Two refs are one type when
+/// their ids are equal; two types of one name from two modules are not.
+#[derive(Debug, Clone, Copy)]
+pub struct TypeRef {
+    pub id: TypeId,
+    pub name: Symbol,
+}
+
+impl TypeRef {
+    /// The builtin type `name`. Panics when no builtin type has that
+    /// name.
+    pub fn builtin(name: &str) -> TypeRef {
+        let id = crate::defs::builtin_type_id(name)
+            .unwrap_or_else(|| panic!("'{name}' is not a builtin type"));
+        TypeRef {
+            id,
+            name: intern(name),
+        }
+    }
+
+    /// Whether this is the builtin type `name`, and not a type of a
+    /// module that has the same name.
+    pub fn is_builtin(&self, name: &str) -> bool {
+        crate::defs::builtin_type_id(name) == Some(self.id)
+    }
+}
+
+#[cfg(test)]
+impl TypeRef {
+    /// A type of a module, named `name`, with an id no definition table
+    /// hands out (unit tests that build types by hand).
+    pub fn test(name: &str) -> TypeRef {
+        let k = name
+            .bytes()
+            .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+            % 100_000;
+        TypeRef {
+            id: TypeId(crate::defs::DefId(u32::MAX - 1 - k)),
+            name: intern(name),
+        }
+    }
+}
+
+impl PartialEq for TypeRef {
+    fn eq(&self, other: &TypeRef) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for TypeRef {}
+
+impl std::hash::Hash for TypeRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl std::fmt::Display for TypeRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+/// A trait, by its definition, and the name it is declared with, for
+/// display. Two refs are one trait when their ids are equal.
+#[derive(Debug, Clone, Copy)]
+pub struct TraitKey {
+    pub id: TraitId,
+    pub name: Symbol,
+}
+
+impl TraitKey {
+    /// The builtin trait `name`. Panics when no builtin trait has that
+    /// name.
+    pub fn builtin(name: &str) -> TraitKey {
+        let id = crate::defs::builtin_trait_id(name)
+            .unwrap_or_else(|| panic!("'{name}' is not a builtin trait"));
+        TraitKey {
+            id,
+            name: intern(name),
+        }
+    }
+
+    /// Whether this is the builtin trait `name`.
+    pub fn is_builtin(&self, name: &str) -> bool {
+        crate::defs::builtin_trait_id(name) == Some(self.id)
+    }
+}
+
+impl PartialEq for TraitKey {
+    fn eq(&self, other: &TraitKey) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for TraitKey {}
+
+impl std::hash::Hash for TraitKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl std::fmt::Display for TraitKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
 }
 
 /// The core type representation used during inference.
@@ -50,10 +161,10 @@ pub enum Type {
     Range(Box<Type>),
     /// Tuple type (fixed length, heterogeneous).
     Tuple(Vec<Type>),
-    /// A nominal record type: name + field name/type pairs.
-    Record(Symbol, Vec<(Symbol, Type)>),
-    /// A generic/parameterized type like Result(Int, String).
-    Generic(Symbol, Vec<Type>),
+    /// A nominal record type: the type and its field name/type pairs.
+    Record(TypeRef, Vec<(Symbol, Type)>),
+    /// A named type with its arguments, like `Result(Int, String)`.
+    Generic(TypeRef, Vec<Type>),
     /// Map type: key type -> value type.
     Map(Box<Type>, Box<Type>),
     /// Set type: element type.
@@ -76,7 +187,7 @@ pub enum Type {
     ///     have the same receiver, trait_name, and assoc_name.
     AssocProj {
         receiver: Box<Type>,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         assoc_name: Symbol,
     },
     /// An anonymous structural record type (row-polymorphic capable).
@@ -89,9 +200,167 @@ pub enum Type {
     },
 }
 
+impl Type {
+    /// The builtin type `name` with `args` (`Option(a)`, `time.Duration`).
+    pub fn builtin(name: &str, args: Vec<Type>) -> Type {
+        Type::Generic(TypeRef::builtin(name), args)
+    }
+
+    /// `Option(t)`.
+    pub fn option(t: Type) -> Type {
+        Type::builtin("Option", vec![t])
+    }
+
+    /// `Result(t, e)`.
+    pub fn result(t: Type, e: Type) -> Type {
+        Type::builtin("Result", vec![t, e])
+    }
+
+    /// `TypeOf(t)`: the type of the type `t` written as a value.
+    pub fn type_of(t: Type) -> Type {
+        Type::builtin(crate::defs::TYPE_OF, vec![t])
+    }
+
+    /// The named type this is (a record, an enum, an alias, a builtin
+    /// with arguments); `None` for any other type.
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        match self {
+            Type::Record(r, _) | Type::Generic(r, _) => Some(*r),
+            _ => None,
+        }
+    }
+
+    /// Render the types of one message, a record type by its name. Each
+    /// named type is written as `qualify` says, given whether another
+    /// type of the message has its name (`a.Pt` and `b.Pt`); `None`
+    /// writes its declared name.
+    pub fn show_all(
+        types: &[&Type],
+        qualify: impl Fn(TypeRef, bool) -> Option<String>,
+    ) -> Vec<String> {
+        let mut refs = Vec::new();
+        for ty in types {
+            ty.collect_refs(&mut refs);
+        }
+        let mut names: HashMap<TypeId, String> = HashMap::new();
+        for r in &refs {
+            let clash = refs.iter().any(|o| o.name == r.name && o.id != r.id);
+            if !names.contains_key(&r.id)
+                && let Some(name) = qualify(*r, clash)
+            {
+                names.insert(r.id, name);
+            }
+        }
+        types
+            .iter()
+            .map(|ty| {
+                Shown {
+                    ty,
+                    names: &names,
+                    brief: true,
+                }
+                .to_string()
+            })
+            .collect()
+    }
+
+    /// Every named type `self` mentions.
+    pub fn collect_refs(&self, out: &mut Vec<TypeRef>) {
+        match self {
+            Type::Record(r, fields) => {
+                out.push(*r);
+                for (_, t) in fields {
+                    t.collect_refs(out);
+                }
+            }
+            Type::Generic(r, args) => {
+                out.push(*r);
+                for t in args {
+                    t.collect_refs(out);
+                }
+            }
+            Type::Fun(params, ret) => {
+                for t in params {
+                    t.collect_refs(out);
+                }
+                ret.collect_refs(out);
+            }
+            Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => t.collect_refs(out),
+            Type::Map(k, v) => {
+                k.collect_refs(out);
+                v.collect_refs(out);
+            }
+            Type::Tuple(ts) => {
+                for t in ts {
+                    t.collect_refs(out);
+                }
+            }
+            Type::AssocProj { receiver, .. } => receiver.collect_refs(out),
+            Type::AnonRecord { fields, .. } => {
+                for t in fields.values() {
+                    t.collect_refs(out);
+                }
+            }
+            Type::Int
+            | Type::Float
+            | Type::Bool
+            | Type::String
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Error
+            | Type::Never => {}
+        }
+    }
+
+    /// Whether this is the builtin type `name` (with any arguments).
+    pub fn is_builtin(&self, name: &str) -> bool {
+        self.type_ref().is_some_and(|r| r.is_builtin(name))
+    }
+}
+
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
+        write!(
+            f,
+            "{}",
+            Shown {
+                ty: self,
+                names: &HashMap::new(),
+                brief: false,
+            }
+        )
+    }
+}
+
+/// A type rendered with some of its named types written otherwise than
+/// by their declared names (see [`Type::show_apart`]).
+struct Shown<'a> {
+    ty: &'a Type,
+    names: &'a HashMap<TypeId, String>,
+    /// A record type is written by its name only.
+    brief: bool,
+}
+
+impl Shown<'_> {
+    fn of<'b>(&'b self, ty: &'b Type) -> Shown<'b> {
+        Shown {
+            ty,
+            names: self.names,
+            brief: self.brief,
+        }
+    }
+
+    fn name(&self, ty: &TypeRef) -> String {
+        self.names
+            .get(&ty.id)
+            .cloned()
+            .unwrap_or_else(|| ty.name.to_string())
+    }
+}
+
+impl std::fmt::Display for Shown<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.ty {
             Type::Int => write!(f, "Int"),
             Type::Float => write!(f, "Float"),
             Type::Bool => write!(f, "Bool"),
@@ -114,29 +383,30 @@ impl std::fmt::Display for Type {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{p}")?;
+                    write!(f, "{}", self.of(p))?;
                 }
-                write!(f, ") -> {ret}")
+                write!(f, ") -> {}", self.of(ret))
             }
-            Type::List(inner) => write!(f, "List({inner})"),
-            Type::Range(inner) => write!(f, "Range({inner})"),
+            Type::List(inner) => write!(f, "List({})", self.of(inner)),
+            Type::Range(inner) => write!(f, "Range({})", self.of(inner)),
             Type::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{e}")?;
+                    write!(f, "{}", self.of(e))?;
                 }
                 write!(f, ")")
             }
+            Type::Record(name, _) if self.brief => write!(f, "{}", self.name(name)),
             Type::Record(name, fields) => {
-                write!(f, "{name} {{")?;
+                write!(f, "{} {{", self.name(name))?;
                 for (i, (n, t)) in fields.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{n}: {t}")?;
+                    write!(f, "{n}: {}", self.of(t))?;
                 }
                 write!(f, "}}")
             }
@@ -144,25 +414,25 @@ impl std::fmt::Display for Type {
                 // `TypeOf(a)` is the internal lowering of a `type a`
                 // parameter. Render it as `type a` so diagnostics use the
                 // surface syntax the user wrote — never leak `TypeOf`.
-                if crate::intern::resolve(*name) == "TypeOf" && args.len() == 1 {
-                    return write!(f, "type {}", args[0]);
+                if name.is_builtin(crate::defs::TYPE_OF) && args.len() == 1 {
+                    return write!(f, "type {}", self.of(&args[0]));
                 }
-                write!(f, "{name}")?;
+                write!(f, "{}", self.name(name))?;
                 if !args.is_empty() {
                     write!(f, "(")?;
                     for (i, a) in args.iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{a}")?;
+                        write!(f, "{}", self.of(a))?;
                     }
                     write!(f, ")")?;
                 }
                 Ok(())
             }
-            Type::Map(k, v) => write!(f, "Map({k}, {v})"),
-            Type::Set(inner) => write!(f, "Set({inner})"),
-            Type::Channel(inner) => write!(f, "Channel({inner})"),
+            Type::Map(k, v) => write!(f, "Map({}, {})", self.of(k), self.of(v)),
+            Type::Set(inner) => write!(f, "Set({})", self.of(inner)),
+            Type::Channel(inner) => write!(f, "Channel({})", self.of(inner)),
             // A type that reached `Type::Error` already triggered a
             // prior diagnostic; rendering `<error>` on cascading
             // messages reads as double-reporting. An empty placeholder
@@ -178,7 +448,7 @@ impl std::fmt::Display for Type {
                 // Render the qualified form `<recv as Trait>::Name` for
                 // diagnostics so the receiver/trait/assoc-name triple is
                 // unambiguous regardless of context.
-                write!(f, "<{receiver} as {trait_name}>::{assoc_name}")
+                write!(f, "<{} as {trait_name}>::{assoc_name}", self.of(receiver))
             }
             Type::AnonRecord { fields, tail } => {
                 write!(f, "{{")?;
@@ -188,7 +458,7 @@ impl std::fmt::Display for Type {
                         write!(f, ", ")?;
                     }
                     first = false;
-                    write!(f, "{n}: {t}")?;
+                    write!(f, "{n}: {}", self.of(t))?;
                 }
                 if matches!(tail, RowTail::Var(_)) {
                     if !first {
@@ -223,7 +493,7 @@ impl std::fmt::Display for Type {
 pub struct Scheme {
     pub vars: Vec<TyVar>,
     pub ty: Type,
-    pub constraints: Vec<(TyVar, Symbol)>,
+    pub constraints: Vec<(TyVar, TraitKey)>,
     pub optional_last_param: bool,
 }
 
@@ -246,29 +516,6 @@ impl Scheme {
 }
 
 // ── Type errors ─────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Severity {
-    Error,
-    Warning,
-}
-
-#[derive(Debug, Clone)]
-pub struct TypeError {
-    pub message: std::string::String,
-    pub span: Span,
-    pub severity: Severity,
-}
-
-impl std::fmt::Display for TypeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self.severity {
-            Severity::Error => "type error",
-            Severity::Warning => "type warning",
-        };
-        write!(f, "[{}] {}: {}", self.span, label, self.message)
-    }
-}
 
 // ── Free functions on types ─────────────────────────────────────────
 

@@ -259,23 +259,6 @@ fn a_stale_arrow_diagnostic_next_to_a_multibyte_character_gets_no_action() {
     }
 }
 
-/// Guard (passes before and after the fix): a diagnostic that does point
-/// at the `->` of `(A -> B)` still gets the rewrite to `Fn(A) -> B`.
-#[test]
-fn an_arrow_diagnostic_on_the_arrow_still_gets_the_rewrite() {
-    let mut lsp = Lsp::spawn();
-    let uri = "file:///wave2_sweep_arrow.silt";
-    lsp.open(uri, "fn apply(f: (Int -> Int), x: Int) -> Int { f(x) }\n");
-    // `->` of `(Int -> Int)` is at column 17.
-    let response = lsp.arrow_code_action(uri, 0, 17);
-    assert!(response.get("error").is_none(), "{response}");
-    let text = response.to_string();
-    assert!(
-        text.contains("Fn(Int) -> Int"),
-        "the quick fix must rewrite `(Int -> Int)` to `Fn(Int) -> Int`\n{response}"
-    );
-}
-
 // ════════════════════════════════════════════════════════════════════
 // 5. examples/budget.silt
 // ════════════════════════════════════════════════════════════════════

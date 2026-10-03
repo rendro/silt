@@ -7,18 +7,18 @@
 use crate::ast::{Pattern, PatternKind};
 use crate::bytecode::Op;
 use crate::intern::{Symbol, intern, resolve};
-use crate::lexer::Span;
-use crate::module;
+use crate::source::Span;
 use crate::value::Value;
 
-use super::{BindDestructKind, CompileError, Compiler};
+use super::{BindDestructKind, Compiler, name_without_binding};
+use crate::diagnostic::{Code, Diagnostic};
 
 impl Compiler {
     /// Emit the shape test of a tuple pattern with `len` elements for the
     /// value on TOS and return the failure jump. The pattern `()` has no
     /// elements and matches the unit value, which is not a tuple at run
     /// time. Shared by both pattern-test compilers below.
-    fn emit_tuple_shape_test(&mut self, len: usize, span: Span) -> Result<usize, CompileError> {
+    fn emit_tuple_shape_test(&mut self, len: usize, span: Span) -> Result<usize, Diagnostic> {
         if len == 0 {
             let unit = self.add_constant(Value::Unit, span)?;
             self.current_chunk().emit_op_u16(Op::TestEqual, unit, span);
@@ -39,7 +39,7 @@ impl Compiler {
         &mut self,
         pattern: &Pattern,
         span: Span,
-    ) -> Result<Vec<usize>, CompileError> {
+    ) -> Result<Vec<usize>, Diagnostic> {
         match &pattern.kind {
             PatternKind::Wildcard | PatternKind::Ident(_) => {
                 // Always matches, no test needed
@@ -77,18 +77,9 @@ impl Compiler {
             PatternKind::Constructor {
                 name, args: fields, ..
             } => {
-                // Gate constructors that require module imports
-                let name_str = resolve(*name);
-                if let Some(required) = module::gated_constructor_module(&name_str)
-                    && !self.imported_builtin_modules.contains(required)
-                {
-                    return Err(CompileError {
-                        message: format!("'{name}' requires `import {required}`"),
-                        span,
-                    });
-                }
-                // Test: tag matches?
-                let idx = self.add_constant(Value::String(name_str), span)?;
+                // Test: is it this variant?
+                let tag = self.pattern_tag(pattern.res, *name, span)?;
+                let idx = self.add_constant(Value::VariantConstructor(tag), span)?;
                 self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
                 let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 let mut all_jumps = vec![tag_jump];
@@ -110,10 +101,11 @@ impl Compiler {
 
             PatternKind::Tuple(pats) => {
                 if pats.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "tuple pattern cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "tuple pattern cannot have more than 255 elements",
+                    ));
                 }
                 // Test shape
                 let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
@@ -178,7 +170,8 @@ impl Compiler {
 
                 // Test tag if present
                 if let Some(type_name) = name {
-                    let idx = self.add_constant(Value::String(resolve(*type_name)), span)?;
+                    let ty = self.record_type(pattern.res, *type_name, span)?;
+                    let idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::TestRecordTag, idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -186,7 +179,7 @@ impl Compiler {
                 }
 
                 // Test each field's sub-pattern
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     let sub_pattern = match sub_pat {
                         Some(p) => p,
                         None => continue, // shorthand binding {name} — always matches
@@ -208,7 +201,7 @@ impl Compiler {
             PatternKind::AnonRecord { fields, .. } => {
                 // No tag check — anon records are structural.
                 let mut all_jumps = Vec::new();
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     let sub_pattern = match sub_pat {
                         Some(p) => p,
                         None => continue,
@@ -307,7 +300,9 @@ impl Compiler {
                             if depth == 0 {
                                 self.current_chunk()
                                     .patch_jump_to(fj, next_alt_offset)
-                                    .map_err(|msg| CompileError { message: msg, span })?;
+                                    .map_err(|msg| {
+                                        Diagnostic::error(Code::CompileLimit, span, msg)
+                                    })?;
                             } else {
                                 let target = trampoline_starts
                                     .iter()
@@ -316,7 +311,9 @@ impl Compiler {
                                     .1;
                                 self.current_chunk()
                                     .patch_jump_to(fj, target)
-                                    .map_err(|msg| CompileError { message: msg, span })?;
+                                    .map_err(|msg| {
+                                        Diagnostic::error(Code::CompileLimit, span, msg)
+                                    })?;
                             }
                         }
                     } else {
@@ -359,9 +356,9 @@ impl Compiler {
                                         .find(|&&(d, _)| d == depth)
                                         .unwrap()
                                         .1;
-                                    self.current_chunk()
-                                        .patch_jump_to(fj, target)
-                                        .map_err(|msg| CompileError { message: msg, span })?;
+                                    self.current_chunk().patch_jump_to(fj, target).map_err(
+                                        |msg| Diagnostic::error(Code::CompileLimit, span, msg),
+                                    )?;
                                 }
                             }
 
@@ -394,10 +391,10 @@ impl Compiler {
                 } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
+                } else if let Some(def) = self.value_def(pattern.res) {
+                    self.emit_global_value(def, span)?;
                 } else {
-                    let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::GetGlobal, name_idx, span);
+                    return Err(name_without_binding(span, *name));
                 }
 
                 // Stack: [... scrutinee, scrutinee_copy, pin_value]
@@ -449,7 +446,7 @@ impl Compiler {
         pattern: &Pattern,
         span: Span,
         base_depth: usize,
-    ) -> Result<Vec<(usize, usize)>, CompileError> {
+    ) -> Result<Vec<(usize, usize)>, Diagnostic> {
         match &pattern.kind {
             // ── Simple (leaf) patterns ──────────────────────────
             // These never push intermediate Destruct values, so the
@@ -511,10 +508,10 @@ impl Compiler {
                 } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
+                } else if let Some(def) = self.value_def(pattern.res) {
+                    self.emit_global_value(def, span)?;
                 } else {
-                    let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::GetGlobal, name_idx, span);
+                    return Err(name_without_binding(span, *name));
                 }
                 self.current_chunk().emit_op(Op::Eq, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -526,16 +523,8 @@ impl Compiler {
             PatternKind::Constructor {
                 name, args: fields, ..
             } => {
-                let name_str = resolve(*name);
-                if let Some(required) = module::gated_constructor_module(&name_str)
-                    && !self.imported_builtin_modules.contains(required)
-                {
-                    return Err(CompileError {
-                        message: format!("'{name}' requires `import {required}`"),
-                        span,
-                    });
-                }
-                let idx = self.add_constant(Value::String(name_str), span)?;
+                let tag = self.pattern_tag(pattern.res, *name, span)?;
+                let idx = self.add_constant(Value::VariantConstructor(tag), span)?;
                 self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
                 let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 let mut all_jumps = vec![(tag_jump, base_depth)];
@@ -556,10 +545,11 @@ impl Compiler {
 
             PatternKind::Tuple(pats) => {
                 if pats.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "tuple pattern cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "tuple pattern cannot have more than 255 elements",
+                    ));
                 }
                 let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
                 let mut all_jumps = vec![(len_jump, base_depth)];
@@ -619,14 +609,15 @@ impl Compiler {
                 let mut all_jumps = Vec::new();
 
                 if let Some(type_name) = name {
-                    let idx = self.add_constant(Value::String(resolve(*type_name)), span)?;
+                    let ty = self.record_type(pattern.res, *type_name, span)?;
+                    let idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::TestRecordTag, idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                     all_jumps.push((tag_jump, base_depth));
                 }
 
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     let sub_pattern = match sub_pat {
                         Some(p) => p,
                         None => continue,
@@ -648,7 +639,7 @@ impl Compiler {
 
             PatternKind::AnonRecord { fields, .. } => {
                 let mut all_jumps = Vec::new();
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     let sub_pattern = match sub_pat {
                         Some(p) => p,
                         None => continue,
@@ -720,7 +711,9 @@ impl Compiler {
                             if depth <= base_depth {
                                 self.current_chunk()
                                     .patch_jump_to(fj, next_alt_offset)
-                                    .map_err(|msg| CompileError { message: msg, span })?;
+                                    .map_err(|msg| {
+                                        Diagnostic::error(Code::CompileLimit, span, msg)
+                                    })?;
                             } else {
                                 let target = trampoline_starts
                                     .iter()
@@ -729,7 +722,9 @@ impl Compiler {
                                     .1;
                                 self.current_chunk()
                                     .patch_jump_to(fj, target)
-                                    .map_err(|msg| CompileError { message: msg, span })?;
+                                    .map_err(|msg| {
+                                        Diagnostic::error(Code::CompileLimit, span, msg)
+                                    })?;
                             }
                         }
                     } else {
@@ -766,9 +761,9 @@ impl Compiler {
                                         .find(|&&(d, _)| d == depth)
                                         .unwrap()
                                         .1;
-                                    self.current_chunk()
-                                        .patch_jump_to(fj, target)
-                                        .map_err(|msg| CompileError { message: msg, span })?;
+                                    self.current_chunk().patch_jump_to(fj, target).map_err(
+                                        |msg| Diagnostic::error(Code::CompileLimit, span, msg),
+                                    )?;
                                 }
                             }
 
@@ -804,7 +799,7 @@ impl Compiler {
         &mut self,
         pattern: &Pattern,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         if !Self::pattern_can_fail(pattern) {
             return self.compile_pattern_bind(pattern, span);
         }
@@ -859,7 +854,7 @@ impl Compiler {
             PatternKind::Tuple(pats) => pats.iter().any(Self::pattern_can_fail),
             PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => fields
                 .iter()
-                .any(|(_, sub)| sub.as_ref().is_some_and(Self::pattern_can_fail)),
+                .any(|(_, _, sub)| sub.as_ref().is_some_and(Self::pattern_can_fail)),
             PatternKind::Int(_)
             | PatternKind::Float(_)
             | PatternKind::Bool(_)
@@ -893,18 +888,11 @@ impl Compiler {
         &mut self,
         pattern: &Pattern,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         match &pattern.kind {
             PatternKind::Ident(name) => {
                 // Dup the value, the dup'd copy becomes the local's stack slot.
                 self.current_chunk().emit_op(Op::Dup, span);
-                // Fix B: shadow warning points at the binding's own span
-                // (the `Pattern::Ident`'s span captured by the parser), not
-                // at the enclosing match-arm / let statement span. This
-                // lands the caret on the `result` identifier in
-                // `(_, Message(result))` rather than on the `match`
-                // scrutinee one line up.
-                self.warn_if_shadows_module(*name, pattern.span);
                 let slot = self.add_local(*name, span)?;
                 self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
             }
@@ -928,10 +916,11 @@ impl Compiler {
 
             PatternKind::Tuple(pats) => {
                 if pats.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "tuple pattern cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "tuple pattern cannot have more than 255 elements",
+                    ));
                 }
                 self.compile_compound_bind(
                     pats.iter()
@@ -950,10 +939,11 @@ impl Compiler {
 
             PatternKind::List(elements, rest) => {
                 if elements.len() > u8::MAX as usize {
-                    return Err(CompileError {
-                        message: "list pattern cannot have more than 255 elements".into(),
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
                         span,
-                    });
+                        "list pattern cannot have more than 255 elements",
+                    ));
                 }
                 let mut items: Vec<(BindDestructKind, Pattern)> = elements
                     .iter()
@@ -979,7 +969,7 @@ impl Compiler {
 
             PatternKind::Record { fields, .. } => {
                 let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
@@ -1003,7 +993,7 @@ impl Compiler {
 
             PatternKind::AnonRecord { fields, rest } => {
                 let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
@@ -1021,7 +1011,7 @@ impl Compiler {
                         }
                     }
                 }
-                if let Some(rest_name) = rest {
+                if let Some((rest_name, _)) = rest {
                     // The rest-capture must run against the parent record,
                     // not against any per-field sub-value. Funnel it through
                     // `compile_compound_bind` so it shares the
@@ -1029,13 +1019,13 @@ impl Compiler {
                     // destructure — that way the rest opcode is fed the
                     // actual parent on every iteration regardless of which
                     // sub-value happens to be on TOS.
-                    let names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
+                    let names: Vec<Symbol> = fields.iter().map(|(n, _, _)| *n).collect();
                     if names.len() > u8::MAX as usize {
-                        return Err(CompileError {
-                            message: "anon record pattern cannot exclude more than 255 fields"
-                                .into(),
+                        return Err(Diagnostic::error(
+                            Code::CompileLimit,
                             span,
-                        });
+                            "anon record pattern cannot exclude more than 255 fields",
+                        ));
                     }
                     items.push((
                         BindDestructKind::RecordRest(names),
@@ -1068,10 +1058,11 @@ impl Compiler {
                 for alt in &alternatives[1..] {
                     let actual = Self::pattern_binding_names(alt);
                     if actual != expected {
-                        return Err(CompileError {
-                            message: "or-pattern alternatives must bind the same variables".into(),
+                        return Err(Diagnostic::error(
+                            Code::InvalidConstruct,
                             span,
-                        });
+                            "or-pattern alternatives must bind the same variables",
+                        ));
                     }
                 }
 
@@ -1114,7 +1105,6 @@ impl Compiler {
                 let mut result_slots = Vec::with_capacity(names.len());
                 for name in &names {
                     self.current_chunk().emit_op(Op::Unit, span);
-                    self.warn_if_shadows_module(*name, pattern.span);
                     let slot = self.add_local(*name, span)?;
                     result_slots.push(slot);
                 }
@@ -1195,7 +1185,7 @@ impl Compiler {
                             };
                             self.current_chunk()
                                 .patch_jump_to(fj, target)
-                                .map_err(|msg| CompileError { message: msg, span })?;
+                                .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))?;
                         }
                     }
                 }
@@ -1232,7 +1222,7 @@ impl Compiler {
         &mut self,
         items: Vec<(BindDestructKind, Pattern)>,
         span: Span,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), Diagnostic> {
         if items.is_empty() {
             return Ok(());
         }
@@ -1333,7 +1323,7 @@ impl Compiler {
                 elems.iter().any(|p| self.pattern_has_bindings(p))
                     || rest.as_ref().is_some_and(|r| self.pattern_has_bindings(r))
             }
-            PatternKind::Record { fields, .. } => fields.iter().any(|(_, p)| {
+            PatternKind::Record { fields, .. } => fields.iter().any(|(_, _, p)| {
                 match p {
                     Some(pat) => self.pattern_has_bindings(pat),
                     None => true, // shorthand {name} always binds
@@ -1341,7 +1331,7 @@ impl Compiler {
             }),
             PatternKind::AnonRecord { fields, rest } => {
                 rest.is_some()
-                    || fields.iter().any(|(_, p)| match p {
+                    || fields.iter().any(|(_, _, p)| match p {
                         Some(pat) => self.pattern_has_bindings(pat),
                         None => true,
                     })
@@ -1382,7 +1372,7 @@ impl Compiler {
                 }
             }
             PatternKind::Record { fields, .. } => {
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(pat) => Self::collect_binding_names(pat, names),
                         None => {
@@ -1392,7 +1382,7 @@ impl Compiler {
                 }
             }
             PatternKind::AnonRecord { fields, rest } => {
-                for (field_name, sub_pat) in fields {
+                for (field_name, _, sub_pat) in fields {
                     match sub_pat {
                         Some(pat) => Self::collect_binding_names(pat, names),
                         None => {
@@ -1400,7 +1390,7 @@ impl Compiler {
                         }
                     }
                 }
-                if let Some(r) = rest {
+                if let Some((r, _)) = rest {
                     names.insert(*r);
                 }
             }

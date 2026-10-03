@@ -10,10 +10,9 @@ use super::docs::{attach_module_docs, attach_module_overview};
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // The opaque Bytes type — same construction as the bytes module so
     // crypto outputs flow into bytes.to_hex, bytes.to_base64, etc.
-    let bytes_ty = Type::Generic(intern("Bytes"), vec![]);
-    let result = |ok_ty: Type, err_ty: Type| -> Type {
-        Type::Generic(intern("Result"), vec![ok_ty, err_ty])
-    };
+    let bytes_ty = Type::builtin("Bytes", vec![]);
+    let result =
+        |ok_ty: Type, err_ty: Type| -> Type { Type::builtin("Result", vec![ok_ty, err_ty]) };
 
     // Hash functions that take Bytes and return a fixed-width Bytes
     // digest. The typechecker has no dependent-width Bytes, so the

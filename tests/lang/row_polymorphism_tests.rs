@@ -19,12 +19,12 @@ fn main() {
     }
 }
 "#;
-    let mut lexer = Lexer::new(source);
+    let mut lexer = Lexer::new(silt::source::FileId::default(), source);
     let _tokens = lexer.tokenize().expect("lex");
     let formatted = silt::formatter::format(source).expect("format");
     // Re-parse the formatted output — must succeed.
-    let mut lexer2 = Lexer::new(&formatted);
+    let mut lexer2 = Lexer::new(silt::source::FileId::default(), &formatted);
     let tokens2 = lexer2.tokenize().expect("lex2");
-    let mut parser2 = Parser::new(tokens2);
+    let mut parser2 = Parser::new(tokens2, &formatted);
     let _ = parser2.parse_program().expect("parse2 of formatted output");
 }

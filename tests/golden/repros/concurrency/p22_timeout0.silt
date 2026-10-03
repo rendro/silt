@@ -1,0 +1,27 @@
+-- verdict: same
+import channel
+import time
+fn main() {
+  let ch = channel.new(1)
+  let t = channel.timeout(0)
+  match channel.select([channel.Recv(ch), channel.Recv(t)]) {
+    (^t, channel.Closed) -> println("timeout fired")
+    (^ch, _) -> println("ch?")
+    _ -> println("other")
+  }
+  match channel.recv_timeout(ch, time.ms(0)) {
+    Ok(v) -> println("ok")
+    Err(channel.ChannelTimeout) -> println("recv_timeout 0 -> ChannelTimeout")
+    Err(channel.ChannelClosed) -> println("closed")
+  }
+  match channel.recv_timeout(ch, time.ms(30)) {
+    Ok(v) -> println("ok")
+    Err(channel.ChannelTimeout) -> println("recv_timeout 30ms -> ChannelTimeout")
+    Err(channel.ChannelClosed) -> println("closed")
+  }
+  -- receive directly on a timeout channel
+  match channel.receive(channel.timeout(20)) {
+    channel.Closed -> println("timeout channel receive -> Closed")
+    _ -> println("other")
+  }
+}

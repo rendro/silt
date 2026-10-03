@@ -1,35 +1,57 @@
-//! Span ↔ LSP position/range conversion utilities.
+//! Span → LSP range conversion.
 //!
 //! LSP positions count characters in **UTF-16 code units** (per the spec,
-//! and what nearly every client uses as the default encoding), so these
-//! helpers walk source text rather than using the lexer's codepoint-based
-//! column counter directly.
+//! and what nearly every client uses as the default encoding). A span is
+//! a byte range; the document's [`SourceFile`] turns a byte offset into a
+//! position (`SourceFile::lsp_position`) and back
+//! (`SourceFile::offset_of_lsp_position`).
 
 use lsp_types::{Position, Range};
 
-use crate::lexer::Span;
+use crate::source::{SourceFile, Span};
 
-// ── Span ↔ LSP conversion ─────────────────────────────────────────
+/// The LSP range of `span`. An empty span (a lexer error points at the
+/// character it rejects, a parse error at the end of the file) covers the
+/// character it is at, so an editor has something to underline; at the
+/// end of the file, one column.
+pub(super) fn span_to_range(span: &Span, file: &SourceFile) -> Range {
+    let start = file.lsp_position(span.start);
+    let end = if span.end > span.start {
+        file.lsp_position(span.end)
+    } else {
+        let width = file
+            .text
+            .get(span.start as usize..)
+            .and_then(|rest| rest.chars().next())
+            .map_or(1, char::len_utf16);
+        Position::new(start.line, start.character + width as u32)
+    };
+    Range::new(start, end)
+}
 
-/// Convert a span to a 0-based LSP `Position`.
-///
-/// LSP positions count characters in **UTF-16 code units** (per the spec,
-/// and what nearly every client uses as the default encoding). The lexer
-/// increments `span.col` once per Unicode codepoint (src/lexer.rs:311),
-/// which is NOT the same as a UTF-16 unit count for characters outside
-/// the BMP (e.g. `😀` is 1 codepoint but 2 UTF-16 units).
-///
-/// The UTF-16 column is derived from `span.offset` (a byte offset) by
-/// delegating to the canonical [`offset_to_position`] walk, so the
-/// code-unit accumulation logic lives in exactly one place. The line,
-/// however, comes from the lexer's `span.line` rather than being
-/// re-derived from the source: it is authoritative for spans, and it
-/// degrades sensibly for malformed spans (e.g. a span referring past
-/// the end of an empty source still reports its recorded line).
-pub(super) fn span_to_position(span: &Span, source: &str) -> Position {
-    let line = span.line.saturating_sub(1) as u32;
-    let character = offset_to_position(source, span.offset).character;
-    Position::new(line, character)
+/// The LSP range of the bytes `start..end` of `file`.
+pub(super) fn offsets_to_range(file: &SourceFile, start: usize, end: usize) -> Range {
+    Range::new(
+        file.lsp_position(start as u32),
+        file.lsp_position(end as u32),
+    )
+}
+
+/// The byte offset of an LSP position in `file`: always a char boundary,
+/// never past the end, so callers may slice `file.text` with it.
+pub(super) fn position_to_offset(file: &SourceFile, pos: &Position) -> usize {
+    file.offset_of_lsp_position(*pos) as usize
+}
+
+/// The byte offset of the character at `pos`, or `None` when there is no
+/// character there: `pos` is at or past the end of its line, or past the
+/// last line. What hover asks about is a character.
+pub(super) fn char_offset_at(file: &SourceFile, pos: &Position) -> Option<usize> {
+    let line = file.line_text(pos.line + 1)?;
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let line_end = file.line_start(pos.line + 1) as usize + line.len();
+    let offset = position_to_offset(file, pos);
+    (offset < line_end).then_some(offset)
 }
 
 /// Return the UTF-16 code-unit length of a string (what LSP positions count).
@@ -37,796 +59,92 @@ pub(super) fn utf16_len(s: &str) -> usize {
     s.chars().map(|c| c.len_utf16()).sum()
 }
 
-/// Largest char boundary of `source` that is `<= offset`. Offsets past the
-/// end clamp to `source.len()`.
-///
-/// Every `&source[a..b]` whose bounds come from a span offset, or from a
-/// span offset plus a guessed length, must pass both bounds through here
-/// (or through a check with `str::is_char_boundary` / `str::get`) first:
-/// a lexer error can point at any character, including a multi-byte one,
-/// and slicing inside it panics.
-pub(super) fn floor_char_boundary(source: &str, offset: usize) -> usize {
-    let mut offset = offset.min(source.len());
-    // `is_char_boundary(0)` is true, so this always terminates.
-    while !source.is_char_boundary(offset) {
-        offset -= 1;
-    }
-    offset
-}
-
-/// Compute the byte length of the token that begins at `offset` in `source`.
-///
-/// When `offset` is a char boundary, `offset + token_len_at(source, offset)`
-/// is a char boundary too (or lies past the end of `source`): every scan
-/// below ends next to an ASCII byte or at the end of the source, and the
-/// fallback measures a whole character.
-pub(super) fn token_len_at(source: &str, offset: usize) -> usize {
-    let bytes = source.as_bytes();
-    if offset >= bytes.len() {
-        return 1;
-    }
-    let first = bytes[offset];
-    if first.is_ascii_alphabetic() || first == b'_' {
-        let mut end = offset + 1;
-        while end < bytes.len() {
-            let b = bytes[end];
-            if b.is_ascii_alphanumeric() || b == b'_' {
-                end += 1;
-            } else {
-                break;
-            }
-        }
-        return end - offset;
-    }
-    if first.is_ascii_digit() {
-        let mut end = offset + 1;
-        let mut seen_dot = false;
-        while end < bytes.len() {
-            let b = bytes[end];
-            if b.is_ascii_digit() || b == b'_' {
-                end += 1;
-            } else if b == b'.' && !seen_dot {
-                if end + 1 < bytes.len() && bytes[end + 1].is_ascii_digit() {
-                    seen_dot = true;
-                    end += 1;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-        return end - offset;
-    }
-    if first == b'"' {
-        if offset + 2 < bytes.len() && bytes[offset + 1] == b'"' && bytes[offset + 2] == b'"' {
-            let mut end = offset + 3;
-            while end + 2 < bytes.len() {
-                if bytes[end] == b'"' && bytes[end + 1] == b'"' && bytes[end + 2] == b'"' {
-                    return end + 3 - offset;
-                }
-                end += 1;
-            }
-            return bytes.len() - offset;
-        }
-        let mut end = offset + 1;
-        let mut escape = false;
-        while end < bytes.len() {
-            let b = bytes[end];
-            if escape {
-                escape = false;
-                end += 1;
-                continue;
-            }
-            if b == b'\\' {
-                escape = true;
-                end += 1;
-                continue;
-            }
-            if b == b'"' {
-                return end + 1 - offset;
-            }
-            if b == b'\n' {
-                return end - offset;
-            }
-            end += 1;
-        }
-        return end - offset;
-    }
-    if offset + 1 < bytes.len() {
-        let two = &bytes[offset..offset + 2];
-        if matches!(
-            two,
-            b"==" | b"!=" | b"<=" | b">=" | b"->" | b"=>" | b".." | b"::" | b"|>" | b"&&" | b"||"
-        ) {
-            return 2;
-        }
-    }
-    // Any other character is a token of its own. Its length is the
-    // character's UTF-8 width (1 to 4 bytes), not 1: the lexer reports
-    // characters it rejects (`“`, `λ`, U+00A0, ...) at their first byte.
-    // `get` yields `None` when `offset` is not a char boundary.
-    source
-        .get(offset..)
-        .and_then(|rest| rest.chars().next())
-        .map_or(1, char::len_utf8)
-}
-
-/// Convert a span to an LSP range, using the source text to determine the
-/// byte length of the token at `span.offset`. Converts both the start and
-/// computed end byte offsets to line/column via the same logic, rather than
-/// hard-coding `end = start + 1`, so multi-character identifiers produce a
-/// correctly-sized range.
-///
-/// Both slice bounds are snapped to char boundaries, so a span that points
-/// at (or into) a multi-byte character yields a range over that whole
-/// character instead of a panic.
-pub(super) fn span_to_range(span: &Span, source: &str) -> Range {
-    let start = span_to_position(span, source);
-    let end_col = if span.offset >= source.len() {
-        start.character + 1
-    } else {
-        // `span_to_position` applies the same snap to the start.
-        let slice_start = floor_char_boundary(source, span.offset);
-        let len = token_len_at(source, slice_start);
-        let mut slice_end = (slice_start + len).min(source.len());
-        // Snap the end forward, so the range never becomes empty;
-        // `is_char_boundary(source.len())` is true, so this terminates.
-        while !source.is_char_boundary(slice_end) {
-            slice_end += 1;
-        }
-        let slice = &source[slice_start..slice_end];
-        if let Some(nl) = slice.find('\n') {
-            let first_line = &slice[..nl];
-            start.character + utf16_len(first_line) as u32
-        } else {
-            start.character + utf16_len(slice) as u32
-        }
-    };
-    let end = Position::new(start.line, end_col);
-    Range::new(start, end)
-}
-
-/// Convert a byte offset into the source to a 0-based LSP `Position`.
-///
-/// This is the canonical byte-offset → position conversion:
-/// [`span_to_position`] delegates its column math here, so this is the
-/// single definition of the UTF-16 code-unit walk. It takes a raw byte
-/// offset rather than a [`Span`] — useful when computing positions for
-/// arbitrary slice boundaries (e.g. matching-brace offsets, region
-/// endpoints) where no lexer span exists. Uses UTF-16 code-unit columns
-/// to match the LSP spec (see [`span_to_position`] for rationale).
-///
-/// Out-of-range offsets are clamped to the end of `source`; offsets that
-/// land mid-character are clamped to the previous char boundary so this
-/// function never panics on malformed input.
-pub(crate) fn offset_to_position(source: &str, offset: usize) -> Position {
-    // Snap a mid-character offset back to the previous char boundary so
-    // the slices below cannot panic.
-    let offset = floor_char_boundary(source, offset);
-    let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let line = source[..line_start].bytes().filter(|&b| b == b'\n').count() as u32;
-    let mut character: u32 = 0;
-    let mut idx = line_start;
-    while idx < offset {
-        let rest = &source[idx..];
-        let Some(ch) = rest.chars().next() else { break };
-        let ch_len = ch.len_utf8();
-        if idx + ch_len > offset {
-            break;
-        }
-        character += ch.len_utf16() as u32;
-        idx += ch_len;
-    }
-    Position::new(line, character)
-}
-
-/// Convert an LSP 0-based line/character to a byte offset into the source.
-///
-/// The result is always a char boundary and never exceeds `source.len()`,
-/// so callers may slice `source` with it. A position past the last line
-/// maps to the end of the source; a character past the end of its line
-/// maps to the end of that line.
-pub(super) fn position_to_offset(source: &str, pos: &Position) -> usize {
-    let mut offset = 0;
-    for (i, line) in source.lines().enumerate() {
-        if i == pos.line as usize {
-            let mut utf16_offset = 0u32;
-            for (byte_idx, ch) in line.char_indices() {
-                if utf16_offset >= pos.character {
-                    return offset + byte_idx;
-                }
-                utf16_offset += ch.len_utf16() as u32;
-            }
-            return offset + line.len();
-        }
-        // Account for actual line ending: \r\n (2 bytes) or \n (1 byte).
-        let line_end = offset + line.len();
-        let newline_len = if source.as_bytes().get(line_end) == Some(&b'\r')
-            && source.as_bytes().get(line_end + 1) == Some(&b'\n')
-        {
-            2
-        } else {
-            1
-        };
-        offset += line.len() + newline_len;
-    }
-    // The loop adds one byte for the line break after every line, also
-    // after a last line that has none; clamp that overshoot away.
-    offset.min(source.len())
-}
-
-/// Build an LSP range for a binding at `(offset, len)` using the source text.
-pub(super) fn binding_range(source: &str, offset: usize, len: usize) -> Option<Range> {
-    if offset > source.len() || !source.is_char_boundary(offset) {
-        return None;
-    }
-    let end_byte = (offset + len).min(source.len());
-    let end_byte = if source.is_char_boundary(end_byte) {
-        end_byte
-    } else {
-        return None;
-    };
-
-    // Delegate to the canonical `offset_to_position` for the start; the
-    // end is on the same line by construction (binding identifiers don't
-    // contain newlines), so we extend the start column by the UTF-16
-    // length of the binding text rather than re-walking from line start.
-    let start = offset_to_position(source, offset);
-    let end_col = start.character + utf16_len(&source[offset..end_byte]) as u32;
-    let end = Position::new(start.line, end_col);
-    Some(Range::new(start, end))
-}
-
 // ── Tests ─────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::Span;
+    use crate::source::{FileId, SourceName};
 
-    // ── position_to_offset ────────────────────────────────────────
-
-    #[test]
-    fn test_position_to_offset_first_line() {
-        let source = "let x = 42\nlet y = 10";
-        let pos = Position::new(0, 4); // 'x'
-        assert_eq!(position_to_offset(source, &pos), 4);
+    fn file(text: &str) -> SourceFile {
+        SourceFile::new(SourceName::Builtin, text.into())
     }
 
-    #[test]
-    fn test_position_to_offset_second_line() {
-        let source = "let x = 42\nlet y = 10";
-        let pos = Position::new(1, 4); // 'y'
-        assert_eq!(position_to_offset(source, &pos), 15);
-    }
-
-    #[test]
-    fn test_position_to_offset_start() {
-        let source = "hello\nworld";
-        let pos = Position::new(0, 0);
-        assert_eq!(position_to_offset(source, &pos), 0);
-    }
-
-    #[test]
-    fn test_position_to_offset_past_end() {
-        let source = "ab\ncd";
-        // Line 0, col 99 — clamps to end of line
-        let pos = Position::new(0, 99);
-        assert_eq!(position_to_offset(source, &pos), 2);
-    }
-
-    // ── span_to_position ──────────────────────────────────────────
-
-    #[test]
-    fn test_span_to_position() {
-        // Line 3, col 5 in this source points at the 'e' in "else".
-        //
-        //   1: let\n      (bytes 0..4)
-        //   2: foo\n      (bytes 4..8)
-        //   3: else\n     (bytes 8..13)  — 'e' at byte 8 (col 1), '…' unused
-        //                                   index of 'e' of col 5 would be byte 12
-        //                                   but we want start-of-line col 5 = 'e'
-        // Simpler: use a clean ASCII source and put the 5th column on line 3.
-        let source = "let\nfoo\n    x = 1"; // line 3 col 5 is 'x' at byte 12.
-        let span = Span {
-            line: 3,
-            col: 5,
-            offset: 12,
-        };
-        let pos = span_to_position(&span, source);
-        assert_eq!(pos.line, 2); // 0-based
-        assert_eq!(pos.character, 4); // 0-based
-    }
-
-    #[test]
-    fn test_span_to_position_saturates() {
-        // An out-of-range span (line 0, offset 0) should not panic; it should
-        // yield a position at the very beginning of the document.
-        let source = "anything";
-        let span = Span {
-            line: 0,
-            col: 0,
-            offset: 0,
-        };
-        let pos = span_to_position(&span, source);
-        assert_eq!(pos.line, 0);
-        assert_eq!(pos.character, 0);
-    }
-
-    // ── span_to_position UTF-16 correctness ───────────────────────
-
-    /// Astral-plane character (emoji) earlier on the SAME line should shift
-    /// subsequent `character` values by 2 UTF-16 code units per emoji, not
-    /// 1 (which is what a naive codepoint-based implementation would give).
-    #[test]
-    fn test_span_to_position_uses_utf16_for_astral_characters() {
-        // 😀 is U+1F600, 4 bytes UTF-8, 2 UTF-16 code units, 1 codepoint.
-        // Source: "😀x" — 'x' starts at byte 4.
-        let source = "😀x";
-        // The span for 'x' should be at line 1 (1-indexed), col 2 (1-indexed
-        // codepoint, matching what the lexer would produce), byte offset 4.
-        let span = Span {
-            line: 1,
-            col: 2,
-            offset: 4,
-        };
-        let pos = span_to_position(&span, source);
-        assert_eq!(pos.line, 0, "line should be 0-based");
-        // 😀 contributes 2 UTF-16 code units, so 'x' is at character 2,
-        // NOT character 1 (which is what the old codepoint-based helper
-        // would have returned: col=2 → character=1).
-        assert_eq!(
-            pos.character, 2,
-            "character must be UTF-16 code units, not codepoints"
-        );
-    }
-
-    /// A span on a line AFTER a line containing an emoji should NOT be
-    /// shifted — UTF-16 offsets reset per line, same as codepoint offsets.
-    /// This is a regression guard against an implementation that forgets
-    /// to reset the column counter at newlines.
-    #[test]
-    fn test_span_to_position_utf16_resets_per_line() {
-        // Line 1: "😀\n"  — bytes 0..5  (😀 = 4 bytes, \n = 1 byte)
-        // Line 2: "xy"    — bytes 5..7
-        let source = "😀\nxy";
-        // 'y' on line 2 at byte offset 6, codepoint col 2.
-        let span = Span {
-            line: 2,
-            col: 2,
-            offset: 6,
-        };
-        let pos = span_to_position(&span, source);
-        assert_eq!(pos.line, 1);
-        // On line 2, 'y' is just after 'x' — 1 UTF-16 unit from the start
-        // of the line. The emoji on line 1 must NOT bleed into line 2.
-        assert_eq!(pos.character, 1);
-    }
-
-    /// For pure-ASCII input the new helper must return the same Position
-    /// that the old codepoint-based implementation did — backwards compat.
-    #[test]
-    fn test_span_to_position_ascii_unchanged() {
-        let source = "hello\nworld\nagain";
-        // 'g' on line 3, codepoint col 3, byte offset 14.
-        let span = Span {
-            line: 3,
-            col: 3,
-            offset: 14,
-        };
-        let pos = span_to_position(&span, source);
-        assert_eq!(pos.line, 2);
-        assert_eq!(pos.character, 2);
-
-        // Also check a span on line 1 — col 1 should always be character 0.
-        let span1 = Span {
-            line: 1,
-            col: 1,
-            offset: 0,
-        };
-        let pos1 = span_to_position(&span1, source);
-        assert_eq!(pos1.line, 0);
-        assert_eq!(pos1.character, 0);
-
-        // 'l' (second one, offset 3) on line 1.
-        let span2 = Span {
-            line: 1,
-            col: 4,
-            offset: 3,
-        };
-        let pos2 = span_to_position(&span2, source);
-        assert_eq!(pos2.line, 0);
-        assert_eq!(pos2.character, 3);
-    }
-
-    /// An end-to-end flavour: `span_to_range` must also produce UTF-16
-    /// ranges when diagnostics live after an astral character. This
-    /// exercises the `make_diagnostic` → `span_to_range` → `span_to_position`
-    /// pipeline that LSP clients actually see. Uses TWO emojis so that the
-    /// buggy codepoint-based and the correct UTF-16-based implementations
-    /// disagree on the start column (one codepoint vs two UTF-16 units per
-    /// emoji → divergence grows linearly with the emoji count).
-    #[test]
-    fn test_span_to_range_uses_utf16_after_emoji() {
-        // Source: "😀😀bad" — each 😀 is 4 UTF-8 bytes, 1 codepoint,
-        // 2 UTF-16 code units. 'b' starts at byte 8.
-        //   Codepoint col of 'b' = 3 (lexer advances col by 1 per char).
-        //   Correct UTF-16 character = 4.
-        let source = "😀😀bad";
-        let span = Span {
-            line: 1,
-            col: 3,
-            offset: 8,
-        };
-        let range = span_to_range(&span, source);
-        // Start: two emojis × 2 UTF-16 units each = 4.
-        // Buggy implementation would return col-1 = 2, which DIFFERS from 4.
-        assert_eq!(
-            range.start.character, 4,
-            "range start must count UTF-16 units, not codepoints"
-        );
-        // Token "bad" is 3 UTF-16 units long, so end.character = 7.
-        assert_eq!(
-            range.end.character, 7,
-            "range end must extend by UTF-16 length of the token"
-        );
-    }
-
-    // ── position_to_offset: UTF-16 handling ──────────────────────
-
-    #[test]
-    fn test_position_to_offset_empty_source() {
-        let source = "";
-        let pos = Position::new(0, 0);
-        assert_eq!(position_to_offset(source, &pos), 0);
-    }
-
-    #[test]
-    fn test_position_to_offset_multiline() {
-        let source = "abc\ndef\nghi";
-        // line 2, col 1 → 'h' at offset 8
-        let pos = Position::new(2, 1);
-        assert_eq!(position_to_offset(source, &pos), 9);
-    }
-
-    // ── span_to_range ────────────────────────────────────────────
-
-    #[test]
-    fn test_span_to_range_empty_source() {
-        // A span referring to line 3 col 5 in an empty source is nonsensical,
-        // but the helper must not panic and must produce a one-column range.
-        // Under the UTF-16-correct implementation, the start column is walked
-        // from the source text — so for an empty source the character count
-        // is 0 (there are no characters to count); the line value still comes
-        // from span.line. The range has width 1 (token_len_at on an empty
-        // source returns 1 by contract).
-        let span = Span {
-            line: 3,
-            col: 5,
-            offset: 0,
-        };
-        let range = span_to_range(&span, "");
-        assert_eq!(range.start.line, 2);
-        assert_eq!(range.start.character, 0);
-        assert_eq!(range.end.line, 2);
-        assert_eq!(range.end.character, 1);
-    }
-
-    #[test]
-    fn test_span_to_range_identifier_width() {
-        // Regression: a span at a multi-character identifier must produce a
-        // range whose width equals the identifier's length, not just 1.
-        let source = "let println = 42";
-        let span = Span {
-            line: 1,
-            col: 5,
-            offset: 4,
-        };
-        let range = span_to_range(&span, source);
-        assert_eq!(range.start.line, 0);
-        assert_eq!(range.start.character, 4);
-        assert_eq!(range.end.line, 0);
-        // `println` is 7 characters wide, so end column = 4 + 7 = 11.
-        assert_eq!(range.end.character, 11);
-    }
-
-    #[test]
-    fn test_span_to_range_multiline_source() {
-        // On line 2, both line and column math must use the span's own
-        // line/col — not hard-coded values — and the end should land at the
-        // end of the identifier, on the same line.
-        let source = "let a = 1\nlet foobar = 2";
-        let span = Span {
-            line: 2,
-            col: 5,
-            offset: 14,
-        };
-        let range = span_to_range(&span, source);
-        assert_eq!(range.start.line, 1);
-        assert_eq!(range.start.character, 4);
-        assert_eq!(range.end.line, 1);
-        // `foobar` is 6 characters wide.
-        assert_eq!(range.end.character, 10);
-    }
-
-    #[test]
-    fn test_token_len_at_identifier() {
-        assert_eq!(token_len_at("println x", 0), 7);
-        assert_eq!(token_len_at("let abc = 1", 4), 3);
-        assert_eq!(token_len_at("foo_bar + 1", 0), 7);
-    }
-
-    #[test]
-    fn test_token_len_at_number() {
-        assert_eq!(token_len_at("42 + 1", 0), 2);
-        assert_eq!(token_len_at("3.14", 0), 4);
-        // `1..10` should stop at the `.` because it's a range, not a float.
-        assert_eq!(token_len_at("1..10", 0), 1);
-    }
-
-    #[test]
-    fn test_token_len_at_string() {
-        assert_eq!(token_len_at(r#""hi" end"#, 0), 4);
-        assert_eq!(token_len_at(r#""esc\"ape""#, 0), 10);
-    }
-
-    #[test]
-    fn test_token_len_at_past_end() {
-        // Out-of-bounds offset must not panic.
-        assert_eq!(token_len_at("x", 99), 1);
-        assert_eq!(token_len_at("", 0), 1);
-    }
-
-    // ── char boundaries ──────────────────────────────────────────
-
-    #[test]
-    fn test_floor_char_boundary() {
-        // `“` occupies bytes 1..4.
-        let source = "a“b";
-        assert_eq!(floor_char_boundary(source, 0), 0);
-        assert_eq!(floor_char_boundary(source, 1), 1);
-        assert_eq!(floor_char_boundary(source, 2), 1);
-        assert_eq!(floor_char_boundary(source, 3), 1);
-        assert_eq!(floor_char_boundary(source, 4), 4);
-        assert_eq!(floor_char_boundary(source, 5), 5);
-        assert_eq!(floor_char_boundary(source, 99), 5);
-    }
-
-    #[test]
-    fn test_token_len_at_non_ascii_is_whole_character() {
-        // `“` is 3 bytes, `λ` 2, U+00A0 2, `😀` 4.
-        assert_eq!(token_len_at("“x", 0), 3);
-        assert_eq!(token_len_at("λx", 0), 2);
-        assert_eq!(token_len_at("\u{a0}1", 0), 2);
-        assert_eq!(token_len_at("😀", 0), 4);
-        // An offset inside a character must not panic.
-        assert_eq!(token_len_at("“x", 1), 1);
-    }
-
-    #[test]
-    fn test_span_to_range_on_rejected_non_ascii_character() {
-        // The lexer reports `“` at its first byte.
-        let source = "fn main() {\n  println(“hello”)\n}\n";
-        let offset = source.find('“').unwrap();
-        let span = Span {
-            line: 2,
-            col: 11,
-            offset,
-        };
-        let range = span_to_range(&span, source);
-        assert_eq!(range.start, Position::new(1, 10));
-        // `“` is one UTF-16 code unit wide.
-        assert_eq!(range.end, Position::new(1, 11));
-    }
-
-    #[test]
-    fn test_span_to_range_astral_character_is_two_units_wide() {
-        let source = "let x = 😀";
-        let offset = source.find('😀').unwrap();
-        let span = Span {
-            line: 1,
-            col: 9,
-            offset,
-        };
-        let range = span_to_range(&span, source);
-        assert_eq!(range.start, Position::new(0, 8));
-        assert_eq!(range.end, Position::new(0, 10));
-    }
-
-    /// No byte offset, on or off a char boundary, in or past the source,
-    /// may make `span_to_range` panic.
-    #[test]
-    fn test_span_to_range_never_panics_for_any_offset() {
-        let source = "ab é “q” 😀!\n\u{a0}x𝕊y λ";
-        for offset in 0..=source.len() + 3 {
-            let span = Span {
-                line: 1,
-                col: 1,
-                offset,
-            };
-            let range = span_to_range(&span, source);
-            assert_eq!(range.start.line, range.end.line);
-            assert!(
-                range.end.character >= range.start.character,
-                "range runs backwards at byte offset {offset}: {range:?}"
-            );
+    fn span(start: u32, end: u32) -> Span {
+        Span {
+            file: FileId::default(),
+            start,
+            end,
         }
     }
 
     #[test]
-    fn test_position_to_offset_line_past_end_clamps_to_source_len() {
-        // No trailing newline: the byte counted for the line break after
-        // the last line must not push the result past the end.
-        assert_eq!(position_to_offset("ab", &Position::new(5, 0)), 2);
-        assert_eq!(position_to_offset("ab\ncd", &Position::new(9, 3)), 5);
-        // With a trailing newline the answer is the end of the source too.
-        assert_eq!(position_to_offset("ab\n", &Position::new(5, 0)), 3);
+    fn a_range_runs_from_the_start_to_the_end_of_the_span() {
+        let f = file("let abc = 1\nlet y = abc");
+        assert_eq!(
+            span_to_range(&span(4, 7), &f),
+            Range::new(Position::new(0, 4), Position::new(0, 7))
+        );
+        // A span over a line break ends on the next line.
+        assert_eq!(
+            span_to_range(&span(8, 15), &f),
+            Range::new(Position::new(0, 8), Position::new(1, 3))
+        );
     }
 
-    /// Every position maps to an offset that `source` can be sliced at.
     #[test]
-    fn test_position_to_offset_result_is_always_sliceable() {
-        for source in ["", "ab", "ab\n", "é“\r\n😀x", "x\r\ny\r\n", "λ\n\n𝕊"] {
-            for line in 0..6 {
-                for character in 0..8 {
-                    let offset = position_to_offset(source, &Position::new(line, character));
-                    assert!(
-                        source.get(..offset).is_some(),
-                        "{source:?} cannot be sliced at {offset} (position {line}:{character})"
-                    );
-                }
+    fn columns_count_utf16_units() {
+        // `😀` is four bytes and two UTF-16 units: `x` after it is at
+        // column 2 and ends at column 3.
+        let f = file("😀x");
+        assert_eq!(
+            span_to_range(&span(4, 5), &f),
+            Range::new(Position::new(0, 2), Position::new(0, 3))
+        );
+    }
+
+    #[test]
+    fn an_empty_span_covers_the_character_it_points_at() {
+        // A lexer error at a rejected character: the range is that whole
+        // character, never a slice inside it.
+        let f = file("fn main() {\n  println(“hello”)\n}\n");
+        let at = f.text.find('“').unwrap() as u32;
+        assert_eq!(
+            span_to_range(&span(at, at), &f),
+            Range::new(Position::new(1, 10), Position::new(1, 11))
+        );
+        let astral = file("x 😀");
+        assert_eq!(
+            span_to_range(&span(2, 2), &astral),
+            Range::new(Position::new(0, 2), Position::new(0, 4))
+        );
+        // At the end of the file: one column.
+        let empty = file("");
+        assert_eq!(
+            span_to_range(&span(0, 0), &empty),
+            Range::new(Position::new(0, 0), Position::new(0, 1))
+        );
+    }
+
+    #[test]
+    fn no_offset_makes_a_range_panic() {
+        let f = file("a😀“b\nλ");
+        for start in 0..=f.text.len() as u32 + 3 {
+            for end in start..=f.text.len() as u32 + 3 {
+                let _ = span_to_range(&span(start, end), &f);
             }
         }
     }
 
-    // ── offset_to_position (round 84 dedup) ──────────────────────
-    //
-    // The four call sites that previously had near-identical copies of
-    // this function (document_symbols.rs, code_action.rs,
-    // semantic_tokens.rs, conversions.rs::binding_range) all relied on
-    // these exact behaviours. These tests pin the contract so the
-    // canonical helper can't silently regress.
-
     #[test]
-    fn test_offset_to_position_ascii_first_line() {
-        let source = "hello world";
-        assert_eq!(offset_to_position(source, 0), Position::new(0, 0));
-        assert_eq!(offset_to_position(source, 5), Position::new(0, 5));
-        assert_eq!(offset_to_position(source, 10), Position::new(0, 10));
-    }
-
-    #[test]
-    fn test_offset_to_position_eol_and_past_end() {
-        let source = "abc\ndef";
-        // End of line 0, just before the newline.
-        assert_eq!(offset_to_position(source, 3), Position::new(0, 3));
-        // Just after the newline → start of line 1.
-        assert_eq!(offset_to_position(source, 4), Position::new(1, 0));
-        // End of source.
-        assert_eq!(offset_to_position(source, 7), Position::new(1, 3));
-        // Past end of source — must clamp, not panic.
-        assert_eq!(offset_to_position(source, 99), Position::new(1, 3));
-    }
-
-    #[test]
-    fn test_offset_to_position_multibyte_utf8_single_unit() {
-        // 'é' is 2 UTF-8 bytes but 1 UTF-16 code unit.
-        // Source: "héllo" — 'l' (second char) starts at byte 3.
-        let source = "héllo";
-        assert_eq!(offset_to_position(source, 0), Position::new(0, 0));
-        assert_eq!(offset_to_position(source, 1), Position::new(0, 1));
-        // After 'é': column 2 (UTF-16 units = chars for BMP).
-        assert_eq!(offset_to_position(source, 3), Position::new(0, 2));
-        assert_eq!(offset_to_position(source, 4), Position::new(0, 3));
-    }
-
-    #[test]
-    fn test_offset_to_position_utf16_surrogate_pair() {
-        // U+1D54A (𝕊) is 4 UTF-8 bytes, 2 UTF-16 code units.
-        // After it, columns should be 2, not 1.
-        let source = "𝕊x"; // 4 bytes + 1 byte = 5 bytes total
-        assert_eq!(offset_to_position(source, 0), Position::new(0, 0));
-        // After '𝕊': column 2 (TWO UTF-16 units, not one).
-        assert_eq!(offset_to_position(source, 4), Position::new(0, 2));
-        // After 'x': column 3.
-        assert_eq!(offset_to_position(source, 5), Position::new(0, 3));
-    }
-
-    #[test]
-    fn test_offset_to_position_multiline() {
-        // Three lines: "ab\ncde\nfg"
-        let source = "ab\ncde\nfg";
-        assert_eq!(offset_to_position(source, 0), Position::new(0, 0));
-        assert_eq!(offset_to_position(source, 3), Position::new(1, 0));
-        assert_eq!(offset_to_position(source, 5), Position::new(1, 2));
-        assert_eq!(offset_to_position(source, 7), Position::new(2, 0));
-        assert_eq!(offset_to_position(source, 9), Position::new(2, 2));
-    }
-
-    #[test]
-    fn test_offset_to_position_third_line_zero_indexed() {
-        // Spec called out: "Multi-line: offset on line 3 → assert
-        // line=2 (0-indexed), character correct."
-        let source = "alpha\nbeta\ngamma\ndelta";
-        // 'g' is at byte 11 (alpha\n = 6 bytes, beta\n = 5 bytes → 11).
-        assert_eq!(offset_to_position(source, 11), Position::new(2, 0));
-        assert_eq!(offset_to_position(source, 13), Position::new(2, 2));
-    }
-
-    /// Cross-check: `offset_to_position` and `span_to_position` should
-    /// agree for any well-formed span on a non-empty source.
-    #[test]
-    fn test_offset_to_position_agrees_with_span_to_position() {
-        let source = "let x = 1\nlet y = 2\nlet z = 3";
-        // 'y' at byte 14, line 2 (1-indexed), col 5 (1-indexed).
-        let span = Span {
-            line: 2,
-            col: 5,
-            offset: 14,
-        };
-        assert_eq!(
-            offset_to_position(source, 14),
-            span_to_position(&span, source)
-        );
-    }
-
-    // ── single-definition lock (dedup of the UTF-16 column loop) ──
-
-    /// `span_to_position` must agree with `offset_to_position` for every
-    /// byte offset — ASCII, multibyte BMP chars, astral emoji, mid-char
-    /// (non-boundary) offsets, EOF, and past-EOF. This holds because
-    /// `span_to_position` delegates its column math to the canonical
-    /// `offset_to_position` walk; any fork between the two would break
-    /// this sweep at the first diverging offset.
-    #[test]
-    fn test_span_to_position_delegates_across_all_offsets() {
-        // ASCII + 'é' (2 bytes, 1 UTF-16 unit) + 😀 (4 bytes, 2 units)
-        // + newline + '𝕊' (4 bytes, 2 units) on a second line.
-        let source = "ab é 😀!\nx𝕊y";
-        for offset in 0..=source.len() + 3 {
-            let clamped = offset.min(source.len());
-            // 1-indexed line the (clamped) offset lives on, matching what
-            // a well-formed lexer span would record. Counted over the byte
-            // slice so mid-character offsets don't panic; snapping to a
-            // char boundary can never cross a '\n' (a 1-byte char), so
-            // this agrees with the line the converters derive.
-            let line = source.as_bytes()[..clamped]
-                .iter()
-                .filter(|&&b| b == b'\n')
-                .count()
-                + 1;
-            let span = Span {
-                line,
-                col: 1, // unused by the conversion; offset is authoritative
-                offset,
-            };
-            assert_eq!(
-                span_to_position(&span, source),
-                offset_to_position(source, offset),
-                "span_to_position and offset_to_position diverge at byte offset {offset}"
-            );
+    fn positions_and_offsets_round_trip() {
+        let f = file("ab\r\nλx\n");
+        for offset in [0usize, 1, 2, 4, 6, 7] {
+            let pos = f.lsp_position(offset as u32);
+            assert_eq!(position_to_offset(&f, &pos), offset, "{pos:?}");
         }
-    }
-
-    /// Source-grep lock: the UTF-16 code-unit accumulation loop must be
-    /// defined exactly once in this file (in `offset_to_position`).
-    /// A second copy means someone re-forked `span_to_position`'s column
-    /// math — the acknowledged-mirror shape that has previously caused
-    /// silent LSP position drift between span-based and offset-based
-    /// consumers. Delegate instead of copying.
-    #[test]
-    fn test_utf16_column_accumulation_defined_once() {
-        let src = include_str!("conversions.rs");
-        // Assembled at compile time so this test's own source doesn't
-        // contain the needle as a contiguous literal.
-        let needle = concat!("character += ch.len_utf16", "() as u32");
-        assert_eq!(
-            src.matches(needle).count(),
-            1,
-            "the UTF-16 column accumulation loop must have exactly one \
-             definition in conversions.rs (offset_to_position); make other \
-             converters delegate to it instead of copying the loop"
-        );
+        // A column past the end of a CRLF line is the end of the line,
+        // before the `\r`.
+        assert_eq!(position_to_offset(&f, &Position::new(0, 9)), 2);
     }
 }

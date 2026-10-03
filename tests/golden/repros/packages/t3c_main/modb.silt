@@ -1,0 +1,2 @@
+pub type P { name: String }
+pub fn mk() -> P { P { name: "bee" } }

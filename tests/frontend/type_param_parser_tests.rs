@@ -16,8 +16,10 @@ use silt::lexer::Lexer;
 use silt::parser::Parser;
 
 fn parse_ok(src: &str) -> Vec<Decl> {
-    let tokens = Lexer::new(src).tokenize().expect("lexer");
-    let program = Parser::new(tokens).parse_program().expect("parse");
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
+        .tokenize()
+        .expect("lexer");
+    let program = Parser::new(tokens, src).parse_program().expect("parse");
     program.decls
 }
 

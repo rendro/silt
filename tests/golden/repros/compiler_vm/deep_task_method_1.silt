@@ -1,0 +1,17 @@
+-- verdict: same
+import task
+trait Deep {
+  fn go(self) -> Int
+}
+trait Deep for Int {
+  fn go(self) -> Int {
+    match self {
+      0 -> 0
+      _ -> 1 + (self - 1).go()
+    }
+  }
+}
+fn main() {
+  let h = task.spawn(fn() { 1.go() })
+  println(task.join(h))
+}

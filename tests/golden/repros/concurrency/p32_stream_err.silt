@@ -1,0 +1,9 @@
+-- verdict: same
+import stream
+fn main() {
+  let out = stream.from_list([1, 2, 0, 4, 5])
+    |> stream.map { x -> 100 / x }
+    |> stream.collect
+  println(out)
+  println("exit 0, error in callback silently dropped elements")
+}

@@ -15,16 +15,16 @@ fn program() {
   })
 
   let transformer = task.spawn({ ->
-    when let Message(a) = channel.receive(input) else { panic("pattern did not match") }
+    when let channel.Message(a) = channel.receive(input) else { panic("pattern did not match") }
     channel.send(output, a * 2)
-    when let Message(b) = channel.receive(input) else { panic("pattern did not match") }
+    when let channel.Message(b) = channel.receive(input) else { panic("pattern did not match") }
     channel.send(output, b * 2)
     channel.close(output)
   })
 
   let consumer = task.spawn({ ->
-    when let Message(x) = channel.receive(output) else { panic("pattern did not match") }
-    when let Message(y) = channel.receive(output) else { panic("pattern did not match") }
+    when let channel.Message(x) = channel.receive(output) else { panic("pattern did not match") }
+    when let channel.Message(y) = channel.receive(output) else { panic("pattern did not match") }
     x + y
   })
 

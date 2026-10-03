@@ -7,9 +7,10 @@ use std::process;
 
 use silt::git::escape_for_display;
 use silt::intern;
-use silt::lockfile::Lockfile;
+use silt::package_graph::{LockPolicy, resolve_packages};
+use silt::source::SourceMap;
 
-use crate::cli::package::{die_on_lockfile_error, die_on_manifest_error, find_project_root};
+use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_root};
 
 /// Dispatch `silt update [<dep-name>]`.
 ///
@@ -130,22 +131,18 @@ fn run_dependency_update(target: Option<&str>) {
         }
     }
 
-    let lockfile = match Lockfile::resolve(&manifest) {
-        Ok(l) => l,
-        Err(e) => die_on_lockfile_error(e),
+    let mut sources = SourceMap::new();
+    let graph = match resolve_packages(&root, LockPolicy::Refresh, &mut sources) {
+        Ok(graph) => graph,
+        Err(diagnostics) => die_on_manifest_error(PackageFailure {
+            sources,
+            diagnostics,
+        }),
     };
-    let lockfile_path = root.join("silt.lock");
-    if let Err(e) = lockfile.write(&lockfile_path) {
-        die_on_lockfile_error(e);
-    }
 
     // Count of pinned (non-root) packages. Quiet single-line summary
     // matches the tone of `cargo update`'s default output.
-    let dep_count = lockfile
-        .packages
-        .iter()
-        .filter(|p| !matches!(p.source, silt::lockfile::LockedSource::Local))
-        .count();
+    let dep_count = graph.packages.len() - 1;
     if dep_count == 1 {
         eprintln!("Locked 1 dependency.");
     } else {

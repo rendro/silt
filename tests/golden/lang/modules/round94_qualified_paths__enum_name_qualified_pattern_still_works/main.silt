@@ -1,7 +1,7 @@
 import shapes.{ Shape }
 
 fn main() {
-  let m = match shapes.Circle(2.0) {
+  let m = match Shape.Circle(2.0) {
     Shape.Circle(r) -> "circle",
     Shape.Rect(w, h) -> "rect",
   }

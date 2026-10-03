@@ -1,0 +1,2 @@
+pub fn describe(n) -> String = "MODULE fn describe"
+pub fn other(n) -> String = "MODULE fn other"

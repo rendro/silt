@@ -1,0 +1,17 @@
+-- verdict: same
+type P { x: Int, y: Int }
+type Q { x: Int, y: Int }
+fn pick(c: Bool, p: P, q: { x: Int, y: Int }) -> { x: Int, y: Int } {
+  match c {
+    true -> p
+    false -> q
+  }
+}
+fn main() {
+  let r = pick(true, P { x: 1, y: 2 }, { x: 3, y: 4 })
+  println(r)
+  let s = match r {
+    { x, y } -> x + y
+  }
+  println(s)
+}

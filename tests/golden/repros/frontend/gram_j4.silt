@@ -1,0 +1,11 @@
+-- verdict: same
+fn main() {
+  let x = 5
+  let r = match x {
+    1 -> "a"
+    -1 -> "b"
+    _ -> "c"
+  }
+  let s = match x { 5 -> 1 - 1 -> 2 _ -> 3 }
+  println("{r} {s}")
+}

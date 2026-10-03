@@ -1,0 +1,9 @@
+-- verdict: same
+fn main() {
+  let v: Result((), String) = Ok(())
+  let s = match v {
+    Ok(()) -> "ok-unit"
+    Err(e) -> e
+  }
+  println(s)
+}

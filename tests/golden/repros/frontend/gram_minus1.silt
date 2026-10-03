@@ -1,0 +1,10 @@
+-- verdict: same
+fn main() {
+  let a = 10
+  let b = 3
+  let x = a
+    - b
+  let y = a
+    * b
+  println("{x} {y}")
+}

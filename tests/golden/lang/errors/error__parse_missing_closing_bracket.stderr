@@ -1,0 +1,9 @@
+error[parse]: expected ']' or ',' to continue list literal, found }
+ --> error__parse_missing_closing_bracket.silt:4:22
+   |
+ 4 | fn main() { [1, 2, 3 }
+   |                      ^ expected ']' or ',' to continue list literal, found }
+ ::: error__parse_missing_closing_bracket.silt:4:13
+   |
+ 4 | fn main() { [1, 2, 3 }
+   |             - the list literal starts here

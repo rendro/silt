@@ -1,0 +1,8 @@
+-- verdict: same
+import m1
+import m2
+import m3
+import m4
+fn main() {
+  println("{m1.f1(1) + m4.f4(1)}")
+}

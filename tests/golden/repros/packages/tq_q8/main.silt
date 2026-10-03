@@ -1,0 +1,12 @@
+-- verdict: same
+import shapes.{ unit }
+fn f(s: Shape) -> Int {
+  match s {
+    Circle(r) -> r
+    Square(x) -> x
+  }
+}
+fn main() {
+  println(f(Square(4)))
+  println(unit().area())
+}

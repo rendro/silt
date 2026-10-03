@@ -2,4 +2,4 @@ error[type]: type mismatch: expected Int, got Float
  --> binop_mismatch_direction_round100__int_plus_float_left_expectation.silt:4:15
    |
  4 |   let x = 1 + 2.5
-   |               ^ type mismatch: expected Int, got Float
+   |               ^^^ type mismatch: expected Int, got Float

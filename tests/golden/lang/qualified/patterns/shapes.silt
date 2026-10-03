@@ -1,0 +1,1 @@
+pub type Shape { Circle(Int), Square(Int), Blank }

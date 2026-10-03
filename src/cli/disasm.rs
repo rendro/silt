@@ -1,12 +1,16 @@
 //! `silt disasm [<file>]` — show bytecode disassembly without running.
 
+use std::io::Write;
 use std::process;
 
+use silt::diagnostic::Diagnostic;
 use silt::disassemble::disassemble_function;
+use silt::intern::intern;
+use silt::session::{ENTRY_POINT, Entry, LockPolicy};
 
 use crate::cli::help::disasm_usage_banner;
 use crate::cli::package::resolve_package_entry_point;
-use crate::cli::pipeline::compile_file_with_options;
+use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
 /// Dispatch `silt disasm [<file>]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -72,17 +76,41 @@ pub(crate) fn dispatch(args: &[String]) {
     disasm_file(&path);
 }
 
-/// Disassemble a file's bytecode without running it.
+/// Disassemble a file's bytecode without running it: the program that
+/// starts at `main` when the file binds one, otherwise its declarations.
 pub(crate) fn disasm_file(path: &str) {
     silt::intern::reset();
-    // Read-only command — never mutates `silt.lock`. If the lock is
-    // stale or missing we resolve in-memory and continue; the user
-    // can still get a useful disassembly without a lockfile write.
-    let (functions, _source) = compile_file_with_options(path, false);
+    // Read-only command — never writes `silt.lock`. A lock that no
+    // longer matches the manifest is a package error ("silt.lock is out
+    // of date", exit 1); `silt update` rewrites it.
+    let (mut session, file) = open_entry_or_exit(path, LockPolicy::ReadOnly);
+    session.analyze(file);
+    let binds_main = session
+        .module_analysis(session.module_of(file))
+        .is_some_and(|analysis| analysis.top_level.contains_key(&intern(ENTRY_POINT)));
+    let target = if binds_main { Entry::Main } else { Entry::Cell };
+    let compiled = session.compile(file, target);
+    let diagnostics = door_diagnostics(&mut session, file, &compiled);
+    silt::diagnostic::eprint_all(&ProgramFiles::new(path, session.sources()), &diagnostics);
+    let program = match compiled {
+        Ok(program) if !diagnostics.iter().any(Diagnostic::is_error) => program,
+        _ => process::exit(1),
+    };
 
-    // Print disassembly of each function
-    for func in &functions {
-        print!("{}", disassemble_function(func));
-        println!();
+    // Print disassembly of each function. A closed pipe (`silt disasm
+    // x.silt | head`) ends the process quietly, as a death by SIGPIPE.
+    let mut out = std::io::stdout().lock();
+    for func in &program.functions {
+        let text = format!("{}\n", disassemble_function(func, &program.globals));
+        if let Err(e) = out.write_all(text.as_bytes()) {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                process::exit(141);
+            }
+            eprintln!(
+                "silt disasm: cannot write to stdout: {}",
+                silt::diagnostic::io_error_text(&e)
+            );
+            process::exit(1);
+        }
     }
 }

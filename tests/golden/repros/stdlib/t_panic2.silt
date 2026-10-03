@@ -1,0 +1,10 @@
+-- verdict: same
+import list
+import task
+import channel
+fn main() {
+  let h = task.spawn { ->
+    list.map([1, 2, 3]) { x -> 10 / (x - 2) }
+  }
+  println(task.join(h))
+}

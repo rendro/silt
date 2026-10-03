@@ -48,7 +48,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(
                     vec![Type::Channel(Box::new(a.clone()))],
-                    Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
+                    Box::new(Type::builtin("ChannelResult", vec![a])),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -96,7 +96,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av],
                 ty: Type::Fun(
                     vec![Type::Channel(Box::new(a.clone()))],
-                    Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
+                    Box::new(Type::builtin("ChannelResult", vec![a])),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -118,13 +118,13 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Scheme {
                 vars: vec![av],
                 ty: Type::Fun(
-                    vec![Type::List(Box::new(Type::Generic(
-                        intern("ChannelOp"),
+                    vec![Type::List(Box::new(Type::builtin(
+                        "ChannelOp",
                         vec![a.clone()],
                     )))],
                     Box::new(Type::Tuple(vec![
                         ch_a,
-                        Type::Generic(intern("ChannelResult"), vec![a]),
+                        Type::builtin("ChannelResult", vec![a]),
                     ])),
                 ),
                 constraints: vec![],
@@ -164,14 +164,14 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     {
         let (a, av) = checker.fresh_tv();
         let duration_ty = super::duration_ty();
-        let channel_error_ty = Type::Generic(intern("ChannelError"), vec![]);
+        let channel_error_ty = Type::builtin("ChannelError", vec![]);
         env.define(
             intern("channel.recv_timeout"),
             Scheme {
                 vars: vec![av],
                 ty: Type::Fun(
                     vec![Type::Channel(Box::new(a.clone())), duration_ty],
-                    Box::new(Type::Generic(intern("Result"), vec![a, channel_error_ty])),
+                    Box::new(Type::builtin("Result", vec![a, channel_error_ty])),
                 ),
                 constraints: vec![],
                 optional_last_param: false,

@@ -1,0 +1,11 @@
+-- verdict: same
+fn depth(n) {
+  match n {
+    0 -> 0
+    _ -> 1 + depth(n - 1)
+  }
+}
+fn main() {
+  println(depth(50000))
+  println(depth(200000))
+}

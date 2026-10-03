@@ -1,0 +1,9 @@
+-- verdict: same
+import json
+type T { x: Float }
+fn main() {
+  match json.parse("\{\"x\": 1e999\}", T) {
+    Ok(t) -> println(t.x)
+    Err(e) -> println("err")
+  }
+}

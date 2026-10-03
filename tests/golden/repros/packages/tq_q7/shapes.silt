@@ -1,0 +1,12 @@
+pub type Shape { Circle(Int), Square(Int) }
+pub type Pt { x: Int, y: Int }
+trait Area { fn area(self) -> Int }
+trait Area for Shape {
+  fn area(self) -> Int {
+    match self {
+      Circle(r) -> r * r * 3
+      Square(s) -> s * s
+    }
+  }
+}
+pub fn unit() -> Shape { Circle(1) }

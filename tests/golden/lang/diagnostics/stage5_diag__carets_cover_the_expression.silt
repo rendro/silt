@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- The marks under a diagnostic cover the whole expression it is about.
+fn main() {
+  let total = 1 + compute(2, 3)
+  println(total)
+}
+
+fn compute(a: Int, b: Int) -> String { "{a}{b}" }

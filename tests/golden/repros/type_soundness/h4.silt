@@ -1,0 +1,5 @@
+-- verdict: same
+-- top-level let referencing a later top-level let / function order
+let a = b
+let b = 1
+fn main() { println(a) }

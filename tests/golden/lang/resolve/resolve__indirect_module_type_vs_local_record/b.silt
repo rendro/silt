@@ -1,0 +1,2 @@
+pub type Node { n: Int }
+pub fn mk() -> Node { Node { n: 2 } }

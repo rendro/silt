@@ -21,8 +21,14 @@ fn typeof_head_renders_as_surface_type_form() {
     // Build `Type::Generic("TypeOf", [Generic("Person", [])])` —
     // exactly what flows through the `(Generic, Generic)` arm when a
     // user-declared record `Person` is used as a type descriptor.
-    let person = Type::Generic(intern("Person"), vec![]);
-    let typeof_person = Type::Generic(intern("TypeOf"), vec![person]);
+    let person = Type::Generic(
+        silt::types::TypeRef {
+            id: silt::defs::TypeId(silt::defs::DefId(u32::MAX - 1)),
+            name: intern("Person"),
+        },
+        vec![],
+    );
+    let typeof_person = Type::type_of(person);
     let rendered = format!("{typeof_person}");
     assert_eq!(
         rendered, "type Person",

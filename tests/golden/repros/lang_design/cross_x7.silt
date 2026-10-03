@@ -1,0 +1,10 @@
+-- verdict: same
+fn f(n) {
+  match n {
+    -9223372036854775808 -> "min"
+    _ -> "other"
+  }
+}
+fn main() {
+  println(f(0))
+}

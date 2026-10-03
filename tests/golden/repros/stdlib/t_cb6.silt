@@ -1,0 +1,14 @@
+-- verdict: same
+import list
+import task
+import time
+
+fn main() {
+  let worker = task.spawn { ->
+    let hs = [1, 2, 3] |> list.map { i -> task.spawn { -> 
+      time.sleep(time.ms(20 * i))
+      i * 10 } }
+    [0] |> list.concat(list.map(hs, task.join))
+  }
+  println(task.join(worker))
+}

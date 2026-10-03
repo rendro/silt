@@ -1,0 +1,2 @@
+pub fn helper(x: Int) -> Int { secret(x) + 1 }
+fn secret(x: Int) -> Int { x * 2 }

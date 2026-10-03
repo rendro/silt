@@ -1,0 +1,13 @@
+-- verdict: same
+import task
+import time
+import io
+fn main() {
+  let h = task.spawn(fn() {
+    time.sleep(time.ms(300))
+    println("task: finished after main?")
+    let _ = io.write_file("p26_marker.txt", "written")
+    ()
+  })
+  println("main: returning immediately")
+}

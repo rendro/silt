@@ -156,7 +156,7 @@ fn closure_param_names_are_parameter_tokens() {
     let mut line = 0u64;
     let mut start = 0u64;
     let mut params = Vec::new();
-    for chunk in data.chunks_exact(5) {
+    for chunk in data.as_chunks::<5>().0 {
         let dl = chunk[0].as_u64().unwrap();
         let ds = chunk[1].as_u64().unwrap();
         if dl == 0 {

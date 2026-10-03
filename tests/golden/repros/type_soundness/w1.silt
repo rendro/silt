@@ -1,0 +1,12 @@
+-- verdict: same
+import list
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+
+-- through higher-order function
+fn apply(f, x) { f(x) }
+fn main() {
+  println(apply(hello, 1))
+  println(apply(hello, "str"))
+}

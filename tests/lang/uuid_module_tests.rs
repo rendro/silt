@@ -11,20 +11,11 @@
 //! The API tests are golden cases in tests/golden/lang/stdlib/uuid_module__*.silt;
 //! the registration cross-check below needs the crate's module table.
 
-use silt::types::Severity;
-
 fn type_errors(input: &str) -> Vec<String> {
-    let tokens = silt::lexer::Lexer::new(input)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
-    let errors = silt::typechecker::check(&mut program);
-    errors
+    silt::session::testing::check_str(input)
         .into_iter()
-        .filter(|e| e.severity == Severity::Error)
-        .map(|e| e.message)
+        .filter(|d| d.is_error())
+        .map(|d| d.message)
         .collect()
 }
 

@@ -1,6 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown field
+-- verdict: same
+-- stderr-contains: error[type]: unknown field 'x' in Pt
+-- A literal of `b.Pt` is checked against b's fields, not a's.
 import a
 import b
 

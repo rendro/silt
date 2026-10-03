@@ -1,0 +1,44 @@
+-- verdict: same
+import list
+import map
+import set
+type P { x: Int }
+type W { inner: P }
+type E { Wrap(P) }
+trait Display for P {
+  fn display(self) -> String { "<P custom {self.x}>" }
+}
+trait Equal for P {
+  fn equal(self, other: P) -> Bool { true }
+}
+trait Compare for P {
+  fn compare(self, other: P) -> Int { other.x - self.x }
+}
+fn main() {
+  let p = P { x: 1 }
+  let q = P { x: 2 }
+  println(p)
+  println("{p}")
+  println(p.display())
+  println([p])
+  println(Some(p))
+  println((p, 1))
+  println(W { inner: p })
+  println(W { inner: p }.display())
+  println(Wrap(p))
+  println(#{ "k": p })
+  println("--- equal (custom: always true)")
+  println(p == q)
+  println(p.equal(q))
+  println([p] == [q])
+  println(Some(p) == Some(q))
+  println(W { inner: p } == W { inner: q })
+  println(list.contains([p], q))
+  println(set.length(#[p, q]))
+  println("--- compare (custom: reversed)")
+  println(p < q)
+  println(p.compare(q))
+  println(list.sort([p, q]))
+  println([p] < [q])
+  println(W { inner: p } < W { inner: q })
+}

@@ -38,11 +38,11 @@ fn main() {
     match collected >= 3 {
       true -> acc
       _ -> {
-        match channel.select([Recv(a), Recv(b), Recv(c), Recv(d)]) {
-          (_, Message(v)) -> loop(collected + 1, acc + v)
-          (_, Closed) -> acc
-          (_, Empty) -> acc
-          (_, Sent) -> acc
+        match channel.select([channel.Recv(a), channel.Recv(b), channel.Recv(c), channel.Recv(d)]) {
+          (_, channel.Message(v)) -> loop(collected + 1, acc + v)
+          (_, channel.Closed) -> acc
+          (_, channel.Empty) -> acc
+          (_, channel.Sent) -> acc
         }
       }
     }

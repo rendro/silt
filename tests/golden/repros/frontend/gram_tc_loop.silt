@@ -1,0 +1,2 @@
+-- verdict: same
+fn main() { loop i = 0, { match { i < 3 -> loop(i + 1)  _ -> println("{i}") } } }

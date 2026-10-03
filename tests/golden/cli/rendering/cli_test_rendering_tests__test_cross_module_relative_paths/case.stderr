@@ -3,7 +3,7 @@
      --> helper.silt:3:3
        |
      3 |   test.assert_eq(x, 999)
-       |   ^ assertion failed: 1 != 999
+       |   ^^^^^^^^^^^^^^^^^^^^^^ assertion failed: 1 != 999
 
     call stack:
       -> do_check  at helper.silt:3:3

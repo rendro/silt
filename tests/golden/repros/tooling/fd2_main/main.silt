@@ -1,0 +1,6 @@
+-- verdict: same
+import helper
+
+fn main() {
+  println("{helper.double(2)}")
+}

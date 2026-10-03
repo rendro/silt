@@ -1,0 +1,2 @@
+let limit = 10
+pub fn remaining(n) { limit - n }

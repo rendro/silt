@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: private type 'Hidden' in the type of public let 'h'
+-- stderr-contains: error[type]: private type 'Hidden' in the type of public fn 'mk'
+-- stderr-contains: error[type]: type mismatch: expected Hidden, got lib.Hidden
+-- lib's private Hidden leaks through the inferred types of a pub let and
+-- an unannotated pub fn: each is reported in lib, and using the value
+-- against this module's own Hidden is a type error.
+import lib
+type Hidden { b: String }
+fn get(x: Hidden) -> String { x.b }
+fn main() {
+  println(get(lib.h))
+  println(get(lib.mk()))
+}

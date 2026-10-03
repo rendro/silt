@@ -1,0 +1,12 @@
+-- verdict: same
+type C { Red, Green }
+fn main() {
+  let r = match Red {
+    Red -> 1
+    Green -> 2
+  }
+  println(r)
+  let c = Red
+  when c == Red else { return }
+  println("ok")
+}

@@ -1,0 +1,28 @@
+-- verdict: same
+import task
+import list
+
+type L {
+  Nil,
+  Cons(Int, L)
+}
+
+fn build(n) {
+  let nil = Nil
+  loop i = 0, acc = nil {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Cons(i, acc))
+    }
+  }
+}
+
+fn work() {
+  let a = build(50)
+  let b = build(50)
+  a.hash()
+}
+
+fn main() {
+  println(work())
+}

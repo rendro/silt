@@ -1,20 +1,45 @@
 error[runtime]: division by zero
- --> <declaration>
-  -> boom  at <declaration>
-  -> <repl>  at <declaration>
+ --> <repl:1>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^^^ division by zero
+
+call stack:
+  -> boom  at <repl:1>:1:11
+  -> <repl:2>  at <repl:2>:1:1
 error[runtime]: division by zero
- --> <declaration>
-  -> boom  at <declaration>
-  -> <repl>  at <declaration>
+ --> <repl:1>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^^^ division by zero
+
+call stack:
+  -> boom  at <repl:1>:1:11
+  -> <repl:3>  at <repl:3>:1:1
 error[runtime]: division by zero
- --> <declaration>
-  -> boom  at <declaration>
-  -> <repl>  at <declaration>
+ --> <repl:1>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^^^ division by zero
+
+call stack:
+  -> boom  at <repl:1>:1:11
+  -> <repl:4>  at <repl:4>:1:1
 error[runtime]: division by zero
- --> <declaration>
-  -> boom  at <declaration>
-  -> <repl>  at <declaration>
+ --> <repl:1>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^^^ division by zero
+
+call stack:
+  -> boom  at <repl:1>:1:11
+  -> <repl:5>  at <repl:5>:1:1
 error[runtime]: division by zero
- --> <declaration>
-  -> boom  at <declaration>
-  -> <repl>  at <declaration>
+ --> <repl:1>:1:11
+   |
+ 1 | fn boom(){1/0}
+   |           ^^^ division by zero
+
+call stack:
+  -> boom  at <repl:1>:1:11
+  -> <repl:6>  at <repl:6>:1:1

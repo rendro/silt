@@ -1,0 +1,11 @@
+-- cmd: check --format json
+-- exit: 1
+-- A diagnostic in JSON carries its code, where its span ends, and its
+-- labels and help as data.
+fn main() {
+  let count: Int = "text"
+  println(coun)
+}
+
+fn twice() { 1 }
+fn twice() { 2 }

@@ -20,10 +20,10 @@ use silt::lexer::Lexer;
 use silt::parser::Parser;
 
 fn parse_program(src: &str) -> Program {
-    let tokens = Lexer::new(src)
+    let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap_or_else(|e| panic!("lex failed: {e:?}\nsrc:\n{src}"));
-    Parser::new(tokens)
+    Parser::new(tokens, src)
         .parse_program()
         .unwrap_or_else(|e| panic!("parse failed: {e:?}\nsrc:\n{src}"))
 }
@@ -107,7 +107,7 @@ fn expr_dbg(e: &Expr, out: &mut String) {
             out.push(')');
         }
         ExprKind::Ascription(ex, ty) => {
-            out.push_str(&format!("Asc(ty={:?},", ty.kind));
+            out.push_str(&format!("Asc(ty={},", type_dbg(ty)));
             expr_dbg(ex, out);
             out.push(')');
         }
@@ -144,6 +144,30 @@ fn expr_dbg(e: &Expr, out: &mut String) {
             out.push_str("])");
         }
         other => out.push_str(&format!("{other:?}")),
+    }
+}
+
+/// A type expression without its source positions.
+fn type_dbg(ty: &silt::ast::TypeExpr) -> String {
+    use silt::ast::TypeExprKind;
+    let list =
+        |items: &[silt::ast::TypeExpr]| items.iter().map(type_dbg).collect::<Vec<_>>().join(",");
+    match &ty.kind {
+        TypeExprKind::Named { module, name, .. } => {
+            format!("Named({:?},{name:?})", module.map(|m| m.name))
+        }
+        TypeExprKind::Generic {
+            module, name, args, ..
+        } => format!(
+            "Generic({:?},{name:?},[{}])",
+            module.map(|m| m.name),
+            list(args)
+        ),
+        TypeExprKind::Tuple(elems) => format!("Tuple([{}])", list(elems)),
+        TypeExprKind::Function(params, ret) => {
+            format!("Fn([{}],{})", list(params), type_dbg(ret))
+        }
+        other => format!("{other:?}"),
     }
 }
 
@@ -184,10 +208,10 @@ fn test_round35_f1_block_comment_interp_round_trip() {
     let fmt2 = format(&fmt1).unwrap();
     assert_eq!(fmt1, fmt2, "formatter must be idempotent");
     // The formatted output must still lex+parse.
-    let tokens = Lexer::new(&fmt1)
+    let tokens = Lexer::new(silt::source::FileId::default(), &fmt1)
         .tokenize()
         .unwrap_or_else(|e| panic!("lex failed: {e:?}\nfmt:\n{fmt1}"));
-    Parser::new(tokens)
+    Parser::new(tokens, &fmt1)
         .parse_program()
         .unwrap_or_else(|e| panic!("parse failed: {e:?}\nfmt:\n{fmt1}"));
     assert!(fmt1.contains("{- note -}"));

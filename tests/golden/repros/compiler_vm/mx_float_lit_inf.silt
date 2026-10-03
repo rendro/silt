@@ -1,0 +1,6 @@
+-- verdict: same
+fn main() {
+  let x = 1.0e400
+  println(x)
+  println(x - x)
+}

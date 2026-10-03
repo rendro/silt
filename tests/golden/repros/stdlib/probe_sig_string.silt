@@ -1,0 +1,37 @@
+-- verdict: same
+import string
+fn main() {
+  let v_string_byte_length: Int = string.byte_length
+  let v_string_char_code: Int = string.char_code
+  let v_string_chars: Int = string.chars
+  let v_string_contains: Int = string.contains
+  let v_string_ends_with: Int = string.ends_with
+  let v_string_from: Int = string.from
+  let v_string_from_char_code: Int = string.from_char_code
+  let v_string_index_of: Int = string.index_of
+  let v_string_is_alnum: Int = string.is_alnum
+  let v_string_is_alpha: Int = string.is_alpha
+  let v_string_is_digit: Int = string.is_digit
+  let v_string_is_empty: Int = string.is_empty
+  let v_string_is_lower: Int = string.is_lower
+  let v_string_is_upper: Int = string.is_upper
+  let v_string_is_whitespace: Int = string.is_whitespace
+  let v_string_join: Int = string.join
+  let v_string_last_index_of: Int = string.last_index_of
+  let v_string_length: Int = string.length
+  let v_string_lines: Int = string.lines
+  let v_string_pad_left: Int = string.pad_left
+  let v_string_pad_right: Int = string.pad_right
+  let v_string_repeat: Int = string.repeat
+  let v_string_replace: Int = string.replace
+  let v_string_slice: Int = string.slice
+  let v_string_split: Int = string.split
+  let v_string_split_at: Int = string.split_at
+  let v_string_starts_with: Int = string.starts_with
+  let v_string_starts_with_at: Int = string.starts_with_at
+  let v_string_to_lower: Int = string.to_lower
+  let v_string_to_upper: Int = string.to_upper
+  let v_string_trim: Int = string.trim
+  let v_string_trim_end: Int = string.trim_end
+  let v_string_trim_start: Int = string.trim_start
+}

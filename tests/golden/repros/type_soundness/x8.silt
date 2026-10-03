@@ -1,0 +1,15 @@
+-- verdict: same
+import list
+import io
+import fs
+-- effect hidden in a closure stored and invoked by a pure-declared builtin HOF
+fn pure_sum(xs: List(Int)) -> Int !{} {
+  list.fold(xs, 0) { acc, x ->
+    let _ = io.write_file("/dev/null", "x")
+    acc + x
+  }
+}
+fn main() !{} {
+  let _ = pure_sum([1,2,3])
+  ()
+}

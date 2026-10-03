@@ -680,23 +680,19 @@ fn test_add_git_nonexistent_branch_errors() {
         .unwrap();
     assert!(!out.status.success(), "expected nonexistent branch to fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    // Narrow lock: src/cli/add.rs emits
-    //     "silt add: cannot resolve {ref_kind} `{ref}` in `{url}`: {e}"
-    // from `resolve_ref`'s error mapping. The old OR accepted "not
-    // found" too, which is so generic it could match unrelated
-    // failures (`git: command not found`, `file not found`, etc.).
-    // Pin the `cannot resolve` prefix emitted by the add-command
-    // wrapper so a regression that swaps this error for a generic
-    // "ref ... not found" would fail.
+    // The ref is resolved with the package graph: a diagnostic at the
+    // new entry, and silt.toml is left as it was.
     assert!(
-        stderr.contains("cannot resolve"),
-        "expected `silt add: cannot resolve ...` diagnostic; got: {stderr}"
+        stderr.contains("error[package]: git dependency `foo`")
+            && stderr.contains("git ref not found")
+            && stderr.contains("silt add left silt.toml as it was"),
+        "expected a git dependency diagnostic; got: {stderr}"
     );
 }
 
-/// Real repo + real branch — the actual happy path. PR 3 wires git
-/// resolution into `Lockfile::resolve`, so `silt add --git --branch`
-/// now writes both the manifest AND a complete `silt.lock` containing
+/// Real repo + real branch — the actual happy path. `silt add --git
+/// --branch` resolves the package graph, so it writes both the
+/// manifest AND a complete `silt.lock` containing
 /// the resolved SHA. We point at a local bare git repo (built on the
 /// fly) holding a tiny silt package so the test stays self-contained.
 #[test]

@@ -1,0 +1,14 @@
+-- verdict: same
+import channel
+import task
+import list
+import time
+
+fn main() {
+  let ch = channel.new(1)
+  let hs = 1..5000 |> list.map { i -> task.spawn(fn() { channel.receive(ch) }) }
+  time.sleep(time.ms(500))
+  println("READY")
+  time.sleep(time.ms(2500))
+  println(list.length(hs))
+}

@@ -1,0 +1,5 @@
+-- verdict: same
+import m3
+fn main() {
+  println(m3.mk())
+}

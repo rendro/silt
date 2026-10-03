@@ -1,0 +1,13 @@
+-- verdict: same
+fn count() -> Int {
+  loop i = 0 {
+    match n >= 3 {
+      true -> n
+      false -> recur(n + 1)
+    }
+  }
+}
+
+fn main() {
+  println("{count()}")
+}

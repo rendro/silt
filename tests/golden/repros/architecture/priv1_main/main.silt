@@ -1,0 +1,13 @@
+-- verdict: same
+import a
+import b
+
+fn helper() -> String = "main-helper"
+
+fn main() {
+  println("a.who() = {a.who()}")
+  println("b.who() = {b.who()}")
+  let f = a.later()
+  println("a.later()() = {f()}")
+  println("main helper = {helper()}")
+}

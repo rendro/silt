@@ -1,0 +1,6 @@
+-- verdict: same
+import nosuchmodule
+fn main() {
+  let x: Int = "s"
+  println(undefined_name)
+}

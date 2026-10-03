@@ -1,0 +1,10 @@
+-- verdict: same
+fn add(a, b) { a + b }
+fn main() {
+  let opt = Some(41)
+  let r = 1 |> add(match opt {
+    Some(v) -> v
+    None -> 0
+  })
+  println(r)
+}

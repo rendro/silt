@@ -1,0 +1,9 @@
+-- verdict: same
+import limits
+
+let limit = "ten"
+
+fn main() {
+  println("limit here = {limit}")
+  println("limits.headroom(3) = {limits.headroom(3)}")
+}

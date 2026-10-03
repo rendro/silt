@@ -1,0 +1,16 @@
+-- verdict: same
+fn main() {
+  let e = None
+  let a: Option(Int) = e
+  let b: Option(String) = e
+  println(a)
+  let p = (None, [])
+  let q: (Option(Int), List(Int)) = p
+  let r: (Option(String), List(String)) = p
+  println(q)
+  let idf = fn(x) { x }
+  let pr = (idf, idf)
+  let (f, g) = pr
+  println(f(1))
+  println(f("s"))
+}

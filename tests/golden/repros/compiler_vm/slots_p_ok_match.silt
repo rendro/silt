@@ -1,0 +1,10 @@
+-- verdict: same
+fn classify(n: Int) -> Result(String, String) {
+  Ok(match n {
+    0 -> "zero"
+    _ -> "many"
+  })
+}
+fn main() {
+  println(classify(0))
+}

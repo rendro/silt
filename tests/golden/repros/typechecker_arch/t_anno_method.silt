@@ -1,0 +1,5 @@
+-- verdict: same
+import http
+
+fn f(x: http.Method) -> Int { 1 }
+fn main() { println("ok") }

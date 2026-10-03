@@ -7,40 +7,17 @@
 //! behavior. If a refactor changes the return shape or error phrase,
 //! these tests should fail loudly so the audit record stays honest.
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
+use silt::typeinfo::bv;
 use silt::value::Value;
-use silt::vm::Vm;
-use std::sync::Arc;
 
 // ── Helpers (mirrors tests/heavy/integration.rs) ──────────────────────────
 
 fn run(input: &str) -> Value {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).expect("runtime error")
+    silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn run_err(input: &str) -> String {
-    let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens).parse_program().expect("parse error");
-    let _ = typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => return e.message,
-    };
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    let err = vm.run(script).expect_err("expected runtime error");
-    format!("{err}")
+    silt::session::testing::run_str(input).expect_err("expected runtime error")
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -55,7 +32,7 @@ fn test_option_map_some_applies_callback() {
 import option
 fn main() { option.map(Some(5), { n -> n * 2 }) }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(10)]));
+    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(10)]));
 }
 
 #[test]
@@ -66,7 +43,7 @@ fn test_option_map_none_propagates() {
 import option
 fn main() { option.map(None, { n -> n * 2 }) }
     "#);
-    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+    assert_eq!(result, Value::variant(bv::NONE, Vec::new()));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -81,7 +58,7 @@ fn test_option_to_result_some_becomes_ok() {
 import option
 fn main() { option.to_result(Some(42), "missing") }
     "#);
-    assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(42)]));
+    assert_eq!(result, Value::variant(bv::OK, vec![Value::Int(42)]));
 }
 
 #[test]
@@ -94,7 +71,7 @@ fn main() { option.to_result(None, "missing") }
     "#);
     assert_eq!(
         result,
-        Value::Variant("Err".into(), vec![Value::String("missing".into())])
+        Value::variant(bv::ERR, vec![Value::String("missing".into())])
     );
 }
 
@@ -112,7 +89,7 @@ fn test_option_flat_map_some_applies_callback() {
 import option
 fn main() { option.flat_map(Some(3), { n -> Some(n + 10) }) }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(13)]));
+    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(13)]));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -153,7 +130,7 @@ fn test_result_flat_map_ok_applies_callback() {
 import result
 fn main() { result.flat_map(Ok(4), { n -> Ok(n * n) }) }
     "#);
-    assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(16)]));
+    assert_eq!(result, Value::variant(bv::OK, vec![Value::Int(16)]));
 }
 
 #[test]
@@ -166,7 +143,7 @@ fn main() { result.flat_map(Err("fail"), { n -> Ok(n * n) }) }
     "#);
     assert_eq!(
         result,
-        Value::Variant("Err".into(), vec![Value::String("fail".into())])
+        Value::variant(bv::ERR, vec![Value::String("fail".into())])
     );
 }
 
@@ -183,7 +160,7 @@ fn test_result_map_err_on_err_applies_callback() {
 import result
 fn main() { result.map_err(Err(3), { e -> e + 100 }) }
     "#);
-    assert_eq!(result, Value::Variant("Err".into(), vec![Value::Int(103)]));
+    assert_eq!(result, Value::variant(bv::ERR, vec![Value::Int(103)]));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -199,7 +176,7 @@ fn test_result_map_ok_on_ok_applies_callback() {
 import result
 fn main() { result.map_ok(Ok(6), { v -> v * 7 }) }
     "#);
-    assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(42)]));
+    assert_eq!(result, Value::variant(bv::OK, vec![Value::Int(42)]));
 }
 
 // ════════════════════════════════════════════════════════════════════

@@ -1,0 +1,32 @@
+-- verdict: same
+import channel
+import task
+fn main() {
+  let work = channel.new(10)
+  let done = channel.new(1)
+
+  -- Worker processes until the work channel closes
+  let worker = task.spawn(fn() {
+    channel.each(work) { item ->
+      println("processing: {item}")
+    }
+    -- channel.each returned, meaning work is closed
+    channel.send(done, "shutdown complete")
+  })
+
+  -- Send some work, then close
+  channel.send(work, "task-a")
+  channel.send(work, "task-b")
+  channel.send(work, "task-c")
+  channel.close(work)
+
+  -- Wait for the worker to finish
+  task.join(worker)
+  when let channel.Message(status) = channel.receive(done) else { return }
+  println(status)
+}
+-- prints:
+--   processing: task-a
+--   processing: task-b
+--   processing: task-c
+--   shutdown complete

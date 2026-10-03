@@ -1,0 +1,9 @@
+-- verdict: same
+import channel
+import float
+fn main() {
+  let ch = channel.new()
+  println(float.to_string(1.5))
+  println(float.to_string(1.5, 3))
+  println("ok")
+}

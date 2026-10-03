@@ -1,10 +1,13 @@
 //! VM error type.
 
-use crate::lexer::Span;
+use crate::diagnostic::{Code, Diagnostic};
+use crate::source::Span;
 
 #[derive(Debug, Clone)]
 pub struct VmError {
     pub message: String,
+    /// What to do about it, one line each: the diagnostic's help.
+    pub help: Vec<String>,
     /// If true, this error signals a cooperative yield, not a real error.
     pub is_yield: bool,
     /// Source span where the error occurred (if available).
@@ -17,6 +20,7 @@ impl VmError {
     pub fn new(message: String) -> Self {
         VmError {
             message,
+            help: Vec::new(),
             is_yield: false,
             span: None,
             call_stack: Vec::new(),
@@ -26,74 +30,47 @@ impl VmError {
     pub(crate) fn yield_signal() -> Self {
         VmError {
             message: String::new(),
+            help: Vec::new(),
             is_yield: true,
             span: None,
             call_stack: Vec::new(),
         }
     }
-}
 
-/// The canonical "frame location" formatter used by `VmError::Display`.
-///
-/// Production CLIs (`silt run`, `silt test`, REPL) supply their own
-/// `format_frame` closure to `render_call_stack` so they can use absolute
-/// file paths.  `VmError::Display` has no access to such paths (it's a
-/// fallback formatter that may be invoked from arbitrary sinks), so it
-/// uses a path-free `"line N, column M"` shape — but it MUST go through
-/// the same `render_call_stack` helper as the production paths, applying
-/// the same `<module:...>`-keep filter and the same `"  -> name  at …"`
-/// line layout.  Any drift between this helper and `render_call_stack`
-/// would re-introduce the round-74 GAP (Display dropping module frames
-/// silently, plus a one-vs-two-space `at` separator divergence).
-pub fn vm_error_display_frame(_name: &str, span: &Span) -> String {
-    if span.line > 0 {
-        format!("line {}, column {}", span.line, span.col)
-    } else {
-        "<unknown location>".to_string()
+    /// The error with `help` as a help line.
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help.push(help.into());
+        self
+    }
+
+    /// The error as a diagnostic: the first line of the message is its
+    /// message, and the rest of the message, as it is (a `panic` text or
+    /// a builtin's report can go on for several lines), its one note.
+    /// The labels are the call stack, innermost frame first. An error
+    /// with no span is about no place of the program, and has
+    /// [`Span::BUILTIN`].
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let (head, rest) = match self.message.split_once('\n') {
+            Some((head, rest)) => (head, Some(rest)),
+            None => (self.message.as_str(), None),
+        };
+        let mut d = Diagnostic::error(Code::RuntimeError, self.span.unwrap_or(Span::BUILTIN), head);
+        d.notes.extend(rest.map(str::to_string));
+        d.help = self.help.clone();
+        d.labels = self
+            .call_stack
+            .iter()
+            .map(|(name, span)| (*span, name.clone()))
+            .collect();
+        d
     }
 }
 
+/// The message alone: a front door renders a runtime error through
+/// [`VmError::to_diagnostic`] and its source map, which give it a place.
 impl std::fmt::Display for VmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Canonicalize to the same `error[runtime]: <msg>` shape produced
-        // by `SourceError::Display` for runtime diagnostics. Production
-        // paths route around this via `SourceError::runtime_at` (round 36
-        // fix), but this Display is an attractive nuisance: any fallback
-        // `eprintln!("{e}")` on a bare VmError would previously re-emit
-        // the raw `"VM error: ..."` prefix, leaking an internal label to
-        // users. Matching SourceError's header means any such fallback
-        // produces a correctly-formed diagnostic instead of a second
-        // dialect. (Audit LATENT L3.)
-        //
-        // No span → no `-->` locator line; no source snippet (we don't
-        // hold the source here). Call-stack rendering delegates to the
-        // shared `render_call_stack` helper so the filter + line shape
-        // can never drift from `silt run` / `silt test` / REPL output.
-        // Round-74 GAP: previously this method had its own filter
-        // (`!name.starts_with('<')`, dropping `<module:...>` frames) and
-        // its own format string (one space before `at`), so a bare
-        // `format!("{e}")` would silently lose module-init provenance
-        // and use a different line shape than the production CLIs.
-        //
-        // NOTE: this Display intentionally does NOT do ANSI coloring —
-        // SourceError::Display gates color on `isatty(stderr)`, but a
-        // bare VmError may be formatted to arbitrary sinks (test logs,
-        // panic messages, operator audits). Plain text is the safe
-        // lowest-common-denominator for a fallback.
-        write!(f, "error[runtime]: {}", self.message)?;
-        if let Some(span) = self.span
-            && span.line > 0
-        {
-            write!(f, "\n --> <input>:{}:{}", span.line, span.col)?;
-        }
-        let stack_lines = render_call_stack(&self.call_stack, vm_error_display_frame);
-        if !stack_lines.is_empty() {
-            write!(f, "\ncall stack:")?;
-            for line in &stack_lines {
-                write!(f, "\n{line}")?;
-            }
-        }
-        Ok(())
+        write!(f, "error[runtime]: {}", self.message)
     }
 }
 
@@ -104,17 +81,13 @@ impl std::error::Error for VmError {}
 /// (`<script>`, `<call:...>`) are dropped, but `<module:...>` frames are
 /// kept because they carry useful provenance for module-init errors —
 /// the call site that triggered the module's load and the source file
-/// that owns the failing top-level statement.  `<repl>` frames are kept
-/// for the same reason: the REPL relabels its synthetic `__repl_eval_<n>`
-/// expression wrapper to `<repl>` (src/repl.rs::repl_call_stack_lines)
-/// so the frame still marks the top-level REPL call site without leaking
-/// the internal wrapper name.  Each returned line is already prefixed
-/// with "  -> " and has no trailing newline.
+/// that owns the failing top-level statement.  `<repl:n>` frames are kept
+/// for the same reason: the function that holds the statements of the
+/// REPL's `n`th entry marks the call site the user typed.  Each returned
+/// line is already prefixed with "  -> " and has no trailing newline.
 ///
 /// `format_frame` turns a (name, span) pair into its location string —
-/// callers pass the exact formatting they want (e.g. `file:line:col` for
-/// `silt run`, `<declaration>` for REPL frames whose line numbers would
-/// be misleading after span adjustment).
+/// callers pass the exact formatting they want (e.g. `file:line:col`).
 ///
 /// Returns an empty vec when the filtered stack is too short to be
 /// informative (a single-frame stack would just restate the error site).
@@ -125,10 +98,10 @@ where
     let meaningful: Vec<&(String, Span)> = call_stack
         .iter()
         .filter(|(name, _)| {
-            !name.starts_with('<') || name.starts_with("<module:") || name == "<repl>"
+            !name.starts_with('<') || name.starts_with("<module:") || name.starts_with("<repl:")
         })
         .collect();
-    let any_real_span = meaningful.iter().any(|(_, s)| s.line > 0);
+    let any_real_span = meaningful.iter().any(|(_, s)| s.is_in_source());
     if meaningful.len() < 2 || !any_real_span {
         return Vec::new();
     }

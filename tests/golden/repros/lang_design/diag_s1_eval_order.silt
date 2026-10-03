@@ -1,0 +1,15 @@
+-- verdict: same
+fn t(label, v) {
+  println("eval {label}")
+  v
+}
+fn add3(a, b, c) { a + b + c }
+type P { x: Int, y: Int }
+fn main() {
+  let r = add3(t("a", 1), t("b", 2), t("c", 3))
+  let s = t("l", 1) + t("r", 2)
+  let p = P { y: t("y", 1), x: t("x", 2) }
+  let q = t("lhs", false) && t("rhs", true)
+  let u = t("piped", 1) |> add3(t("arg2", 2), t("arg3", 3))
+  ()
+}

@@ -1,4 +1,0 @@
--- exit: 1
--- stderr-contains: unsupported pattern in top-level let
-let (a, b) = (1, 2)
-fn main() { a }

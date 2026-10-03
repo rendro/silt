@@ -1,0 +1,12 @@
+-- verdict: same
+fn f(x) {
+  when x > 0 else {
+    -- guard
+    return 0
+  }
+  x
+}
+
+fn main() {
+  println("{f(3)}")
+}

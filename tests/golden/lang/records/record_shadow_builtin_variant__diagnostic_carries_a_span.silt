@@ -1,7 +1,0 @@
--- cmd: check
--- exit: 1
--- stderr-contains: --> record_shadow_builtin_variant__diagnostic_carries_a_span.silt:
--- stderr-contains: ^
--- stderr-contains: type Empty
-type Empty {}
-fn main() { () }

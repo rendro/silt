@@ -1,0 +1,29 @@
+-- verdict: same
+import bytes
+import channel
+import set
+import map
+import list
+import float
+fn lt(a: a, b: a) -> Bool { a < b }
+fn main() {
+  let b1 = bytes.from_string("ab")
+  let b2 = bytes.from_string("ab")
+  println("bytes ==: {b1 == b2}")
+  println("bytes set: {set.length(set.from_list([b1, b2]))}")
+  let c1 = channel.new(1)
+  let c2 = channel.new(1)
+  println("chan ==: {c1 == c1} {c1 == c2}")
+  println("chan set: {set.length(set.from_list([c1, c2, c1]))}")
+  let nan = float.nan
+  let s = set.from_list([nan, nan])
+  println("nan set size: {set.length(s)} contains nan: {set.contains(s, nan)}")
+  let m = #{ (1, nan): "a" }
+  println("tuple-nan key lookup: {map.get(m, (1, nan))}")
+  println("list.contains nan: {list.contains([nan], nan)}")
+  println("list.unique nan: {list.unique([nan, nan])}")
+  println("index_of: {list.sort([nan, 1.0 / 1.0, float.infinity, float.neg_infinity])}")
+  println("map == map: {#{1: nan} == #{1: nan}}")
+  println("tuple ==: {(1, 2) == (1, 2)}")
+  println("unit ==: {() == ()}")
+}

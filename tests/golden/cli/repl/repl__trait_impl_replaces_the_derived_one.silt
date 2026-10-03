@@ -1,0 +1,8 @@
+-- cmd: repl
+-- stdin: type Box { v: Int }\ntrait Display for Box { fn display(self) -> String { "Box({self.v})" } }\n1 + 1\nlet b = Box { v: 3 }\nb.display()\n"{b.display()} {b == Box { v: 3 }}"\ntrait Display for Box { fn display(self) -> String { "again" } }\nb.display()\nfn show(x: Box) -> String { x.display() }\nshow(Box { v: 4 })\n:quit\n
+-- stderr-contains: error[type]: duplicate implementation of trait 'Display' for type 'Box'
+-- stderr-contains:  --> <repl:7>:1:1
+-- A written `Display` impl for a type of an earlier input replaces the
+-- derived one, as in a file, and every later input sees it (they used to
+-- fail with "duplicate implementation"). A second written impl is a real
+-- duplicate: that input is rejected and the session goes on.

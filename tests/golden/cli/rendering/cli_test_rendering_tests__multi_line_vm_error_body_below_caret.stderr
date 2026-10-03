@@ -2,7 +2,7 @@ error[runtime]: invalid regex: regex parse error:
  --> cli_test_rendering_tests__multi_line_vm_error_body_below_caret.silt:4:11
    |
  4 |   let r = regex.is_match("[unclosed", "hello")
-   |           ^ invalid regex: regex parse error:
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid regex: regex parse error:
   = note:     [unclosed
               ^
           error: unclosed character class

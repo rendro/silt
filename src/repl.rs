@@ -1,41 +1,6 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Per-process counter that uniquely tags each REPL `eval_expression`
-/// call site. The wrapper name `__repl_eval_<n>` derived from this is
-/// guaranteed not to collide with any name a user could realistically
-/// declare (and even if they did, each new expression gets a fresh `n`),
-/// which prevents the round-74 BROKEN bug where `fn main()` defined in
-/// the REPL would shadow the wrapper and cause infinite self-recursion
-/// on every subsequent expression. See
-/// `tests/cli/round74_repl_main_no_hang_tests.rs`.
-static REPL_EVAL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Prefix of the synthetic per-expression wrapper function name. Named
-/// so the error renderer can recognise wrapper frames and relabel them
-/// `<repl>` instead of leaking the internal `__repl_eval_<n>` name into
-/// user-facing call stacks (see `repl_call_stack_lines`).
-const REPL_WRAPPER_PREFIX: &str = "__repl_eval_";
-
-/// Produce the next unique synthetic wrapper name for an expression
-/// being evaluated by the REPL.
-fn next_repl_wrapper_name() -> String {
-    let n = REPL_EVAL_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{REPL_WRAPPER_PREFIX}{n}")
-}
-
-/// True when `name` is a synthetic REPL wrapper frame — the
-/// `REPL_WRAPPER_PREFIX` followed by a purely numeric counter suffix, as
-/// produced by `next_repl_wrapper_name`. The digit check keeps a
-/// (pathological) user-defined `fn __repl_eval_helper()` from being
-/// relabelled.
-fn is_repl_wrapper_frame(name: &str) -> bool {
-    name.strip_prefix(REPL_WRAPPER_PREFIX)
-        .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
-}
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -45,17 +10,14 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
-use crate::ast::{Decl, Pattern, PatternKind, TypeBody};
-use crate::compiler::{CompileError, Compiler};
-use crate::errors::{SourceError, active_colors};
+use crate::defs::DefTable;
+use crate::diagnostic::{Diagnostic, Located, SourceView, render_human};
 use crate::intern;
-use crate::lexer::{LexError, Lexer, Span};
-use crate::parser::{ParseError, Parser};
-use crate::typechecker;
-use crate::typechecker::ReplTypeContext;
+use crate::session::{Config, Entry, LockPolicy, ModuleId, ProjectSetup, Session};
+use crate::source::{SourceMap, SourceName, Span};
+use crate::typechecker::names::{Binding, Exports, ModuleScope};
 use crate::value::Value;
 use crate::vm::Vm;
-use crate::vm::error::{VmError, render_call_stack};
 
 /// Compute the path to the REPL history file.
 ///
@@ -197,10 +159,13 @@ pub fn run_repl() {
     // the REPL instead of by the scheduler. Not after each input: the
     // handle may still be bound, and a later input may join or cancel it.
     crate::scheduler::collect_unjoined_failures();
-    let mut vm = Vm::new();
-    let mut type_ctx = ReplTypeContext::new();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let mut repl = Repl::new(ProjectSetup::Discover(cwd));
 
     println!("Silt REPL (type :quit to exit, :help for commands)");
+    for d in repl.project_problems() {
+        eprintln!("{}", repl.render(&d));
+    }
 
     let mut buffer = String::new();
 
@@ -251,7 +216,22 @@ pub fn run_repl() {
 
                 let _ = rl.add_history_entry(&input);
 
-                eval_input(&mut vm, &mut type_ctx, &input, &names);
+                let evaluation = repl.eval(&input);
+                for d in &evaluation.diagnostics {
+                    eprintln!("{}", repl.render(d));
+                }
+                if let Some(value) = &evaluation.value
+                    && !matches!(value, Value::Unit)
+                {
+                    println!("{value}");
+                }
+                if evaluation.committed {
+                    let mut all = builtin_names();
+                    all.extend(evaluation.names);
+                    all.sort();
+                    all.dedup();
+                    *names.borrow_mut() = all;
+                }
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
@@ -267,10 +247,155 @@ pub fn run_repl() {
 
     // Tasks that failed and that no input joined or cancelled. A task
     // that is still running when the session ends is not reported.
-    report_task_failures();
+    report_task_failures(&repl);
 
     if let Some(ref p) = history_path {
         let _ = rl.save_history(p);
+    }
+}
+
+/// A REPL session: one compilation session, to which each input is
+/// added as a cell of its own (`<repl:n>`), and the VM that runs the
+/// cells. A cell sees what the cells before it that ran define; a cell
+/// with an error, static or at run time, is dropped and leaves the
+/// session as it was.
+pub struct Repl {
+    session: Session,
+    vm: Vm,
+    /// The working directory, against which the files of the session are
+    /// named.
+    cwd: Option<PathBuf>,
+}
+
+/// What evaluating one input gives.
+pub struct Evaluation {
+    /// Its diagnostics: the static ones, warnings too, and the runtime
+    /// error that stopped it.
+    pub diagnostics: Vec<Diagnostic>,
+    /// The value it returned, when it ran: the value of its statements,
+    /// or `()` for declarations.
+    pub value: Option<Value>,
+    /// Whether it ran to the end, so that later inputs see what it binds.
+    pub committed: bool,
+    /// When it ran: every name later inputs see, for completion, but
+    /// the prelude's (see [`builtin_names`]).
+    pub names: Vec<String>,
+}
+
+impl Repl {
+    /// A REPL session in the project `project`.
+    pub fn new(project: ProjectSetup) -> Repl {
+        let cwd = match &project {
+            ProjectSetup::Discover(dir) | ProjectSetup::Script(dir) => Some(dir.clone()),
+            ProjectSetup::None => None,
+        };
+        Repl {
+            session: Session::new(Config {
+                project,
+                lock: LockPolicy::Update,
+                host: Vec::new(),
+            }),
+            vm: Vm::new(),
+            cwd,
+        }
+    }
+
+    /// The problems of the project the session is in, which no input
+    /// reports.
+    pub fn project_problems(&mut self) -> Vec<Diagnostic> {
+        self.session.project_problems()
+    }
+
+    /// Check, compile and run `input` as the next cell.
+    pub fn eval(&mut self, input: &str) -> Evaluation {
+        let file = self.session.add_cell(input.to_string());
+        let analysis = self.session.analyze(file);
+        let mut evaluation = Evaluation {
+            diagnostics: analysis.diagnostics.clone(),
+            value: None,
+            committed: false,
+            names: Vec::new(),
+        };
+        if analysis.has_errors() {
+            return evaluation;
+        }
+        let program = match self.session.compile(file, Entry::Cell) {
+            Ok(program) => program,
+            Err(errors) => {
+                evaluation.diagnostics.extend(errors);
+                return evaluation;
+            }
+        };
+        match self.vm.run_program(&program) {
+            Ok(value) => {
+                self.session.commit_cell(file);
+                let module = self.session.module_of(file);
+                if let Some(analysis) = self.session.module_analysis(module) {
+                    let session = &self.session;
+                    evaluation.names =
+                        scope_completion_names(&analysis.scope, session.defs(), |id| {
+                            session.module_analysis(id).map(|a| &a.scope.exports)
+                        });
+                }
+                evaluation.value = Some(value);
+                evaluation.committed = true;
+            }
+            Err(e) => evaluation.diagnostics.push(e.to_diagnostic()),
+        }
+        evaluation
+    }
+
+    /// `d` rendered for the terminal.
+    pub fn render(&self, d: &Diagnostic) -> String {
+        render_human(
+            &ReplFiles {
+                sources: self.session.sources(),
+                cwd: self.cwd.as_deref(),
+            },
+            d,
+        )
+    }
+}
+
+/// How the REPL names the files of its diagnostics: a cell as
+/// `<repl:n>`, a module file by its path from the working directory.
+struct ReplFiles<'a> {
+    sources: &'a SourceMap,
+    cwd: Option<&'a Path>,
+}
+
+impl ReplFiles<'_> {
+    /// `path` from the working directory, when it is under it. Module
+    /// paths can be canonical (on Windows in the `\\?\` form) while the
+    /// working directory is not, so both are canonicalized when the plain
+    /// comparison fails.
+    fn relative(&self, path: &Path) -> Option<String> {
+        let cwd = self.cwd?;
+        if let Ok(rel) = path.strip_prefix(cwd) {
+            return Some(rel.display().to_string());
+        }
+        let (path, cwd) = (
+            std::fs::canonicalize(path).ok()?,
+            std::fs::canonicalize(cwd).ok()?,
+        );
+        path.strip_prefix(&cwd)
+            .ok()
+            .map(|rel| rel.display().to_string())
+    }
+}
+
+impl SourceView for ReplFiles<'_> {
+    fn locate(&self, span: Span) -> Option<Located> {
+        let file = match &self.sources.get(span.file)?.path {
+            SourceName::Path(p) | SourceName::Overlay(p) | SourceName::Manifest(p) => {
+                self.relative(p).unwrap_or_else(|| p.display().to_string())
+            }
+            other => crate::diagnostic::source_name_for_display(other)?,
+        };
+        Some(Located {
+            file,
+            position: self.sources.position(span),
+        })
     }
 }
 
@@ -278,93 +403,108 @@ pub fn run_repl() {
 /// nobody joined or cancelled. The REPL calls it when the session ends:
 /// until then a handle may still be bound, and an input may join or
 /// cancel it.
-///
-/// The code of a task can come from any earlier input, so the location
-/// is shown as `<declaration>`, as for the frames of every REPL runtime
-/// error.
-fn report_task_failures() {
+fn report_task_failures(repl: &Repl) {
     let taken = crate::scheduler::take_unjoined_failures();
     for failure in &taken.failures {
-        let error = failure.report_error();
-        eprintln!(
-            "{}",
-            render_runtime_error_without_source(&error.message, error.span.is_some())
-        );
-        for line in repl_call_stack_lines(&error.call_stack) {
-            eprintln!("{line}");
-        }
+        eprintln!("{}", repl.render(&failure.report_error().to_diagnostic()));
     }
     for (_, count) in &taken.not_kept {
         eprintln!(
             "{}",
-            render_runtime_error_without_source(
-                &crate::scheduler::UnjoinedFailures::not_kept_message(*count),
-                false
-            )
+            repl.render(&Diagnostic::error(
+                crate::diagnostic::Code::UnjoinedTaskFailure,
+                Span::BUILTIN,
+                crate::scheduler::UnjoinedFailures::not_kept_message(*count),
+            ))
         );
     }
 }
 
+/// The names `<Tab>` offers before any input: the REPL's commands, the
+/// keywords and the prelude's names. A builtin module's members are
+/// offered once it is imported (see [`scope_completion_names`]).
 pub fn builtin_names() -> Vec<String> {
-    // REPL-only short commands (not part of the language lexer) and
-    // non-constructor globals. Language keywords come from
-    // `lexer::KEYWORDS` and `lexer::KEYWORD_LITERALS` below so that
-    // additions there flow through automatically — mirrors the post-
-    // round-63 pattern in `src/lsp/completion.rs` and
-    // `src/lsp/rename.rs`. Parity lock:
-    // `tests/cli/repl_keyword_parity_with_lexer_tests.rs`.
     let mut names: Vec<String> = vec![":quit", ":q", ":help", ":h"]
         .into_iter()
         .map(String::from)
         .collect();
-
-    // Globals (non-constructor). Constructor variants come from
-    // `module::all_builtin_constructor_names` below so gated ones
-    // (IoNotFound, PgConnect, Recv, Send, Monday…) stay in sync.
-    // Free-function names (`print`/`println`/`panic`) come from
-    // `module::builtin_free_function_names()` so adding a new free
-    // function (e.g. `eprintln`, `assert`) flows through automatically.
-    // Parity lock: `tests/meta/builtin_free_function_parity_tests.rs`.
-    for name in crate::module::builtin_free_function_names() {
-        names.push((*name).to_string());
-    }
-
-    // Language keywords + reserved-word-shaped literals. Sourced from
-    // the lexer so REPL <Tab> completion automatically tracks any
-    // additions to the keyword set.
+    // Language keywords + reserved-word-shaped literals, from the lexer.
+    // Parity lock: `tests/cli/repl_keyword_parity_with_lexer_tests.rs`.
     for kw in crate::lexer::KEYWORDS {
         names.push((*kw).to_string());
     }
     for kw in crate::lexer::KEYWORD_LITERALS {
         names.push((*kw).to_string());
     }
-
-    // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
-    // every gated variant. Sourced from `module::all_builtin_constructor_names`
-    // so additions to `builtin_enum_variants` flow through automatically.
-    // Parity lock: `tests/meta/builtin_constructor_parity_tests.rs`.
-    for name in crate::module::all_builtin_constructor_names() {
-        names.push(name.to_string());
+    let (_, scopes) = crate::typechecker::names::builtins();
+    for name in scopes
+        .prelude
+        .values
+        .keys()
+        .chain(scopes.prelude.types.keys())
+    {
+        names.push(intern::resolve(*name));
     }
+    names.sort();
+    names.dedup();
+    names
+}
 
-    // Round-62 G6: primitive + container type names so REPL <Tab>
-    // completion offers `Int`, `Bool`, `List`, etc. wherever the user
-    // is typing a type annotation. Derived from the authoritative
-    // `BUILTIN_TYPES` constant so additions flow through automatically.
-    for entry in crate::types::builtins::iter_all() {
-        names.push(entry.name.to_string());
-    }
-
-    // Generate module completions from the registry.
-    for &module in crate::module::BUILTIN_MODULES {
-        for func in crate::module::builtin_module_functions(module) {
-            names.push(format!("{module}.{func}"));
+/// The names an input sees after it ran, as the session's scope of the
+/// input binds them: what it and the earlier inputs declared, the items
+/// they imported, and for each module bound by an import (`import list`,
+/// `import list as l`) its members, `l.map`, and for each enum its
+/// variants, `C.Red`, `time.Weekday.Monday`. A variant name that is ambiguous for the next input
+/// (the input's own `type D { Red }` beside an earlier `type C { Red }`)
+/// and a name of a module that failed to load are left out.
+pub fn scope_completion_names<'a>(
+    scope: &ModuleScope,
+    defs: &DefTable,
+    exports_of: impl Fn(ModuleId) -> Option<&'a Exports>,
+) -> Vec<String> {
+    let (_, builtin_scopes) = crate::typechecker::names::builtins();
+    let mut names = Vec::new();
+    for (name, binding) in scope
+        .values
+        .iter()
+        .chain(&scope.types)
+        .chain(scope.implied())
+    {
+        match binding {
+            Binding::Def(_)
+                if matches!(scope.exports.values.get(name), Some(Binding::Ambiguous(_))) => {}
+            Binding::Def(id) => {
+                names.push(intern::resolve(*name));
+                for v in defs.variants(*id) {
+                    names.push(format!("{name}.{}", defs.get(*v).name));
+                }
+            }
+            Binding::Module(id) => {
+                names.push(intern::resolve(*name));
+                let exports = if id.is_builtin() {
+                    builtin_scopes.modules.get(id)
+                } else {
+                    exports_of(*id)
+                };
+                for member in exports
+                    .into_iter()
+                    .flat_map(|e| e.values.keys().chain(e.types.keys()))
+                {
+                    names.push(format!("{name}.{member}"));
+                }
+                // An enum of the module offers its variants:
+                // `time.Weekday.Monday`.
+                for (ty, binding) in exports.into_iter().flat_map(|e| &e.types) {
+                    if let Binding::Def(ty_id) = binding {
+                        for v in defs.variants(*ty_id) {
+                            names.push(format!("{name}.{ty}.{}", defs.get(*v).name));
+                        }
+                    }
+                }
+            }
+            Binding::Ambiguous(_) | Binding::Poisoned => {}
         }
-        for constant in crate::module::builtin_module_constants(module) {
-            names.push(format!("{module}.{constant}"));
-        }
     }
-
     names.sort();
     names.dedup();
     names
@@ -489,728 +629,6 @@ fn has_unclosed_delimiters(input: &str) -> bool {
         || in_triple_string
 }
 
-/// Does `input` begin with a token that introduces a top-level
-/// declaration (as opposed to an expression)? The REPL uses the answer
-/// to pick its eval path: declarations are compiled-and-loaded, while
-/// expressions are wrapped in a throwaway `fn main` for execution.
-///
-/// Keep the prefix list in sync with the keyword set the parser accepts
-/// at declaration position (see `src/parser/*` — `fn`, `let`, `type`,
-/// `trait`, `import`, `mod`, plus the `pub ` visibility modifier that
-/// may precede any of them). Missing `mod ` here would route a
-/// `mod foo { ... }` declaration through `eval_expression`, which wraps
-/// it in `fn main()` and emits a confusing parse error.
-///
-/// `fn` is matched as a keyword, whatever follows it: `fn` only ever
-/// starts a declaration, so `fn\tfoo() {}` is one, and so is a malformed
-/// `fn (x)`, which the declaration parser then reports.
-///
-/// Exposed at crate-root visibility for the integration test at
-/// `tests/cli/repl_is_declaration_mod_tests.rs` (round-60 LATENT lock).
-pub fn is_declaration(input: &str) -> bool {
-    let trimmed = input.trim();
-    starts_with_fn_keyword(trimmed)
-        || trimmed.starts_with("let ")
-        || trimmed.starts_with("type ")
-        || trimmed.starts_with("trait ")
-        || trimmed.starts_with("import ")
-        || trimmed.starts_with("mod ")
-        || trimmed.starts_with("pub ")
-}
-
-/// True iff `s` begins with the `fn` keyword: `fn` not followed by an
-/// identifier character (`fnord` is an identifier).
-fn starts_with_fn_keyword(s: &str) -> bool {
-    s.strip_prefix("fn").is_some_and(|rest| {
-        !rest
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_')
-    })
-}
-
-/// Evaluate a single REPL input.  Declarations are compiled and loaded into
-/// the persistent VM.  Expressions are wrapped in a throwaway function,
-/// compiled, and run; the result is printed if it is not Unit.
-fn eval_input(
-    vm: &mut Vm,
-    type_ctx: &mut ReplTypeContext,
-    input: &str,
-    names: &Rc<RefCell<Vec<String>>>,
-) {
-    if is_declaration(input) {
-        eval_declaration(vm, type_ctx, input, names);
-    } else {
-        eval_expression(vm, type_ctx, input);
-    }
-}
-
-fn eval_declaration(
-    vm: &mut Vm,
-    type_ctx: &mut ReplTypeContext,
-    input: &str,
-    names: &Rc<RefCell<Vec<String>>>,
-) {
-    let tokens = match Lexer::new(input).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            let source_err = SourceError::from_lex_error(&e, input, "<repl>");
-            eprintln!("{source_err}");
-            return;
-        }
-    };
-    let mut program = match Parser::new(tokens).for_repl().parse_program() {
-        Ok(p) => p,
-        Err(e) => {
-            let source_err = SourceError::from_parse_error(&e, input, "<repl>");
-            eprintln!("{source_err}");
-            return;
-        }
-    };
-
-    // Type-check using the persistent REPL context so that previously
-    // defined names are visible to this input.
-    let type_errors = type_ctx.check(&mut program);
-    for te in &type_errors {
-        let source_err = SourceError::from_type_error(te, input, "<repl>");
-        eprintln!("{source_err}");
-    }
-    if type_errors
-        .iter()
-        .any(|e| e.severity == typechecker::Severity::Error)
-    {
-        return;
-    }
-
-    // Compile declarations only (no main call)
-    let mut compiler = Compiler::new();
-    compiler.import_all_builtins();
-    // Seed enum-variant tables from prior turns so a qualified variant
-    // constructor like `S.C(1)` for an enum declared earlier resolves.
-    let (enum_variants, unit_variants) = type_ctx.enum_variant_tables();
-    compiler.seed_known_variants(&enum_variants, &unit_variants);
-    let functions = match compiler.compile_declarations(&program) {
-        Ok(f) => f,
-        Err(e) => {
-            let source_err = SourceError::from_compile_error(&e, input, "<repl>");
-            eprintln!("{source_err}");
-            return;
-        }
-    };
-
-    let Some(script) = take_first_function(functions) else {
-        return;
-    };
-    if let Err(e) = vm.run(script) {
-        // Declarations are compiled un-wrapped, so spans are already in
-        // `input` coordinates — pass `None` for the adjust tuple. The
-        // shared helper handles the in-range / out-of-range / span-less
-        // branches plus call-stack rendering.
-        render_repl_vm_error(&e, input, None);
-        return;
-    }
-
-    // After successful evaluation, add newly defined names to the completion list.
-    let new_names = collect_decl_completion_names(&program.decls);
-    if !new_names.is_empty() {
-        let mut names_ref = names.borrow_mut();
-        for name in new_names {
-            if !names_ref.contains(&name) {
-                names_ref.push(name);
-            }
-        }
-    }
-}
-
-/// Collect every name a list of top-level decls introduces into the
-/// REPL's completion namespace.
-///
-/// Includes:
-/// - `fn` decl names
-/// - `let` pattern bindings (recursively)
-/// - `type` decl names AND, for enum bodies, every variant constructor
-///   name. Without the variant pass, user-defined enum constructors
-///   (e.g. `Active`/`Idle` in `type Status { Active, Idle }`) silently
-///   fall out of tab completion even though the typechecker accepts
-///   them and builtin enum variants (`Ok`/`Some`/`Recv`/`Monday`/...)
-///   from `module::all_builtin_constructor_names()` DO appear. This
-///   was REPL-1 in the round-77 audit.
-/// - `trait` decl names
-///
-/// (Trait method names and record field names are intentionally NOT
-/// surfaced here: completion at the unqualified-name layer offers the
-/// trait/type itself, and method/field access goes through the
-/// `module.member` / receiver-dispatch completion path.)
-pub fn collect_decl_completion_names(decls: &[Decl]) -> Vec<String> {
-    let mut new_names = Vec::new();
-    for decl in decls {
-        match decl {
-            Decl::Fn(f) => {
-                new_names.push(intern::resolve(f.name));
-            }
-            Decl::Let { pattern, .. } => {
-                collect_pattern_names(pattern, &mut new_names);
-            }
-            Decl::Type(t) => {
-                new_names.push(intern::resolve(t.name));
-                if let TypeBody::Enum(variants) = &t.body {
-                    // Mirror the builtin side
-                    // (`module::all_builtin_constructor_names`): every
-                    // enum variant is a callable constructor and must
-                    // be surfaced unqualified for tab-completion.
-                    for v in variants {
-                        new_names.push(intern::resolve(v.name));
-                    }
-                }
-            }
-            Decl::Trait(t) => {
-                new_names.push(intern::resolve(t.name));
-            }
-            _ => {}
-        }
-    }
-    new_names
-}
-
-/// Collect bound names from a pattern (for let bindings).
-fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
-    match &pattern.kind {
-        PatternKind::Ident(sym) => {
-            names.push(intern::resolve(*sym));
-        }
-        PatternKind::Tuple(pats) => {
-            for p in pats {
-                collect_pattern_names(p, names);
-            }
-        }
-        PatternKind::Constructor { args: pats, .. } => {
-            for p in pats {
-                collect_pattern_names(p, names);
-            }
-        }
-        PatternKind::Record { fields, .. } => {
-            for (field_name, sub) in fields {
-                if let Some(p) = sub {
-                    collect_pattern_names(p, names);
-                } else {
-                    // Shorthand field: `{ x }` binds `x`
-                    names.push(intern::resolve(*field_name));
-                }
-            }
-        }
-        PatternKind::AnonRecord { fields, rest } => {
-            // Round-62 B9: anonymous record destructure
-            // (`let { x, y } = anon`) binds shorthand fields just like
-            // the nominal record case. Round-101: the named rest binder
-            // (`{ x, ...rest }`) binds too — mirror the typechecker's
-            // `collect_pattern_vars`.
-            for (field_name, sub) in fields {
-                if let Some(p) = sub {
-                    collect_pattern_names(p, names);
-                } else {
-                    // Shorthand field: `{ x }` binds `x`
-                    names.push(intern::resolve(*field_name));
-                }
-            }
-            if let Some(r) = rest {
-                names.push(intern::resolve(*r));
-            }
-        }
-        PatternKind::List(pats, rest) => {
-            for p in pats {
-                collect_pattern_names(p, names);
-            }
-            if let Some(rest_pat) = rest {
-                collect_pattern_names(rest_pat, names);
-            }
-        }
-        PatternKind::Or(alts) => {
-            // Round-101: all alternatives are validated to bind the same
-            // names; mirror `collect_pattern_vars` and take the first.
-            if let Some(p) = alts.first() {
-                collect_pattern_names(p, names);
-            }
-        }
-        PatternKind::Map(entries) => {
-            // Round-101: map-pattern values bind (`#{ "k": v }` binds
-            // `v`); keys are string literals, never binders.
-            for (_, p) in entries {
-                collect_pattern_names(p, names);
-            }
-        }
-        _ => {} // Wildcard, Int, Float, Bool, StringLit, Range, Pin, etc.
-    }
-}
-
-/// Render a runtime `VmError` to stderr in the REPL's canonical shape.
-///
-/// Shared between `eval_declaration` (un-wrapped input — pass `adjust = None`)
-/// and `eval_expression` (input wrapped in `fn main() { … }` — pass
-/// `adjust = Some((wrapper_prefix_len, input_line_count, input_byte_len,
-/// last_line_cols))` so spans are translated back into the user's
-/// coordinates via `adjust_span`).
-///
-/// Output exactly mirrors what the previous inline blocks emitted:
-///
-///   * If `e.span` is `Some` and the (adjusted) span fits `input`, render
-///     `SourceError::runtime_at(...)` for a caret-aligned diagnostic.
-///   * If `e.span` is `Some` but out of range (i.e. the chunk was compiled
-///     in a previous REPL entry), call
-///     `render_runtime_error_without_source(msg, true)` to get the
-///     `--> <declaration>` locator shape.
-///   * Then iterate `repl_call_stack_lines(...)` printing every frame at
-///     `<declaration>` (line numbers from earlier-entry coordinates aren't
-///     meaningful against the current entry's text), with synthetic
-///     `__repl_eval_<n>` wrapper frames relabelled `<repl>`.
-///   * If `e.span` is `None`, call
-///     `render_runtime_error_without_source(msg, false)` — a plain
-///     `error[runtime]:` header with no locator.
-fn render_repl_vm_error(e: &VmError, input: &str, adjust: Option<(usize, usize, usize, usize)>) {
-    if let Some(span) = e.span {
-        let resolved = match adjust {
-            Some((prefix_len, input_lines, input_bytes, last_line_cols)) => {
-                adjust_span(span, prefix_len, input_lines, input_bytes, last_line_cols)
-            }
-            None => span,
-        };
-        if span_fits_input(resolved, input) {
-            let source_err = SourceError::runtime_at(&e.message, resolved, input, "<repl>");
-            eprintln!("{source_err}");
-        } else {
-            // Out-of-range span (prior-entry chunk): render with the
-            // `<declaration>` locator and split multi-line messages
-            // into `= note:`/`= help:` continuation, matching the
-            // `SourceError::Display` shape. Round-59 GAP #5.
-            eprintln!("{}", render_runtime_error_without_source(&e.message, true));
-        }
-        // Print the call stack for the non-synthetic frames. Frame line
-        // numbers come from the original REPL input buffer (or the wrapped
-        // input for `eval_expression`) and don't carry usable positions
-        // here, so we label every frame `<declaration>`. The synthetic
-        // `__repl_eval_<n>` expression wrapper is relabelled `<repl>` so
-        // the internal name never reaches the user.
-        for line in repl_call_stack_lines(&e.call_stack) {
-            eprintln!("{line}");
-        }
-    } else {
-        // Span-less runtime error: route through the shared helper so the
-        // `error[runtime]:` header gets the same ANSI color gating and
-        // `= note:` continuation splitting as every other REPL diagnostic
-        // (`VmError::Display` emits the same header but is intentionally
-        // plain text — see src/vm/error.rs). Round-59 GAP #4.
-        eprintln!("{}", render_runtime_error_without_source(&e.message, false));
-    }
-}
-
-/// Render a REPL runtime-error call stack as user-facing lines.
-///
-/// Synthetic per-expression wrapper frames (`__repl_eval_<n>`) are
-/// relabelled `<repl>` before rendering so the internal implementation
-/// name never leaks to users, while the frame itself is kept — it marks
-/// the REPL top-level call site the same way `<module:...>` frames mark
-/// module init, and dropping it would erase real user frames from the
-/// output (`render_call_stack` filters stacks that shrink below two
-/// meaningful frames). `render_call_stack` keeps the `<repl>` label
-/// explicitly (src/vm/error.rs).
-///
-/// Every frame's location is `<declaration>`: frame line numbers come
-/// from the original REPL input buffer (or the wrapped input for
-/// `eval_expression`) and don't carry usable positions here.
-///
-/// `pub` so the regression lock (tests/cli/repl_wrapper_frame_leak_tests.rs)
-/// can exercise the exact production rendering path.
-pub fn repl_call_stack_lines(call_stack: &[(String, Span)]) -> Vec<String> {
-    let display_stack: Vec<(String, Span)> = call_stack
-        .iter()
-        .map(|(name, span)| {
-            if is_repl_wrapper_frame(name) {
-                ("<repl>".to_string(), *span)
-            } else {
-                (name.clone(), *span)
-            }
-        })
-        .collect();
-    render_call_stack(&display_stack, |_name, _span| "<declaration>".to_string())
-}
-
-/// Pop the first function out of a freshly-compiled `Vec<Function>` and
-/// wrap it in `Arc`. On an empty list, both REPL paths print the same
-/// internal-error message and bail; this helper centralises that guard.
-/// Returns `None` if the list was empty (the caller should `return`).
-fn take_first_function<F>(functions: Vec<F>) -> Option<Arc<F>> {
-    match functions.into_iter().next() {
-        Some(f) => Some(Arc::new(f)),
-        None => {
-            eprintln!("internal error: empty function list");
-            None
-        }
-    }
-}
-
-/// Take the first compiled function as the runnable script, or a canonical
-/// error string. Shared by the `#[cfg(test)]` eval helpers
-/// (`eval_expression_value` / `eval_declaration_value`) so the
-/// "empty function list" guard literal is not duplicated across them — the
-/// round-70 dedup lock (round70_repl_eval_dedup_lock_tests) asserts the
-/// literal appears exactly twice (here and in `take_first_function`).
-#[cfg(test)]
-fn first_script_or_err<F>(functions: Vec<F>) -> Result<Arc<F>, String> {
-    functions
-        .into_iter()
-        .next()
-        .map(Arc::new)
-        .ok_or_else(|| "internal error: empty function list".to_string())
-}
-
-/// Compile and run `input` as an expression, returning the resulting Value
-/// (or an error message). This is the testable core of `eval_expression`;
-/// the interactive version adds formatted error reporting and stdout output.
-#[cfg(test)]
-fn eval_expression_value(
-    vm: &mut Vm,
-    type_ctx: &mut ReplTypeContext,
-    input: &str,
-) -> Result<Value, String> {
-    // Mirror the synthetic-wrapper-name convention used by the live
-    // `eval_expression` so tests exercise the same dispatch path.
-    let wrapper_name = next_repl_wrapper_name();
-    let wrapper_prefix_owned = format!("fn {wrapper_name}() {{\n");
-    let wrapper_prefix = wrapper_prefix_owned.as_str();
-    let wrapped = format!("{wrapper_prefix}{input}\n}}");
-    let tokens = Lexer::new(&wrapped)
-        .tokenize()
-        .map_err(|e| format!("lex error: {}", e.message))?;
-    let mut program = Parser::new(tokens)
-        .parse_program()
-        .map_err(|e| format!("parse error: {}", e.message))?;
-    let type_errors = type_ctx.check(&mut program);
-    if let Some(err) = type_errors
-        .iter()
-        .find(|e| e.severity == typechecker::Severity::Error)
-    {
-        return Err(format!("type error: {}", err.message));
-    }
-    let mut compiler = Compiler::new();
-    // Match the production order in `eval_expression`: enable REPL mode
-    // *before* importing builtins so the in-file tests exercise the same
-    // codegen branch as the live REPL. Without this, `name.field` against a
-    // previously-bound REPL value compiles via the non-REPL
-    // `GetGlobal("name.field")` path instead of the repl_mode
-    // `GetGlobal(name)` + `GetField(field)` path.
-    compiler.set_repl_mode(true);
-    compiler.import_all_builtins();
-    let (enum_variants, unit_variants) = type_ctx.enum_variant_tables();
-    compiler.seed_known_variants(&enum_variants, &unit_variants);
-    let functions = compiler
-        .compile_program_with_entry(&program, &wrapper_name)
-        .map_err(|e| format!("compile error: {}", e.message))?;
-    let script = first_script_or_err(functions)?;
-    vm.run(script)
-        .map_err(|e| format!("runtime error: {}", e.message))
-}
-
-/// Compile and run a declaration (`let`/`fn`/`type`) into the persistent VM
-/// and type context, mirroring the live `eval_declaration` path. This is the
-/// testable core that lets expression-eval tests first bind a REPL value
-/// (e.g. `let p = Point { x: 42 }`) so a subsequent `eval_expression_value`
-/// can exercise the repl_mode `name.field` codegen path against it.
-#[cfg(test)]
-fn eval_declaration_value(
-    vm: &mut Vm,
-    type_ctx: &mut ReplTypeContext,
-    input: &str,
-) -> Result<(), String> {
-    let tokens = Lexer::new(input)
-        .tokenize()
-        .map_err(|e| format!("lex error: {}", e.message))?;
-    let mut program = Parser::new(tokens)
-        .parse_program()
-        .map_err(|e| format!("parse error: {}", e.message))?;
-    let type_errors = type_ctx.check(&mut program);
-    if let Some(err) = type_errors
-        .iter()
-        .find(|e| e.severity == typechecker::Severity::Error)
-    {
-        return Err(format!("type error: {}", err.message));
-    }
-    let mut compiler = Compiler::new();
-    compiler.import_all_builtins();
-    let (enum_variants, unit_variants) = type_ctx.enum_variant_tables();
-    compiler.seed_known_variants(&enum_variants, &unit_variants);
-    let functions = compiler
-        .compile_declarations(&program)
-        .map_err(|e| format!("compile error: {}", e.message))?;
-    let script = first_script_or_err(functions)?;
-    vm.run(script)
-        .map_err(|e| format!("runtime error: {}", e.message))?;
-    Ok(())
-}
-
-fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
-    // Wrap the expression in a synthetic top-level function so the
-    // compiler can handle it. Round-74 BROKEN fix: this used to be
-    // `fn main()`, which silently shadowed any user-defined `fn main()`
-    // and caused an infinite self-recursion when the user's expression
-    // was `main()`. We now use a unique per-eval name that user code
-    // cannot realistically collide with.
-    let wrapper_name = next_repl_wrapper_name();
-    let wrapper_prefix_owned = format!("fn {wrapper_name}() {{\n");
-    let wrapper_prefix = wrapper_prefix_owned.as_str();
-    let wrapped = format!("{wrapper_prefix}{input}\n}}");
-    // Total lines in the user's real input (minimum 1), used to clamp errors
-    // that land on synthetic tokens past the user's text.
-    let input_line_count = input.lines().count().max(1);
-    let input_byte_len = input.len();
-    // Length (in columns) of the final user-input line, used when clamping
-    // past-end errors so the caret points at the end of the last real line
-    // instead of column 1 of a synthetic `}`.
-    let last_line_cols = input.lines().last().map(|l| l.chars().count()).unwrap_or(0);
-    let tokens = match Lexer::new(&wrapped).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            let adjusted = adjust_error_span_lex(
-                &e,
-                wrapper_prefix.len(),
-                input_line_count,
-                input_byte_len,
-                last_line_cols,
-            );
-            let source_err = SourceError::from_lex_error(&adjusted, input, "<repl>");
-            eprintln!("{source_err}");
-            return;
-        }
-    };
-    let mut program = match Parser::new(tokens).parse_program() {
-        Ok(p) => p,
-        Err(e) => {
-            let adjusted = adjust_error_span_parse(
-                &e,
-                wrapper_prefix.len(),
-                input_line_count,
-                input_byte_len,
-                last_line_cols,
-            );
-            let source_err = SourceError::from_parse_error(&adjusted, input, "<repl>");
-            eprintln!("{source_err}");
-            return;
-        }
-    };
-
-    // Type-check using the persistent REPL context so that previously
-    // defined names are visible to this input.
-    let type_errors = type_ctx.check(&mut program);
-    for te in &type_errors {
-        let adjusted = adjust_error_span_type(
-            te,
-            wrapper_prefix.len(),
-            input_line_count,
-            input_byte_len,
-            last_line_cols,
-        );
-        let source_err = SourceError::from_type_error(&adjusted, input, "<repl>");
-        eprintln!("{source_err}");
-    }
-    if type_errors
-        .iter()
-        .any(|e| e.severity == typechecker::Severity::Error)
-    {
-        return;
-    }
-
-    // Use compile_program_with_entry so `<script>` calls *our* synthetic
-    // wrapper (not the user's `main`, if any). This is the load-bearing
-    // half of the round-74 BROKEN fix — if we passed `"main"` here a
-    // user-defined `fn main()` would still be the one we called.
-    let mut compiler = Compiler::new();
-    compiler.set_repl_mode(true);
-    compiler.import_all_builtins();
-    // Seed enum-variant tables from prior turns so a qualified variant
-    // constructor like `S.C(1)` for an enum declared earlier resolves.
-    let (enum_variants, unit_variants) = type_ctx.enum_variant_tables();
-    compiler.seed_known_variants(&enum_variants, &unit_variants);
-    let functions = match compiler.compile_program_with_entry(&program, &wrapper_name) {
-        Ok(f) => f,
-        Err(e) => {
-            let adjusted = adjust_error_span_compile(
-                &e,
-                wrapper_prefix.len(),
-                input_line_count,
-                input_byte_len,
-                last_line_cols,
-            );
-            let source_err = SourceError::from_compile_error(&adjusted, input, "<repl>");
-            eprintln!("{source_err}");
-            return;
-        }
-    };
-
-    let Some(script) = take_first_function(functions) else {
-        return;
-    };
-    match vm.run(script) {
-        Ok(val) => {
-            if !matches!(val, Value::Unit) {
-                println!("{val}");
-            }
-        }
-        Err(e) => {
-            // Expressions are compiled wrapped in `fn main() { … }`, so spans
-            // need to be translated back into the user's coordinates. Pass
-            // the wrapper metadata so the shared helper can call
-            // `adjust_span`. Branching for in-range / out-of-range spans and
-            // span-less errors lives inside `render_repl_vm_error`.
-            render_repl_vm_error(
-                &e,
-                input,
-                Some((
-                    wrapper_prefix.len(),
-                    input_line_count,
-                    input_byte_len,
-                    last_line_cols,
-                )),
-            );
-        }
-    }
-}
-
-/// Test whether `span` points at a real (line, column) position inside
-/// `input`. Used to detect runtime-error spans that came from a chunk
-/// compiled in a *previous* REPL entry: such spans will have line/col
-/// pairs that don't correspond to any character of the current entry's
-/// source, because each REPL entry is lexed in its own coordinate space
-/// starting from line 1 column 1.
-///
-/// A span "fits" when:
-///   - its line is 1-based and exists in `input`, AND
-///   - its column is 1-based and lies within (or one past the end of)
-///     that line's character count — one past end is valid because it
-///     corresponds to the position right after the last character, e.g.
-///     a trailing expected-token caret.
-fn span_fits_input(span: Span, input: &str) -> bool {
-    if span.line == 0 || span.col == 0 {
-        return false;
-    }
-    let Some(line_text) = input.lines().nth(span.line - 1) else {
-        return false;
-    };
-    let line_chars = line_text.chars().count();
-    span.col <= line_chars + 1
-}
-
-/// Render a runtime-error diagnostic for the REPL when no usable source
-/// location is available. Two shapes share this code path:
-///
-///   * `VmError::span == None` — the VM reported a runtime failure with
-///     no span at all. Previously this fell through to `eprintln!("{e}")`,
-///     which at the time emitted a legacy internal Display prefix (since
-///     fixed: `VmError::Display` now emits the canonical `error[runtime]:`
-///     header, though deliberately without color — see src/vm/error.rs).
-///     Routing through this helper keeps the output colored and
-///     note-split exactly like `silt run` / `silt test`.
-///
-///   * `VmError::span == Some(_)` but the span doesn't fit the current
-///     REPL entry — the error originated inside a chunk compiled in a
-///     *previous* entry (e.g. a `fn` called from a later expression).
-///     Aligning a caret against this entry's text would point at
-///     phantom whitespace, so the primary location is rendered as
-///     `--> <declaration>`, matching how the call-stack frames already
-///     label prior-entry frames.
-///
-/// `show_declaration_locator` controls which shape is emitted:
-///   * `true`  → include ` --> <declaration>` below the header.
-///   * `false` → omit the locator entirely (`SourceError::Display` does
-///     the same when `span.line == 0`).
-///
-/// Multi-line messages are split on the first `\n`: the first line goes
-/// into the `error[runtime]:` header, and subsequent lines render AFTER
-/// the locator as `  = note: …` / `  = help: …` continuation, matching
-/// the layout emitted by `SourceError::Display` (see src/errors.rs).
-///
-/// Public so `tests/cli/repl_error_render_and_keywords_tests.rs` can lock
-/// the output shape directly rather than round-tripping through a
-/// subprocess.
-pub fn render_runtime_error_without_source(
-    message: &str,
-    show_declaration_locator: bool,
-) -> String {
-    let (header_msg, note_body): (&str, Option<&str>) = match message.split_once('\n') {
-        Some((head, rest)) => (head, Some(rest)),
-        None => (message, None),
-    };
-
-    // Round-84 fix: consult `active_colors()` so this helper honors
-    // `NO_COLOR` / `FORCE_COLOR` in the same way `SourceError::Display`
-    // does. Previously this branch always emitted plain text, leaving
-    // span-less / out-of-range runtime errors asymmetric with the
-    // span-in-range path (which routes through `SourceError::Display`
-    // and renders colored when appropriate). Lock:
-    // `tests/round84_repl_render_runtime_error_force_color_tests.rs`.
-    let c = active_colors();
-
-    let mut out = String::new();
-    // Header: bold red `error[runtime]:` followed by bold message,
-    // matching the shape `SourceError::Display` emits for runtime
-    // errors with a real span.
-    out.push_str(c.bold);
-    out.push_str(c.red);
-    out.push_str("error[runtime]");
-    out.push_str(c.reset);
-    out.push_str(c.bold);
-    out.push_str(": ");
-    out.push_str(header_msg);
-    out.push_str(c.reset);
-
-    if show_declaration_locator {
-        // Cyan `-->` arrow, matching the locator line in
-        // `SourceError::Display`.
-        out.push_str("\n ");
-        out.push_str(c.cyan);
-        out.push_str("-->");
-        out.push_str(c.reset);
-        out.push_str(" <declaration>");
-    }
-
-    // Multi-line body: first line becomes `= note:` (unless it
-    // starts with `help: `, in which case it becomes `= help:`);
-    // every subsequent line is aligned-indented continuation.
-    // Matches `SourceError::Display`'s body-line formatting so
-    // multi-line REPL errors look identical to CLI errors.
-    if let Some(body) = note_body {
-        let mut first = true;
-        for line in body.lines() {
-            let (prefix, content) = if let Some(rest) = line.strip_prefix("help: ") {
-                first = false;
-                ("= help:", rest)
-            } else if first {
-                first = false;
-                ("= note:", line)
-            } else {
-                // 7-char padding aligns continuation content under
-                // `= note:`/`= help:` content (same trick as
-                // `SourceError::Display`).
-                ("       ", line)
-            };
-            out.push_str("\n  ");
-            // Continuation-line gutter is colored cyan in the
-            // `SourceError::Display` path, but only for the `= note:`
-            // / `= help:` prefixes — pure-spacing continuation lines
-            // stay plain (otherwise the empty escape pair adds noise
-            // without any visible effect).
-            if prefix.starts_with('=') {
-                out.push_str(c.cyan);
-                out.push_str(prefix);
-                out.push_str(c.reset);
-            } else {
-                out.push_str(prefix);
-            }
-            out.push(' ');
-            out.push_str(content);
-        }
-    }
-
-    out
-}
-
 /// Completion candidates for a given prefix, using the REPL's builtin name
 /// list. Mirrors the logic inside `SiltHelper::complete` but takes just a
 /// prefix string so integration tests can exercise it without building a
@@ -1224,90 +642,6 @@ pub fn completion_candidates_for_prefix(prefix: &str) -> Vec<String> {
         .into_iter()
         .filter(|n| n.starts_with(prefix))
         .collect()
-}
-
-/// Adjust a span from `wrapped` coordinates to `input` coordinates.
-///
-/// The wrapper adds one line (`fn __repl_eval_<n>() {\n`, formerly
-/// `fn main() {\n`) before the user input, so line numbers are off by 1
-/// and byte offsets are off by `prefix_len`. When an error lands on the
-/// synthetic closing `}` — i.e. past the last line of the user's real
-/// input — we clamp it to the last line (and end-of-line column) so the
-/// error pointer stays inside the user's text rather than printing a
-/// phantom line.
-fn adjust_span(
-    span: Span,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> Span {
-    let raw_line = span.line.saturating_sub(1);
-    let (line, col) = if raw_line == 0 {
-        (1, span.col)
-    } else if raw_line > input_lines {
-        // Error lands past the user's input (typically on the synthetic `}`).
-        // Clamp to the end of the last real line.
-        (input_lines, last_line_cols.max(1))
-    } else {
-        (raw_line, span.col)
-    };
-    let raw_offset = span.offset.saturating_sub(prefix_len);
-    let offset = raw_offset.min(input_bytes);
-    Span::with_offset(line, col, offset)
-}
-
-fn adjust_error_span_lex(
-    e: &LexError,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> LexError {
-    LexError {
-        message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
-    }
-}
-
-fn adjust_error_span_parse(
-    e: &ParseError,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> ParseError {
-    ParseError {
-        message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
-    }
-}
-
-fn adjust_error_span_compile(
-    e: &CompileError,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> CompileError {
-    CompileError {
-        message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
-    }
-}
-
-fn adjust_error_span_type(
-    e: &typechecker::TypeError,
-    prefix_len: usize,
-    input_lines: usize,
-    input_bytes: usize,
-    last_line_cols: usize,
-) -> typechecker::TypeError {
-    typechecker::TypeError {
-        message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
-        severity: e.severity,
-    }
 }
 
 #[cfg(test)]
@@ -1331,14 +665,21 @@ mod tests {
     }
 
     #[test]
-    fn builtin_names_contains_module_entries() {
+    fn builtin_names_hold_no_module_member_or_module_variant() {
         let names = builtin_names();
-        assert!(names.contains(&"list.map".to_string()), "missing list.map");
-        assert!(
-            names.contains(&"string.split".to_string()),
-            "missing string.split"
-        );
-        assert!(names.contains(&"math.pi".to_string()), "missing math.pi");
+        for absent in [
+            "list.map",
+            "string.split",
+            "math.pi",
+            "Message",
+            "Monday",
+            "GET",
+        ] {
+            assert!(!names.contains(&absent.to_string()), "offered {absent}");
+        }
+        for present in ["Int", "Option", "Some", "None", "Ok", "Err", "println"] {
+            assert!(names.contains(&present.to_string()), "missing {present}");
+        }
     }
 
     #[test]
@@ -1458,36 +799,6 @@ mod tests {
         assert!(!has_unclosed_delimiters(r#""hello\\\\""#));
     }
 
-    // ── is_declaration ────────────────────────────────────────────
-
-    #[test]
-    fn is_declaration_recognizes_fn() {
-        assert!(is_declaration("fn foo() {}"));
-        assert!(is_declaration("fn add(a, b) { a + b }"));
-    }
-
-    #[test]
-    fn is_declaration_recognizes_let() {
-        assert!(is_declaration("let x = 42"));
-    }
-
-    #[test]
-    fn is_declaration_recognizes_type_and_trait() {
-        assert!(is_declaration("type Color { Red, Green }"));
-        assert!(is_declaration("trait Show { fn show(self) -> String }"));
-    }
-
-    #[test]
-    fn is_declaration_rejects_expression() {
-        assert!(!is_declaration("1 + 2"));
-        assert!(!is_declaration("foo(42)"));
-    }
-
-    #[test]
-    fn is_declaration_recognizes_pub() {
-        assert!(is_declaration("pub fn foo() {}"));
-    }
-
     // ── Multi-line input continuation ─────────────────────────────
     //
     // The REPL reads lines until `has_unclosed_delimiters` returns false.
@@ -1522,272 +833,144 @@ mod tests {
         );
     }
 
-    // ── Expression evaluation ─────────────────────────────────────
+    // ── Evaluation ────────────────────────────────────────────────
 
-    #[test]
-    fn eval_simple_arithmetic() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        let value = eval_expression_value(&mut vm, &mut ctx, "1 + 2").unwrap();
-        assert_eq!(format!("{value}"), "3");
+    fn repl() -> Repl {
+        Repl::new(ProjectSetup::None)
     }
 
-    #[test]
-    fn eval_string_literal() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        let value = eval_expression_value(&mut vm, &mut ctx, r#""hello""#).unwrap();
-        assert_eq!(format!("{value}"), "hello");
-    }
-
-    #[test]
-    fn eval_bool_expression() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        let value = eval_expression_value(&mut vm, &mut ctx, "true").unwrap();
-        assert_eq!(format!("{value}"), "true");
-    }
-
-    // ── repl_mode field-access lock ───────────────────────────────
-    //
-    // Regression lock for the latent gap where `eval_expression_value`
-    // omitted `compiler.set_repl_mode(true)`, so the in-file tests ran the
-    // non-REPL codegen branch and never exercised the repl_mode
-    // `name.field` path of `compile_expr`.
-    //
-    // Here we bind a record value `p` as a REPL global, then read `p.x`
-    // through an expression. In repl_mode the compiler emits
-    // `GetGlobal("p")` + `GetField("x")`, resolving the field against the
-    // stored record. With set_repl_mode(false) (the pre-fix behaviour) the
-    // compiler instead emits `GetGlobal("p.x")`, which is not a registered
-    // global and fails at runtime — so this test FAILS if the flag is
-    // removed and PASSES with it set.
-    #[test]
-    fn eval_repl_mode_field_access_on_bound_record() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        // Declare a record type and bind a value as a REPL global.
-        eval_declaration_value(&mut vm, &mut ctx, "type Point { x: Int, y: Int }")
-            .expect("type declaration should succeed");
-        eval_declaration_value(&mut vm, &mut ctx, "let p = Point { x: 42, y: 7 }")
-            .expect("value binding should succeed");
-        // Read a field via the repl_mode `name.field` codegen path.
-        let value = eval_expression_value(&mut vm, &mut ctx, "p.x")
-            .expect("repl_mode field access should resolve against the bound record");
-        assert_eq!(
-            format!("{value}"),
-            "42",
-            "p.x must resolve to the bound record's field via the repl_mode \
-             GetGlobal(p)+GetField(x) path"
-        );
-    }
-
-    // Round 94 B8 follow-up: the *call* form `p.d(args)` on a bound REPL
-    // value whose field `d` holds a callable. The compiler's Call arm used
-    // to lack the repl_mode guard the FieldAccess arm has, so it treated
-    // `p` as a module and emitted `GetGlobal("p.d")` — which fails at
-    // runtime with `undefined global: p.d` (the bug this locks). With the
-    // guard, a non-builtin-module receiver in REPL mode falls through to the
-    // value method-call path: `GetGlobal(p)` + `CallMethod("d", ..)`, and the
-    // VM's CallMethod resolves `d` against the record's fields when no
-    // method/trait method matches, invoking the stored closure. This mirrors
-    // file mode, where `p` is a local and already takes that path.
-    #[test]
-    fn eval_repl_mode_method_call_on_bound_record_field() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        eval_declaration_value(&mut vm, &mut ctx, "type P { d: Fn(Int) -> Int }")
-            .expect("type declaration should succeed");
-        eval_declaration_value(&mut vm, &mut ctx, "let p = P { d: { x -> x + 1 } }")
-            .expect("value binding should succeed");
-        let value = eval_expression_value(&mut vm, &mut ctx, "p.d(5)")
-            .expect("repl_mode method-style call must invoke the field's closure");
-        assert_eq!(
-            format!("{value}"),
-            "6",
-            "p.d(5) must invoke the closure stored in field `d` via the \
-             repl_mode GetGlobal(p)+CallMethod(d) path, not GetGlobal(\"p.d\")"
-        );
-    }
-
-    // Companion control: a builtin module call inside the REPL must STILL
-    // compile via the module path (`GetGlobal(\"list.sum\")`), proving the
-    // round-94 guard narrows only to non-builtin-module receivers.
-    #[test]
-    fn eval_repl_mode_builtin_module_call_still_resolves() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        eval_declaration_value(&mut vm, &mut ctx, "import list").expect("import should succeed");
-        let value = eval_expression_value(&mut vm, &mut ctx, "list.sum([1, 2, 3])")
-            .expect("builtin module call must still resolve in REPL mode");
-        assert_eq!(format!("{value}"), "6");
-    }
-
-    // Round 94: a function with an INFERRED return type must carry that
-    // type to later REPL turns. `register_fn_decl` generalizes the
-    // signature before the body runs, so `fn f() { 9 }` would persist as
-    // `forall a. () -> a`; a later `let g = f()` then instantiated a fresh
-    // unconstrained var and failed with "cannot infer the type of g". The
-    // ReplTypeContext::check end-of-turn narrowing re-generalizes f's scheme
-    // from its body-inferred type so the next turn sees `() -> Int`. This
-    // FAILS before that narrowing and PASSES after.
-    #[test]
-    fn inferred_return_type_persists_to_later_repl_turn() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        eval_declaration_value(&mut vm, &mut ctx, "fn f() { 9 }")
-            .expect("fn declaration should succeed");
-        eval_declaration_value(&mut vm, &mut ctx, "let g = f()")
-            .expect("let binding from an inferred-return fn must infer across turns");
-        let value = eval_expression_value(&mut vm, &mut ctx, "g").expect("g should be bound");
-        assert_eq!(format!("{value}"), "9");
-    }
-
-    // Companion: chained inferred-return fns across turns.
-    #[test]
-    fn chained_inferred_return_fns_persist_across_turns() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        eval_declaration_value(&mut vm, &mut ctx, "fn f() { 9 }").unwrap();
-        eval_declaration_value(&mut vm, &mut ctx, "fn g() { f() + 1 }").unwrap();
-        eval_declaration_value(&mut vm, &mut ctx, "let h = g()")
-            .expect("let from a chained inferred-return fn must infer across turns");
-        let value = eval_expression_value(&mut vm, &mut ctx, "h").unwrap();
-        assert_eq!(format!("{value}"), "10");
-    }
-
-    // The end-of-turn narrowing must NOT monomorphize a polymorphic fn: an
-    // inferred-generic `fn id(x) { x }` must stay usable at multiple types
-    // across turns. If narrowing wrongly pinned `id` to its first use, the
-    // second call at a different type would fail.
-    #[test]
-    fn inferred_polymorphic_fn_stays_polymorphic_across_turns() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        eval_declaration_value(&mut vm, &mut ctx, "fn id(x) { x }").unwrap();
-        let n = eval_expression_value(&mut vm, &mut ctx, "id(5)").expect("id at Int");
-        assert_eq!(format!("{n}"), "5");
-        let s = eval_expression_value(&mut vm, &mut ctx, "id(\"hi\")")
-            .expect("id at String must still typecheck — polymorphism preserved");
-        assert_eq!(format!("{s}"), "hi");
-    }
-
-    // Round 94: a qualified variant constructor for an enum declared in an
-    // EARLIER turn must resolve. The per-turn compiler only knew builtins
-    // plus the current input's own `type` decls, so `type S { C(Int) }`
-    // (turn 1) then `let c = S.C(1)` (turn 2) compiled `S.C` to
-    // `GetGlobal("S.C")` and died with `undefined global: S.C`. Seeding the
-    // compiler's enum-variant tables from the persistent type context fixes
-    // it. Exercises qualified construction AND a qualified pattern across
-    // turns. Fails before the seeding, passes after.
-    #[test]
-    fn qualified_variant_ctor_and_pattern_persist_across_turns() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        eval_declaration_value(&mut vm, &mut ctx, "type S { C(Int) }")
-            .expect("enum declaration should succeed");
-        eval_declaration_value(&mut vm, &mut ctx, "let c = S.C(1)")
-            .expect("qualified variant constructor must resolve across turns");
-        let value = eval_expression_value(&mut vm, &mut ctx, "match c { S.C(n) -> n }")
-            .expect("qualified variant pattern must resolve across turns");
-        assert_eq!(format!("{value}"), "1");
-    }
-
-    // Companion: nullary qualified variant across turns, both construction
-    // and pattern.
-    #[test]
-    fn qualified_nullary_variant_persists_across_turns() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        eval_declaration_value(&mut vm, &mut ctx, "type Color { Red, Green }")
-            .expect("enum declaration should succeed");
-        eval_declaration_value(&mut vm, &mut ctx, "let col = Color.Red")
-            .expect("qualified nullary variant must resolve across turns");
-        let value = eval_expression_value(
-            &mut vm,
-            &mut ctx,
-            "match col { Color.Red -> 1, Green -> 2 }",
+    /// The value `input` returns, which must run.
+    fn value(repl: &mut Repl, input: &str) -> String {
+        let evaluation = repl.eval(input);
+        let messages: Vec<&str> = evaluation
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+        assert!(evaluation.committed, "`{input}` must run: {messages:?}");
+        format!(
+            "{}",
+            evaluation.value.expect("a committed cell has a value")
         )
-        .expect("qualified nullary pattern must resolve across turns");
-        assert_eq!(format!("{value}"), "1");
     }
 
-    // ── Error recovery ────────────────────────────────────────────
-    //
-    // A syntax error on one line should not corrupt the persistent REPL
-    // state — a valid input on the next turn must still evaluate correctly.
-
-    #[test]
-    fn syntax_error_does_not_break_later_input() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        // First: garbage input → error.
-        let err = eval_expression_value(&mut vm, &mut ctx, "let x =");
-        assert!(err.is_err(), "malformed input should return Err");
-
-        // Second: valid input after the error. The VM and type context
-        // must still be usable.
-        let value = eval_expression_value(&mut vm, &mut ctx, "10 * 10").unwrap();
-        assert_eq!(format!("{value}"), "100");
+    /// The error messages of `input`, which must not run.
+    fn errors(repl: &mut Repl, input: &str) -> Vec<String> {
+        let evaluation = repl.eval(input);
+        assert!(!evaluation.committed, "`{input}` must fail");
+        evaluation
+            .diagnostics
+            .iter()
+            .filter(|d| d.is_error())
+            .map(|d| d.message.clone())
+            .collect()
     }
 
     #[test]
-    fn type_error_does_not_crash() {
-        let mut vm = Vm::new();
-        let mut ctx = ReplTypeContext::new();
-        // `1 + 2.5` is a type error (Int and Float do not mix).
-        let err = eval_expression_value(&mut vm, &mut ctx, "1 + 2.5");
-        assert!(err.is_err(), "type error should return Err");
-        // Next input must still work.
-        let value = eval_expression_value(&mut vm, &mut ctx, "7").unwrap();
-        assert_eq!(format!("{value}"), "7");
+    fn eval_simple_values() {
+        let mut repl = repl();
+        assert_eq!(value(&mut repl, "1 + 2"), "3");
+        assert_eq!(value(&mut repl, r#""hello""#), "hello");
+        assert_eq!(value(&mut repl, "true"), "true");
     }
 
-    // ── adjust_span clamping ──────────────────────────────────────
-    //
-    // When a parse error lands past the user's input (on the synthetic
-    // closing `}` the REPL appends), `adjust_span` clamps the span back
-    // to the last column of the last real line — not one past it.
+    #[test]
+    fn a_field_of_an_earlier_record_value() {
+        let mut repl = repl();
+        value(&mut repl, "type Point { x: Int, y: Int }");
+        value(&mut repl, "let p = Point { x: 42, y: 7 }");
+        assert_eq!(value(&mut repl, "p.x"), "42");
+    }
 
     #[test]
-    fn adjust_span_clamps_synthetic_brace_to_last_real_column() {
-        // Simulate input `42 +` (4 cols on line 1 of user input), wrapped
-        // as `fn main() {\n42 +\n}`. A parse error on the synthetic `}`
-        // arrives as line 3 in wrapped coordinates. After adjustment it
-        // should sit on the last real column (4, the `+`), not column 5.
-        let prefix_len = "fn main() {\n".len();
-        let input = "42 +";
-        let input_bytes = input.len();
-        let last_line_cols = 4; // `+` is column 4
-        let wrapped_span = Span::with_offset(3, 1, prefix_len + input_bytes + 1);
+    fn a_call_of_a_function_field_of_an_earlier_record_value() {
+        let mut repl = repl();
+        value(&mut repl, "type P { d: Fn(Int) -> Int }");
+        value(&mut repl, "let p = P { d: { x -> x + 1 } }");
+        assert_eq!(value(&mut repl, "p.d(5)"), "6");
+    }
 
-        let adjusted = adjust_span(wrapped_span, prefix_len, 1, input_bytes, last_line_cols);
+    #[test]
+    fn an_earlier_import_stays() {
+        let mut repl = repl();
+        value(&mut repl, "import list");
+        assert_eq!(value(&mut repl, "list.sum([1, 2, 3])"), "6");
+        value(&mut repl, "import string.{ to_upper }");
+        assert_eq!(value(&mut repl, r#"to_upper("a")"#), "A");
+    }
 
-        assert_eq!(adjusted.line, 1, "line should clamp to last real line");
+    #[test]
+    fn an_inferred_return_type_is_seen_by_later_cells() {
+        let mut repl = repl();
+        value(&mut repl, "fn f() { 9 }");
+        value(&mut repl, "fn g() { f() + 1 }");
+        value(&mut repl, "let h = g()");
+        assert_eq!(value(&mut repl, "h"), "10");
+    }
+
+    #[test]
+    fn an_inferred_polymorphic_function_stays_polymorphic() {
+        let mut repl = repl();
+        value(&mut repl, "fn id(x) { x }");
+        assert_eq!(value(&mut repl, "id(5)"), "5");
+        assert_eq!(value(&mut repl, r#"id("hi")"#), "hi");
+    }
+
+    #[test]
+    fn variants_of_an_earlier_enum_qualified_and_bare() {
+        let mut repl = repl();
+        value(&mut repl, "type S { C(Int) }");
+        value(&mut repl, "let c = S.C(1)");
+        assert_eq!(value(&mut repl, "match c { S.C(n) -> n }"), "1");
+        value(&mut repl, "type Color { Red, Green }");
+        value(&mut repl, "let col = Color.Red");
         assert_eq!(
-            adjusted.col, 4,
-            "col should sit on the last real column (the `+`), not one past it"
-        );
-        assert_eq!(
-            adjusted.offset, input_bytes,
-            "offset should clamp to end of real input"
+            value(&mut repl, "match col { Color.Red -> 1, Green -> 2 }"),
+            "1"
         );
     }
 
     #[test]
-    fn adjust_span_preserves_in_range_spans() {
-        // An error on line 1 col 3 of wrapped input maps back to line 1
-        // col 3 of user input (line is offset by 1 in wrapped form, but
-        // raw_line == 0 falls through to the first arm unchanged).
-        let prefix_len = "fn main() {\n".len();
-        let input = "foo";
-        let wrapped_span = Span::with_offset(2, 3, prefix_len + 2);
+    fn an_error_leaves_the_session_as_it_was() {
+        let mut repl = repl();
+        value(&mut repl, "let y = 1");
+        assert!(!errors(&mut repl, "let x =").is_empty());
+        assert!(!errors(&mut repl, "1 + 2.5").is_empty());
+        // A redefinition with a type error does not replace `y`.
+        assert!(!errors(&mut repl, r#"let y = 1 + "a""#).is_empty());
+        assert_eq!(value(&mut repl, "y"), "1");
+        // Nor does one that fails when it runs.
+        assert!(!errors(&mut repl, "let y = 1 / 0").is_empty());
+        assert_eq!(value(&mut repl, "y + 1"), "2");
+        // A cell that failed binds nothing.
+        assert!(!errors(&mut repl, "let z = 1 / 0").is_empty());
+        let messages = errors(&mut repl, "z");
+        assert!(
+            messages.iter().any(|m| m.contains("'z'")),
+            "`z` must be undefined: {messages:?}"
+        );
+    }
 
-        let adjusted = adjust_span(wrapped_span, prefix_len, 1, input.len(), 3);
-
-        assert_eq!(adjusted.line, 1);
-        assert_eq!(adjusted.col, 3);
-        assert_eq!(adjusted.offset, 2);
+    #[test]
+    fn a_redefinition_is_early_bound() {
+        let mut repl = repl();
+        value(&mut repl, "fn f() { 1 }");
+        value(&mut repl, "fn g() { f() }");
+        value(&mut repl, "let call_f = { -> f() }");
+        value(&mut repl, r#"fn f() { "two" }"#);
+        assert_eq!(value(&mut repl, "g()"), "1");
+        assert_eq!(value(&mut repl, "call_f()"), "1");
+        assert_eq!(value(&mut repl, "f()"), "two");
+        // A `let` too, with a new type.
+        value(&mut repl, "let x = 1");
+        value(&mut repl, "fn get_x() { x }");
+        value(&mut repl, r#"let x = "s""#);
+        assert_eq!(value(&mut repl, "get_x() + 1"), "2");
+        assert_eq!(value(&mut repl, "x"), "s");
+        // A `let` that binds a name again reads its old value.
+        value(&mut repl, "let n = 10");
+        value(&mut repl, "let n = n + 1");
+        assert_eq!(value(&mut repl, "n"), "11");
     }
 
     // ── DX2: completion filters on module prefix ──────────────────
@@ -1805,7 +988,12 @@ mod tests {
         use rustyline::completion::Completer;
         use rustyline::history::DefaultHistory;
 
-        let names = Rc::new(RefCell::new(builtin_names()));
+        let mut repl = Repl::new(ProjectSetup::None);
+        let evaluation = repl.eval("import string");
+        assert!(evaluation.committed);
+        let mut all = builtin_names();
+        all.extend(evaluation.names);
+        let names = Rc::new(RefCell::new(all));
         let helper = SiltHelper {
             names: names.clone(),
         };

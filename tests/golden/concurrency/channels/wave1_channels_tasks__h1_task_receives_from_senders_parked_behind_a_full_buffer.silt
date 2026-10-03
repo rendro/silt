@@ -13,7 +13,7 @@ fn recv_n(ch, n, acc) {
     0 -> acc
     _ -> {
       match channel.receive(ch) {
-        Message(v) -> recv_n(ch, n - 1, acc + v)
+        channel.Message(v) -> recv_n(ch, n - 1, acc + v)
         _ -> acc
       }
     }

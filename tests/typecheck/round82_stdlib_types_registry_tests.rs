@@ -445,7 +445,7 @@ mod lsp_e2e {
         let uri = "file:///tmp/silt_rn_stdlib_file_stat.silt";
         // Mention `FileStat` in a context the parser accepts so the
         // identifier lands in the AST and reaches the rename guard.
-        let source = "import fs\nfn main() {\n  let _x = FileStat\n  0\n}\n";
+        let source = "import fs\nfn main() {\n  let _x = fs.FileStat\n  0\n}\n";
         client.did_open_and_wait(uri, source);
 
         // `FileStat` starts at line=2, char=11.
@@ -491,7 +491,7 @@ mod lsp_e2e {
     fn rename_stdlib_record_type_response_is_rejected() {
         let mut client = LspClient::spawn();
         let uri = "file:///tmp/silt_rn_stdlib_response.silt";
-        let source = "import http\nfn main() {\n  let _x = Response\n  0\n}\n";
+        let source = "import http\nfn main() {\n  let _x = http.Response\n  0\n}\n";
         client.did_open_and_wait(uri, source);
 
         // `Response` starts at line=2, char=11.

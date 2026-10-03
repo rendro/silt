@@ -24,10 +24,9 @@
 //! unifier (`unify` in `src/typechecker/mod.rs`) and the typechecker's
 //! `resolve_type_expr` / `type_name_for_impl` through [`canonicalize`];
 //! phase C pointed the VM's runtime dispatch (via
-//! [`dispatch_name_for_value`]) and the compiler's trait-impl
-//! global-name emission (via [`canonicalize_type_name`]) at the
-//! canonical-name oracle; phase D added the alias registry described
-//! below.
+//! [`dispatch_type_for_value`]) and the compiler's keying of impl
+//! methods (via [`canonical_head`]) at the canonical-name oracle;
+//! phase D added the alias registry described below.
 //!
 //! ## Display vs canonical name
 //!
@@ -55,18 +54,15 @@
 //! canonicaliser reads when expanding alias references. Implementation
 //! notes:
 //!
-//! - The registry lives on a [`Resolver`] instance owned by the
-//!   `TypeChecker` (see `src/typechecker/mod.rs`). One `Resolver` is
-//!   shared across every per-module typecheck in a single CLI compile
-//!   invocation (so module B importing module A still sees A's
-//!   aliases); LSP pulls each allocate a fresh `Resolver` so per-pull
-//!   state cannot leak across unrelated documents. The pre-refactor
-//!   design used process-global `RwLock<HashMap>` statics; commit
-//!   6364552 replaced that with the per-session `Resolver` to close
-//!   the cross-pull contamination hazard.
-//! - Keys are resolved `String`s rather than `Symbol`s because the
-//!   interner is `thread_local!` (see `crate::intern`), so two threads
-//!   can produce different `Symbol` values for the same string.
+//! - The registry lives on a [`Resolver`] instance in the checker
+//!   tables a compilation session holds (`typechecker::Tables`): every
+//!   module's check of the session reads and adds to the one
+//!   `Resolver`, so module B importing module A sees A's aliases, and
+//!   nothing leaks between sessions.
+//! - An alias is keyed by its [`TypeId`]: two modules may each declare
+//!   an alias of one name; a trait by its [`TraitKey`]. An associated
+//!   type's name is keyed by its resolved `String`, because the interner is `thread_local!`
+//!   (see `crate::intern`).
 //! - Phase A unit tests in this module continue to pass because they
 //!   exercise built-in types only — no aliases registered.
 //! - The substitution helper for parametric aliases is the existing
@@ -74,8 +70,9 @@
 //!   The typechecker assigns one fresh `TyVar` per alias parameter at
 //!   registration time so the substitution is straightforward.
 
-use crate::intern::{Symbol, intern, resolve};
-use crate::types::{TyVar, Type};
+use crate::defs::TypeId;
+use crate::intern::{Symbol, resolve};
+use crate::types::{TraitKey, TyVar, Type, TypeRef};
 use crate::value::Value;
 use std::collections::HashMap;
 
@@ -112,8 +109,9 @@ pub struct AliasInfo {
 // ── Associated-type bindings registry (Phase: associated types) ──────
 //
 // Mirrors the alias-registry pattern above. Keys are
-// `(trait_name, target_canonical_head, assoc_name)` resolved to
-// strings (for the same `Symbol`-vs-thread-local-interner reason).
+// `(trait, target_canonical_head, assoc_name)`, the associated type's
+// name resolved to a string (for the `Symbol`-vs-thread-local-interner
+// reason).
 // The typechecker populates this at impl registration; the
 // canonicaliser reads it when reducing `Type::AssocProj` whose
 // receiver canonicalises to a concrete head.
@@ -133,40 +131,31 @@ pub struct AssocBinding {
 /// triple being registered. Round 76 BROKEN T1 fix.
 #[derive(Debug, Clone)]
 pub struct AssocBindingCycle {
-    /// Trait name of the binding under registration.
-    pub trait_name: String,
+    /// Trait of the binding under registration.
+    pub trait_name: TraitKey,
     /// Canonical target head of the binding under registration.
-    pub head: String,
+    pub head: TypeRef,
     /// Associated-type name of the binding under registration.
     pub assoc_name: String,
     /// Triple at which the cycle closes (may equal `(trait_name,
     /// head, assoc_name)` for direct self-reference, or a different
     /// triple for mutual cycles through other registered bindings).
-    pub via: (String, String, String),
+    pub via: (TraitKey, TypeRef, String),
 }
 
+/// The key of an associated-type binding: the trait, the canonical head
+/// of the impl's target, the associated type's name.
+type AssocKey = (TraitKey, TypeRef, String);
+
 /// Compile-session-scoped storage for the alias and associated-type
-/// binding registries.
+/// binding registries: one per session, shared by every module's check.
 ///
-/// Replaces the previous `RwLock<HashMap>` process-globals: every
-/// `TypeChecker` constructed in one compile invocation (one `silt
-/// run` / `silt check` / `silt test` call, or one LSP pull) shares a
-/// single `Resolver` so cross-module alias resolution still works
-/// (module B importing module A sees A's aliases) without leaking
-/// state across unrelated compile invocations (no cross-pull
-/// contamination in LSP).
-///
-/// Keys are resolved `String`s rather than `Symbol`s because the
-/// interner (`crate::intern`) is `thread_local!`, so two threads
-/// (e.g. parallel test runners) can produce different `Symbol`
-/// values for the same string. Keying by string sidesteps that
-/// hazard and matches the variant-ordinal registry pattern in
-/// `src/value.rs` which is intentionally kept process-global because
-/// the VM consumes it.
+/// An alias is keyed by its definition, so two modules' aliases of one
+/// name are two entries.
 #[derive(Debug, Clone, Default)]
 pub struct Resolver {
-    aliases: HashMap<String, AliasInfo>,
-    assoc_bindings: HashMap<(String, String, String), AssocBinding>,
+    aliases: HashMap<TypeId, AliasInfo>,
+    assoc_bindings: HashMap<AssocKey, AssocBinding>,
 }
 
 impl Resolver {
@@ -176,21 +165,16 @@ impl Resolver {
     }
 
     /// Register a user-declared type alias. Called by the typechecker
-    /// at decl-processing time. Re-registering the same name
-    /// overwrites the previous entry, which matches the duplicate-
-    /// decl semantics enforced elsewhere (`register_type_decl`
-    /// already errors on a duplicate name; the overwrite here is a
-    /// defensive convenience for tests).
-    pub fn register_alias(&mut self, name: Symbol, info: AliasInfo) {
-        self.aliases.insert(resolve(name), info);
+    /// at decl-processing time. Registering the same alias again (its
+    /// module is checked again) replaces the entry.
+    pub fn register_alias(&mut self, alias: TypeRef, info: AliasInfo) {
+        self.aliases.insert(alias.id, info);
     }
 
-    /// Look up a registered alias by name. Returns `None` for built-
-    /// in names and for any user name that has not been registered
-    /// (which is the common case during a non-alias-bearing
-    /// typecheck run).
-    pub fn lookup_alias(&self, name: Symbol) -> Option<AliasInfo> {
-        self.aliases.get(&resolve(name)).cloned()
+    /// Look up a registered alias. Returns `None` for a type that is
+    /// not an alias.
+    pub fn lookup_alias(&self, alias: TypeRef) -> Option<AliasInfo> {
+        self.aliases.get(&alias.id).cloned()
     }
 
     /// Remove a registered alias by name. Used by the typechecker when
@@ -199,8 +183,8 @@ impl Resolver {
     /// target that referenced the now-known-cyclic target, so leaving
     /// those entries in the map produces incoherent diagnostics at
     /// later use sites (round 79 LATENT TS-L1).
-    pub fn unregister_alias(&mut self, name: Symbol) {
-        self.aliases.remove(&resolve(name));
+    pub fn unregister_alias(&mut self, alias: TypeRef) {
+        self.aliases.remove(&alias.id);
     }
 
     /// Register an `assoc-type` impl binding.
@@ -228,12 +212,12 @@ impl Resolver {
     #[allow(clippy::result_large_err)]
     pub fn register_assoc_binding(
         &mut self,
-        trait_name: Symbol,
-        target_head: Symbol,
+        trait_name: TraitKey,
+        target_head: TypeRef,
         assoc_name: Symbol,
         ty: Type,
     ) -> Result<(), AssocBindingCycle> {
-        let head_canon = canonicalize_type_name(self, target_head);
+        let head_canon = canonical_head(self, target_head);
         let canon_ty = canonicalize(self, &ty);
         // Cycle detection: walk the canonicalised RHS, following any
         // already-registered assoc bindings, and refuse insertion if
@@ -241,21 +225,16 @@ impl Resolver {
         // covers both direct self-reference (`type Item =
         // <Int as Container>::Item`) and mutual cycles through other
         // bindings already in the registry.
-        let target_triple = (
-            resolve(trait_name),
-            resolve(head_canon),
-            resolve(assoc_name),
-        );
-        let mut visited: std::collections::HashSet<(String, String, String)> =
-            std::collections::HashSet::new();
+        let target_triple = (trait_name, head_canon, resolve(assoc_name));
+        let mut visited: std::collections::HashSet<AssocKey> = std::collections::HashSet::new();
         // Treat the triple under registration as already-visited so a
         // direct AssocProj on the RHS that resolves to the same triple
         // is detected immediately.
         visited.insert(target_triple.clone());
         if let Some(cycle) = self.find_assoc_cycle(&canon_ty, &mut visited) {
             return Err(AssocBindingCycle {
-                trait_name: target_triple.0.clone(),
-                head: target_triple.1.clone(),
+                trait_name: target_triple.0,
+                head: target_triple.1,
                 assoc_name: target_triple.2.clone(),
                 via: cycle,
             });
@@ -271,21 +250,17 @@ impl Resolver {
     fn find_assoc_cycle(
         &self,
         ty: &Type,
-        visited: &mut std::collections::HashSet<(String, String, String)>,
-    ) -> Option<(String, String, String)> {
+        visited: &mut std::collections::HashSet<AssocKey>,
+    ) -> Option<AssocKey> {
         match ty {
             Type::AssocProj {
                 receiver,
                 trait_name,
                 assoc_name,
             } => {
-                if let Some(head) = head_symbol_of_canon(receiver) {
-                    let head_canon = canonicalize_type_name(self, head);
-                    let triple = (
-                        resolve(*trait_name),
-                        resolve(head_canon),
-                        resolve(*assoc_name),
-                    );
+                if let Some(head) = head_of_canon(receiver) {
+                    let head_canon = canonical_head(self, head);
+                    let triple = (*trait_name, head_canon, resolve(*assoc_name));
                     if visited.contains(&triple) {
                         return Some(triple);
                     }
@@ -361,17 +336,13 @@ impl Resolver {
     /// binding.
     pub fn lookup_assoc_binding(
         &self,
-        trait_name: Symbol,
-        target_head: Symbol,
+        trait_name: TraitKey,
+        target_head: TypeRef,
         assoc_name: Symbol,
     ) -> Option<AssocBinding> {
-        let head_canon = canonicalize_type_name(self, target_head);
+        let head_canon = canonical_head(self, target_head);
         self.assoc_bindings
-            .get(&(
-                resolve(trait_name),
-                resolve(head_canon),
-                resolve(assoc_name),
-            ))
+            .get(&(trait_name, head_canon, resolve(assoc_name)))
             .cloned()
     }
 }
@@ -479,7 +450,7 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
             let canon_recv = canonicalize(resolver, receiver);
             // Try to find a head symbol on the canonicalised receiver.
             // Concrete heads -> impl-table lookup. None -> abstract.
-            if let Some(head) = head_symbol_of_canon(&canon_recv)
+            if let Some(head) = head_of_canon(&canon_recv)
                 && let Some(binding) = resolver.lookup_assoc_binding(*trait_name, head, *assoc_name)
             {
                 // The stored binding was canonicalised at registration
@@ -577,10 +548,9 @@ pub fn canonical_name(ty: &Type) -> String {
 
         // ── Containers ─────────────────────────────────────────────
         // Range collapses to List per the canonicalisation rule. This
-        // is the dispatch oracle the VM's value_type_name_for_dispatch
-        // (phase C) will consult: returning "Range" here would miss
-        // the qualified-global lookup the compiler emits under the
-        // "List.<m>" key.
+        // is the dispatch oracle `dispatch_type_for_value` consults:
+        // returning "Range" here would miss the methods the compiler
+        // keys under `List`.
         Type::List(_) | Type::Range(_) => "List".to_string(),
         Type::Map(_, _) => "Map".to_string(),
         Type::Set(_) => "Set".to_string(),
@@ -589,8 +559,8 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Fun(_, _) => "Fn".to_string(),
 
         // ── User-declared nominal types: identity is the name ──────
-        Type::Record(name, _) => crate::intern::resolve(*name),
-        Type::Generic(name, _) => crate::intern::resolve(*name),
+        Type::Record(name, _) => crate::intern::resolve(name.name),
+        Type::Generic(name, _) => crate::intern::resolve(name.name),
 
         // ── Diagnostic / inference-internal shapes ─────────────────
         // These should never reach a dispatch-name consumer in
@@ -615,210 +585,118 @@ pub fn canonical_name(ty: &Type) -> String {
     }
 }
 
-/// Canonicalise a type-name [`Symbol`] for dispatch-table keys.
+/// The type a dispatch table knows `ty` by: the type itself, or for a
+/// surface alias of a builtin type, the builtin type, or for a user
+/// alias, the head of the type it stands for.
 ///
-/// Mirror of [`canonical_name`] for the case where only the head
-/// constructor's surface name is in hand (as a `Symbol`) — typically
-/// because a parser/AST node carries the user-supplied identifier
-/// rather than a fully reconstructed [`Type`]. The collapse rules,
-/// matching [`canonical_name`]'s reductions:
-///
-/// - `Range` -> `List` (Phase B; `Range` is a nominal alias of
-///   `List`, so Range-targeted impls register under the key both
-///   List and Range receivers reach at dispatch time).
-/// - `Fun`   -> `Fn` (round 71 follow-up; deprecated surface alias
-///   of the function-type name — the VM dispatches closures under
-///   `"Fn"`, so a `trait T for Fun` impl must register there too).
-/// - `()`    -> `Unit` (round 75 TYPE-3; surface alias of the
-///   canonical primitive name, matching
-///   `canonical_name(&Type::Unit) = "Unit"` and
-///   `dispatch_name_for_value(&Value::Unit) = "Unit"`).
+/// - `Range` -> `List` (`Range` is a nominal alias of `List`, so
+///   Range-targeted impls register under the key both List and Range
+///   receivers reach at dispatch time).
+/// - `Fun` -> `Fn` (the surface alias of the function-type name — the
+///   VM dispatches closures under `"Fn"`, so a `trait T for Fun` impl
+///   must register there too).
 /// - Registered user aliases route to the canonical head of their
-///   target (Phase D): `type Bytes = List(Int)` collapses to
-///   `"List"`; chained aliases collapse fully via recursion.
+///   target: `type Bytes = List(Int)` collapses to `List`; chained
+///   aliases collapse fully via recursion.
 ///
-/// Other names round-trip unchanged so the function is safe to apply
-/// unconditionally to any target-type symbol.
-///
-/// Phase B added a sibling helper of the same name in
-/// `src/typechecker/mod.rs` that the typechecker's
-/// `register_trait_impl` and trait-method body-check sites call;
-/// phase C adds this canonical-module copy so the compiler
-/// (`src/compiler/mod.rs`) can route `trait_impl.target_type` through
-/// the same reduction without depending on the typechecker module.
-/// The two copies are hand-maintained duplicates with no automatic
-/// parity guarantee: if the canonicalisation rules ever change, both
-/// MUST be updated together. Doc-comment parity is locked by
-/// `tests/meta/round86_canonicalize_type_name_doc_parity_tests.rs`; see
-/// also the architectural lock test in
-/// `tests/meta/canonical_type_arch_lock_tests.rs`.
-pub fn canonicalize_type_name(resolver: &Resolver, name: Symbol) -> Symbol {
-    let name_str = resolve(name);
-    if name_str.as_str() == "Range" {
-        return intern("List");
+/// Any other type is its own head. (`()` is not a type name: it is
+/// written `Unit` in an impl target.)
+pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
+    if ty.is_builtin("Range") {
+        return TypeRef::builtin("List");
     }
-    // `Fun` is the deprecated surface alias for the function type. It
-    // collapses to `Fn` so a user `trait T for Fun { ... }` impl
-    // registers under the same `("T", "Fn")` key the compiler emits
-    // globals for (`canonical_name(Type::Fun) == "Fn"`) and the VM
-    // dispatches under (`dispatch_name_for_value(VmClosure) == "Fn"`).
-    // Without this collapse, `for Fun` impls would register under a
-    // different key than the runtime dispatch name, and user methods
-    // on function values would never be found.
-    if name_str.as_str() == "Fun" {
-        return intern("Fn");
+    if ty.is_builtin("Fun") {
+        return TypeRef::builtin("Fn");
     }
-    // Round 75 TYPE-3 LATENT: collapse the surface alias `"()"`
-    // onto `"Unit"`. This direction (NOT `Unit → ()`) is mandated
-    // by the runtime dispatch oracle: `dispatch_name_for_value(
-    // &Value::Unit)` returns `canonical_name(&Type::Unit) = "Unit"`,
-    // so the VM looks up `Unit.<method>` in `globals`. Compiler-side
-    // qualified-global emission goes through this function; flipping
-    // the direction would break VM dispatch (round 75 audit fix #3
-    // CAUTION). The typechecker's `inference.rs` FieldAccess arm and
-    // auto-derive registration also key on `"Unit"` post-fix; the
-    // round-74 in-tree mirror at `src/typechecker/mod.rs` collapsed
-    // `Unit → ()` which was inconsistent with the runtime path —
-    // round-75 flips both sites to `() → Unit` (the canonical
-    // direction).
-    if name_str.as_str() == "()" {
-        return intern("Unit");
-    }
-    // Phase D: alias names route to the canonical head of their
-    // target. `type Bytes = List(Int)` registers / dispatches under
-    // `"List"`; `type Pair(a) = (a, a)` under `"Tuple"`. Chained
-    // aliases collapse fully because `canonicalize` already follows
-    // the alias chain inside the stored target — `head_symbol_of`
-    // returns the final non-alias head. The recursive call protects
-    // against future canonicalize changes that might leave a partial
-    // chain in place.
-    if let Some(info) = resolver.lookup_alias(name) {
+    if let Some(info) = resolver.lookup_alias(ty) {
         let canon_target = canonicalize(resolver, &info.target);
-        if let Some(head) = head_symbol_of_canon(&canon_target) {
-            return canonicalize_type_name(resolver, head);
+        if let Some(head) = head_of_canon(&canon_target) {
+            return canonical_head(resolver, head);
         }
     }
-    name
+    ty
 }
 
-/// Head symbol for canonical-name resolution. Used both by this
-/// module's alias-routing logic and by the typechecker's trait-impl
-/// registration path (`src/typechecker/mod.rs::head_symbol_of` was
-/// the duplicate copy collapsed in round 72 LATENT L2; the source
-/// of truth lives here so future drift is structurally impossible).
+/// The head type of a canonical type: the builtin type of a primitive
+/// or container, the named type of a record or `Generic`. Used both by
+/// this module's alias-routing logic and by the typechecker's trait-impl
+/// registration path.
 ///
 /// Returns `None` for shapes that have no nominal head (raw
 /// type-variables, error / never sentinels, associated projections,
 /// anonymous records).
-pub(crate) fn head_symbol_of_canon(ty: &Type) -> Option<Symbol> {
-    match ty {
-        Type::Int => Some(intern("Int")),
-        Type::Float => Some(intern("Float")),
-        Type::Bool => Some(intern("Bool")),
-        Type::String => Some(intern("String")),
-        Type::Unit => Some(intern("Unit")),
-        Type::List(_) | Type::Range(_) => Some(intern("List")),
-        Type::Map(_, _) => Some(intern("Map")),
-        Type::Set(_) => Some(intern("Set")),
-        Type::Channel(_) => Some(intern("Channel")),
-        Type::Tuple(_) => Some(intern("Tuple")),
-        Type::Fun(_, _) => Some(intern("Fn")),
-        Type::Record(name, _) | Type::Generic(name, _) => Some(*name),
+pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
+    let builtin = match ty {
+        Type::Int => "Int",
+        Type::Float => "Float",
+        Type::Bool => "Bool",
+        Type::String => "String",
+        Type::Unit => "Unit",
+        Type::List(_) | Type::Range(_) => "List",
+        Type::Map(_, _) => "Map",
+        Type::Set(_) => "Set",
+        Type::Channel(_) => "Channel",
+        Type::Tuple(_) => "Tuple",
+        Type::Fun(_, _) => "Fn",
+        Type::Record(name, _) | Type::Generic(name, _) => return Some(*name),
         Type::Var(_)
         | Type::Error
         | Type::Never
         | Type::AssocProj { .. }
-        | Type::AnonRecord { .. } => None,
-    }
+        | Type::AnonRecord { .. } => return None,
+    };
+    Some(TypeRef::builtin(builtin))
 }
 
-/// Canonical dispatch name for a runtime [`Value`], where the answer
-/// can be derived from the value's shape alone.
-///
-/// Returns `Some(name)` for every variant whose dispatch identity is a
-/// fixed function of the variant tag plus any carried name string
-/// (records and type descriptors). Returns `None` for
-/// [`Value::Variant`]: enum-variant-tag → parent-type lookup needs the
-/// VM's `__type_of__<tag>` global table, which lives outside this
-/// module. Callers (currently `Vm::value_type_name_for_dispatch` in
-/// `src/vm/mod.rs`) handle the `Variant` case themselves and delegate
-/// every other variant here.
+/// The type a runtime [`Value`] dispatches its methods on: the type the
+/// methods of its impls are keyed by. A record, a variant and a type
+/// descriptor carry their type, so `Int.default()` and
+/// `Todo.decode(...)` route to impls of `Int` / `Todo`.
 ///
 /// The mapping mirrors [`canonical_name`] applied to each `Value`
 /// variant's corresponding [`Type`] — in particular `Value::Range(..)`
-/// returns `"List"` because the type system collapses `Range(t)` to
-/// `List(t)` and the compiler emits trait-impl globals under the
-/// canonical key. Returning `"Range"` here would route a
-/// `Value::Range` receiver to a never-registered `"Range.<m>"` global
-/// and surface `no method '<m>' for type 'Range'` to the user (round
-/// 61 REGRESSION).
-pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
+/// is a `List`, because the type system collapses `Range(t)` to
+/// `List(t)` and the compiler keys `for Range(a)` impls under `List`.
+/// Every function-shaped value (a closure, a builtin, a host function, a
+/// variant constructor) is an `Fn`: the typechecker types each as
+/// `Type::Fun(..)`, so a `trait T for Fn` impl serves them all.
+pub fn dispatch_type_for_value(val: &Value) -> TypeId {
+    let builtin = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
     match val {
-        // Variant requires globals lookup for `__type_of__<tag>`; the
-        // VM handles this branch directly.
-        Value::Variant(_, _) => None,
+        Value::Variant(tag, _) => tag.type_id(),
+        Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.id,
+        Value::PrimitiveDescriptor(name) => TypeRef::builtin(name).id,
+        Value::Int(_) => builtin(Type::Int),
+        Value::Float(_) => builtin(Type::Float),
+        Value::Bool(_) => builtin(Type::Bool),
+        Value::String(_) => builtin(Type::String),
+        Value::List(_) => builtin(Type::List(Box::new(Type::Unit))),
+        Value::Range(..) => builtin(Type::Range(Box::new(Type::Unit))),
+        Value::Map(_) => builtin(Type::Map(Box::new(Type::Unit), Box::new(Type::Unit))),
+        Value::Set(_) => builtin(Type::Set(Box::new(Type::Unit))),
+        Value::Tuple(_) => builtin(Type::Tuple(vec![])),
+        Value::Channel(_) => builtin(Type::Channel(Box::new(Type::Unit))),
+        Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(..) => builtin(Type::Fun(vec![], Box::new(Type::Unit))),
+        Value::Unit => builtin(Type::Unit),
+        Value::Bytes(_) => TypeRef::builtin("Bytes").id,
+        Value::Handle(_) => TypeRef::builtin("Handle").id,
+        Value::TcpListener(_) => TypeRef::builtin("TcpListener").id,
+        Value::TcpStream(_) => TypeRef::builtin("TcpStream").id,
+    }
+}
 
-        // User-declared nominal types carry their own dispatch identity.
-        Value::Record(name, _) => Some(name.clone()),
-        // Type descriptors dispatch on the carried type name, so
-        // `Int.default()` and `Todo.decode(...)` route to impls of
-        // `Int` / `Todo` even though the descriptor value itself is
-        // neither an Int nor a Todo.
-        Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => Some(name.clone()),
-
-        // Built-ins: route every shape through `canonical_name` of the
-        // corresponding `Type` so the dispatch oracle has exactly one
-        // source of truth. Range collapses to "List" via canonical_name.
-        Value::Int(_) => Some(canonical_name(&Type::Int)),
-        Value::Float(_) => Some(canonical_name(&Type::Float)),
-        Value::Bool(_) => Some(canonical_name(&Type::Bool)),
-        Value::String(_) => Some(canonical_name(&Type::String)),
-        Value::List(_) => Some(canonical_name(&Type::List(Box::new(Type::Unit)))),
-        Value::Range(..) => Some(canonical_name(&Type::Range(Box::new(Type::Unit)))),
-        Value::Map(_) => Some(canonical_name(&Type::Map(
-            Box::new(Type::Unit),
-            Box::new(Type::Unit),
-        ))),
-        Value::Set(_) => Some(canonical_name(&Type::Set(Box::new(Type::Unit)))),
-        Value::Tuple(_) => Some(canonical_name(&Type::Tuple(vec![]))),
-        Value::Channel(_) => Some(canonical_name(&Type::Channel(Box::new(Type::Unit)))),
-        // All function-shaped values dispatch under `"Fn"` — the same
-        // canonical name that `canonical_name(Type::Fun)`,
-        // `head_symbol_of_canon(Type::Fun)`, and the typechecker's
-        // `type_name_for_impl` produce. The typechecker types every
-        // function-shaped value as `Type::Fun(..)`, so a user
-        // `trait T for Fn { ... }` impl registers under the
-        // `("T", "Fn")` key. Round 71 follow-up unified the four
-        // sites that used to disagree (`"Fun"` / `"Fn"` /
-        // `"Function"`) and migrated `VmClosure` to `"Fn"`; round 77
-        // closed the gap by routing the `BuiltinFn` and
-        // `VariantConstructor` siblings through the same name. Pre-fix,
-        // those two arms returned their own variant tags
-        // (`"BuiltinFn"` / `"VariantConstructor"`), so binding a builtin
-        // (`let h = println`) or a variant constructor (`let h = May`)
-        // and then calling `h.describe()` surfaced
-        // `no method 'describe' for type 'BuiltinFn'` even though the
-        // `for Fn` impl was registered.
-        //
-        // Each arm is written out long-hand (rather than collapsed
-        // via `|`-patterns) so the round-71 source-grep lock in
-        // `tests/lang/round71_followup_fn_canonical_name_tests.rs` —
-        // which asserts the exact literal
-        // `Value::VmClosure(_) => Some("Fn".to_string())` — keeps
-        // matching. Round-77 lock:
-        // `tests/lang/round77_for_fn_builtinfn_dispatch_tests.rs`.
-        Value::VmClosure(_) => Some("Fn".to_string()),
-        Value::BuiltinFn(_) => Some("Fn".to_string()),
-        Value::VariantConstructor(..) => Some("Fn".to_string()),
-        Value::Unit => Some(canonical_name(&Type::Unit)),
-
-        // Resource types with no Type variant (yet): keep their
-        // historical dispatch names so any registered impls
-        // (`trait Foo for Bytes { ... }`) still resolve.
-        Value::Bytes(_) => Some("Bytes".to_string()),
-        Value::Handle(_) => Some("Handle".to_string()),
-        Value::TcpListener(_) => Some("TcpListener".to_string()),
-        Value::TcpStream(_) => Some("TcpStream".to_string()),
+/// The name of the type [`dispatch_type_for_value`] gives, as messages
+/// show it.
+pub fn dispatch_type_name(val: &Value) -> String {
+    match val {
+        Value::Variant(tag, _) => tag.ty().name.clone(),
+        Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.name.clone(),
+        _ => crate::typeinfo::builtin_type(dispatch_type_for_value(val))
+            .name
+            .clone(),
     }
 }
 
@@ -827,6 +705,18 @@ pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A type of a module, with an id no definition table hands out.
+    fn user_type(name: &str) -> TypeRef {
+        let k = name
+            .bytes()
+            .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+            % 1000;
+        TypeRef {
+            id: crate::defs::TypeId(crate::defs::DefId(u32::MAX - 1 - k)),
+            name: intern::intern(name),
+        }
+    }
     use crate::intern;
     use crate::types::builtins::{BUILTIN_TYPES, BuiltinKind};
 
@@ -933,7 +823,7 @@ mod tests {
 
     #[test]
     fn canonicalize_range_in_record_field() {
-        let name = intern::intern("Holder");
+        let name = user_type("Holder");
         let field = intern::intern("xs");
         let r = Type::Record(name, vec![(field, Type::Range(Box::new(Type::Int)))]);
         let expected = Type::Record(name, vec![(field, Type::List(Box::new(Type::Int)))]);
@@ -943,7 +833,7 @@ mod tests {
 
     #[test]
     fn canonicalize_range_in_generic_args() {
-        let name = intern::intern("Result");
+        let name = TypeRef::builtin("Result");
         let g = Type::Generic(name, vec![Type::Range(Box::new(Type::Int)), Type::String]);
         let expected = Type::Generic(name, vec![Type::List(Box::new(Type::Int)), Type::String]);
         let res = Resolver::new();
@@ -1164,7 +1054,7 @@ mod tests {
 
     #[test]
     fn canonical_name_user_record_uses_name() {
-        let sym = intern::intern("Point");
+        let sym = user_type("Point");
         let r = Type::Record(
             sym,
             vec![
@@ -1177,7 +1067,7 @@ mod tests {
 
     #[test]
     fn canonical_name_user_generic_uses_name() {
-        let sym = intern::intern("Result");
+        let sym = TypeRef::builtin("Result");
         let g = Type::Generic(sym, vec![Type::Int, Type::String]);
         // Parameters are stripped: dispatch is by head constructor.
         assert_eq!(canonical_name(&g), "Result");
@@ -1241,98 +1131,94 @@ mod tests {
         }
     }
 
-    // ── canonicalize_type_name ─────────────────────────────────────
+    // ── canonical_head ─────────────────────────────────────────────
 
     #[test]
-    fn canonicalize_type_name_collapses_range_to_list() {
+    fn canonical_head_collapses_range_to_list() {
         let res = Resolver::new();
         assert_eq!(
-            resolve(canonicalize_type_name(&res, intern::intern("Range"))),
-            "List"
+            canonical_head(&res, TypeRef::builtin("Range")),
+            TypeRef::builtin("List")
         );
     }
 
     #[test]
-    fn canonicalize_type_name_round_trips_unrelated_names() {
+    fn canonical_head_round_trips_unrelated_types() {
         let res = Resolver::new();
-        for n in ["Int", "List", "Map", "Set", "Tuple", "Foo", "Bar"] {
-            let s = intern::intern(n);
-            assert_eq!(
-                canonicalize_type_name(&res, s),
-                s,
-                "expected round-trip for {n}"
-            );
+        let types = ["Int", "List", "Map", "Set", "Tuple"]
+            .map(TypeRef::builtin)
+            .into_iter()
+            .chain([user_type("Foo"), user_type("Bar")]);
+        for ty in types {
+            assert_eq!(canonical_head(&res, ty), ty, "expected round-trip for {ty}");
         }
     }
 
-    // ── dispatch_name_for_value ────────────────────────────────────
+    // ── dispatch_type_for_value ────────────────────────────────────
+
+    fn builtin_id(name: &str) -> TypeId {
+        TypeRef::builtin(name).id
+    }
 
     #[test]
-    fn dispatch_name_for_value_range_returns_list() {
+    fn dispatch_type_for_value_range_is_list() {
         // The whole-stack invariant: a Range receiver dispatches under
-        // the same key the compiler emits for `for List(a)` impls.
+        // the type the compiler keys `for List(a)` impls by.
         let v = Value::Range(1, 5);
-        assert_eq!(dispatch_name_for_value(&v), Some("List".to_string()));
+        assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
+        assert_eq!(dispatch_type_name(&v), "List");
     }
 
     #[test]
-    fn dispatch_name_for_value_list_returns_list() {
+    fn dispatch_type_for_value_list_is_list() {
         let v = Value::List(std::sync::Arc::new(vec![]));
-        assert_eq!(dispatch_name_for_value(&v), Some("List".to_string()));
+        assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
     }
 
     #[test]
-    fn dispatch_name_for_value_primitives() {
+    fn dispatch_type_for_value_primitives() {
+        assert_eq!(dispatch_type_for_value(&Value::Int(0)), builtin_id("Int"));
         assert_eq!(
-            dispatch_name_for_value(&Value::Int(0)),
-            Some("Int".to_string())
+            dispatch_type_for_value(&Value::Float(0.0)),
+            builtin_id("Float")
         );
         assert_eq!(
-            dispatch_name_for_value(&Value::Float(0.0)),
-            Some("Float".to_string())
+            dispatch_type_for_value(&Value::Bool(false)),
+            builtin_id("Bool")
         );
         assert_eq!(
-            dispatch_name_for_value(&Value::Bool(false)),
-            Some("Bool".to_string())
+            dispatch_type_for_value(&Value::String(String::new())),
+            builtin_id("String")
         );
-        assert_eq!(
-            dispatch_name_for_value(&Value::String(String::new())),
-            Some("String".to_string())
-        );
-        assert_eq!(
-            dispatch_name_for_value(&Value::Unit),
-            Some("Unit".to_string())
-        );
+        assert_eq!(dispatch_type_for_value(&Value::Unit), builtin_id("Unit"));
     }
 
     #[test]
-    fn dispatch_name_for_value_record_uses_carried_name() {
-        let v = Value::Record(
-            "Point".to_string(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-        );
-        assert_eq!(dispatch_name_for_value(&v), Some("Point".to_string()));
+    fn dispatch_type_for_value_record_uses_carried_type() {
+        let v = Value::builtin_record(crate::typeinfo::ty::DATE, Default::default());
+        assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::DATE);
+        assert_eq!(dispatch_type_name(&v), "Date");
     }
 
     #[test]
-    fn dispatch_name_for_value_descriptors_use_carried_name() {
+    fn dispatch_type_for_value_descriptors_use_carried_type() {
         assert_eq!(
-            dispatch_name_for_value(&Value::TypeDescriptor("Todo".to_string())),
-            Some("Todo".to_string())
+            dispatch_type_for_value(&Value::TypeDescriptor(
+                crate::typeinfo::builtin_type(crate::typeinfo::ty::WEEKDAY).clone()
+            )),
+            crate::typeinfo::ty::WEEKDAY
         );
         assert_eq!(
-            dispatch_name_for_value(&Value::PrimitiveDescriptor("Int".to_string())),
-            Some("Int".to_string())
+            dispatch_type_for_value(&Value::PrimitiveDescriptor("Int".to_string())),
+            builtin_id("Int")
         );
     }
 
     #[test]
-    fn dispatch_name_for_value_variant_returns_none() {
-        // Variant needs the VM's __type_of__<tag> globals lookup;
-        // dispatch_name_for_value is shape-only, so it returns None
-        // and the VM handles this branch itself.
-        let v = Value::Variant("Some".to_string(), vec![Value::Int(7)]);
-        assert!(dispatch_name_for_value(&v).is_none());
+    fn dispatch_type_for_value_variant_uses_its_type() {
+        let v = Value::variant(crate::typeinfo::bv::SOME, vec![Value::Int(7)]);
+        assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::OPTION);
+        assert_eq!(dispatch_type_name(&v), "Option");
     }
 
     // ── Phase D: alias registry + expansion in canonicalize ──────────
@@ -1344,7 +1230,7 @@ mod tests {
     #[test]
     fn alias_expansion_simple() {
         let mut res = Resolver::new();
-        let name = intern::intern("CanonTest_Bytes");
+        let name = user_type("CanonTest_Bytes");
         res.register_alias(
             name,
             AliasInfo {
@@ -1362,7 +1248,7 @@ mod tests {
     #[test]
     fn alias_expansion_parametric() {
         let mut res = Resolver::new();
-        let name = intern::intern("CanonTest_PairOf");
+        let name = user_type("CanonTest_PairOf");
         // `type CanonTest_PairOf(a) = (a, a)` with a hand-rolled
         // TyVar id of 999.
         let var_id: TyVar = 999;
@@ -1387,8 +1273,8 @@ mod tests {
     #[test]
     fn alias_expansion_chained() {
         let mut res = Resolver::new();
-        let a = intern::intern("CanonTest_ChainA");
-        let b = intern::intern("CanonTest_ChainB");
+        let a = user_type("CanonTest_ChainA");
+        let b = user_type("CanonTest_ChainB");
         res.register_alias(
             a,
             AliasInfo {
@@ -1409,13 +1295,13 @@ mod tests {
         assert_eq!(canonicalize(&res, &ty), Type::List(Box::new(Type::Int)));
     }
 
-    /// `canonicalize_type_name` follows alias chains to the head
-    /// constructor — `Bytes -> List(Int) -> "List"` registers and
-    /// dispatches under the same key as a direct `List` impl.
+    /// `canonical_head` follows alias chains to the head constructor —
+    /// `Bytes -> List(Int) -> List` registers and dispatches under the
+    /// same key as a direct `List` impl.
     #[test]
-    fn canonicalize_type_name_follows_alias_to_head() {
+    fn canonical_head_follows_alias_to_head() {
         let mut res = Resolver::new();
-        let name = intern::intern("CanonTest_Bytes2");
+        let name = user_type("CanonTest_Bytes2");
         res.register_alias(
             name,
             AliasInfo {
@@ -1425,8 +1311,8 @@ mod tests {
             },
         );
         assert_eq!(
-            resolve(canonicalize_type_name(&res, name)),
-            "List",
+            canonical_head(&res, name),
+            TypeRef::builtin("List"),
             "alias name should route to its target's canonical head"
         );
     }
@@ -1439,7 +1325,7 @@ mod tests {
     fn two_resolvers_do_not_share_aliases_unit() {
         let mut a = Resolver::new();
         let b = Resolver::new();
-        let name = intern::intern("CanonTest_IsolatedAlias");
+        let name = user_type("CanonTest_IsolatedAlias");
         a.register_alias(
             name,
             AliasInfo {

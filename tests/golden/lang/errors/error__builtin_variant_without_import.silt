@@ -1,0 +1,5 @@
+-- exit: 1
+-- stderr-contains: error[type]: undefined variable 'Stop'
+-- stderr-contains: help: `Stop` is in module `list`: write `list.Stop` after `import list`, or add `import list.{ Stop }`
+-- A builtin enum's variant belongs to its module: it is no prelude name.
+fn main() { Stop }

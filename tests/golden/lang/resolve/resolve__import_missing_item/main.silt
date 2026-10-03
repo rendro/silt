@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: module 'calc' has no member 'nope'
+-- stderr-contains: --> main.silt:9:15
+-- An import of a name the module does not have is rejected at the name,
+-- even when the name is never used.
+import calc
+import calc.{ nope }
+fn main() {
+  println(calc.add(1, 2))
+}

@@ -1,0 +1,10 @@
+-- cmd: lsp
+-- verdict: same
+-- The LSP loads `helper` through the session, as `silt check` does,
+-- and publishes the same two errors.
+import helper
+
+fn main() {
+  println("{helper.twice(undefined_name)}")
+  println("{helper.thrice(1)}")
+}

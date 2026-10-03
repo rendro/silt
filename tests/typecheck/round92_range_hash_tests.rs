@@ -27,6 +27,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use silt::typeinfo::bv;
 use silt::value::Value;
 
 /// Mirror of `silt::value::MAX_RANGE_MATERIALIZE` (pub(crate), not
@@ -127,7 +128,7 @@ fn nested_huge_range_hash_completes_promptly() {
     // Record with an over-cap range field.
     let mut fields = BTreeMap::new();
     fields.insert("xs".to_string(), Value::Range(0, i64::MAX));
-    let _ = hash_of(&Value::Record("R".to_string(), Arc::new(fields)));
+    let _ = hash_of(&Value::Record(record_type("R"), Arc::new(fields)));
 
     // Tuple, list, and variant containing over-cap ranges.
     let _ = hash_of(&Value::Tuple(vec![
@@ -135,8 +136,8 @@ fn nested_huge_range_hash_completes_promptly() {
         Value::Range(0, 4_000_000_000),
     ]));
     let _ = hash_of(&Value::List(Arc::new(vec![Value::Range(0, i64::MAX)])));
-    let _ = hash_of(&Value::Variant(
-        "Some".to_string(),
+    let _ = hash_of(&Value::variant(
+        bv::SOME,
         vec![Value::Range(i64::MIN, i64::MAX)],
     ));
 
@@ -145,4 +146,18 @@ fn nested_huge_range_hash_completes_promptly() {
         "nested over-cap range hashing must be O(1) per range, took {:?}",
         start.elapsed()
     );
+}
+
+/// A program's record type named `name`, with an id of its own.
+fn record_type(name: &str) -> std::sync::Arc<silt::typeinfo::TypeInfo> {
+    let id = name
+        .bytes()
+        .fold(9000u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+        % 100_000
+        + 10_000;
+    silt::typeinfo::TypeInfo::new_record(
+        silt::defs::TypeId(silt::defs::DefId(id)),
+        name,
+        Vec::new(),
+    )
 }

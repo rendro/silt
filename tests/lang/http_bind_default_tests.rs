@@ -114,7 +114,7 @@ fn server_src(builtin: &str, port: u16) -> String {
 import http
 fn main() {{
   http.{builtin}({port}) {{ _req ->
-    Response {{ status: 200, body: "ok", headers: #{{}} }}
+    http.Response {{ status: 200, body: "ok", headers: #{{}} }}
   }}
 }}
 "#

@@ -249,12 +249,17 @@ fn completion_offers_primitive_types_in_type_annotation_position() {
 
 #[test]
 fn repl_builtin_names_includes_primitive_types() {
-    // `repl::builtin_names` must surface every BUILTIN_TYPES entry so
-    // <Tab> completion in the REPL offers them.
+    // `repl::builtin_names` must surface every prelude type of
+    // BUILTIN_TYPES so <Tab> completion in the REPL offers them; the
+    // builtin modules' (`tcp.TcpStream`, `task.Handle`) come through their
+    // module once it is imported.
     let names = silt::repl::builtin_names();
 
     // Sourced from the authoritative constant.
-    let expected: Vec<&str> = silt::types::builtins::iter_all().map(|b| b.name).collect();
+    let expected: Vec<&str> = silt::types::builtins::iter_all()
+        .map(|b| b.name)
+        .filter(|n| !matches!(*n, "()" | "TcpStream" | "TcpListener" | "Handle"))
+        .collect();
 
     for entry in &expected {
         assert!(
@@ -265,12 +270,11 @@ fn repl_builtin_names_includes_primitive_types() {
         );
     }
 
-    // Sanity: at least the 15 user-typeable type names mentioned in the
-    // round-62 audit (the `()` surface alias makes 16 total — the audit
-    // text refers to the 15 user-facing names).
+    // Sanity: the 15 user-typeable type names of the round-62 audit, but
+    // the three that live in builtin modules.
     assert!(
-        expected.len() >= 15,
-        "BUILTIN_TYPES is expected to have at least 15 entries; got {} — \
+        expected.len() >= 12,
+        "BUILTIN_TYPES is expected to have at least 12 prelude entries; got {} — \
          the authoritative list shrank, update this test.",
         expected.len()
     );
@@ -279,7 +283,7 @@ fn repl_builtin_names_includes_primitive_types() {
     // representative slice of containers.
     for required in &[
         "Int", "Float", "Bool", "String", "Unit", "List", "Range", "Map", "Set", "Channel",
-        "Tuple", "Fn", "Fun", "Handle",
+        "Tuple", "Fn", "Fun",
     ] {
         assert!(
             names.iter().any(|n| n == required),

@@ -1,0 +1,11 @@
+-- verdict: same
+import set
+import list
+
+type A { X, Y }
+type B { Y, Z }
+
+fn main() {
+  let ax: A = X
+  println(ax)
+}

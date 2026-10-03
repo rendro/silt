@@ -1,0 +1,5 @@
+-- verdict: same
+type Outcome { Ok(Int), Failed }
+fn main() {
+  println("hi")
+}

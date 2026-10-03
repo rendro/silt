@@ -1,0 +1,11 @@
+-- verdict: same
+import list
+type P { v: Int }
+trait Greet { fn greet(self) -> String }
+trait Greet for P { fn greet(self) -> String { "p" } }
+fn main() {
+  let ps = [P { v: 1 }]
+  let f = fn(p) { p.greet() }
+  println(f(P { v: 2 }))
+  println(list.map(ps, f))
+}

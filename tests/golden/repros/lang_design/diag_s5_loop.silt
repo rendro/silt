@@ -1,0 +1,17 @@
+-- verdict: same
+fn main() {
+  let r = loop {
+    5
+  }
+  println(r)
+  let n = loop i = 0 {
+    match i < 3 {
+      true -> {
+        let j = loop(i + 1)
+        j * 100
+      }
+      false -> i
+    }
+  }
+  println(n)
+}

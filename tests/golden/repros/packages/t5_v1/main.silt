@@ -1,0 +1,10 @@
+-- verdict: same
+import lib1
+fn main() {
+  let s = lib1.mk()
+  -- pattern match on private variant by bare name
+  match s {
+    S(n) -> println(n)
+    Other -> println("other")
+  }
+}

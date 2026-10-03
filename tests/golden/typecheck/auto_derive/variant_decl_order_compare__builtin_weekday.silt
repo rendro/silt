@@ -1,7 +1,7 @@
 import time
 fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
 fn main() {
-    println(cmp_gen(Monday, Friday))
-    println(cmp_gen(Sunday, Monday))
-    println(cmp_gen(Wednesday, Wednesday))
+    println(cmp_gen(time.Monday, time.Friday))
+    println(cmp_gen(time.Sunday, time.Monday))
+    println(cmp_gen(time.Wednesday, time.Wednesday))
 }

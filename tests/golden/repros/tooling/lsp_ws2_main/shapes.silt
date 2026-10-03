@@ -1,0 +1,16 @@
+pub type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+}
+
+-- Area of a shape.
+pub fn area(s: Shape) -> Float {
+  match s {
+    Circle(r) -> 3.14 * r * r
+    Rect(w, h) -> w * h
+  }
+}
+
+fn private_helper(x: Int) -> Int {
+  x
+}

@@ -1,0 +1,7 @@
+-- verdict: same
+import a
+import b
+
+fn main() {
+  println(a.is_small(b.huge()))
+}

@@ -1,0 +1,18 @@
+-- verdict: same
+trait Deep {
+  fn go(self) -> Int
+}
+trait Deep for Int {
+  fn go(self) -> Int {
+    match self {
+      0 -> 0
+      _ -> 1 + (self - 1).go()
+    }
+  }
+}
+fn main() {
+  println(1000.go())
+  println(5000.go())
+  println(20000.go())
+  println(90000.go())
+}

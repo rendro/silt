@@ -1,0 +1,12 @@
+-- verdict: same
+fn main() {
+  let t = (1,)
+  let u = (1)
+  println(t)
+  println(u)
+  let e = #{}
+  let s = #[]
+  let l = []
+  println(e)
+  println(l)
+}

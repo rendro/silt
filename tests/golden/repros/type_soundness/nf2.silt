@@ -1,0 +1,9 @@
+-- verdict: same
+import float
+import math
+import int
+import list
+fn main() {
+  let a: Float = list.sum([1.0e308, 1.0e308])
+  println(a)
+}
