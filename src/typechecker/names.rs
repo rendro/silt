@@ -752,7 +752,7 @@ fn report_type_name_clashes(
     }
 }
 
-/// Report each private type or trait of `module` that a public
+/// Report each private record, enum or trait of `module` that a public
 /// declaration names: a `pub fn`'s parameter and return types and its
 /// where-bounds, a `pub type`'s fields, variants and alias target. An
 /// importer could use the public declaration but never name the private
@@ -763,10 +763,15 @@ fn report_private_in_public(
     defs: &DefTable,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    // A type alias is transparent: a private one stands for a type the
+    // importer can name.
     let private = |res: Option<Res>| match res {
         Some(Res::Def(id)) => {
             let def = defs.get(id);
-            (def.module == module && def.vis == Vis::Private).then_some(def)
+            (def.module == module
+                && def.vis == Vis::Private
+                && !matches!(def.kind, DefKind::TypeAlias))
+            .then_some(def)
         }
         _ => None,
     };
