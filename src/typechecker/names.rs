@@ -694,7 +694,7 @@ fn report_private_in_public(
         }
         _ => None,
     };
-    let mut report = |def: &Def, span: Span, owner: String| {
+    let mut report = |def: &Def, span: Span, (owner, owner_name): (String, Symbol)| {
         let what = if matches!(def.kind, DefKind::Trait(_)) {
             "trait"
         } else {
@@ -711,8 +711,7 @@ fn report_private_in_public(
                 format!("'{}' is declared without `pub`", def.name),
             )
             .with_help(format!(
-                "mark `{}` `pub`, or the {owner} private, so that an importer can name what \
-                 it uses",
+                "mark `{}` `pub`, or drop the `pub` of '{owner_name}'",
                 def.name
             )),
         );
@@ -756,7 +755,7 @@ fn report_private_in_public(
                     names.push((wc.trait_res, wc.trait_name_span));
                     wc.trait_args.iter().for_each(|a| type_names(a, &mut names));
                 }
-                format!("public fn '{}'", f.name)
+                (format!("public fn '{}'", f.name), f.name)
             }
             Decl::Type(td) if td.is_pub => {
                 match &td.body {
@@ -769,7 +768,7 @@ fn report_private_in_public(
                     }
                     TypeBody::Alias(target) => type_names(target, &mut names),
                 }
-                format!("public type '{}'", td.name)
+                (format!("public type '{}'", td.name), td.name)
             }
             _ => continue,
         };
