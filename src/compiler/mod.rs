@@ -2082,6 +2082,12 @@ impl Compiler {
                         self.compile_operands_above(1, args)?;
                         let argc = args.len() as u8;
                         self.emit_call(argc, tail, span);
+                    } else if let Some(global) = self.qualified_type_member(callee) {
+                        let idx = self.add_constant(Value::String(global), span)?;
+                        self.current_chunk().emit_op_u16(Op::GetGlobal, idx, span);
+                        self.compile_operands_above(1, args)?;
+                        let argc = args.len() as u8;
+                        self.emit_call(argc, tail, span);
                     } else if let ExprKind::Ident(name) = &receiver.kind
                         && is_module_call
                         && self.known_unit_variants.contains(&resolve(*name))
@@ -2178,6 +2184,11 @@ impl Compiler {
             ExprKind::FieldAccess(..) if let Some(variant) = self.variant_value(expr) => {
                 let idx = self.add_constant(variant, span)?;
                 self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
+            ExprKind::FieldAccess(..) if let Some(global) = self.qualified_type_member(expr) => {
+                let idx = self.add_constant(Value::String(global), span)?;
+                self.current_chunk().emit_op_u16(Op::GetGlobal, idx, span);
             }
 
             ExprKind::FieldAccess(expr, field, _) => {
@@ -2958,6 +2969,30 @@ impl Compiler {
     }
 
     // ── Helper: qualified variants ───────────────────────────────
+
+    /// The global of `m.T.method`, a method of the type `T` of a module
+    /// reached through the type, as the resolver resolved `m.T`: the
+    /// impl's `<T>.<method>` global, as `T.method` reaches it.
+    fn qualified_type_member(&self, expr: &Expr) -> Option<String> {
+        let ExprKind::FieldAccess(obj, field, _) = &expr.kind else {
+            return None;
+        };
+        if !matches!(obj.kind, ExprKind::FieldAccess(..)) {
+            return None;
+        }
+        let Some(crate::defs::Res::Def(id)) = obj.res else {
+            return None;
+        };
+        let def = match &self.units.defs {
+            Some(defs) => defs.get(id).clone(),
+            None => crate::typechecker::names::builtin_def(id)?,
+        };
+        if !def.is_type() {
+            return None;
+        }
+        let ty = canonicalize_type_name(self.resolver(), def.name);
+        Some(format!("{ty}.{field}"))
+    }
 
     /// The value of the variant `expr` names, as the resolver resolved
     /// it (`Red`, `Color.Red`, `m.Red`, `m.Color.Red`): a nullary variant

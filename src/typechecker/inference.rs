@@ -626,6 +626,10 @@ impl TypeChecker {
 
         // Validate where clauses
         for wc in &f.where_clauses {
+            // A bound the resolver resolved to nothing: it reported why.
+            if wc.trait_res == Some(crate::defs::Res::Error) {
+                continue;
+            }
             let type_param = &wc.type_param;
             let trait_name = &wc.trait_name;
             let trait_args = &wc.trait_args;
@@ -2584,9 +2588,17 @@ impl TypeChecker {
                     expr.ty = Some(ty.clone());
                     return ty;
                 }
-                // `Type.method`: a method of a type, called through it.
-                if let ExprKind::Ident(type_name) = &obj.kind
-                    && obj.res != Some(crate::defs::Res::Local)
+                // `Type.method`: a method of a type, called through it
+                // (`Shape.describe`, `m.Shape.describe`).
+                let type_name = match (&obj.kind, obj.res) {
+                    (_, Some(crate::defs::Res::Local)) => None,
+                    (_, res) if self.res_def(res).is_some_and(|def| def.is_type()) => {
+                        self.res_def(res).map(|def| def.name)
+                    }
+                    (ExprKind::Ident(name), _) => Some(*name),
+                    _ => None,
+                };
+                if let Some(type_name) = type_name
                     && let Some(scheme) = env.lookup(intern(&format!("{type_name}.{field}")))
                 {
                     let scheme = scheme.clone();

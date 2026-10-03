@@ -6779,6 +6779,10 @@ impl TypeChecker {
         let expanded_self_args = self.type_args_of(&self_type);
         let mut impl_obligations_by_index: Vec<(usize, Symbol, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
+            // A bound the resolver resolved to nothing: it reported why.
+            if wc.trait_res == Some(crate::defs::Res::Error) {
+                continue;
+            }
             let type_param = &wc.type_param;
             let trait_name = &wc.trait_name;
             let trait_args = &wc.trait_args;
@@ -7205,6 +7209,10 @@ impl TypeChecker {
             // follow-up folds that latent gap into the same code path.
             let mut method_constraints = impl_level_constraints.clone();
             for wc in &method.where_clauses {
+                // A bound the resolver resolved to nothing: it reported why.
+                if wc.trait_res == Some(crate::defs::Res::Error) {
+                    continue;
+                }
                 let type_param = &wc.type_param;
                 let trait_name = &wc.trait_name;
                 let trait_args = &wc.trait_args;

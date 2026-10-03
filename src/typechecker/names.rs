@@ -968,6 +968,23 @@ impl Resolver<'_> {
         found
     }
 
+    /// An imported module (by its import name) that declares `name`
+    /// without `pub`.
+    fn private_in_import(&self, name: Symbol) -> Option<Symbol> {
+        let mut found: Vec<Symbol> = self
+            .imports
+            .iter()
+            .filter_map(|(module, imported)| match imported {
+                Imported::Module(_, scope) if scope.exports.private.contains_key(&name) => {
+                    Some(*module)
+                }
+                _ => None,
+            })
+            .collect();
+        found.sort_by_key(|m| resolve(*m));
+        found.first().copied()
+    }
+
     /// The help for `name`, which resolves to nothing here but which the
     /// modules `elsewhere` offer.
     fn elsewhere_help(&self, name: Symbol, elsewhere: &[(Symbol, Option<Symbol>)]) -> String {
@@ -1207,6 +1224,21 @@ impl Resolver<'_> {
             }
             let elsewhere = self.elsewhere(name);
             if elsewhere.is_empty() {
+                // A private type or trait of an imported module: the
+                // checker would find it by its name.
+                if let Some(module) = self.private_in_import(name) {
+                    self.error(
+                        Diagnostic::error(
+                            Code::UnresolvedName,
+                            span,
+                            format!("unknown {what} '{name}'"),
+                        )
+                        .with_help(format!(
+                            "module '{module}' has a {what} '{name}', but it is private there"
+                        )),
+                    );
+                    return Some(Res::Error);
+                }
                 return None;
             }
             let help = self.elsewhere_help(name, &elsewhere);
@@ -1409,6 +1441,10 @@ impl Resolver<'_> {
                     Some(Binding::Def(ty)) if self.defs.get(ty).is_type() => {
                         self.enum_variant(ty, &resolve(q.name), name, span)
                     }
+                    None if crate::module::is_builtin_module(&resolve(q.name)) => {
+                        self.not_a_module(*q, &[name], "type");
+                        Some(Res::Error)
+                    }
                     _ => {
                         self.error(Diagnostic::error(
                             Code::UndefinedConstructor,
@@ -1518,7 +1554,22 @@ impl Resolver<'_> {
                 }
                 Some(_) => Some(Res::Error),
                 None => {
-                    let d = if exports.private.contains_key(&e.name) {
+                    let variant_of = match exports.values.get(&e.name) {
+                        Some(Binding::Def(v)) => self.defs.variant_type(*v).map(|ty| ty.name),
+                        _ => None,
+                    };
+                    let d = if let Some(ty) = variant_of {
+                        Diagnostic::error(
+                            Code::NoSuchVariant,
+                            e.span,
+                            format!(
+                                "'{q}.{e}' is a variant of enum '{q}.{ty}', not a type: write \
+                                 `{q}.{e}` or `{q}.{ty}.{e}`",
+                                q = q.name,
+                                e = e.name
+                            ),
+                        )
+                    } else if exports.private.contains_key(&e.name) {
                         Diagnostic::error(
                             Code::PrivateItem,
                             e.span,
