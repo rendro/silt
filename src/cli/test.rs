@@ -213,11 +213,6 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             unreachable!("a program compiled for its tests has tests as its entry point");
         };
         let sources = session.into_sources();
-        let Some(first) = program.functions.first().cloned() else {
-            eprintln!("{path}: internal error: no functions compiled");
-            counts.file_errors += 1;
-            continue;
-        };
         // Tasks that the file's top-level code spawns are the file's.
         let file_index = owners.add_file(TestFile {
             path: path.clone(),
@@ -227,10 +222,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let setup_owner = owners.add_owner(file_index, None);
         silt::scheduler::set_task_owner(setup_owner);
 
-        let script = Arc::new(first);
         let mut vm = Vm::new();
-        vm.load(&program);
-        if let Err(e) = vm.run(script) {
+        if let Err(e) = vm.run_program(&program) {
             owners.mark_failed(setup_owner);
             // G2 (audit round 21): frame and error-header paths follow
             // the style of the path the user typed, as under `silt run`.

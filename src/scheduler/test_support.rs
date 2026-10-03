@@ -314,8 +314,7 @@ fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) 
             return (stdout, Err(crate::vm::VmError::new(message)));
         }
     };
-    let (mut vm, script) = crate::session::testing::vm_for(&program);
-    let result = vm.run(script);
+    let result = crate::vm::Vm::new().run_program(&program);
     (stdout, result)
 }
 

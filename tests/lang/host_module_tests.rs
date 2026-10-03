@@ -443,9 +443,6 @@ fn docs_ffi_quick_start() {
 
     // 4. Compile it and run it.
     let program = session.compile(file, Entry::Main).expect("compiles");
-    let script = program.functions[0].clone();
-    let mut vm = Vm::new();
-    vm.load(&program);
-    let result = vm.run(Arc::new(script)).unwrap();
+    let result = Vm::new().run_program(&program).unwrap();
     assert_eq!(result, Value::Int(42));
 }

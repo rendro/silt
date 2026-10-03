@@ -22,8 +22,7 @@ fn run_vm(source: &str) -> Value {
 /// Helper: compile a silt program through a session and run it.
 fn run_vm_result(source: &str) -> Result<Value, VmError> {
     let program = crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
-    let (mut vm, script) = crate::session::testing::vm_for(&program);
-    vm.run(script)
+    Vm::new().run_program(&program)
 }
 
 // ── Phase 1 bytecode-level tests ──────────────────────────────

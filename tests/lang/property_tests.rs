@@ -278,8 +278,7 @@ proptest! {
                 ));
             }
         };
-        let (mut vm, script) = silt::session::testing::vm_for(&program);
-        let vm_result = vm.run(script);
+        let vm_result = silt::vm::Vm::new().run_program(&program);
 
         // Reference semantics via Rust's checked arithmetic.
         let expected = match op {

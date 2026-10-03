@@ -3,7 +3,6 @@
 //! <file>.silt` convenience shim.
 
 use std::process;
-use std::sync::Arc;
 
 use silt::ast::{Decl, Program};
 use silt::diagnostic::{Code, Diagnostic, render_human};
@@ -207,19 +206,12 @@ pub(crate) fn vm_run_file(path: &str) {
         .unwrap_or(Span::point(file, 0));
     let sources = session.into_sources();
 
-    let Some(script) = program.functions.first().cloned() else {
-        eprintln!("{path}: internal error: empty function list");
-        process::exit(1);
-    };
-    let script = Arc::new(script);
-
     // Run via VM. The failures of tasks that nobody joins are taken and
     // reported here, against the program's files, instead of by the
     // scheduler.
     silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new();
-    vm.load(&program);
-    let run_result = vm.run(script);
+    let run_result = vm.run_program(&program);
     // The program has ended. The tasks that failed by now and that
     // nobody joined or cancelled are reported, and make the run fail. A
     // task that is still running is not a failure; if it fails later,

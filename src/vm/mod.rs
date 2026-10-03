@@ -612,11 +612,28 @@ impl Vm {
         }
     }
 
+    /// Run a compiled program: take in its tables, then run its script.
+    /// The value is the script's: `main`'s for a program compiled for
+    /// `Entry::Main`. This is the one way to start a [`Program`]; the
+    /// functions of a loaded program (a test) are called with
+    /// [`Vm::run`] afterwards. A REPL session runs each entry's program
+    /// on one `Vm`.
+    ///
+    /// [`Program`]: crate::session::Program
+    pub fn run_program(&mut self, program: &crate::session::Program) -> Result<Value, VmError> {
+        self.load(program);
+        let script =
+            program.functions.first().cloned().ok_or_else(|| {
+                VmError::new("internal VM error: a program without a script".into())
+            })?;
+        self.run(Arc::new(script))
+    }
+
     /// Take in a program about to run: the descriptions its values'
     /// types carry, which the decoders look up by id, and its global
-    /// slots. A REPL entry's program has the slots of the entries
-    /// before it too, whose values stay.
-    pub fn load(&mut self, program: &crate::session::Program) {
+    /// slots and impl methods. A REPL entry's program has the slots of
+    /// the entries before it too, whose values stay.
+    pub(crate) fn load(&mut self, program: &crate::session::Program) {
         Arc::make_mut(&mut self.types).extend(&program.types);
         self.global_slots = program.globals.clone();
         self.globals.resize(self.global_slots.len(), None);

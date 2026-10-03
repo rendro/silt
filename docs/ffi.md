@@ -16,7 +16,6 @@ typechecked against the signature the embedder declared.
 
 ```rust
 use std::path::Path;
-use std::sync::Arc;
 
 use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
 use silt::{Value, Vm};
@@ -42,10 +41,7 @@ assert!(!analysis.has_errors());
 
 // 4. Compile it and run it.
 let program = session.compile(file, Entry::Main).expect("compiles");
-let script = program.functions[0].clone();
-let mut vm = Vm::new();
-vm.load(&program);
-let result = vm.run(Arc::new(script)).unwrap();
+let result = Vm::new().run_program(&program).unwrap();
 assert_eq!(result, Value::Int(42));
 ```
 
@@ -194,11 +190,12 @@ thread in the task scheduler's pool. The type system enforces this. Use
 
 ## Vm Lifecycle
 
-A `Vm` is a single interpreter instance. `vm.load(&program)` takes in a
-compiled program: the types of its values and its global slots, one per
-top-level function, `let`, host function and trait method. The program
-carries its host functions: the `Vm` needs no other set-up.
-`vm.run(script)` then runs the program's script, `program.functions[0]`.
+A `Vm` is a single interpreter instance. `vm.run_program(&program)` runs
+a compiled program: it takes in the types of the program's values and
+its global slots (one per top-level function, `let`, host function and
+trait method), then runs the program's script and returns `main`'s
+value. The program carries its host functions: the `Vm` needs no other
+set-up.
 
 **Reusing a Vm.** Run one program per `Vm`: build a fresh `Vm::new()`
 for each. (The entries of a REPL session are compiled to follow one
@@ -226,7 +223,7 @@ several scripts in parallel from Rust, create one `Vm` per thread.
   the way to fail; the catch is a safety net.
 
 ```rust
-match vm.run(script) {
+match vm.run_program(&program) {
     Ok(value) => println!("result: {:?}", value),
     Err(e) => eprintln!("silt error: {}", e.message),
 }

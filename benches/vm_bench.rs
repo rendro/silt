@@ -18,8 +18,9 @@ fn compile(source: &str) -> Program {
 }
 
 fn run_once(program: &Program) -> Value {
-    let (mut vm, script) = silt::session::testing::vm_for(program);
-    vm.run(script).expect("runtime error")
+    silt::vm::Vm::new()
+        .run_program(program)
+        .expect("runtime error")
 }
 
 fn bench(name: &str, source: &str) -> Duration {
@@ -429,12 +430,13 @@ import list
 fn main() {
   let ch = channel.new(10000)
   -- Pre-fill the channel, then read back (avoids cross-thread blocking)
-  list.each(1..10001) { n -> channel.send(ch, n) }
+  list.each(1..10000) { n -> channel.send(ch, n) }
   channel.close(ch)
   let sum = loop acc = 0 {
     match channel.receive(ch) {
       channel.Message(n) -> loop(acc + n)
       channel.Closed -> acc
+      _ -> acc
     }
   }
   sum
@@ -479,6 +481,7 @@ fn main() {
         match result {
           (_, channel.Message(n)) -> loop(acc + n, done)
           (_, channel.Closed) -> loop(acc, done + 1)
+          _ -> acc
         }
       }
     }
@@ -532,7 +535,7 @@ fn main() { compute(100000, 0.0) }
 fn generate_large_program(num_fns: usize) -> String {
     let mut s = String::new();
     for i in 0..num_fns {
-        s.push_str(&format!("fn f{i}(x) = x + {i}\n"));
+        s.push_str(&format!("fn f{i}(x) {{ x + {i} }}\n"));
     }
     s.push_str("fn main() { f0(1) }\n");
     s

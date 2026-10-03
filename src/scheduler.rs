@@ -1966,10 +1966,11 @@ mod tests {
     /// Compile a Silt snippet and return a VM ready for execute_slice.
     fn make_vm(src: &str) -> Vm {
         let program = crate::session::testing::compile_str(src).expect("compile error");
-        let (mut vm, script) = crate::session::testing::vm_for(&program);
+        let mut vm = Vm::new();
+        vm.load(&program);
         vm.is_scheduled_task = true;
         let closure = Arc::new(VmClosure {
-            function: script,
+            function: Arc::new(program.functions[0].clone()),
             upvalues: vec![],
         });
         vm.frames.push(CallFrame {

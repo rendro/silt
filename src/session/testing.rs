@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::ast;
-use crate::bytecode::Function;
 use crate::diagnostic::Diagnostic;
 use crate::value::Value;
 use crate::vm::Vm;
@@ -82,8 +81,7 @@ pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Va
             .map(|d| d.message.clone())
             .unwrap_or_default()
     })?;
-    let (mut vm, script) = vm_for(&program);
-    vm.run(script).map_err(|e| e.to_string())
+    Vm::new().run_program(&program).map_err(|e| e.to_string())
 }
 
 /// Compile `source` as a program that starts at `main`. `Err` holds the
@@ -135,19 +133,6 @@ pub fn analyze_files(files: &[(&str, &str)]) -> (Arc<ast::Program>, Vec<Diagnost
         .map(|analysis| analysis.ast.clone())
         .expect("an opened file is analysed");
     (ast, diagnostics)
-}
-
-/// A VM that has loaded `program`, and the program's script, ready for
-/// [`Vm::run`].
-pub fn vm_for(program: &Program) -> (Vm, Arc<Function>) {
-    let mut vm = Vm::new();
-    vm.load(program);
-    let script = program
-        .functions
-        .first()
-        .cloned()
-        .expect("a compiled program has a script");
-    (vm, Arc::new(script))
 }
 
 /// The path of the in-memory file `name` of a test program, for a test

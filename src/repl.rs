@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -327,13 +326,7 @@ impl Repl {
                 return evaluation;
             }
         };
-        self.vm.load(&program);
-        let script = program
-            .functions
-            .into_iter()
-            .next()
-            .expect("a compiled program has a script");
-        match self.vm.run(Arc::new(script)) {
+        match self.vm.run_program(&program) {
             Ok(value) => {
                 self.session.commit_cell(file);
                 let module = self.session.module_of(file);
