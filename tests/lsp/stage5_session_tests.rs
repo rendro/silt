@@ -628,8 +628,7 @@ fn module_names_and_imported_items_in_hover_and_completion() {
 #[test]
 fn completion_follows_the_import_rule() {
     let lib = "pub type Shape { Sq(Int), Ci(Int) }\npub fn area(s: Shape) -> Int { 1 }\n";
-    let main =
-        "import lib\nimport lib.{ Sq }\nimport list as l\n\nfn main() {\n  \n  l.\n  bytes.\n}\n";
+    let main = "import lib\nimport lib.{ Sq, Shape }\nimport list as l\n\ntype Color { Red, Green }\n\nfn main() {\n  \n  l.\n  bytes.\n  Color.\n  Shape.\n}\n";
     let dir = project("rule", &[("lib.silt", lib), ("main.silt", main)]);
     let main_uri = uri(&dir.join("main.silt"));
     let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
@@ -652,7 +651,9 @@ fn completion_follows_the_import_rule() {
         &main_uri,
         blank,
     ));
-    for expected in ["lib", "l", "Sq", "println", "Some", "Option", "Int", "main"] {
+    for expected in [
+        "lib", "l", "Sq", "Shape", "Color", "println", "Some", "Option", "Int", "main",
+    ] {
         assert!(
             plain.iter().any(|l| l == expected),
             "missing {expected}: {plain:?}"
@@ -688,7 +689,32 @@ fn completion_follows_the_import_rule() {
         "a module's types: {members:?}"
     );
 
-    let after_unbound = position_of(main, "bytes.\n}", 6);
+    let after_enum = position_of(main, "Color.\n  Shape", 6);
+    let variants = labels(&request_at(
+        &mut client,
+        "textDocument/completion",
+        &main_uri,
+        after_enum,
+    ));
+    assert_eq!(
+        variants,
+        vec!["Red".to_string(), "Green".to_string()],
+        "{variants:?}"
+    );
+    let after_imported = position_of(main, "Shape.\n}", 6);
+    let variants = labels(&request_at(
+        &mut client,
+        "textDocument/completion",
+        &main_uri,
+        after_imported,
+    ));
+    assert_eq!(
+        variants,
+        vec!["Sq".to_string(), "Ci".to_string()],
+        "{variants:?}"
+    );
+
+    let after_unbound = position_of(main, "bytes.\n  Color", 6);
     let none = labels(&request_at(
         &mut client,
         "textDocument/completion",

@@ -46,6 +46,10 @@ impl Server {
             if let Some(items) = self.module_member_completions(doc, &prefix, cursor) {
                 return Some(CompletionResponse::Array(items));
             }
+            // An enum's name before the dot: its variants.
+            if let Some(items) = self.enum_variant_completions(doc, &prefix, cursor) {
+                return Some(CompletionResponse::Array(items));
+            }
             let builtin = self.bound_builtin_module(doc, &prefix, cursor);
             // Round 81: the document's program was parsed from the user's
             // exact source. A partial expression at the cursor (`xs.|`)
@@ -381,6 +385,44 @@ impl Server {
         items.sort_by(|a, b| a.label.cmp(&b.label));
         items.dedup_by(|a, b| a.label == b.label);
         items
+    }
+
+    /// The variants of the enum `prefix` names in the open document `doc`
+    /// (declared there or imported by name), unless a local binding of
+    /// that name shadows it.
+    fn enum_variant_completions(
+        &self,
+        doc: &Document,
+        prefix: &str,
+        cursor: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        if doc.program.as_ref().is_some_and(|program| {
+            locals_at_offset(program, cursor)
+                .iter()
+                .any(|local| local.name == prefix)
+        }) {
+            return None;
+        }
+        let scope = &self.checked_module(doc)?.scope;
+        let Some(Binding::Def(ty)) = scope.types.get(&intern(prefix)) else {
+            return None;
+        };
+        let module = doc.module.as_ref()?;
+        let defs = self.projects.get(&module.project)?.session.defs();
+        let variants = defs.variants(*ty);
+        if variants.is_empty() {
+            return None;
+        }
+        Some(
+            variants
+                .iter()
+                .map(|v| CompletionItem {
+                    label: resolve(defs.get(*v).name),
+                    kind: Some(CompletionItemKind::CONSTRUCTOR),
+                    ..CompletionItem::default()
+                })
+                .collect(),
+        )
     }
 
     /// The builtin module `prefix` is bound to in the open document `doc`

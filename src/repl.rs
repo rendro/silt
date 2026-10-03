@@ -11,6 +11,7 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
+use crate::defs::DefTable;
 use crate::diagnostic::{Diagnostic, Located, SourceView, render_human};
 use crate::intern;
 use crate::session::{Config, Entry, LockPolicy, ModuleId, ProjectSetup, Session};
@@ -338,9 +339,10 @@ impl Repl {
                 let module = self.session.module_of(file);
                 if let Some(analysis) = self.session.module_analysis(module) {
                     let session = &self.session;
-                    evaluation.names = scope_completion_names(&analysis.scope, |id| {
-                        session.module_analysis(id).map(|a| &a.scope.exports)
-                    });
+                    evaluation.names =
+                        scope_completion_names(&analysis.scope, session.defs(), |id| {
+                            session.module_analysis(id).map(|a| &a.scope.exports)
+                        });
                 }
                 evaluation.value = Some(value);
                 evaluation.committed = true;
@@ -458,10 +460,13 @@ pub fn builtin_names() -> Vec<String> {
 /// The names an input sees after it ran, as the session's scope of the
 /// input binds them: what it and the earlier inputs declared, the items
 /// they imported, and for each module bound by an import (`import list`,
-/// `import list as l`) its members, `l.map`. An ambiguous variant and a
-/// name of a module that failed to load are left out.
+/// `import list as l`) its members, `l.map`, and for each enum its
+/// variants, `C.Red`. A variant name that is ambiguous for the next input
+/// (the input's own `type D { Red }` beside an earlier `type C { Red }`)
+/// and a name of a module that failed to load are left out.
 pub fn scope_completion_names<'a>(
     scope: &ModuleScope,
+    defs: &DefTable,
     exports_of: impl Fn(ModuleId) -> Option<&'a Exports>,
 ) -> Vec<String> {
     let (_, builtin_scopes) = crate::typechecker::names::builtins();
@@ -473,7 +478,14 @@ pub fn scope_completion_names<'a>(
         .chain(scope.implied())
     {
         match binding {
-            Binding::Def(_) => names.push(intern::resolve(*name)),
+            Binding::Def(_)
+                if matches!(scope.exports.values.get(name), Some(Binding::Ambiguous(_))) => {}
+            Binding::Def(id) => {
+                names.push(intern::resolve(*name));
+                for v in defs.variants(*id) {
+                    names.push(format!("{name}.{}", defs.get(*v).name));
+                }
+            }
             Binding::Module(id) => {
                 names.push(intern::resolve(*name));
                 let exports = if id.is_builtin() {

@@ -11,7 +11,7 @@ fn completion_names(src: &str) -> Vec<String> {
     session.analyze(file);
     let module = session.module_of(file);
     let analysis = session.module_analysis(module).expect("analysed");
-    silt::repl::scope_completion_names(&analysis.scope, |_| None)
+    silt::repl::scope_completion_names(&analysis.scope, session.defs(), |_| None)
 }
 
 fn assert_names(src: &str, expected: &[&str]) {

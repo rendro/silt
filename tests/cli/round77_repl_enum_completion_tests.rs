@@ -81,3 +81,24 @@ fn builtin_module_names_complete_only_through_an_import() {
         );
     }
 }
+
+#[test]
+fn an_ambiguous_variant_is_not_offered_and_an_enum_offers_its_variants() {
+    // After `type C { Red }` and `type D { Red }`, a bare `Red` is
+    // ambiguous for the next input: it is not offered; `C.Red` and
+    // `D.Red` are.
+    let names = names_after(&["type C { Red, Green }", "type D { Red, Blue }"]);
+    assert!(!names.iter().any(|s| s == "Red"), "{names:?}");
+    for present in [
+        "C", "D", "Green", "Blue", "C.Red", "C.Green", "D.Red", "D.Blue",
+    ] {
+        assert!(
+            names.iter().any(|s| s == present),
+            "missing `{present}`: {names:?}"
+        );
+    }
+    let mut repl = Repl::new(ProjectSetup::None);
+    repl.eval("type C { Red, Green }");
+    repl.eval("type D { Red, Blue }");
+    assert!(!repl.eval("Red").committed, "a bare `Red` is ambiguous");
+}
