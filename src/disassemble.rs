@@ -47,7 +47,6 @@ fn op_name(op: Op) -> &'static str {
         Op::MakeMap => "MakeMap",
         Op::MakeSet => "MakeSet",
         Op::MakeRecord => "MakeRecord",
-        Op::MakeVariant => "MakeVariant",
         Op::RecordUpdate => "RecordUpdate",
         Op::MakeRange => "MakeRange",
         Op::ListConcat => "ListConcat",
@@ -103,7 +102,7 @@ fn constant_comment(chunk: &Chunk, index: u16) -> String {
 }
 
 /// Format an instruction whose operands are a u16 constant-index followed by
-/// a u8 (e.g. `CallMethod`, `CallBuiltin`, `MakeVariant`). The u16 is
+/// a u8 (`CallMethod`, `CallBuiltin`). The u16 is
 /// commented with the resolved constant; the u8 is printed as a bare number.
 ///
 /// Returns `(formatted_line, next_offset)`. The next offset is `offset + 4`.
@@ -298,10 +297,9 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         // ── u16 + u8 (with constant comment on the u16) ──────
         //   CallMethod(method_name_index, argc)
         //   CallBuiltin(name_index, argc)
-        //   MakeVariant(name_index, field_count)
-        // The three arms shared a byte-identical operand-decode shape
+        // The two arms shared a byte-identical operand-decode shape
         // (round 84 audit): consolidated into `fmt_u16_u8_with_const`.
-        Op::CallMethod | Op::CallBuiltin | Op::MakeVariant => {
+        Op::CallMethod | Op::CallBuiltin => {
             fmt_u16_u8_with_const(chunk, code, offset, name)
         }
 
@@ -323,7 +321,7 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
             (line, next)
         }
 
-        // ── MakeRecord: u16 type_name_index, u8 field_count, then field names
+        // ── MakeRecord: u16 type_index, u8 field_count, then field names
         Op::MakeRecord => {
             let type_name_index = read_u16(code, offset + 1);
             let field_count = code[offset + 3];
@@ -632,7 +630,7 @@ mod tests {
     fn test_call_method_format() {
         // Round 84: locks the formatted output for `Op::CallMethod`,
         // which now shares the operand-decode helper
-        // `fmt_u16_u8_with_const` with `CallBuiltin` and `MakeVariant`.
+        // `fmt_u16_u8_with_const` with `CallBuiltin`.
         let mut chunk = Chunk::new();
         let span = dummy_span();
 
@@ -649,32 +647,12 @@ mod tests {
     }
 
     #[test]
-    fn test_make_variant_format() {
-        // Round 84: locks the formatted output for `Op::MakeVariant`,
-        // which now shares the operand-decode helper
-        // `fmt_u16_u8_with_const` with `CallMethod` and `CallBuiltin`.
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        let name_idx = chunk.add_constant(Value::String("Some".into())).unwrap();
-
-        chunk.emit_op(Op::MakeVariant, span);
-        chunk.emit_u16(name_idx, span);
-        chunk.emit_u8(1, span); // field_count = 1
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, "variant");
-        assert!(output.contains("MakeVariant"));
-        assert!(output.contains("\"Some\""));
-    }
-
-    #[test]
     fn test_op_from_byte_roundtrip() {
         // Hand-locked count of Op variants. Bumping the Op enum without
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 72 variants.
-        const EXPECTED_OP_COUNT: usize = 72;
+        // tables. Last verified: 71 variants.
+        const EXPECTED_OP_COUNT: usize = 71;
 
         // Sweep every possible byte value. For each one that decodes,
         // verify the round-trip discriminant matches. This catches both

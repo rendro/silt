@@ -337,6 +337,7 @@ fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) 
     };
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
+    vm.load_types(&compiler.types());
     let result = vm.run(script);
     (stdout, result)
 }

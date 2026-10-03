@@ -77,9 +77,9 @@ impl Compiler {
             PatternKind::Constructor {
                 name, args: fields, ..
             } => {
-                let name_str = resolve(*name);
-                // Test: tag matches?
-                let idx = self.add_constant(Value::String(name_str), span)?;
+                // Test: is it this variant?
+                let tag = self.pattern_tag(pattern.res, *name, span)?;
+                let idx = self.add_constant(Value::VariantConstructor(tag), span)?;
                 self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
                 let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 let mut all_jumps = vec![tag_jump];
@@ -170,8 +170,8 @@ impl Compiler {
 
                 // Test tag if present
                 if let Some(type_name) = name {
-                    let tag = self.runtime_name_of(pattern.res, *type_name);
-                    let idx = self.add_constant(Value::String(tag), span)?;
+                    let ty = self.record_type(pattern.res, *type_name, span)?;
+                    let idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::TestRecordTag, idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -525,8 +525,8 @@ impl Compiler {
             PatternKind::Constructor {
                 name, args: fields, ..
             } => {
-                let name_str = resolve(*name);
-                let idx = self.add_constant(Value::String(name_str), span)?;
+                let tag = self.pattern_tag(pattern.res, *name, span)?;
+                let idx = self.add_constant(Value::VariantConstructor(tag), span)?;
                 self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
                 let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 let mut all_jumps = vec![(tag_jump, base_depth)];
@@ -611,8 +611,8 @@ impl Compiler {
                 let mut all_jumps = Vec::new();
 
                 if let Some(type_name) = name {
-                    let tag = self.runtime_name_of(pattern.res, *type_name);
-                    let idx = self.add_constant(Value::String(tag), span)?;
+                    let ty = self.record_type(pattern.res, *type_name, span)?;
+                    let idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::TestRecordTag, idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);

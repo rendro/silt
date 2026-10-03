@@ -53,7 +53,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     for variant in method_variants {
         env.define(intern(variant), Scheme::mono(method_ty.clone()));
     }
-    crate::value::register_variant_decl_order(method_variants);
 
     // Response record
     let map_ss = Type::Map(Box::new(Type::String), Box::new(Type::String));

@@ -6,6 +6,7 @@
 //! list/tuple/record/map destructuring, pin patterns, when/else,
 //! plus all previous features (closures, upvalues, pipes, lambdas).
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -13,36 +14,30 @@ use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
     Qualifier, RecordField, Stmt, StringPart, TypeBody, TypeExpr, TypeExprKind, UnaryOp,
 };
-use crate::bytecode::{ANON_RECORD_TAG, Chunk, Function, Op, UpvalueDesc, VmClosure};
+use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::module;
 use crate::source::Span;
+use crate::typeinfo::{FieldType, Shape, Tag, TypeInfo, TypeTable, VariantInfo};
 use crate::types::TypeRef;
 use crate::types::canonical::{Resolver, canonical_head};
 use crate::value::{HostFn, Value};
 
 mod patterns;
 
-// ── Record field types for the json / toml decoders ─────────────────
+// ── Types at run time ───────────────────────────────────────────────
 //
-// `json.parse(text, T)` and `toml.parse(text, T)` build a value of the
-// record type `T` at run time. For that, every record declaration
-// installs a list of `(field name, field type descriptor)` pairs, read by
-// the decoders in `src/builtins/data.rs` and `src/builtins/toml.rs`.
-//
-// A descriptor is one of
-//
-//   Int  Float  String  Bool  Date  Time  DateTime
-//   List:<d>   Option:<d>   Map:<d>   Tuple(<d>,<d>,...)   Record:<name>
-//   Unsupported:<type as written>
-//
-// `Map:<d>` is `Map(String, d)`. Type aliases are replaced by their
-// target before the descriptor is built. A type no decoder exists for
-// gets `Unsupported`, which makes the decoders return `Err`; it is never
-// mapped to some other type. A direct `json.parse` / `toml.parse` call
-// whose type argument names such a record is rejected at compile time
-// (see `Compiler::check_decode_target`).
+// Each record and enum type a program builds values of is described to
+// the VM by a `TypeInfo` (see `crate::typeinfo`): its id, its name, its
+// variants or its fields. A record's fields carry their types as far as
+// `json.parse(text, T)` and `toml.parse(text, T)` need them to build a
+// value of `T`. Type aliases are replaced by their target. A type no
+// decoder exists for is `FieldType::Unsupported`, which makes the
+// decoders return `Err`; it is never mapped to some other type. A direct
+// `json.parse` / `toml.parse` call whose type argument names such a
+// record is rejected at compile time (see
+// `Compiler::check_decode_target`).
 
 /// The builtin functions that decode text into a value of the type named
 /// by their last argument.
@@ -59,6 +54,16 @@ const DECODING_BUILTINS: &[&str] = &[
 const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
      Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, \
      non-generic record types, and aliases of these";
+
+/// The record types a field type names.
+fn collect_records(field_type: &FieldType, out: &mut Vec<crate::defs::TypeId>) {
+    match field_type {
+        FieldType::Record(id) => out.push(*id),
+        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => collect_records(t, out),
+        FieldType::Tuple(ts) => ts.iter().for_each(|t| collect_records(t, out)),
+        _ => {}
+    }
+}
 
 /// A record declaration, kept to describe and check its field types.
 struct RecordDecl {
@@ -479,6 +484,11 @@ pub struct Compiler {
     /// modules' `Pt`, or a module's own `Result` beside the builtin one):
     /// see [`Compiler::runtime_type_name`].
     clashing_type_names: HashSet<Symbol>,
+    /// The names two types of the program's modules have (two modules'
+    /// `Pt`, not a builtin type): such a type prints qualified.
+    program_clashes: HashSet<Symbol>,
+    /// The types described so far, which the VM is given.
+    types: RefCell<TypeTable>,
     /// The name the entry's top-level `let` being compiled binds: its
     /// initializer reads the value the name had before (a REPL entry's
     /// `let x = x + 1`).
@@ -503,27 +513,31 @@ fn builtin_module_function(module: &str, item: Symbol) -> bool {
 }
 
 /// The names two or more types of the program have: two modules' types,
-/// or a module's type and a builtin type.
-fn clashing_type_names(units: &ProgramUnits) -> HashSet<Symbol> {
+/// or a module's type and a builtin type; and of those the names two
+/// modules' types have.
+fn clashing_type_names(units: &ProgramUnits) -> (HashSet<Symbol>, HashSet<Symbol>) {
     let Some(defs) = &units.defs else {
-        return HashSet::new();
+        return (HashSet::new(), HashSet::new());
     };
     let mut seen: HashMap<Symbol, crate::defs::DefId> = HashMap::new();
     let mut clashing = HashSet::new();
+    let mut program = HashSet::new();
     for unit in &units.modules {
         for id in defs.of_module(unit.id) {
             let def = defs.get(*id);
             if !matches!(def.kind, crate::defs::DefKind::Type(_)) {
                 continue;
             }
-            if crate::defs::builtin_type_id(&resolve(def.name)).is_some()
-                || seen.insert(def.name, *id).is_some_and(|other| other != *id)
-            {
+            if seen.insert(def.name, *id).is_some_and(|other| other != *id) {
+                program.insert(def.name);
+                clashing.insert(def.name);
+            }
+            if crate::defs::builtin_type_id(&resolve(def.name)).is_some() {
                 clashing.insert(def.name);
             }
         }
     }
-    clashing
+    (clashing, program)
 }
 
 /// The builtin enums, which seed `known_enums`.
@@ -569,7 +583,7 @@ impl Compiler {
     /// only in the modules; everything else is seeded identically here
     /// so the two paths can never drift apart.
     fn build(units: ProgramUnits) -> Self {
-        let clashing_type_names = clashing_type_names(&units);
+        let (clashing_type_names, program_clashes) = clashing_type_names(&units);
         Self {
             contexts: Vec::new(),
             functions: Vec::new(),
@@ -590,6 +604,8 @@ impl Compiler {
             record_decls: HashMap::new(),
             alias_decls: HashMap::new(),
             clashing_type_names,
+            program_clashes,
+            types: RefCell::new(TypeTable::default()),
             initializing: None,
         }
     }
@@ -616,6 +632,11 @@ impl Compiler {
     /// Returns warnings emitted during compilation.
     pub fn warnings(&self) -> &[Diagnostic] {
         &self.warnings
+    }
+
+    /// The types the compiled code builds values of, for the VM.
+    pub fn types(&self) -> TypeTable {
+        self.types.borrow().clone()
     }
 
     /// Mark all builtin modules as imported, for the tests below.
@@ -1036,110 +1057,56 @@ impl Compiler {
 
             Decl::Type(type_decl) => {
                 let span = type_decl.span;
-                match &type_decl.body {
-                    crate::ast::TypeBody::Enum(variants) => {
-                        let enum_name = self.declared_type_name(type_decl.name);
-                        self.known_enums.insert(resolve(type_decl.name));
-
-                        // Register the enum type name as a type descriptor
-                        // global so it can be passed as a `type a` argument
-                        // (mirrors records). Skipped when a variant shares
-                        // the enum's name — the variant constructor owns the
-                        // symbol in that case.
-                        let variant_shares_name = variants.iter().any(|v| v.name == type_decl.name);
-                        if !variant_shares_name {
-                            let val = Value::TypeDescriptor(enum_name.clone());
-                            let val_idx = self.add_constant(val, span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::Constant, val_idx, span);
-                            let name_idx =
-                                self.add_constant(Value::String(enum_name.clone()), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, name_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-                        }
-
-                        for variant in variants {
-                            let vname = resolve(variant.name);
-                            let arity = variant.fields.len();
-                            if arity == 0 {
-                                // Nullary variant: register as a Variant value
-                                let val = Value::Variant(vname.clone(), Vec::new());
-                                let val_idx = self.add_constant(val, span)?;
-                                self.current_chunk()
-                                    .emit_op_u16(Op::Constant, val_idx, span);
-                                // Track for the bare-variant method-dispatch
-                                // rewrite in `Call` codegen — so `Red.display()`
-                                // lowers to a value-method call rather than the
-                                // qualified-global `GetGlobal("Red.display")`.
-                                self.known_unit_variants.insert(vname.clone());
-                            } else {
-                                // Variant constructor
-                                let val = Value::VariantConstructor(vname.clone(), arity);
-                                let val_idx = self.add_constant(val, span)?;
-                                self.current_chunk()
-                                    .emit_op_u16(Op::Constant, val_idx, span);
-                            }
-                            let name_idx = self.add_constant(Value::String(vname.clone()), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, name_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-
-                            // Register variant -> type mapping for method dispatch.
-                            let mapping_key = format!("__type_of__{vname}");
-                            let key_idx = self.add_constant(Value::String(mapping_key), span)?;
-                            let type_val_idx =
-                                self.add_constant(Value::String(enum_name.clone()), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::Constant, type_val_idx, span);
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, key_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
-                        }
-                    }
-                    crate::ast::TypeBody::Record(fields) => {
-                        // Register the record type name as a TypeDescriptor global.
-                        let record_name = self.declared_type_name(type_decl.name);
-                        let val = Value::TypeDescriptor(record_name.clone());
+                // Type aliases are transparent at the typechecker /
+                // canonicaliser layer and emit no runtime artefacts.
+                if matches!(type_decl.body, TypeBody::Alias(_)) {
+                    return Ok(());
+                }
+                let Some(id) = self.declared_type(type_decl.name) else {
+                    return Err(checker_missed(
+                        span,
+                        &format!("the type '{}' with no definition", type_decl.name),
+                    ));
+                };
+                let info = self.type_info(id);
+                // The type's descriptor is the global of its name, so it
+                // can be passed as a `type a` argument; unless a variant
+                // shares the enum's name, which owns the global then.
+                let variant_shares_name = match &type_decl.body {
+                    TypeBody::Enum(variants) => variants.iter().any(|v| v.name == type_decl.name),
+                    _ => false,
+                };
+                if !variant_shares_name {
+                    let val_idx = self.add_constant(Value::TypeDescriptor(info.clone()), span)?;
+                    self.current_chunk()
+                        .emit_op_u16(Op::Constant, val_idx, span);
+                    let name_idx = self.add_constant(Value::String(info.key.clone()), span)?;
+                    self.current_chunk()
+                        .emit_op_u16(Op::SetGlobal, name_idx, span);
+                    self.current_chunk().emit_op(Op::Pop, span);
+                }
+                if let TypeBody::Enum(variants) = &type_decl.body {
+                    self.known_enums.insert(resolve(type_decl.name));
+                    for (ordinal, variant) in variants.iter().enumerate() {
+                        let vname = resolve(variant.name);
+                        let tag = Tag::new(info.clone(), ordinal as u16);
+                        let val = if variant.fields.is_empty() {
+                            // Track for the bare-variant method-dispatch
+                            // rewrite in `Call` codegen — so `Red.display()`
+                            // lowers to a value-method call rather than the
+                            // qualified-global `GetGlobal("Red.display")`.
+                            self.known_unit_variants.insert(vname.clone());
+                            Value::Variant(tag, Vec::new())
+                        } else {
+                            Value::VariantConstructor(tag)
+                        };
                         let val_idx = self.add_constant(val, span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::Constant, val_idx, span);
-                        let name_idx =
-                            self.add_constant(Value::String(record_name.clone()), span)?;
+                        let name_idx = self.add_constant(Value::String(vname), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::SetGlobal, name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
-
-                        // Emit record field metadata as a global list for the
-                        // json and toml decoders.
-                        // Format: list of alternating [field_name, type descriptor, ...]
-                        let field_count = fields.len();
-                        for f in fields {
-                            let fname = self.add_constant(Value::String(resolve(f.name)), span)?;
-                            self.current_chunk().emit_op_u16(Op::Constant, fname, span);
-                            let descriptor = self.field_type_descriptor(&f.ty);
-                            let ftype = self.add_constant(Value::String(descriptor), span)?;
-                            self.current_chunk().emit_op_u16(Op::Constant, ftype, span);
-                        }
-                        self.current_chunk().emit_op_u16(
-                            Op::MakeList,
-                            (field_count * 2) as u16,
-                            span,
-                        );
-                        let meta_key = self.add_constant(
-                            Value::String(format!("__record_fields__{record_name}")),
-                            span,
-                        )?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, meta_key, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
-                    }
-                    crate::ast::TypeBody::Alias(_) => {
-                        // Phase D: type aliases are transparent at the
-                        // typechecker / canonicaliser layer and emit no
-                        // runtime artefacts. The alias name has already
-                        // reduced to its target's canonical form by the
-                        // time the compiler sees any use site.
                     }
                 }
                 Ok(())
@@ -1646,53 +1613,33 @@ impl Compiler {
                 Decl::Type(type_decl) if public_types.contains(&type_decl.name) => {
                     // Compile the type declaration — registers variants under bare names.
                     self.compile_decl(decl)?;
-                    // Also register type name and variants under qualified names.
-                    match &type_decl.body {
-                        crate::ast::TypeBody::Enum(variants) => {
-                            for variant in variants {
-                                // Copy bare "VariantName" -> "module.VariantName"
-                                let vname = resolve(variant.name);
-                                let bare_idx =
-                                    self.add_constant(Value::String(vname.clone()), span)?;
-                                self.current_chunk()
-                                    .emit_op_u16(Op::GetGlobal, bare_idx, span);
-                                let qual = format!("{global}.{vname}");
-                                let qual_idx = self.add_constant(Value::String(qual), span)?;
-                                self.current_chunk()
-                                    .emit_op_u16(Op::SetGlobal, qual_idx, span);
-                                self.current_chunk().emit_op(Op::Pop, span);
+                    // Also register the type and its variants under
+                    // qualified names.
+                    if let Some(id) = self.declared_type(type_decl.name) {
+                        let info = self.type_info(id);
+                        let mut values = vec![(
+                            format!("{global}.{}", type_decl.name),
+                            Value::TypeDescriptor(info.clone()),
+                        )];
+                        if let TypeBody::Enum(variants) = &type_decl.body {
+                            for (ordinal, variant) in variants.iter().enumerate() {
+                                let tag = Tag::new(info.clone(), ordinal as u16);
+                                let value = if variant.fields.is_empty() {
+                                    Value::Variant(tag, Vec::new())
+                                } else {
+                                    Value::VariantConstructor(tag)
+                                };
+                                values.push((format!("{global}.{}", variant.name), value));
                             }
-                            // Register the type name itself as a qualified global
-                            // (pointing to the type name string for use in `import mod.{ Type }`).
-                            let type_val = Value::String(self.declared_type_name(type_decl.name));
-                            let type_val_idx = self.add_constant(type_val, span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::Constant, type_val_idx, span);
-                            let qual_type = format!("{global}.{}", type_decl.name);
-                            let qual_type_idx =
-                                self.add_constant(Value::String(qual_type), span)?;
-                            self.current_chunk()
-                                .emit_op_u16(Op::SetGlobal, qual_type_idx, span);
-                            self.current_chunk().emit_op(Op::Pop, span);
                         }
-                        crate::ast::TypeBody::Record(_) => {
-                            // Copy the type's global -> "module.TypeName"
-                            let declared = self.declared_type_name(type_decl.name);
-                            let bare_idx = self.add_constant(Value::String(declared), span)?;
+                        for (qual, value) in values {
+                            let val_idx = self.add_constant(value, span)?;
                             self.current_chunk()
-                                .emit_op_u16(Op::GetGlobal, bare_idx, span);
-                            let qual = format!("{global}.{}", type_decl.name);
+                                .emit_op_u16(Op::Constant, val_idx, span);
                             let qual_idx = self.add_constant(Value::String(qual), span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::SetGlobal, qual_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);
-                        }
-                        crate::ast::TypeBody::Alias(_) => {
-                            // Phase D: type aliases emit no runtime
-                            // artefacts; nothing to re-export under a
-                            // qualified name. The alias has already
-                            // expanded to its target's canonical form
-                            // at typecheck time.
                         }
                     }
                 }
@@ -2034,6 +1981,12 @@ impl Compiler {
                 self.current_chunk().emit_op_u16(Op::Constant, idx, span);
             }
 
+            // A type of the program used as a value is its descriptor.
+            ExprKind::Ident(_) if let Some(ty) = self.program_type(expr.res) => {
+                let idx = self.add_constant(Value::TypeDescriptor(self.type_info(ty)), span)?;
+                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
             ExprKind::Ident(name) => {
                 if let Some(slot) = self.resolve_local(*name) {
                     self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
@@ -2234,6 +2187,12 @@ impl Compiler {
             // aren't mistaken for missing module imports.
             ExprKind::FieldAccess(..) if let Some(variant) = self.variant_value(expr) => {
                 let idx = self.add_constant(variant, span)?;
+                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
+            // `m.Pt` used as a value: the type's descriptor.
+            ExprKind::FieldAccess(..) if let Some(ty) = self.program_type(expr.res) => {
+                let idx = self.add_constant(Value::TypeDescriptor(self.type_info(ty)), span)?;
                 self.current_chunk().emit_op_u16(Op::Constant, idx, span);
             }
 
@@ -2611,15 +2570,8 @@ impl Compiler {
                 self.compile_expr(inner)?;
             }
 
-            // Round 94: the optional module qualifier (`util.Pt { .. }`)
-            // is a typecheck-time concept only — it selects which
-            // module's declaration the literal is checked against. At
-            // runtime every record carries its BARE type name (modules
-            // share the VM's global namespace; see how variants register
-            // bare + `module.Variant` aliases), so codegen ignores the
-            // qualifier and the qualified literal builds a value
-            // identical to the bare spelling — same `MakeRecord` tag,
-            // same trait dispatch, same `==`.
+            // The literal's type is the one the resolver resolved it to,
+            // written `Pt { .. }` or `util.Pt { .. }`.
             ExprKind::RecordCreate {
                 module: _,
                 name_span: _,
@@ -2636,8 +2588,8 @@ impl Compiler {
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(fields.iter().map(|(_, val)| val))?;
-                let tag = self.runtime_name_of(expr.res, *name);
-                let type_name_idx = self.add_constant(Value::String(tag), span)?;
+                let ty = self.record_type(expr.res, *name, span)?;
+                let type_name_idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
                 self.current_chunk()
                     .emit_op_u16(Op::MakeRecord, type_name_idx, span);
                 self.current_chunk().emit_u8(field_names.len() as u8, span);
@@ -2703,13 +2655,14 @@ impl Compiler {
                     }
                 } else {
                     // Closed anon record literal: same encoding as nominal
-                    // RecordCreate but with the synthetic name
-                    // `ANON_RECORD_TAG`, which every run-time record-tag
-                    // check accepts (see `bytecode::record_tag_matches`).
+                    // RecordCreate but with the anonymous record type,
+                    // which every run-time record-type check accepts (see
+                    // `bytecode::record_type_matches`).
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.compile_operands(fields.iter().map(|(_, val)| val))?;
+                    let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
                     let type_name_idx =
-                        self.add_constant(Value::String(ANON_RECORD_TAG.to_string()), span)?;
+                        self.add_constant(Value::TypeDescriptor(anon.clone()), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::MakeRecord, type_name_idx, span);
                     self.current_chunk().emit_u8(field_names.len() as u8, span);
@@ -3071,17 +3024,22 @@ impl Compiler {
         }
     }
 
-    /// The name the values, descriptors, field lists and impl globals of
-    /// the type `ty` carry at run time: its name, or for a module's type
-    /// whose name another type of the program has too, the module's
-    /// global prefix and the name (`a.Pt`), so that two modules' `Pt`
-    /// do not share their impls. (Values carry type ids in a later
-    /// step.)
+    /// The name the impl globals of the type `ty` are installed under:
+    /// its name, or for a module's type whose name another type of the
+    /// program has too (a module's or a builtin one), the module's global
+    /// prefix and the name (`a.Pt`), so that two modules' `Pt` do not
+    /// share their impls.
     fn runtime_type_name(&self, ty: TypeRef) -> String {
+        self.qualified_type_name(ty, &self.clashing_type_names)
+    }
+
+    /// The name of `ty`, qualified by its module's global when `clashes`
+    /// has it.
+    fn qualified_type_name(&self, ty: TypeRef, clashes: &HashSet<Symbol>) -> String {
         if crate::defs::builtin_types()
             .get(ty.id.0.0 as usize)
             .is_some()
-            || !self.clashing_type_names.contains(&ty.name)
+            || !clashes.contains(&ty.name)
         {
             return resolve(ty.name);
         }
@@ -3097,6 +3055,139 @@ impl Compiler {
         }
     }
 
+    /// The run-time description of the type `id`, which values of the
+    /// type carry; described once per compilation, and given to the VM.
+    fn type_info(&self, id: crate::defs::TypeId) -> Arc<TypeInfo> {
+        if crate::defs::builtin_types().get(id.0.0 as usize).is_some() {
+            return crate::typeinfo::builtin_type(id).clone();
+        }
+        if let Some(info) = self.types.borrow().get(id) {
+            return info.clone();
+        }
+        let Some(def) = self.def(id.0) else {
+            unreachable!("a type id names a definition");
+        };
+        let ty = TypeRef { id, name: def.name };
+        let defs = self.units.defs.as_ref().expect("a program type has a session");
+        let variants = defs.variants(id.0);
+        let mut nested = Vec::new();
+        let shape = if !variants.is_empty() {
+            Shape::Enum(
+                variants
+                    .iter()
+                    .map(|v| {
+                        let variant = defs.get(*v);
+                        let arity = match variant.kind {
+                            crate::defs::DefKind::Variant { arity, .. } => arity,
+                            _ => 0,
+                        };
+                        VariantInfo {
+                            name: resolve(variant.name),
+                            arity,
+                        }
+                    })
+                    .collect(),
+            )
+        } else {
+            let fields = self.declared_record_fields(def.span).unwrap_or_default();
+            Shape::Record(
+                fields
+                    .iter()
+                    .map(|f| {
+                        let field_type = self
+                            .describe_field_type(&f.ty, &mut Vec::new(), &mut Vec::new())
+                            .unwrap_or_else(|_| FieldType::Unsupported(render_type_expr(&f.ty)));
+                        collect_records(&field_type, &mut nested);
+                        (resolve(f.name), field_type)
+                    })
+                    .collect(),
+            )
+        };
+        let info = Arc::new(TypeInfo {
+            id,
+            name: self.qualified_type_name(ty, &self.program_clashes),
+            key: self.runtime_type_name(ty),
+            shape,
+        });
+        self.types.borrow_mut().insert(info.clone());
+        // The record types of its fields, which a decoder builds too.
+        for record in nested {
+            self.type_info(record);
+        }
+        info
+    }
+
+    /// The fields of the record type declared with its name at `span`.
+    fn declared_record_fields(&self, span: Span) -> Option<Vec<RecordField>> {
+        let programs = self
+            .units
+            .modules
+            .iter()
+            .map(|unit| &unit.program)
+            .chain(self.units.earlier.programs.iter());
+        for program in programs {
+            for decl in &program.decls {
+                if let Decl::Type(td) = decl
+                    && td.name_span == span
+                    && let TypeBody::Record(fields) = &td.body
+                {
+                    return Some(fields.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// The variant a resolution names (a constructor pattern, a variant
+    /// used as a value). With no resolution (the derived impls of the
+    /// builtin types, which the builtin environment makes, and a
+    /// compiler with no session) it is a builtin variant, named by its
+    /// name: builtin variant names are unique among the builtins.
+    fn variant_tag(&self, res: Option<crate::defs::Res>, name: Symbol) -> Option<Tag> {
+        if let Some(res) = res {
+            let crate::defs::Res::Def(id) = res else {
+                return None;
+            };
+            let def = self.def(id)?;
+            let crate::defs::DefKind::Variant { ty, ordinal, .. } = def.kind else {
+                return None;
+            };
+            return Some(Tag::new(self.type_info(ty), ordinal));
+        }
+        let name = resolve(name);
+        module::builtin_enum_variants()
+            .iter()
+            .find(|(_, variants)| variants.contains(&name.as_str()))
+            .and_then(|(ty, _)| crate::typeinfo::builtin_type_named(ty))
+            .and_then(|ty| Tag::named(ty, &name))
+    }
+
+    /// The tag of the variant a constructor pattern names.
+    fn pattern_tag(
+        &self,
+        res: Option<crate::defs::Res>,
+        name: Symbol,
+        span: Span,
+    ) -> Result<Tag, Diagnostic> {
+        self.variant_tag(res, name)
+            .ok_or_else(|| checker_missed(span, &format!("the unresolved variant '{name}'")))
+    }
+
+    /// The descriptor of the type a record literal or pattern names.
+    fn record_type(
+        &self,
+        res: Option<crate::defs::Res>,
+        name: Symbol,
+        span: Span,
+    ) -> Result<Arc<TypeInfo>, Diagnostic> {
+        match self.res_type(res) {
+            Some(ty) => Ok(self.type_info(ty.id)),
+            None => crate::typeinfo::builtin_type_named(&resolve(name))
+                .cloned()
+                .ok_or_else(|| checker_missed(span, &format!("the unresolved type '{name}'"))),
+        }
+    }
+
     /// The type a resolution names, if it names a record or enum type.
     fn res_type(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
         let Some(crate::defs::Res::Def(id)) = res else {
@@ -3109,33 +3200,29 @@ impl Compiler {
         })
     }
 
-    /// The run-time name of the type `name` written with the resolution
-    /// `res` (a record literal or pattern, a type used as a value).
-    pub(super) fn runtime_name_of(&self, res: Option<crate::defs::Res>, name: Symbol) -> String {
-        match self.res_type(res) {
-            Some(ty) => self.runtime_type_name(ty),
-            None => resolve(name),
-        }
+    /// The type a resolution names, if it names a record or enum type of
+    /// the program (not a builtin type).
+    fn program_type(&self, res: Option<crate::defs::Res>) -> Option<crate::defs::TypeId> {
+        let ty = self.res_type(res)?;
+        crate::defs::builtin_types()
+            .get(ty.id.0.0 as usize)
+            .is_none()
+            .then_some(ty.id)
     }
 
-    /// The run-time name of the type the module being compiled declares
-    /// as `name`.
-    fn declared_type_name(&self, name: Symbol) -> String {
+    /// The type the module being compiled declares as `name`.
+    fn declared_type(&self, name: Symbol) -> Option<crate::defs::TypeId> {
         let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
-        let declared = self.units.defs.as_ref().and_then(|defs| {
-            let unit = self.units.modules.get(current)?;
-            defs.of_module(unit.id).iter().copied().find(|id| {
+        let defs = self.units.defs.as_ref()?;
+        let unit = self.units.modules.get(current)?;
+        defs.of_module(unit.id)
+            .iter()
+            .copied()
+            .find(|id| {
                 let def = defs.get(*id);
                 def.name == name && matches!(def.kind, crate::defs::DefKind::Type(_))
             })
-        });
-        match declared {
-            Some(id) => self.runtime_type_name(TypeRef {
-                id: crate::defs::TypeId(id),
-                name,
-            }),
-            None => resolve(name),
-        }
+            .map(crate::defs::TypeId)
     }
 
     /// The name of the type the impl `ti` is for, as the checker keys
@@ -3225,13 +3312,13 @@ impl Compiler {
             return None;
         };
         let def = self.def(id)?;
-        let crate::defs::DefKind::Variant { arity, .. } = def.kind else {
+        let crate::defs::DefKind::Variant { ty, ordinal, arity } = def.kind else {
             return None;
         };
-        let name = resolve(def.name);
+        let tag = Tag::new(self.type_info(ty), ordinal);
         Some(match arity {
-            0 => Value::Variant(name, Vec::new()),
-            n => Value::VariantConstructor(name, n as usize),
+            0 => Value::Variant(tag, Vec::new()),
+            _ => Value::VariantConstructor(tag),
         })
     }
 
@@ -3279,30 +3366,20 @@ impl Compiler {
 
     // ── Record field types for the json / toml decoders ──────────
 
-    /// The descriptor installed for a record field of type `te`; see the
-    /// descriptor grammar at the top of this file.
-    fn field_type_descriptor(&self, te: &TypeExpr) -> String {
-        match self.describe_field_type(te, &mut Vec::new(), &mut Vec::new()) {
-            Ok(descriptor) => descriptor,
-            Err(_) => format!("Unsupported:{}", render_type_expr(te)),
-        }
-    }
-
-    /// Build the descriptor of the field type `te`.
+    /// The type of the record field `te` as the decoders see it.
     ///
     /// `Err` carries the part of `te` no decoder exists for, as written.
     /// `open_aliases` holds the aliases being expanded (an alias that
-    /// leads back to itself has no descriptor). The names of the record
-    /// types the descriptor refers to are added to `records`.
+    /// leads back to itself has no decoder). The names of the record
+    /// types the field type refers to are added to `records`.
     fn describe_field_type(
         &self,
         te: &TypeExpr,
         open_aliases: &mut Vec<String>,
         records: &mut Vec<String>,
-    ) -> Result<String, String> {
+    ) -> Result<FieldType, String> {
         const NO_ARGS: &[TypeExpr] = &[];
         let (name, args): (Symbol, &[TypeExpr]) = match &te.kind {
-            // Types live in one namespace at run time: `m.Pt` is `Pt`.
             TypeExprKind::Named { name, .. } => (*name, NO_ARGS),
             TypeExprKind::Generic { name, args, .. } => (*name, args.as_slice()),
             TypeExprKind::Tuple(elems) if !elems.is_empty() => {
@@ -3310,7 +3387,7 @@ impl Compiler {
                 for elem in elems {
                     parts.push(self.describe_field_type(elem, open_aliases, records)?);
                 }
-                return Ok(format!("Tuple({})", parts.join(",")));
+                return Ok(FieldType::Tuple(parts));
             }
             _ => return Err(render_type_expr(te)),
         };
@@ -3330,36 +3407,37 @@ impl Compiler {
         // Builtin types are matched by their canonical name: a range type
         // is described like the list type it is the same type as.
         let canonical = if name_str == "Range" {
-            "List".to_string()
+            "List"
         } else {
-            name_str.clone()
+            name_str.as_str()
         };
-        match (canonical.as_str(), args) {
-            ("Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime", []) => {
-                Ok(canonical.clone())
-            }
-            ("List", [elem]) => Ok(format!(
-                "List:{}",
-                self.describe_field_type(elem, open_aliases, records)?
-            )),
-            ("Option", [inner]) => Ok(format!(
-                "Option:{}",
-                self.describe_field_type(inner, open_aliases, records)?
-            )),
+        match (canonical, args) {
+            ("Int", []) => Ok(FieldType::Int),
+            ("Float", []) => Ok(FieldType::Float),
+            ("String", []) => Ok(FieldType::String),
+            ("Bool", []) => Ok(FieldType::Bool),
+            ("Date", []) => Ok(FieldType::Date),
+            ("Time", []) => Ok(FieldType::Time),
+            ("DateTime", []) => Ok(FieldType::DateTime),
+            ("List", [elem]) => Ok(FieldType::List(Box::new(
+                self.describe_field_type(elem, open_aliases, records)?,
+            ))),
+            ("Option", [inner]) => Ok(FieldType::Option(Box::new(
+                self.describe_field_type(inner, open_aliases, records)?,
+            ))),
             ("Map", [key, value]) => {
                 // The keys of a JSON object or a TOML table are strings.
-                let key_descriptor = self.describe_field_type(key, open_aliases, &mut Vec::new());
-                if key_descriptor.as_deref() != Ok("String") {
+                let key_type = self.describe_field_type(key, open_aliases, &mut Vec::new());
+                if !matches!(key_type, Ok(FieldType::String)) {
                     return Err(render_type_expr(te));
                 }
-                Ok(format!(
-                    "Map:{}",
-                    self.describe_field_type(value, open_aliases, records)?
-                ))
+                Ok(FieldType::Map(Box::new(self.describe_field_type(
+                    value,
+                    open_aliases,
+                    records,
+                )?)))
             }
-            // A non-generic record type. A name the compiler has no
-            // declaration for is taken to be one as well; the decoders
-            // return `Err` if no record of that name exists at run time.
+            // A non-generic record type of the program.
             (_, [])
                 if name_str.starts_with(|c: char| c.is_uppercase())
                     && !self.known_enums.contains(&name_str)
@@ -3369,8 +3447,11 @@ impl Compiler {
                         .get(&name_str)
                         .is_none_or(|decl| decl.params.is_empty()) =>
             {
+                let Some(ty) = self.res_type(te.res) else {
+                    return Err(render_type_expr(te));
+                };
                 records.push(name_str.clone());
-                Ok(format!("Record:{}", self.runtime_name_of(te.res, name)))
+                Ok(FieldType::Record(ty.id))
             }
             // Everything else: type parameters, enums, generic records,
             // Set, Channel, functions, Map with a non-String key, ...

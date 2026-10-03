@@ -92,11 +92,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     for day in weekday_variants {
         env.define(intern(day), Scheme::mono(weekday_ty.clone()));
     }
-    // Register declaration-order ordinals so `cmp_gen(Monday, Friday)`
-    // and `Monday < Friday` both honour the same ordering used by every
-    // other enum. Replaces the hand-rolled `weekday_ordinal` table that
-    // lived in `value.rs` before this change.
-    crate::value::register_variant_decl_order(weekday_variants);
 
     // ── Register Display (and other builtin traits) for time types ──
     // Shares `register_auto_derived_impls_for` with the primitive-type

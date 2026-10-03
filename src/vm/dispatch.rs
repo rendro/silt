@@ -5,6 +5,7 @@ use std::panic::AssertUnwindSafe;
 use super::{Vm, VmError};
 use crate::builtins;
 use crate::module;
+use crate::typeinfo::Tag;
 use crate::value::{HostFn, Value};
 
 // ── Round-62 follow-up: dispatch arms for (Variant, Variant) /
@@ -154,12 +155,13 @@ pub(crate) fn error_trait_dispatch(enum_name: &str) -> Option<ErrorTraitFn> {
 /// Used by `Value::Display` to collapse the dual shape between
 /// `format!("{e}")` and `e.message()` for stdlib error enums per the
 /// silt "explicit over implicit / one way" principle. User-defined
-/// enums are not affected — the registry only covers stdlib error
-/// enums.
-pub fn render_stdlib_error_message(tag: &str, fields: &[Value]) -> Option<String> {
-    let enum_name = crate::module::variant_to_error_enum(tag)?;
-    let dispatch_fn = error_trait_dispatch(enum_name)?;
-    let variant_value = Value::Variant(tag.into(), fields.to_vec());
+/// enums are not affected: only a variant of a builtin error enum is
+/// rendered so, whatever its name.
+pub fn render_stdlib_error_message(tag: &Tag, fields: &[Value]) -> Option<String> {
+    let ty = tag.ty();
+    crate::defs::builtin_types().get(ty.id.0.0 as usize)?;
+    let dispatch_fn = error_trait_dispatch(&ty.name)?;
+    let variant_value = Value::Variant(tag.clone(), fields.to_vec());
     match dispatch_fn("message", &[variant_value]).ok()? {
         Value::String(s) => Some(s),
         _ => None,
@@ -170,55 +172,23 @@ impl Vm {
     /// Register all builtin functions and variant constructors in globals.
     pub(super) fn register_builtins(&mut self) {
         // ── Prelude + stdlib-error enum variants ──
-        // Round-71 PARALLEL-ARRAY-DRIFT fix made the prelude loop
-        // data-driven from `module::builtin_prelude_enum_variants_with_arity()`,
-        // mirroring the round-64 DUP-1 fix that already drove the
-        // stdlib-error variants from
-        // `module::builtin_error_enum_variants_with_arity()`. Both loops
-        // had byte-identical bodies (`Variant` for nullary, otherwise
-        // `VariantConstructor`); round-75 DEAD-7 collapses them via
-        // `chain()`. The two registries are still authored separately
-        // (the prelude registry mirrors `module::builtin_enum_variants`
-        // minus the error enums; the error registry parallels
-        // `src/typechecker/builtins/errors.rs::register`), and the
-        // parity tests at `tests/meta/error_enum_dispatch_parity_tests.rs`
-        // and `tests/meta/round71_dispatch_collapse_and_parity_tests.rs`
-        // keep them in lockstep on `(variant, arity)`. Each variant is
-        // globally unique (module-prefixed for error enums) so we
-        // register every entry as a bare global.
-        for (_enum_name, variants) in module::builtin_prelude_enum_variants_with_arity()
+        // Each builtin variant is a global of its name (builtin variant
+        // names are unique among the builtins): a value for a nullary
+        // variant, its constructor otherwise, built from the builtin
+        // type's description.
+        for (enum_name, _) in module::builtin_prelude_enum_variants_with_arity()
             .iter()
             .chain(module::builtin_error_enum_variants_with_arity().iter())
         {
-            for (variant, arity) in variants.iter() {
-                let value = if *arity == 0 {
-                    Value::Variant((*variant).into(), Vec::new())
+            let ty = crate::typeinfo::builtin_type_named(enum_name).expect("a builtin enum");
+            for (ordinal, variant) in ty.variants().iter().enumerate() {
+                let tag = Tag::new(ty.clone(), ordinal as u16);
+                let value = if variant.arity == 0 {
+                    Value::Variant(tag, Vec::new())
                 } else {
-                    Value::VariantConstructor((*variant).into(), *arity)
+                    Value::VariantConstructor(tag)
                 };
-                self.globals.insert((*variant).into(), value);
-            }
-        }
-
-        // ── __type_of__<variant> mappings for builtin error enums ──
-        // Phase 1 of the stdlib error redesign: `CallMethod` dispatch
-        // looks up the parent type name via `__type_of__<tag>` to route
-        // `err.message()` to `IoError.message`, etc. User-declared enums
-        // register these globals at codegen time; builtin enums have to
-        // be seeded here so the same dispatch works.
-        //
-        // We also register declaration-order ordinals for every builtin
-        // variant in the same loop. The typechecker registers ordinals
-        // during `check_program`, but a Vm constructed without a
-        // preceding type-check pass (some unit tests)
-        // still needs ordinals for `cmp_gen(Monday, Friday)` to honour
-        // declaration order. The two registrations are idempotent —
-        // re-registering the same (name, ordinal) is a no-op write.
-        for (enum_name, variants) in module::builtin_enum_variants() {
-            for (idx, variant) in variants.iter().enumerate() {
-                let key = format!("__type_of__{variant}");
-                self.globals.insert(key, Value::String((*enum_name).into()));
-                crate::value::register_variant_ordinal(variant, idx as u32);
+                self.globals.insert(variant.name.clone(), value);
             }
         }
 
@@ -256,8 +226,9 @@ impl Vm {
         // Round-73 BLOAT-2 fix: name set hoisted to
         // `module::BUILTIN_GENERIC_CONTAINER_NAMES`.
         for name in module::BUILTIN_GENERIC_CONTAINER_NAMES {
+            let ty = crate::typeinfo::builtin_type_named(name).expect("a builtin type");
             self.globals
-                .insert((*name).into(), Value::TypeDescriptor((*name).into()));
+                .insert((*name).into(), Value::TypeDescriptor(ty.clone()));
         }
 
         // Math constants
@@ -346,8 +317,7 @@ impl Vm {
                         Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
                             self.type_name(receiver).to_string()
                         }
-                        _ => crate::types::canonical::dispatch_name_for_value(receiver)
-                            .unwrap_or_else(|| self.type_name(receiver).to_string()),
+                        _ => crate::types::canonical::dispatch_name_for_value(receiver),
                     };
                     return Some(Err(VmError::new(format!(
                         "type '{name}' does not implement Display"

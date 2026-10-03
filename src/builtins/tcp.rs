@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 
 use super::common::ok;
+use crate::typeinfo::bv;
 use crate::value::{IoCompletion, ReadWrite, TcpListenerHandle, TcpStreamHandle, Value};
 use crate::vm::{Vm, VmError};
 
@@ -34,9 +35,9 @@ use crate::vm::{Vm, VmError};
 /// `TcpTimeout` is a nullary variant; `e.message()` still produces a
 /// helpful string via the trait impl.
 fn tcp_timeout_err(_msg: &str) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant("TcpTimeout".into(), vec![])],
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(bv::TCP_TIMEOUT, vec![])],
     )
 }
 
@@ -105,6 +106,8 @@ mod tls {
     use rustls::server::WebPkiClientVerifier;
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
 
+    use crate::typeinfo::bv;
+
     use super::{
         ReadWrite, TcpStreamHandle, Value, Vm, VmError, require_bytes, require_listener,
         require_string, tcp_completion, tcp_timeout_err,
@@ -127,10 +130,10 @@ mod tls {
             tcp_completion(),
             &tcp_timeout_err,
             move || match do_connect_tls(&addr, &hostname, next_id) {
-                Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
-                Err(e) => Value::Variant(
-                    "Err".into(),
-                    vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                Err(e) => Value::variant(
+                    bv::ERR,
+                    vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
                 ),
             },
         )
@@ -153,10 +156,10 @@ mod tls {
             tcp_completion(),
             &tcp_timeout_err,
             move || match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
-                Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
-                Err(e) => Value::Variant(
-                    "Err".into(),
-                    vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                Err(e) => Value::variant(
+                    bv::ERR,
+                    vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
                 ),
             },
         )
@@ -187,10 +190,10 @@ mod tls {
                 &client_ca_pem,
                 next_id,
             ) {
-                Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
-                Err(e) => Value::Variant(
-                    "Err".into(),
-                    vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                Err(e) => Value::variant(
+                    bv::ERR,
+                    vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
                 ),
             }
         })
@@ -408,28 +411,28 @@ fn tcp_error_to_variant(err: &std::io::Error) -> Value {
         | ErrorKind::AddrNotAvailable
         | ErrorKind::HostUnreachable
         | ErrorKind::NetworkUnreachable => {
-            Value::Variant("TcpConnect".into(), vec![Value::String(msg)])
+            Value::variant(bv::TCP_CONNECT, vec![Value::String(msg)])
         }
         ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
-            Value::Variant("TcpClosed".into(), vec![])
+            Value::variant(bv::TCP_CLOSED, vec![])
         }
-        ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::Variant("TcpTimeout".into(), vec![]),
-        _ => Value::Variant("TcpUnknown".into(), vec![Value::String(msg)]),
+        ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::TCP_TIMEOUT, vec![]),
+        _ => Value::variant(bv::TCP_UNKNOWN, vec![Value::String(msg)]),
     }
 }
 
 /// Build `Err(TcpError)` from a `std::io::Error`.
 fn tcp_io_err(err: &std::io::Error) -> Value {
-    Value::Variant("Err".into(), vec![tcp_error_to_variant(err)])
+    Value::variant(bv::ERR, vec![tcp_error_to_variant(err)])
 }
 
 /// Build `Err(TcpUnknown(msg))` for string-form failures (TLS stringly
 /// errors from the rustls code path; ad-hoc arg/validation failures).
 fn err(s: impl Into<String>) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant(
-            "TcpUnknown".into(),
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(
+            bv::TCP_UNKNOWN,
             vec![Value::String(s.into())],
         )],
     )
@@ -437,9 +440,9 @@ fn err(s: impl Into<String>) -> Value {
 
 /// Build `Err(TcpClosed)`.
 fn err_closed() -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant("TcpClosed".into(), vec![])],
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(bv::TCP_CLOSED, vec![])],
     )
 }
 
@@ -689,7 +692,7 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     shutdown_sock: Mutex::new(shutdown_sock),
                     reader_socket,
                 });
-                Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
+                Value::variant(bv::OK, vec![Value::TcpStream(handle)])
             }
             Err(e) => tcp_io_err(&e),
         },
@@ -717,7 +720,7 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     shutdown_sock: Mutex::new(shutdown_sock),
                     reader_socket,
                 });
-                Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
+                Value::variant(bv::OK, vec![Value::TcpStream(handle)])
             }
             Err(e) => tcp_io_err(&e),
         },
@@ -751,7 +754,7 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         match guard.read(&mut buf) {
             Ok(n) => {
                 buf.truncate(n);
-                Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(buf))])
+                Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))])
             }
             Err(e) => {
                 // If the stream was closed (locally) while/before this
@@ -759,7 +762,7 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 // cancellation error (Windows: WSACancelBlockingCall /
                 // WSA_OPERATION_ABORTED from CancelIoEx in close()).
                 if stream.closed.load(Ordering::SeqCst) {
-                    Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(Vec::new()))])
+                    Value::variant(bv::OK, vec![Value::Bytes(Arc::new(Vec::new()))])
                 } else {
                     tcp_io_err(&e)
                 }
@@ -790,7 +793,7 @@ fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         let mut buf = vec![0u8; n];
         let mut guard = stream.inner.lock();
         match guard.read_exact(&mut buf) {
-            Ok(()) => Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(buf))]),
+            Ok(()) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
             Err(e) => tcp_io_err(&e),
         }
     })
@@ -814,7 +817,7 @@ fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         let mut guard = stream.inner.lock();
         match guard.write_all(&buf) {
             Ok(()) => match guard.flush() {
-                Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
+                Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
                 Err(e) => tcp_io_err(&e),
             },
             Err(e) => tcp_io_err(&e),

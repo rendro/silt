@@ -11,96 +11,15 @@ use std::time::Duration;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use super::common::value_kind;
-use crate::bytecode::record_tag_matches;
+use crate::defs::TypeId;
+use crate::typeinfo::{BuiltinVariant, FieldType, Shape, TypeInfo, bv, ty};
+use crate::bytecode::record_type_matches;
 #[cfg(feature = "http")]
 use crate::value::TaskHandle;
 use crate::value::{IoCompletion, Value, checked_range_len};
 use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 
-// ── Field type for JSON / TOML parsing ───────────────────────────────
-
-/// The declared type of a record field, as far as the decoders of
-/// `json.parse` and `toml.parse` are concerned. Built from the field type
-/// descriptors the compiler installs with every record declaration (the
-/// grammar is documented at the top of `src/compiler/mod.rs`).
-///
-/// Both decoders must produce, for every variant, a value of exactly the
-/// described type or an error. `Unsupported` is a type no decoder exists
-/// for: decoding such a field is an error.
-#[derive(Debug, Clone)]
-pub(crate) enum FieldType {
-    Int,
-    Float,
-    String,
-    Bool,
-    List(Box<FieldType>),
-    Option(Box<FieldType>),
-    /// `Map(String, T)`.
-    Map(Box<FieldType>),
-    Tuple(Vec<FieldType>),
-    Record(std::string::String),
-    Date,
-    Time,
-    DateTime,
-    /// A type without a decoder; carries the type as written in the
-    /// record declaration.
-    Unsupported(std::string::String),
-}
-
-/// Decode a field type descriptor (from compiler metadata) into a FieldType.
-/// A descriptor this function does not know is `Unsupported`.
-pub(crate) fn decode_field_type(s: &str) -> FieldType {
-    if let Some(rest) = s.strip_prefix("Unsupported:") {
-        FieldType::Unsupported(rest.to_string())
-    } else if let Some(rest) = s.strip_prefix("List:") {
-        FieldType::List(Box::new(decode_field_type(rest)))
-    } else if let Some(rest) = s.strip_prefix("Option:") {
-        FieldType::Option(Box::new(decode_field_type(rest)))
-    } else if let Some(rest) = s.strip_prefix("Map:") {
-        FieldType::Map(Box::new(decode_field_type(rest)))
-    } else if let Some(rest) = s.strip_prefix("Record:") {
-        FieldType::Record(rest.to_string())
-    } else if let Some(elems) = s.strip_prefix("Tuple(").and_then(|r| r.strip_suffix(')')) {
-        FieldType::Tuple(
-            split_tuple_descriptors(elems)
-                .into_iter()
-                .map(decode_field_type)
-                .collect(),
-        )
-    } else {
-        match s {
-            "Int" => FieldType::Int,
-            "Float" => FieldType::Float,
-            "String" => FieldType::String,
-            "Bool" => FieldType::Bool,
-            "Date" => FieldType::Date,
-            "Time" => FieldType::Time,
-            "DateTime" => FieldType::DateTime,
-            other => FieldType::Unsupported(other.to_string()),
-        }
-    }
-}
-
-/// Split the inside of a `Tuple(...)` descriptor at the commas that
-/// separate its elements; commas of nested tuples are left alone.
-fn split_tuple_descriptors(s: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    for (i, c) in s.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                parts.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(&s[start..]);
-    parts
-}
+// ── Field types for JSON / TOML parsing ──────────────────────────────
 
 /// The message of the error a decoder returns for a field whose declared
 /// type has no decoder. `field` is the field of the record type `record`
@@ -164,7 +83,7 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 //   JsonUnknown(message)
 
 fn json_err_wrap(inner: Value) -> Value {
-    Value::Variant("Err".into(), vec![inner])
+    Value::variant(bv::ERR, vec![inner])
 }
 
 /// Classify a `serde_json::Error` into one of the `JsonError` variants.
@@ -182,12 +101,12 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error) -> Value {
             // not codepoints). Prefer it over `line()` because fully
             // inlined TOML/JSON blobs are common in practice.
             let offset = err.column() as i64;
-            Value::Variant(
-                "JsonSyntax".into(),
+            Value::variant(
+                bv::JSON_SYNTAX,
                 vec![Value::String(err.to_string()), Value::Int(offset)],
             )
         }
-        _ => Value::Variant("JsonUnknown".into(), vec![Value::String(err.to_string())]),
+        _ => Value::variant(bv::JSON_UNKNOWN, vec![Value::String(err.to_string())]),
     }
 }
 
@@ -200,16 +119,16 @@ pub(crate) fn json_result_err(err: &serde_json::Error) -> Value {
 /// hand-written record decoder to report a field whose value has the
 /// wrong shape.
 pub(crate) fn json_type_mismatch_err(expected: &str, actual: &str) -> Value {
-    json_err_wrap(Value::Variant(
-        "JsonTypeMismatch".into(),
+    json_err_wrap(Value::variant(
+        bv::JSON_TYPE_MISMATCH,
         vec![Value::String(expected.into()), Value::String(actual.into())],
     ))
 }
 
 /// Build `Err(JsonMissingField(name))`.
 pub(crate) fn json_missing_field_err(name: &str) -> Value {
-    json_err_wrap(Value::Variant(
-        "JsonMissingField".into(),
+    json_err_wrap(Value::variant(
+        bv::JSON_MISSING_FIELD,
         vec![Value::String(name.into())],
     ))
 }
@@ -217,8 +136,8 @@ pub(crate) fn json_missing_field_err(name: &str) -> Value {
 /// Build `Err(JsonUnknown(msg))` for ad-hoc failures (unknown type
 /// descriptor, internal unexpected results, etc.).
 pub(crate) fn json_unknown_err<S: Into<String>>(msg: S) -> Value {
-    json_err_wrap(Value::Variant(
-        "JsonUnknown".into(),
+    json_err_wrap(Value::variant(
+        bv::JSON_UNKNOWN,
         vec![Value::String(msg.into())],
     ))
 }
@@ -297,20 +216,20 @@ pub fn call_regex_error_trait(name: &str, args: &[Value]) -> Result<Value, VmErr
 fn time_parse_err(err: chrono::ParseError) -> Value {
     let msg = err.to_string();
     let inner = if msg.contains("out of range") {
-        Value::Variant("TimeOutOfRange".into(), vec![Value::String(msg)])
+        Value::variant(bv::TIME_OUT_OF_RANGE, vec![Value::String(msg)])
     } else {
-        Value::Variant("TimeParseFormat".into(), vec![Value::String(msg)])
+        Value::variant(bv::TIME_PARSE_FORMAT, vec![Value::String(msg)])
     };
-    Value::Variant("Err".into(), vec![inner])
+    Value::variant(bv::ERR, vec![inner])
 }
 
 /// Build `Err(TimeOutOfRange(msg))` for explicit range rejections from
 /// `time.date` / `time.time`.
 fn time_out_of_range_err(msg: String) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant(
-            "TimeOutOfRange".into(),
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(
+            bv::TIME_OUT_OF_RANGE,
             vec![Value::String(msg)],
         )],
     )
@@ -379,15 +298,15 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
                     .collect();
             serde_json::Value::Object(obj?)
         }
-        Value::Variant(name, fields) if name == "None" && fields.is_empty() => {
+        Value::Variant(name, fields) if name.is(bv::NONE) && fields.is_empty() => {
             serde_json::Value::Null
         }
-        Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {
+        Value::Variant(name, fields) if name.is(bv::SOME) && fields.len() == 1 => {
             value_to_json(&fields[0])?
         }
         Value::Variant(name, fields) => {
             let mut obj = serde_json::Map::new();
-            obj.insert("variant".into(), serde_json::Value::String(name.clone()));
+            obj.insert("variant".into(), serde_json::Value::String(name.name().into()));
             if !fields.is_empty() {
                 let items: Result<Vec<_>, _> = fields.iter().map(value_to_json).collect();
                 obj.insert("fields".into(), serde_json::Value::Array(items?));
@@ -395,7 +314,7 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
             serde_json::Value::Object(obj)
         }
         Value::Unit => serde_json::Value::Null,
-        Value::VariantConstructor(name, _) => serde_json::Value::String(name.clone()),
+        Value::VariantConstructor(tag) => serde_json::Value::String(tag.name().into()),
         _ => serde_json::Value::Null,
     })
 }
@@ -408,7 +327,7 @@ pub(crate) fn make_date(d: NaiveDate) -> Value {
     fields.insert("year".into(), Value::Int(d.year() as i64));
     fields.insert("month".into(), Value::Int(d.month() as i64));
     fields.insert("day".into(), Value::Int(d.day() as i64));
-    Value::Record("Date".into(), Arc::new(fields))
+    Value::builtin_record(ty::DATE, fields)
 }
 
 /// Build a Silt `Time` record Value from chrono NaiveTime.
@@ -418,7 +337,7 @@ pub(crate) fn make_time(t: NaiveTime) -> Value {
     fields.insert("minute".into(), Value::Int(t.minute() as i64));
     fields.insert("second".into(), Value::Int(t.second() as i64));
     fields.insert("ns".into(), Value::Int(t.nanosecond() as i64));
-    Value::Record("Time".into(), Arc::new(fields))
+    Value::builtin_record(ty::TIME, fields)
 }
 
 /// Build a Silt `DateTime` record Value from chrono NaiveDateTime.
@@ -428,21 +347,21 @@ pub(crate) fn make_datetime(dt: NaiveDateTime) -> Value {
     let mut fields = BTreeMap::new();
     fields.insert("date".into(), date_val);
     fields.insert("time".into(), time_val);
-    Value::Record("DateTime".into(), Arc::new(fields))
+    Value::builtin_record(ty::DATE_TIME, fields)
 }
 
 /// Build a Silt `Instant` record Value.
 fn make_instant(epoch_ns: i64) -> Value {
     let mut fields = BTreeMap::new();
     fields.insert("epoch_ns".into(), Value::Int(epoch_ns));
-    Value::Record("Instant".into(), Arc::new(fields))
+    Value::builtin_record(ty::INSTANT, fields)
 }
 
 /// Build a Silt `Duration` record Value.
 fn make_duration(ns: i64) -> Value {
     let mut fields = BTreeMap::new();
     fields.insert("ns".into(), Value::Int(ns));
-    Value::Record("Duration".into(), Arc::new(fields))
+    Value::builtin_record(ty::DURATION, fields)
 }
 
 /// Round 77 BLOAT-D2: shared body for the six `time.*` duration
@@ -637,8 +556,8 @@ fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
             value_kind(v)
         )));
     };
-    if !record_tag_matches(name, "Date") {
-        return Err(VmError::new(format!("expected Date, got {name}")));
+    if !record_type_matches(name, ty::DATE) {
+        return Err(VmError::new(format!("expected Date, got {}", name.name)));
     }
     let y = field_as_i32(fields, "year", 0)?;
     let m = field_as_u32(fields, "month", 1)?;
@@ -655,8 +574,8 @@ fn extract_time(v: &Value) -> Result<NaiveTime, VmError> {
             value_kind(v)
         )));
     };
-    if !record_tag_matches(name, "Time") {
-        return Err(VmError::new(format!("expected Time, got {name}")));
+    if !record_type_matches(name, ty::TIME) {
+        return Err(VmError::new(format!("expected Time, got {}", name.name)));
     }
     let h = field_as_u32(fields, "hour", 0)?;
     let m = field_as_u32(fields, "minute", 0)?;
@@ -674,8 +593,8 @@ fn extract_datetime(v: &Value) -> Result<NaiveDateTime, VmError> {
             value_kind(v)
         )));
     };
-    if !record_tag_matches(name, "DateTime") {
-        return Err(VmError::new(format!("expected DateTime, got {name}")));
+    if !record_type_matches(name, ty::DATE_TIME) {
+        return Err(VmError::new(format!("expected DateTime, got {}", name.name)));
     }
     let date = fields
         .get("date")
@@ -696,8 +615,8 @@ fn extract_instant(v: &Value) -> Result<i64, VmError> {
             value_kind(v)
         )));
     };
-    if !record_tag_matches(name, "Instant") {
-        return Err(VmError::new(format!("expected Instant, got {name}")));
+    if !record_type_matches(name, ty::INSTANT) {
+        return Err(VmError::new(format!("expected Instant, got {}", name.name)));
     }
     match fields.get("epoch_ns") {
         Some(Value::Int(n)) => Ok(*n),
@@ -713,8 +632,8 @@ pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
             value_kind(v)
         )));
     };
-    if !record_tag_matches(name, "Duration") {
-        return Err(VmError::new(format!("expected Duration, got {name}")));
+    if !record_type_matches(name, ty::DURATION) {
+        return Err(VmError::new(format!("expected Duration, got {}", name.name)));
     }
     match fields.get("ns") {
         Some(Value::Int(n)) => Ok(*n),
@@ -724,39 +643,36 @@ pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
 
 // ── JSON helpers ────────────────────────────────────────────────────
 
-/// Load record field info from the `__record_fields__<type>` global metadata.
-/// `caller` is the builtin on whose behalf the type is looked up
-/// (`json.parse`, `toml.parse_list`, ...); it starts the error message.
-pub(crate) fn load_record_fields(
-    vm: &mut Vm,
+/// The record type `ty` a decoder builds, with its fields. `caller` is
+/// the builtin on whose behalf the type is looked up (`json.parse`,
+/// `toml.parse_list`, ...); it starts the error message. A builtin
+/// record type (`Date`) lists no fields and has no decoder.
+pub(crate) fn decodable_record(
     caller: &str,
-    type_name: &str,
+    ty: &Arc<TypeInfo>,
 ) -> Result<Vec<(std::string::String, FieldType)>, VmError> {
-    // Check cache first
-    if let Some(fields) = vm.record_types.get(type_name) {
-        return Ok(fields.clone());
-    }
-    // Look up the metadata global
-    let meta_key = format!("__record_fields__{type_name}");
-    let meta = vm.globals.get(&meta_key).cloned();
-    match meta {
-        Some(Value::List(items)) => {
-            let mut fields = Vec::new();
-            let mut i = 0;
-            while i + 1 < items.len() {
-                if let (Value::String(fname), Value::String(ftype)) = (&items[i], &items[i + 1]) {
-                    fields.push((fname.clone(), decode_field_type(ftype)));
-                }
-                i += 2;
-            }
-            vm.record_types
-                .insert(type_name.to_string(), fields.clone());
-            Ok(fields)
-        }
+    match &ty.shape {
+        Shape::Record(fields) if !fields.is_empty() || !is_builtin_type(ty) => Ok(fields.clone()),
         _ => Err(VmError::new(format!(
-            "{caller}: unknown record type '{type_name}'"
+            "{caller}: unknown record type '{}'",
+            ty.name
         ))),
     }
+}
+
+/// Whether `ty` is a builtin type.
+fn is_builtin_type(ty: &TypeInfo) -> bool {
+    crate::defs::builtin_types()
+        .get(ty.id.0.0 as usize)
+        .is_some()
+}
+
+/// The record type `id` a record field names, from the program's types.
+pub(crate) fn field_record_type(vm: &Vm, caller: &str, id: TypeId) -> Result<Arc<TypeInfo>, VmError> {
+    vm.types
+        .get(id)
+        .cloned()
+        .ok_or_else(|| VmError::new(format!("{caller}: unknown record type")))
 }
 
 /// Inner-decoder error type. Each variant carries the already-
@@ -800,7 +716,7 @@ fn decode_err_to_silt(e: JsonDecodeErr) -> Value {
 
 fn json_to_record(
     vm: &mut Vm,
-    type_name: &str,
+    ty: &Arc<TypeInfo>,
     fields: &[(std::string::String, FieldType)],
     json: &serde_json::Value,
 ) -> Result<Value, VmError> {
@@ -816,7 +732,7 @@ fn json_to_record(
                 }
                 Err(JsonDecodeErr::Unsupported(declared)) => {
                     return Ok(json_unknown_err(unsupported_field_type_message(
-                        type_name, field_name, &declared,
+                        &ty.name, field_name, &declared,
                     )));
                 }
                 Err(e) => return Ok(decode_err_to_silt(e)),
@@ -825,7 +741,7 @@ fn json_to_record(
                 FieldType::Option(_) => {
                     record_fields.insert(
                         field_name.clone(),
-                        Value::Variant("None".into(), Vec::new()),
+                        Value::variant(bv::NONE, Vec::new()),
                     );
                 }
                 _ => {
@@ -834,18 +750,15 @@ fn json_to_record(
             },
         }
     }
-    Ok(Value::Variant(
-        "Ok".into(),
-        vec![Value::Record(
-            type_name.to_string(),
-            Arc::new(record_fields),
-        )],
+    Ok(Value::variant(
+        bv::OK,
+        vec![Value::Record(ty.clone(), Arc::new(record_fields))],
     ))
 }
 
 fn json_to_record_list(
     vm: &mut Vm,
-    type_name: &str,
+    ty: &Arc<TypeInfo>,
     fields: &[(std::string::String, FieldType)],
     json: &serde_json::Value,
 ) -> Result<Value, VmError> {
@@ -854,47 +767,59 @@ fn json_to_record_list(
     };
     let mut records = Vec::new();
     for item in arr.iter() {
-        let result = json_to_record(vm, type_name, fields, item)?;
+        let result = json_to_record(vm, ty, fields, item)?;
         match result {
-            Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
+            Value::Variant(name, inner) if name.is(bv::OK) && inner.len() == 1 => {
                 records.push(inner.into_iter().next().expect("guard guarantees len==1"));
             }
-            ref err @ Value::Variant(ref name, _) if name == "Err" => {
+            ref err @ Value::Variant(ref name, _) if name.is(bv::ERR) => {
                 // Already a typed `Err(JsonError)`; forward unchanged
                 // so the caller still gets a structured variant.
                 return Ok(err.clone());
             }
             _ => {
                 return Ok(json_unknown_err(format!(
-                    "json.parse_list({type_name}): unexpected result"
+                    "json.parse_list({}): unexpected result",
+                    ty.name
                 )));
             }
         }
     }
-    Ok(Value::Variant(
-        "Ok".into(),
+    Ok(Value::variant(
+        bv::OK,
         vec![Value::List(Arc::new(records))],
     ))
 }
 
-fn json_to_map(vm: &mut Vm, value_type: &str, json: &serde_json::Value) -> Result<Value, VmError> {
+fn json_to_map(vm: &mut Vm, value_type: &Value, json: &serde_json::Value) -> Result<Value, VmError> {
     let serde_json::Value::Object(obj) = json else {
         return Ok(json_type_mismatch_err("object", json_type_name(json)));
     };
     let field_type = match value_type {
-        "String" => FieldType::String,
-        "Int" => FieldType::Int,
-        "Float" => FieldType::Float,
-        "Bool" => FieldType::Bool,
-        record_name => {
-            // Check if it's a known record type
-            let meta_key = format!("__record_fields__{record_name}");
-            if !vm.globals.contains_key(&meta_key) {
+        Value::PrimitiveDescriptor(name) => match name.as_str() {
+            "String" => FieldType::String,
+            "Int" => FieldType::Int,
+            "Float" => FieldType::Float,
+            "Bool" => FieldType::Bool,
+            other => {
                 return Ok(json_unknown_err(format!(
-                    "json.parse_map: unknown value type '{record_name}'"
+                    "json.parse_map: unknown value type '{other}'"
                 )));
             }
-            FieldType::Record(record_name.to_string())
+        },
+        Value::TypeDescriptor(ty) => {
+            if decodable_record("json.parse_map", ty).is_err() {
+                return Ok(json_unknown_err(format!(
+                    "json.parse_map: unknown value type '{}'",
+                    ty.name
+                )));
+            }
+            FieldType::Record(ty.id)
+        }
+        _ => {
+            return Err(VmError::new(
+                "json.parse_map: type argument must be a type (Int, Float, String, Bool, or a record type)".into(),
+            ));
         }
     };
     let mut map = BTreeMap::new();
@@ -906,7 +831,7 @@ fn json_to_map(vm: &mut Vm, value_type: &str, json: &serde_json::Value) -> Resul
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
     }
-    Ok(Value::Variant("Ok".into(), vec![Value::Map(Arc::new(map))]))
+    Ok(Value::variant(bv::OK, vec![Value::Map(Arc::new(map))]))
 }
 
 /// Decode a `serde_json::Value` into a silt `Value` of the expected
@@ -921,14 +846,14 @@ fn json_to_typed_value(
 ) -> Result<Value, JsonDecodeErr> {
     // Helper: construct the `JsonTypeMismatch` variant directly.
     let mismatch = |expected: &str, actual: &str| -> JsonDecodeErr {
-        JsonDecodeErr::Variant(Value::Variant(
-            "JsonTypeMismatch".into(),
+        JsonDecodeErr::Variant(Value::variant(
+            bv::JSON_TYPE_MISMATCH,
             vec![Value::String(expected.into()), Value::String(actual.into())],
         ))
     };
     let unknown = |msg: String| -> JsonDecodeErr {
-        JsonDecodeErr::Variant(Value::Variant(
-            "JsonUnknown".into(),
+        JsonDecodeErr::Variant(Value::variant(
+            bv::JSON_UNKNOWN,
             vec![Value::String(msg)],
         ))
     };
@@ -984,10 +909,10 @@ fn json_to_typed_value(
             _ => Err(mismatch("List", json_type_name(json))),
         },
         FieldType::Option(inner) => match json {
-            serde_json::Value::Null => Ok(Value::Variant("None".into(), Vec::new())),
+            serde_json::Value::Null => Ok(Value::variant(bv::NONE, Vec::new())),
             _ => {
                 let val = json_to_typed_value(vm, json, inner)?;
-                Ok(Value::Variant("Some".into(), vec![val]))
+                Ok(Value::variant(bv::SOME, vec![val]))
             }
         },
         FieldType::Map(inner) => match json {
@@ -1050,14 +975,15 @@ fn json_to_typed_value(
             }
             _ => Err(mismatch("datetime string", json_type_name(json))),
         },
-        FieldType::Record(rec_name) => {
-            let fields = load_record_fields(vm, "json.parse", rec_name)?;
-            let result = json_to_record(vm, rec_name, &fields, json)?;
+        FieldType::Record(id) => {
+            let ty = field_record_type(vm, "json.parse", *id)?;
+            let fields = decodable_record("json.parse", &ty)?;
+            let result = json_to_record(vm, &ty, &fields, json)?;
             match result {
-                Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
+                Value::Variant(name, inner) if name.is(bv::OK) && inner.len() == 1 => {
                     Ok(inner.into_iter().next().expect("len==1"))
                 }
-                Value::Variant(name, inner) if name == "Err" && inner.len() == 1 => {
+                Value::Variant(name, inner) if name.is(bv::ERR) && inner.len() == 1 => {
                     // Re-wrap as JsonDecodeErr::Variant so the outer
                     // caller forwards it unchanged. `inner[0]` is
                     // already a JsonError variant value.
@@ -1065,7 +991,7 @@ fn json_to_typed_value(
                         inner.into_iter().next().expect("len==1"),
                     ))
                 }
-                _ => Err(unknown(format!("failed to parse {rec_name}"))),
+                _ => Err(unknown(format!("failed to parse {}", ty.name))),
             }
         }
     }
@@ -1134,11 +1060,11 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (pattern, text) = parse_regex_string_pair("find", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             match re.find(text) {
-                Some(m) => Ok(Value::Variant(
-                    "Some".into(),
+                Some(m) => Ok(Value::variant(
+                    bv::SOME,
                     vec![Value::String(m.as_str().to_string())],
                 )),
-                None => Ok(Value::Variant("None".into(), Vec::new())),
+                None => Ok(Value::variant(bv::NONE, Vec::new())),
             }
         }
         "find_all" => {
@@ -1243,12 +1169,12 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                             None => Value::String(std::string::String::new()),
                         })
                         .collect();
-                    Ok(Value::Variant(
-                        "Some".into(),
+                    Ok(Value::variant(
+                        bv::SOME,
                         vec![Value::List(Arc::new(groups))],
                     ))
                 }
-                None => Ok(Value::Variant("None".into(), Vec::new())),
+                None => Ok(Value::variant(bv::NONE, Vec::new())),
             }
         }
         "captures_all" => {
@@ -1279,10 +1205,10 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             // pattern is "nameless" — if so, the contract says `None`.
             let named_count = re.capture_names().flatten().count();
             if named_count == 0 {
-                return Ok(Value::Variant("None".into(), Vec::new()));
+                return Ok(Value::variant(bv::NONE, Vec::new()));
             }
             let Some(caps) = re.captures(text) else {
-                return Ok(Value::Variant("None".into(), Vec::new()));
+                return Ok(Value::variant(bv::NONE, Vec::new()));
             };
             // Collect (name → match) pairs. Skip any named group that
             // did not participate in the match — per the spec we omit
@@ -1296,8 +1222,8 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                     );
                 }
             }
-            Ok(Value::Variant(
-                "Some".into(),
+            Ok(Value::variant(
+                bv::SOME,
                 vec![Value::Map(Arc::new(out))],
             ))
         }
@@ -1341,17 +1267,17 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     };
                     match serde_json::from_str::<serde_json::Value>(&s) {
                         Ok(json_val) => match json_to_typed_value(vm, &json_val, &field_type) {
-                            Ok(val) => Ok(Value::Variant("Ok".into(), vec![val])),
+                            Ok(val) => Ok(Value::variant(bv::OK, vec![val])),
                             Err(e) => Ok(decode_err_to_silt(e)),
                         },
                         Err(e) => Ok(json_result_err(&e)),
                     }
                 }
-                Value::TypeDescriptor(type_name) => {
-                    let type_name = type_name.clone();
-                    let fields = load_record_fields(vm, "json.parse", &type_name)?;
+                Value::TypeDescriptor(ty) => {
+                    let ty = ty.clone();
+                    let fields = decodable_record("json.parse", &ty)?;
                     match serde_json::from_str::<serde_json::Value>(&s) {
-                        Ok(json_val) => json_to_record(vm, &type_name, &fields, &json_val),
+                        Ok(json_val) => json_to_record(vm, &ty, &fields, &json_val),
                         Err(e) => Ok(json_result_err(&e)),
                     }
                 }
@@ -1373,15 +1299,15 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 )));
             };
             let s = s.clone();
-            let Value::TypeDescriptor(type_name) = &args[1] else {
+            let Value::TypeDescriptor(ty) = &args[1] else {
                 return Err(VmError::new(
                     "json.parse_list: type argument must be a record type".into(),
                 ));
             };
-            let type_name = type_name.clone();
-            let fields = load_record_fields(vm, "json.parse_list", &type_name)?;
+            let ty = ty.clone();
+            let fields = decodable_record("json.parse_list", &ty)?;
             match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(json_val) => json_to_record_list(vm, &type_name, &fields, &json_val),
+                Ok(json_val) => json_to_record_list(vm, &ty, &fields, &json_val),
                 Err(e) => Ok(json_result_err(&e)),
             }
         }
@@ -1398,13 +1324,7 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 )));
             };
             let s = s.clone();
-            let value_type = match &args[1] {
-                Value::PrimitiveDescriptor(name) => name.clone(),
-                Value::TypeDescriptor(name) => name.clone(),
-                _ => return Err(VmError::new(
-                    "json.parse_map: type argument must be a type (Int, Float, String, Bool, or a record type)".into()
-                )),
-            };
+            let value_type = args[1].clone();
             match serde_json::from_str::<serde_json::Value>(&s) {
                 Ok(json_val) => json_to_map(vm, &value_type, &json_val),
                 Err(e) => Ok(json_result_err(&e)),
@@ -1489,7 +1409,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let d32 = u32::try_from(*d)
                 .map_err(|_| VmError::new(format!("time.date: day {d} out of range for u32")))?;
             match NaiveDate::from_ymd_opt(y32, m32, d32) {
-                Some(date) => Ok(Value::Variant("Ok".into(), vec![make_date(date)])),
+                Some(date) => Ok(Value::variant(bv::OK, vec![make_date(date)])),
                 None => Ok(time_out_of_range_err(format!("invalid date: {y}-{m}-{d}"))),
             }
         }
@@ -1516,7 +1436,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let s32 = u32::try_from(*s)
                 .map_err(|_| VmError::new(format!("time.time: second {s} out of range for u32")))?;
             match NaiveTime::from_hms_opt(h32, m32, s32) {
-                Some(t) => Ok(Value::Variant("Ok".into(), vec![make_time(t)])),
+                Some(t) => Ok(Value::variant(bv::OK, vec![make_time(t)])),
                 None => Ok(time_out_of_range_err(format!("invalid time: {h}:{m}:{s}"))),
             }
         }
@@ -1693,7 +1613,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 )));
             };
             match NaiveDateTime::parse_from_str(s, pattern) {
-                Ok(dt) => Ok(Value::Variant("Ok".into(), vec![make_datetime(dt)])),
+                Ok(dt) => Ok(Value::variant(bv::OK, vec![make_datetime(dt)])),
                 Err(e) => Ok(time_parse_err(e)),
             }
         }
@@ -1715,11 +1635,11 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let padded = format!("{s}T00:00:00");
             let padded_fmt = format!("{pattern}T%H:%M:%S");
             match NaiveDateTime::parse_from_str(&padded, &padded_fmt) {
-                Ok(dt) => Ok(Value::Variant("Ok".into(), vec![make_date(dt.date())])),
+                Ok(dt) => Ok(Value::variant(bv::OK, vec![make_date(dt.date())])),
                 Err(_) => {
                     // Fallback: try direct NaiveDate parse (works on native)
                     match NaiveDate::parse_from_str(s, pattern) {
-                        Ok(d) => Ok(Value::Variant("Ok".into(), vec![make_date(d)])),
+                        Ok(d) => Ok(Value::variant(bv::OK, vec![make_date(d)])),
                         Err(e) => Ok(time_parse_err(e)),
                     }
                 }
@@ -1849,15 +1769,15 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let d = extract_date(&args[0])?;
             let day_name = match d.weekday() {
-                Weekday::Mon => "Monday",
-                Weekday::Tue => "Tuesday",
-                Weekday::Wed => "Wednesday",
-                Weekday::Thu => "Thursday",
-                Weekday::Fri => "Friday",
-                Weekday::Sat => "Saturday",
-                Weekday::Sun => "Sunday",
+                Weekday::Mon => bv::MONDAY,
+                Weekday::Tue => bv::TUESDAY,
+                Weekday::Wed => bv::WEDNESDAY,
+                Weekday::Thu => bv::THURSDAY,
+                Weekday::Fri => bv::FRIDAY,
+                Weekday::Sat => bv::SATURDAY,
+                Weekday::Sun => bv::SUNDAY,
             };
-            Ok(Value::Variant(day_name.into(), vec![]))
+            Ok(Value::variant(day_name, vec![]))
         }
 
         "days_between" => {
@@ -1991,24 +1911,24 @@ fn make_http_response(
     fields.insert("status".into(), Value::Int(status as i64));
     fields.insert("body".into(), Value::String(body));
     fields.insert("headers".into(), Value::Map(Arc::new(headers)));
-    Value::Record("Response".into(), Arc::new(fields))
+    Value::builtin_record(ty::RESPONSE, fields)
 }
 
 #[cfg(feature = "http")]
 fn make_http_request_value(
-    method: &str,
+    method: BuiltinVariant,
     path: &str,
     query: &str,
     headers: BTreeMap<Value, Value>,
     body: std::string::String,
 ) -> Value {
     let mut fields = BTreeMap::new();
-    fields.insert("method".into(), Value::Variant(method.into(), vec![]));
+    fields.insert("method".into(), Value::variant(method, vec![]));
     fields.insert("path".into(), Value::String(path.into()));
     fields.insert("query".into(), Value::String(query.into()));
     fields.insert("headers".into(), Value::Map(Arc::new(headers)));
     fields.insert("body".into(), Value::String(body));
-    Value::Record("Request".into(), Arc::new(fields))
+    Value::builtin_record(ty::REQUEST, fields)
 }
 
 #[cfg(feature = "http")]
@@ -2025,9 +1945,10 @@ fn extract_http_response(
     let Value::Record(name, fields) = val else {
         return Err(VmError::new("handler must return a Response record".into()));
     };
-    if !record_tag_matches(name, "Response") {
+    if !record_type_matches(name, ty::RESPONSE) {
         return Err(VmError::new(format!(
-            "handler must return Response, got {name}"
+            "handler must return Response, got {}",
+            name.name
         )));
     }
     let status = match fields.get("status") {
@@ -2215,9 +2136,9 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 /// is a nullary variant. Used by http.get / http.request submits.
 #[cfg(feature = "http")]
 fn http_timeout_err(_msg: &str) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant("HttpTimeout".into(), vec![])],
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(bv::HTTP_TIMEOUT, vec![])],
     )
 }
 
@@ -2233,47 +2154,47 @@ fn http_error_to_variant(raw_msg: &str, url: &str) -> Value {
     let lower = msg.to_lowercase();
     let url_redacted = redact_http_url_userinfo(url);
     if lower.contains("timed out") || lower.contains("timeout") {
-        Value::Variant("HttpTimeout".into(), vec![])
+        Value::variant(bv::HTTP_TIMEOUT, vec![])
     } else if lower.contains("invalid url") || lower.contains("not a valid url") {
-        Value::Variant("HttpInvalidUrl".into(), vec![Value::String(url_redacted)])
+        Value::variant(bv::HTTP_INVALID_URL, vec![Value::String(url_redacted)])
     } else if lower.contains("tls") || lower.contains("certificate") || lower.contains("handshake")
     {
-        Value::Variant("HttpTls".into(), vec![Value::String(msg)])
+        Value::variant(bv::HTTP_TLS, vec![Value::String(msg)])
     } else if lower.contains("bad status")
         || lower.contains("invalid response")
         || lower.contains("bad header")
     {
-        Value::Variant("HttpInvalidResponse".into(), vec![Value::String(msg)])
+        Value::variant(bv::HTTP_INVALID_RESPONSE, vec![Value::String(msg)])
     } else if lower.contains("connection closed")
         || lower.contains("unexpected eof")
         || lower.contains("closed before")
     {
-        Value::Variant("HttpClosedEarly".into(), vec![])
+        Value::variant(bv::HTTP_CLOSED_EARLY, vec![])
     } else if lower.contains("resolve")
         || lower.contains("refused")
         || lower.contains("no such host")
         || lower.contains("network unreachable")
         || lower.contains("connect")
     {
-        Value::Variant("HttpConnect".into(), vec![Value::String(msg)])
+        Value::variant(bv::HTTP_CONNECT, vec![Value::String(msg)])
     } else {
-        Value::Variant("HttpUnknown".into(), vec![Value::String(msg)])
+        Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(msg)])
     }
 }
 
 /// Wrap a ureq error in `Err(HttpError)`.
 #[cfg(feature = "http")]
 fn http_err(raw_msg: &str, url: &str) -> Value {
-    Value::Variant("Err".into(), vec![http_error_to_variant(raw_msg, url)])
+    Value::variant(bv::ERR, vec![http_error_to_variant(raw_msg, url)])
 }
 
 /// Wrap a response-body decode failure as `Err(HttpInvalidResponse(msg))`.
 #[cfg(feature = "http")]
 fn http_response_decode_err(msg: String) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant(
-            "HttpInvalidResponse".into(),
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(
+            bv::HTTP_INVALID_RESPONSE,
             vec![Value::String(msg)],
         )],
     )
@@ -2291,7 +2212,7 @@ fn finish_http_response(
 ) -> Value {
     match result {
         Ok(response) => match ureq_response_to_value(response) {
-            Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
+            Ok(resp) => Value::variant(bv::OK, vec![resp]),
             Err(e) => http_response_decode_err(e.message),
         },
         Err(e) => http_err(&format!("{e}"), url),
@@ -2366,10 +2287,10 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
         "HEAD" => no_body!(head),
         "OPTIONS" => no_body!(options),
         other => {
-            return Value::Variant(
-                "Err".into(),
-                vec![Value::Variant(
-                    "HttpInvalidUrl".into(),
+            return Value::variant(
+                bv::ERR,
+                vec![Value::variant(
+                    bv::HTTP_INVALID_URL,
                     vec![Value::String(format!("unknown method: {other}"))],
                 )],
             );
@@ -2470,14 +2391,14 @@ fn do_http_serve_inner(
                 let _dec = Decrement(inflight_guard);
 
                 // Parse the HTTP method
-                let method_str = match req.method() {
-                    tiny_http::Method::Get => "GET",
-                    tiny_http::Method::Post => "POST",
-                    tiny_http::Method::Put => "PUT",
-                    tiny_http::Method::Patch => "PATCH",
-                    tiny_http::Method::Delete => "DELETE",
-                    tiny_http::Method::Head => "HEAD",
-                    tiny_http::Method::Options => "OPTIONS",
+                let method = match req.method() {
+                    tiny_http::Method::Get => bv::GET,
+                    tiny_http::Method::Post => bv::POST,
+                    tiny_http::Method::Put => bv::PUT,
+                    tiny_http::Method::Patch => bv::PATCH,
+                    tiny_http::Method::Delete => bv::DELETE,
+                    tiny_http::Method::Head => bv::HEAD,
+                    tiny_http::Method::Options => bv::OPTIONS,
                     _ => {
                         let resp = tiny_http::Response::from_string("Method Not Allowed")
                             .with_status_code(tiny_http::StatusCode(405));
@@ -2537,7 +2458,7 @@ fn do_http_serve_inner(
                 let body = std::string::String::from_utf8_lossy(&body_bytes).into_owned();
 
                 // Build Request record
-                let request_val = make_http_request_value(method_str, &path, &query, headers, body);
+                let request_val = make_http_request_value(method, &path, &query, headers, body);
 
                 // Run the user's handler on the per-request child VM
                 match request_vm.invoke_callable(&handler, &[request_val]) {
@@ -2622,7 +2543,7 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         value_kind(&args[0])
                     )));
                 };
-                if !method_args.is_empty() {
+                if !method_args.is_empty() || !method_tag.of(ty::METHOD) {
                     return Err(VmError::new("http.request: invalid Method variant".into()));
                 }
                 let Value::String(url) = &args[1] else {
@@ -2644,7 +2565,7 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     )));
                 };
 
-                let method_tag = method_tag.clone();
+                let method_tag = method_tag.name().to_string();
                 let url = url.clone();
                 let body = body.clone();
                 let headers: Vec<(String, String)> = header_map
@@ -2793,7 +2714,7 @@ mod http_response_tests {
         fields.insert("status".to_string(), Value::Int(status));
         fields.insert("body".to_string(), Value::String(String::new()));
         fields.insert("headers".to_string(), Value::Map(Arc::new(BTreeMap::new())));
-        Value::Record("Response".to_string(), Arc::new(fields))
+        Value::builtin_record(ty::RESPONSE, fields)
     }
 
     #[test]
@@ -2832,45 +2753,5 @@ mod http_response_tests {
         let result = extract_http_response(&val);
         assert!(result.is_ok(), "status 0 should be accepted");
         assert_eq!(result.unwrap().0, 0);
-    }
-}
-
-#[cfg(test)]
-mod field_type_tests {
-    use super::{FieldType, decode_field_type};
-
-    #[test]
-    fn descriptors_decode_to_their_field_type() {
-        assert!(matches!(decode_field_type("Int"), FieldType::Int));
-        assert!(matches!(decode_field_type("DateTime"), FieldType::DateTime));
-        assert!(matches!(
-            decode_field_type("Map:Int"),
-            FieldType::Map(value) if matches!(*value, FieldType::Int)
-        ));
-        assert!(matches!(
-            decode_field_type("List:Record:P"),
-            FieldType::List(elem) if matches!(&*elem, FieldType::Record(name) if name == "P")
-        ));
-        match decode_field_type("Tuple(Int,Tuple(String,Bool),Option:Int)") {
-            FieldType::Tuple(elems) => {
-                assert_eq!(elems.len(), 3);
-                assert!(matches!(&elems[0], FieldType::Int));
-                assert!(matches!(&elems[1], FieldType::Tuple(inner) if inner.len() == 2));
-                assert!(matches!(&elems[2], FieldType::Option(_)));
-            }
-            other => panic!("expected a tuple, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_type_without_decoder_is_unsupported() {
-        assert!(matches!(
-            decode_field_type("Unsupported:Set(Int)"),
-            FieldType::Unsupported(declared) if declared == "Set(Int)"
-        ));
-        assert!(matches!(
-            decode_field_type("Whatever"),
-            FieldType::Unsupported(declared) if declared == "Whatever"
-        ));
     }
 }

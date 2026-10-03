@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::common::value_kind;
+use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use crate::vm::{BuiltinAcc, BuiltinIterKind, SuspendedBuiltin, Vm, VmError};
 
@@ -153,7 +154,7 @@ fn apply_unfold_result(
     result: &mut Vec<Value>,
 ) -> Result<UnfoldStep, VmError> {
     match val {
-        Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
+        Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
             if let Value::Tuple(pair) = &fields[0]
                 && pair.len() == 2
             {
@@ -170,7 +171,7 @@ fn apply_unfold_result(
             result.push(fields[0].clone());
             Ok(UnfoldStep::Done)
         }
-        Value::Variant(ref tag, _) if tag == "None" => Ok(UnfoldStep::Done),
+        Value::Variant(ref tag, _) if tag.is(bv::NONE) => Ok(UnfoldStep::Done),
         other => {
             result.push(other);
             Ok(UnfoldStep::Done)
@@ -325,14 +326,14 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             match &args[0] {
                 Value::List(xs) => match xs.first() {
-                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
-                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                    Some(val) => Ok(Value::variant(bv::SOME, vec![val.clone()])),
+                    None => Ok(Value::variant(bv::NONE, Vec::new())),
                 },
                 Value::Range(lo, hi) => {
                     if lo <= hi {
-                        Ok(Value::Variant("Some".into(), vec![Value::Int(*lo)]))
+                        Ok(Value::variant(bv::SOME, vec![Value::Int(*lo)]))
                     } else {
-                        Ok(Value::Variant("None".into(), Vec::new()))
+                        Ok(Value::variant(bv::NONE, Vec::new()))
                     }
                 }
                 _ => Err(VmError::new("list.head requires a list or range".into())),
@@ -366,14 +367,14 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             match &args[0] {
                 Value::List(xs) => match xs.last() {
-                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
-                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                    Some(val) => Ok(Value::variant(bv::SOME, vec![val.clone()])),
+                    None => Ok(Value::variant(bv::NONE, Vec::new())),
                 },
                 Value::Range(lo, hi) => {
                     if lo <= hi {
-                        Ok(Value::Variant("Some".into(), vec![Value::Int(*hi)]))
+                        Ok(Value::variant(bv::SOME, vec![Value::Int(*hi)]))
                     } else {
-                        Ok(Value::Variant("None".into(), Vec::new()))
+                        Ok(Value::variant(bv::NONE, Vec::new()))
                     }
                 }
                 _ => Err(VmError::new("list.last requires a list or range".into())),
@@ -541,18 +542,18 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let idx = n_val as usize;
             match &args[0] {
                 Value::List(xs) => match xs.get(idx) {
-                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
-                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                    Some(val) => Ok(Value::variant(bv::SOME, vec![val.clone()])),
+                    None => Ok(Value::variant(bv::NONE, Vec::new())),
                 },
                 Value::Range(lo, hi) => {
                     let i = match lo.checked_add(idx as i64) {
                         Some(i) => i,
-                        None => return Ok(Value::Variant("None".into(), Vec::new())),
+                        None => return Ok(Value::variant(bv::NONE, Vec::new())),
                     };
                     if i <= *hi {
-                        Ok(Value::Variant("Some".into(), vec![Value::Int(i)]))
+                        Ok(Value::variant(bv::SOME, vec![Value::Int(i)]))
                     } else {
-                        Ok(Value::Variant("None".into(), Vec::new()))
+                        Ok(Value::variant(bv::NONE, Vec::new()))
                     }
                 }
                 _ => Err(VmError::new("list.get requires a list or range".into())),
@@ -798,10 +799,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                             "list.index_of overflow: index too large to represent as Int".into(),
                         )
                     })?;
-                    return Ok(Value::Variant("Some".into(), vec![Value::Int(idx)]));
+                    return Ok(Value::variant(bv::SOME, vec![Value::Int(idx)]));
                 }
             }
-            Ok(Value::Variant("None".into(), Vec::new()))
+            Ok(Value::variant(bv::NONE, Vec::new()))
         }
         "remove_at" => {
             if args.len() != 2 {
@@ -986,8 +987,8 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
                 return Err(VmError::new("map.get requires a map".into()));
             };
             match m.get(&args[1]) {
-                Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
-                None => Ok(Value::Variant("None".into(), Vec::new())),
+                Some(val) => Ok(Value::variant(bv::SOME, vec![val.clone()])),
+                None => Ok(Value::variant(bv::NONE, Vec::new())),
             }
         }
         "set" => {
@@ -1134,7 +1135,7 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let result =
                 vm.iterate_builtin(BuiltinIterKind::MapMap, items, args[1].clone(), args)?;
             if let Value::Variant(ref tag, _) = result
-                && tag == "__MapMapTypeError__"
+                && tag.is(bv::MAP_ERROR)
             {
                 return Err(VmError::new(
                     "map.map callback must return a (key, value) tuple".into(),

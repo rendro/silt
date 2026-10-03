@@ -3677,7 +3677,7 @@ impl TypeChecker {
                     }
                 }
 
-                for (decl_idx, variant) in variants.iter().enumerate() {
+                for variant in variants {
                     let field_types: Vec<Type> = variant
                         .fields
                         .iter()
@@ -3688,19 +3688,6 @@ impl TypeChecker {
                         name: variant.name,
                         field_types: field_types.clone(),
                     });
-
-                    // Register the variant's declaration-order ordinal
-                    // into the global variant-ordinal registry that
-                    // `Value::cmp` consults. This is what makes
-                    // `cmp_gen(Red, Green)` return `-1` for
-                    // `type Color { Red, Green, Blue }` regardless of
-                    // alphabetical order — the round-60 baseline used
-                    // alphabetical comparison everywhere except a
-                    // hand-rolled Weekday special case (now removed).
-                    //
-                    // The map is keyed by the bare variant name, which
-                    // two enums may share: their ordinals then collide.
-                    crate::value::register_variant_ordinal(&resolve(variant.name), decl_idx as u32);
 
                     // Register the constructor in the type environment
                     let type_params: Vec<Type> =

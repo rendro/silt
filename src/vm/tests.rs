@@ -1,4 +1,5 @@
 use super::*;
+use crate::typeinfo::bv;
 use crate::bytecode::{Chunk, Function, Op};
 use crate::compiler::Compiler;
 use crate::lexer::Lexer;
@@ -853,7 +854,7 @@ fn test_e2e_variant_constructor() {
             }
         "#,
     );
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
+    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(42)]));
 }
 
 #[test]
@@ -2371,7 +2372,7 @@ fn test_scheduler_channel_communication() {
     );
     assert_eq!(
         result,
-        Value::Variant("Message".into(), vec![Value::Int(99)])
+        Value::variant(bv::MESSAGE, vec![Value::Int(99)])
     );
 }
 

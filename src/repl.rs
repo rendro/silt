@@ -328,6 +328,7 @@ impl Repl {
             }
         };
         evaluation.diagnostics.extend(program.warnings);
+        self.vm.load_types(&program.types);
         let script = program
             .functions
             .into_iter()

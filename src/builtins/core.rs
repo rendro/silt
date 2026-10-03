@@ -1,5 +1,6 @@
 //! Core builtin functions (`result.*`, `option.*`, `test.*`).
 
+use crate::typeinfo::{BuiltinVariant, bv};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
@@ -10,22 +11,22 @@ use crate::vm::{Vm, VmError};
 struct AdtShape {
     module: &'static str,   // "result" | "option" — for error messages
     adt_name: &'static str, // "Result" | "Option" — for error messages
-    ok_tag: &'static str,   // "Ok"     | "Some"
-    err_tag: &'static str,  // "Err"    | "None"
+    ok_tag: BuiltinVariant,  // Ok  | Some
+    err_tag: BuiltinVariant, // Err | None
 }
 
 const RESULT_SHAPE: AdtShape = AdtShape {
     module: "result",
     adt_name: "Result",
-    ok_tag: "Ok",
-    err_tag: "Err",
+    ok_tag: bv::OK,
+    err_tag: bv::ERR,
 };
 
 const OPTION_SHAPE: AdtShape = AdtShape {
     module: "option",
     adt_name: "Option",
-    ok_tag: "Some",
-    err_tag: "None",
+    ok_tag: bv::SOME,
+    err_tag: bv::NONE,
 };
 
 /// Dispatch the shared two-variant ADT operations (`unwrap_or`, `is_ok`/
@@ -57,10 +58,10 @@ fn dispatch_shared_adt_op(
             )));
         }
         return match &args[0] {
-            Value::Variant(tag, fields) if tag == ok_tag && fields.len() == 1 => {
+            Value::Variant(tag, fields) if tag.is(ok_tag) && fields.len() == 1 => {
                 Ok(Some(fields[0].clone()))
             }
-            Value::Variant(tag, _) if tag == err_tag => Ok(Some(args[1].clone())),
+            Value::Variant(tag, _) if tag.is(err_tag) => Ok(Some(args[1].clone())),
             _ => Err(VmError::new(format!(
                 "{module}.unwrap_or requires a{} {adt_name}",
                 if adt_name == "Option" { "n" } else { "" }
@@ -74,7 +75,7 @@ fn dispatch_shared_adt_op(
             )));
         }
         return Ok(Some(Value::Bool(
-            matches!(&args[0], Value::Variant(tag, _) if tag == ok_tag),
+            matches!(&args[0], Value::Variant(tag, _) if tag.is(ok_tag)),
         )));
     }
     if name == is_err_name {
@@ -84,7 +85,7 @@ fn dispatch_shared_adt_op(
             )));
         }
         return Ok(Some(Value::Bool(
-            matches!(&args[0], Value::Variant(tag, _) if tag == err_tag),
+            matches!(&args[0], Value::Variant(tag, _) if tag.is(err_tag)),
         )));
     }
     if name == map_name {
@@ -94,11 +95,11 @@ fn dispatch_shared_adt_op(
             )));
         }
         return match &args[0] {
-            Value::Variant(tag, fields) if tag == ok_tag && fields.len() == 1 => {
+            Value::Variant(tag, fields) if tag.is(ok_tag) && fields.len() == 1 => {
                 let new_val = vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)?;
-                Ok(Some(Value::Variant(ok_tag.into(), vec![new_val])))
+                Ok(Some(Value::variant(ok_tag, vec![new_val])))
             }
-            other @ Value::Variant(tag, _) if tag == err_tag => Ok(Some(other.clone())),
+            other @ Value::Variant(tag, _) if tag.is(err_tag) => Ok(Some(other.clone())),
             _ => Err(VmError::new(format!(
                 "{module}.{map_name} requires a{} {adt_name}",
                 if adt_name == "Option" { "n" } else { "" }
@@ -110,11 +111,11 @@ fn dispatch_shared_adt_op(
             return Err(VmError::new(format!("{module}.flat_map takes 2 arguments")));
         }
         return match &args[0] {
-            Value::Variant(tag, fields) if tag == ok_tag && fields.len() == 1 => {
+            Value::Variant(tag, fields) if tag.is(ok_tag) && fields.len() == 1 => {
                 let v = vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)?;
                 Ok(Some(v))
             }
-            other @ Value::Variant(tag, _) if tag == err_tag => Ok(Some(other.clone())),
+            other @ Value::Variant(tag, _) if tag.is(err_tag) => Ok(Some(other.clone())),
             _ => Err(VmError::new(format!(
                 "{module}.flat_map requires a{} {adt_name}",
                 if adt_name == "Option" { "n" } else { "" }
@@ -137,11 +138,11 @@ pub fn call_result(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
                 return Err(VmError::new("result.map_err takes 2 arguments".into()));
             }
             match &args[0] {
-                other @ Value::Variant(tag, _) if tag == "Ok" => Ok(other.clone()),
-                Value::Variant(tag, fields) if tag == "Err" && fields.len() == 1 => {
+                other @ Value::Variant(tag, _) if tag.is(bv::OK) => Ok(other.clone()),
+                Value::Variant(tag, fields) if tag.is(bv::ERR) && fields.len() == 1 => {
                     let new_val =
                         vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)?;
-                    Ok(Value::Variant("Err".into(), vec![new_val]))
+                    Ok(Value::variant(bv::ERR, vec![new_val]))
                 }
                 _ => Err(VmError::new("result.map_err requires a Result".into())),
             }
@@ -151,17 +152,17 @@ pub fn call_result(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
                 return Err(VmError::new("result.flatten takes 1 argument".into()));
             }
             match &args[0] {
-                Value::Variant(tag, fields) if tag == "Ok" && fields.len() == 1 => {
+                Value::Variant(tag, fields) if tag.is(bv::OK) && fields.len() == 1 => {
                     match &fields[0] {
                         ok @ Value::Variant(inner_tag, _)
-                            if inner_tag == "Ok" || inner_tag == "Err" =>
+                            if inner_tag.is(bv::OK) || inner_tag.is(bv::ERR) =>
                         {
                             Ok(ok.clone())
                         }
                         _ => Ok(args[0].clone()),
                     }
                 }
-                other @ Value::Variant(tag, _) if tag == "Err" => Ok(other.clone()),
+                other @ Value::Variant(tag, _) if tag.is(bv::ERR) => Ok(other.clone()),
                 _ => Err(VmError::new("result.flatten requires a Result".into())),
             }
         }
@@ -182,11 +183,11 @@ pub fn call_option(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
                 return Err(VmError::new("option.to_result takes 2 arguments".into()));
             }
             match &args[0] {
-                Value::Variant(tag, fields) if tag == "Some" && fields.len() == 1 => {
-                    Ok(Value::Variant("Ok".into(), vec![fields[0].clone()]))
+                Value::Variant(tag, fields) if tag.is(bv::SOME) && fields.len() == 1 => {
+                    Ok(Value::variant(bv::OK, vec![fields[0].clone()]))
                 }
-                Value::Variant(tag, _) if tag == "None" => {
-                    Ok(Value::Variant("Err".into(), vec![args[1].clone()]))
+                Value::Variant(tag, _) if tag.is(bv::NONE) => {
+                    Ok(Value::variant(bv::ERR, vec![args[1].clone()]))
                 }
                 _ => Err(VmError::new("option.to_result requires an Option".into())),
             }

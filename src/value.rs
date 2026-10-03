@@ -1,14 +1,13 @@
 use parking_lot::{Condvar, Mutex};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::sync::OnceLock;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 
 use crate::bytecode;
+use crate::typeinfo::{Tag, TypeInfo, bv, ty};
 use crate::vm::VmError;
 
 /// Maximum number of elements that may be materialized from a range into a
@@ -122,93 +121,6 @@ impl Drop for WakerRegistration {
     }
 }
 
-// ── Variant declaration-order ordinal registry ──────────────────────
-//
-// Declaration-order comparison for user-defined enum variants requires a
-// stable mapping from variant name → ordinal index inside its enum. We
-// keep that mapping in a process-global registry rather than baking it
-// into every `Value::Variant` payload — the alternative would mean
-// touching the 500+ existing `Value::Variant(name, fields)` construction
-// sites across the source tree and tests.
-//
-// The registry is populated from three places:
-//   1. The registry itself, which seeds all built-in enum ordinals on
-//      first access (Weekday, Method, Result, Option, all the typed
-//      stdlib error enums). This makes ordinals available even before
-//      any typechecker / Vm init has run, which matters for unit tests
-//      that build `Value::Variant` directly and never construct a Vm.
-//   2. The typechecker, when it registers each user enum decl during
-//      `check_program`. User-defined variants are registered with their
-//      declaration-order index inside the parent enum.
-//   3. Built-in module init in `vm/dispatch.rs` (idempotent re-write of
-//      the same built-in ordinals seeded in step 1). Kept as a defensive
-//      pass — registering the same (name, ordinal) twice is a no-op.
-//
-// `Value::cmp` consults the registry (via `lookup_variant_ordinal`) to
-// order two variants by ordinal; if either tag is unregistered, falls
-// back to alphabetical name comparison (preserving the prior behaviour
-// for variants we never saw).
-//
-// Variant names are globally unique in silt (the typechecker emits a
-// warning when one enum's variant shadows another's), so a flat
-// `HashMap<String, u32>` keyed on the variant name suffices — the
-// `(enum_name, variant_name)` pair would be redundant.
-fn variant_ordinal_registry() -> &'static RwLock<HashMap<String, u32>> {
-    static REG: OnceLock<RwLock<HashMap<String, u32>>> = OnceLock::new();
-    REG.get_or_init(|| {
-        let mut map = HashMap::new();
-        // Seed built-in enum ordinals up front so unit tests that build
-        // `Value::Variant("Ok", ...)` directly (without going through a
-        // typechecker / Vm) still get declaration-order semantics.
-        // Forwards directly to `module::builtin_enum_variants` — the
-        // authoritative source of truth. Round 67 collapsed a parallel
-        // ~115-line hand-rolled list that lived here (the historical
-        // comment about a "circular dependency" was wrong: neither
-        // file imports the other, so the direct call compiles and the
-        // duplicate list was just bloat that drifted from the module
-        // side, e.g. `ChannelResult` ordinal order had diverged).
-        for (_enum_name, variants) in crate::module::builtin_enum_variants() {
-            for (idx, variant) in variants.iter().enumerate() {
-                map.insert((*variant).to_string(), idx as u32);
-            }
-        }
-        RwLock::new(map)
-    })
-}
-
-/// Register the declaration-order ordinal for a variant tag. If the
-/// variant is already registered, the new ordinal overwrites the old —
-/// this matches the variant-shadowing semantics in the typechecker
-/// (most-recent-wins for cross-enum collisions). Idempotent for the
-/// common case of the same value being re-registered.
-pub fn register_variant_ordinal(name: &str, ordinal: u32) {
-    let mut guard = variant_ordinal_registry().write().unwrap();
-    guard.insert(name.to_string(), ordinal);
-}
-
-/// Look up the declaration-order ordinal for a variant tag. Returns
-/// `None` if the variant has never been registered (e.g. variants
-/// constructed in unit tests that bypass both the typechecker and the
-/// VM init path).
-pub fn lookup_variant_ordinal(name: &str) -> Option<u32> {
-    let guard = variant_ordinal_registry().read().unwrap();
-    guard.get(name).copied()
-}
-
-/// Register a sequence of variant names in declaration order.
-/// Equivalent to calling `register_variant_ordinal(name, idx as u32)`
-/// for each `(idx, name)` pair, but acquires the lock once.
-pub fn register_variant_decl_order<I, S>(variants: I)
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let mut guard = variant_ordinal_registry().write().unwrap();
-    for (idx, name) in variants.into_iter().enumerate() {
-        guard.insert(name.as_ref().to_string(), idx as u32);
-    }
-}
-
 #[derive(Clone)]
 pub enum Value {
     Int(i64),
@@ -220,19 +132,22 @@ pub enum Value {
     Map(Arc<BTreeMap<Value, Value>>),
     Set(Arc<BTreeSet<Value>>),
     Tuple(Vec<Value>),
-    Record(String, Arc<BTreeMap<String, Value>>),
-    Variant(String, Vec<Value>),
+    /// A record: its type and its fields by name.
+    Record(Arc<TypeInfo>, Arc<BTreeMap<String, Value>>),
+    /// A variant: which variant of which enum, and its fields.
+    Variant(Tag, Vec<Value>),
     VmClosure(Arc<bytecode::VmClosure>),
     BuiltinFn(String),
     /// A function of a host module an embedder declared to the session
     /// (see `session::HostModule`), installed by the program that
     /// imports the module.
     HostFn(Arc<HostFn>),
-    VariantConstructor(String, usize), // name, arity
-    /// Runtime token for a user-defined type (record or enum) passed as a
-    /// `type a` argument. Keeps `type T`-style values distinct from
-    /// primitives (see `PrimitiveDescriptor`).
-    TypeDescriptor(String),
+    /// The constructor of a variant with fields, as a value.
+    VariantConstructor(Tag),
+    /// Runtime token for a record or enum type, or a builtin container
+    /// type, passed as a `type a` argument. Keeps `type T`-style values
+    /// distinct from primitives (see `PrimitiveDescriptor`).
+    TypeDescriptor(Arc<TypeInfo>),
     PrimitiveDescriptor(String), // "Int", "Float", "String", "Bool" — for json.parse_map etc.
     Channel(Arc<Channel>),
     Handle(Arc<TaskHandle>),
@@ -1170,10 +1085,10 @@ pub type TimeoutErrFactory = std::sync::Arc<dyn Fn(&str) -> Value + Send + Sync>
 /// signature declares a different error enum MUST construct its own
 /// factory and pass it via `with_timeout_err` + `submit_with`.
 pub fn io_unknown_timeout_err(msg: &str) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant(
-            "IoUnknown".into(),
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(
+            bv::IO_UNKNOWN,
             vec![Value::String(msg.to_string())],
         )],
     )
@@ -1402,8 +1317,8 @@ impl fmt::Debug for Value {
                 }
                 t.finish()
             }
-            Value::Record(name, fields) => {
-                write!(f, "{name} {{")?;
+            Value::Record(ty, fields) => {
+                write!(f, "{} {{", ty.name)?;
                 for (i, (k, v)) in fields.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -1429,10 +1344,9 @@ impl fmt::Debug for Value {
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::HostFn(h) => write!(f, "<host:{}>", h.name),
-            Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
-            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
-                write!(f, "<type:{name}>")
-            }
+            Value::VariantConstructor(tag) => write!(f, "<constructor:{tag}>"),
+            Value::TypeDescriptor(ty) => write!(f, "<type:{}>", ty.name),
+            Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Bytes(b) => write!(f, "{}", format_bytes_preview(b)),
@@ -1440,6 +1354,19 @@ impl fmt::Debug for Value {
             Value::TcpStream(t) => write!(f, "<tcp-stream:{}>", t.id),
             Value::Unit => write!(f, "()"),
         }
+    }
+}
+
+impl Value {
+    /// The variant `tag` (a [`Tag`], or a builtin variant of
+    /// [`crate::typeinfo::bv`]) with the fields `fields`.
+    pub fn variant(tag: impl Into<Tag>, fields: Vec<Value>) -> Value {
+        Value::Variant(tag.into(), fields)
+    }
+
+    /// A record of the builtin record type `ty` (`ty::DATE`).
+    pub fn builtin_record(ty: crate::defs::TypeId, fields: BTreeMap<String, Value>) -> Value {
+        Value::Record(crate::typeinfo::builtin_type(ty).clone(), Arc::new(fields))
     }
 }
 
@@ -1475,16 +1402,16 @@ impl Value {
                 let items: Vec<String> = vs.iter().map(|v| v.format_silt()).collect();
                 format!("({})", items.join(", "))
             }
-            Value::Record(name, fields) => {
+            Value::Record(ty, fields) => {
                 let items: Vec<String> = fields
                     .iter()
                     .map(|(k, v)| format!("{k}: {}", v.format_silt()))
                     .collect();
-                format!("{name} {{{}}}", items.join(", "))
+                format!("{} {{{}}}", ty.name, items.join(", "))
             }
             Value::Variant(name, fields) => {
                 if fields.is_empty() {
-                    name.clone()
+                    name.name().to_string()
                 } else {
                     let items: Vec<String> = fields.iter().map(|v| v.format_silt()).collect();
                     format!("{name}({})", items.join(", "))
@@ -1492,10 +1419,9 @@ impl Value {
             }
             Value::VmClosure(_) => "<fn>".to_string(),
             Value::BuiltinFn(_) | Value::HostFn(_) => "<fn>".to_string(),
-            Value::VariantConstructor(name, _) => format!("<constructor:{name}>"),
-            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
-                format!("<type:{name}>")
-            }
+            Value::VariantConstructor(tag) => format!("<constructor:{tag}>"),
+            Value::TypeDescriptor(ty) => format!("<type:{}>", ty.name),
+            Value::PrimitiveDescriptor(name) => format!("<type:{name}>"),
             Value::Channel(ch) => format!("<channel:{}>", ch.id),
             Value::Handle(h) => format!("<handle:{}>", h.id),
             Value::Bytes(b) => format_bytes_preview(b),
@@ -1658,14 +1584,14 @@ impl fmt::Display for Value {
                 }
                 write!(f, ")")
             }
-            Value::Record(name, fields) => match name.as_str() {
-                "Date" => {
+            Value::Record(ty, fields) => match ty.id {
+                ty::DATE => {
                     let y = val_i64(fields.get("year"));
                     let m = val_i64(fields.get("month"));
                     let d = val_i64(fields.get("day"));
                     write!(f, "{y:04}-{m:02}-{d:02}")
                 }
-                "Time" => {
+                ty::TIME => {
                     let h = val_i64(fields.get("hour"));
                     let m = val_i64(fields.get("minute"));
                     let s = val_i64(fields.get("second"));
@@ -1676,16 +1602,16 @@ impl fmt::Display for Value {
                         write!(f, "{h:02}:{m:02}:{s:02}")
                     }
                 }
-                "DateTime" => {
+                ty::DATE_TIME => {
                     if let (Some(date), Some(time)) = (fields.get("date"), fields.get("time")) {
                         write!(f, "{date}T{time}")
                     } else {
                         write!(f, "DateTime {{}}")
                     }
                 }
-                "Duration" => fmt_duration(f, val_i64(fields.get("ns"))),
+                ty::DURATION => fmt_duration(f, val_i64(fields.get("ns"))),
                 _ => {
-                    write!(f, "{name} {{")?;
+                    write!(f, "{} {{", ty.name)?;
                     for (i, (k, v)) in fields.iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
@@ -1696,7 +1622,7 @@ impl fmt::Display for Value {
                 }
             },
             Value::Variant(name, fields) => {
-                // Round 73 follow-up: stdlib error variants render via
+                // Stdlib error variants render via
                 // their `Error::message()` implementation so that
                 // `format!("{e}")` and `e.message()` produce the same
                 // text — the "one way" principle. User enums are
@@ -1722,10 +1648,9 @@ impl fmt::Display for Value {
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::HostFn(h) => write!(f, "<host:{}>", h.name),
-            Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
-            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
-                write!(f, "<type:{name}>")
-            }
+            Value::VariantConstructor(tag) => write!(f, "<constructor:{tag}>"),
+            Value::TypeDescriptor(ty) => write!(f, "<type:{}>", ty.name),
+            Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Bytes(b) => write!(f, "{}", format_bytes_preview(b)),
@@ -1839,30 +1764,19 @@ impl PartialEq for Value {
             (Value::Range(lo, hi), Value::List(list)) => list_eq_range(list.as_ref(), *lo, *hi),
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
-            // Round 84 (BROKEN, extends round 83): the typechecker's
-            // `unify_anon_nominal` (src/typechecker/mod.rs ~1556) widens
-            // `Type::Record(P, fields)` ⇄ `Type::AnonRecord{closed}` at
-            // unification edges (assignment, function-arg binding, dot-update
-            // on anon-typed nominal) WITHOUT any runtime tag rebrand. The
-            // original `Value::Record("P", ...)` flows through unchanged.
-            // Then `==` compares it to `Value::Record("<anon>", ...)` and
-            // a naive `na == nb && fa == fb` returns `false`, even though
-            // the type system has already DECIDED these are the same type.
-            //
-            // Fix: when at least one side carries `type_name == "<anon>"`,
-            // compare fields-only (ignore names). This respects the
-            // typechecker's edge decision at runtime. Two distinct nominal
-            // names (e.g. `Person{x:1}` vs `Car{x:1}`, neither anon) still
-            // compare unequal — the typechecker would never unify those.
-            (Value::Record(na, fa), Value::Record(nb, fb)) => {
-                let anon_either = na.as_str() == "<anon>" || nb.as_str() == "<anon>";
-                if anon_either {
+            // The typechecker lets a nominal record and an anonymous
+            // record of the same shape meet (`unify_anon_nominal`) with
+            // no change to the value, so when either side is anonymous
+            // the fields alone decide. Two nominal types (`Person{x:1}`
+            // vs `Car{x:1}`) are never unified and compare unequal.
+            (Value::Record(ta, fa), Value::Record(tb, fb)) => {
+                if ta.is_anon() || tb.is_anon() {
                     fa == fb
                 } else {
-                    na == nb && fa == fb
+                    ta.id == tb.id && fa == fb
                 }
             }
-            (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a == b,
+            (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id == b.id,
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
             (Value::Channel(a), Value::Channel(b)) => a.id == b.id,
             // Structural equality — same content, regardless of Arc identity.
@@ -1885,15 +1799,13 @@ impl PartialEq for Value {
             //     upvalues; two closures of the same function with different
             //     upvalues must NOT compare equal).
             //   - BuiltinFn: string equality (builtins are by name).
-            //   - VariantConstructor: name + arity equality.
+            //   - VariantConstructor: variant equality.
             // Cross-kind pairs still fall through to `_ => false`.
             (Value::Handle(a), Value::Handle(b)) => a.id == b.id,
             (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
             (Value::BuiltinFn(a), Value::BuiltinFn(b)) => a == b,
             (Value::HostFn(a), Value::HostFn(b)) => a.name == b.name,
-            (Value::VariantConstructor(na, aa), Value::VariantConstructor(nb, ab)) => {
-                na == nb && aa == ab
-            }
+            (Value::VariantConstructor(a), Value::VariantConstructor(b)) => a == b,
             _ => false,
         }
     }
@@ -1979,58 +1891,36 @@ impl Ord for Value {
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
             (Value::Map(a), Value::Map(b)) => a.iter().cmp(b.iter()),
             (Value::Set(a), Value::Set(b)) => a.iter().cmp(b.iter()),
-            (Value::Record(na, fa), Value::Record(nb, fb)) => {
-                // Round 85: mirror the `<anon>`-wildcard logic from
-                // `PartialEq` (line ~1729). When either side carries
-                // `type_name == "<anon>"`, the typechecker has already
-                // decided these are the same type — Ord must agree so
-                // that `a == b ⇒ cmp(a, b) == Equal` (the contract the
-                // comment block at line ~1921-1928 calls out). Otherwise
-                // BTreeSet / BTreeMap silently treat equal-by-PartialEq
-                // values as distinct, breaking dedup. When neither side
-                // is anon, fall back to the original name-first
-                // comparison.
-                let anon_either = na.as_str() == "<anon>" || nb.as_str() == "<anon>";
-                if anon_either {
+            (Value::Record(ta, fa), Value::Record(tb, fb)) => {
+                // Mirror the `<anon>` wildcard of `PartialEq`: when either
+                // side is an anonymous record, the typechecker has
+                // already decided these are the same type, and Ord must
+                // agree so that `a == b ⇒ cmp(a, b) == Equal`; otherwise
+                // BTreeSet / BTreeMap would treat equal values as
+                // distinct. Records of one builtin time type order by
+                // their fields from the largest unit down; any other
+                // record by its fields in name order.
+                if ta.is_anon() || tb.is_anon() {
                     fa.iter().cmp(fb.iter())
                 } else {
-                    na.cmp(nb).then_with(|| match na.as_str() {
-                        "Date" => cmp_record_field(fa, fb, "year")
+                    ta.id.cmp(&tb.id).then_with(|| match ta.id {
+                        ty::DATE => cmp_record_field(fa, fb, "year")
                             .then_with(|| cmp_record_field(fa, fb, "month"))
                             .then_with(|| cmp_record_field(fa, fb, "day")),
-                        "Time" => cmp_record_field(fa, fb, "hour")
+                        ty::TIME => cmp_record_field(fa, fb, "hour")
                             .then_with(|| cmp_record_field(fa, fb, "minute"))
                             .then_with(|| cmp_record_field(fa, fb, "second"))
                             .then_with(|| cmp_record_field(fa, fb, "ns")),
-                        "DateTime" => cmp_record_field(fa, fb, "date")
+                        ty::DATE_TIME => cmp_record_field(fa, fb, "date")
                             .then_with(|| cmp_record_field(fa, fb, "time")),
                         _ => fa.iter().cmp(fb.iter()),
                     })
                 }
             }
-            (Value::Variant(na, fa), Value::Variant(nb, fb)) => {
-                // Declaration-order comparison: every enum variant
-                // registered with the typechecker (or VM init) has an
-                // ordinal index baked into a process-global registry.
-                // Two variants with the same name compare equal by
-                // ordinal (their fields are then ordered lexicographic-
-                // ally). Two variants from the same enum order by their
-                // declaration position. Two variants from different
-                // enums with both registered fall through to ordinal
-                // comparison too — but variant names are globally
-                // unique in silt (typechecker enforces this), so this
-                // case shouldn't arise in well-typed code.
-                //
-                // If either tag is unregistered (e.g. a Variant built
-                // directly in a unit test that bypasses the typechecker
-                // and VM init), we fall back to alphabetical name
-                // comparison — same as the round-60 baseline.
-                match (lookup_variant_ordinal(na), lookup_variant_ordinal(nb)) {
-                    (Some(a), Some(b)) => a.cmp(&b).then_with(|| fa.cmp(fb)),
-                    _ => na.cmp(nb).then_with(|| fa.cmp(fb)),
-                }
-            }
-            (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.cmp(b),
+            // Variants of one enum order by declaration, then by their
+            // fields (see `Tag`'s `Ord`).
+            (Value::Variant(ta, fa), Value::Variant(tb, fb)) => ta.cmp(tb).then_with(|| fa.cmp(fb)),
+            (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id.cmp(&b.id),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
             (Value::Channel(a), Value::Channel(b)) => a.id.cmp(&b.id),
             // Structural lex comparison on bytes — required for Eq/Ord
@@ -2047,16 +1937,14 @@ impl Ord for Value {
             // what they see as duplicates (Ord contract: a == b ⇒ cmp == Equal,
             // contrapositively a != b ⇒ cmp != Equal). We order by identity
             // (`id` field for TaskHandle, Arc pointer address for VmClosure)
-            // and by contents (name / arity) for the name-carrying variants.
+            // and by contents for the name-carrying variants.
             (Value::Handle(a), Value::Handle(b)) => a.id.cmp(&b.id),
             (Value::VmClosure(a), Value::VmClosure(b)) => {
                 (Arc::as_ptr(a) as usize).cmp(&(Arc::as_ptr(b) as usize))
             }
             (Value::BuiltinFn(a), Value::BuiltinFn(b)) => a.cmp(b),
             (Value::HostFn(a), Value::HostFn(b)) => a.name.cmp(&b.name),
-            (Value::VariantConstructor(na, aa), Value::VariantConstructor(nb, ab)) => {
-                na.cmp(nb).then_with(|| aa.cmp(ab))
-            }
+            (Value::VariantConstructor(a), Value::VariantConstructor(b)) => a.cmp(b),
             _ => Ordering::Equal,
         }
     }
@@ -2115,17 +2003,15 @@ impl HostShape {
             (HostShape::Map(k, v), Value::Map(entries)) => entries
                 .iter()
                 .all(|(key, value)| k.admits(key) && v.admits(value)),
-            (HostShape::Option(item), Value::Variant(tag, payload)) => {
-                match (tag.as_str(), payload.as_slice()) {
-                    ("Some", [v]) => item.admits(v),
-                    ("None", []) => true,
-                    _ => false,
-                }
-            }
+            (HostShape::Option(item), Value::Variant(tag, payload)) => match payload.as_slice() {
+                [v] if tag.is(bv::SOME) => item.admits(v),
+                [] => tag.is(bv::NONE),
+                _ => false,
+            },
             (HostShape::Result(ok, err), Value::Variant(tag, payload)) => {
-                match (tag.as_str(), payload.as_slice()) {
-                    ("Ok", [v]) => ok.admits(v),
-                    ("Err", [v]) => err.admits(v),
+                match payload.as_slice() {
+                    [v] if tag.is(bv::OK) => ok.admits(v),
+                    [v] if tag.is(bv::ERR) => err.admits(v),
                     _ => false,
                 }
             }
@@ -2312,8 +2198,8 @@ impl IntoValue for Vec<Value> {
 impl<T: IntoValue> IntoValue for Option<T> {
     fn into_value(self) -> Result<Value, String> {
         Ok(match self {
-            Some(v) => Value::Variant("Some".into(), vec![v.into_value()?]),
-            None => Value::Variant("None".into(), vec![]),
+            Some(v) => Value::variant(bv::SOME, vec![v.into_value()?]),
+            None => Value::variant(bv::NONE, vec![]),
         })
     }
 }
@@ -2321,8 +2207,8 @@ impl<T: IntoValue> IntoValue for Option<T> {
 impl<T: IntoValue> IntoValue for Result<T, String> {
     fn into_value(self) -> Result<Value, String> {
         Ok(match self {
-            Ok(v) => Value::Variant("Ok".into(), vec![v.into_value()?]),
-            Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
+            Ok(v) => Value::variant(bv::OK, vec![v.into_value()?]),
+            Err(e) => Value::variant(bv::ERR, vec![Value::String(e)]),
         })
     }
 }
@@ -2451,27 +2337,24 @@ impl Hash for Value {
                     v.hash(state);
                 }
             }
-            Value::Record(_name, fields) => {
+            Value::Record(_, fields) => {
                 state.write_u8(9);
-                // Round 85: do NOT hash the type name. `PartialEq` treats
-                // `Value::Record("<anon>", fields)` as equal to
-                // `Value::Record("P", fields)` (the `<anon>` wildcard at
-                // line ~1729) — so the Hash contract `a == b ⇒
-                // hash(a) == hash(b)` requires the same fields to hash
-                // to the same value regardless of name. Two distinct
-                // concrete nominals with the same fields (e.g.
-                // `Person{x:1}` vs `Car{x:1}`) still compare unequal via
-                // PartialEq's `na == nb && fa == fb` branch, so they
-                // just hash-collide and disambiguate via Eq — that is
-                // normal hash-collision behavior, not a bug.
+                // Do NOT hash the type. `PartialEq` treats an anonymous
+                // record as equal to a nominal one with the same fields
+                // (the `<anon>` wildcard), so the Hash contract `a == b ⇒
+                // hash(a) == hash(b)` requires the same fields to hash to
+                // the same value whatever the type. Two distinct nominal
+                // types with the same fields (`Person{x:1}` vs
+                // `Car{x:1}`) still compare unequal, so they just
+                // hash-collide and are told apart by Eq.
                 for (k, v) in fields.iter() {
                     k.hash(state);
                     v.hash(state);
                 }
             }
-            Value::Variant(name, fields) => {
+            Value::Variant(tag, fields) => {
                 state.write_u8(10);
-                name.hash(state);
+                tag.hash(state);
                 fields.len().hash(state);
                 for f in fields {
                     f.hash(state);
@@ -2512,18 +2395,16 @@ impl Hash for Value {
                 state.write_u8(21);
                 h.name.hash(state);
             }
-            Value::VariantConstructor(name, arity) => {
+            Value::VariantConstructor(tag) => {
                 state.write_u8(18);
-                name.hash(state);
-                arity.hash(state);
+                tag.hash(state);
             }
-            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
-                let tag = if matches!(self, Value::TypeDescriptor(_)) {
-                    19u8
-                } else {
-                    20u8
-                };
-                state.write_u8(tag);
+            Value::TypeDescriptor(ty) => {
+                state.write_u8(19);
+                ty.id.hash(state);
+            }
+            Value::PrimitiveDescriptor(name) => {
+                state.write_u8(20);
                 name.hash(state);
             }
         }
@@ -2547,7 +2428,7 @@ mod tests {
         fields.insert("year".to_string(), Value::Int(year));
         fields.insert("month".to_string(), Value::Int(month));
         fields.insert("day".to_string(), Value::Int(day));
-        Value::Record("Date".to_string(), Arc::new(fields))
+        Value::builtin_record(ty::DATE, fields)
     }
 
     fn make_time(hour: i64, minute: i64, second: i64, ns: i64) -> Value {
@@ -2556,7 +2437,7 @@ mod tests {
         fields.insert("minute".to_string(), Value::Int(minute));
         fields.insert("second".to_string(), Value::Int(second));
         fields.insert("ns".to_string(), Value::Int(ns));
-        Value::Record("Time".to_string(), Arc::new(fields))
+        Value::builtin_record(ty::TIME, fields)
     }
 
     // ── Hash/Eq consistency ────────────────────────────────────────
@@ -2603,8 +2484,8 @@ mod tests {
 
     #[test]
     fn hash_eq_variant_values() {
-        let a = Value::Variant("Ok".into(), vec![Value::Int(42)]);
-        let b = Value::Variant("Ok".into(), vec![Value::Int(42)]);
+        let a = Value::variant(bv::OK, vec![Value::Int(42)]);
+        let b = Value::variant(bv::OK, vec![Value::Int(42)]);
         assert_eq!(a, b);
         assert_eq!(hash_of(&a), hash_of(&b));
     }
@@ -2719,16 +2600,16 @@ mod tests {
 
     #[test]
     fn ord_weekday_variants() {
-        let monday = Value::Variant("Monday".into(), vec![]);
-        let tuesday = Value::Variant("Tuesday".into(), vec![]);
-        let friday = Value::Variant("Friday".into(), vec![]);
-        let sunday = Value::Variant("Sunday".into(), vec![]);
+        let monday = Value::variant(bv::MONDAY, vec![]);
+        let tuesday = Value::variant(bv::TUESDAY, vec![]);
+        let friday = Value::variant(bv::FRIDAY, vec![]);
+        let sunday = Value::variant(bv::SUNDAY, vec![]);
         assert!(monday < tuesday, "Monday < Tuesday");
         assert!(tuesday < friday, "Tuesday < Friday");
         assert!(friday < sunday, "Friday < Sunday");
         assert_eq!(
-            Value::Variant("Wednesday".into(), vec![])
-                .cmp(&Value::Variant("Wednesday".into(), vec![])),
+            Value::variant(bv::WEDNESDAY, vec![])
+                .cmp(&Value::variant(bv::WEDNESDAY, vec![])),
             Ordering::Equal,
         );
     }
@@ -2740,8 +2621,8 @@ mod tests {
         // and `Ok < Err`. (Pre-round-61 this was `err < ok` because the
         // fallback comparison was alphabetical — that fallback is now
         // only used for variants the registry has never seen.)
-        let ok = Value::Variant("Ok".into(), vec![Value::Int(1)]);
-        let err = Value::Variant("Err".into(), vec![Value::String("e".into())]);
+        let ok = Value::variant(bv::OK, vec![Value::Int(1)]);
+        let err = Value::variant(bv::ERR, vec![Value::String("e".into())]);
         assert!(ok < err, "Ok declared before Err → Ok < Err");
     }
 
@@ -2818,12 +2699,12 @@ mod tests {
 
     #[test]
     fn display_variant_no_fields() {
-        assert_eq!(format!("{}", Value::Variant("None".into(), vec![])), "None");
+        assert_eq!(format!("{}", Value::variant(bv::NONE, vec![])), "None");
     }
 
     #[test]
     fn display_variant_with_fields() {
-        let v = Value::Variant("Some".into(), vec![Value::Int(42)]);
+        let v = Value::variant(bv::SOME, vec![Value::Int(42)]);
         assert_eq!(format!("{}", v), "Some(42)");
     }
 

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use super::common::{require_int, require_string, value_kind};
+use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use crate::vm::{Vm, VmError};
 
@@ -199,12 +200,12 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             match s.find(needle.as_str()) {
                 Some(byte_pos) => {
                     let char_pos = s[..byte_pos].chars().count();
-                    Ok(Value::Variant(
-                        "Some".into(),
+                    Ok(Value::variant(
+                        bv::SOME,
                         vec![Value::Int(char_pos as i64)],
                     ))
                 }
-                None => Ok(Value::Variant("None".into(), Vec::new())),
+                None => Ok(Value::variant(bv::NONE, Vec::new())),
             }
         }
         "last_index_of" => {
@@ -219,12 +220,12 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Some(byte_pos) => {
                     // Match string.index_of: return a CHARACTER index (not byte).
                     let char_pos = s[..byte_pos].chars().count();
-                    Ok(Value::Variant(
-                        "Some".into(),
+                    Ok(Value::variant(
+                        bv::SOME,
                         vec![Value::Int(char_pos as i64)],
                     ))
                 }
-                None => Ok(Value::Variant("None".into(), Vec::new())),
+                None => Ok(Value::variant(bv::NONE, Vec::new())),
             }
         }
         "split_at" => {

@@ -74,10 +74,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::builtins::data::FieldType;
+use crate::typeinfo::TypeTable;
 use crate::bytecode::{Function, VmClosure};
 use crate::scheduler::Scheduler;
-use crate::types::canonical::dispatch_name_for_value;
 use crate::value::{IoCompletion, Value};
 use runtime::{IoPool, RegexCache, TimerManager};
 
@@ -296,8 +295,9 @@ pub struct Vm {
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) stack: Vec<Value>,
     pub(crate) globals: HashMap<String, Value>,
-    /// Maps record type names to their field definitions (name, type) for json.parse.
-    pub(crate) record_types: HashMap<String, Vec<(String, FieldType)>>,
+    /// The program's types, by id: the decoders find the record types
+    /// of record fields here.
+    pub(crate) types: Arc<TypeTable>,
 
     // ── Concurrency state ────────────────────────────────────────
     next_channel_id: Arc<AtomicU64>,
@@ -591,7 +591,7 @@ impl Vm {
             frames: Vec::new(),
             stack: Vec::new(),
             globals: HashMap::new(),
-            record_types: HashMap::new(),
+            types: Arc::new(TypeTable::default()),
             next_channel_id: Arc::new(AtomicU64::new(0)),
             next_task_id: Arc::new(AtomicU64::new(0)),
             block_reason: None,
@@ -610,8 +610,14 @@ impl Vm {
         vm
     }
 
+    /// Take in the types of a program about to run: the descriptions
+    /// its values' types carry, which the decoders look up by id.
+    pub fn load_types(&mut self, types: &TypeTable) {
+        Arc::make_mut(&mut self.types).extend(types);
+    }
+
     /// Create a child VM that shares runtime state (the scheduler, timers, the I/O pool)
-    /// via Arc and clones per-task state (globals, record types cache).
+    /// via Arc and clones per-task state (globals, the program's types).
     /// Used for thread-per-task spawning.
     pub(crate) fn spawn_child(&self) -> Self {
         Vm {
@@ -619,7 +625,7 @@ impl Vm {
             frames: Vec::new(),
             stack: Vec::new(),
             globals: self.globals.clone(),
-            record_types: self.record_types.clone(),
+            types: self.types.clone(),
             next_channel_id: self.next_channel_id.clone(),
             next_task_id: self.next_task_id.clone(),
             block_reason: None,
@@ -799,6 +805,33 @@ impl Vm {
             Value::String(s) => Ok(s),
             other => Err(VmError::new(format!(
                 "expected string constant at index {index}, got {}",
+                self.type_name(&other)
+            ))),
+        }
+    }
+
+    /// The variant of the constructor constant at `index` (a pattern's
+    /// variant test).
+    fn read_constant_tag(&self, index: usize) -> Result<crate::typeinfo::Tag, VmError> {
+        match self.read_constant(index)? {
+            Value::VariantConstructor(tag) => Ok(tag),
+            other => Err(VmError::new(format!(
+                "expected variant constant at index {index}, got {}",
+                self.type_name(&other)
+            ))),
+        }
+    }
+
+    /// The type of the descriptor constant at `index` (a record literal's
+    /// or pattern's type).
+    fn read_constant_type(
+        &self,
+        index: usize,
+    ) -> Result<Arc<crate::typeinfo::TypeInfo>, VmError> {
+        match self.read_constant(index)? {
+            Value::TypeDescriptor(ty) => Ok(ty),
+            other => Err(VmError::new(format!(
+                "expected type constant at index {index}, got {}",
                 self.type_name(&other)
             ))),
         }
@@ -1081,10 +1114,8 @@ impl Vm {
     /// **deliberate aliases** that carry semantic content into the
     /// diagnostic:
     ///   - `Record(name, _)` → the record's own type name
-    ///   - `Variant(tag, _)` → resolves to the parent enum type via the
-    ///     `__type_of__<tag>` global registered by the compiler, falling
-    ///     back to the bare tag.
-    ///   - `VariantConstructor(name, _)` → ``"VariantConstructor `name`"``
+    ///   - `Variant(tag, _)` → the name of the variant's enum type.
+    ///   - `VariantConstructor(tag)` → ``"VariantConstructor `name`"``
     ///     (TitleCase, no "a " article).
     ///   - `TypeDescriptor(name)` / `PrimitiveDescriptor(name)` →
     ///     ``"TypeDescriptor `name`"`` / ``"PrimitiveDescriptor `name`"``.
@@ -1097,20 +1128,13 @@ impl Vm {
         match val {
             // Variants that carry semantic content into the user-facing
             // diagnostic. Each is a deliberate alias documented above.
-            Value::Record(name, _) => name.clone(),
-            Value::Variant(tag, _) => {
-                let key = format!("__type_of__{tag}");
-                if let Some(Value::String(type_name)) = self.globals.get(&key) {
-                    type_name.clone()
-                } else {
-                    tag.clone()
-                }
+            Value::Record(ty, _) => ty.name.clone(),
+            Value::Variant(tag, _) => tag.ty().name.clone(),
+            Value::VariantConstructor(tag) => {
+                format!("VariantConstructor `{tag}`")
             }
-            Value::VariantConstructor(name, _) => {
-                format!("VariantConstructor `{name}`")
-            }
-            Value::TypeDescriptor(name) => {
-                format!("TypeDescriptor `{name}`")
+            Value::TypeDescriptor(ty) => {
+                format!("TypeDescriptor `{}`", ty.name)
             }
             Value::PrimitiveDescriptor(name) => {
                 format!("PrimitiveDescriptor `{name}`")
@@ -1119,51 +1143,6 @@ impl Vm {
             // TitleCase wording. Drift is impossible because the same
             // arms are read from the same source.
             _ => self.type_name(val).to_string(),
-        }
-    }
-
-    /// Get the type name for method dispatch. For variants, looks up the parent type.
-    ///
-    /// This name is used to build the qualified global lookup key
-    /// `"<TypeName>.<method>"` in `Op::CallMethod`. Returning the
-    /// canonical `type_name` for every variant is load-bearing: if the
-    /// name disagrees with what the compiler registers (e.g. returning
-    /// `"Unknown"` for a primitive), the qualified-global miss falls
-    /// through to `dispatch_trait_method` with a stringly-typed type
-    /// name that no fallback arm matches — producing spurious
-    /// `"no method '<m>' for type 'Unknown'"` errors. Keep this in sync
-    /// with `type_name` above and `user_facing_type_name`.
-    ///
-    /// Phase C of the canonical-type-equality refactor centralises the
-    /// shape-only mapping in `crate::types::canonical::dispatch_name_for_value`
-    /// (the single source of truth for value-shape -> dispatch-name
-    /// reduction, including the `Range -> List` collapse). This method
-    /// remains a thin wrapper because the `Value::Variant` case needs
-    /// the VM's `__type_of__<tag>` globals lookup, which the canonical
-    /// module — by design — does not have access to.
-    fn value_type_name_for_dispatch(&self, val: &Value) -> String {
-        if let Some(name) = dispatch_name_for_value(val) {
-            return name;
-        }
-        // The shape-only canonical helper returned None; the only
-        // variant that lands here is `Value::Variant`, whose dispatch
-        // name comes from the VM-side `__type_of__<tag>` global table.
-        match val {
-            Value::Variant(tag, _) => {
-                let key = format!("__type_of__{tag}");
-                if let Some(Value::String(type_name)) = self.globals.get(&key) {
-                    type_name.clone()
-                } else {
-                    tag.clone() // fallback: use the tag itself
-                }
-            }
-            // Unreachable: dispatch_name_for_value returns Some(_) for
-            // every Value variant except Variant. Defensive: if a new
-            // Value variant is added without updating dispatch_name_for_value,
-            // the unit tests in src/types/canonical.rs catch the omission;
-            // this match arm exists only so the compiler can prove
-            // exhaustiveness.
-            other => format!("{other:?}"),
         }
     }
 }

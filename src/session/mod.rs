@@ -109,6 +109,9 @@ pub struct ModuleAnalysis {
 /// [`Entry::Main`], calls `main`).
 pub struct Program {
     pub functions: Vec<Function>,
+    /// The types its values are of, which the VM is given
+    /// ([`crate::vm::Vm::load_types`]).
+    pub types: crate::typeinfo::TypeTable,
     pub entry: EntryPoint,
     /// The compiler's warnings.
     pub warnings: Vec<Diagnostic>,
@@ -753,6 +756,7 @@ impl Session {
             Ok(_) if !entry_errors.is_empty() => Err(entry_errors),
             Ok(functions) => Ok(Program {
                 functions,
+                types: compiler.types(),
                 entry: entry_point,
                 warnings: compiler.warnings().to_vec(),
             }),

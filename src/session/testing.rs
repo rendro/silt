@@ -85,12 +85,14 @@ pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Va
             .map(|d| d.message.clone())
             .unwrap_or_default()
     })?;
+    let types = program.types;
     let script = program
         .functions
         .into_iter()
         .next()
         .expect("a compiled program has a script");
     let mut vm = Vm::new();
+    vm.load_types(&types);
     vm.run(Arc::new(script)).map_err(|e| e.to_string())
 }
 

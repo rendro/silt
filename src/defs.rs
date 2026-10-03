@@ -168,20 +168,30 @@ pub const ANON_RECORD: &str = "<anon>";
 /// Every builtin type, with the builtin module that declares it (`None`
 /// for the prelude), in the order of their ids: the `k`th is
 /// `TypeId(DefId(k))`. The builtin definitions begin with them, so their
-/// ids are known before anything else of the builtins is built.
+/// ids are known before anything else of the builtins is built. The
+/// first are [`crate::typeinfo::RUNTIME_BUILTIN_TYPES`], whose ids are
+/// the constants of [`crate::typeinfo::ty`].
 pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
     static TYPES: OnceLock<Vec<(&'static str, Option<&'static str>)>> = OnceLock::new();
     TYPES.get_or_init(|| {
-        let mut types: Vec<(&'static str, Option<&'static str>)> = Vec::new();
+        let mut types: Vec<(&'static str, Option<&'static str>)> =
+            crate::typeinfo::RUNTIME_BUILTIN_TYPES.to_vec();
+        let mut add = |name: &'static str, module: Option<&'static str>| {
+            if !types.iter().any(|(known, _)| *known == name) {
+                types.push((name, module));
+            }
+        };
         for ty in crate::types::builtins::BUILTIN_TYPES {
             if ty.name == "()" || OPAQUE_MODULE_TYPES.iter().any(|(name, _)| *name == ty.name) {
                 continue;
             }
-            types.push((ty.name, None));
+            add(ty.name, None);
         }
-        types.extend(PRELUDE_ENUMS.iter().map(|name| (*name, None)));
-        types.push((TYPE_OF, None));
-        types.push((ANON_RECORD, None));
+        for name in PRELUDE_ENUMS {
+            add(name, None);
+        }
+        add(TYPE_OF, None);
+        add(ANON_RECORD, None);
         for module in crate::module::BUILTIN_MODULES {
             let declared = crate::module::builtin_module_type_names(module).chain(
                 OPAQUE_MODULE_TYPES
@@ -189,7 +199,9 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
                     .filter(|(_, m)| m == module)
                     .map(|(name, _)| *name),
             );
-            types.extend(declared.map(|name| (name, Some(*module))));
+            for name in declared {
+                add(name, Some(*module));
+            }
         }
         types
     })

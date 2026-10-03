@@ -2547,7 +2547,7 @@ fn main() {{
         let completion = IoCompletion::new();
         let past = Instant::now() - Duration::from_secs(1);
         registry.add(1, &completion, past, DeadlineSource::Global);
-        let ok_val = Value::Variant("Ok".into(), vec![Value::String("real".into())]);
+        let ok_val = Value::variant(bv::OK, vec![Value::String("real".into())]);
         assert!(completion.complete(ok_val));
         let fired = registry.scan_and_fire();
         assert_eq!(fired, 0, "no timeout should fire — I/O already completed");

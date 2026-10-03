@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::common::value_kind;
+use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::builtins::data::make_datetime;
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
@@ -52,10 +53,10 @@ pub fn program_args() -> Vec<String> {
 /// before Linux 4.11 lack it even where the kernel supports it.
 fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Value {
     let Ok(t) = t else {
-        return Value::Variant("None".into(), vec![]);
+        return Value::variant(bv::NONE, vec![]);
     };
     let Ok(d) = t.duration_since(UNIX_EPOCH) else {
-        return Value::Variant("None".into(), vec![]);
+        return Value::variant(bv::NONE, vec![]);
     };
     // i64 seconds range ≈ ±292 billion years — the cast is never a
     // truncation in practice but we guard against negative→overflow
@@ -64,9 +65,9 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
     let secs = d.as_secs() as i64;
     let nanos = d.subsec_nanos();
     let Some(dt) = chrono::DateTime::from_timestamp(secs, nanos) else {
-        return Value::Variant("None".into(), vec![]);
+        return Value::variant(bv::NONE, vec![]);
     };
-    Value::Variant("Some".into(), vec![make_datetime(dt.naive_utc())])
+    Value::variant(bv::SOME, vec![make_datetime(dt.naive_utc())])
 }
 
 /// Maximum number of entries that may be materialized into a single
@@ -80,12 +81,12 @@ const MAX_FS_WALK_ENTRIES: usize = 1_000_000;
 
 /// Make an `Ok(inner)` variant value.
 fn fs_ok(inner: Value) -> Value {
-    Value::Variant("Ok".into(), vec![inner])
+    Value::variant(bv::OK, vec![inner])
 }
 
 /// Wrap an `IoError` variant value inside an `Err(...)` outer Result.
 fn io_err(inner: Value) -> Value {
-    Value::Variant("Err".into(), vec![inner])
+    Value::variant(bv::ERR, vec![inner])
 }
 
 /// Classify a `std::io::Error` into one of the `IoError` enum variants.
@@ -99,19 +100,19 @@ fn io_err(inner: Value) -> Value {
 /// (mapping native I/O failures into the typed `IoError` enum).
 pub(crate) fn io_error_to_variant(err: &std::io::Error, path: &str) -> Value {
     use std::io::ErrorKind;
-    let (name, arg): (&str, Option<String>) = match err.kind() {
-        ErrorKind::NotFound => ("IoNotFound", Some(path.into())),
-        ErrorKind::PermissionDenied => ("IoPermissionDenied", Some(path.into())),
-        ErrorKind::AlreadyExists => ("IoAlreadyExists", Some(path.into())),
-        ErrorKind::InvalidInput => ("IoInvalidInput", Some(err.to_string())),
-        ErrorKind::Interrupted => ("IoInterrupted", None),
-        ErrorKind::UnexpectedEof => ("IoUnexpectedEof", None),
-        ErrorKind::WriteZero => ("IoWriteZero", None),
-        _ => ("IoUnknown", Some(err.to_string())),
+    let (variant, arg): (BuiltinVariant, Option<String>) = match err.kind() {
+        ErrorKind::NotFound => (bv::IO_NOT_FOUND, Some(path.into())),
+        ErrorKind::PermissionDenied => (bv::IO_PERMISSION_DENIED, Some(path.into())),
+        ErrorKind::AlreadyExists => (bv::IO_ALREADY_EXISTS, Some(path.into())),
+        ErrorKind::InvalidInput => (bv::IO_INVALID_INPUT, Some(err.to_string())),
+        ErrorKind::Interrupted => (bv::IO_INTERRUPTED, None),
+        ErrorKind::UnexpectedEof => (bv::IO_UNEXPECTED_EOF, None),
+        ErrorKind::WriteZero => (bv::IO_WRITE_ZERO, None),
+        _ => (bv::IO_UNKNOWN, Some(err.to_string())),
     };
     match arg {
-        Some(a) => Value::Variant(name.into(), vec![Value::String(a)]),
-        None => Value::Variant(name.into(), vec![]),
+        Some(a) => Value::variant(variant, vec![Value::String(a)]),
+        None => Value::variant(variant, vec![]),
     }
 }
 
@@ -127,8 +128,8 @@ pub(crate) fn io_result_err(err: &std::io::Error, path: &str) -> Value {
 /// `fs.walk` entry-cap cutoff). Keeps the result type
 /// `Result(T, IoError)` uniform.
 pub(crate) fn io_result_err_unknown<S: Into<String>>(msg: S) -> Value {
-    io_err(Value::Variant(
-        "IoUnknown".into(),
+    io_err(Value::variant(
+        bv::IO_UNKNOWN,
         vec![Value::String(msg.into())],
     ))
 }
@@ -182,7 +183,7 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 crate::value::IoCompletion::new(),
                 &crate::value::io_unknown_timeout_err,
                 move || match std::fs::read_to_string(&path) {
-                    Ok(content) => Value::Variant("Ok".into(), vec![Value::String(content)]),
+                    Ok(content) => Value::variant(bv::OK, vec![Value::String(content)]),
                     Err(e) => io_result_err(&e, &path),
                 },
             )
@@ -205,7 +206,7 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 crate::value::IoCompletion::new(),
                 &crate::value::io_unknown_timeout_err,
                 move || match std::fs::write(&path, &content) {
-                    Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
+                    Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
                     Err(e) => io_result_err(&e, &path),
                 },
             )
@@ -220,9 +221,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     // Ok(0) means EOF — surface as Err(IoUnexpectedEof) so
                     // match-against-Err loops terminate cleanly instead of
                     // spinning on "".
-                    Ok(0) => io_err(Value::Variant("IoUnexpectedEof".into(), vec![])),
-                    Ok(_) => Value::Variant(
-                        "Ok".into(),
+                    Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, vec![])),
+                    Ok(_) => Value::variant(
+                        bv::OK,
                         vec![Value::String(line.trim_end().to_string())],
                     ),
                     Err(e) => io_result_err(&e, ""),
@@ -309,8 +310,8 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                             }
                         }
                     }
-                    Ok(Value::Variant(
-                        "Ok".into(),
+                    Ok(Value::variant(
+                        bv::OK,
                         vec![Value::List(Arc::new(items))],
                     ))
                 }
@@ -328,7 +329,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 )));
             };
             match std::fs::create_dir_all(path) {
-                Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                Ok(()) => Ok(Value::variant(bv::OK, vec![Value::Unit])),
                 Err(e) => Ok(io_result_err(&e, path)),
             }
         }
@@ -349,7 +350,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 std::fs::remove_file(p)
             };
             match result {
-                Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                Ok(()) => Ok(Value::variant(bv::OK, vec![Value::Unit])),
                 Err(e) => Ok(io_result_err(&e, path)),
             }
         }
@@ -365,7 +366,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 )));
             };
             match std::fs::rename(from, to) {
-                Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                Ok(()) => Ok(Value::variant(bv::OK, vec![Value::Unit])),
                 Err(e) => Ok(io_result_err(&e, from)),
             }
         }
@@ -381,7 +382,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 )));
             };
             match std::fs::copy(from, to) {
-                Ok(_) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                Ok(_) => Ok(Value::variant(bv::OK, vec![Value::Unit])),
                 Err(e) => Ok(io_result_err(&e, from)),
             }
         }
@@ -450,7 +451,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     fields.insert("mode".into(), Value::Int(mode));
                     fields.insert("accessed".into(), accessed);
                     fields.insert("created".into(), created);
-                    let rec = Value::Record("FileStat".into(), Arc::new(fields));
+                    let rec = Value::builtin_record(ty::FILE_STAT, fields);
                     Ok(fs_ok(rec))
                 }
                 Err(e) => Ok(io_result_err(&e, path)),
@@ -570,8 +571,8 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 // PatternError (bad glob pattern) is a user-input problem;
                 // route to IoInvalidInput so callers can distinguish
                 // "your pattern was malformed" from fs failures.
-                Err(e) => Ok(io_err(Value::Variant(
-                    "IoInvalidInput".into(),
+                Err(e) => Ok(io_err(Value::variant(
+                    bv::IO_INVALID_INPUT,
                     vec![Value::String(e.to_string())],
                 ))),
             }
@@ -594,8 +595,8 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 )));
             };
             match std::env::var(key) {
-                Ok(val) => Ok(Value::Variant("Some".into(), vec![Value::String(val)])),
-                Err(_) => Ok(Value::Variant("None".into(), vec![])),
+                Ok(val) => Ok(Value::variant(bv::SOME, vec![Value::String(val)])),
+                Err(_) => Ok(Value::variant(bv::NONE, vec![])),
             }
         }
         "set" => {

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
+use crate::typeinfo::{bv, ty};
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
@@ -96,10 +97,10 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             // Try non-blocking first.
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
-                    return Ok(Value::Variant("Message".into(), vec![val]));
+                    return Ok(Value::variant(bv::MESSAGE, vec![val]));
                 }
                 TryReceiveResult::Closed => {
-                    return Ok(Value::Variant("Closed".into(), vec![]));
+                    return Ok(Value::variant(bv::CLOSED, vec![]));
                 }
                 TryReceiveResult::Empty => {}
             }
@@ -149,9 +150,9 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 ));
             };
             match ch.try_receive() {
-                TryReceiveResult::Value(val) => Ok(Value::Variant("Message".into(), vec![val])),
-                TryReceiveResult::Empty => Ok(Value::Variant("Empty".into(), Vec::new())),
-                TryReceiveResult::Closed => Ok(Value::Variant("Closed".into(), Vec::new())),
+                TryReceiveResult::Value(val) => Ok(Value::variant(bv::MESSAGE, vec![val])),
+                TryReceiveResult::Empty => Ok(Value::variant(bv::EMPTY, Vec::new())),
+                TryReceiveResult::Closed => Ok(Value::variant(bv::CLOSED, Vec::new())),
             }
         }
         "select" => {
@@ -259,7 +260,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             // the select ops, so a recv_timeout on a quiet channel inside a
             // spawned task never timed out.
             let resume_timer: Option<Arc<Channel>> = match &args[1] {
-                Value::Record(name, fields) if name.as_str() == RECV_TIMEOUT_RESUME_MARKER => {
+                Value::Record(ty, fields) if ty.id == ty::RECV_TIMEOUT => {
                     match fields.get(RECV_TIMEOUT_RESUME_TIMER_FIELD) {
                         Some(Value::Channel(t)) => Some(t.clone()),
                         _ => {
@@ -290,21 +291,21 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             // (matches the "ready value wins" corner case).
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
-                    return Ok(Value::Variant("Ok".into(), vec![val]));
+                    return Ok(Value::variant(bv::OK, vec![val]));
                 }
                 TryReceiveResult::Closed => {
-                    return Ok(Value::Variant(
-                        "Err".into(),
-                        vec![Value::Variant("ChannelClosed".into(), vec![])],
+                    return Ok(Value::variant(
+                        bv::ERR,
+                        vec![Value::variant(bv::CHANNEL_CLOSED, vec![])],
                     ));
                 }
                 TryReceiveResult::Empty => {}
             }
             // Zero duration on an empty channel = instant timeout.
             if resume_timer.is_none() && fresh_dur_ns == 0 {
-                return Ok(Value::Variant(
-                    "Err".into(),
-                    vec![Value::Variant("ChannelTimeout".into(), vec![])],
+                return Ok(Value::variant(
+                    bv::ERR,
+                    vec![Value::variant(bv::CHANNEL_TIMEOUT, vec![])],
                 ));
             }
 
@@ -520,7 +521,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                         // `each` was the arm left behind). Locked by
                         // `tests/concurrency/main_thread_each_deadlock_tests.rs`.
                         match main_thread_wait_for_receive(&ch, vm)? {
-                            Value::Variant(tag, mut vals) if tag == "Message" => {
+                            Value::Variant(tag, mut vals) if tag.is(bv::MESSAGE) => {
                                 let val = vals.pop().unwrap_or(Value::Unit);
                                 match vm.invoke_callable(&callback, &[val]) {
                                     Ok(_) => {}
@@ -533,7 +534,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                                     Err(e) => return Err(e),
                                 }
                             }
-                            Value::Variant(tag, _) if tag == "Closed" => {
+                            Value::Variant(tag, _) if tag.is(bv::CLOSED) => {
                                 return Ok(Value::Unit);
                             }
                             _ => unreachable!(
@@ -805,22 +806,21 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 /// full-length timer (the round-101 livelock: every timer expiry re-armed
 /// the timeout forever). The marker only ever exists on the VM stack
 /// between a park and its CallBuiltin replay — it is never user-visible,
-/// and the double-underscore name cannot collide with a typechecked
-/// `Duration` argument.
-const RECV_TIMEOUT_RESUME_MARKER: &str = "__recv_timeout_resume__";
+/// and its type (`ty::RECV_TIMEOUT`) is no type a program can name, so
+/// it cannot be mistaken for a typechecked `Duration` argument.
 
 /// Field of the resume marker record holding the private timer channel.
 const RECV_TIMEOUT_RESUME_TIMER_FIELD: &str = "timer";
 
 /// Build the internal resume marker for `channel.recv_timeout` parks. See
-/// [`RECV_TIMEOUT_RESUME_MARKER`].
+/// [`ty::RECV_TIMEOUT`].
 fn make_recv_timeout_resume_marker(timer_ch: &Arc<Channel>) -> Value {
     let mut fields = std::collections::BTreeMap::new();
     fields.insert(
         RECV_TIMEOUT_RESUME_TIMER_FIELD.to_string(),
         Value::Channel(timer_ch.clone()),
     );
-    Value::Record(RECV_TIMEOUT_RESUME_MARKER.to_string(), Arc::new(fields))
+    Value::builtin_record(ty::RECV_TIMEOUT, fields)
 }
 
 /// Translate a `try_select_sweep` result (a `(Channel, Variant)` tuple) into
@@ -835,15 +835,15 @@ fn make_recv_timeout_resume_marker(timer_ch: &Arc<Channel>) -> Value {
 /// shape returned by `try_select_sweep`; anything else is a programming bug.
 fn map_recv_timeout_result(tuple: Value, timer_ch: &Arc<Channel>) -> Value {
     let timeout_err = || {
-        Value::Variant(
-            "Err".into(),
-            vec![Value::Variant("ChannelTimeout".into(), vec![])],
+        Value::variant(
+            bv::ERR,
+            vec![Value::variant(bv::CHANNEL_TIMEOUT, vec![])],
         )
     };
     let closed_err = || {
-        Value::Variant(
-            "Err".into(),
-            vec![Value::Variant("ChannelClosed".into(), vec![])],
+        Value::variant(
+            bv::ERR,
+            vec![Value::variant(bv::CHANNEL_CLOSED, vec![])],
         )
     };
     let Value::Tuple(parts) = tuple else {
@@ -858,11 +858,11 @@ fn map_recv_timeout_result(tuple: Value, timer_ch: &Arc<Channel>) -> Value {
         return timeout_err();
     }
     match parts.get(1) {
-        Some(Value::Variant(name, fields)) if name.as_str() == "Message" => {
+        Some(Value::Variant(name, fields)) if name.is(bv::MESSAGE) => {
             let val = fields.first().cloned().unwrap_or(Value::Unit);
-            Value::Variant("Ok".into(), vec![val])
+            Value::variant(bv::OK, vec![val])
         }
-        Some(Value::Variant(name, _)) if name.as_str() == "Closed" => closed_err(),
+        Some(Value::Variant(name, _)) if name.is(bv::CLOSED) => closed_err(),
         _ => {
             debug_assert!(false, "recv_timeout: unexpected select variant");
             closed_err()
@@ -884,7 +884,7 @@ fn parse_select_ops(ops_list: &[Value]) -> Result<Vec<SelectOp>, VmError> {
     let mut ops = Vec::with_capacity(ops_list.len());
     for item in ops_list {
         match item {
-            Value::Variant(name, fields) if name == "Recv" && fields.len() == 1 => {
+            Value::Variant(name, fields) if name.is(bv::RECV) && fields.len() == 1 => {
                 let Value::Channel(ch) = &fields[0] else {
                     return Err(VmError::new(
                         "channel.select Recv operation must wrap a Channel".into(),
@@ -892,7 +892,7 @@ fn parse_select_ops(ops_list: &[Value]) -> Result<Vec<SelectOp>, VmError> {
                 };
                 ops.push(SelectOp::Receive(ch.clone()));
             }
-            Value::Variant(name, fields) if name == "Send" && fields.len() == 2 => {
+            Value::Variant(name, fields) if name.is(bv::SEND) && fields.len() == 2 => {
                 let Value::Channel(ch) = &fields[0] else {
                     return Err(VmError::new(
                         "channel.select Send operation must take (Channel, value)".into(),
@@ -977,14 +977,14 @@ fn try_select_sweep_registered(
         let (ch, outcome) = match &ops[index] {
             SelectOp::Receive(ch) => match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
-                    (ch, Some(Value::Variant("Message".into(), vec![val])))
+                    (ch, Some(Value::variant(bv::MESSAGE, vec![val])))
                 }
-                TryReceiveResult::Closed => (ch, Some(Value::Variant("Closed".into(), vec![]))),
+                TryReceiveResult::Closed => (ch, Some(Value::variant(bv::CLOSED, vec![]))),
                 TryReceiveResult::Empty => (ch, None),
             },
             SelectOp::Send(ch, val) => match ch.try_send(val.clone()) {
-                TrySendResult::Sent => (ch, Some(Value::Variant("Sent".into(), vec![]))),
-                TrySendResult::Closed => (ch, Some(Value::Variant("Closed".into(), vec![]))),
+                TrySendResult::Sent => (ch, Some(Value::variant(bv::SENT, vec![]))),
+                TrySendResult::Closed => (ch, Some(Value::variant(bv::CLOSED, vec![]))),
                 TrySendResult::Full => (ch, None),
             },
         };
@@ -1467,9 +1467,9 @@ fn main_thread_wait_for_receive(
     if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() && !is_stream_fed(ch) {
         match ch.try_receive() {
             TryReceiveResult::Value(val) => {
-                return Ok(Value::Variant("Message".into(), vec![val]));
+                return Ok(Value::variant(bv::MESSAGE, vec![val]));
             }
-            TryReceiveResult::Closed => return Ok(Value::Variant("Closed".into(), vec![])),
+            TryReceiveResult::Closed => return Ok(Value::variant(bv::CLOSED, vec![])),
             TryReceiveResult::Empty => {
                 return Err(VmError::new(
                     "deadlock on main thread: channel receive with no counterparty".into(),
@@ -1527,12 +1527,12 @@ fn main_thread_wait_for_receive(
         TryReceiveResult::Value(val) => {
             drop(reg.take());
             unpark_main(vm);
-            Some(Ok(Value::Variant("Message".into(), vec![val])))
+            Some(Ok(Value::variant(bv::MESSAGE, vec![val])))
         }
         TryReceiveResult::Closed => {
             drop(reg.take());
             unpark_main(vm);
-            Some(Ok(Value::Variant("Closed".into(), vec![])))
+            Some(Ok(Value::variant(bv::CLOSED, vec![])))
         }
         TryReceiveResult::Empty => None,
     };
