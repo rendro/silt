@@ -128,7 +128,32 @@ const PRELUDE_ENUMS: &[&str] = &["Option", "Result"];
 
 /// The builtin types that are reached through a builtin module but have
 /// no record or enum declaration (opaque handles).
-const OPAQUE_MODULE_TYPES: &[(&str, &str)] = &[("TcpListener", "tcp"), ("TcpStream", "tcp")];
+const OPAQUE_MODULE_TYPES: &[(&str, &str)] = &[
+    ("TcpListener", "tcp"),
+    ("TcpStream", "tcp"),
+    ("Handle", "task"),
+    ("PgPool", "postgres"),
+    ("PgTx", "postgres"),
+    ("PgCursor", "postgres"),
+    ("QueryResult", "postgres"),
+    ("ExecResult", "postgres"),
+    ("Value", "postgres"),
+];
+
+/// The builtin types with no declaration of their own, each with the
+/// number of its type arguments: the opaque handles of the builtin
+/// modules and the prelude's `TypeOf`, the type of a type used as a
+/// value (`Int`, a `type a` parameter).
+pub const OPAQUE_TYPE_ARITY: &[(&str, usize)] = &[
+    ("Handle", 1),
+    ("TypeOf", 1),
+    ("PgPool", 0),
+    ("PgTx", 0),
+    ("PgCursor", 0),
+    ("QueryResult", 0),
+    ("ExecResult", 0),
+    ("Value", 0),
+];
 
 thread_local! {
     static BUILTINS: RefCell<Option<(u64, Arc<BuiltinDefs>, Arc<BuiltinScopes>)>> =
@@ -213,7 +238,7 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         }
         add_type(&mut defs, &mut exports, prelude, intern(ty.name));
     }
-    for name in PRELUDE_ENUMS {
+    for name in PRELUDE_ENUMS.iter().chain(&["TypeOf"]) {
         add_type(&mut defs, &mut exports, prelude, intern(name));
     }
     for name in PRELUDE_FUNCTIONS {
@@ -258,6 +283,21 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
             add_type(&mut defs, &mut exports, module, intern(ty));
         }
         scopes.modules.insert(module, exports);
+    }
+    // `ParseError` is the error of `int.parse` and of `float.parse`: it is
+    // declared in `int` and reached through `float` as well.
+    let int = ModuleId::builtin("int").expect("a builtin module");
+    let float = ModuleId::builtin("float").expect("a builtin module");
+    let parse_error = intern("ParseError");
+    if let Some(Binding::Def(ty)) = scopes.modules[&int].types.get(&parse_error).cloned() {
+        let variants = defs.variants.get(&ty).cloned().unwrap_or_default();
+        let float_exports = scopes.modules.get_mut(&float).expect("float's exports");
+        float_exports.types.insert(parse_error, Binding::Def(ty));
+        for v in variants {
+            float_exports
+                .values
+                .insert(defs.defs[v.0 as usize].name, Binding::Def(v));
+        }
     }
     (defs, scopes)
 }

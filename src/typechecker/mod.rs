@@ -2502,6 +2502,27 @@ impl TypeChecker {
         }
     }
 
+    /// The number of type arguments of the opaque builtin type a type name
+    /// resolved to (`task.Handle`, `postgres.PgPool`, `TypeOf`); `None` for
+    /// any other name.
+    pub(super) fn opaque_builtin_arity(&self, res: Option<crate::defs::Res>) -> Option<usize> {
+        let def = match res {
+            Some(crate::defs::Res::Def(id)) => match &self.defs {
+                Some(defs) => defs.get(id).clone(),
+                None => names::builtin_def(id)?,
+            },
+            _ => return None,
+        };
+        if !def.module.is_builtin() {
+            return None;
+        }
+        let name = resolve(def.name);
+        names::OPAQUE_TYPE_ARITY
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, arity)| *arity)
+    }
+
     /// The enum a resolver slot naming a variant names it of.
     pub(super) fn res_variant_enum(&self, res: Option<crate::defs::Res>) -> Option<Symbol> {
         match (res, &self.defs) {
@@ -4592,6 +4613,10 @@ impl TypeChecker {
                     // A type parameter variable.
                     return tv.clone();
                 }
+                if let Some(arity) = self.opaque_builtin_arity(te.res) {
+                    let args = (0..arity).map(|_| self.fresh_var()).collect();
+                    return Type::Generic(*name, args);
+                }
                 let name_str = resolve(*name);
                 match name_str.as_str() {
                     "Int" => Type::Int,
@@ -4723,6 +4748,22 @@ impl TypeChecker {
                     .map(|a| self.resolve_type_expr(a, param_vars))
                     .collect();
                 let name_str = resolve(*name);
+                if let Some(arity) = self.opaque_builtin_arity(te.res) {
+                    if arity != resolved_args.len() {
+                        let err_span = self.current_type_anno_span.unwrap_or(te.span);
+                        self.error(
+                            Code::ArityMismatch,
+                            format!(
+                                "type argument count mismatch for builtin type '{name_str}': \
+                                 expected {arity}, got {}",
+                                resolved_args.len()
+                            ),
+                            err_span,
+                        );
+                        return Type::Error;
+                    }
+                    return Type::Generic(*name, resolved_args);
+                }
                 match name_str.as_str() {
                     "List" if resolved_args.is_empty() => Type::List(Box::new(self.fresh_var())),
                     "List" if resolved_args.len() == 1 => {

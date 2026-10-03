@@ -246,12 +246,17 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
 `channel.Closed`, `http.Request` and `http.GET`, `io.IoError` and
-`io.IoNotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`. A selective
-import works for them too: `import channel.{ Message }`.
+`io.IoNotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`,
+`task.Handle(a)`, `postgres.PgPool` (and `PgTx`, `PgCursor`,
+`QueryResult`, `ExecResult`, `Value`). `ParseError`, the error of both
+`int.parse` and `float.parse`, is declared in `int` and reached through
+either module: `int.ParseError` and `float.ParseError` are one type. A
+selective import works for them too: `import channel.{ Message }`.
 
 The **prelude** needs no import: the primitive and container types (`Int`,
 `Float`, `Bool`, `String`, `Bytes`, `List`, `Map`, `Set`, `Channel`, ...),
-`Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
+`TypeOf(a)` (the type of a type used as a value, like `Int` or a
+`type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
 `panic`. A module's own declaration or import of one of these names
 shadows the prelude: after `type Maybe { Some(a), None }`, a bare `None`
 is `Maybe.None`, and the prelude's is still `Option.None`.
