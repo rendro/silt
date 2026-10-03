@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A pattern whose head the resolver reports still binds its names: the
+-- only errors are the two heads, no "undefined variable" for the names
+-- the patterns bind, no exhaustiveness or refutability follow-up.
+import lib
+fn main() {
+  match lib.Pt { x: 1, y: 2 } {
+    Pt { x, .. } -> println(x)
+  }
+  let Circle(r) = lib.Shape.Circle(3)
+  println(r)
+}

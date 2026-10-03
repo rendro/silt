@@ -1338,7 +1338,9 @@ impl TypeChecker {
         let bind_failed = self.errors[errors_before..]
             .iter()
             .any(|e| matches!(e.severity, Severity::Error));
-        if !bind_failed {
+        // A name in the pattern the resolver reported: what it matches
+        // is not known.
+        if !bind_failed && !names_unresolved(pattern) {
             self.require_irrefutable(pattern, ty, span, site);
         }
     }
@@ -1673,6 +1675,14 @@ impl TypeChecker {
         }
     }
 
+    /// Bind the names `pattern` binds to the error type: its head names
+    /// something the resolver reported, so nothing is known of its parts.
+    fn bind_unresolved(&mut self, pattern: &Pattern, env: &mut TypeEnv) {
+        for name in collect_pattern_vars(pattern) {
+            env.define(name, Scheme::mono(Type::Error));
+        }
+    }
+
     /// The variant the constructor pattern `pattern` names: the one the
     /// resolver resolved it to. A pattern the checker made itself has no
     /// resolution: its variant is the one of the enum written before it
@@ -1850,10 +1860,7 @@ impl TypeChecker {
                     CtorTarget::Enum(enum_name, info) => Some((enum_name, info)),
                     CtorTarget::Unknown => None,
                     CtorTarget::Silent => {
-                        for sp in sub_pats {
-                            let tv = self.fresh_var();
-                            self.bind_pattern(sp, &tv, env, span);
-                        }
+                        self.bind_unresolved(pattern, env);
                         return;
                     }
                 };
@@ -1959,6 +1966,10 @@ impl TypeChecker {
                 // the field didn't exist. Both were deferred to VM runtime
                 // errors. Reject them at the type-check stage. The type
                 // identity is the bare name (`util.Pt { x }` names `Pt`).
+                if pattern.res == Some(crate::defs::Res::Error) {
+                    self.bind_unresolved(pattern, env);
+                    return;
+                }
                 let resolved = self.apply(ty);
                 let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match name {
                     Some(rec_name) => self.named_record(pattern.res, *rec_name, span, true),
@@ -4973,10 +4984,7 @@ impl TypeChecker {
                 // no variant is looked up bare, for the hints below.
                 let scheme = match self.ctor_target(pattern) {
                     CtorTarget::Silent => {
-                        for sp in sub_pats {
-                            let tv = self.fresh_var();
-                            self.check_pattern(sp, &tv, env, span);
-                        }
+                        self.bind_unresolved(pattern, env);
                         return;
                     }
                     CtorTarget::Enum(enum_name, _) => {
@@ -5095,6 +5103,10 @@ impl TypeChecker {
                 // flow through `check_pattern`, so the check has to fire
                 // on both paths.
                 self.check_record_pattern_duplicate_fields(fields, pattern.span);
+                if pattern.res == Some(crate::defs::Res::Error) {
+                    self.bind_unresolved(pattern, env);
+                    return;
+                }
                 if let Some(rec_name) = name {
                     let looked = self.named_record(pattern.res, *rec_name, span, true);
                     if let Some((rec_info, param_ids)) = looked {
