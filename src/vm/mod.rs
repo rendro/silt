@@ -74,9 +74,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::typeinfo::TypeTable;
 use crate::bytecode::{Function, VmClosure};
 use crate::scheduler::Scheduler;
+use crate::typeinfo::TypeTable;
 use crate::value::{IoCompletion, Value};
 use runtime::{IoPool, RegexCache, TimerManager};
 
@@ -824,10 +824,7 @@ impl Vm {
 
     /// The type of the descriptor constant at `index` (a record literal's
     /// or pattern's type).
-    fn read_constant_type(
-        &self,
-        index: usize,
-    ) -> Result<Arc<crate::typeinfo::TypeInfo>, VmError> {
+    fn read_constant_type(&self, index: usize) -> Result<Arc<crate::typeinfo::TypeInfo>, VmError> {
         match self.read_constant(index)? {
             Value::TypeDescriptor(ty) => Ok(ty),
             other => Err(VmError::new(format!(

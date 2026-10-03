@@ -374,10 +374,7 @@ fn toml_to_record(
             },
             None => match field_type {
                 FieldType::Option(_) => {
-                    record_fields.insert(
-                        field_name.clone(),
-                        Value::variant(bv::NONE, Vec::new()),
-                    );
+                    record_fields.insert(field_name.clone(), Value::variant(bv::NONE, Vec::new()));
                 }
                 _ => {
                     return Ok(toml_missing_field_err(field_name));
@@ -419,10 +416,7 @@ fn toml_to_record_list(
             }
         }
     }
-    Ok(Value::variant(
-        bv::OK,
-        vec![Value::List(Arc::new(records))],
-    ))
+    Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(records))]))
 }
 
 fn toml_to_map(vm: &mut Vm, value_type: &Value, tv: &::toml::Value) -> Result<Value, VmError> {
@@ -480,10 +474,7 @@ fn toml_to_typed_value(
         ))
     };
     let unknown = |msg: String| -> TomlDecodeErr {
-        TomlDecodeErr::Variant(Value::variant(
-            bv::TOML_UNKNOWN,
-            vec![Value::String(msg)],
-        ))
+        TomlDecodeErr::Variant(Value::variant(bv::TOML_UNKNOWN, vec![Value::String(msg)]))
     };
     match expected {
         FieldType::String => match tv {

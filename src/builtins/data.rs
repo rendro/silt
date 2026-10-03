@@ -11,9 +11,9 @@ use std::time::Duration;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use super::common::value_kind;
+use crate::bytecode::record_type_matches;
 use crate::defs::TypeId;
 use crate::typeinfo::{BuiltinVariant, FieldType, Shape, TypeInfo, bv, ty};
-use crate::bytecode::record_type_matches;
 #[cfg(feature = "http")]
 use crate::value::TaskHandle;
 use crate::value::{IoCompletion, Value, checked_range_len};
@@ -306,7 +306,10 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
         }
         Value::Variant(name, fields) => {
             let mut obj = serde_json::Map::new();
-            obj.insert("variant".into(), serde_json::Value::String(name.name().into()));
+            obj.insert(
+                "variant".into(),
+                serde_json::Value::String(name.name().into()),
+            );
             if !fields.is_empty() {
                 let items: Result<Vec<_>, _> = fields.iter().map(value_to_json).collect();
                 obj.insert("fields".into(), serde_json::Value::Array(items?));
@@ -594,7 +597,10 @@ fn extract_datetime(v: &Value) -> Result<NaiveDateTime, VmError> {
         )));
     };
     if !record_type_matches(name, ty::DATE_TIME) {
-        return Err(VmError::new(format!("expected DateTime, got {}", name.name)));
+        return Err(VmError::new(format!(
+            "expected DateTime, got {}",
+            name.name
+        )));
     }
     let date = fields
         .get("date")
@@ -633,7 +639,10 @@ pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
         )));
     };
     if !record_type_matches(name, ty::DURATION) {
-        return Err(VmError::new(format!("expected Duration, got {}", name.name)));
+        return Err(VmError::new(format!(
+            "expected Duration, got {}",
+            name.name
+        )));
     }
     match fields.get("ns") {
         Some(Value::Int(n)) => Ok(*n),
@@ -668,7 +677,11 @@ fn is_builtin_type(ty: &TypeInfo) -> bool {
 }
 
 /// The record type `id` a record field names, from the program's types.
-pub(crate) fn field_record_type(vm: &Vm, caller: &str, id: TypeId) -> Result<Arc<TypeInfo>, VmError> {
+pub(crate) fn field_record_type(
+    vm: &Vm,
+    caller: &str,
+    id: TypeId,
+) -> Result<Arc<TypeInfo>, VmError> {
     vm.types
         .get(id)
         .cloned()
@@ -739,10 +752,7 @@ fn json_to_record(
             },
             None => match field_type {
                 FieldType::Option(_) => {
-                    record_fields.insert(
-                        field_name.clone(),
-                        Value::variant(bv::NONE, Vec::new()),
-                    );
+                    record_fields.insert(field_name.clone(), Value::variant(bv::NONE, Vec::new()));
                 }
                 _ => {
                     return Ok(json_missing_field_err(field_name));
@@ -785,13 +795,14 @@ fn json_to_record_list(
             }
         }
     }
-    Ok(Value::variant(
-        bv::OK,
-        vec![Value::List(Arc::new(records))],
-    ))
+    Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(records))]))
 }
 
-fn json_to_map(vm: &mut Vm, value_type: &Value, json: &serde_json::Value) -> Result<Value, VmError> {
+fn json_to_map(
+    vm: &mut Vm,
+    value_type: &Value,
+    json: &serde_json::Value,
+) -> Result<Value, VmError> {
     let serde_json::Value::Object(obj) = json else {
         return Ok(json_type_mismatch_err("object", json_type_name(json)));
     };
@@ -852,10 +863,7 @@ fn json_to_typed_value(
         ))
     };
     let unknown = |msg: String| -> JsonDecodeErr {
-        JsonDecodeErr::Variant(Value::variant(
-            bv::JSON_UNKNOWN,
-            vec![Value::String(msg)],
-        ))
+        JsonDecodeErr::Variant(Value::variant(bv::JSON_UNKNOWN, vec![Value::String(msg)]))
     };
     match expected {
         FieldType::String => match json {
@@ -1222,10 +1230,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                     );
                 }
             }
-            Ok(Value::variant(
-                bv::SOME,
-                vec![Value::Map(Arc::new(out))],
-            ))
+            Ok(Value::variant(bv::SOME, vec![Value::Map(Arc::new(out))]))
         }
         _ => Err(VmError::new(format!("unknown regex function: {name}"))),
     }
@@ -2136,10 +2141,7 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 /// is a nullary variant. Used by http.get / http.request submits.
 #[cfg(feature = "http")]
 fn http_timeout_err(_msg: &str) -> Value {
-    Value::variant(
-        bv::ERR,
-        vec![Value::variant(bv::HTTP_TIMEOUT, vec![])],
-    )
+    Value::variant(bv::ERR, vec![Value::variant(bv::HTTP_TIMEOUT, vec![])])
 }
 
 /// Build a fresh `IoCompletion` configured with `http_timeout_err`.

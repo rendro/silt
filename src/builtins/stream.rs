@@ -188,9 +188,7 @@ fn err_io(e: &std::io::Error) -> Value {
         ErrorKind::PermissionDenied => {
             Value::variant(bv::IO_PERMISSION_DENIED, vec![Value::String(msg)])
         }
-        ErrorKind::AlreadyExists => {
-            Value::variant(bv::IO_ALREADY_EXISTS, vec![Value::String(msg)])
-        }
+        ErrorKind::AlreadyExists => Value::variant(bv::IO_ALREADY_EXISTS, vec![Value::String(msg)]),
         ErrorKind::InvalidInput | ErrorKind::InvalidData => {
             Value::variant(bv::IO_INVALID_INPUT, vec![Value::String(msg)])
         }

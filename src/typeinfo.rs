@@ -56,6 +56,35 @@ pub struct VariantInfo {
 }
 
 impl TypeInfo {
+    /// The enum `name` with the id `id` and the variants `(name, arity)`,
+    /// which prints, and has its impls, under its name.
+    pub fn new_enum(id: TypeId, name: &str, variants: &[(&str, u16)]) -> Arc<TypeInfo> {
+        Arc::new(TypeInfo {
+            id,
+            name: name.to_string(),
+            key: name.to_string(),
+            shape: Shape::Enum(
+                variants
+                    .iter()
+                    .map(|(name, arity)| VariantInfo {
+                        name: (*name).to_string(),
+                        arity: *arity,
+                    })
+                    .collect(),
+            ),
+        })
+    }
+
+    /// The record type `name` with the id `id` and the fields `fields`.
+    pub fn new_record(id: TypeId, name: &str, fields: Vec<(String, FieldType)>) -> Arc<TypeInfo> {
+        Arc::new(TypeInfo {
+            id,
+            name: name.to_string(),
+            key: name.to_string(),
+            shape: Shape::Record(fields),
+        })
+    }
+
     /// The variants of an enum; none for any other type.
     pub fn variants(&self) -> &[VariantInfo] {
         match &self.shape {
@@ -232,7 +261,9 @@ pub struct TypeTable {
 
 impl TypeTable {
     pub fn get(&self, id: TypeId) -> Option<&Arc<TypeInfo>> {
-        self.types.get(&id).or_else(|| builtin_types().get(id.0.0 as usize))
+        self.types
+            .get(&id)
+            .or_else(|| builtin_types().get(id.0.0 as usize))
     }
 
     pub fn insert(&mut self, info: Arc<TypeInfo>) {
@@ -313,8 +344,8 @@ pub mod bv {
     pub const CONTINUE: BuiltinVariant = BuiltinVariant::new(ty::STEP, 1);
     pub const MESSAGE: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 0);
     pub const CLOSED: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 1);
-    pub const EMPTY: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 2);
-    pub const SENT: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 3);
+    pub const SENT: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 2);
+    pub const EMPTY: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 3);
     pub const RECV: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_OP, 0);
     pub const SEND: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_OP, 1);
     pub const MONDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 0);
@@ -576,6 +607,8 @@ mod tests {
         assert_eq!(bv::OPTIONS.tag().name(), "OPTIONS");
         assert_eq!(bv::CHANNEL_CLOSED.tag().name(), "ChannelClosed");
         assert_eq!(bv::V_LIST.tag().name(), "VList");
+        assert_eq!(bv::SENT.tag().name(), "Sent");
+        assert_eq!(bv::EMPTY.tag().name(), "Empty");
     }
 
     #[test]

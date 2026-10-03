@@ -1199,26 +1199,14 @@ mod tests {
 
     #[test]
     fn dispatch_name_for_value_primitives() {
-        assert_eq!(
-            dispatch_name_for_value(&Value::Int(0)),
-            "Int"
-        );
-        assert_eq!(
-            dispatch_name_for_value(&Value::Float(0.0)),
-            "Float"
-        );
-        assert_eq!(
-            dispatch_name_for_value(&Value::Bool(false)),
-            "Bool"
-        );
+        assert_eq!(dispatch_name_for_value(&Value::Int(0)), "Int");
+        assert_eq!(dispatch_name_for_value(&Value::Float(0.0)), "Float");
+        assert_eq!(dispatch_name_for_value(&Value::Bool(false)), "Bool");
         assert_eq!(
             dispatch_name_for_value(&Value::String(String::new())),
             "String"
         );
-        assert_eq!(
-            dispatch_name_for_value(&Value::Unit),
-            "Unit"
-        );
+        assert_eq!(dispatch_name_for_value(&Value::Unit), "Unit");
     }
 
     #[test]

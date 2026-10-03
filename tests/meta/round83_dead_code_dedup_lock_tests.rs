@@ -30,10 +30,11 @@
 //! > claim and hard to verify; the lock closes that.
 //!
 //! The lock below proves `common::ok(v)` produces an output value
-//! byte-for-byte equal to the inline `Value::Variant("Ok".into(), vec![v])`
+//! byte-for-byte equal to the inline `Value::variant(bv::OK, vec![v])`
 //! literal that the three deleted clones built.
 
 use silt::builtins;
+use silt::typeinfo::bv;
 use silt::value::Value;
 
 // ── Lock A: fn ok dedup ─────────────────────────────────────────────────
@@ -58,7 +59,7 @@ fn round83_ok_helper_matches_inline_variant_for_each_dedup_site() {
     ];
 
     for payload in cases {
-        let inline = Value::Variant("Ok".into(), vec![payload.clone()]);
+        let inline = Value::variant(bv::OK, vec![payload.clone()]);
         let via_helper = builtins::ok(payload);
         assert_eq!(
             inline, via_helper,

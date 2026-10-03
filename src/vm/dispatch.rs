@@ -352,10 +352,7 @@ impl Vm {
                 // Function/Bytes/Handle) are now statically REJECTED by
                 // that gate (`type 'X' does not implement trait`), so the
                 // old "such fields are laundered through here" path no
-                // longer exists. The only theoretical fall-through is a
-                // `Value::Variant` with no `__type_of__` registration
-                // (src/vm/mod.rs ~:940), which is not constructible from a
-                // valid program. `impl PartialEq for Value` (in
+                // longer exists, and no valid program reaches it. `impl PartialEq for Value` (in
                 // src/value.rs) compares records and variants structurally,
                 // so this arm stays sound even on that malformed input.
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
@@ -407,10 +404,7 @@ impl Vm {
                     // Function/Bytes/Handle) are now statically REJECTED by
                     // that gate (`type 'X' does not implement trait`), so the
                     // old "such fields are laundered through here" path no
-                    // longer exists. The only theoretical fall-through is a
-                    // `Value::Variant` with no `__type_of__` registration
-                    // (src/vm/mod.rs ~:940), which is not constructible from a
-                    // valid program. `fn cmp` (in src/value.rs)
+                    // longer exists, and no valid program reaches it. `fn cmp` (in src/value.rs)
                     // orders records and variants structurally, so this arm
                     // stays sound even on that malformed input.
                     (Value::Variant(..), Value::Variant(..))
@@ -481,10 +475,7 @@ impl Vm {
                 // Function/Bytes/Handle) are now statically REJECTED by
                 // that gate (`type 'X' does not implement trait`), so the
                 // old "such fields are laundered through here" path no
-                // longer exists. The only theoretical fall-through is a
-                // `Value::Variant` with no `__type_of__` registration
-                // (src/vm/mod.rs ~:940), which is not constructible from a
-                // valid program. `impl Hash for Value` (in
+                // longer exists, and no valid program reaches it. `impl Hash for Value` (in
                 // src/value.rs) hashes records and variants structurally, so
                 // this arm stays sound even on that malformed input.
                 match receiver {

@@ -834,18 +834,8 @@ fn make_recv_timeout_resume_marker(timer_ch: &Arc<Channel>) -> Value {
 /// `tuple` is expected to be `Value::Tuple(vec![Channel, Variant])` per the
 /// shape returned by `try_select_sweep`; anything else is a programming bug.
 fn map_recv_timeout_result(tuple: Value, timer_ch: &Arc<Channel>) -> Value {
-    let timeout_err = || {
-        Value::variant(
-            bv::ERR,
-            vec![Value::variant(bv::CHANNEL_TIMEOUT, vec![])],
-        )
-    };
-    let closed_err = || {
-        Value::variant(
-            bv::ERR,
-            vec![Value::variant(bv::CHANNEL_CLOSED, vec![])],
-        )
-    };
+    let timeout_err = || Value::variant(bv::ERR, vec![Value::variant(bv::CHANNEL_TIMEOUT, vec![])]);
+    let closed_err = || Value::variant(bv::ERR, vec![Value::variant(bv::CHANNEL_CLOSED, vec![])]);
     let Value::Tuple(parts) = tuple else {
         debug_assert!(false, "recv_timeout: select result not a tuple");
         return closed_err();
@@ -976,9 +966,7 @@ fn try_select_sweep_registered(
         let index = (start + i) % n;
         let (ch, outcome) = match &ops[index] {
             SelectOp::Receive(ch) => match ch.try_receive() {
-                TryReceiveResult::Value(val) => {
-                    (ch, Some(Value::variant(bv::MESSAGE, vec![val])))
-                }
+                TryReceiveResult::Value(val) => (ch, Some(Value::variant(bv::MESSAGE, vec![val]))),
                 TryReceiveResult::Closed => (ch, Some(Value::variant(bv::CLOSED, vec![]))),
                 TryReceiveResult::Empty => (ch, None),
             },

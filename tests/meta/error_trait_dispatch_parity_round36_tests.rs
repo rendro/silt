@@ -46,8 +46,17 @@ fn s(lit: &str) -> Value {
     Value::String(lit.to_string())
 }
 
+/// The builtin error variant named `tag`.
 fn v(tag: &str, fields: Vec<Value>) -> Value {
-    Value::Variant(tag.to_string(), fields)
+    let ty = silt::module::builtin_error_enum_variants_with_arity()
+        .iter()
+        .find(|(_, variants)| variants.iter().any(|(name, _)| *name == tag))
+        .and_then(|(ty, _)| silt::typeinfo::builtin_type_named(ty))
+        .expect("a builtin error variant");
+    Value::Variant(
+        silt::typeinfo::Tag::named(ty, tag).expect("a variant"),
+        fields,
+    )
 }
 
 fn expect_ok(dispatch: Dispatch, name: &str, args: &[Value]) -> String {

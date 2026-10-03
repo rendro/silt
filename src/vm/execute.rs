@@ -347,7 +347,9 @@ fn apply_callback_result(
         BuiltinIterKind::ListFilterMap => {
             if let BuiltinAcc::List(v) = acc {
                 match result {
-                    Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
+                    Value::Variant(ref tag, ref fields)
+                        if tag.is(bv::SOME) && fields.len() == 1 =>
+                    {
                         v.push(fields[0].clone());
                     }
                     Value::Variant(ref tag, _) if tag.is(bv::NONE) => {}
@@ -358,10 +360,7 @@ fn apply_callback_result(
         }
         BuiltinIterKind::ListFind => {
             if value_is_truthy(&result) {
-                return Ok(ControlFlow::Short(Value::variant(
-                    bv::SOME,
-                    vec![item],
-                )));
+                return Ok(ControlFlow::Short(Value::variant(bv::SOME, vec![item])));
             }
             Ok(ControlFlow::Continue)
         }

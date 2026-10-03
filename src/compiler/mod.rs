@@ -2099,8 +2099,8 @@ impl Compiler {
                         // Bare unit-variant method call: `Red.display(args)`
                         // where `Red` is a known nullary variant. Push the
                         // variant value as receiver and dispatch via
-                        // `CallMethod`, which the VM routes through
-                        // `__type_of__<tag>` to find `<EnumName>.display`.
+                        // `CallMethod`, which the VM routes through the
+                        // variant's type to find `<EnumName>.display`.
                         // Without this rewrite, the `is_module_call` branch
                         // below would emit `GetGlobal("Red.display")` and
                         // fail at runtime with `undefined global`.
@@ -2115,9 +2115,18 @@ impl Compiler {
                                 ),
                             ));
                         }
-                        let var_idx = self.add_constant(Value::String(variant_str), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::GetGlobal, var_idx, span);
+                        match self.variant_value(receiver) {
+                            Some(variant) => {
+                                let idx = self.add_constant(variant, span)?;
+                                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                            }
+                            None => {
+                                let var_idx =
+                                    self.add_constant(Value::String(variant_str), span)?;
+                                self.current_chunk()
+                                    .emit_op_u16(Op::GetGlobal, var_idx, span);
+                            }
+                        }
                         self.compile_operands_above(1, args)?;
                         let argc = (args.len() + 1) as u8; // receiver + args
                         let method_idx =
@@ -3068,7 +3077,11 @@ impl Compiler {
             unreachable!("a type id names a definition");
         };
         let ty = TypeRef { id, name: def.name };
-        let defs = self.units.defs.as_ref().expect("a program type has a session");
+        let defs = self
+            .units
+            .defs
+            .as_ref()
+            .expect("a program type has a session");
         let variants = defs.variants(id.0);
         let mut nested = Vec::new();
         let shape = if !variants.is_empty() {
@@ -3419,12 +3432,16 @@ impl Compiler {
             ("Date", []) => Ok(FieldType::Date),
             ("Time", []) => Ok(FieldType::Time),
             ("DateTime", []) => Ok(FieldType::DateTime),
-            ("List", [elem]) => Ok(FieldType::List(Box::new(
-                self.describe_field_type(elem, open_aliases, records)?,
-            ))),
-            ("Option", [inner]) => Ok(FieldType::Option(Box::new(
-                self.describe_field_type(inner, open_aliases, records)?,
-            ))),
+            ("List", [elem]) => Ok(FieldType::List(Box::new(self.describe_field_type(
+                elem,
+                open_aliases,
+                records,
+            )?))),
+            ("Option", [inner]) => Ok(FieldType::Option(Box::new(self.describe_field_type(
+                inner,
+                open_aliases,
+                records,
+            )?))),
             ("Map", [key, value]) => {
                 // The keys of a JSON object or a TOML table are strings.
                 let key_type = self.describe_field_type(key, open_aliases, &mut Vec::new());
@@ -3935,8 +3952,18 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
-    /// Compile declarations (no main call) and return all functions.
+    /// Compile declarations (no main call) and return all functions:
+    /// through a session, so that names are resolved, when the program
+    /// checks; otherwise by a compiler with no session, which knows the
+    /// builtin names only.
     fn compile(input: &str) -> Vec<Function> {
+        let (mut session, entry) = crate::session::testing::session_with(&[("main.silt", input)]);
+        if !session.analyze(entry).has_errors() {
+            return session
+                .compile(entry, crate::session::Entry::Tests { filter: None })
+                .unwrap_or_else(|e| panic!("{e:?}"))
+                .functions;
+        }
         let tokens = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap();
@@ -3946,8 +3973,17 @@ mod tests {
         compiler.compile_declarations(&program).unwrap()
     }
 
-    /// Compile expecting an error, return the error.
+    /// Compile expecting an error, return the error: through a session
+    /// when the program checks, by a compiler with no session otherwise.
     fn compile_err(input: &str) -> Diagnostic {
+        let (mut session, entry) = crate::session::testing::session_with(&[("main.silt", input)]);
+        if !session.analyze(entry).has_errors() {
+            return session
+                .compile(entry, crate::session::Entry::Tests { filter: None })
+                .err()
+                .and_then(|errors| errors.into_iter().next())
+                .expect("a compile error");
+        }
         let tokens = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap();
@@ -4344,7 +4380,7 @@ fn main() { Red }
         let script = &fns[0];
         // Nullary variants are registered as Variant values
         assert!(script.chunk.constants.iter().any(
-            |c| matches!(c, Value::Variant(name, fields) if name == "Red" && fields.is_empty())
+            |c| matches!(c, Value::Variant(tag, fields) if tag.name() == "Red" && fields.is_empty())
         ));
         assert!(has_string_constant(&script.chunk, "Red"));
         assert!(has_string_constant(&script.chunk, "Green"));
@@ -4361,9 +4397,9 @@ fn main() { Circle(1.0) }
         );
         let script = &fns[0];
         // Constructor variants are registered as VariantConstructor values
-        assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::VariantConstructor(name, arity) if name == "Circle" && *arity == 1)));
+        assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::VariantConstructor(tag) if tag.name() == "Circle" && tag.arity() == 1)));
         assert!(script.chunk.constants.iter().any(
-            |c| matches!(c, Value::VariantConstructor(name, arity) if name == "Rect" && *arity == 2)
+            |c| matches!(c, Value::VariantConstructor(tag) if tag.name() == "Rect" && tag.arity() == 2)
         ));
     }
 
@@ -4911,16 +4947,27 @@ fn f(x) {
 
     #[test]
     fn test_compile_record_field_metadata() {
-        let fns = compile("type User { name: String, age: Int }");
-        let script = &fns[0];
-        // Record field metadata is stored as __record_fields__User
-        assert!(has_string_constant(&script.chunk, "__record_fields__User"));
+        let (mut session, entry) = crate::session::testing::session_with(&[(
+            "main.silt",
+            "type User { name: String, age: Int }",
+        )]);
+        let program = session
+            .compile(entry, crate::session::Entry::Tests { filter: None })
+            .unwrap();
+        // The record's fields, in declaration order, are in its type's
+        // description.
+        let user = program
+            .types
+            .iter()
+            .find(|ty| ty.name == "User")
+            .expect("User is described");
+        let fields: Vec<&str> = user.fields().iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(fields, ["name", "age"]);
     }
 
     #[test]
     fn test_compile_record_field_descriptors() {
-        let fns = compile(
-            r#"
+        let source = r#"
 type R {
     a: Ids,
     m: Map(String, Int),
@@ -4932,22 +4979,29 @@ type R {
 type Inner { x: Int }
 type Ids = List(Int)
 type Pair(a) = (a, a)
-"#,
+"#;
+        let (mut session, entry) = crate::session::testing::session_with(&[("main.silt", source)]);
+        let program = session
+            .compile(entry, crate::session::Entry::Tests { filter: None })
+            .unwrap();
+        let r = program.types.iter().find(|ty| ty.name == "R").expect("R");
+        let inner = program
+            .types
+            .iter()
+            .find(|ty| ty.name == "Inner")
+            .expect("the record type of a field is described too");
+        let described: Vec<String> = r.fields().iter().map(|(_, t)| format!("{t:?}")).collect();
+        assert_eq!(
+            described,
+            [
+                "List(Int)",
+                "Map(Int)",
+                "Tuple([Int, String])",
+                "Tuple([Bool, Bool])",
+                "Unsupported(\"Set(Int)\")",
+                format!("Record({:?})", inner.id).as_str(),
+            ]
         );
-        let script = &fns[0];
-        for descriptor in [
-            "List:Int",
-            "Map:Int",
-            "Tuple(Int,String)",
-            "Tuple(Bool,Bool)",
-            "Unsupported:Set(Int)",
-            "Record:Inner",
-        ] {
-            assert!(
-                has_string_constant(&script.chunk, descriptor),
-                "missing field type descriptor {descriptor:?}"
-            );
-        }
     }
 
     #[test]

@@ -9,8 +9,8 @@ use crate::vm::{Vm, VmError};
 /// `err_tag` is the "absent/failure" variant (0 or 1 fields depending
 /// on the ADT).
 struct AdtShape {
-    module: &'static str,   // "result" | "option" — for error messages
-    adt_name: &'static str, // "Result" | "Option" — for error messages
+    module: &'static str,    // "result" | "option" — for error messages
+    adt_name: &'static str,  // "Result" | "Option" — for error messages
     ok_tag: BuiltinVariant,  // Ok  | Some
     err_tag: BuiltinVariant, // Err | None
 }

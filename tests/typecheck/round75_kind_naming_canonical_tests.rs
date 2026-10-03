@@ -43,6 +43,7 @@
 //!      `user_facing_type_name == type_name` modulo the four
 //!      documented deliberate aliases.
 
+use silt::typeinfo::bv;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -87,6 +88,15 @@ struct AllVariants {
     tcp_listener: Value,
     tcp_stream: Value,
     unit: Value,
+}
+
+/// A program's record type `Point`.
+fn point_type() -> Arc<silt::typeinfo::TypeInfo> {
+    silt::typeinfo::TypeInfo::new_record(
+        silt::defs::TypeId(silt::defs::DefId(9000)),
+        "Point",
+        Vec::new(),
+    )
 }
 
 fn build_all_variants() -> AllVariants {
@@ -135,19 +145,16 @@ fn build_all_variants() -> AllVariants {
             s
         })),
         tuple: Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
-        record: Value::Record("Point".to_string(), Arc::new(record_fields)),
-        // Use a custom tag with no `__type_of__` binding in a fresh VM
-        // so the deliberate-alias arm falls back to the bare tag.
-        // Stdlib enums (Option/Result) would resolve to their parent
-        // enum name and confound the equality check.
-        variant: Value::Variant("MyVariantR75".to_string(), vec![Value::Int(1)]),
+        record: Value::Record(point_type(), Arc::new(record_fields)),
+        // A variant names its enum type.
+        variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
         vm_closure: Value::VmClosure(Arc::new(VmClosure {
             function: Arc::new(Function::new("f".to_string(), 0)),
             upvalues: Vec::new(),
         })),
         builtin_fn: Value::BuiltinFn("println".to_string()),
-        variant_constructor: Value::VariantConstructor("Some".to_string(), 1),
-        type_descriptor: Value::TypeDescriptor("Point".to_string()),
+        variant_constructor: Value::VariantConstructor(bv::SOME.tag()),
+        type_descriptor: Value::TypeDescriptor(point_type()),
         primitive_descriptor: Value::PrimitiveDescriptor("Int".to_string()),
         channel: Value::Channel(Arc::new(Channel::new(0, 0))),
         handle: Value::Handle(Arc::new(TaskHandle::new(0))),
@@ -292,14 +299,12 @@ fn user_facing_type_name_titlecase_aligned_with_type_name() {
              {v:?}: {ufn:?}"
         );
         // Match-by-shape: equality with type_name OR a documented
-        // deliberate alias. The Variant tag chosen in `build_all_variants`
-        // (`MyVariantR75`) has no stdlib `__type_of__` binding, so the
-        // alias arm falls back to the bare tag.
+        // deliberate alias: a variant is named by its enum type.
         let ok = match v {
-            Value::Record(name, _) => ufn == *name,
-            Value::Variant(tag, _) => ufn == *tag,
-            Value::VariantConstructor(name, _) => ufn == format!("VariantConstructor `{name}`"),
-            Value::TypeDescriptor(name) => ufn == format!("TypeDescriptor `{name}`"),
+            Value::Record(ty, _) => ufn == ty.name,
+            Value::Variant(tag, _) => ufn == tag.ty().name,
+            Value::VariantConstructor(tag) => ufn == format!("VariantConstructor `{tag}`"),
+            Value::TypeDescriptor(ty) => ufn == format!("TypeDescriptor `{}`", ty.name),
             Value::PrimitiveDescriptor(name) => ufn == format!("PrimitiveDescriptor `{name}`"),
             _ => ufn == tn,
         };

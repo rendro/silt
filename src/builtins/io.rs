@@ -5,8 +5,8 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::common::value_kind;
-use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::builtins::data::make_datetime;
+use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
@@ -222,10 +222,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     // match-against-Err loops terminate cleanly instead of
                     // spinning on "".
                     Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, vec![])),
-                    Ok(_) => Value::variant(
-                        bv::OK,
-                        vec![Value::String(line.trim_end().to_string())],
-                    ),
+                    Ok(_) => {
+                        Value::variant(bv::OK, vec![Value::String(line.trim_end().to_string())])
+                    }
                     Err(e) => io_result_err(&e, ""),
                 }
             },
@@ -310,10 +309,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                             }
                         }
                     }
-                    Ok(Value::variant(
-                        bv::OK,
-                        vec![Value::List(Arc::new(items))],
-                    ))
+                    Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(items))]))
                 }
                 Err(e) => Ok(io_result_err(&e, path)),
             }

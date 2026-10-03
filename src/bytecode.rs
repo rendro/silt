@@ -407,7 +407,9 @@ impl Chunk {
             Value::Bool(b) => Some(ConstantKey::Bool(*b)),
             Value::String(s) => Some(ConstantKey::String(s.clone())),
             Value::Float(f) => Some(ConstantKey::Float(f.to_bits())),
-            Value::VariantConstructor(tag) => Some(ConstantKey::Variant(tag.type_id(), tag.ordinal())),
+            Value::VariantConstructor(tag) => {
+                Some(ConstantKey::Variant(tag.type_id(), tag.ordinal()))
+            }
             Value::Variant(tag, fields) if fields.is_empty() => {
                 Some(ConstantKey::Nullary(tag.type_id(), tag.ordinal()))
             }

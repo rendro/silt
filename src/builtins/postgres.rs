@@ -47,10 +47,7 @@ use crate::vm::{Vm, VmError};
 /// `PgTimeout` is a nullary variant; `e.message()` still produces a
 /// helpful string via the trait impl.
 fn pg_timeout_err(_msg: &str) -> Value {
-    Value::variant(
-        bv::ERR,
-        vec![Value::variant(bv::PG_TIMEOUT, vec![])],
-    )
+    Value::variant(bv::ERR, vec![Value::variant(bv::PG_TIMEOUT, vec![])])
 }
 
 /// Build a fresh `IoCompletion` whose watchdog-timeout factory is
@@ -454,10 +451,7 @@ fn wrap_v_float(f: f64) -> Value {
     if !f.is_finite() {
         return wrap_v_str(format!("<decode error: non-finite float {f}>"));
     }
-    Value::variant(
-        bv::V_FLOAT,
-        vec![crate::builtins::numeric::float_value(f)],
-    )
+    Value::variant(bv::V_FLOAT, vec![crate::builtins::numeric::float_value(f)])
 }
 fn wrap_v_null() -> Value {
     Value::variant(bv::V_NULL, vec![])
@@ -2543,7 +2537,7 @@ mod tests {
         let Value::Variant(tag, payload) = &result else {
             panic!("expected Variant, got {result:?}");
         };
-        assert_eq!(tag, "Err", "expected Err, got {tag}");
+        assert_eq!(tag.name(), "Err", "expected Err, got {tag}");
         let inner = payload.first().expect("err payload");
         let Value::Variant(etag, epayload) = inner else {
             panic!("expected inner Variant, got {inner:?}");
@@ -2552,7 +2546,7 @@ mod tests {
         // TLS now surface `PgTls(msg)` instead of the legacy
         // `ConnectionError`. The message text still mentions TLS /
         // postgres-tls so operators see the feature-flag hint.
-        assert_eq!(etag, "PgTls");
+        assert_eq!(etag.name(), "PgTls");
         let Some(Value::String(msg)) = epayload.first() else {
             panic!("expected message string");
         };
@@ -2570,7 +2564,7 @@ mod tests {
             let Value::Variant(tag, payload) = &result else {
                 panic!("expected Variant for {mode}");
             };
-            assert_eq!(tag, "Err", "{mode} should Err");
+            assert_eq!(tag.name(), "Err", "{mode} should Err");
             let inner = payload.first().expect("err payload");
             let Value::Variant(_, epayload) = inner else {
                 panic!("expected inner Variant for {mode}");
@@ -2678,7 +2672,7 @@ mod tests {
         let Value::Variant(tag, payload) = &result else {
             panic!("expected Variant, got {result:?}");
         };
-        assert_eq!(tag, "Ok", "connect failed: {result:?}");
+        assert_eq!(tag.name(), "Ok", "connect failed: {result:?}");
         let handle = payload.first().cloned().expect("pool handle");
         let pool_id = extract_pool_id(&handle).expect("pool id");
         let pool = lookup_pool(pool_id).expect("registered");
@@ -2687,7 +2681,7 @@ mod tests {
         let Value::Variant(qtag, qpayload) = &q else {
             panic!("expected Variant from query: {q:?}");
         };
-        assert_eq!(qtag, "Ok", "query failed: {q:?}");
+        assert_eq!(qtag.name(), "Ok", "query failed: {q:?}");
         // Payload is `QueryResult { rows: [...] }`. Pull out the rows
         // list and confirm one row with `?column?` = 1.
         let record = qpayload.first().expect("query result record");
@@ -2710,7 +2704,7 @@ mod tests {
         let Value::Variant(vtag, vpayload) = col else {
             panic!("expected VInt variant, got {col:?}");
         };
-        assert_eq!(vtag, "VInt");
+        assert_eq!(vtag.name(), "VInt");
         assert_eq!(vpayload.first(), Some(&Value::Int(1)));
 
         let _ = remove_pool(pool_id);

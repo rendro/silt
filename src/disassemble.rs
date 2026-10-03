@@ -299,9 +299,7 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
         //   CallBuiltin(name_index, argc)
         // The two arms shared a byte-identical operand-decode shape
         // (round 84 audit): consolidated into `fmt_u16_u8_with_const`.
-        Op::CallMethod | Op::CallBuiltin => {
-            fmt_u16_u8_with_const(chunk, code, offset, name)
-        }
+        Op::CallMethod | Op::CallBuiltin => fmt_u16_u8_with_const(chunk, code, offset, name),
 
         // ── MakeClosure: u16 func_index, u8 upvalue_count, then descriptors
         Op::MakeClosure => {

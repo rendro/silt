@@ -2608,8 +2608,7 @@ mod tests {
         assert!(tuesday < friday, "Tuesday < Friday");
         assert!(friday < sunday, "Friday < Sunday");
         assert_eq!(
-            Value::variant(bv::WEDNESDAY, vec![])
-                .cmp(&Value::variant(bv::WEDNESDAY, vec![])),
+            Value::variant(bv::WEDNESDAY, vec![]).cmp(&Value::variant(bv::WEDNESDAY, vec![])),
             Ordering::Equal,
         );
     }
@@ -2617,25 +2616,38 @@ mod tests {
     #[test]
     fn ord_result_variants_decl_order() {
         // Result is declared as `type Result(a, e) { Ok(a), Err(e) }`,
-        // so the declaration-order ordinal registry has Ok=0, Err=1
-        // and `Ok < Err`. (Pre-round-61 this was `err < ok` because the
-        // fallback comparison was alphabetical — that fallback is now
-        // only used for variants the registry has never seen.)
+        // so Ok has ordinal 0, Err ordinal 1, and `Ok < Err`.
         let ok = Value::variant(bv::OK, vec![Value::Int(1)]);
         let err = Value::variant(bv::ERR, vec![Value::String("e".into())]);
         assert!(ok < err, "Ok declared before Err → Ok < Err");
     }
 
+    /// Two enums with variants of one name each order by their own
+    /// declaration, and their variants are not equal.
     #[test]
-    fn ord_unregistered_variants_alphabetical_fallback() {
-        // Variants whose names are NOT in the ordinal registry (e.g.
-        // hypothetical tags built inside a unit test before any enum
-        // decl is processed) fall back to alphabetical comparison so
-        // `Value::cmp` remains a total order. This locks the fallback
-        // path explicitly.
-        let zzz = Value::Variant("__SiltUnknownZ".into(), vec![]);
-        let aaa = Value::Variant("__SiltUnknownA".into(), vec![]);
-        assert!(aaa < zzz, "alphabetical fallback for unregistered tags");
+    fn variants_of_one_name_in_two_enums_stay_apart() {
+        use crate::defs::{DefId, TypeId};
+        let a = TypeInfo::new_enum(TypeId(DefId(9000)), "A", &[("Red", 0), ("Blue", 0)]);
+        let b = TypeInfo::new_enum(TypeId(DefId(9001)), "B", &[("Blue", 0), ("Red", 0)]);
+        let value = |ty: &Arc<TypeInfo>, name: &str| {
+            Value::Variant(Tag::named(ty, name).expect("a variant"), vec![])
+        };
+        assert!(value(&a, "Red") < value(&a, "Blue"));
+        assert!(value(&b, "Blue") < value(&b, "Red"));
+        assert_ne!(value(&a, "Red"), value(&b, "Red"));
+        assert_eq!(hash_of(&value(&a, "Red")), hash_of(&value(&a, "Red")));
+    }
+
+    /// A program's record type named like a builtin one prints as a
+    /// record: Display is keyed by the builtin type's id, not its name.
+    #[test]
+    fn a_program_type_named_time_is_not_the_builtin_time() {
+        use crate::defs::{DefId, TypeId};
+        let ty = TypeInfo::new_record(TypeId(DefId(9002)), "Time", Vec::new());
+        let mut fields = BTreeMap::new();
+        fields.insert("h".to_string(), Value::Int(1));
+        let rec = Value::Record(ty, Arc::new(fields));
+        assert_eq!(format!("{rec}"), "Time {h: 1}");
     }
 
     #[test]
@@ -2731,7 +2743,12 @@ mod tests {
         let mut fields = BTreeMap::new();
         fields.insert("x".to_string(), Value::Int(10));
         fields.insert("y".to_string(), Value::Int(20));
-        let rec = Value::Record("Point".to_string(), Arc::new(fields));
+        let ty = TypeInfo::new_record(
+            crate::defs::TypeId(crate::defs::DefId(9003)),
+            "Point",
+            Vec::new(),
+        );
+        let rec = Value::Record(ty, Arc::new(fields));
         assert_eq!(format!("{}", rec), "Point {x: 10, y: 20}");
     }
 

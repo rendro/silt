@@ -35,10 +35,7 @@ use crate::vm::{Vm, VmError};
 /// `TcpTimeout` is a nullary variant; `e.message()` still produces a
 /// helpful string via the trait impl.
 fn tcp_timeout_err(_msg: &str) -> Value {
-    Value::variant(
-        bv::ERR,
-        vec![Value::variant(bv::TCP_TIMEOUT, vec![])],
-    )
+    Value::variant(bv::ERR, vec![Value::variant(bv::TCP_TIMEOUT, vec![])])
 }
 
 /// Build a fresh `IoCompletion` whose watchdog-timeout factory is
@@ -440,10 +437,7 @@ fn err(s: impl Into<String>) -> Value {
 
 /// Build `Err(TcpClosed)`.
 fn err_closed() -> Value {
-    Value::variant(
-        bv::ERR,
-        vec![Value::variant(bv::TCP_CLOSED, vec![])],
-    )
+    Value::variant(bv::ERR, vec![Value::variant(bv::TCP_CLOSED, vec![])])
 }
 
 // Round 65 dedup (DC2): the byte-identical bodies of these helpers

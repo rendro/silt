@@ -200,10 +200,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             match s.find(needle.as_str()) {
                 Some(byte_pos) => {
                     let char_pos = s[..byte_pos].chars().count();
-                    Ok(Value::variant(
-                        bv::SOME,
-                        vec![Value::Int(char_pos as i64)],
-                    ))
+                    Ok(Value::variant(bv::SOME, vec![Value::Int(char_pos as i64)]))
                 }
                 None => Ok(Value::variant(bv::NONE, Vec::new())),
             }
@@ -220,10 +217,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Some(byte_pos) => {
                     // Match string.index_of: return a CHARACTER index (not byte).
                     let char_pos = s[..byte_pos].chars().count();
-                    Ok(Value::variant(
-                        bv::SOME,
-                        vec![Value::Int(char_pos as i64)],
-                    ))
+                    Ok(Value::variant(bv::SOME, vec![Value::Int(char_pos as i64)]))
                 }
                 None => Ok(Value::variant(bv::NONE, Vec::new())),
             }
