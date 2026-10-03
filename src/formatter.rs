@@ -9509,9 +9509,10 @@ mod self_check_tests {
     #[test]
     fn a_top_level_name_bound_twice_does_not_parse() {
         // Sorting imports can never change which declaration a name
-        // refers to: a top-level name is bound only once.
+        // refers to: a top-level name is bound only once. (Two items of
+        // one name are the resolver's: one binding if they name one
+        // definition, an error if not, in either order.)
         for src in [
-            "import zeta.{ name }\nimport alpha.{ name }\n\nfn main() {\n  println(name())\n}\n",
             "fn name() {\n  \"local\"\n}\n\nimport zeta.{ name }\n\nfn main() {\n  println(name())\n}\n",
         ] {
             match format(src) {

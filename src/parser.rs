@@ -5289,26 +5289,22 @@ fn main() {
 
     #[test]
     fn test_recovery_reports_every_top_level_name_bound_twice() {
+        // Two items of `import m.{ ... }` lines are the resolver's to
+        // judge (one definition imported twice is one binding); an item
+        // and a function are not.
         let (prog, errs) =
             parse_recovering("import a.{ x }\nimport b.{ x }\nfn x() { 1 }\nfn y() { 2 }\n");
         assert_eq!(prog.decls.len(), 4, "every declaration is kept");
-        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert_eq!(errs.len(), 1, "{errs:?}");
         assert!(
             errs[0]
                 .message
-                .contains("by the import and by the import here")
-        );
-        assert!(
-            errs[1]
-                .message
                 .contains("by the import and by the function here")
         );
-        // Each error points at the second binder: the item `x` of the
-        // second import, then the function's name on line 3; the label
+        // The error points at the function's name on line 3; the label
         // points at the first binder, the item `x` of the first import.
-        assert_eq!(errs[0].span.start, 26);
-        assert_eq!(errs[1].span.start, 33);
-        assert_eq!(errs[1].labels[0].0.start, 11);
+        assert_eq!(errs[0].span.start, 33);
+        assert_eq!(errs[0].labels[0].0.start, 11);
     }
 
     #[test]
