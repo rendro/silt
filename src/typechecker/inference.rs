@@ -2809,7 +2809,7 @@ impl TypeChecker {
                     // `src/typechecker/mod.rs:2092`), so dispatch must route those
                     // receivers through the same `method_table` lookup. The
                     // `"Fn"` key matches `canonical_name(Type::Fun)`,
-                    // `head_symbol_of_canon`, and `dispatch_name_for_value`
+                    // `head_of_canon`, and `dispatch_name_for_value`
                     // — round 71 follow-up unified all four sites on `"Fn"`.
                     Type::Int
                     | Type::Float

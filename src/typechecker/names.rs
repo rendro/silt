@@ -440,7 +440,7 @@ fn declare(
         }
     }
     for (name, id, is_type) in own {
-        let def = defs.get(id).clone();
+        let def = *defs.get(id);
         let namespace = if is_type {
             &mut scope.types
         } else {

@@ -55,15 +55,11 @@
 //! canonicaliser reads when expanding alias references. Implementation
 //! notes:
 //!
-//! - The registry lives on a [`Resolver`] instance owned by the
-//!   `TypeChecker` (see `src/typechecker/mod.rs`). One `Resolver` is
-//!   shared across every per-module typecheck in a single CLI compile
-//!   invocation (so module B importing module A still sees A's
-//!   aliases); LSP pulls each allocate a fresh `Resolver` so per-pull
-//!   state cannot leak across unrelated documents. The pre-refactor
-//!   design used process-global `RwLock<HashMap>` statics; commit
-//!   6364552 replaced that with the per-session `Resolver` to close
-//!   the cross-pull contamination hazard.
+//! - The registry lives on a [`Resolver`] instance in the checker
+//!   tables a compilation session holds (`typechecker::Tables`): every
+//!   module's check of the session reads and adds to the one
+//!   `Resolver`, so module B importing module A sees A's aliases, and
+//!   nothing leaks between sessions.
 //! - An alias is keyed by its [`TypeId`]: two modules may each declare
 //!   an alias of one name; a trait by its [`TraitKey`]. An associated
 //!   type's name is keyed by its resolved `String`, because the interner is `thread_local!`
@@ -153,15 +149,7 @@ pub struct AssocBindingCycle {
 type AssocKey = (TraitKey, TypeRef, String);
 
 /// Compile-session-scoped storage for the alias and associated-type
-/// binding registries.
-///
-/// Replaces the previous `RwLock<HashMap>` process-globals: every
-/// `TypeChecker` constructed in one compile invocation (one `silt
-/// run` / `silt check` / `silt test` call, or one LSP pull) shares a
-/// single `Resolver` so cross-module alias resolution still works
-/// (module B importing module A sees A's aliases) without leaking
-/// state across unrelated compile invocations (no cross-pull
-/// contamination in LSP).
+/// binding registries: one per session, shared by every module's check.
 ///
 /// An alias is keyed by its definition, so two modules' aliases of one
 /// name are two entries.
@@ -175,20 +163,6 @@ impl Resolver {
     /// Allocate a fresh resolver with empty maps.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Add every alias and associated-type binding of `other`, as a
-    /// module that imports `other`'s module sees them; an entry of
-    /// `other` replaces one of the same name.
-    pub fn absorb(&mut self, other: &Resolver) {
-        self.aliases
-            .extend(other.aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
-        self.assoc_bindings.extend(
-            other
-                .assoc_bindings
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
     }
 
     /// Register a user-declared type alias. Called by the typechecker
@@ -728,7 +702,7 @@ pub fn dispatch_name_for_value(val: &Value) -> Option<String> {
         Value::Channel(_) => Some(canonical_name(&Type::Channel(Box::new(Type::Unit)))),
         // All function-shaped values dispatch under `"Fn"` — the same
         // canonical name that `canonical_name(Type::Fun)`,
-        // `head_symbol_of_canon(Type::Fun)`, and the typechecker's
+        // `head_of_canon(Type::Fun)`, and the typechecker's
         // `type_name_for_impl` produce. The typechecker types every
         // function-shaped value as `Type::Fun(..)`, so a user
         // `trait T for Fn { ... }` impl registers under the

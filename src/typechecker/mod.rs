@@ -471,17 +471,11 @@ pub struct Tables {
     /// The builtin types whose derived impls the builtin environment
     /// holds already, so a check does not derive them again.
     pub(super) builtin_derived: std::collections::HashSet<TypeRef>,
-    /// Compile-session-scoped storage for the canonical alias /
-    /// associated-type-binding registries. Populated as the
-    /// typechecker processes user `type ... = ...` decls and trait
-    /// impls; consumed by `canonicalize` and `canonical_head`
-    /// at every read site. Cross-module sharing happens by extracting
-    /// this field from one TypeChecker and constructing the next via
-    /// `with_resolver` — the CLI compile pipeline does this so module
-    /// B importing module A still sees A's aliases. LSP pulls each
-    /// allocate a fresh `Resolver` so per-pull state cannot leak
-    /// across unrelated documents. See commit 6364552 for the
-    /// migration from process-global `RwLock<HashMap>` statics.
+    /// The session's canonical alias / associated-type-binding
+    /// registries. Populated as the typechecker processes user
+    /// `type ... = ...` decls and trait impls; consumed by
+    /// `canonicalize` and `canonical_head` at every read site, and by
+    /// the compiler when it names impl globals.
     pub(super) resolver: crate::types::canonical::Resolver,
     /// The scheme of each definition of a checked module and of each
     /// builtin: a function, a `let`, a variant's constructor, a type

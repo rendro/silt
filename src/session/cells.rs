@@ -2,9 +2,9 @@
 //! `<repl:n>`, checked and compiled like any module, that sees what the
 //! earlier cells that ran bind: the session imports into it the last
 //! committed cell (`import <repl:k>.{ ... }`, a name no program can
-//! write), which offers all it saw as well as all it declared (see
-//! `typechecker::check_cell`), and carries the earlier cells' own imports
-//! over. A cell therefore imports one cell however long the session is.
+//! write), which offers all it saw as well as all it declared (a REPL
+//! cell is resolved as `names::ModuleKind::Cell`), and carries the
+//! earlier cells' own imports over. A cell therefore imports one cell however long the session is.
 //! Of two impls of one trait for one type the newer one is seen, as a
 //! written impl replaces the derived one in a file.
 //!
