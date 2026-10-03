@@ -688,7 +688,7 @@ impl Function {
 /// `name`, with no arguments and returns the result: the test runner
 /// calls each test so. The call is silt's own, so its code has
 /// `Span::BUILTIN`.
-pub fn call_global_script(slot: u16, name: &str) -> Function {
+pub(crate) fn call_global_script(slot: u16, name: &str) -> Function {
     let span = Span::BUILTIN;
     let mut func = Function::new(format!("<call:{name}>"), 0);
     func.chunk.emit_op(Op::GetGlobal, span);

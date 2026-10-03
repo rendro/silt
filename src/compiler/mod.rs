@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
-    Qualifier, RecordField, Stmt, StringPart, TypeBody, TypeExpr, TypeExprKind, UnaryOp,
+    Stmt, StringPart, TypeBody, UnaryOp,
 };
 use crate::bytecode::{Chunk, Function, Globals, Op, UpvalueDesc, VmClosure};
 use crate::diagnostic::{Code, Diagnostic};
@@ -20,8 +20,8 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::module;
 use crate::source::Span;
 use crate::typeinfo::{FieldType, Shape, Tag, TypeInfo, TypeTable, VariantInfo};
-use crate::types::TypeRef;
 use crate::types::canonical::{Resolver, canonical_head};
+use crate::types::{Type, TypeRef};
 use crate::value::{HostFn, Value};
 
 mod patterns;
@@ -65,115 +65,20 @@ fn collect_records(field_type: &FieldType, out: &mut Vec<crate::defs::TypeId>) {
     }
 }
 
+/// A type as messages write it, a record type by its name.
+fn shown(ty: &Type) -> String {
+    Type::show_all(&[ty], |_, _| None).remove(0)
+}
+
 /// A record field that `json.parse` / `toml.parse` cannot decode.
 struct UndecodableField {
     /// The record type that declares the field.
     record: String,
     field: String,
-    /// The field's type as written in the declaration.
+    /// The field's type.
     field_type: String,
-    /// The part of the field's type that has no decoder, as written.
+    /// The part of the field's type that has no decoder.
     part: String,
-}
-
-/// Render a type expression the way it is written in source.
-fn render_type_expr(te: &TypeExpr) -> String {
-    fn render_list(items: &[TypeExpr]) -> String {
-        items
-            .iter()
-            .map(render_type_expr)
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-    match &te.kind {
-        TypeExprKind::Named { module, name, .. } => Qualifier::written(*module, *name),
-        TypeExprKind::Generic {
-            module, name, args, ..
-        } => {
-            format!(
-                "{}({})",
-                Qualifier::written(*module, *name),
-                render_list(args)
-            )
-        }
-        TypeExprKind::Tuple(elems) => format!("({})", render_list(elems)),
-        TypeExprKind::Function(params, ret) => {
-            format!("Fn({}) -> {}", render_list(params), render_type_expr(ret))
-        }
-        TypeExprKind::SelfType => "Self".to_string(),
-        TypeExprKind::AssocProj {
-            receiver,
-            trait_module,
-            trait_name,
-            assoc_name,
-        } => format!(
-            "<{} as {}>::{}",
-            render_type_expr(receiver),
-            Qualifier::written(*trait_module, *trait_name),
-            resolve(*assoc_name)
-        ),
-        TypeExprKind::AnonRecord { fields, tail } => {
-            let mut items: Vec<String> = fields
-                .iter()
-                .map(|(n, t)| format!("{}: {}", resolve(*n), render_type_expr(t)))
-                .collect();
-            if let Some(row) = tail {
-                items.push(format!("...{}", resolve(*row)));
-            }
-            format!("{{{}}}", items.join(", "))
-        }
-    }
-}
-
-/// Replace the type parameters `params` by `args` in `te`. Used to expand
-/// a parametric alias: `Pair(Int)` with `type Pair(a) = (a, a)` becomes
-/// `(Int, Int)`.
-fn substitute_type_params(te: &TypeExpr, params: &[Symbol], args: &[TypeExpr]) -> TypeExpr {
-    let subst = |t: &TypeExpr| substitute_type_params(t, params, args);
-    let kind = match &te.kind {
-        TypeExprKind::Named {
-            module: None, name, ..
-        } if params.contains(name) => {
-            let i = params.iter().position(|p| p == name).expect("contained");
-            return args[i].clone();
-        }
-        TypeExprKind::Named { .. } => te.kind.clone(),
-        TypeExprKind::Generic {
-            module,
-            name,
-            name_span,
-            args: type_args,
-        } => TypeExprKind::Generic {
-            module: *module,
-            name: *name,
-            name_span: *name_span,
-            args: type_args.iter().map(subst).collect(),
-        },
-        TypeExprKind::Tuple(elems) => TypeExprKind::Tuple(elems.iter().map(subst).collect()),
-        TypeExprKind::Function(fn_params, ret) => TypeExprKind::Function(
-            fn_params.iter().map(subst).collect(),
-            Box::new(substitute_type_params(ret, params, args)),
-        ),
-        TypeExprKind::SelfType => TypeExprKind::SelfType,
-        TypeExprKind::AssocProj {
-            receiver,
-            trait_module,
-            trait_name,
-            assoc_name,
-        } => TypeExprKind::AssocProj {
-            receiver: Box::new(substitute_type_params(receiver, params, args)),
-            trait_module: *trait_module,
-            trait_name: *trait_name,
-            assoc_name: *assoc_name,
-        },
-        TypeExprKind::AnonRecord { fields, tail } => TypeExprKind::AnonRecord {
-            fields: fields.iter().map(|(n, t)| (*n, subst(t))).collect(),
-            tail: *tail,
-        },
-    };
-    let mut substituted = TypeExpr::new(kind, te.span);
-    substituted.res = te.res;
-    substituted
 }
 
 // ── Bind destruct kind ───────────────────────────────────────────────
@@ -357,6 +262,9 @@ pub struct ProgramUnits {
     /// impl targets are canonicalized with them, as the checker keyed
     /// the impls.
     pub resolver: Arc<Resolver>,
+    /// The fields of each record type of the session, with their types
+    /// as the checker inferred them, in declaration order.
+    pub record_fields: Arc<HashMap<crate::defs::TypeId, Vec<(Symbol, Type)>>>,
 }
 
 /// What the earlier entries of a REPL session installed, which the entry
@@ -493,7 +401,7 @@ impl Compiler {
                     continue;
                 }
                 let name = match qualify {
-                    true => format!("{}.{}", unit.name, def.name),
+                    true => format!("{}.{}", unit.qualifier, def.name),
                     false => resolve(def.name),
                 };
                 let slot = globals
@@ -2235,16 +2143,16 @@ impl Compiler {
                     .collect(),
             )
         } else {
-            let fields = self.declared_record_fields(def.span).unwrap_or_default();
+            let fields = self.record_fields(id);
             Shape::Record(
                 fields
                     .iter()
-                    .map(|f| {
+                    .map(|(name, ty)| {
                         let field_type = self
-                            .describe_field_type(&f.ty, &mut Vec::new(), &mut Vec::new())
-                            .unwrap_or_else(|_| FieldType::Unsupported(render_type_expr(&f.ty)));
+                            .describe_field_type(ty, &mut Vec::new())
+                            .unwrap_or_else(|_| FieldType::Unsupported(shown(ty)));
                         collect_records(&field_type, &mut nested);
-                        (resolve(f.name), field_type)
+                        (resolve(*name), field_type)
                     })
                     .collect(),
             )
@@ -2280,14 +2188,6 @@ impl Compiler {
             }
         }
         None
-    }
-
-    /// The fields of the record type declared with its name at `span`.
-    fn declared_record_fields(&self, span: Span) -> Option<Vec<RecordField>> {
-        match &self.type_declaration(span)?.body {
-            TypeBody::Record(fields) => Some(fields.clone()),
-            _ => None,
-        }
     }
 
     /// The variant a resolution names (a constructor pattern, a variant
@@ -2587,104 +2487,93 @@ impl Compiler {
 
     // ── Record field types for the json / toml decoders ──────────
 
-    /// The type of the record field `te` as the decoders see it, by what
-    /// its names resolved to.
+    /// The fields of the record type `id`, with their types as the
+    /// checker inferred them (an alias is the type it stands for).
+    fn record_fields(&self, id: crate::defs::TypeId) -> Vec<(Symbol, Type)> {
+        let fields = self
+            .units
+            .record_fields
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
+        fields
+            .into_iter()
+            .map(|(name, ty)| {
+                (
+                    name,
+                    crate::types::canonical::canonicalize(self.resolver(), &ty),
+                )
+            })
+            .collect()
+    }
+
+    /// The type `ty` of a record field as the decoders see it.
     ///
-    /// `Err` carries the part of `te` no decoder exists for, as written.
-    /// `open_aliases` holds the aliases being expanded (an alias that
-    /// leads back to itself has no decoder). The record types the field
-    /// type refers to are added to `records`.
+    /// `Err` carries the part of `ty` no decoder exists for. The record
+    /// types the field type refers to are added to `records`.
     fn describe_field_type(
         &self,
-        te: &TypeExpr,
-        open_aliases: &mut Vec<crate::defs::DefId>,
+        ty: &Type,
         records: &mut Vec<crate::defs::TypeId>,
     ) -> Result<FieldType, String> {
-        const NO_ARGS: &[TypeExpr] = &[];
-        let args: &[TypeExpr] = match &te.kind {
-            TypeExprKind::Named { .. } => NO_ARGS,
-            TypeExprKind::Generic { args, .. } => args.as_slice(),
-            TypeExprKind::Tuple(elems) if !elems.is_empty() => {
+        use crate::typeinfo::ty as bt;
+        let unsupported = || Err(shown(ty));
+        match ty {
+            Type::Int => Ok(FieldType::Int),
+            Type::Float => Ok(FieldType::Float),
+            Type::String => Ok(FieldType::String),
+            Type::Bool => Ok(FieldType::Bool),
+            // A range type is described like the list type it is the
+            // same type as.
+            Type::List(elem) | Type::Range(elem) => Ok(FieldType::List(Box::new(
+                self.describe_field_type(elem, records)?,
+            ))),
+            // The keys of a JSON object or a TOML table are strings.
+            Type::Map(key, value) if matches!(**key, Type::String) => Ok(FieldType::Map(Box::new(
+                self.describe_field_type(value, records)?,
+            ))),
+            Type::Tuple(elems) if !elems.is_empty() => {
                 let mut parts = Vec::with_capacity(elems.len());
                 for elem in elems {
-                    parts.push(self.describe_field_type(elem, open_aliases, records)?);
+                    parts.push(self.describe_field_type(elem, records)?);
                 }
-                return Ok(FieldType::Tuple(parts));
+                Ok(FieldType::Tuple(parts))
             }
-            _ => return Err(render_type_expr(te)),
-        };
-        let unsupported = || Err(render_type_expr(te));
-        let Some(crate::defs::Res::Def(id)) = te.res else {
-            // A type variable, or a name that resolved to nothing.
-            return unsupported();
-        };
-        let def = *self.units.defs.get(id);
-        match def.kind {
-            crate::defs::DefKind::TypeAlias => {
-                let Some(decl) = self.type_declaration(def.span) else {
-                    return unsupported();
-                };
-                let TypeBody::Alias(target) = &decl.body else {
-                    return unsupported();
-                };
-                if decl.params.len() != args.len() || open_aliases.contains(&id) {
-                    return unsupported();
-                }
-                let target = substitute_type_params(target, &decl.params, args);
-                open_aliases.push(id);
-                let described = self.describe_field_type(&target, open_aliases, records);
-                open_aliases.pop();
-                described
-            }
-            crate::defs::DefKind::Type(ty) if def.module.is_builtin() => {
-                // A builtin type, by its id. A range type is described
-                // like the list type it is the same type as.
-                let name = crate::defs::builtin_types()[ty.0.0 as usize].0;
-                match (name, args) {
-                    ("Int", []) => Ok(FieldType::Int),
-                    ("Float", []) => Ok(FieldType::Float),
-                    ("String", []) => Ok(FieldType::String),
-                    ("Bool", []) => Ok(FieldType::Bool),
-                    _ if ty == crate::typeinfo::ty::DATE && args.is_empty() => Ok(FieldType::Date),
-                    _ if ty == crate::typeinfo::ty::TIME && args.is_empty() => Ok(FieldType::Time),
-                    _ if ty == crate::typeinfo::ty::DATE_TIME && args.is_empty() => {
-                        Ok(FieldType::DateTime)
-                    }
-                    ("List" | "Range", [elem]) => Ok(FieldType::List(Box::new(
-                        self.describe_field_type(elem, open_aliases, records)?,
-                    ))),
-                    ("Option", [inner]) => Ok(FieldType::Option(Box::new(
-                        self.describe_field_type(inner, open_aliases, records)?,
-                    ))),
-                    ("Map", [key, value]) => {
-                        // The keys of a JSON object or a TOML table are
-                        // strings.
-                        let key_type = self.describe_field_type(key, open_aliases, &mut Vec::new());
-                        if !matches!(key_type, Ok(FieldType::String)) {
-                            return unsupported();
-                        }
-                        Ok(FieldType::Map(Box::new(self.describe_field_type(
-                            value,
-                            open_aliases,
-                            records,
-                        )?)))
-                    }
-                    // Set, Channel, functions, the other builtin types.
-                    _ => unsupported(),
-                }
-            }
-            // A non-generic record type of the program.
-            crate::defs::DefKind::Type(ty)
-                if args.is_empty()
-                    && self.type_declaration(def.span).is_some_and(|decl| {
-                        decl.params.is_empty() && matches!(decl.body, TypeBody::Record(_))
-                    }) =>
-            {
-                records.push(ty);
-                Ok(FieldType::Record(ty))
-            }
-            // Enums, generic records, ...
+            Type::Generic(t, args) if t.id == bt::OPTION && args.len() == 1 => Ok(
+                FieldType::Option(Box::new(self.describe_field_type(&args[0], records)?)),
+            ),
+            Type::Record(t, _) => self.describe_named_type(*t, ty, records),
+            Type::Generic(t, args) if args.is_empty() => self.describe_named_type(*t, ty, records),
+            // Set, Channel, functions, generic records, ...
             _ => unsupported(),
+        }
+    }
+
+    /// A named type with no arguments as the decoders see it: Date, Time,
+    /// DateTime, or a non-generic record type of the program.
+    fn describe_named_type(
+        &self,
+        t: TypeRef,
+        ty: &Type,
+        records: &mut Vec<crate::defs::TypeId>,
+    ) -> Result<FieldType, String> {
+        use crate::typeinfo::ty as bt;
+        match t.id {
+            id if id == bt::DATE => Ok(FieldType::Date),
+            id if id == bt::TIME => Ok(FieldType::Time),
+            id if id == bt::DATE_TIME => Ok(FieldType::DateTime),
+            // A non-generic record type of the program.
+            id if crate::defs::builtin_types().get(id.0.0 as usize).is_none()
+                && self.units.defs.variants(id.0).is_empty()
+                && self
+                    .type_declaration(self.units.defs.get(id.0).span)
+                    .is_some_and(|decl| decl.params.is_empty()) =>
+            {
+                records.push(id);
+                Ok(FieldType::Record(id))
+            }
+            // Enums, the other builtin types.
+            _ => Err(shown(ty)),
         }
     }
 
@@ -2699,15 +2588,14 @@ impl Compiler {
             return None;
         }
         let def = *self.units.defs.get(record.0);
-        let fields = self.declared_record_fields(def.span)?;
-        for field in &fields {
+        for (field, ty) in self.record_fields(record) {
             let mut nested = Vec::new();
-            match self.describe_field_type(&field.ty, &mut Vec::new(), &mut nested) {
+            match self.describe_field_type(&ty, &mut nested) {
                 Err(part) => {
                     return Some(UndecodableField {
                         record: resolve(def.name),
-                        field: resolve(field.name),
-                        field_type: render_type_expr(&field.ty),
+                        field: resolve(field),
+                        field_type: shown(&ty),
                         part,
                     });
                 }
@@ -2764,6 +2652,20 @@ impl Compiler {
                     ),
                 )
                 .with_help("decode into a record type"));
+            }
+            if self
+                .type_declaration(def.span)
+                .is_some_and(|decl| !decl.params.is_empty())
+            {
+                return Err(Diagnostic::error(
+                    Code::InvalidConstruct,
+                    span,
+                    format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: it is a generic record \
+                         type, and a decoder builds a value of one type"
+                    ),
+                )
+                .with_help(DECODABLE_TYPES_HELP));
             }
             let Some(found) = self.undecodable_field(ty.id, &mut HashSet::new()) else {
                 return Ok(());
@@ -3136,6 +3038,7 @@ mod tests {
             defs: Arc::new(crate::typechecker::names::new_def_table()),
             earlier: EarlierCells::default(),
             resolver: Arc::new(Resolver::new()),
+            record_fields: Arc::new(HashMap::new()),
         }
     }
 

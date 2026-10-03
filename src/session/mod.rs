@@ -730,6 +730,13 @@ impl Session {
         ProgramUnits {
             defs: self.defs.clone(),
             resolver: Arc::new(self.tables.resolver().clone()),
+            record_fields: Arc::new(
+                self.tables
+                    .record_fields()
+                    .into_iter()
+                    .map(|(ty, fields)| (ty.id, fields))
+                    .collect(),
+            ),
             earlier,
             modules: modules
                 .iter()

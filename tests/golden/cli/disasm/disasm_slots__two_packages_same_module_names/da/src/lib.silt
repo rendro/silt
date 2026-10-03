@@ -1,0 +1,2 @@
+import util
+pub fn get() -> Int { util.base }

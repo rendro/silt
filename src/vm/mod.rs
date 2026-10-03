@@ -615,8 +615,8 @@ impl Vm {
     /// Run a compiled program: take in its tables, then run its script.
     /// The value is the script's: `main`'s for a program compiled for
     /// `Entry::Main`. This is the one way to start a [`Program`]; the
-    /// functions of a loaded program (a test) are called with
-    /// [`Vm::run`] afterwards. A REPL session runs each entry's program
+    /// test functions of a program compiled for its tests are called
+    /// with [`Vm::call_test`] afterwards. A REPL session runs each entry's program
     /// on one `Vm`.
     ///
     /// [`Program`]: crate::session::Program
@@ -627,6 +627,15 @@ impl Vm {
                 VmError::new("internal VM error: a program without a script".into())
             })?;
         self.run(Arc::new(script))
+    }
+
+    /// Call the test function `test` of the program this VM ran with
+    /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
+    /// arguments, and give its value.
+    pub fn call_test(&mut self, test: &crate::session::TestFn) -> Result<Value, VmError> {
+        self.run(Arc::new(crate::bytecode::call_global_script(
+            test.slot, &test.name,
+        )))
     }
 
     /// Take in a program about to run: the descriptions its values'
@@ -719,7 +728,7 @@ impl Vm {
     /// (e.g. successive REPL evaluations sharing the same persistent VM)
     /// don't render phantom call-stack frames from prior entries. See
     /// `tests/cli/repl_frame_leak_tests.rs` for the regression lock.
-    pub fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
+    pub(crate) fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
         let saved_frames_len = self.frames.len();
         let saved_stack_len = self.stack.len();
         let saved_tco_len = self.tco_elided.len();

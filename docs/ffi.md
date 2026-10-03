@@ -211,7 +211,7 @@ several scripts in parallel from Rust, create one `Vm` per thread.
   are the diagnostics of `session.analyze(file)`. `session.compile`
   returns them as its `Err` for a program that has them.
 - **Runtime errors** (overflow, out-of-bounds, an `Err` or `None` that
-  bubbled to the top) return as `Err(VmError)` from `vm.run`.
+  bubbled to the top) return as `Err(VmError)` from `vm.run_program`.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
   message carries the panicked string.
 - **An `Err` from a host function** becomes a runtime error whose message

@@ -4,7 +4,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process;
-use std::sync::Arc;
 
 use silt::diagnostic::{Code, Diagnostic, render_human};
 use silt::scheduler::UnjoinedFailures;
@@ -252,8 +251,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             // spawn in turn, are the test's: their failures fail it.
             let owner = owners.add_owner(file_index, Some(name.clone()));
             silt::scheduler::set_task_owner(owner);
-            let caller = silt::bytecode::call_global_script(test.slot, name);
-            let outcome = vm.run(Arc::new(caller));
+            let outcome = vm.call_test(test);
             // The failures of spawned tasks that have happened by now.
             // Those of this test's tasks are reported under its result
             // line; those of earlier tests are reported here.

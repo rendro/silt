@@ -1,0 +1,9 @@
+-- cmd: disasm
+-- Two dependencies each have a module `util` with a `let base`: each
+-- global slot is named as the program names its module.
+-- stdout-contains: ; da.util.base
+-- stdout-contains: ; db.util.base
+-- stdout-contains: ; da.get
+import da
+import db
+fn main() { println(da.get() + db.get()) }
