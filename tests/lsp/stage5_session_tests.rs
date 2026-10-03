@@ -622,6 +622,79 @@ fn module_names_and_imported_items_in_hover_and_completion() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Plain completion offers what is in scope: the bound module names, the
+/// imported items, the prelude, never a builtin module's variant or
+/// function bare; after `m.`, a module's members only when `m` is bound.
+#[test]
+fn completion_follows_the_import_rule() {
+    let lib = "pub type Shape { Sq(Int), Ci(Int) }\npub fn area(s: Shape) -> Int { 1 }\n";
+    let main =
+        "import lib\nimport lib.{ Sq }\nimport list as l\n\nfn main() {\n  \n  l.\n  bytes.\n}\n";
+    let dir = project("rule", &[("lib.silt", lib), ("main.silt", main)]);
+    let main_uri = uri(&dir.join("main.silt"));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    client.did_open_and_wait(&main_uri, main);
+    let labels = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|it| it["label"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let blank = position_of(main, "  \n  l.", 2);
+    let plain = labels(&request_at(
+        &mut client,
+        "textDocument/completion",
+        &main_uri,
+        blank,
+    ));
+    for expected in ["lib", "l", "Sq", "println", "Some", "Option", "Int", "main"] {
+        assert!(
+            plain.iter().any(|l| l == expected),
+            "missing {expected}: {plain:?}"
+        );
+    }
+    for unexpected in [
+        "Message",
+        "Monday",
+        "GET",
+        "Ci",
+        "area",
+        "bytes.concat",
+        "list",
+        "map",
+    ] {
+        assert!(
+            !plain.iter().any(|l| l == unexpected),
+            "offered {unexpected}: {plain:?}"
+        );
+    }
+
+    let after_alias = position_of(main, "l.\n  bytes", 2);
+    let members = labels(&request_at(
+        &mut client,
+        "textDocument/completion",
+        &main_uri,
+        after_alias,
+    ));
+    assert!(members.iter().any(|l| l == "map"), "{members:?}");
+
+    let after_unbound = position_of(main, "bytes.\n}", 6);
+    let none = labels(&request_at(
+        &mut client,
+        "textDocument/completion",
+        &main_uri,
+        after_unbound,
+    ));
+    assert!(!none.iter().any(|l| l == "concat"), "{none:?}");
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A silt.toml opened in the editor is not analysed as silt, and a
 /// didChange for a document never opened is ignored.
 #[test]

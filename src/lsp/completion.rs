@@ -9,9 +9,11 @@ use lsp_types::{
 };
 
 use crate::ast::*;
+use crate::defs::DefKind;
 use crate::intern::{Symbol, intern, resolve};
 use crate::lexer::{KEYWORD_LITERALS, KEYWORDS};
 use crate::module;
+use crate::typechecker::names::Binding;
 use crate::types::Type;
 use crate::types::canonical::canonical_name;
 
@@ -44,6 +46,7 @@ impl Server {
             if let Some(items) = self.module_member_completions(doc, &prefix, cursor) {
                 return Some(CompletionResponse::Array(items));
             }
+            let builtin = self.bound_builtin_module(doc, &prefix, cursor);
             // Round 81: the document's program was parsed from the user's
             // exact source. A partial expression at the cursor (`xs.|`)
             // is a parse error that the parser's recovery currently turns
@@ -59,7 +62,7 @@ impl Server {
             let fixed = self.dot_completion_fixup(uri, &pos);
             let doc = self.documents.get(uri)?;
             let checked = fixed.or_else(|| self.checked_facts(doc));
-            let items = self.dot_completions(checked.as_ref(), &prefix, cursor);
+            let items = self.dot_completions(checked.as_ref(), &prefix, builtin, cursor);
             return Some(CompletionResponse::Array(items));
         }
         let doc = self.documents.get(uri);
@@ -75,17 +78,68 @@ impl Server {
             });
         }
 
-        // Builtins (globals + stdlib)
-        for (name, kind) in builtins() {
-            let detail = self.builtin_sigs.get(&name).cloned();
-            let documentation = self.builtin_docs.get(&name).map(|d| {
+        for kw in KEYWORD_LITERALS {
+            items.push(CompletionItem {
+                label: kw.to_string(),
+                kind: Some(CompletionItemKind::CONSTANT),
+                ..CompletionItem::default()
+            });
+        }
+
+        // The names in scope at the top level: the prelude, and the
+        // names the module's declarations and imports bind (a module by
+        // `import m`), as the resolver bound them.
+        let (_, builtin_scopes) = crate::typechecker::names::builtins();
+        let scope = doc
+            .and_then(|doc| self.checked_module(doc))
+            .map(|m| &m.scope);
+        let defs = doc
+            .and_then(|doc| doc.module.as_ref())
+            .and_then(|m| self.projects.get(&m.project))
+            .map(|p| p.session.defs());
+        let mut names: Vec<(Symbol, CompletionItemKind)> = Vec::new();
+        let prelude = &builtin_scopes.prelude;
+        let layers = scope
+            .into_iter()
+            .flat_map(|s| [&s.values, &s.types])
+            .chain([&prelude.values, &prelude.types]);
+        for layer in layers {
+            for (name, binding) in layer {
+                if let Some(kind) = Self::binding_kind(defs, binding) {
+                    names.push((*name, kind));
+                }
+            }
+        }
+        names.sort_by_key(|(name, _)| resolve(*name));
+        names.dedup_by_key(|(name, _)| *name);
+        // The document's own definitions and the items of its
+        // `import m.{ ... }` are offered below, with their types.
+        let mut own: HashSet<String> = doc
+            .map(|doc| doc.definitions.keys().map(|n| n.to_string()).collect())
+            .unwrap_or_default();
+        if let Some(program) = doc.and_then(|doc| doc.program.as_ref()) {
+            for decl in &program.decls {
+                if let Decl::Import(ImportTarget::Items(module, imported), _) = decl
+                    && !module::is_builtin_module(&resolve(*module))
+                {
+                    own.extend(imported.iter().map(|(item, _)| item.to_string()));
+                }
+            }
+        }
+        for (name, kind) in names {
+            let label = resolve(name);
+            if own.contains(&label) {
+                continue;
+            }
+            let detail = self.builtin_sigs.get(&label).cloned();
+            let documentation = self.builtin_docs.get(&label).map(|d| {
                 Documentation::MarkupContent(MarkupContent {
                     kind: MarkupKind::Markdown,
                     value: d.clone(),
                 })
             });
             items.push(CompletionItem {
-                label: name,
+                label,
                 kind: Some(kind),
                 detail,
                 documentation,
@@ -166,6 +220,7 @@ impl Server {
         &self,
         checked: Option<&Checked>,
         prefix: &str,
+        builtin: Option<&str>,
         cursor: usize,
     ) -> Vec<CompletionItem> {
         let mut items = Vec::new();
@@ -174,7 +229,7 @@ impl Server {
         //    Module constants (e.g. `math.pi`, `float.max_value`) are distinct from
         //    functions and must be surfaced here so editor autocompletion after
         //    `math.` / `float.` offers them alongside `sin`, `cos`, `parse`, etc.
-        if module::is_builtin_module(prefix) {
+        if let Some(prefix) = builtin {
             for func in module::builtin_module_functions(prefix) {
                 let qualified = format!("{prefix}.{func}");
                 let detail = self.builtin_sigs.get(&qualified).cloned();
@@ -313,6 +368,60 @@ impl Server {
         items.sort_by(|a, b| a.label.cmp(&b.label));
         items.dedup_by(|a, b| a.label == b.label);
         items
+    }
+
+    /// The builtin module `prefix` is bound to in the open document `doc`
+    /// (by `import m` or `import m as prefix`), unless a local binding
+    /// shadows it. A document with no analysis yet takes a builtin
+    /// module's name for the module.
+    fn bound_builtin_module(
+        &self,
+        doc: &Document,
+        prefix: &str,
+        cursor: usize,
+    ) -> Option<&'static str> {
+        if doc.program.as_ref().is_some_and(|program| {
+            locals_at_offset(program, cursor)
+                .iter()
+                .any(|local| local.name == prefix)
+        }) {
+            return None;
+        }
+        match self.checked_module(doc) {
+            Some(checked) => match checked.scope.values.get(&intern(prefix)) {
+                Some(Binding::Module(id)) => id.builtin_name(),
+                _ => None,
+            },
+            None => module::BUILTIN_MODULES
+                .iter()
+                .copied()
+                .find(|m| *m == prefix),
+        }
+    }
+
+    /// The completion kind of a name bound at the top level: `None` for a
+    /// name a bare use of which is an error (an ambiguous variant, a name
+    /// of a module that failed to load).
+    fn binding_kind(
+        defs: Option<&crate::defs::DefTable>,
+        binding: &Binding,
+    ) -> Option<CompletionItemKind> {
+        let id = match binding {
+            Binding::Module(_) => return Some(CompletionItemKind::MODULE),
+            Binding::Def(id) => *id,
+            Binding::Ambiguous(_) | Binding::Poisoned => return None,
+        };
+        let def = match defs {
+            Some(defs) => defs.get(id).clone(),
+            None => crate::typechecker::names::builtin_def(id)?,
+        };
+        Some(match def.kind {
+            DefKind::Fn | DefKind::Host => CompletionItemKind::FUNCTION,
+            DefKind::Let => CompletionItemKind::VARIABLE,
+            DefKind::Variant { .. } => CompletionItemKind::CONSTRUCTOR,
+            DefKind::Trait(_) => CompletionItemKind::INTERFACE,
+            DefKind::Type(_) | DefKind::TypeAlias => CompletionItemKind::CLASS,
+        })
     }
 
     /// What dot completion reads about the open document `doc`: the
@@ -591,66 +700,6 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
 // `KEYWORDS` is sourced from `crate::lexer::KEYWORDS` — the authoritative
 // list maintained alongside the lexer's keyword match arms. Re-introducing
 // a hand-rolled list here is guarded by `tests/meta/lexer_keyword_parity_tests.rs`.
-
-/// Build the builtins completion list dynamically from the module registry
-/// so it never falls out of sync with `module.rs`.
-///
-/// `pub` so integration tests (see `tests/meta/builtin_constructor_parity_tests.rs`)
-/// can assert every gated constructor from
-/// `module::all_builtin_constructor_names` is emitted here.
-pub fn builtins() -> Vec<(String, CompletionItemKind)> {
-    // Globals (not part of any module). Sourced from
-    // `module::builtin_free_function_names()` so adding a new free
-    // function (e.g. `eprintln`, `assert`) flows through automatically.
-    // Parity lock: `tests/meta/builtin_free_function_parity_tests.rs`.
-    let mut items: Vec<(String, CompletionItemKind)> = module::builtin_free_function_names()
-        .iter()
-        .map(|name| ((*name).to_string(), CompletionItemKind::FUNCTION))
-        .collect();
-
-    // Reserved-word-shaped boolean literals. Sourced from
-    // `crate::lexer::KEYWORD_LITERALS` so additions there flow through
-    // automatically — mirrors the round-63 pattern used for `KEYWORDS`
-    // above and the round-64 G4 fix in `src/repl.rs`. Parity lock:
-    // `tests/meta/lexer_keyword_parity_tests.rs`.
-    for kw in KEYWORD_LITERALS {
-        items.push((kw.to_string(), CompletionItemKind::CONSTANT));
-    }
-
-    // Round-62 G6: primitive + container type names from the
-    // authoritative `BUILTIN_TYPES` constant. Surfaced as completion
-    // items so an editor offers `Int`, `Bool`, `List`, etc. wherever
-    // identifier completion runs (notably in type-annotation positions
-    // like `let x: B|`). Derived from
-    // `crate::types::builtins::iter_all` so additions flow through.
-    for entry in crate::types::builtins::iter_all() {
-        // Skip the surface-alias `()` — completion items must be valid
-        // identifiers users would type to commit.
-        if entry.name == "()" {
-            continue;
-        }
-        items.push((entry.name.to_string(), CompletionItemKind::CLASS));
-    }
-
-    // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
-    // every gated variant (Recv/Send, IoNotFound, PgConnect, Monday,
-    // GET/POST/…, etc.). Sourced from the authoritative module helper
-    // so new variants flow through without editing this list.
-    for name in module::all_builtin_constructor_names() {
-        items.push((name.to_string(), CompletionItemKind::CONSTRUCTOR));
-    }
-
-    for &m in module::BUILTIN_MODULES {
-        for func in module::builtin_module_functions(m) {
-            items.push((format!("{m}.{func}"), CompletionItemKind::FUNCTION));
-        }
-        for constant in module::builtin_module_constants(m) {
-            items.push((format!("{m}.{constant}"), CompletionItemKind::CONSTANT));
-        }
-    }
-
-    items
-}
 
 #[cfg(test)]
 mod tests {
