@@ -1707,7 +1707,7 @@ impl TypeChecker {
         else {
             return CtorTarget::Unknown;
         };
-        if pattern.res == Some(crate::defs::Res::Error) {
+        if pattern.res == Some(crate::defs::Res::Error) || self.names_rejected(pattern.res, *name) {
             return CtorTarget::Silent;
         }
         let enum_name = self.pattern_variant_enum(pattern.res, qualifier);
@@ -1737,7 +1737,7 @@ impl TypeChecker {
         span: Span,
         in_pattern: bool,
     ) -> Option<(TypeRef, RecordInfo, Option<Vec<TyVar>>)> {
-        if res == Some(crate::defs::Res::Error) {
+        if res == Some(crate::defs::Res::Error) || self.names_rejected(res, name) {
             return None;
         }
         let ty = self.named_type(res, name);
@@ -2591,10 +2591,13 @@ impl TypeChecker {
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
-                } else if matches!(expr.res, Some(crate::defs::Res::Def(_))) {
-                    // A definition with no scheme: a type alias or a
-                    // trait used as a value, or a definition whose
-                    // check failed.
+                } else if self.res_def(expr.res).is_some_and(|def| {
+                    matches!(
+                        def.kind,
+                        crate::defs::DefKind::TypeAlias | crate::defs::DefKind::Trait(_)
+                    )
+                }) {
+                    // A type alias or a trait used as a value.
                     self.error(
                         Code::UndefinedVariable,
                         format!("'{name}' is not a value"),

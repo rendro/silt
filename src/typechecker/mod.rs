@@ -659,6 +659,10 @@ pub struct TypeChecker {
     pub(super) own_types: HashMap<Symbol, TypeRef>,
     /// The traits the module's own declarations declare, by name.
     pub(super) own_traits: HashMap<Symbol, TraitKey>,
+    /// The module's type declarations that are rejected (a reserved or
+    /// builtin type's name): a use of one, or of a variant of one, is
+    /// already reported, so it is an error type, silently.
+    pub(super) rejected_types: std::collections::HashSet<TypeRef>,
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
@@ -738,6 +742,7 @@ impl TypeChecker {
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),
+            rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             signatures_only: false,
             fully_annotated_fn_names: std::collections::HashSet::new(),
@@ -2478,6 +2483,17 @@ impl TypeChecker {
         crate::defs::builtin_type_id(name_str).map(|id| TypeRef { id, name })
     }
 
+    /// Whether a type name, or a variant's resolution, names a type
+    /// declaration the module's check rejected (see `rejected_types`).
+    pub(super) fn names_rejected(&self, res: Option<crate::defs::Res>, name: Symbol) -> bool {
+        if self.rejected_types.is_empty() {
+            return false;
+        }
+        self.named_type(res, name)
+            .or_else(|| self.res_variant_enum(res))
+            .is_some_and(|ty| self.rejected_types.contains(&ty))
+    }
+
     /// The number of type parameters of a record, enum or alias type;
     /// `None` for a type that is none of these.
     pub(super) fn type_arity(&self, ty: TypeRef) -> Option<usize> {
@@ -2869,6 +2885,9 @@ impl TypeChecker {
         if def.module.is_builtin() {
             return builtin_scheme(&def);
         }
+        if self.names_rejected(res, def.name) {
+            return Some(Scheme::mono(Type::Error));
+        }
         if def.module == self.module && !matches!(def.kind, crate::defs::DefKind::Variant { .. }) {
             return env.lookup(def.name).cloned();
         }
@@ -2912,11 +2931,13 @@ impl TypeChecker {
         // below overwrites the placeholders.
         for decl in &program.decls {
             if let Decl::Type(td) = decl {
-                let td_name_str = resolve(td.name);
-                if td_name_str == "TypeOf" {
+                let ty = self.own_type(td.name);
+                // A declaration `register_type_decl` rejects declares
+                // nothing: what names it or its variants is not checked.
+                if rejected_type_name(&resolve(td.name)) {
+                    self.rejected_types.insert(ty);
                     continue;
                 }
-                let ty = self.own_type(td.name);
                 match &td.body {
                     TypeBody::Enum(_) => {
                         let pkg = self.defining_package();
@@ -4243,6 +4264,9 @@ impl TypeChecker {
                     return tv.clone();
                 }
                 let name_str = resolve(*name);
+                if self.names_rejected(te.res, *name) {
+                    return Type::Error;
+                }
                 let Some(ty) = self.named_type(te.res, *name) else {
                     // Lowercase names in type annotations are type variables
                     // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
@@ -4343,6 +4367,9 @@ impl TypeChecker {
                     .map(|a| self.resolve_type_expr(a, param_vars))
                     .collect();
                 let name_str = resolve(*name);
+                if self.names_rejected(te.res, *name) {
+                    return Type::Error;
+                }
                 let ty = self.named_type(te.res, *name);
                 if let Some(builtin) = ty.and_then(builtin_type_name) {
                     let n = resolved_args.len();
@@ -6033,6 +6060,9 @@ impl TypeChecker {
         // Widget` would attach methods to a phantom type. A lowercase
         // target (`trait Display for a { ... }`) names a type variable,
         // not a type: there is nothing to register it for.
+        if self.names_rejected(ti.target_res, ti.target_type) {
+            return;
+        }
         let Some(written) = self.named_type(ti.target_res, ti.target_type) else {
             let name_str = resolve(ti.target_type);
             if !name_str.starts_with(|c: char| c.is_lowercase()) {
@@ -6997,6 +7027,12 @@ impl TypeChecker {
 }
 
 // ── Helper functions ────────────────────────────────────────────────
+
+/// Whether a type declaration of this name is rejected: `TypeOf`, the
+/// type system's own, or a builtin scalar or container type's name.
+fn rejected_type_name(name: &str) -> bool {
+    name == "TypeOf" || crate::types::builtins::lookup(name).is_some()
+}
 
 /// The name of a builtin type; `None` for a type a module declares.
 pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
