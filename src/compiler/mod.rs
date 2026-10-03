@@ -374,6 +374,9 @@ pub struct Compiler {
     types: RefCell<TypeTable>,
     /// The global slots of the program.
     globals: Globals,
+    /// The slot of each top-level function, `let` and host function of
+    /// the modules compiled now, by module and name.
+    own_slots: HashMap<(crate::session::ModuleId, Symbol), u16>,
     /// Whether the derived impls of the builtin types are installed
     /// already (by an earlier REPL entry).
     builtin_impls_installed: bool,
@@ -430,9 +433,10 @@ impl Compiler {
             program_clashes,
             types: RefCell::new(TypeTable::default()),
             globals: Globals::default(),
+            own_slots: HashMap::new(),
             builtin_impls_installed,
         };
-        compiler.assign_slots(&mut globals)?;
+        compiler.own_slots = compiler.assign_slots(&mut globals)?;
         compiler.globals = globals;
         Ok(compiler)
     }
@@ -440,8 +444,13 @@ impl Compiler {
     /// Give a global slot to each definition the program installs: the
     /// derived impls of the builtin types (unless an earlier REPL entry
     /// installed them), then, module by module, each function, `let`,
-    /// host function and impl method.
-    fn assign_slots(&self, globals: &mut Globals) -> Result<(), Diagnostic> {
+    /// host function and impl method. Gives the slots of the modules'
+    /// own functions, `let`s and host functions by module and name.
+    fn assign_slots(
+        &self,
+        globals: &mut Globals,
+    ) -> Result<HashMap<(crate::session::ModuleId, Symbol), u16>, Diagnostic> {
+        let mut own = HashMap::new();
         if !self.builtin_impls_installed {
             for decl in crate::typechecker::builtin_derived_impls().iter() {
                 if let Decl::TraitImpl(ti) = decl {
@@ -468,9 +477,10 @@ impl Compiler {
                     true => format!("{}.{}", unit.name, def.name),
                     false => resolve(def.name),
                 };
-                globals
+                let slot = globals
                     .add_def(id, name)
                     .ok_or_else(|| too_many_globals(def.span))?;
+                own.insert((unit.id, def.name), slot);
             }
             for decl in &unit.program.decls {
                 if let Decl::TraitImpl(ti) = decl {
@@ -478,7 +488,7 @@ impl Compiler {
                 }
             }
         }
-        Ok(())
+        Ok(own)
     }
 
     /// Give a global slot to each method of the impl `ti`.
@@ -651,22 +661,7 @@ impl Compiler {
     fn own_def_slot(&self, name: Symbol) -> Option<u16> {
         let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
         let module = self.units.modules[current].id;
-        self.units
-            .defs
-            .of_module(module)
-            .iter()
-            .copied()
-            .find(|id| {
-                let def = self.units.defs.get(*id);
-                def.name == name
-                    && matches!(
-                        def.kind,
-                        crate::defs::DefKind::Fn
-                            | crate::defs::DefKind::Let
-                            | crate::defs::DefKind::Host
-                    )
-            })
-            .and_then(|id| self.globals.def(id))
+        self.own_slots.get(&(module, name)).copied()
     }
 
     /// The order in which a program's declarations are installed: first
@@ -4132,6 +4127,40 @@ fn f(expected, actual) {
     // `jumpback_fits_u16`; this test exercises that helper directly so
     // the bounds-check is locked without having to synthesize a
     // >64KB loop body.
+    /// A program with more top-level definitions than a `u16` slot can
+    /// name is a compile error at the first definition that does not
+    /// fit. Checking 65,537 definitions takes minutes, so the program
+    /// here is small and the slots before it are taken already, as an
+    /// earlier REPL entry would have taken them.
+    #[test]
+    fn test_more_than_65536_globals_rejected() {
+        let source = "fn main() { helper() }\nfn helper() { 1 }\n";
+        let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
+        assert!(!session.analyze(file).has_errors());
+        let mut units = session.program_units(session.module_of(file), false);
+        for k in 0..=u16::MAX as u32 - 1 {
+            let taken = units
+                .earlier
+                .globals
+                .add_def(crate::defs::DefId(u32::MAX - k), format!("taken{k}"));
+            assert!(taken.is_some());
+        }
+        let err = match Compiler::for_program(units) {
+            Ok(_) => panic!("65,537 globals must not compile"),
+            Err(err) => err,
+        };
+        assert_eq!(err.code, Code::CompileLimit, "{}", err.message);
+        assert!(
+            err.message
+                .contains("more than 65536 top-level definitions")
+        );
+        // `main` took the last slot; `helper` does not fit.
+        assert_eq!(
+            &source[err.span.start as usize..err.span.end as usize],
+            "helper"
+        );
+    }
+
     #[test]
     fn test_jumpback_overflow_rejected() {
         use crate::source::Span;

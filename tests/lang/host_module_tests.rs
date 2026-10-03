@@ -45,6 +45,28 @@ fn host_functions_imported_by_name_and_through_an_alias() {
     assert_eq!(run(source, mylib()), Ok(Value::String("HI 8".into())));
 }
 
+/// Two host modules with functions of one name: each function has a
+/// global slot of its own, read from the entry and from a file module.
+#[test]
+fn two_host_modules_with_functions_of_one_name() {
+    let twice = HostModule::new("twice").fn1("fn apply(x: Int) -> Int", |x: i64| x * 2);
+    let thrice = HostModule::new("thrice").fn1("fn apply(x: Int) -> Int", |x: i64| x * 3);
+    let files = [
+        (
+            "main.silt",
+            "import twice\nimport helper\nfn main() { \"{twice.apply(1)} {helper.via_thrice(1)}\" }",
+        ),
+        (
+            "helper.silt",
+            "import thrice\npub fn via_thrice(x: Int) -> Int { thrice.apply(x) }",
+        ),
+    ];
+    assert_eq!(
+        run_with_host(&files, vec![twice, thrice]),
+        Ok(Value::String("2 3".into()))
+    );
+}
+
 #[test]
 fn host_function_is_a_value() {
     let source =

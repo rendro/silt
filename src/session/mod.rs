@@ -613,7 +613,6 @@ impl Session {
                 .collect());
         }
         let id = self.module_of(entry);
-        let modules = self.results[&id].modules.clone();
         let analysis = &self.analyses[&id];
         // The entry point is checked here and reported after the compile
         // errors: a program the compiler rejects may lack a `main` only
@@ -653,35 +652,7 @@ impl Session {
             Entry::Cell => EntryPoint::Cell,
         };
 
-        // The units, numbered in graph order, with each import mapped to
-        // the unit of the module it names.
-        let index: HashMap<ModuleId, usize> =
-            modules.iter().enumerate().map(|(i, id)| (*id, i)).collect();
-        let earlier = match target {
-            Entry::Cell if self.cells.info.contains_key(&id) => self.cells.earlier(&index),
-            _ => EarlierCells::default(),
-        };
-        let units = ProgramUnits {
-            defs: self.defs.clone(),
-            resolver: Arc::new(self.tables.resolver().clone()),
-            earlier,
-            modules: modules
-                .iter()
-                .map(|m| {
-                    let module = self.graph.module(*m);
-                    ModuleUnit {
-                        id: *m,
-                        program: self.analyses[m].ast.clone(),
-                        name: resolve(module.name),
-                        imports: unit_imports(module, &index),
-                        host: module
-                            .host
-                            .map_or_else(HashMap::new, |host| self.host_functions(module, host)),
-                    }
-                })
-                .collect(),
-            entry: index[&id],
-        };
+        let units = self.program_units(id, matches!(target, Entry::Cell));
         let program = self.analyses[&id].ast.clone();
         let mut compiler = match Compiler::for_program(units) {
             Ok(compiler) => compiler,
@@ -740,6 +711,41 @@ impl Session {
                 errors.extend(entry_errors);
                 Err(errors)
             }
+        }
+    }
+
+    /// The modules of the analysed program of module `id`, as the
+    /// compiler takes them: numbered in graph order, with each import
+    /// mapped to the unit of the module it names. For a REPL cell
+    /// (`cell`), with what the earlier cells installed.
+    pub(crate) fn program_units(&self, id: ModuleId, cell: bool) -> ProgramUnits {
+        let modules = &self.results[&id].modules;
+        let index: HashMap<ModuleId, usize> =
+            modules.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        let earlier = match cell && self.cells.info.contains_key(&id) {
+            true => self.cells.earlier(&index),
+            false => EarlierCells::default(),
+        };
+        ProgramUnits {
+            defs: self.defs.clone(),
+            resolver: Arc::new(self.tables.resolver().clone()),
+            earlier,
+            modules: modules
+                .iter()
+                .map(|m| {
+                    let module = self.graph.module(*m);
+                    ModuleUnit {
+                        id: *m,
+                        program: self.analyses[m].ast.clone(),
+                        name: resolve(module.name),
+                        imports: unit_imports(module, &index),
+                        host: module
+                            .host
+                            .map_or_else(HashMap::new, |host| self.host_functions(module, host)),
+                    }
+                })
+                .collect(),
+            entry: index[&id],
         }
     }
 
