@@ -30,7 +30,7 @@ const TEXTS_PER_SESSION: usize = 1000;
 
 /// `path` as the key of a file: canonical when it exists.
 pub(super) fn path_key(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    crate::source::canonical_path(path)
 }
 
 /// One project and its session.

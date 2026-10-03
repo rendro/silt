@@ -235,14 +235,9 @@ pub(crate) fn display_path_for(
 /// `path` for display, without the Windows extended-length prefix
 /// `\\?\` that `canonicalize` adds; unchanged elsewhere.
 fn without_verbatim_prefix(path: &Path) -> String {
-    let s = path.display().to_string();
-    #[cfg(windows)]
-    {
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            return stripped.to_string();
-        }
-    }
-    s
+    silt::source::without_verbatim_prefix(path)
+        .display()
+        .to_string()
 }
 
 /// Express `target` as a path relative to `base`, using `..` segments

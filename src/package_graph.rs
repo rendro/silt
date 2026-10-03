@@ -147,7 +147,7 @@ pub fn resolve_packages(
     policy: LockPolicy,
     sources: &mut SourceMap,
 ) -> Result<PackageGraph, Vec<Diagnostic>> {
-    let root_dir = canonical(project_root);
+    let root_dir = crate::source::canonical_path(project_root);
     let manifest = Manifest::load(&root_dir.join("silt.toml"), sources).map_err(|d| vec![d])?;
     let lock_path = root_dir.join("silt.lock");
     let existing = match policy {
@@ -327,7 +327,7 @@ impl Resolver<'_> {
                     ));
                     return None;
                 }
-                let root = canonical(&dir);
+                let root = crate::source::canonical_path(&dir);
                 let locked = LockedSource::Path { path: root.clone() };
                 self.enter(
                     SourceKey::Path(root.clone()),
@@ -365,7 +365,7 @@ impl Resolver<'_> {
                     },
                 };
                 let root = match git::fetch_to_cache(&url, &commit) {
-                    Ok(root) => canonical(&root),
+                    Ok(root) => crate::source::canonical_path(&root),
                     Err(e) => {
                         let d = match &e {
                             GitError::Symlink { path } => {
@@ -625,24 +625,6 @@ fn count_word(n: usize) -> String {
         3 => "three".into(),
         4 => "four".into(),
         n => n.to_string(),
-    }
-}
-
-/// `path` made canonical, without the `\\?\` prefix Windows gives a
-/// canonical path: that form is not what a user writes, and a git URL
-/// made from it would not pass the URL rule. A path that cannot be made
-/// canonical is returned as it is.
-fn canonical(path: &Path) -> PathBuf {
-    let Ok(canonical) = path.canonicalize() else {
-        return path.to_path_buf();
-    };
-    let text = canonical.to_string_lossy();
-    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{unc}"))
-    } else if let Some(disk) = text.strip_prefix(r"\\?\") {
-        PathBuf::from(disk)
-    } else {
-        canonical
     }
 }
 

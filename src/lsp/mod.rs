@@ -505,24 +505,27 @@ impl Server {
 /// server.
 pub fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
     let stripped = uri.strip_prefix("file://")?;
-    #[cfg(windows)]
-    let stripped = {
-        // `file:///C:/foo` → stripped = "/C:/foo"
-        // Drop the leading `/` if followed by a drive letter.
-        if stripped.len() >= 4
-            && stripped.as_bytes()[0] == b'/'
-            && stripped.as_bytes()[1].is_ascii_alphabetic()
-            && stripped.as_bytes()[2] == b':'
-        {
-            &stripped[1..]
-        } else {
-            stripped
-        }
-    };
+    // Decoded first: an editor may encode the drive's colon
+    // (`file:///c%3A/Users/...`).
     let decoded = percent_encoding::percent_decode_str(stripped)
         .decode_utf8()
         .map(|cow| cow.into_owned())
         .unwrap_or_else(|_| stripped.to_string());
+    #[cfg(windows)]
+    let decoded = {
+        // `file:///C:/foo` → decoded = "/C:/foo"
+        // Drop the leading `/` if followed by a drive letter.
+        let bytes = decoded.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0] == b'/'
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b':'
+        {
+            decoded[1..].to_string()
+        } else {
+            decoded
+        }
+    };
     Some(std::path::PathBuf::from(decoded))
 }
 

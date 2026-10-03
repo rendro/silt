@@ -899,7 +899,7 @@ pub(super) fn undeclared_dependency_help(
 /// The key a file is known by in the graph: its canonical path, or the
 /// path as given when it does not exist.
 pub(super) fn canonical_key(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    crate::source::canonical_path(path)
 }
 
 /// `p` canonicalized, also when `p` itself does not exist (a module that
@@ -942,12 +942,7 @@ fn module_path_for_display(p: &Path) -> String {
             return rel.display().to_string();
         }
     }
-    let s = p.display().to_string();
-    #[cfg(windows)]
-    {
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            return stripped.to_string();
-        }
-    }
-    s
+    crate::source::without_verbatim_prefix(p)
+        .display()
+        .to_string()
 }

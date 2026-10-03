@@ -29,7 +29,8 @@ fn project(tag: &str, files: &[(&str, &str)]) -> PathBuf {
     for (name, text) in files {
         fs::write(dir.join(name), text).expect("write");
     }
-    fs::canonicalize(&dir).expect("canonicalize")
+    // As an editor names it: canonical, with no Windows verbatim prefix.
+    silt::source::canonical_path(&dir)
 }
 
 fn uri(path: &Path) -> String {

@@ -408,24 +408,30 @@ fn run_in(case: &Case, dir: &Path) -> Output {
     }
 }
 
-/// On Windows, the backslashes inside paths to `.silt` files become `/`,
-/// so one expected file serves every platform. Elsewhere the text is
-/// unchanged.
+/// On Windows, the backslashes inside paths to `.silt` files and to
+/// package files (`silt.toml`, `silt.lock`) become `/`, so one expected
+/// file serves every platform. Elsewhere the text is unchanged.
 fn portable_paths(text: &str) -> String {
     if !cfg!(windows) {
         return text.to_string();
     }
     text.split_inclusive(|c: char| c.is_whitespace() || c == '`' || c == '\'')
-        .map(|token| match token.rfind(".silt") {
-            // Only the path part, before the file name's end: a JSON
-            // string in the same token may hold escapes such as `\\n`.
-            // A path inside JSON has its separators escaped (`\\\\`).
-            Some(end) => format!(
-                "{}{}",
-                token[..end].replace("\\\\", "/").replace('\\', "/"),
-                &token[end..]
-            ),
-            None => token.to_string(),
+        .map(|token| {
+            match [".silt", "silt.toml", "silt.lock"]
+                .iter()
+                .filter_map(|file| token.rfind(file))
+                .max()
+            {
+                // Only the path part, before the file name's end: a JSON
+                // string in the same token may hold escapes such as `\\n`.
+                // A path inside JSON has its separators escaped (`\\\\`).
+                Some(end) => format!(
+                    "{}{}",
+                    token[..end].replace("\\\\", "/").replace('\\', "/"),
+                    &token[end..]
+                ),
+                None => token.to_string(),
+            }
         })
         .collect()
 }

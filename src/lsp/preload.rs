@@ -168,11 +168,13 @@ fn load_file(server: &mut Server, path: &Path) {
 /// containing a space or non-ASCII character, so preload silently
 /// skipped those files.
 pub fn path_to_file_uri(path: &Path) -> Option<Uri> {
-    file_uri(&fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+    file_uri(&crate::source::canonical_path(path))
 }
 
-/// The `file://` URI of the absolute path `abs`, spelled as given.
+/// The `file://` URI of the absolute path `abs`, spelled as given but
+/// for a Windows verbatim prefix (`\\?\`), which an editor never writes.
 fn file_uri(abs: &Path) -> Option<Uri> {
+    let abs = crate::source::without_verbatim_prefix(abs);
     let s = abs.to_str()?;
 
     // On Unix, absolute paths start with `/`; LSP wants `file:///path`.

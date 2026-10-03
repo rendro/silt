@@ -231,7 +231,8 @@ impl std::error::Error for InvalidGitUrl {}
 ///   - anything that is not one of the accepted forms below.
 ///
 /// Which characters a URL may hold depends on its form. It is in a
-/// local form if it starts with `file://`, `/`, `./` or `../`. Every
+/// local form if it starts with `file://`, `/`, `./` or `../` (or, on
+/// Windows, is a drive-absolute or UNC path). Every
 /// other value is checked as a network form: `https://`, `http://`,
 /// `ssh://`, `git://`, `host:path` and `user@host:path`.
 ///
@@ -262,7 +263,8 @@ impl std::error::Error for InvalidGitUrl {}
 ///     the first `:`, no `/` before that `:`, a `host` that does not
 ///     start with `-`, and a non-empty `path` that starts with none of
 ///     `-`, `:` and `//`;
-///   - a local path: a value starting with `/`, `./` or `../`.
+///   - a local path: a value starting with `/`, `./` or `../` (on
+///     Windows also a drive-absolute or UNC path).
 ///
 /// The `path` rule of the scp-like forms is what keeps two dangerous
 /// shapes out. `<transport>::<address>` (`ext::sh -c ...`) has a path
@@ -270,11 +272,10 @@ impl std::error::Error for InvalidGitUrl {}
 /// listed above has a path starting with `//`; git hands both to a
 /// `git-remote-<name>` helper program.
 ///
-/// Windows drive-letter paths (`C:\repo`, `C:/repo`) are not covered by
-/// the local-path rule. `C:` cannot be told apart from the `host:` of
-/// the scp-like form, so such a value is checked as `host:path`: it is
-/// accepted in that shape, but a space in it is rejected. A Windows
-/// path that contains a space is spelled as a `file://` URL.
+/// On Windows, a drive-absolute path (`C:\repo`, `C:/repo`) and a UNC
+/// path (`\\server\share`) are local paths too, as git takes them there
+/// (`silt add --git ./lib` stores such a path made from the working
+/// directory). Elsewhere `C:/repo` is the scp-like `host:path`.
 pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
     let local = url.starts_with("file://") || is_local_path(url);
     let is_forbidden: fn(char) -> bool = if local {
@@ -329,9 +330,25 @@ pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
     })
 }
 
-/// A local path: a value starting with `/`, `./` or `../`.
+/// A local path: a value starting with `/`, `./` or `../`, and on
+/// Windows also a drive-absolute path (`C:\repo`, `C:/repo`) or a UNC
+/// path (`\\server\share`), as git itself takes them there.
 fn is_local_path(url: &str) -> bool {
-    url.starts_with('/') || url.starts_with("./") || url.starts_with("../")
+    url.starts_with('/')
+        || url.starts_with("./")
+        || url.starts_with("../")
+        || (cfg!(windows) && is_windows_absolute_path(url))
+}
+
+/// Whether `url` is a Windows drive-absolute path (`C:\repo`, `C:/repo`)
+/// or a UNC path (`\\server\share`).
+fn is_windows_absolute_path(url: &str) -> bool {
+    let bytes = url.as_bytes();
+    let drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    drive || url.starts_with(r"\\")
 }
 
 /// The scheme of a URL written as `<scheme>://...` whose scheme is not
@@ -1027,6 +1044,18 @@ mod tests {
             Ok(()) => panic!("expected `{url}` to be rejected"),
             Err(e) => e.reason,
         }
+    }
+
+    #[test]
+    fn windows_absolute_paths_are_told_apart_from_scp_forms() {
+        assert!(is_windows_absolute_path(r"C:\repo"));
+        assert!(is_windows_absolute_path("C:/repo"));
+        assert!(is_windows_absolute_path(r"\\server\share\repo"));
+        assert!(!is_windows_absolute_path("host:repo"));
+        assert!(!is_windows_absolute_path("c:repo"));
+        assert!(!is_windows_absolute_path("git@host:repo"));
+        // A local path on Windows only, as git takes it.
+        assert_eq!(is_local_path("C:/repo"), cfg!(windows));
     }
 
     const RULE_SPACE: &str = "must not contain whitespace or control characters";

@@ -51,6 +51,10 @@ Comparison:
   `error[fmt]` refusals are the exception. The verdict mode checks the
   same in `check`'s stderr of every verdict case, the repro corpus
   included.
+- On Windows, the backslashes in a path to a `.silt` file or to a
+  package file (`silt.toml`, `silt.lock`) are turned into `/` before the
+  comparison, so one expected file serves every platform: write
+  `deps/x/silt.toml`, which Windows prints as `deps\x\silt.toml`.
 - A case with no expectation beyond the exit status is allowed only when
   the exit status itself is the point (say `-- exit: 0` for "this compiles
   and runs").

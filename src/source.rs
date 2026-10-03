@@ -5,7 +5,7 @@
 //! compilation reads: the lexer, the parser and everything after them
 //! carry byte offsets, and whoever prints a position asks the map for it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The identity of a file in a [`SourceMap`]. The first file added to a
@@ -279,6 +279,32 @@ impl SourceMap {
             end_col,
             line_text: file.line_text(line).unwrap_or("").to_string(),
         }
+    }
+}
+
+/// `path` made canonical, written as a user writes it: without the
+/// `\\?\` prefix Windows gives a canonical path (`\\?\UNC\server\share`
+/// is `\\server\share`). Files, URIs and keys made from it are the ones
+/// an editor and a user name. A path that cannot be made canonical (it
+/// does not exist) is returned as it is.
+pub fn canonical_path(path: &Path) -> PathBuf {
+    match std::fs::canonicalize(path) {
+        Ok(canonical) => without_verbatim_prefix(&canonical),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// `path` without the `\\?\` (verbatim) prefix of a Windows path, which
+/// no user writes: `\\?\C:\x` is `C:\x`, `\\?\UNC\server\share` is
+/// `\\server\share`. Any other path is returned as it is.
+pub fn without_verbatim_prefix(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{unc}"))
+    } else if let Some(disk) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(disk)
+    } else {
+        path.to_path_buf()
     }
 }
 
