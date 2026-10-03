@@ -797,17 +797,17 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
 // ── Select helpers ────────────────────────────────────────────────
 
-/// Record name of the internal `channel.recv_timeout` resume marker.
-///
-/// When a scheduled task parks inside `recv_timeout`, the re-pushed args
-/// replace the user's `Duration` (args[1]) with a record of this name
-/// wrapping the call's private timer channel, so the re-entry after a wake
-/// races the ORIGINAL absolute deadline instead of arming a fresh
-/// full-length timer (the round-101 livelock: every timer expiry re-armed
-/// the timeout forever). The marker only ever exists on the VM stack
-/// between a park and its CallBuiltin replay — it is never user-visible,
-/// and its type (`ty::RECV_TIMEOUT`) is no type a program can name, so
-/// it cannot be mistaken for a typechecked `Duration` argument.
+// The internal `channel.recv_timeout` resume marker.
+//
+// When a scheduled task parks inside `recv_timeout`, the re-pushed args
+// replace the user's `Duration` (args[1]) with a record of this type
+// wrapping the call's private timer channel, so the re-entry after a wake
+// races the ORIGINAL absolute deadline instead of arming a fresh
+// full-length timer (the round-101 livelock: every timer expiry re-armed
+// the timeout forever). The marker only ever exists on the VM stack
+// between a park and its CallBuiltin replay — it is never user-visible,
+// and its type (`ty::RECV_TIMEOUT`) is no type a program can name, so
+// it cannot be mistaken for a typechecked `Duration` argument.
 
 /// Field of the resume marker record holding the private timer channel.
 const RECV_TIMEOUT_RESUME_TIMER_FIELD: &str = "timer";

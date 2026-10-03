@@ -116,16 +116,16 @@ fn push(out: &Channel, val: &Value) -> bool {
     }
 }
 
-/// Marker tag used to carry a pump-thread type error in-band. Stream
-/// transforms run on detached OS threads with no `VmError` path back to
-/// the caller, so a runtime gate that fires there (currently only the
-/// `stream.dedup` Fn gate) pushes this marker onto its output channel
-/// and closes it. `spawn_pump`-based transforms forward the marker
-/// unchanged, and the synchronous sinks (`collect` / `fold` / `each` /
-/// `count` / `first` / `last`) translate it into the canonical `VmError`.
-/// Same in-band-marker pattern as `bv::MAP_ERROR` in
-/// src/builtins/collections.rs. Its type is no type a program can name.
-/// Locked by tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.
+// The marker used to carry a pump-thread type error in-band. Stream
+// transforms run on detached OS threads with no `VmError` path back to
+// the caller, so a runtime gate that fires there (currently only the
+// `stream.dedup` Fn gate) pushes this marker onto its output channel
+// and closes it. `spawn_pump`-based transforms forward the marker
+// unchanged, and the synchronous sinks (`collect` / `fold` / `each` /
+// `count` / `first` / `last`) translate it into the canonical `VmError`.
+// Same in-band-marker pattern as `bv::MAP_ERROR` in
+// src/builtins/collections.rs. Its type is no type a program can name.
+// Locked by tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.
 
 /// Build the in-band error marker for a pump-thread type error.
 fn stream_type_error(msg: String) -> Value {

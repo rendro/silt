@@ -46,15 +46,23 @@ fn s(lit: &str) -> Value {
     Value::String(lit.to_string())
 }
 
-/// The builtin error variant named `tag`.
+/// The builtin error variant named `tag`; for any other name, a variant
+/// of an enum of its own.
 fn v(tag: &str, fields: Vec<Value>) -> Value {
-    let ty = silt::module::builtin_error_enum_variants_with_arity()
+    let builtin = silt::module::builtin_error_enum_variants_with_arity()
         .iter()
         .find(|(_, variants)| variants.iter().any(|(name, _)| *name == tag))
         .and_then(|(ty, _)| silt::typeinfo::builtin_type_named(ty))
-        .expect("a builtin error variant");
+        .cloned();
+    let ty = builtin.unwrap_or_else(|| {
+        silt::typeinfo::TypeInfo::new_enum(
+            silt::defs::TypeId(silt::defs::DefId(9000)),
+            "Other",
+            &[(tag, fields.len() as u16)],
+        )
+    });
     Value::Variant(
-        silt::typeinfo::Tag::named(ty, tag).expect("a variant"),
+        silt::typeinfo::Tag::named(&ty, tag).expect("a variant"),
         fields,
     )
 }
