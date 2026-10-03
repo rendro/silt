@@ -895,13 +895,6 @@ impl Compiler {
             PatternKind::Ident(name) => {
                 // Dup the value, the dup'd copy becomes the local's stack slot.
                 self.current_chunk().emit_op(Op::Dup, span);
-                // Fix B: shadow warning points at the binding's own span
-                // (the `Pattern::Ident`'s span captured by the parser), not
-                // at the enclosing match-arm / let statement span. This
-                // lands the caret on the `result` identifier in
-                // `(_, Message(result))` rather than on the `match`
-                // scrutinee one line up.
-                self.warn_if_shadows_module(*name, pattern.span);
                 let slot = self.add_local(*name, span)?;
                 self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
             }
@@ -1114,7 +1107,6 @@ impl Compiler {
                 let mut result_slots = Vec::with_capacity(names.len());
                 for name in &names {
                     self.current_chunk().emit_op(Op::Unit, span);
-                    self.warn_if_shadows_module(*name, pattern.span);
                     let slot = self.add_local(*name, span)?;
                     result_slots.push(slot);
                 }

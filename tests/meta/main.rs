@@ -9,7 +9,6 @@ mod builtin_free_function_parity_tests;
 mod builtin_require_dedup_tests;
 mod builtin_types_authoritative_parity_tests;
 mod comprehensive_module_function_parity_tests;
-mod doc_builtin_shadow_snippet_lock_tests;
 mod docs_markdown_println_parity_tests;
 mod docs_math_display_tests;
 mod docs_primitive_descriptor_list_tests;

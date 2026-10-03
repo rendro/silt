@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: type P { A, B }\nlet a1 = A\nlet b1 = B\ntype P { B, A }\na1 < b1\nA < B\n:quit\n
+-- Redefinition is early-bound (stage 5 decision D4): after `P` is
+-- declared again with its variants in the other order, the values of
+-- the old `P` keep the old order, and the new `P`'s values have the new
+-- one.

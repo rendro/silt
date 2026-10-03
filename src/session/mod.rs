@@ -113,8 +113,6 @@ pub struct Program {
     /// ([`crate::vm::Vm::load_types`]).
     pub types: crate::typeinfo::TypeTable,
     pub entry: EntryPoint,
-    /// The compiler's warnings.
-    pub warnings: Vec<Diagnostic>,
 }
 
 /// What a [`Program`] was compiled for.
@@ -758,7 +756,6 @@ impl Session {
                 functions,
                 types: compiler.types(),
                 entry: entry_point,
-                warnings: compiler.warnings().to_vec(),
             }),
             Err(e) => {
                 let mut errors = vec![e];

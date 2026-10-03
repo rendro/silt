@@ -1,8 +1,0 @@
--- cmd: check
--- exit: 0
--- stderr-contains: warning[compile]: variable 'result' shadows the builtin 'result' module
--- stderr-contains: = help: use a different name to access 'result.*' functions
-fn main() -> Int {
-  let result = 42
-  result
-}

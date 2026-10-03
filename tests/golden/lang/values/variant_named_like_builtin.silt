@@ -1,0 +1,30 @@
+-- I5 of the audit, and the old ordinal registry's hazard: a program's
+-- variants named like builtin ones (`Empty`, `Stop`, `Continue`) are
+-- their own, and do not change the builtin enums' order.
+import list
+
+type Node { Leaf(String), Empty }
+
+type Flow { Continue, Stop }
+
+fn show(n: Node) -> String {
+  match n {
+    Leaf(s) -> "leaf {s}"
+    Empty -> "empty"
+  }
+}
+
+fn main() {
+  println([Empty, Leaf("a")] |> list.sort)
+  println("{show(Empty)}, {show(Leaf("b"))}")
+  println("Leaf < Empty: {Leaf("a") < Empty}")
+  println("Continue < Stop: {Continue < Stop}")
+  println("list.Stop < list.Continue: {list.Stop(1) < list.Continue(1)}")
+  let total = [1, 2, 3, 4] |> list.fold_until(0) { acc, x ->
+    match x > 2 {
+      true -> list.Stop(acc)
+      false -> list.Continue(acc + x)
+    }
+  }
+  println("fold_until: {total}")
+}

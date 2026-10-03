@@ -1,0 +1,16 @@
+-- I7 of the audit: a program's record type named `Time` is not the
+-- builtin `time.Time`. It prints as a record, and compares, dedups and
+-- keys maps by its own fields.
+import map
+import set
+
+type Time { h: Int, m: Int }
+
+fn main() {
+  let a = Time { h: 1, m: 2 }
+  let b = Time { h: 3, m: 4 }
+  println(a)
+  println("a < b: {a < b}, b < a: {b < a}")
+  println("set: {set.length(set.from_list([a, b, a]))}")
+  println("map: {map.length(map.from_entries([(a, 1), (b, 2)]))}")
+}

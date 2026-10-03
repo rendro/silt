@@ -1,0 +1,18 @@
+-- An imported module's enum and the program's own enum share variant
+-- names in different orders; each keeps its declaration order (the
+-- blocking ordering of repro architecture/ord1_main).
+import list
+import shapes
+
+type Signal {
+  Blue,
+  Amber,
+  Red
+}
+
+fn main() {
+  println("main: Blue < Red = {Blue < Red}")
+  println("shapes: Red < Blue = {shapes.color_lt()}")
+  println("shapes sorted: {shapes.sorted_colors()}")
+  println("main sorted: {[Red, Amber, Blue] |> list.sort}")
+}

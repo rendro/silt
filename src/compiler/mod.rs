@@ -281,8 +281,6 @@ struct Local {
     slot: u16,
 }
 
-// ── Compiler warnings ────────────────────────────────────────────────
-
 // ── Compiler errors ─────────────────────────────────────────────────
 
 /// A defect in silt: the program reached the compiler with an error the
@@ -401,8 +399,6 @@ pub struct Compiler {
     /// Modules already compiled in this compilation unit, so each is
     /// compiled once, where it is first imported.
     compiled_modules: HashSet<usize>,
-    /// Warnings emitted during compilation.
-    warnings: Vec<Diagnostic>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
     imported_builtin_modules: HashSet<String>,
     /// Aliases for builtin modules: maps the alias name (e.g. "l" from
@@ -590,7 +586,6 @@ impl Compiler {
             units,
             unit_stack: Vec::new(),
             compiled_modules: HashSet::new(),
-            warnings: Vec::new(),
             imported_builtin_modules: HashSet::new(),
             imported_builtin_module_aliases: HashMap::new(),
             in_tail_position: false,
@@ -627,11 +622,6 @@ impl Compiler {
     /// across the typecheck → compile boundary.
     fn resolver(&self) -> &Resolver {
         &self.units.resolver
-    }
-
-    /// Returns warnings emitted during compilation.
-    pub fn warnings(&self) -> &[Diagnostic] {
-        &self.warnings
     }
 
     /// The types the compiled code builds values of, for the VM.
@@ -1734,7 +1724,6 @@ impl Compiler {
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
                         // The value just pushed becomes the local.
-                        self.warn_if_shadows_module(*name, pattern.span);
                         let slot = self.add_local(*name, span)?;
                         self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
                         if is_last {
@@ -2995,7 +2984,6 @@ impl Compiler {
         // Compile initial values; each stays on the stack as its binding.
         for (name, _, init) in bindings {
             self.compile_expr(init)?;
-            self.warn_if_shadows_module(*name, span);
             let slot = self.add_local(*name, span)?;
             self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
         }
@@ -3761,7 +3749,6 @@ impl Compiler {
         for (i, param) in params.iter().enumerate() {
             match &param.pattern.kind {
                 PatternKind::Ident(name) => {
-                    self.warn_if_shadows_module(*name, param.pattern.span);
                     self.add_local(*name, span)?;
                 }
                 _ => {
@@ -3779,21 +3766,6 @@ impl Compiler {
             self.compile_pattern_bind_checked(pattern, span)?;
         }
         Ok(())
-    }
-
-    /// Emit a warning if `name` shadows a builtin module like `json`, `int`, etc.
-    fn warn_if_shadows_module(&mut self, name: Symbol, span: Span) {
-        let s = resolve(name);
-        if module::is_builtin_module(&s) {
-            self.warnings.push(
-                Diagnostic::warning(
-                    Code::ShadowsModule,
-                    span,
-                    format!("variable '{s}' shadows the builtin '{s}' module"),
-                )
-                .with_help(format!("use a different name to access '{s}.*' functions")),
-            );
-        }
     }
 
     fn resolve_local(&self, name: Symbol) -> Option<u16> {
@@ -4802,31 +4774,6 @@ fn main() {
         // compile_declarations emits Unit, Return (no main call)
         assert!(has_op(&script.chunk, Op::Unit));
         assert!(has_op(&script.chunk, Op::Return));
-    }
-
-    // ── Warnings ───────────────────────────────────────────────────
-
-    #[test]
-    fn test_shadow_module_warning() {
-        let tokens = Lexer::new(
-            crate::source::FileId::default(),
-            "fn main() { let list = 42\n list }",
-        )
-        .tokenize()
-        .unwrap();
-        let program = Parser::new(tokens, "fn main() { let list = 42\n list }")
-            .parse_program()
-            .unwrap();
-        let mut compiler = Compiler::new();
-        compiler.import_all_builtins();
-        compiler.compile_declarations(&program).unwrap();
-        assert!(
-            compiler
-                .warnings()
-                .iter()
-                .any(|w| w.message.contains("shadows")),
-            "expected shadow warning"
-        );
     }
 
     // ── Selective import compilation ────────────────────────────────

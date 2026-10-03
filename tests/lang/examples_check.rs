@@ -75,21 +75,6 @@ const WARN_ALLOWLIST: &[&str] = &[
     // known type-checker limitation tracked in src/ — the example
     // itself is correct.
     "expr_eval.silt",
-    // `let result = mymath.add(3, 4)` shadows the builtin `result`
-    // module. The `result` binding is the pedagogically natural
-    // variable name for a computation result, and this example is the
-    // first thing a reader sees under examples/modules/. Renaming
-    // would harm the teaching value; the warning is harmless.
-    "main.silt",
-    // `let result = matches |> list.fold(...)` shadows the builtin
-    // `result` module. Same rationale as above — `result` is the
-    // natural name for the fold's accumulator.
-    "link_checker.silt",
-    // `(_, Message(result)) -> { let (worker_id, outcome) = result }`
-    // destructures the channel message payload into a binding named
-    // `result`, which shadows the builtin `result` module. Renaming
-    // inside a deep match arm would make the example harder to read.
-    "concurrent_processor.silt",
 ];
 
 fn silt_cmd() -> Command {
@@ -633,18 +618,12 @@ fn all_doc_fn_test_blocks_compile() {
     );
 }
 
-/// Regression lock for round 15 GAP finding G8: 27 ```silt fenced blocks
-/// across `docs/stdlib/*.md` declared `let result = ...` in a `fn main`
-/// block, which shadows the builtin `result` module and causes the
-/// compiler to emit `warning[compile]: variable 'result' shadows the
-/// builtin 'result' module`. A user copy-pasting any of those blocks
-/// would see the warning even though nothing in the example was broken.
+/// A user copy-pasting a doc block's `fn main` should see no warning.
 ///
 /// `all_doc_fn_main_blocks_compile` only checked for hard errors; this
 /// walker extends that contract by failing if ANY `warning[` line
 /// appears in the `silt check` stderr for a doc block's `fn main`.
-/// Reverting a single block to `let result = ...` makes this walker
-/// fail with a precise file path + opener line + the warning text.
+/// A failure names the file, the fence's opener line and the warning.
 #[test]
 fn test_doc_fn_main_blocks_emit_no_compile_warnings() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));

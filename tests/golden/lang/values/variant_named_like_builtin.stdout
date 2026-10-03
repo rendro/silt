@@ -1,0 +1,6 @@
+[Leaf(a), Empty]
+empty, leaf b
+Leaf < Empty: true
+Continue < Stop: true
+list.Stop < list.Continue: true
+fold_until: 3

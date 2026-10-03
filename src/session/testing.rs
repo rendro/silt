@@ -53,9 +53,8 @@ pub fn check_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Vec<Dia
     if session.analyze(entry).has_errors() {
         return diagnostics;
     }
-    match session.compile(entry, Entry::Tests { filter: None }) {
-        Ok(program) => diagnostics.extend(program.warnings),
-        Err(errors) => diagnostics.extend(errors),
+    if let Err(errors) = session.compile(entry, Entry::Tests { filter: None }) {
+        diagnostics.extend(errors);
     }
     diagnostics
 }

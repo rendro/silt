@@ -1,0 +1,20 @@
+-- Two sibling modules declare enums with the same variant names in
+-- opposite orders. Each enum orders, sorts, compares and hashes by its
+-- own declaration, in one program (the blocking orderings of stage 5
+-- step 6: repros architecture/ord2_main and compiler_vm/modtest_main).
+import a
+import b
+import list
+import map
+import set
+
+fn main() {
+  println("a: Red < Blue = {a.red_lt_blue()}, sorted {a.sorted()}, distinct {a.distinct()}")
+  println("b: Blue < Red = {b.blue_lt_red()}, sorted {b.sorted()}, distinct {b.distinct()}")
+  println("a.red() < a.blue() = {a.red() < a.blue()}; b.red() < b.blue() = {b.red() < b.blue()}")
+  println("a compare: {a.red().compare(a.blue())}; b compare: {b.red().compare(b.blue())}")
+  let ma = map.from_entries([(a.blue(), "blue"), (a.red(), "red")])
+  let mb = map.from_entries([(b.blue(), "blue"), (b.red(), "red")])
+  println("a keys: {map.keys(ma)}; b keys: {map.keys(mb)}")
+  println("a == a: {a.red() == a.red()}; a red == a blue: {a.red() == a.blue()}")
+}
