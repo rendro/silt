@@ -261,7 +261,15 @@ impl TypeTable {
             .or_else(|| builtin_types().get(id.0.0 as usize))
     }
 
+    /// Enter the description of a program's type. `get` finds a builtin
+    /// type by its id as an index of the builtin table, which is sound
+    /// because a program's definitions have ids after every builtin
+    /// definition (see the test `program_ids_follow_the_builtin_ids`).
     pub fn insert(&mut self, info: Arc<TypeInfo>) {
+        debug_assert!(
+            builtin_types().get(info.id.0.0 as usize).is_none(),
+            "a program's type has the id of a builtin type"
+        );
         self.types.insert(info.id, info);
     }
 
@@ -588,19 +596,148 @@ pub fn builtin_type_named(name: &str) -> Option<&'static Arc<TypeInfo>> {
 mod tests {
     use super::*;
 
+    /// The first definition a program declares has an id after every
+    /// builtin one, so `TypeTable::get` can find a builtin type by its id
+    /// as an index.
     #[test]
-    fn the_fixed_ids_are_the_builtin_definitions() {
-        for (k, (name, module)) in RUNTIME_BUILTIN_TYPES.iter().enumerate() {
-            assert_eq!(crate::defs::builtin_types()[k], (*name, *module));
+    fn program_ids_follow_the_builtin_ids() {
+        let mut defs = crate::typechecker::names::new_def_table();
+        let id = defs.add(crate::defs::Def {
+            module: crate::session::ModuleId(0),
+            name: crate::intern::intern("Pt"),
+            span: crate::source::Span::BUILTIN,
+            vis: crate::defs::Vis::Pub,
+            kind: crate::defs::DefKind::Fn,
+        });
+        assert!(builtin_types().get(id.0 as usize).is_none());
+        assert!(id.0 as usize >= crate::defs::builtin_types().len());
+    }
+
+    /// Each `bv::` constant is the variant it is named after, with the
+    /// ordinal and the arity the checker's builtin declarations give it.
+    #[test]
+    fn the_builtin_variant_constants_are_the_declared_variants() {
+        let (defs, _) = crate::typechecker::names::builtins();
+        let constants: &[(BuiltinVariant, &str)] = &[
+            (bv::OK, "Ok"),
+            (bv::ERR, "Err"),
+            (bv::SOME, "Some"),
+            (bv::NONE, "None"),
+            (bv::STOP, "Stop"),
+            (bv::CONTINUE, "Continue"),
+            (bv::MESSAGE, "Message"),
+            (bv::CLOSED, "Closed"),
+            (bv::SENT, "Sent"),
+            (bv::EMPTY, "Empty"),
+            (bv::RECV, "Recv"),
+            (bv::SEND, "Send"),
+            (bv::MONDAY, "Monday"),
+            (bv::TUESDAY, "Tuesday"),
+            (bv::WEDNESDAY, "Wednesday"),
+            (bv::THURSDAY, "Thursday"),
+            (bv::FRIDAY, "Friday"),
+            (bv::SATURDAY, "Saturday"),
+            (bv::SUNDAY, "Sunday"),
+            (bv::GET, "GET"),
+            (bv::POST, "POST"),
+            (bv::PUT, "PUT"),
+            (bv::PATCH, "PATCH"),
+            (bv::DELETE, "DELETE"),
+            (bv::HEAD, "HEAD"),
+            (bv::OPTIONS, "OPTIONS"),
+            (bv::IO_NOT_FOUND, "IoNotFound"),
+            (bv::IO_PERMISSION_DENIED, "IoPermissionDenied"),
+            (bv::IO_ALREADY_EXISTS, "IoAlreadyExists"),
+            (bv::IO_INVALID_INPUT, "IoInvalidInput"),
+            (bv::IO_INTERRUPTED, "IoInterrupted"),
+            (bv::IO_UNEXPECTED_EOF, "IoUnexpectedEof"),
+            (bv::IO_WRITE_ZERO, "IoWriteZero"),
+            (bv::IO_UNKNOWN, "IoUnknown"),
+            (bv::JSON_SYNTAX, "JsonSyntax"),
+            (bv::JSON_TYPE_MISMATCH, "JsonTypeMismatch"),
+            (bv::JSON_MISSING_FIELD, "JsonMissingField"),
+            (bv::JSON_UNKNOWN, "JsonUnknown"),
+            (bv::TOML_SYNTAX, "TomlSyntax"),
+            (bv::TOML_TYPE_MISMATCH, "TomlTypeMismatch"),
+            (bv::TOML_MISSING_FIELD, "TomlMissingField"),
+            (bv::TOML_UNKNOWN, "TomlUnknown"),
+            (bv::PARSE_EMPTY, "ParseEmpty"),
+            (bv::PARSE_INVALID_DIGIT, "ParseInvalidDigit"),
+            (bv::PARSE_OVERFLOW, "ParseOverflow"),
+            (bv::PARSE_UNDERFLOW, "ParseUnderflow"),
+            (bv::HTTP_CONNECT, "HttpConnect"),
+            (bv::HTTP_TLS, "HttpTls"),
+            (bv::HTTP_TIMEOUT, "HttpTimeout"),
+            (bv::HTTP_INVALID_URL, "HttpInvalidUrl"),
+            (bv::HTTP_INVALID_RESPONSE, "HttpInvalidResponse"),
+            (bv::HTTP_CLOSED_EARLY, "HttpClosedEarly"),
+            (bv::HTTP_STATUS_CODE, "HttpStatusCode"),
+            (bv::HTTP_UNKNOWN, "HttpUnknown"),
+            (bv::REGEX_INVALID_PATTERN, "RegexInvalidPattern"),
+            (bv::REGEX_TOO_BIG, "RegexTooBig"),
+            (bv::PG_CONNECT, "PgConnect"),
+            (bv::PG_TLS, "PgTls"),
+            (bv::PG_AUTH_FAILED, "PgAuthFailed"),
+            (bv::PG_QUERY, "PgQuery"),
+            (bv::PG_TYPE_MISMATCH, "PgTypeMismatch"),
+            (bv::PG_NO_SUCH_COLUMN, "PgNoSuchColumn"),
+            (bv::PG_CLOSED, "PgClosed"),
+            (bv::PG_TIMEOUT, "PgTimeout"),
+            (bv::PG_TXN_ABORTED, "PgTxnAborted"),
+            (bv::PG_UNKNOWN, "PgUnknown"),
+            (bv::TCP_CONNECT, "TcpConnect"),
+            (bv::TCP_TLS, "TcpTls"),
+            (bv::TCP_CLOSED, "TcpClosed"),
+            (bv::TCP_TIMEOUT, "TcpTimeout"),
+            (bv::TCP_UNKNOWN, "TcpUnknown"),
+            (bv::TIME_PARSE_FORMAT, "TimeParseFormat"),
+            (bv::TIME_OUT_OF_RANGE, "TimeOutOfRange"),
+            (bv::BYTES_INVALID_UTF8, "BytesInvalidUtf8"),
+            (bv::BYTES_INVALID_HEX, "BytesInvalidHex"),
+            (bv::BYTES_INVALID_BASE64, "BytesInvalidBase64"),
+            (bv::BYTES_BYTE_OUT_OF_RANGE, "BytesByteOutOfRange"),
+            (bv::BYTES_OUT_OF_BOUNDS, "BytesOutOfBounds"),
+            (bv::CHANNEL_TIMEOUT, "ChannelTimeout"),
+            (bv::CHANNEL_CLOSED, "ChannelClosed"),
+            (bv::PG_POOL, "PgPool"),
+            (bv::PG_TX, "PgTx"),
+            (bv::PG_CURSOR, "PgCursor"),
+            (bv::V_INT, "VInt"),
+            (bv::V_STR, "VStr"),
+            (bv::V_BOOL, "VBool"),
+            (bv::V_FLOAT, "VFloat"),
+            (bv::V_NULL, "VNull"),
+            (bv::V_LIST, "VList"),
+        ];
+        for (variant, name) in constants {
+            let tag = variant.tag();
+            assert_eq!(tag.name(), *name);
+            // The variants of the builtin handle types (`PgPool`,
+            // postgres `Value`) are the run time's own: the checker sees
+            // the types as opaque.
+            let Some(declared) = defs.variants.get(&variant.ty.0) else {
+                assert!(
+                    HANDLE_VARIANTS
+                        .iter()
+                        .any(|(_, vs)| vs.iter().any(|(v, _)| v == name)),
+                    "{name} is declared by the checker"
+                );
+                continue;
+            };
+            let declared = declared[variant.ordinal as usize];
+            let def = defs.defs[declared.0 as usize];
+            assert_eq!(
+                crate::intern::resolve(def.name),
+                *name,
+                "the declaration of {name}"
+            );
+            let crate::defs::DefKind::Variant { ordinal, arity, .. } = def.kind else {
+                panic!("{name} is declared as a variant");
+            };
+            assert_eq!(ordinal, variant.ordinal, "the ordinal of {name}");
+            assert_eq!(arity as usize, tag.arity(), "the arity of {name}");
         }
-        assert_eq!(builtin_type(ty::OPTION).name, "Option");
         assert_eq!(builtin_type(ty::ANON_RECORD).name, crate::defs::ANON_RECORD);
-        assert_eq!(bv::NONE.tag().name(), "None");
-        assert_eq!(bv::OPTIONS.tag().name(), "OPTIONS");
-        assert_eq!(bv::CHANNEL_CLOSED.tag().name(), "ChannelClosed");
-        assert_eq!(bv::V_LIST.tag().name(), "VList");
-        assert_eq!(bv::SENT.tag().name(), "Sent");
-        assert_eq!(bv::EMPTY.tag().name(), "Empty");
     }
 
     #[test]

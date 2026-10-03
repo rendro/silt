@@ -160,132 +160,24 @@ pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)
 }
 
-/// Returns the set of builtin enums as `(enum_name, variant_names)`
-/// pairs. The compiler finds a builtin variant by its name here in the
-/// derived impls of the builtin types, which name variants unresolved;
-/// it also names the module of each variant (`builtin_variant_module`).
-///
-/// Includes both the prelude enums (Result, Option) and the enums of
-/// the builtin modules.
-/// Keep in sync with `src/typechecker/builtins/errors.rs` enum registrations.
-pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static str])] {
-    &[
-        ("Result", &["Ok", "Err"]),
-        ("Option", &["Some", "None"]),
-        ("Step", &["Stop", "Continue"]),
-        ("ChannelResult", &["Message", "Closed", "Sent", "Empty"]),
-        ("ChannelOp", &["Recv", "Send"]),
-        (
-            "Weekday",
-            &[
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday",
-            ],
-        ),
-        (
-            "Method",
-            &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-        ),
-        // Stdlib typed-error enums. See
-        // `module.rs::builtin_error_enum_variants_with_arity` for
-        // Phase 0 background.
-        (
-            "IoError",
-            &[
-                "IoNotFound",
-                "IoPermissionDenied",
-                "IoAlreadyExists",
-                "IoInvalidInput",
-                "IoInterrupted",
-                "IoUnexpectedEof",
-                "IoWriteZero",
-                "IoUnknown",
-            ],
-        ),
-        (
-            "JsonError",
-            &[
-                "JsonSyntax",
-                "JsonTypeMismatch",
-                "JsonMissingField",
-                "JsonUnknown",
-            ],
-        ),
-        (
-            "TomlError",
-            &[
-                "TomlSyntax",
-                "TomlTypeMismatch",
-                "TomlMissingField",
-                "TomlUnknown",
-            ],
-        ),
-        (
-            "ParseError",
-            &[
-                "ParseEmpty",
-                "ParseInvalidDigit",
-                "ParseOverflow",
-                "ParseUnderflow",
-            ],
-        ),
-        (
-            "HttpError",
-            &[
-                "HttpConnect",
-                "HttpTls",
-                "HttpTimeout",
-                "HttpInvalidUrl",
-                "HttpInvalidResponse",
-                "HttpClosedEarly",
-                "HttpStatusCode",
-                "HttpUnknown",
-            ],
-        ),
-        ("RegexError", &["RegexInvalidPattern", "RegexTooBig"]),
-        (
-            "PgError",
-            &[
-                "PgConnect",
-                "PgTls",
-                "PgAuthFailed",
-                "PgQuery",
-                "PgTypeMismatch",
-                "PgNoSuchColumn",
-                "PgClosed",
-                "PgTimeout",
-                "PgTxnAborted",
-                "PgUnknown",
-            ],
-        ),
-        (
-            "TcpError",
-            &[
-                "TcpConnect",
-                "TcpTls",
-                "TcpClosed",
-                "TcpTimeout",
-                "TcpUnknown",
-            ],
-        ),
-        ("TimeError", &["TimeParseFormat", "TimeOutOfRange"]),
-        (
-            "BytesError",
-            &[
-                "BytesInvalidUtf8",
-                "BytesInvalidHex",
-                "BytesInvalidBase64",
-                "BytesByteOutOfRange",
-                "BytesOutOfBounds",
-            ],
-        ),
-        ("ChannelError", &["ChannelTimeout", "ChannelClosed"]),
-    ]
+/// The builtin enums as `(enum_name, variant_names)` pairs: the prelude
+/// enums (Result, Option) and the enums of the builtin modules, from the
+/// one listing of their variants
+/// ([`builtin_prelude_enum_variants_with_arity`] and
+/// [`builtin_error_enum_variants_with_arity`]). The compiler finds a
+/// builtin variant by its name here in the derived impls of the builtin
+/// types, which name variants unresolved; it also names the module of
+/// each variant (`builtin_variant_module`).
+pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
+    static ENUMS: std::sync::OnceLock<Vec<(&'static str, Vec<&'static str>)>> =
+        std::sync::OnceLock::new();
+    ENUMS.get_or_init(|| {
+        builtin_prelude_enum_variants_with_arity()
+            .iter()
+            .chain(builtin_error_enum_variants_with_arity())
+            .map(|(name, variants)| (*name, variants.iter().map(|(v, _)| *v).collect()))
+            .collect()
+    })
 }
 
 /// Iterator over every builtin enum variant name across all builtin enums

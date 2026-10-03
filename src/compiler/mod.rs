@@ -314,6 +314,13 @@ pub struct ModuleUnit {
     /// The module's name in its package (`"lib"` for a dependency's
     /// library, `"util"` for `src/util.silt`).
     pub name: String,
+    /// How a value of a type of the module names the module when two
+    /// types of the program have the type's name (`util.Pt {x: 1}`):
+    /// as the entry's package imports it. A module of the entry's
+    /// package is its name (`util`); a dependency's library is the
+    /// dependency (`db`); another module of a dependency is the
+    /// dependency and the module (`db.util`).
+    pub qualifier: String,
     /// The module each `import` of this module names, by the module
     /// name written after `import`. Builtin modules are not in it.
     pub imports: HashMap<Symbol, usize>,
@@ -2177,7 +2184,8 @@ impl Compiler {
     // ── Helper: what names resolve to ────────────────────────────
 
     /// The name of `ty` as values of it print: its name, qualified by its
-    /// module's name when two types of the program's modules have it.
+    /// module ([`ModuleUnit::qualifier`]) when two types of the
+    /// program's modules have it.
     fn display_type_name(&self, ty: TypeRef) -> String {
         if crate::defs::builtin_types()
             .get(ty.id.0.0 as usize)
@@ -2188,7 +2196,7 @@ impl Compiler {
         }
         let module = self.units.defs.get(ty.id.0).module;
         match self.units.modules.iter().find(|unit| unit.id == module) {
-            Some(unit) => format!("{}.{}", unit.name, ty.name),
+            Some(unit) => format!("{}.{}", unit.qualifier, ty.name),
             None => resolve(ty.name),
         }
     }

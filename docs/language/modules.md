@@ -138,7 +138,19 @@ error: import the enum and write `Shape.Red`.
 Two modules may each declare a type of one name. They are different
 types, kept apart by their qualifiers: `a.Pt` and `b.Pt`, or a module's
 own `Pt` and an imported `b.Pt`. A value of one is not a value of the
-other.
+other, and each has its own trait impls.
+
+A value of such a type prints qualified, as the program names the
+module: `a.Pt {x: 1}` for a module `a` of the program, `db.Pt {x: 1}`
+for the library of a dependency `db`, and `db.util.Pt {x: 1}` for its
+module `util`. A type whose name no other type of the program has
+prints bare: `Pt {x: 1}`.
+
+Two modules may also each declare a trait of one name, say `Show` with
+a method `show`, and implement it for one type. A method call means the
+method of the trait its module sees: a trait it declares, imports by
+name, or reaches through a module it imports. A call that sees both
+traits is an error at the call.
 
 ## Module names and shadowing
 

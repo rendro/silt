@@ -106,7 +106,7 @@ fn editor_grammars_include_all_builtin_constructors() {
     let mut missing: Vec<String> = Vec::new();
 
     for (_enum_name, variants) in builtin_enum_variants() {
-        for &variant in *variants {
+        for &variant in variants {
             if !grammar_mentions_name(&vim_scope, variant) {
                 missing.push(format!(
                     "editors/vim/syntax/silt.vim (siltConstructor keyword list) is missing \
@@ -180,7 +180,7 @@ fn vscode_constructor_tokens(block: &str) -> BTreeSet<String> {
 fn authoritative_constructor_names() -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for (_enum_name, variants) in builtin_enum_variants() {
-        for &variant in *variants {
+        for &variant in variants {
             names.insert(variant.to_string());
         }
     }

@@ -2,8 +2,7 @@
 -- The operand rendering of the opcodes main compiles to. The prelude
 -- chunks never emit RecordUpdate or CallBuiltin, and their CallMethod
 -- lines have other constant indices, so these needles match main only.
--- (Variant construction compiles to the constructor as a constant + Call;
--- the compiler emits no MakeVariant.)
+-- (Variant construction compiles to the constructor as a constant + Call.)
 -- stdout-contains: == main (arity=0, upvalues=0) ==
 -- stdout-contains: RecordUpdate         1
 -- stdout-contains: |  field 3     ; "x"

@@ -12,13 +12,14 @@
 //!
 //!   * DUP — the typed-error variant set lived in three independent
 //!     registries (`src/module.rs`, `src/typechecker/builtins/errors.rs`,
-//!     and `src/vm/dispatch.rs`). The dispatch-side list is now
-//!     data-driven from `module::builtin_error_enum_variants_with_arity`;
-//!     the typechecker's registration is checked against it by
-//!     behaviour below.
+//!     and `src/vm/dispatch.rs`). The run-time builtin types
+//!     (`crate::typeinfo`) take their variants from
+//!     `module::builtin_error_enum_variants_with_arity`; the
+//!     typechecker's registration is checked against it by behaviour
+//!     below.
 
 use silt::diagnostic::Severity;
-use silt::module::{builtin_enum_variants, builtin_error_enum_variants_with_arity};
+use silt::module::builtin_error_enum_variants_with_arity;
 
 // ── Finding 1 — feature-gate lock ────────────────────────────────────
 
@@ -83,48 +84,6 @@ fn main() {
 }
 
 // ── Finding 3 — variant/arity parity ─────────────────────────────────
-
-/// Source-level lock: the variant set in
-/// `module::builtin_enum_variants` (names only) must be a perfect
-/// subset of `builtin_error_enum_variants_with_arity` for every
-/// stdlib error enum. Catches the simplest form of drift — adding a
-/// variant in one helper and forgetting the other.
-#[test]
-fn module_helpers_agree_on_error_enum_variant_names() {
-    // Collect (enum_name -> variants) from each helper.
-    let with_arity = builtin_error_enum_variants_with_arity();
-    let names_only = builtin_enum_variants();
-
-    let mut mismatches: Vec<String> = Vec::new();
-    for (enum_name, arity_variants) in with_arity {
-        let arity_names: Vec<&str> = arity_variants.iter().map(|(n, _)| *n).collect();
-        let names = names_only
-            .iter()
-            .find(|(e, _)| e == enum_name)
-            .map(|(_, vs)| vs.to_vec());
-        match names {
-            Some(names) => {
-                if names != arity_names {
-                    mismatches.push(format!(
-                        "{enum_name}: names-only={names:?} vs with-arity={arity_names:?}"
-                    ));
-                }
-            }
-            None => {
-                mismatches.push(format!(
-                    "{enum_name}: present in builtin_error_enum_variants_with_arity \
-                     but missing from builtin_enum_variants"
-                ));
-            }
-        }
-    }
-
-    assert!(
-        mismatches.is_empty(),
-        "module.rs helpers disagree on stdlib error enum variants:\n  - {}",
-        mismatches.join("\n  - ")
-    );
-}
 
 /// The typechecker's registration of every stdlib error enum must
 /// agree with `builtin_error_enum_variants_with_arity` on the variant

@@ -1,0 +1,13 @@
+-- Two dependencies each have a module `util` with a type `Pt`: a value
+-- of each prints qualified as the program names it, by the dependency
+-- and the module (`da.util.Pt`), and runs its own Display impl.
+import da
+import db
+import list
+fn main() {
+  println(da.mk())
+  println(db.mk())
+  println(da.show())
+  println(db.show())
+  println(da.reds() |> list.sort)
+}

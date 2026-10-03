@@ -1,0 +1,4 @@
+import util
+pub fn mk() -> util.Pt { util.Pt { x: 1 } }
+pub fn show() -> String { mk().display() }
+pub fn reds() -> List(util.Color) { [util.Green, util.Red] }

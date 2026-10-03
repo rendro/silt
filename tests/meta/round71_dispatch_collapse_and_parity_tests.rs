@@ -1,8 +1,8 @@
 //! Round-71 audit: dead-code collapse + parallel-array-drift +
 //! signature-help findings.
 //!
-//! Kept here: the prelude variant registry parity (DEAD-2) and the
-//! LSP signature-help parameters (DX-4).
+//! Kept here: the prelude variant registry's exact shape (DEAD-2) and
+//! the LSP signature-help parameters (DX-4).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -13,57 +13,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use silt::module::{
-    builtin_enum_variants, builtin_error_enum_variants_with_arity,
-    builtin_prelude_enum_variants_with_arity,
-};
+use silt::module::builtin_prelude_enum_variants_with_arity;
 
 // ── DEAD-2: prelude variant constructor parity ───────────────────────
-
-/// `builtin_prelude_enum_variants_with_arity` must cover every
-/// non-error enum tracked by `builtin_enum_variants`. The two
-/// registries are kept in shape lockstep — drift in either will
-/// surface here.
-#[test]
-fn prelude_variant_registry_matches_builtin_enum_variants() {
-    use std::collections::BTreeSet;
-
-    let prelude_set: BTreeSet<&str> = builtin_prelude_enum_variants_with_arity()
-        .iter()
-        .map(|(name, _)| *name)
-        .collect();
-    let error_set: BTreeSet<&str> = builtin_error_enum_variants_with_arity()
-        .iter()
-        .map(|(name, _)| *name)
-        .collect();
-    let all_set: BTreeSet<&str> = builtin_enum_variants()
-        .iter()
-        .map(|(name, _)| *name)
-        .collect();
-
-    // Every non-error enum in `builtin_enum_variants` must live in the
-    // prelude registry.
-    for name in &all_set {
-        if error_set.contains(name) {
-            continue;
-        }
-        assert!(
-            prelude_set.contains(name),
-            "enum `{name}` is in builtin_enum_variants but missing from \
-             builtin_prelude_enum_variants_with_arity — round-71 \
-             dispatch.rs registration loop will skip its constructors"
-        );
-    }
-    // Every prelude registry entry must live in `builtin_enum_variants`.
-    for name in &prelude_set {
-        assert!(
-            all_set.contains(name),
-            "enum `{name}` is in builtin_prelude_enum_variants_with_arity \
-             but missing from builtin_enum_variants — likely a typo or \
-             stale entry"
-        );
-    }
-}
 
 /// Pin the exact `(variant, arity)` shape the prelude registry exposes
 /// so adding/renaming a constructor is intentional. The list mirrors

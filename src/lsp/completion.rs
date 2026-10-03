@@ -273,7 +273,7 @@ impl Server {
             // as CONSTRUCTOR entries so editors distinguish them from
             // module functions / constants.
             for (_enum_name, variants) in module::builtin_enum_variants() {
-                for &variant in *variants {
+                for &variant in variants {
                     if module::builtin_variant_module(variant) == Some(prefix) {
                         items.push(CompletionItem {
                             label: variant.to_string(),

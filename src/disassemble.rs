@@ -231,8 +231,21 @@ fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (
         }
 
         // ── u16 operand with constant comment ─────────────────
+        // TestTag: the variant the test is for (its operand is the
+        // variant's tag, kept as a constructor constant).
+        Op::TestTag => {
+            let index = read_u16(code, offset + 1);
+            let comment = match chunk.constants.get(index as usize) {
+                Some(crate::value::Value::VariantConstructor(tag)) => format!("<variant:{tag}>"),
+                _ => constant_comment(chunk, index),
+            };
+            (
+                format!("{offset:04}  {name:<20} {index:<5} ; {comment}"),
+                offset + 3,
+            )
+        }
+
         Op::Constant
-        | Op::TestTag
         | Op::TestEqual
         | Op::GetField
         | Op::DestructRecordField

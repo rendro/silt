@@ -722,6 +722,7 @@ impl Session {
         let modules = &self.results[&id].modules;
         let index: HashMap<ModuleId, usize> =
             modules.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        let entry_package = self.graph.module(id).package;
         let earlier = match cell && self.cells.info.contains_key(&id) {
             true => self.cells.earlier(&index),
             false => EarlierCells::default(),
@@ -738,6 +739,11 @@ impl Session {
                         id: *m,
                         program: self.analyses[m].ast.clone(),
                         name: resolve(module.name),
+                        qualifier: match (module.package == entry_package, resolve(module.name)) {
+                            (true, name) => name,
+                            (false, name) if name == "lib" => resolve(module.package_name),
+                            (false, name) => format!("{}.{name}", module.package_name),
+                        },
                         imports: unit_imports(module, &index),
                         host: module
                             .host
