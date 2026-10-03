@@ -110,7 +110,7 @@ pub struct ModuleAnalysis {
 pub struct Program {
     pub functions: Vec<Function>,
     /// The types its values are of, which the VM is given
-    /// ([`crate::vm::Vm::load`]).
+    /// ([`crate::vm::Vm::run_program`]).
     pub types: crate::typeinfo::TypeTable,
     /// Its global slots, which the VM is given too.
     pub globals: Arc<Globals>,

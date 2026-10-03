@@ -54,8 +54,9 @@ impl Drop for TempDir {
 }
 
 /// RAII handle around a spawned `silt -w` subprocess that collects its
-/// stdout into a shared buffer on a background thread. Kills the child on
-/// drop so tests never leak processes, even on panic.
+/// stdout into a shared buffer on a background thread. Kills the child,
+/// and the program it runs, on drop so tests never leak processes, even
+/// on panic.
 struct WatchProc {
     child: Child,
     stdout: Arc<Mutex<Vec<u8>>>,
@@ -71,14 +72,19 @@ impl WatchProc {
 
     /// Spawn `silt <args>` in the directory `cwd`.
     fn spawn_with(args: &[&str], cwd: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_silt"));
+        command
             .args(args)
             .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("failed to spawn silt -w");
+            .stderr(Stdio::null());
+        // The watcher and the program it runs share a process group of
+        // their own, which drop kills whole: the program does not
+        // outlive the test.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let mut child = command.spawn().expect("failed to spawn silt -w");
 
         let stdout = Arc::new(Mutex::new(Vec::<u8>::new()));
         let mut child_stdout = child.stdout.take().expect("piped stdout");
@@ -132,6 +138,14 @@ impl WatchProc {
 
 impl Drop for WatchProc {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Ok(pid) = libc::pid_t::try_from(self.child.id()) {
+            // SAFETY: kill(2) with a negative pid signals the process
+            // group the watcher leads (set up in `spawn_with`).
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
