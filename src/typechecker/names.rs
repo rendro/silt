@@ -151,6 +151,12 @@ pub fn builtins() -> (Arc<BuiltinDefs>, Arc<BuiltinScopes>) {
     (defs, scopes)
 }
 
+/// The builtin definition `id`; `None` for the id of a module's
+/// definition.
+pub fn builtin_def(id: DefId) -> Option<Def> {
+    builtins().0.defs.get(id.0 as usize).cloned()
+}
+
 /// A new definition table over the builtins.
 pub fn new_def_table() -> DefTable {
     DefTable::new(builtins().0)
@@ -282,6 +288,7 @@ pub fn resolve_module(
         &mut scope,
         &mut diagnostics,
     );
+    report_type_name_clashes(program, imports, defs, &scope, &mut diagnostics);
     let mut resolver = Resolver {
         defs,
         scope: &scope,
@@ -579,6 +586,93 @@ fn bind_imported(
     }
 }
 
+/// Report two record or enum types of one name that one module would
+/// see: its own and an imported module's, or two imported modules'. The
+/// checker knows a type by its name, so it cannot tell such two apart.
+/// (An earlier REPL cell's type that a cell declares again is replaced,
+/// not a clash.)
+fn report_type_name_clashes(
+    program: &Program,
+    imports: &HashMap<Symbol, Imported<'_>>,
+    defs: &DefTable,
+    scope: &ModuleScope,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let is_type = |id: DefId| matches!(defs.get(id).kind, DefKind::Type(_));
+    // Each type name, with the type and the module it comes from.
+    let mut seen: HashMap<Symbol, (DefId, Option<Symbol>)> = HashMap::new();
+    for decl in &program.decls {
+        if let Decl::Type(td) = decl
+            && let Some(Binding::Def(id)) = scope.types.get(&td.name)
+            && is_type(*id)
+        {
+            seen.insert(td.name, (*id, None));
+        }
+    }
+    let mut reported: HashSet<Symbol> = HashSet::new();
+    for decl in &program.decls {
+        let Decl::Import(target, span) = decl else {
+            continue;
+        };
+        let module = import_module(target);
+        let Some(Imported::Module(_, imported)) = imports.get(&module) else {
+            continue;
+        };
+        let mut types: Vec<(Symbol, DefId)> = imported
+            .exports
+            .types
+            .iter()
+            .filter_map(|(name, b)| match b {
+                Binding::Def(id) if is_type(*id) => Some((*name, *id)),
+                _ => None,
+            })
+            .collect();
+        types.sort_by_key(|(name, _)| resolve(*name));
+        for (name, id) in types {
+            match seen.get(&name).copied() {
+                None => {
+                    seen.insert(name, (id, Some(module)));
+                }
+                Some((other, _)) if other == id => {}
+                Some((other, from)) => {
+                    if !reported.insert(name) {
+                        continue;
+                    }
+                    let other_def = defs.get(other);
+                    let (message, label) = match from {
+                        Some(m) => (
+                            format!("modules '{m}' and '{module}' both declare a type '{name}'"),
+                            format!("module '{m}' imported here"),
+                        ),
+                        None => (
+                            format!(
+                                "module '{module}' declares a type '{name}', as this module does"
+                            ),
+                            "declared here".to_string(),
+                        ),
+                    };
+                    let mut d = Diagnostic::error(
+                        Code::DuplicateDeclaration,
+                        *span,
+                        format!("{message}: one module cannot use two types of one name"),
+                    );
+                    if from.is_none() && other_def.span != Span::BUILTIN {
+                        d = d.with_label(other_def.span, label);
+                    } else if let Some(m) = from
+                        && let Some(Decl::Import(_, import_span)) = program.decls.iter().find(
+                            |decl| matches!(decl, Decl::Import(t, _) if import_module(t) == m),
+                        )
+                    {
+                        d = d.with_label(*import_span, label);
+                    }
+                    d = d.with_help("rename one of the two types");
+                    diagnostics.push(d);
+                }
+            }
+        }
+    }
+}
+
 /// `import m.{ item }` where `m` does not offer `item`.
 fn missing_item(module: Symbol, item: Symbol, span: Span, exports: &Exports) -> Diagnostic {
     if exports.private.contains_key(&item) {
@@ -769,10 +863,12 @@ impl Resolver<'_> {
         if let Some(name) = id.builtin_name() {
             return Some(intern(name));
         }
-        self.imports.iter().find_map(|(name, imported)| match imported {
-            Imported::Module(m, _) | Imported::Cell(m, _) if *m == id => Some(*name),
-            _ => None,
-        })
+        self.imports
+            .iter()
+            .find_map(|(name, imported)| match imported {
+                Imported::Module(m, _) | Imported::Cell(m, _) if *m == id => Some(*name),
+                _ => None,
+            })
     }
 
     /// A top-level value name: the module's own and imported names, the
@@ -978,7 +1074,9 @@ impl Resolver<'_> {
                     self.fn_decl(m);
                 }
             }
-            Decl::Let { pattern, ty, value, .. } => {
+            Decl::Let {
+                pattern, ty, value, ..
+            } => {
                 if let Some(ty) = ty {
                     self.type_expr(ty);
                 }
@@ -1209,7 +1307,13 @@ impl Resolver<'_> {
                 }
                 pattern.res = res;
             }
-            PatternKind::Record { module, name, name_span, fields, .. } => {
+            PatternKind::Record {
+                module,
+                name,
+                name_span,
+                fields,
+                ..
+            } => {
                 let (module, name, name_span) = (*module, *name, *name_span);
                 for (_, _, sub) in fields.iter_mut() {
                     if let Some(sub) = sub {
@@ -1498,11 +1602,18 @@ impl Resolver<'_> {
         {
             return Some(Res::Def(v));
         }
-        self.error(Diagnostic::error(
-            Code::NoSuchVariant,
-            span,
-            format!("enum '{written}' has no variant '{name}'"),
-        ));
+        // The variant of another enum, if the name is one here.
+        let owner = match self.lookup_global_value(name) {
+            Some(Binding::Def(v)) => self.defs.variant_type(v).map(|ty| ty.name),
+            _ => None,
+        };
+        let message = match owner {
+            Some(owner) => {
+                format!("'{name}' is not a variant of enum '{written}' (it belongs to '{owner}')")
+            }
+            None => format!("enum '{written}' has no variant '{name}'"),
+        };
+        self.error(Diagnostic::error(Code::NoSuchVariant, span, message));
         Some(Res::Error)
     }
 
@@ -1732,7 +1843,10 @@ impl Resolver<'_> {
                     self.expr(e);
                 }
             }
-            ExprKind::Match { expr: scrutinee, arms } => {
+            ExprKind::Match {
+                expr: scrutinee,
+                arms,
+            } => {
                 if let Some(s) = scrutinee {
                     self.expr(s);
                 }
@@ -1792,7 +1906,9 @@ impl Resolver<'_> {
             "break" | "continue" => {
                 Some("silt has no 'break'/'continue' — return early or restructure the recursion")
             }
-            "if" => Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'"),
+            "if" => {
+                Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'")
+            }
             "while" | "for" => Some(
                 "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / \
                  'list.map'",
@@ -1935,15 +2051,10 @@ impl Resolver<'_> {
                         span,
                         format!("module '{module_str}' is not imported"),
                     )
-                    .with_help(format!(
-                        "add `import {module_str}` at the top of the file"
-                    ))
+                    .with_help(format!("add `import {module_str}` at the top of the file"))
                     .with_fix(
                         format!("Add import for `{module_str}`"),
-                        vec![(
-                            Span::point(span.file, 0),
-                            format!("import {module_str}\n"),
-                        )],
+                        vec![(Span::point(span.file, 0), format!("import {module_str}\n"))],
                     ),
                 );
                 obj.res = Some(Res::Error);
@@ -1952,6 +2063,12 @@ impl Resolver<'_> {
             None if resolve(head_name) == "self" => {
                 obj.res = Some(Res::Local);
                 None
+            }
+            // `m.x` after `import m.{ ... }` of a module that failed to
+            // load: the failure is reported at the import.
+            None if matches!(self.imports.get(&head_name), Some(Imported::Poisoned)) => {
+                obj.res = Some(Res::Error);
+                Some(Res::Error)
             }
             None => {
                 self.unresolved_value(head_name, head_span);

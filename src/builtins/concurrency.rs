@@ -902,8 +902,8 @@ fn parse_select_ops(ops_list: &[Value]) -> Result<Vec<SelectOp>, VmError> {
             }
             _ => {
                 return Err(VmError::new(
-                    "channel.select list items must be `Recv(ch)` or `Send(ch, value)` \
-                     ChannelOp values"
+                    "channel.select list items must be `channel.Recv(ch)` or \
+                     `channel.Send(ch, value)` ChannelOp values"
                         .into(),
                 ));
             }

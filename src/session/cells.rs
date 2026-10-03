@@ -138,7 +138,10 @@ impl Cells {
                     t.is_pub = true;
                     Kind::Type
                 }
-                Decl::Trait(_) => Kind::Type,
+                Decl::Trait(t) => {
+                    t.is_pub = true;
+                    Kind::Type
+                }
                 Decl::TraitImpl(_) => continue,
                 Decl::Import(ImportTarget::Items(..), _) => Kind::Item,
                 Decl::Import(..) => Kind::Module,

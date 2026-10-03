@@ -348,6 +348,9 @@ pub struct ModuleUnit {
 pub struct ProgramUnits {
     pub modules: Vec<ModuleUnit>,
     pub entry: usize,
+    /// The definitions the resolver's slots name: a variant is compiled
+    /// from its definition. `None` for a compiler with no session.
+    pub defs: Option<Arc<crate::defs::DefTable>>,
     /// For a REPL entry: what the earlier entries left in the VM. Empty
     /// for any other program.
     pub earlier: EarlierCells,
@@ -414,14 +417,10 @@ pub struct Compiler {
     /// exports. Populated during `compile_file_module_inner`; a name that
     /// is a key here is a module (see `names_function_value`).
     module_public_fns: HashMap<String, HashSet<String>>,
-    /// Maps enum type name → set of variant names. Populated as `type`
-    /// declarations are compiled. Used by `FieldAccess` codegen to
-    /// rewrite `EnumName.Variant` into a bare `GetGlobal("Variant")`
-    /// since variants are registered globally by bare name. Also seeded
-    /// from `module::builtin_enum_variants()` at construction so builtin
-    /// enums (Result, Option, IoError, etc.) support the same qualifier
-    /// syntax as user-declared enums.
-    known_enum_variants: HashMap<String, HashSet<String>>,
+    /// The names of the enum types: the builtin ones, and each `type`
+    /// declaration of an enum, collected before the program's code is
+    /// compiled. The json / toml decoders read it.
+    known_enums: HashSet<String>,
     /// Names of known unit (nullary) enum variants — i.e. those
     /// registered globally as `Value::Variant(name, [])`. Used to gate
     /// the bare-variant method-dispatch rewrite: `Red.display()` must
@@ -485,17 +484,12 @@ pub struct Compiler {
     initializing: Option<Symbol>,
 }
 
-/// Seed `known_enum_variants` with the builtin enums. Called from
-/// `Compiler::new` and `for_program` so every compiler instance
-/// recognises `ResultEnum.Ok`, `IoError.IoNotFound`, etc. without
-/// needing a `type` declaration in user code.
-fn initial_known_enum_variants() -> HashMap<String, HashSet<String>> {
-    let mut map = HashMap::new();
-    for (enum_name, variants) in module::builtin_enum_variants() {
-        let set: HashSet<String> = variants.iter().map(|v| (*v).to_string()).collect();
-        map.insert((*enum_name).to_string(), set);
-    }
-    map
+/// The builtin enums, which seed `known_enums`.
+fn initial_known_enums() -> HashSet<String> {
+    module::builtin_enum_variants()
+        .iter()
+        .map(|(enum_name, _)| (*enum_name).to_string())
+        .collect()
 }
 
 /// Seed `known_unit_variants` with all builtin nullary variants. Routes
@@ -545,7 +539,7 @@ impl Compiler {
             in_tail_position: false,
             module_scope: None,
             module_public_fns: HashMap::new(),
-            known_enum_variants: initial_known_enum_variants(),
+            known_enums: initial_known_enums(),
             known_unit_variants: initial_known_unit_variants(),
             top_level_value_globals: HashSet::new(),
             top_level_fn_names: HashSet::new(),
@@ -713,17 +707,15 @@ impl Compiler {
     // ── Declarations ──────────────────────────────────────────────
 
     /// Round 94: pre-pass over the entry program's decls collecting
-    /// top-level `let` binder names into `top_level_value_globals`.
-    /// Top-level lets only accept Ident patterns (see the `Decl::Let`
-    /// arm of `compile_decl`), so a single-name walk suffices. Also
+    /// top-level `let` binder names into `top_level_value_globals`. Also
     /// collects the top-level `fn` names into `top_level_fn_names` and
     /// the program's selective imports (`collect_selective_imports`).
     fn collect_top_level_value_globals(&mut self, program: &Program) {
         for decl in &program.decls {
             match decl {
-                Decl::Let { pattern, .. } => {
-                    if let PatternKind::Ident(name) = &pattern.kind {
-                        self.top_level_value_globals.insert(resolve(*name));
+                Decl::Let { .. } => {
+                    for (name, _, _) in crate::parser::top_level_binders(decl) {
+                        self.top_level_value_globals.insert(resolve(name));
                     }
                 }
                 Decl::Fn(fn_decl) => {
@@ -861,13 +853,11 @@ impl Compiler {
             let type_name = resolve(type_decl.name);
             match &type_decl.body {
                 TypeBody::Enum(variants) => {
-                    let variant_set = self.known_enum_variants.entry(type_name).or_default();
+                    self.known_enums.insert(type_name);
                     for variant in variants {
-                        let variant_name = resolve(variant.name);
                         if variant.fields.is_empty() {
-                            self.known_unit_variants.insert(variant_name.clone());
+                            self.known_unit_variants.insert(resolve(variant.name));
                         }
-                        variant_set.insert(variant_name);
                     }
                 }
                 TypeBody::Record(fields) => {
@@ -992,11 +982,11 @@ impl Compiler {
                         self.current_chunk().emit_op(Op::Pop, span);
                     }
                     _ => {
-                        return Err(Diagnostic::error(
-                            Code::InvalidConstruct,
-                            span,
-                            "unsupported pattern in top-level let",
-                        ));
+                        let globals: Vec<(Symbol, String)> = crate::parser::top_level_binders(decl)
+                            .into_iter()
+                            .map(|(name, _, _)| (name, self.top_level_global(name)))
+                            .collect();
+                        self.install_destructured(pattern, &globals, span)?;
                     }
                 }
 
@@ -1007,17 +997,8 @@ impl Compiler {
                 let span = type_decl.span;
                 match &type_decl.body {
                     crate::ast::TypeBody::Enum(variants) => {
-                        // Track enum-variant mapping so `EnumName.Variant`
-                        // field access can be rewritten to a bare global
-                        // lookup at codegen time.
                         let enum_name = resolve(type_decl.name);
-                        let variant_set = self
-                            .known_enum_variants
-                            .entry(enum_name.clone())
-                            .or_default();
-                        for variant in variants {
-                            variant_set.insert(resolve(variant.name));
-                        }
+                        self.known_enums.insert(enum_name.clone());
 
                         // Register the enum type name as a type descriptor
                         // global so it can be passed as a `type a` argument
@@ -1144,87 +1125,51 @@ impl Compiler {
                 let canonical_target =
                     canonicalize_type_name(self.resolver(), trait_impl.target_type);
 
-                // Auto-derived impls for built-in enums and records
-                // synthesize bodies that reference the target type's
-                // own variants (e.g. `Display for BytesError`'s body
-                // matches `BytesInvalidUtf8`, `BytesOutOfBounds`, ...).
-                // Those names are import-gated under `import bytes`,
-                // but the synth happens unconditionally for every
-                // built-in regardless of which user imports — the
-                // user importing `time` would still see the
-                // `BytesError.display` global registered. To compile
-                // its body without tripping the gate, we temporarily
-                // pretend every builtin module is imported for the
-                // duration of the impl-body compilation. The gate is
-                // restored after the impl is done so the rest of the
-                // user's program sees the original import set.
-                //
-                // This is sound because the synthesized body is the
-                // single source that references those gated variants
-                // — the user's own code still hits the gate.
-                let saved_imports = if trait_impl.is_auto_derived {
-                    let saved = self.imported_builtin_modules.clone();
-                    for &m in module::BUILTIN_MODULES {
-                        self.imported_builtin_modules.insert(m.to_string());
-                    }
-                    Some(saved)
-                } else {
-                    None
-                };
-
-                // Inner closure so we can restore `imported_builtin_modules`
-                // on every exit path (success and error).
-                let result: Result<(), Diagnostic> = (|| {
-                    for method in &trait_impl.methods {
-                        let span = method.span;
-                        if method.params.len() > u8::MAX as usize {
-                            return Err(Diagnostic::error(
-                                Code::CompileLimit,
-                                span,
-                                format!(
-                                    "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
-                                    trait_impl.target_type,
-                                    method.name,
-                                    method.params.len()
-                                ),
-                            ));
-                        }
-                        let arity = method.params.len() as u8;
-                        let qualified_name = format!("{}.{}", canonical_target, method.name);
-
-                        self.contexts
-                            .push(CompileContext::new(qualified_name.clone(), arity));
-
-                        self.compile_params(&method.params, span)?;
-
-                        self.compile_expr(&method.body)?;
-                        self.current_chunk().emit_op(Op::Return, span);
-
-                        let ctx = self.contexts.pop().ok_or(Diagnostic::error(
-                            Code::CompilerBug,
+                for method in &trait_impl.methods {
+                    let span = method.span;
+                    if method.params.len() > u8::MAX as usize {
+                        return Err(Diagnostic::error(
+                            Code::CompileLimit,
                             span,
-                            "compiler bug: missing trait method context",
-                        ))?;
-                        let func = ctx.function;
-                        let vm_closure = Arc::new(VmClosure {
-                            function: Arc::new(func),
-                            upvalues: vec![],
-                        });
-                        let closure_val = Value::VmClosure(vm_closure);
-                        let fi = self.add_constant(closure_val, span)?;
-                        self.current_chunk().emit_op_u16(Op::Constant, fi, span);
-
-                        let name_idx = self.add_constant(Value::String(qualified_name), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetGlobal, name_idx, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
+                            format!(
+                                "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
+                                trait_impl.target_type,
+                                method.name,
+                                method.params.len()
+                            ),
+                        ));
                     }
-                    Ok(())
-                })();
-                if let Some(saved) = saved_imports {
-                    self.imported_builtin_modules = saved;
+                    let arity = method.params.len() as u8;
+                    let qualified_name = format!("{}.{}", canonical_target, method.name);
+
+                    self.contexts
+                        .push(CompileContext::new(qualified_name.clone(), arity));
+
+                    self.compile_params(&method.params, span)?;
+
+                    self.compile_expr(&method.body)?;
+                    self.current_chunk().emit_op(Op::Return, span);
+
+                    let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+                        Code::CompilerBug,
+                        span,
+                        "compiler bug: missing trait method context",
+                    ))?;
+                    let func = ctx.function;
+                    let vm_closure = Arc::new(VmClosure {
+                        function: Arc::new(func),
+                        upvalues: vec![],
+                    });
+                    let closure_val = Value::VmClosure(vm_closure);
+                    let fi = self.add_constant(closure_val, span)?;
+                    self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+
+                    let name_idx = self.add_constant(Value::String(qualified_name), span)?;
+                    self.current_chunk()
+                        .emit_op_u16(Op::SetGlobal, name_idx, span);
+                    self.current_chunk().emit_op(Op::Pop, span);
                 }
-                result
+                Ok(())
             }
 
             Decl::Trait(_) => {
@@ -1234,6 +1179,36 @@ impl Compiler {
 
             Decl::Import(target, span) => self.compile_import(target, *span),
         }
+    }
+
+    /// Install the names a top-level `let` with the destructuring pattern
+    /// `pattern` binds, whose value is on the stack: each binder becomes
+    /// the global `globals` names for it. The pattern is bound as a block's
+    /// `let` would bind it, then each local is copied to its global.
+    fn install_destructured(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        globals: &[(Symbol, String)],
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        self.begin_scope();
+        let val_slot = self.add_local(intern("__let_val__"), span)?;
+        self.current_chunk()
+            .emit_op_u16(Op::SetLocal, val_slot, span);
+        self.compile_pattern_bind_checked(pattern, span)?;
+        for (name, global) in globals {
+            let slot = self.resolve_local(*name).ok_or_else(|| {
+                checker_missed(span, &format!("the binder '{name}' of a top-level let"))
+            })?;
+            self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
+            let idx = self.add_constant(Value::String(global.clone()), span)?;
+            self.current_chunk().emit_op_u16(Op::SetGlobal, idx, span);
+            self.current_chunk().emit_op(Op::Pop, span);
+        }
+        self.current_chunk().emit_op(Op::Unit, span);
+        self.end_scope_with_result(false, span)?;
+        self.current_chunk().emit_op(Op::Pop, span);
+        Ok(())
     }
 
     // ── Import compilation ─────────────────────────────────────────
@@ -1528,12 +1503,10 @@ impl Compiler {
                 Decl::Fn(f) => {
                     all_fn_names.insert(resolve(f.name), f.is_pub);
                 }
-                Decl::Let {
-                    pattern, is_pub, ..
-                } => {
-                    if let PatternKind::Ident(name) = &pattern.kind {
-                        all_fn_names.insert(resolve(*name), *is_pub);
-                        let_names.insert(resolve(*name));
+                Decl::Let { is_pub, .. } => {
+                    for (name, _, _) in crate::parser::top_level_binders(decl) {
+                        all_fn_names.insert(resolve(name), *is_pub);
+                        let_names.insert(resolve(name));
                     }
                 }
                 _ => {}
@@ -1706,23 +1679,31 @@ impl Compiler {
                     span: let_span,
                     ..
                 } => {
-                    let PatternKind::Ident(name) = &pattern.kind else {
-                        return Err(Diagnostic::error(
-                            Code::InvalidConstruct,
-                            *let_span,
-                            "unsupported pattern in top-level let",
-                        ));
+                    let global_of = |name: Symbol| {
+                        if *is_pub {
+                            format!("{global}.{name}")
+                        } else {
+                            format!("__{global}__{name}")
+                        }
                     };
                     self.compile_expr(value)?;
-                    let global_name = if *is_pub {
-                        format!("{global}.{name}")
-                    } else {
-                        format!("__{global}__{name}")
-                    };
-                    let name_idx = self.add_constant(Value::String(global_name), *let_span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::SetGlobal, name_idx, *let_span);
-                    self.current_chunk().emit_op(Op::Pop, *let_span);
+                    match &pattern.kind {
+                        PatternKind::Ident(name) => {
+                            let name_idx =
+                                self.add_constant(Value::String(global_of(*name)), *let_span)?;
+                            self.current_chunk()
+                                .emit_op_u16(Op::SetGlobal, name_idx, *let_span);
+                            self.current_chunk().emit_op(Op::Pop, *let_span);
+                        }
+                        _ => {
+                            let globals: Vec<(Symbol, String)> =
+                                crate::parser::top_level_binders(decl)
+                                    .into_iter()
+                                    .map(|(name, _, _)| (name, global_of(name)))
+                                    .collect();
+                            self.install_destructured(pattern, &globals, *let_span)?;
+                        }
+                    }
                 }
             }
         }
@@ -2010,6 +1991,11 @@ impl Compiler {
                 self.end_scope_with_result(tail, span)?;
             }
 
+            ExprKind::Ident(_) if let Some(variant) = self.variant_value(expr) => {
+                let idx = self.add_constant(variant, span)?;
+                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
             ExprKind::Ident(name) => {
                 if let Some(slot) = self.resolve_local(*name) {
                     self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
@@ -2017,17 +2003,7 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
-                    // Gate constructors that require module imports
                     let name_str = resolve(*name);
-                    if let Some(required) = module::gated_constructor_module(&name_str)
-                        && !self.imported_builtin_modules.contains(required)
-                    {
-                        return Err(Diagnostic::error(
-                            Code::CompileModuleNotImported,
-                            span,
-                            format!("'{name}' requires `import {required}`"),
-                        ));
-                    }
                     // If we're inside a module and this name matches a sibling function,
                     // qualify it so intra-module calls resolve correctly.
                     // Public fns: "module.name", private fns: "__module__name".
@@ -2068,7 +2044,7 @@ impl Compiler {
                     ));
                 }
                 // Check if this is a module-qualified builtin call like list.map(...)
-                if self.qualified_variant(callee).is_none()
+                if self.variant_value(callee).is_none()
                     && let Some(builtin_name) = self.extract_builtin_name(callee)?
                 {
                     self.check_decode_target(&builtin_name, args.last(), span)?;
@@ -2096,15 +2072,13 @@ impl Compiler {
                     } else {
                         false
                     };
-                    // Qualified variant call: `EnumName.Variant(args)`,
-                    // `channel.Message(v)`, `m.Shape.Circle(r)` resolve to
-                    // the variant's bare global constructor. Checked
+                    // A variant's constructor: `Shape.Circle(r)`,
+                    // `channel.Message(v)`, `m.Shape.Circle(r)`. Checked
                     // before the module-call path so enum names aren't
                     // confused with missing module imports.
-                    if let Some(variant_name) = self.qualified_variant(callee) {
-                        let name_idx = self.add_constant(Value::String(variant_name), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::GetGlobal, name_idx, span);
+                    if let Some(variant) = self.variant_value(callee) {
+                        let idx = self.add_constant(variant, span)?;
+                        self.current_chunk().emit_op_u16(Op::Constant, idx, span);
                         self.compile_operands_above(1, args)?;
                         let argc = args.len() as u8;
                         self.emit_call(argc, tail, span);
@@ -2198,14 +2172,12 @@ impl Compiler {
                 }
             }
 
-            // Qualified variant access: `EnumName.Variant`, `time.Monday`,
-            // `m.Color.Red` resolve to the variant's bare global
-            // registration. Checked ahead of the builtin-module gate so
-            // enum names aren't mistaken for missing module imports.
-            ExprKind::FieldAccess(..) if let Some(variant) = self.qualified_variant(expr) => {
-                let name_idx = self.add_constant(Value::String(variant), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::GetGlobal, name_idx, span);
+            // A variant: `EnumName.Variant`, `time.Monday`, `m.Color.Red`.
+            // Checked ahead of the builtin-module gate so enum names
+            // aren't mistaken for missing module imports.
+            ExprKind::FieldAccess(..) if let Some(variant) = self.variant_value(expr) => {
+                let idx = self.add_constant(variant, span)?;
+                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
             }
 
             ExprKind::FieldAccess(expr, field, _) => {
@@ -2987,60 +2959,28 @@ impl Compiler {
 
     // ── Helper: qualified variants ───────────────────────────────
 
-    /// The bare global of the variant a qualified expression names, or
-    /// `None` if it names none: `Shape.Circle` (a known enum's variant),
-    /// `channel.Message` / `time.Monday` (a variant of a builtin enum,
-    /// through its module or an alias of it) and `m.Shape.Circle` (an
-    /// enum reached through a module). Variants are globals by bare name.
-    fn qualified_variant(&self, expr: &Expr) -> Option<String> {
-        let ExprKind::FieldAccess(qualifier, variant, _) = &expr.kind else {
+    /// The value of the variant `expr` names, as the resolver resolved
+    /// it (`Red`, `Color.Red`, `m.Red`, `m.Color.Red`): a nullary variant
+    /// is the value, any other its constructor. Two enums may have
+    /// variants of one name, so a variant is not looked up by its name.
+    fn variant_value(&self, expr: &Expr) -> Option<Value> {
+        let Some(crate::defs::Res::Def(id)) = expr.res else {
             return None;
         };
-        let variant = resolve(*variant);
-        let is_enum_variant = |enum_name: Symbol| {
-            self.known_enum_variants
-                .get(&resolve(enum_name))
-                .is_some_and(|variants| variants.contains(&variant))
+        // A compiler with no session knows the builtin definitions only.
+        let def = match &self.units.defs {
+            Some(defs) => defs.get(id).clone(),
+            None => crate::typechecker::names::builtin_def(id)?,
         };
-        match &qualifier.kind {
-            ExprKind::Ident(name) if self.names_global_scope(*name) => {
-                if is_enum_variant(*name) {
-                    return Some(variant);
-                }
-                let name_str = resolve(*name);
-                let module = if module::is_builtin_module(&name_str) {
-                    Some(name_str.as_str())
-                } else {
-                    self.imported_builtin_module_aliases
-                        .get(&name_str)
-                        .map(String::as_str)
-                };
-                module
-                    .filter(|module| self.imported_builtin_modules.contains(*module))
-                    .filter(|module| module::builtin_variant_module(&variant) == Some(module))
-                    .map(|_| variant.clone())
-            }
-            ExprKind::FieldAccess(module, enum_name, _) => match &module.kind {
-                ExprKind::Ident(module) if self.names_global_scope(*module) => {
-                    is_enum_variant(*enum_name).then_some(variant)
-                }
-                _ => None,
-            },
-            _ => None,
-        }
+        let crate::defs::DefKind::Variant { arity, .. } = def.kind else {
+            return None;
+        };
+        let name = resolve(def.name);
+        Some(match arity {
+            0 => Value::Variant(name, Vec::new()),
+            n => Value::VariantConstructor(name, n as usize),
+        })
     }
-
-    /// Whether the identifier `name` names something of the global scope
-    /// (a module or a type) rather than a local, an upvalue, a top-level
-    /// `let`, or a function value.
-    fn names_global_scope(&self, name: Symbol) -> bool {
-        self.resolve_local(name).is_none()
-            && self.resolve_upvalue_peek(name).is_none()
-            && !self.top_level_value_globals.contains(&resolve(name))
-            && !self.names_function_value(name)
-    }
-
-    // ── Helper: extract builtin name ─────────────────────────────
 
     /// If the callee is a module-qualified builtin (e.g., `list.map`),
     /// return the qualified name. Only returns Some if the ident is NOT a
@@ -3165,7 +3105,7 @@ impl Compiler {
             // return `Err` if no record of that name exists at run time.
             (_, [])
                 if name_str.starts_with(|c: char| c.is_uppercase())
-                    && !self.known_enum_variants.contains_key(&name_str)
+                    && !self.known_enums.contains(&name_str)
                     && crate::types::builtins::lookup(&name_str).is_none()
                     && self
                         .record_decls
@@ -3281,7 +3221,7 @@ impl Compiler {
             )
             .with_help(DECODABLE_TYPES_HELP));
         }
-        if self.known_enum_variants.contains_key(&type_name) {
+        if self.known_enums.contains(&type_name) {
             return Err(Diagnostic::error(
                 Code::InvalidConstruct,
                 span,

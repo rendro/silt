@@ -124,7 +124,7 @@ pub fn feature_gated_stdlib_type(name: &str) -> Option<&'static str> {
 /// enums `Step`, `ChannelResult` and `ChannelOp`): `time` for `Weekday`,
 /// `http` for `Request`. `None` for the prelude types and for any other
 /// name. A module's types are reached as `time.Weekday`; their variants
-/// as `time.Monday` (see [`gated_constructor_module`]).
+/// as `time.Monday` (see [`builtin_variant_module`]).
 pub fn builtin_type_module(name: &str) -> Option<&'static str> {
     match name {
         "Step" => Some("list"),
@@ -172,61 +172,12 @@ pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)
 }
 
-/// Returns the module that must be imported for a gated constructor to be available.
-/// Returns `None` for prelude constructors (Ok, Err, Some, None) that are always available.
-pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
-    match name {
-        "Stop" | "Continue" => Some("list"),
-        "Message" | "Closed" | "Empty" | "Sent" => Some("channel"),
-        "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" => {
-            Some("time")
-        }
-        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => Some("http"),
-        // Stdlib typed-error enums. Each module's error variants
-        // require that module to be imported before they can be
-        // constructed. See
-        // `module.rs::builtin_error_enum_variants_with_arity` for
-        // Phase 0 background.
-        "IoNotFound" | "IoPermissionDenied" | "IoAlreadyExists" | "IoInvalidInput"
-        | "IoInterrupted" | "IoUnexpectedEof" | "IoWriteZero" | "IoUnknown" => Some("io"),
-        "JsonSyntax" | "JsonTypeMismatch" | "JsonMissingField" | "JsonUnknown" => Some("json"),
-        "TomlSyntax" | "TomlTypeMismatch" | "TomlMissingField" | "TomlUnknown" => Some("toml"),
-        // ParseError is shared between int and float. Arbitrary
-        // routing pick: int. Users importing `float` can still
-        // destructure these variants in a match once constructed.
-        "ParseEmpty" | "ParseInvalidDigit" | "ParseOverflow" | "ParseUnderflow" => Some("int"),
-        "HttpConnect"
-        | "HttpTls"
-        | "HttpTimeout"
-        | "HttpInvalidUrl"
-        | "HttpInvalidResponse"
-        | "HttpClosedEarly"
-        | "HttpStatusCode"
-        | "HttpUnknown" => Some("http"),
-        "RegexInvalidPattern" | "RegexTooBig" => Some("regex"),
-        "PgConnect" | "PgTls" | "PgAuthFailed" | "PgQuery" | "PgTypeMismatch"
-        | "PgNoSuchColumn" | "PgClosed" | "PgTimeout" | "PgTxnAborted" | "PgUnknown" => {
-            Some("postgres")
-        }
-        "TcpConnect" | "TcpTls" | "TcpClosed" | "TcpTimeout" | "TcpUnknown" => Some("tcp"),
-        "TimeParseFormat" | "TimeOutOfRange" => Some("time"),
-        "BytesInvalidUtf8"
-        | "BytesInvalidHex"
-        | "BytesInvalidBase64"
-        | "BytesByteOutOfRange"
-        | "BytesOutOfBounds" => Some("bytes"),
-        "ChannelTimeout" | "ChannelClosed" => Some("channel"),
-        _ => None,
-    }
-}
-
-/// Returns the set of builtin enums known to the compiler as
-/// `(enum_name, variant_names)` pairs. Seeds the compiler's
-/// `known_enum_variants` map so `EnumName.Variant` qualifier syntax
-/// compiles to a bare `GetGlobal("Variant")`, matching how the same
-/// rewrite already works for user-declared enums.
+/// Returns the set of builtin enums as `(enum_name, variant_names)`
+/// pairs. Seeds the compiler's `known_enum_variants` map, which tells the
+/// json / toml decoders which types are enums.
 ///
-/// Includes both prelude enums (Result, Option) and gated enums.
+/// Includes both the prelude enums (Result, Option) and the enums of
+/// the builtin modules.
 /// Keep in sync with `src/typechecker/builtins/errors.rs` enum registrations
 /// and `src/vm/dispatch.rs` variant globals.
 pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static str])] {

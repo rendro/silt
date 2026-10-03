@@ -7,7 +7,6 @@
 use crate::ast::{Pattern, PatternKind};
 use crate::bytecode::Op;
 use crate::intern::{Symbol, intern, resolve};
-use crate::module;
 use crate::source::Span;
 use crate::value::Value;
 
@@ -78,17 +77,7 @@ impl Compiler {
             PatternKind::Constructor {
                 name, args: fields, ..
             } => {
-                // Gate constructors that require module imports
                 let name_str = resolve(*name);
-                if let Some(required) = module::gated_constructor_module(&name_str)
-                    && !self.imported_builtin_modules.contains(required)
-                {
-                    return Err(Diagnostic::error(
-                        Code::CompileModuleNotImported,
-                        span,
-                        format!("'{name}' requires `import {required}`"),
-                    ));
-                }
                 // Test: tag matches?
                 let idx = self.add_constant(Value::String(name_str), span)?;
                 self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
@@ -536,15 +525,6 @@ impl Compiler {
                 name, args: fields, ..
             } => {
                 let name_str = resolve(*name);
-                if let Some(required) = module::gated_constructor_module(&name_str)
-                    && !self.imported_builtin_modules.contains(required)
-                {
-                    return Err(Diagnostic::error(
-                        Code::CompileModuleNotImported,
-                        span,
-                        format!("'{name}' requires `import {required}`"),
-                    ));
-                }
                 let idx = self.add_constant(Value::String(name_str), span)?;
                 self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
                 let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);

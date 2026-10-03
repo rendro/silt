@@ -192,8 +192,6 @@ codes! {
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;
     ImportCycle = "E0402", Compile;
-    /// A builtin module used without an import, found by the compiler.
-    CompileModuleNotImported = "E0404", Compile;
     /// Something the bytecode cannot express: too many constants, locals,
     /// arguments, a jump too far.
     CompileLimit = "E0405", Compile;
@@ -917,6 +915,7 @@ mod tests {
             let expected = match code.phase() {
                 Phase::Lex => &["0"][..],
                 Phase::Parse => &["1"],
+                Phase::Resolve => &["2"],
                 Phase::Type => &["3"],
                 Phase::Compile => &["4", "5"],
                 Phase::Package => &["6"],

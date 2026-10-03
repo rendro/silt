@@ -76,6 +76,9 @@ use crate::source::Span;
 /// runtime error inside a derived method points at the type.
 pub(super) struct Derive {
     pub(super) span: Span,
+    /// The type the impls are for. A variant pattern is written with it
+    /// (`Shape.Circle(r)`): two enums may have variants of one name.
+    pub(super) ty: Symbol,
 }
 
 impl Derive {
@@ -90,7 +93,10 @@ impl Derive {
     fn ctor_pat(&self, name: Symbol, args: Vec<Pattern>) -> Pattern {
         Pattern::new(
             PatternKind::Constructor {
-                qualifier: Vec::new(),
+                qualifier: vec![Qualifier {
+                    name: self.ty,
+                    span: self.span,
+                }],
                 name,
                 name_span: self.span,
                 args,

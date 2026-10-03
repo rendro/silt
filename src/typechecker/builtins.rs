@@ -892,7 +892,7 @@ impl TypeChecker {
         //
         // Attach the inlined markdown for the globals (`println`,
         // `print`, `panic`, `Ok`/`Err`/`Some`/`None`, plus the
-        // import-gated constructors `Stop`/`Continue`/`Message`/
+        // builtin modules' constructors `Stop`/`Continue`/`Message`/
         // `Closed`/`Empty`/`Sent`/`Recv`/`Send`) and the regex
         // module — those names are registered here in this file
         // rather than in a per-module submodule, so the attach

@@ -481,8 +481,12 @@ pub struct ModuleExports {
     pub(super) aliases: Vec<Symbol>,
     /// Type-parameter arity for each alias (parallel to `aliases`).
     pub(super) alias_arity: Vec<usize>,
-    /// `pub trait T { ... }` snapshots.
+    /// `trait T { ... }` snapshots: every trait, since the module's impls
+    /// of them are program-wide.
     pub(super) traits: Vec<(Symbol, TraitInfo)>,
+    /// The traits declared without `pub`: their methods can be called
+    /// only in the module.
+    pub(super) private_traits: Vec<Symbol>,
     /// Variant → enum name map for every pub enum's variants. Used so
     /// `a.Red` resolves to the same variant the producer saw.
     pub(super) variant_to_enum: Vec<(Symbol, Symbol)>,
@@ -493,18 +497,13 @@ pub struct ModuleExports {
     /// Record type → param TyVar ids, mirroring
     /// `record_param_var_ids` in the producer's TypeChecker.
     pub(super) record_param_var_ids: Vec<(Symbol, Vec<TyVar>)>,
-    /// Variant constructor schemes — bound under bare names by the
-    /// producer (`Red: () -> Color`, `Some(a) -> Option(a)`). Stored
-    /// here so the importer can re-bind them under both bare and
-    /// qualified-by-module names.
-    pub(super) variant_schemes: Vec<(Symbol, Scheme)>,
+    /// Variant constructor schemes, by (enum, variant): the importer
+    /// binds each as `Enum.Variant` and as `m.Variant`.
+    pub(super) variant_schemes: Vec<((Symbol, Symbol), Scheme)>,
     /// Type-name schemes registered for first-class type values
     /// (`TypeOf(EnumName)`, `TypeOf(RecordName)`) — mirrors what the
     /// producer's register_type_decl bound under the type's bare name.
     pub(super) type_name_schemes: Vec<(Symbol, Scheme)>,
-    /// The functions the module declares without `pub`, so that a use of
-    /// one from an importer is told it is private rather than missing.
-    pub(super) private_fns: Vec<Symbol>,
 }
 
 /// Snapshot of one `(trait_name, target_type)` impl in the producer's
@@ -545,44 +544,12 @@ pub struct TypeChecker {
     pub(super) enums: HashMap<Symbol, EnumInfo>,
     /// Maps variant constructor name -> parent enum type name.
     pub(super) variant_to_enum: HashMap<Symbol, Symbol>,
-    /// For an enum some of whose variants a declaration of this file
-    /// shadows, the span of the first such declaration's variant. The
-    /// derived impls of a builtin enum are checked with bare variant
-    /// names, so a diagnostic they cause belongs to the declaration that
-    /// shadows them.
-    pub(super) shadowed_enums: HashMap<Symbol, Span>,
     /// For a type an import brought in, the span of that import: a
     /// diagnostic about the type's derived impls, which no file of this
     /// program declares, belongs to it.
     pub(super) imported_type_spans: HashMap<Symbol, Span>,
     /// Declared record types (type name -> record info).
     pub(super) records: HashMap<Symbol, RecordInfo>,
-    /// Round 94: module-qualified type mirrors. Keys are interned
-    /// `"prefix.Name"` where `prefix` is the spelling the importer uses
-    /// (module name or `import ... as` alias); values are the PRODUCER
-    /// module's infos. They back qualified record literals
-    /// (`util.Pt { .. }`) and qualified patterns (`shapes.Circle(r)`,
-    /// `util.Pt { x }`), and in particular keep working when a bare-name
-    /// conflict made the `or_insert` merge into `records` / `enums`
-    /// keep a DIFFERENT module's same-named type — the qualifier is
-    /// exactly how the user disambiguates. Kept in separate maps (not
-    /// dotted keys inside `records` / `enums`) so bare-name iteration
-    /// sites (exhaustiveness witness synthesis, suggestions,
-    /// auto-derive) never see qualified entries. Cleared per
-    /// `check_program` run alongside `imported_modules`.
-    pub(super) qualified_records: HashMap<Symbol, RecordInfo>,
-    /// Round 94: qualified mirror of `record_param_var_ids`, keyed like
-    /// `qualified_records`.
-    pub(super) qualified_record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
-    /// Round 94: qualified mirror of `enums` (`"prefix.EnumName"` keys).
-    pub(super) qualified_enums: HashMap<Symbol, EnumInfo>,
-    /// Round 94: maps `"prefix.Variant"` → the owning enum's BARE name.
-    /// The bare name is the enum's type identity (`Type::Generic(bare,
-    /// ..)` — two modules' same-named enums are conflated at the type
-    /// level, see `merge_imported_module_exports`); the matching
-    /// `EnumInfo` for field types lives in `qualified_enums` under
-    /// `"prefix.<bare>"`.
-    pub(super) qualified_variant_to_enum: HashMap<Symbol, Symbol>,
     /// Declared traits.
     pub(super) traits: HashMap<Symbol, TraitInfo>,
     /// Method table: (type_name, method_name) → method entry.
@@ -775,25 +742,12 @@ pub struct TypeChecker {
     /// `__builtin__`) so the orphan rule never trips on a program that
     /// has no package context.
     pub(super) current_package: Option<Symbol>,
-    /// Round 56 item 4: the set of module names visible through `import`
-    /// statements in the current program. Populated at the start of
-    /// `check()`. Used by the `FieldAccess` path to decide whether
-    /// `list.sum(...)` should typecheck or emit an
-    /// "module 'X' is not imported" error. Stdlib
-    /// module names (`list`, `string`, ...) have all their qualified
-    /// members pre-registered in the environment, so without this
-    /// gate they'd typecheck silently even when never imported; the
-    /// compiler would then emit the import-recommendation at its own
-    /// layer but the typechecker said nothing. The audit decision
-    /// (round 52 item 4) is that stdlib should be opaque until
-    /// imported, so this gate fires at typecheck time.
-    ///
-    /// Entries:
-    ///   - `import list` / `import list.{sum}` → contains `list`.
-    ///   - `import list as l` → contains `l` (alias), NOT `list` —
-    ///     the user renamed the module, so its original name is no
-    ///     longer in scope.
-    pub(super) imported_modules: std::collections::HashSet<Symbol>,
+    /// The session's definitions, which the resolver's `Res` slots
+    /// name. `None` for a checker that has no program (the builtins).
+    pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
+    /// The traits imported modules declare without `pub`, each with its
+    /// module: their methods cannot be called here.
+    pub(super) private_traits: HashMap<Symbol, Symbol>,
     /// Cross-module typechecking (round 64 item 6A): exports from
     /// previously-typechecked sibling modules, keyed by module name as
     /// it appears in `import` statements. Populated by callers (the
@@ -806,19 +760,9 @@ pub struct TypeChecker {
     /// module binds its names silently, and a use of them through it
     /// (`m.x`, an imported item) is not checked, so nothing cascades.
     pub(super) poisoned_modules: std::collections::HashSet<Symbol>,
-    /// The names the imports of poisoned modules bind: the module name
-    /// or alias, or the items. Nothing is reported about them.
-    pub(super) poisoned_names: std::collections::HashSet<Symbol>,
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
-    /// For each name an imported user module is reached by (its name or
-    /// alias), the module and the functions it declares without `pub`.
-    pub(super) imported_private_fns: HashMap<Symbol, (Symbol, Vec<Symbol>)>,
-    /// For each name an imported module is reached by in a qualified
-    /// type, trait or pattern head (its name or alias), the module.
-    /// Builtin and user modules alike; cleared with `imported_modules`.
-    pub(super) module_prefixes: HashMap<Symbol, Symbol>,
     /// The builtin types whose derived impls the builtin environment
     /// holds already, so a check does not derive them again.
     pub(super) builtin_derived: std::collections::HashSet<Symbol>,
@@ -884,13 +828,8 @@ impl TypeChecker {
             next_var: 0,
             enums: HashMap::new(),
             variant_to_enum: HashMap::new(),
-            shadowed_enums: HashMap::new(),
             imported_type_spans: HashMap::new(),
             records: HashMap::new(),
-            qualified_records: HashMap::new(),
-            qualified_record_param_var_ids: HashMap::new(),
-            qualified_enums: HashMap::new(),
-            qualified_variant_to_enum: HashMap::new(),
             traits: HashMap::new(),
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
@@ -921,13 +860,11 @@ impl TypeChecker {
             tyvar_trait_constraints: HashMap::new(),
             last_field_access_was_method: false,
             current_package: None,
-            imported_modules: std::collections::HashSet::new(),
+            defs: None,
+            private_traits: HashMap::new(),
             module_exports: HashMap::new(),
             poisoned_modules: std::collections::HashSet::new(),
-            poisoned_names: std::collections::HashSet::new(),
             signatures_only: false,
-            imported_private_fns: HashMap::new(),
-            module_prefixes: HashMap::new(),
             builtin_derived: std::collections::HashSet::new(),
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
@@ -2546,15 +2483,33 @@ impl TypeChecker {
     // ── Error reporting ─────────────────────────────────────────────
 
     /// Where the derived impls of `type_name`, a type no declaration of
-    /// this file makes, are checked: at the first declaration that shadows
-    /// one of its variants, else at the import that brought it in, else
-    /// nowhere (a builtin type).
+    /// this file makes, are checked: at the import that brought it in,
+    /// else nowhere (a builtin type).
     fn derive_span(&self, type_name: Symbol) -> Span {
-        self.shadowed_enums
+        self.imported_type_spans
             .get(&type_name)
-            .or_else(|| self.imported_type_spans.get(&type_name))
             .copied()
             .unwrap_or(Span::BUILTIN)
+    }
+
+    // ── Resolved names ──────────────────────────────────────────────
+
+    /// The definition a resolver slot names, if it names one.
+    pub(super) fn res_def(&self, res: Option<crate::defs::Res>) -> Option<&crate::defs::Def> {
+        match (res, &self.defs) {
+            (Some(crate::defs::Res::Def(id)), Some(defs)) => Some(defs.get(id)),
+            _ => None,
+        }
+    }
+
+    /// The enum a resolver slot naming a variant names it of.
+    pub(super) fn res_variant_enum(&self, res: Option<crate::defs::Res>) -> Option<Symbol> {
+        match (res, &self.defs) {
+            (Some(crate::defs::Res::Def(id)), Some(defs)) => {
+                defs.variant_type(id).map(|ty| ty.name)
+            }
+            _ => None,
+        }
     }
 
     /// The quick fix for a value where a `Result` is expected: wrap the
@@ -2670,214 +2625,6 @@ impl TypeChecker {
         }
     }
 
-    /// Bind `item`, imported from a module that failed to load, so that
-    /// nothing is reported about it: its value has the error type, which
-    /// unifies with anything and takes any field, method or call, and as a
-    /// type it is the error type with any arguments.
-    fn bind_poisoned_name(&mut self, item: Symbol, env: &mut TypeEnv) {
-        self.poisoned_names.insert(item);
-        env.define(item, Scheme::mono(Type::Error));
-    }
-
-    // ── Qualified names: members of an imported module ──────────────
-
-    /// Bind the types and variants of the builtin module `module`,
-    /// imported under `prefix` (its name or alias): `time.Monday` and
-    /// `channel.Message` as values, and the qualified mirrors that
-    /// patterns (`channel.Message(v)`), record literals
-    /// (`http.Response { .. }`) and type positions (`time.Weekday`) read.
-    fn import_builtin_module_members(&mut self, module: Symbol, prefix: Symbol, env: &mut TypeEnv) {
-        self.module_prefixes.insert(prefix, module);
-        let qualified = |name: Symbol| intern(&format!("{prefix}.{name}"));
-        let module_str = resolve(module);
-        for ty in crate::module::builtin_module_type_names(&module_str).map(intern) {
-            if let Some(scheme) = env.lookup(ty).cloned() {
-                env.define(qualified(ty), scheme);
-            }
-            if let Some(info) = self.enums.get(&ty).cloned() {
-                for variant in &info.variants {
-                    if let Some(scheme) = env.lookup(variant.name).cloned() {
-                        env.define(qualified(variant.name), scheme);
-                    }
-                    self.qualified_variant_to_enum
-                        .insert(qualified(variant.name), ty);
-                }
-                self.qualified_enums.insert(qualified(ty), info);
-            }
-            if let Some(info) = self.records.get(&ty).cloned() {
-                self.qualified_records.insert(qualified(ty), info);
-                if let Some(ids) = self.record_param_var_ids.get(&ty).cloned() {
-                    self.qualified_record_param_var_ids
-                        .insert(qualified(ty), ids);
-                }
-            }
-        }
-    }
-
-    /// The types (enums, records and aliases) or the traits the imported
-    /// module `module` declares.
-    fn module_members(&self, module: Symbol, traits: bool) -> Vec<Symbol> {
-        let module_str = resolve(module);
-        if crate::module::is_builtin_module(&module_str) {
-            if traits {
-                return Vec::new();
-            }
-            return crate::module::builtin_module_type_names(&module_str)
-                .map(intern)
-                .filter(|ty| self.enums.contains_key(ty) || self.records.contains_key(ty))
-                .collect();
-        }
-        let Some(exports) = self.module_exports.get(&module) else {
-            return Vec::new();
-        };
-        if traits {
-            return exports.traits.iter().map(|(name, _)| *name).collect();
-        }
-        exports
-            .enums
-            .iter()
-            .map(|(name, _)| *name)
-            .chain(exports.records.iter().map(|(name, _)| *name))
-            .chain(exports.aliases.iter().copied())
-            .collect()
-    }
-
-    /// Check the qualifier of the type `module.name` written in a type
-    /// position or as an impl target: `module` must be an imported module
-    /// (or alias) that declares a type `name`. Reports and returns false
-    /// otherwise; a module that failed to load reports nothing more. The
-    /// type is then the one its bare name names.
-    pub(super) fn check_qualified_type(
-        &mut self,
-        module: Qualifier,
-        name: Symbol,
-        name_span: Span,
-    ) -> bool {
-        self.check_qualified_member(module, name, name_span, false)
-    }
-
-    /// [`Self::check_qualified_type`] for a trait: `trait m.Describe for T`,
-    /// `where a: m.Describe`, a supertrait or an associated-type bound.
-    pub(super) fn check_qualified_trait(
-        &mut self,
-        module: Qualifier,
-        name: Symbol,
-        name_span: Span,
-    ) -> bool {
-        self.check_qualified_member(module, name, name_span, true)
-    }
-
-    fn check_qualified_member(
-        &mut self,
-        module: Qualifier,
-        name: Symbol,
-        name_span: Span,
-        trait_member: bool,
-    ) -> bool {
-        if self.poisoned_names.contains(&module.name) {
-            return false;
-        }
-        let what = if trait_member { "trait" } else { "type" };
-        let Some(target) = self.module_prefixes.get(&module.name).copied() else {
-            let module_str = resolve(module.name);
-            if crate::module::is_builtin_module(&module_str) {
-                self.error_help(
-                    Code::ModuleNotImported,
-                    (
-                        format!("module '{module_str}' is not imported"),
-                        Some(format!("add `import {module_str}` at the top of the file")),
-                    ),
-                    module.span,
-                );
-            } else {
-                let code = if trait_member {
-                    Code::UnknownTrait
-                } else {
-                    Code::UndefinedType
-                };
-                self.error(
-                    code,
-                    format!(
-                        "undefined {what} '{module_str}.{name}' — no module '{module_str}' in \
-                         scope; import it with `import {module_str}`"
-                    ),
-                    module.span,
-                );
-            }
-            return false;
-        };
-        let members = self.module_members(target, trait_member);
-        if members.contains(&name) {
-            return true;
-        }
-        // A trait no module declares is reported where the trait is used,
-        // by its bare name.
-        if trait_member && !self.traits.contains_key(&name) {
-            return false;
-        }
-        let candidates: Vec<String> = members.iter().map(|m| resolve(*m)).collect();
-        let help = suggest::suggest_similar(&resolve(name), candidates.iter())
-            .map(|cand| format!("did you mean `{cand}`?"));
-        self.error_help(
-            Code::UnknownModuleMember,
-            (
-                format!("module '{}' has no {what} '{name}'", module.name),
-                help,
-            ),
-            name_span,
-        );
-        false
-    }
-
-    /// Check the module qualifiers of the trait references and impl
-    /// targets of `program` (types inside them are checked where they are
-    /// resolved). A qualified name means the same as its bare name.
-    pub(super) fn check_qualified_trait_refs(&mut self, program: &Program) {
-        fn where_refs(
-            clauses: &[WhereClause],
-        ) -> impl Iterator<Item = (Option<Qualifier>, Symbol, Span)> + '_ {
-            clauses
-                .iter()
-                .map(|wc| (wc.trait_module, wc.trait_name, wc.trait_name_span))
-        }
-        let mut traits: Vec<(Option<Qualifier>, Symbol, Span)> = Vec::new();
-        let mut types: Vec<(Qualifier, Symbol, Span)> = Vec::new();
-        for decl in &program.decls {
-            match decl {
-                Decl::Fn(f) => traits.extend(where_refs(&f.where_clauses)),
-                Decl::Trait(t) => {
-                    traits.extend(t.supertraits.iter().map(|r| (r.module, r.name, r.span)));
-                    for assoc in &t.assoc_types {
-                        traits.extend(assoc.bounds.iter().map(|r| (r.module, r.name, r.span)));
-                    }
-                    traits.extend(where_refs(&t.param_where_clauses));
-                    for m in &t.methods {
-                        traits.extend(where_refs(&m.where_clauses));
-                    }
-                }
-                Decl::TraitImpl(ti) => {
-                    traits.push((ti.trait_module, ti.trait_name, ti.trait_name_span));
-                    if let Some(module) = ti.target_module {
-                        types.push((module, ti.target_type, ti.target_type_span));
-                    }
-                    traits.extend(where_refs(&ti.where_clauses));
-                    for m in &ti.methods {
-                        traits.extend(where_refs(&m.where_clauses));
-                    }
-                }
-                Decl::Type(_) | Decl::Import(..) | Decl::Let { .. } => {}
-            }
-        }
-        for (module, name, span) in traits {
-            if let Some(module) = module {
-                self.check_qualified_trait(module, name, span);
-            }
-        }
-        for (module, name, span) in types {
-            self.check_qualified_type(module, name, span);
-        }
-    }
-
     // ── Cross-module exports (round 64 item 6A) ─────────────────────
 
     /// Merge the producer-side snapshot for `module_sym` into this
@@ -2890,9 +2637,10 @@ impl TypeChecker {
     /// Caller-provided `qualified_prefix` is the symbol the consumer
     /// uses to reach the module — `module` for `import a` (=`"a"`),
     /// `alias` for `import a as al` (=`"al"`). Schemes are bound under
-    /// `prefix.name`. `bind_bare` controls whether to also bind the
-    /// bare name (used for `import a.{ id, add }` which copies under
-    /// the bare item name into env).
+    /// `prefix.name`, a variant under `Enum.Variant`; the module's types,
+    /// traits and impls join this checker's tables by their names. No
+    /// bare name is bound: the resolver decided what each written name
+    /// means, and the caller binds the items of `import a.{ ... }`.
     ///
     /// Returns `true` if `module_sym` was found in `self.module_exports`,
     /// `false` if the module is unknown (caller falls back to its
@@ -2907,8 +2655,6 @@ impl TypeChecker {
         let Some(exports) = self.module_exports.get(&module_sym).cloned() else {
             return false;
         };
-        self.imported_private_fns
-            .insert(qualified_prefix, (module_sym, exports.private_fns.clone()));
         let type_names = exports.enums.iter().map(|(n, _)| *n);
         for name in type_names.chain(exports.records.iter().map(|(n, _)| *n)) {
             self.imported_type_spans.entry(name).or_insert(import_span);
@@ -3034,51 +2780,21 @@ impl TypeChecker {
                 variants: new_variants,
                 defined_in: info.defined_in,
             };
-            // Round 94: qualified mirror first (the bare merge below
-            // moves `new_info`). `insert`, not `or_insert`: the prefix
-            // is unique per import spelling, and re-importing the same
-            // module under the same prefix re-registers identical data.
-            self.qualified_enums.insert(
-                intern(&format!("{prefix_str}.{}", resolve(*name))),
-                new_info.clone(),
-            );
             self.enums.entry(*name).or_insert(new_info);
         }
 
-        // Merge variant_to_enum.
-        for (variant, enum_name) in &exports.variant_to_enum {
-            // Round 94: `prefix.Variant` → bare owning-enum name, so
-            // qualified variant PATTERNS (`shapes.Circle(r)`) resolve
-            // against this module's enum even when the bare entry below
-            // was claimed by an earlier import's same-named variant.
-            self.qualified_variant_to_enum.insert(
-                intern(&format!("{prefix_str}.{}", resolve(*variant))),
-                *enum_name,
-            );
-            self.variant_to_enum.entry(*variant).or_insert(*enum_name);
-        }
-
-        // Merge variant schemes (under bare name AND qualified `prefix.Variant`).
-        for (name, scheme) in &exports.variant_schemes {
+        // Variant constructors, under `Enum.Variant`, and under
+        // `prefix.Variant` for the expression `m.Red`.
+        for ((enum_name, name), scheme) in &exports.variant_schemes {
             let new_scheme = remap_scheme(scheme, &tv_remap, &ty_remap);
-            let bare = *name;
-            // Bind bare so pattern matching `Red` still works.
-            if env.lookup(bare).is_none() {
-                env.define(bare, new_scheme.clone());
-            }
-            let qualified = intern(&format!("{prefix_str}.{}", resolve(bare)));
-            env.define(qualified, new_scheme);
+            env.define(intern(&format!("{enum_name}.{name}")), new_scheme.clone());
+            env.define(intern(&format!("{prefix_str}.{name}")), new_scheme);
         }
 
-        // Merge type-name schemes under both bare and qualified
-        // (so `module.Color` referenced as a value works too).
+        // Types as values (`json.parse(s, m.Pt)`).
         for (name, scheme) in &exports.type_name_schemes {
             let new_scheme = remap_scheme(scheme, &tv_remap, &ty_remap);
-            if env.lookup(*name).is_none() {
-                env.define(*name, new_scheme.clone());
-            }
-            let qualified = intern(&format!("{prefix_str}.{}", resolve(*name)));
-            env.define(qualified, new_scheme);
+            env.define(intern(&format!("{prefix_str}.{name}")), new_scheme);
         }
 
         // Merge records.
@@ -3092,23 +2808,12 @@ impl TypeChecker {
                 fields: new_fields,
                 defined_in: info.defined_in,
             };
-            // Round 94: qualified mirror so `prefix.Pt { .. }` (literal
-            // and pattern forms) resolves against THIS module's fields
-            // even when the bare entry was claimed by an earlier import.
-            self.qualified_records.insert(
-                intern(&format!("{prefix_str}.{}", resolve(*name))),
-                new_info.clone(),
-            );
             self.records.entry(*name).or_insert(new_info);
         }
 
         // Merge record_param_var_ids.
         for (name, ids) in &exports.record_param_var_ids {
             let remapped: Vec<TyVar> = ids.iter().map(|v| *tv_remap.get(v).unwrap_or(v)).collect();
-            self.qualified_record_param_var_ids.insert(
-                intern(&format!("{prefix_str}.{}", resolve(*name))),
-                remapped.clone(),
-            );
             self.record_param_var_ids.entry(*name).or_insert(remapped);
         }
 
@@ -3121,6 +2826,9 @@ impl TypeChecker {
             }
         }
 
+        for name in &exports.private_traits {
+            self.private_traits.insert(*name, module_sym);
+        }
         // Merge traits.
         for (name, info) in &exports.traits {
             let new_param_ids: Vec<TyVar> = info
@@ -3270,10 +2978,10 @@ impl TypeChecker {
             exports.enums.push((*name, info.clone()));
             for variant in &info.variants {
                 exports.variant_to_enum.push((variant.name, *name));
-                if self.variant_to_enum.get(&variant.name) == Some(name)
-                    && let Some(scheme) = env.lookup(variant.name)
-                {
-                    exports.variant_schemes.push((variant.name, scheme.clone()));
+                if let Some(scheme) = env.lookup(intern(&format!("{name}.{}", variant.name))) {
+                    exports
+                        .variant_schemes
+                        .push(((*name, variant.name), scheme.clone()));
                 }
             }
             if let Some(scheme) = env.lookup(*name) {
@@ -3350,16 +3058,11 @@ impl TypeChecker {
                         exports.schemes.push((f.name, scheme.clone()));
                     }
                 }
-                Decl::Fn(f) => exports.private_fns.push(f.name),
-                Decl::Let {
-                    pattern,
-                    is_pub: true,
-                    ..
-                } => {
-                    if let PatternKind::Ident(name) = &pattern.kind
-                        && let Some(scheme) = env.lookup(*name)
-                    {
-                        exports.schemes.push((*name, scheme.clone()));
+                Decl::Let { is_pub: true, .. } => {
+                    for (name, _, _) in crate::parser::top_level_binders(decl) {
+                        if let Some(scheme) = env.lookup(name) {
+                            exports.schemes.push((name, scheme.clone()));
+                        }
                     }
                 }
                 Decl::Type(td) if td.is_pub => {
@@ -3371,10 +3074,11 @@ impl TypeChecker {
                                 // Variant schemes + variant_to_enum.
                                 for variant in &info.variants {
                                     exports.variant_to_enum.push((variant.name, td.name));
-                                    if let Some(scheme) = env.lookup(variant.name) {
+                                    let key = intern(&format!("{}.{}", td.name, variant.name));
+                                    if let Some(scheme) = env.lookup(key) {
                                         exports
                                             .variant_schemes
-                                            .push((variant.name, scheme.clone()));
+                                            .push(((td.name, variant.name), scheme.clone()));
                                     }
                                 }
                             }
@@ -3404,6 +3108,9 @@ impl TypeChecker {
                     pub_trait_names.insert(t.name);
                     if let Some(info) = self.traits.get(&t.name) {
                         exports.traits.push((t.name, info.clone()));
+                    }
+                    if !t.is_pub {
+                        exports.private_traits.push(t.name);
                     }
                 }
                 _ => {}
@@ -3478,145 +3185,64 @@ impl TypeChecker {
     pub(super) fn check_program_returning_env(&mut self, program: &mut Program) -> TypeEnv {
         let mut env = self.install_builtins();
 
-        // Round 56 item 4: reset the import set so a fresh check_program
-        // call doesn't inherit modules imported by a previous run.
-        self.imported_modules.clear();
-        self.poisoned_names.clear();
-        self.imported_private_fns.clear();
-        self.module_prefixes.clear();
-        // Round 94: the qualified type mirrors share the import set's
-        // lifecycle — they are rebuilt from the imports processed below.
-        self.qualified_records.clear();
-        self.qualified_record_param_var_ids.clear();
-        self.qualified_enums.clear();
-        self.qualified_variant_to_enum.clear();
-
-        // Process imports: register selective/aliased import names in the type environment
+        // The names the imports bring. A member of a module is bound as
+        // `m.name` (`n.name` for `import m as n`), the name the checker
+        // looks it up by; an item of `import m.{ x }` by its bare name.
+        // Which names may be written, and what each means, the resolver
+        // decided: a name of a module that failed to load resolves to
+        // nothing, and its import binds nothing here.
         for decl in &program.decls {
-            if let Decl::Import(ImportTarget::Items(module, items), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.imported_modules.insert(*module);
-                    self.import_builtin_module_members(*module, *module, &mut env);
-                    for (item, _) in items {
-                        let qualified = intern(&format!("{module}.{item}"));
-                        if let Some(scheme) = env.lookup(qualified).cloned() {
-                            env.define(*item, scheme);
-                        }
-                    }
-                } else if self.poisoned_modules.contains(module) {
-                    // The module's name binds nothing here, but a use of
-                    // it (`m.q`) is a use of the failed module too.
-                    self.imported_modules.insert(*module);
-                    self.poisoned_names.insert(*module);
-                    for (item, _) in items {
-                        self.bind_poisoned_name(*item, &mut env);
-                    }
-                } else if self.merge_imported_module_exports(*module, *module, *span, &mut env) {
-                    // Round 64 item 6A: cross-module typecheck found
-                    // the producer's exports — schemes are now bound
-                    // under `module.name`. Also alias each requested
-                    // selective `item` to the bare name in env.
-                    self.imported_modules.insert(*module);
-                    self.module_prefixes.insert(*module, *module);
-                    for (item, _) in items {
-                        let qualified = intern(&format!("{module}.{item}"));
-                        if let Some(scheme) = env.lookup(qualified).cloned() {
-                            env.define(*item, scheme);
-                        }
-                    }
-                } else {
-                    self.warning(
-                        Code::UnknownModule,
-                        format!(
-                            "unknown module '{module_str}'; imported items will not be type-checked"
-                        ),
-                        *span,
-                    );
-                }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias, _), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    // Track the alias (not the original module name) — the
-                    // user chose to rename the module, so the original
-                    // symbol is no longer in scope under its bare name.
-                    self.imported_modules.insert(*alias);
-                    self.import_builtin_module_members(*module, *alias, &mut env);
-                    // Mirror every qualified `{module}.{suffix}` binding
-                    // under the alias. Before round 58, this loop iterated
-                    // `builtin_module_functions(module_str)` and copied
-                    // only names in that curated list — which excluded
-                    // schemes registered directly in the typechecker's
-                    // submodules (e.g. `list.sum`, `list.product`), so
-                    // `l.sum` under `import list as l` failed with
-                    // "undefined variable 'l'" while `list.sum` worked.
-                    // Iterating the env by prefix captures every
-                    // qualified entry regardless of which registrar
-                    // defined it.
-                    let alias_str = resolve(*alias);
-                    let prefix = format!("{module_str}.");
-                    let to_alias: Vec<(Symbol, Scheme)> = env
-                        .bindings_with_prefix(&prefix)
+            let Decl::Import(target, span) = decl else {
+                continue;
+            };
+            let (module, prefix) = match target {
+                ImportTarget::Module(m) => (*m, *m),
+                ImportTarget::Alias(m, alias, _) => (*m, *alias),
+                ImportTarget::Items(m, _) => (*m, *m),
+            };
+            let module_str = resolve(module);
+            if crate::module::is_builtin_module(&module_str) {
+                // A builtin module's functions are bound as `module.f`
+                // already; an alias gets a copy of each.
+                if prefix != module {
+                    let qualified = format!("{module_str}.");
+                    let aliased: Vec<(Symbol, Scheme)> = env
+                        .bindings_with_prefix(&qualified)
                         .into_iter()
                         .map(|(name, scheme)| {
-                            let suffix = &name[prefix.len()..];
-                            (intern(&format!("{alias_str}.{suffix}")), scheme)
+                            (
+                                intern(&format!("{prefix}.{}", &name[qualified.len()..])),
+                                scheme,
+                            )
                         })
                         .collect();
-                    for (aliased, scheme) in to_alias {
-                        env.define(aliased, scheme);
+                    for (name, scheme) in aliased {
+                        env.define(name, scheme);
                     }
-                } else if self.poisoned_modules.contains(module) {
-                    self.imported_modules.insert(*alias);
-                    self.poisoned_names.insert(*alias);
-                } else if self.merge_imported_module_exports(*module, *alias, *span, &mut env) {
-                    // Round 64 item 6A: schemes registered under
-                    // `alias.name` (matching the aliased prefix the
-                    // user wrote).
-                    self.imported_modules.insert(*alias);
-                    self.module_prefixes.insert(*alias, *module);
-                } else {
-                    self.warning(Code::UnknownModule,
-                        format!("unknown module '{module_str}'; aliased imports will not be type-checked"),
-                        *span,
-                    );
                 }
-            } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
-                let module_str = resolve(*module);
-                if crate::module::is_builtin_module(&module_str) {
-                    self.imported_modules.insert(*module);
-                    // Built-in module functions are already bound via
-                    // register_builtins under their `module.func` qualified
-                    // form; the module's types and variants are bound here.
-                    self.import_builtin_module_members(*module, *module, &mut env);
-                } else if self.poisoned_modules.contains(module) {
-                    self.imported_modules.insert(*module);
-                    self.poisoned_names.insert(*module);
-                } else if self.merge_imported_module_exports(*module, *module, *span, &mut env) {
-                    // Round 64 item 6A: producer-side exports merged.
-                    self.imported_modules.insert(*module);
-                    self.module_prefixes.insert(*module, *module);
-                } else {
-                    // A user module the check was not given: a check
-                    // outside a session cannot see user modules. Warn, and add a minimal
-                    // binding for the module name itself so downstream
-                    // `module.foo(...)` calls don't cascade into
-                    // "undefined variable" errors.
-                    self.warning(Code::UnknownModule,
-                        format!(
-                            "unknown module '{module_str}'; imported module will not be type-checked"
-                        ),
-                        *span,
-                    );
-                    // Bind the module name to a fresh variable so member access
-                    // on it degrades gracefully rather than failing lookup.
-                    let placeholder = self.fresh_var();
-                    env.define(*module, Scheme::mono(placeholder));
+            } else if self.poisoned_modules.contains(&module) {
+                continue;
+            } else if !self.merge_imported_module_exports(module, prefix, *span, &mut env) {
+                // A user module the check was not given: a check outside a
+                // session cannot see user modules.
+                self.warning(
+                    Code::UnknownModule,
+                    format!(
+                        "unknown module '{module_str}'; imported module will not be type-checked"
+                    ),
+                    *span,
+                );
+                continue;
+            }
+            if let ImportTarget::Items(_, items) = target {
+                for (item, _) in items {
+                    let qualified = intern(&format!("{module}.{item}"));
+                    if let Some(scheme) = env.lookup(qualified).cloned() {
+                        env.define(*item, scheme);
+                    }
                 }
             }
         }
-
-        self.check_qualified_trait_refs(program);
 
         // First pass: pre-register every type name with a placeholder
         // body. This makes recursive type references (e.g.
@@ -4336,46 +3962,6 @@ impl TypeChecker {
             );
             return;
         }
-        // BROKEN T1: a type-decl whose name shadows a builtin enum's
-        // variant constructor (e.g. `type Empty {}`, `type Some { x: Int }`,
-        // `type Ok { x: Int }`, `type Closed { ... }`, `type Sent { ... }`,
-        // `type None { ... }`, `type Err { ... }`, `type Message { ... }`)
-        // used to silently overwrite the variant binding via
-        // `env.define(td.name, TypeOf(record_ty))` (record arm) or
-        // `env.define(td.name, TypeOf(enum_ty))` (enum arm with no
-        // self-referential variant), then downstream auto-derive synth
-        // or stamping unified the residual ChannelResult/Option/Result
-        // scheme against the new TypeOf and emitted up to 8 unspanned
-        // cascade errors of the shape `expected TypeOf, got ChannelResult`.
-        //
-        // The sibling case `td.name` matching the *enum* name itself
-        // (e.g. `type Option { ... }`) is handled by the existing
-        // `variant '{}' of enum '{}' shadows same-named variant of
-        // builtin enum '{}'` warning inside the enum arm — we exclude
-        // that here so we don't double-diagnose. We detect that case
-        // by `prev_enum_owner == td.name`: the variant `td.name` is
-        // owned by an enum whose name is also `td.name`, which only
-        // happens when `td.name` is a self-named variant (e.g. the
-        // builtin `Box(T)` pattern doesn't apply to any builtin, so
-        // this guard fires for user shadows of `Some`/`Ok`/`Empty`/
-        // etc. but stays out of the enum-vs-enum path).
-        if let Some(prev_enum_owner) = self.variant_to_enum.get(&td.name).copied()
-            && prev_enum_owner != td.name
-        {
-            self.errors.push(
-                Diagnostic::error(
-                    Code::InvalidTypeDeclaration,
-                    td.name_span,
-                    format!(
-                        "type '{}' shadows variant of builtin enum '{}'",
-                        resolve(td.name),
-                        resolve(prev_enum_owner)
-                    ),
-                )
-                .with_help("choose a different name or fully-qualify the variant"),
-            );
-            return;
-        }
         // B2: populate the span hint used by `resolve_type_expr` for any
         // arity error on field / variant type annotations.
         let prev_type_span = self.current_type_anno_span.replace(td.span);
@@ -4459,11 +4045,8 @@ impl TypeChecker {
                     // alphabetical comparison everywhere except a
                     // hand-rolled Weekday special case (now removed).
                     //
-                    // Variant names are globally unique in silt (the
-                    // duplicate-name diagnostic above + the
-                    // cross-enum-shadow warning below ensure this), so
-                    // a flat name → ordinal map is sufficient — no
-                    // need to key on the parent enum.
+                    // The map is keyed by the bare variant name, which
+                    // two enums may share: their ordinals then collide.
                     crate::value::register_variant_ordinal(&resolve(variant.name), decl_idx as u32);
 
                     // Register the constructor in the type environment
@@ -4476,94 +4059,26 @@ impl TypeChecker {
                         Type::Generic(td.name, type_params)
                     };
 
-                    if field_types.is_empty() {
-                        // No-arg constructor is just a value
-                        env.define(
-                            variant.name,
-                            Scheme {
-                                vars: var_ids.clone(),
-                                ty: result_type,
-                                constraints: vec![],
-                                optional_last_param: false,
-                            },
-                        );
-                    } else {
-                        // Constructor function
-                        env.define(
-                            variant.name,
-                            Scheme {
-                                vars: var_ids.clone(),
-                                ty: Type::Fun(field_types, Box::new(result_type)),
-                                constraints: vec![],
-                                optional_last_param: false,
-                            },
-                        );
-                    }
-
-                    // Round-23 GAP #2: detect cross-enum variant name
-                    // collisions. Previously `type A { Red }` followed by
-                    // `type B { Red }` silently overwrote the owning-enum
-                    // entry, so later `match x: A { Red -> ... }` resolved
-                    // `Red` to `B` and produced misleading "expected B,
-                    // got A" errors. The same hazard applies when a user
-                    // `type Result { ... }` shadows the builtin Result,
-                    // because builtins populate variant_to_enum first.
-                    // Emit a warning (not a hard error: the language
-                    // allows this and resolves by most-recent-wins, but
-                    // the user should know the prior variant is now
-                    // unreachable). Same-enum duplicates are caught
-                    // above as a hard error (G3).
-                    //
-                    // The shadowing case breaks into two sub-cases:
-                    //   a. prev_owner != td.name — two distinct enums,
-                    //      whether user/user or user/builtin (e.g. user
-                    //      `type X { Ok, Err }` vs builtin Result).
-                    //   b. prev_owner == td.name — same Symbol but the
-                    //      previously-registered enum entry is a builtin
-                    //      we're about to overwrite (e.g. user
-                    //      `type Result { ... }` replacing builtin Result).
-                    //      We detect this by the presence of a prior
-                    //      `self.enums[td.name]` entry at this point; the
-                    //      insert for the *current* td happens below, so
-                    //      any existing key must be a prior registration.
-                    //      Two decls of one file never share a name (the
-                    //      parser rejects it), so what we see here is a
-                    //      builtin's, or an earlier REPL cell's.
-                    if let Some(prev_owner) = self.variant_to_enum.get(&variant.name).copied() {
-                        if prev_owner != td.name {
-                            self.shadowed_enums
-                                .entry(prev_owner)
-                                .or_insert(variant.name_span);
-                            self.warning(Code::Shadowing,
-                                format!(
-                                    "variant '{}' of enum '{}' shadows same-named variant of enum '{}'; \
-                                     earlier variant is no longer resolvable by bare name",
-                                    resolve(variant.name),
-                                    resolve(td.name),
-                                    resolve(prev_owner)
-                                ),
-                                variant.name_span,
-                            );
-                        } else if let Some(prior) = self.enums.get(&td.name) {
-                            // Sub-case (b): the type shadows a builtin of
-                            // the same name, or an earlier REPL cell's.
-                            let (whose, what) = if prior.defined_in == Self::builtin_pkg() {
-                                ("builtin enum", "builtin variant")
-                            } else {
-                                ("the earlier enum", "earlier variant")
-                            };
-                            self.warning(Code::Shadowing,
-                                format!(
-                                    "variant '{}' of enum '{}' shadows same-named variant of {whose} '{}'; \
-                                     {what} is no longer resolvable by bare name",
-                                    resolve(variant.name),
-                                    resolve(td.name),
-                                    resolve(prev_owner)
-                                ),
-                                variant.name_span,
-                            );
-                        }
-                    }
+                    let scheme = Scheme {
+                        vars: var_ids.clone(),
+                        ty: if field_types.is_empty() {
+                            // No-arg constructor is just a value
+                            result_type
+                        } else {
+                            Type::Fun(field_types, Box::new(result_type))
+                        },
+                        constraints: vec![],
+                        optional_last_param: false,
+                    };
+                    // Bound as `Enum.Variant`, which is what a resolved use
+                    // of the variant reads: two enums may have variants of
+                    // one name. The bare name serves the impls the checker
+                    // derives itself.
+                    env.define(
+                        intern(&format!("{}.{}", td.name, variant.name)),
+                        scheme.clone(),
+                    );
+                    env.define(variant.name, scheme);
                     self.variant_to_enum.insert(variant.name, td.name);
                 }
 
@@ -5063,23 +4578,19 @@ impl TypeChecker {
         param_vars: &mut HashMap<Symbol, Type>,
     ) -> Type {
         match &te.kind {
-            TypeExprKind::Named {
-                module,
-                name,
-                name_span,
-            } => {
-                // `m.Shape` is the type `Shape` of module `m`: types are
-                // keyed by their bare name.
-                if let Some(module) = module {
-                    if !self.check_qualified_type(*module, *name, *name_span) {
-                        return Type::Error;
-                    }
-                } else if let Some(tv) = param_vars.get(name) {
+            TypeExprKind::Named { module, name, .. } => {
+                // What the name means, the resolver said: nothing (it
+                // reported why, or the type comes from a module that
+                // failed to load), or a type, which the checker knows by
+                // its bare name (`m.Shape` is the type `Shape` of `m`).
+                if te.res == Some(crate::defs::Res::Error) {
+                    return Type::Error;
+                }
+                if module.is_none()
+                    && let Some(tv) = param_vars.get(name)
+                {
                     // A type parameter variable.
                     return tv.clone();
-                }
-                if self.poisoned_names.contains(name) {
-                    return Type::Error;
                 }
                 let name_str = resolve(*name);
                 match name_str.as_str() {
@@ -5198,18 +4709,10 @@ impl TypeChecker {
                     }
                 }
             }
-            TypeExprKind::Generic {
-                module,
-                name,
-                name_span,
-                args,
-            } => {
-                // A type imported from a module that failed to load takes
-                // any arguments; nothing is known about it. So does a
-                // qualified type the module does not have (reported here).
-                if self.poisoned_names.contains(name)
-                    || module.is_some_and(|m| !self.check_qualified_type(m, *name, *name_span))
-                {
+            TypeExprKind::Generic { name, args, .. } => {
+                // A type the resolver resolved to nothing takes any
+                // arguments; nothing is known about it.
+                if te.res == Some(crate::defs::Res::Error) {
                     for arg in args {
                         let _ = self.resolve_type_expr_inner(arg, param_vars);
                     }
@@ -5374,13 +4877,11 @@ impl TypeChecker {
             }
             TypeExprKind::AssocProj {
                 receiver,
-                trait_module,
                 trait_name,
                 assoc_name,
+                ..
             } => {
-                if let Some(module) = trait_module
-                    && !self.check_qualified_trait(*module, *trait_name, te.span)
-                {
+                if te.res == Some(crate::defs::Res::Error) {
                     return Type::Error;
                 }
                 // Build a `Type::AssocProj` whose receiver is the
@@ -6173,7 +5674,10 @@ impl TypeChecker {
 
         let mut synthesized: Vec<Decl> = Vec::new();
         for (type_name, type_params, body, decl_span) in tasks {
-            let derive = auto_derive::Derive { span: decl_span };
+            let derive = auto_derive::Derive {
+                span: decl_span,
+                ty: type_name,
+            };
             // Helper closures to scope the synthesis decisions per-trait.
             let key = canonicalize_type_name(&self.resolver, type_name);
 
@@ -6887,6 +6391,13 @@ impl TypeChecker {
     }
 
     fn register_trait_impl(&mut self, ti: &TraitImpl, env: &mut TypeEnv) {
+        // An impl of a trait or for a type the resolver resolved to
+        // nothing: it reported why.
+        if ti.trait_res == Some(crate::defs::Res::Error)
+            || ti.target_res == Some(crate::defs::Res::Error)
+        {
+            return;
+        }
         // Phase B: canonicalise the target-type symbol so an impl
         // `trait Foo for Range(a)` registers under the same key
         // (`"List"`) that dispatch lookup will use for both `Range(_)`
@@ -8678,11 +8189,10 @@ pub(super) fn register_auto_derived_impls_for(
     }
 }
 
-/// Run the type checker on a program. Returns a list of type errors (warnings).
+/// Resolve and check a program on its own, outside a session (it can
+/// import builtin modules only). Returns its diagnostics.
 pub fn check(program: &mut Program) -> Vec<Diagnostic> {
-    let mut checker = TypeChecker::new();
-    checker.check_program(program);
-    checker.errors
+    check_with_package(program, None)
 }
 
 /// Run the type checker on a program with an explicit owning package.
@@ -8694,10 +8204,14 @@ pub fn check(program: &mut Program) -> Vec<Diagnostic> {
 /// REPL inputs to disable orphan enforcement (every decl looks local
 /// to the scratch package).
 pub fn check_with_package(program: &mut Program, package: Option<Symbol>) -> Vec<Diagnostic> {
+    let mut defs = names::new_def_table();
+    let mut diagnostics = names::resolve_standalone(program, &mut defs);
     let mut checker = TypeChecker::new();
     checker.current_package = package;
+    checker.defs = Some(std::sync::Arc::new(defs));
     checker.check_program(program);
-    checker.errors
+    diagnostics.extend(checker.errors);
+    diagnostics
 }
 
 /// What checking one module of a program gives.
@@ -8718,35 +8232,35 @@ pub struct ModuleCheck {
     pub record_fields: HashMap<Symbol, Vec<(Symbol, Type)>>,
 }
 
-/// Check one module of a program. `package` is the package the module
-/// belongs to, for the trait-orphan rule (round 63 item 5); `imports`
-/// holds the exports of every module it imports, by the name written
-/// after `import`; `poisoned` names the imports whose module failed to
-/// load or parse, so nothing is reported about what they would have
-/// supplied. `resolver` holds the type aliases and associated-type
-/// bindings of the program, shared by the checks of all its modules.
-pub fn check_module(
-    program: &mut Program,
-    package: Option<Symbol>,
-    imports: HashMap<Symbol, ModuleExports>,
-    poisoned: std::collections::HashSet<Symbol>,
-    resolver: &mut crate::types::canonical::Resolver,
-) -> ModuleCheck {
-    check_module_with(program, package, imports, poisoned, resolver, false, false)
+/// The context a module is checked in, from the session.
+pub struct ModuleContext<'a> {
+    /// The package the module belongs to, for the trait-orphan rule
+    /// (round 63 item 5).
+    pub package: Option<Symbol>,
+    /// The exports of every module it imports, by the name written after
+    /// `import`.
+    pub imports: HashMap<Symbol, ModuleExports>,
+    /// The imports whose module failed to load or parse: nothing is
+    /// reported about what they would have supplied.
+    pub poisoned: std::collections::HashSet<Symbol>,
+    /// The type aliases and associated-type bindings of the program,
+    /// shared by the checks of all its modules.
+    pub resolver: &'a mut crate::types::canonical::Resolver,
+    /// The session's definitions; the module is resolved already.
+    pub defs: std::sync::Arc<crate::defs::DefTable>,
+}
+
+/// Check one module of a program, which the resolver has resolved.
+pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
+    check_module_with(program, context, false, false)
 }
 
 /// Check a REPL cell: [`check_module`], where what the cell offers the
 /// next cell is all it sees as well as all it declares (the values it
 /// imports from the earlier cells, and every type, trait and impl of
 /// its package it knows), so the next cell needs to import only it.
-pub fn check_cell(
-    program: &mut Program,
-    package: Option<Symbol>,
-    imports: HashMap<Symbol, ModuleExports>,
-    poisoned: std::collections::HashSet<Symbol>,
-    resolver: &mut crate::types::canonical::Resolver,
-) -> ModuleCheck {
-    check_module_with(program, package, imports, poisoned, resolver, true, false)
+pub fn check_cell(program: &mut Program, context: ModuleContext<'_>) -> ModuleCheck {
+    check_module_with(program, context, true, false)
 }
 
 /// Check the signatures of a host module: `program` holds one `pub fn`
@@ -8755,16 +8269,16 @@ pub fn check_cell(
 pub fn check_host_module(
     program: &mut Program,
     resolver: &mut crate::types::canonical::Resolver,
+    defs: std::sync::Arc<crate::defs::DefTable>,
 ) -> ModuleCheck {
-    check_module_with(
-        program,
-        None,
-        HashMap::new(),
-        std::collections::HashSet::new(),
+    let context = ModuleContext {
+        package: None,
+        imports: HashMap::new(),
+        poisoned: std::collections::HashSet::new(),
         resolver,
-        false,
-        true,
-    )
+        defs,
+    };
+    check_module_with(program, context, false, true)
 }
 
 /// The check behind [`check_module`], [`check_cell`] and
@@ -8773,18 +8287,23 @@ pub fn check_host_module(
 /// host module).
 fn check_module_with(
     program: &mut Program,
-    package: Option<Symbol>,
-    imports: HashMap<Symbol, ModuleExports>,
-    poisoned: std::collections::HashSet<Symbol>,
-    resolver: &mut crate::types::canonical::Resolver,
+    context: ModuleContext<'_>,
     reexport: bool,
     signatures_only: bool,
 ) -> ModuleCheck {
+    let ModuleContext {
+        package,
+        imports,
+        poisoned,
+        resolver,
+        defs,
+    } = context;
     let mut checker = TypeChecker::with_resolver(std::mem::take(resolver));
     checker.signatures_only = signatures_only;
     checker.current_package = package;
     checker.module_exports = imports;
     checker.poisoned_modules = poisoned;
+    checker.defs = Some(defs);
     let env = checker.check_program_returning_env(program);
     let mut exports = checker.collect_module_exports(program, &env);
     if reexport {
@@ -8794,10 +8313,10 @@ fn check_module_with(
     for decl in &program.decls {
         let names: Vec<Symbol> = match decl {
             Decl::Fn(f) => vec![f.name],
-            Decl::Let { pattern, .. } => match &pattern.kind {
-                crate::ast::PatternKind::Ident(name) => vec![*name],
-                _ => Vec::new(),
-            },
+            Decl::Let { .. } => crate::parser::top_level_binders(decl)
+                .into_iter()
+                .map(|(name, _, _)| name)
+                .collect(),
             Decl::Import(ImportTarget::Items(_, items), _) => {
                 items.iter().map(|(item, _)| *item).collect()
             }
@@ -8813,7 +8332,6 @@ fn check_module_with(
     let record_fields = checker
         .records
         .iter()
-        .chain(&checker.qualified_records)
         .map(|(name, info)| (*name, info.fields.clone()))
         .collect();
     *resolver = checker.take_resolver();
@@ -8853,6 +8371,22 @@ impl BuiltinEnv {
         // must not look trait-local.
         checker.register_builtins(&mut env);
         register_builtin_trait_impls(&mut checker);
+        // Each builtin variant is bound as `Enum.Variant` too, which is
+        // what a resolved use of it reads.
+        let mut variants: Vec<(Symbol, Scheme)> = Vec::new();
+        for (enum_name, info) in &checker.enums {
+            for variant in &info.variants {
+                if let Some(scheme) = env.lookup(variant.name) {
+                    variants.push((
+                        intern(&format!("{enum_name}.{}", variant.name)),
+                        scheme.clone(),
+                    ));
+                }
+            }
+        }
+        for (name, scheme) in variants {
+            env.define(name, scheme);
+        }
         // Every builtin scheme is generalized, so the bodies below are
         // checked without walking the builtin scope for free variables.
         env.closed = env.free_vars(&checker).is_empty();
@@ -8975,8 +8509,10 @@ impl TypeChecker {
         let package = self.current_package;
         let module_exports = std::mem::take(&mut self.module_exports);
         let poisoned_modules = std::mem::take(&mut self.poisoned_modules);
+        let defs = self.defs.take();
         let signatures_only = self.signatures_only;
         *self = checker;
+        self.defs = defs;
         self.signatures_only = signatures_only;
         self.resolver = resolver;
         self.current_package = package;

@@ -362,23 +362,28 @@ impl TypeChecker {
             .find_map(|p| self.refutable_part(p))
     }
 
-    /// The enum that owns the constructor a pattern names, with its name.
-    /// A constructor resolves by its bare name; the module-qualified
-    /// mirror is consulted when the bare name is not registered.
+    /// The enum that owns the variant a constructor pattern names, with
+    /// its name: the one the resolver resolved it to; in a pattern the
+    /// checker made itself, the enum written before it (`Shape.Circle`)
+    /// or the one its bare name is registered for.
     pub(super) fn pattern_constructor_enum(
         &self,
-        qualifier: &[Qualifier],
-        name: Symbol,
+        pattern: &Pattern,
     ) -> Option<(Symbol, &EnumInfo)> {
-        let module = qualifier.first().map(|q| q.name);
-        let enum_name = self.variant_to_enum.get(&name).copied().or_else(|| {
-            let key = intern(&format!("{}.{}", resolve(module?), resolve(name)));
-            self.qualified_variant_to_enum.get(&key).copied()
-        })?;
-        let info = self.enums.get(&enum_name).or_else(|| {
-            let key = intern(&format!("{}.{}", resolve(module?), resolve(enum_name)));
-            self.qualified_enums.get(&key)
-        })?;
+        let PatternKind::Constructor {
+            qualifier, name, ..
+        } = &pattern.kind
+        else {
+            return None;
+        };
+        let enum_name = match self.res_variant_enum(pattern.res) {
+            Some(enum_name) => enum_name,
+            None => match qualifier.last() {
+                Some(q) if self.enums.contains_key(&q.name) => q.name,
+                _ => self.variant_to_enum.get(name).copied()?,
+            },
+        };
+        let info = self.enums.get(&enum_name)?;
         Some((enum_name, info))
     }
 
@@ -1423,13 +1428,8 @@ impl TypeChecker {
                 })
             }
             PatternKind::Tuple(ps) => ps.iter().all(|p| self.is_fully_covering_pattern(p)),
-            PatternKind::Constructor {
-                qualifier,
-                name,
-                args,
-                ..
-            } => {
-                self.pattern_constructor_enum(qualifier, *name)
+            PatternKind::Constructor { args, .. } => {
+                self.pattern_constructor_enum(pat)
                     .is_some_and(|(_, info)| info.variants.len() == 1)
                     && args.iter().all(|p| self.is_fully_covering_pattern(p))
             }
@@ -1689,7 +1689,22 @@ impl TypeChecker {
 
     /// Get the sub-type for a constructor's fields.
     fn sub_type_for_constructor(&self, ctor_name: Symbol, parent_ty: &Type) -> Type {
-        if let Some(enum_name) = self.variant_to_enum.get(&ctor_name)
+        // The enum of the scrutinee, if it has the variant: two enums may
+        // have variants of one name.
+        let parent_enum = match parent_ty {
+            Type::Generic(name, _)
+                if self
+                    .enums
+                    .get(name)
+                    .is_some_and(|e| e.variants.iter().any(|v| v.name == ctor_name)) =>
+            {
+                Some(*name)
+            }
+            _ => None,
+        };
+        if let Some(enum_name) = parent_enum
+            .as_ref()
+            .or_else(|| self.variant_to_enum.get(&ctor_name))
             && let Some(enum_info) = self.enums.get(enum_name)
             && let Some(variant) = enum_info.variants.iter().find(|v| v.name == ctor_name)
         {

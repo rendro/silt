@@ -358,6 +358,7 @@ mod tests {
                     Type::Record(crate::intern::intern("Inner"), vec![(value_sym, Type::Int)]),
                 )],
             )),
+            res: None,
         };
 
         // Middle node: `d.inner` with type Record("Inner", [("value", Int)])
@@ -368,6 +369,7 @@ mod tests {
                 crate::intern::intern("Inner"),
                 vec![(value_sym, Type::Int)],
             )),
+            res: None,
         };
 
         // Outermost node: `d.inner.value` with type Int
@@ -376,6 +378,7 @@ mod tests {
             kind: ExprKind::FieldAccess(Box::new(inner_access), value_sym, at(8, 13)),
             span: at(0, 13),
             ty: Some(Type::Int),
+            res: None,
         };
 
         // Cursor on 'v' of "value" — offset 8 in "d.inner.value"
@@ -420,6 +423,7 @@ mod tests {
                     Type::Record(crate::intern::intern("Inner"), vec![(value_sym, Type::Int)]),
                 )],
             )),
+            res: None,
         };
 
         let inner_access = Expr {
@@ -429,12 +433,14 @@ mod tests {
                 crate::intern::intern("Inner"),
                 vec![(value_sym, Type::Int)],
             )),
+            res: None,
         };
 
         let outer_access = Expr {
             kind: ExprKind::FieldAccess(Box::new(inner_access), value_sym, at(8, 13)),
             span: at(0, 13),
             ty: Some(Type::Int),
+            res: None,
         };
 
         // Cursor on 'i' of "inner" — offset 2 in "d.inner.value"

@@ -115,17 +115,37 @@ pub(super) fn format_symbol_set(set: &BTreeSet<Symbol>) -> String {
     format!("{{{}}}", names.join(", "))
 }
 
-/// Round 94: outcome of validating a constructor pattern's qualifier
-/// (`Shape.Circle(r)` / `shapes.Circle(r)`). See
-/// `TypeChecker::resolve_pattern_ctor_qualifier`.
-enum CtorQualifierResolution {
-    /// Qualifier is the variant's own enum — resolve by bare name.
-    EnumOwned,
-    /// Qualifier is an imported module/alias; carries the bare enum
-    /// name (the type identity) and the producer module's enum info.
-    Module(Symbol, EnumInfo),
-    /// Diagnostic already emitted; bind sub-patterns to fresh vars.
-    Invalid,
+/// Whether `pattern` holds a constructor or record name the resolver
+/// resolved to nothing.
+fn names_unresolved(pattern: &Pattern) -> bool {
+    if pattern.res == Some(crate::defs::Res::Error) {
+        return true;
+    }
+    match &pattern.kind {
+        PatternKind::Tuple(ps)
+        | PatternKind::Or(ps)
+        | PatternKind::Constructor { args: ps, .. } => ps.iter().any(names_unresolved),
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => fields
+            .iter()
+            .any(|(_, _, sub)| sub.as_ref().is_some_and(names_unresolved)),
+        PatternKind::List(elems, rest) => {
+            elems.iter().any(names_unresolved) || rest.as_deref().is_some_and(names_unresolved)
+        }
+        PatternKind::Map(entries) => entries.iter().any(|(_, p)| names_unresolved(p)),
+        _ => false,
+    }
+}
+
+/// The variant a constructor pattern names, for the checker. See
+/// `TypeChecker::ctor_target`.
+enum CtorTarget {
+    /// A variant of this enum.
+    Enum(Symbol, EnumInfo),
+    /// Nothing to report: the resolver reported the name, or it comes
+    /// from a module that failed to load.
+    Silent,
+    /// No variant of that name: the checker says what is wrong.
+    Unknown,
 }
 
 /// Format an "undefined variable '<typo>'" error message, with an
@@ -330,6 +350,27 @@ impl TypeChecker {
         span: Span,
     ) -> Type {
         self.last_field_access_was_method = true;
+        // A method of a trait another module declares without `pub` can
+        // be called only in that module.
+        if let Some(trait_name) = entry.trait_name
+            && let Some(module) = self.private_traits.get(&trait_name).copied()
+        {
+            self.errors.push(
+                Diagnostic::error(
+                    Code::PrivateItem,
+                    span,
+                    format!(
+                        "method `{method_name}` belongs to trait '{trait_name}', which is private \
+                         to module '{module}'"
+                    ),
+                )
+                .with_help(format!(
+                    "mark it `pub trait {trait_name}` in module '{module}' to call its methods \
+                     from another module"
+                )),
+            );
+            return Type::Error;
+        }
         let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
         // Reject value-receiver calls on no-self trait methods (`empty`,
         // `default`, etc.). The method has no slot for the receiver, so
@@ -1315,9 +1356,7 @@ impl TypeChecker {
     /// can fail to match.
     fn refutable_part_reason(&self, part: &Pattern, ty: &Type) -> String {
         match &part.kind {
-            PatternKind::Constructor {
-                qualifier, name, ..
-            } => match self.pattern_constructor_enum(qualifier, *name) {
+            PatternKind::Constructor { name, .. } => match self.pattern_constructor_enum(part) {
                 Some((enum_name, info)) => format!(
                     "constructor '{}' is only one of {} variants of enum '{}'",
                     name,
@@ -1571,14 +1610,11 @@ impl TypeChecker {
         }
     }
 
-    // ── Qualified type references (round 94) ────────────────────────
+    // ── Named records and variants ──────────────────────────────────
     //
-    // `mod.Type` works in every position: record literals
-    // (`util.Pt { x: 1 }`), record patterns (`util.Pt { x }`), and
-    // variant patterns (`shapes.Circle(r)`). The helpers below resolve
-    // the qualifier against the qualified mirrors populated by
-    // `merge_imported_module_exports` and own the diagnostics, so the
-    // literal and pattern call sites stay small and agree on wording.
+    // What a record literal, record pattern or variant pattern names
+    // (`util.Pt { x: 1 }`, `shapes.Circle(r)`), the resolver decided; the
+    // helpers below turn its resolution into the checker's tables.
 
     /// Instantiate a record's declared field types, substituting fresh
     /// type variables for the record's type parameters (if any) so
@@ -1604,355 +1640,64 @@ impl TypeChecker {
         }
     }
 
-    /// Round 94 (module-shadowing fix): does a VALUE binding named
-    /// `name` shadow a same-named imported module in `env`?
-    ///
-    /// silt's lexical-scoping rule is that a value binding (fn param,
-    /// lambda param, `let`, pattern binder, top-level fn/let) shadows
-    /// an imported module name within its scope — `other.year` with a
-    /// local `other` in scope is field access on the local, never a
-    /// member lookup on module `other`. Type-name bindings do NOT
-    /// count as shadowing: type/enum names live in `env` as
-    /// `TypeOf(..)` descriptor schemes (see the `Decl::Type`
-    /// registration sites in `mod.rs`), and `Shape.Circle` /
-    /// `Int.parse` must keep resolving through the enum-qualifier and
-    /// type-descriptor paths.
-    ///
-    /// Consulted by every dotted-name resolution surface in the
-    /// typechecker (FieldAccess module lookup, the Call arm's
-    /// module-call detection, qualified record literals and variant
-    /// patterns) so they all agree; the compiler applies the same rule
-    /// via its `resolve_local`/upvalue/`top_level_value_globals`
-    /// checks.
-    pub(super) fn value_binding_shadows_module(&self, env: &TypeEnv, name: Symbol) -> bool {
-        let Some(scheme) = env.lookup(name) else {
-            return false;
+    /// The variant the constructor pattern `pattern` names: the one the
+    /// resolver resolved it to. A pattern the checker made itself has no
+    /// resolution: its variant is the one of the enum written before it
+    /// (`Shape.Circle`), or the one its bare name is registered for.
+    fn ctor_target(&self, pattern: &Pattern) -> CtorTarget {
+        let PatternKind::Constructor {
+            qualifier, name, ..
+        } = &pattern.kind
+        else {
+            return CtorTarget::Unknown;
         };
-        let applied = self.apply(&scheme.ty);
-        !matches!(
-            &applied,
-            Type::Generic(g, args) if resolve(*g) == "TypeOf" && args.len() == 1
-        )
+        let enum_name = match pattern.res {
+            Some(crate::defs::Res::Error) => return CtorTarget::Silent,
+            Some(_) => self.res_variant_enum(pattern.res),
+            None => match qualifier.last() {
+                Some(q) => Some(q.name),
+                None => self.variant_to_enum.get(name).copied(),
+            },
+        };
+        match enum_name.and_then(|e| self.enums.get(&e).map(|info| (e, info))) {
+            Some((e, info)) if info.variants.iter().any(|v| v.name == *name) => {
+                CtorTarget::Enum(e, info.clone())
+            }
+            _ => CtorTarget::Unknown,
+        }
     }
 
-    /// Resolve `module.name` to the producer module's record info +
-    /// param var ids. On failure, EMITS the diagnostic and returns
-    /// `None`. `in_pattern` only adjusts wording.
-    ///
-    /// Error shapes:
-    ///   * qualifier is a known import (module/alias, user or builtin)
-    ///     but exports no such record → a precise "module has no record
-    ///     type" error with a did-you-mean over that module's records;
-    ///   * qualifier is not in scope at all → an "undefined type"
-    ///     diagnostic;
-    ///   * qualifier names a module that failed to load → nothing: the
-    ///     failure is reported once, at the import.
-    pub(super) fn lookup_qualified_record(
+    /// The record type a record pattern or literal names, with its type
+    /// parameters' variables: the one the resolver resolved it to (a
+    /// bare name the resolver left alone is looked up by name). Reports
+    /// a name that names no record type, unless the resolver reported it
+    /// already.
+    pub(super) fn named_record(
         &mut self,
-        module: Symbol,
+        res: Option<crate::defs::Res>,
         name: Symbol,
         span: Span,
         in_pattern: bool,
-        env: &TypeEnv,
     ) -> Option<(RecordInfo, Option<Vec<TyVar>>)> {
-        if self.poisoned_names.contains(&module)
-            && env
-                .lookup(module)
-                .is_none_or(|scheme| matches!(scheme.ty, Type::Error))
-        {
+        if res == Some(crate::defs::Res::Error) {
             return None;
         }
-        let key = intern(&format!("{}.{}", resolve(module), resolve(name)));
-        // Round 94 (module-shadowing): when a value binding named like
-        // the qualifier is in scope, the module is shadowed. Record-
-        // literal/-pattern qualifiers are type positions (a local can
-        // never carry `.CapName { .. }` syntax), so silently picking
-        // the module would make `util.Pt { .. }` mean different things
-        // for `util` depending on a binding the user may not have
-        // noticed. Be conservative: error clearly instead.
-        let shadowed = self.value_binding_shadows_module(env, module);
-        if shadowed
-            && (self.qualified_records.contains_key(&key)
-                || self.imported_modules.contains(&module))
-        {
-            let module_str = resolve(module);
-            let name_str = resolve(name);
-            let where_ = if in_pattern { " in pattern" } else { "" };
-            self.error(
-                Code::Shadowing,
-                format!(
-                    "cannot use '{module_str}' as a module qualifier for \
-                     '{module_str}.{name_str}'{where_}: a local binding named '{module_str}' \
-                     shadows module '{module_str}' here; rename the binding or the import"
-                ),
-                span,
-            );
-            return None;
-        }
-        if let Some(info) = self.qualified_records.get(&key).cloned() {
-            let param_ids = self.qualified_record_param_var_ids.get(&key).cloned();
-            return Some((info, param_ids));
-        }
-        let module_str = resolve(module);
-        let name_str = resolve(name);
-        if self.imported_modules.contains(&module) {
-            // The import resolved (its exports were merged), so the
-            // record genuinely isn't there — suggest a near-miss among
-            // the records this module DOES export.
-            let prefix = format!("{module_str}.");
-            let candidates: Vec<String> = self
-                .qualified_records
-                .keys()
-                .filter_map(|k| resolve(*k).strip_prefix(&prefix).map(str::to_string))
-                .collect();
-            let help = suggest_similar(&name_str, candidates.iter())
-                .map(|cand| format!("did you mean `{cand}`?"));
-            self.error_help(
-                Code::UndefinedType,
-                (
-                    format!("module '{module_str}' has no record type '{name_str}'"),
-                    help,
-                ),
-                span,
-            );
-        } else {
-            let where_ = if in_pattern { " in pattern" } else { "" };
-            self.error(
-                Code::UndefinedType,
-                format!(
-                    "undefined type '{module_str}.{name_str}'{where_} — no module '{module_str}' \
-                     in scope; import it with `import {module_str}`"
-                ),
-                span,
-            );
-        }
-        None
-    }
-
-    /// The type of `module.enum_name.variant` in an expression, where
-    /// `enum_name` is an enum of `module`: the variant's constructor, if
-    /// `variant` is one of its variants. Reports and returns a fresh type
-    /// otherwise.
-    fn infer_module_enum_variant(
-        &mut self,
-        module: Symbol,
-        enum_name: Symbol,
-        variant: Symbol,
-        span: Span,
-        env: &TypeEnv,
-    ) -> Type {
-        let key = |name: Symbol| intern(&format!("{module}.{name}"));
-        let owner = self.qualified_variant_to_enum.get(&key(variant)).copied();
-        if owner == Some(enum_name)
-            && let Some(scheme) = env.lookup(key(variant)).cloned()
-        {
-            let ty = self.instantiate(&scheme);
-            return self.apply(&ty);
-        }
-        self.error(
-            Code::NoSuchVariant,
-            format!("enum '{module}.{enum_name}' has no variant '{variant}'"),
-            span,
-        );
-        self.fresh_var()
-    }
-
-    /// Validate + resolve a constructor pattern's qualifier. Two
-    /// accepted spellings (mirroring expression-side `EnumName.Variant`
-    /// / `module.Variant` resolution in the `FieldAccess` arm):
-    ///   * the owning ENUM's bare name (`Shape.Circle(r)`) — validated
-    ///     against `variant_to_enum`, then resolution proceeds by bare
-    ///     name;
-    ///   * an imported MODULE or alias (`shapes.Circle(r)`) — resolved
-    ///     through the qualified mirrors so the producer module's enum
-    ///     is used even under bare-name conflicts.
-    /// On failure, EMITS the diagnostic and returns `Invalid`.
-    fn resolve_pattern_ctor_qualifier(
-        &mut self,
-        qualifier: &[Qualifier],
-        name: Symbol,
-        span: Span,
-        env: &TypeEnv,
-    ) -> CtorQualifierResolution {
-        let [module, enum_name] = qualifier else {
-            return self.resolve_pattern_ctor_segment(qualifier[0].name, name, span, env);
-        };
-        // `m.Shape.Circle(r)`: the variant of `m` must belong to `Shape`.
-        if !self.module_prefixes.contains_key(&module.name) {
-            if !self.poisoned_names.contains(&module.name) {
-                self.error(
-                    Code::UndefinedConstructor,
-                    format!(
-                        "undefined constructor '{}.{}.{name}' in pattern — '{}' is not an \
-                         imported module",
-                        module.name, enum_name.name, module.name
-                    ),
-                    span,
-                );
+        let name = self.res_def(res).map_or(name, |def| def.name);
+        match self.records.get(&name).cloned() {
+            Some(info) => {
+                let ids = self.record_param_var_ids.get(&name).cloned();
+                Some((info, ids))
             }
-            return CtorQualifierResolution::Invalid;
-        }
-        let resolution = self.resolve_pattern_ctor_segment(module.name, name, span, env);
-        match &resolution {
-            CtorQualifierResolution::Module(owner, _) if *owner == enum_name.name => resolution,
-            CtorQualifierResolution::Module(owner, _) => {
-                self.error(
-                    Code::NoSuchVariant,
-                    format!(
-                        "'{name}' is not a variant of enum '{m}.{e}' (it belongs to '{m}.{owner}')",
-                        m = module.name,
-                        e = enum_name.name,
-                    ),
-                    span,
-                );
-                CtorQualifierResolution::Invalid
-            }
-            CtorQualifierResolution::EnumOwned => {
-                self.error(
-                    Code::UndefinedConstructor,
-                    format!(
-                        "undefined constructor '{}.{}.{name}' in pattern — '{}' is an enum type, \
-                         not a module",
-                        module.name, enum_name.name, module.name
-                    ),
-                    span,
-                );
-                CtorQualifierResolution::Invalid
-            }
-            CtorQualifierResolution::Invalid => resolution,
-        }
-    }
-
-    /// [`Self::resolve_pattern_ctor_qualifier`] for one qualifier segment.
-    fn resolve_pattern_ctor_segment(
-        &mut self,
-        qualifier: Symbol,
-        name: Symbol,
-        span: Span,
-        env: &TypeEnv,
-    ) -> CtorQualifierResolution {
-        if self.poisoned_names.contains(&qualifier)
-            && env
-                .lookup(qualifier)
-                .is_none_or(|scheme| matches!(scheme.ty, Type::Error))
-        {
-            return CtorQualifierResolution::Invalid;
-        }
-        // Enum-name qualifier takes priority: an enum and a module can
-        // share a name only when the user shadowed a module name with a
-        // local type, and the local type is the more specific reading.
-        if self.enums.contains_key(&qualifier) {
-            return match self.variant_to_enum.get(&name).copied() {
-                Some(owner) if owner == qualifier => CtorQualifierResolution::EnumOwned,
-                Some(owner) => {
-                    self.error(
-                        Code::NoSuchVariant,
-                        format!(
-                            "'{}' is not a variant of enum '{}' (it belongs to '{}')",
-                            resolve(name),
-                            resolve(qualifier),
-                            resolve(owner),
-                        ),
-                        span,
-                    );
-                    CtorQualifierResolution::Invalid
-                }
-                None => {
-                    self.error(
-                        Code::NoSuchVariant,
-                        format!(
-                            "enum '{}' has no variant '{}'",
-                            resolve(qualifier),
-                            resolve(name),
-                        ),
-                        span,
-                    );
-                    CtorQualifierResolution::Invalid
-                }
-            };
-        }
-        let key = intern(&format!("{}.{}", resolve(qualifier), resolve(name)));
-        // Round 94 (module-shadowing): mirror `lookup_qualified_record` —
-        // a value binding named like the qualifier shadows the module, so
-        // resolving the module silently would be misleading. Error
-        // clearly (conservative choice; see the record-literal helper's
-        // rationale). Only fires when the qualifier otherwise WOULD have
-        // resolved as a module; an unrelated local falls through to the
-        // existing "neither an imported module nor an enum type" error.
-        if self.value_binding_shadows_module(env, qualifier)
-            && (self.qualified_variant_to_enum.contains_key(&key)
-                || self.qualified_records.contains_key(&key)
-                || self.imported_modules.contains(&qualifier))
-        {
-            let qual_str = resolve(qualifier);
-            let name_str = resolve(name);
-            self.error(
-                Code::Shadowing,
-                format!(
-                    "cannot use '{qual_str}' as a module qualifier for \
-                     '{qual_str}.{name_str}' in pattern: a local binding named '{qual_str}' \
-                     shadows module '{qual_str}' here; rename the binding or the import"
-                ),
-                span,
-            );
-            return CtorQualifierResolution::Invalid;
-        }
-        if let Some(enum_bare) = self.qualified_variant_to_enum.get(&key).copied() {
-            let enum_key = intern(&format!("{}.{}", resolve(qualifier), resolve(enum_bare)));
-            // The qualified enum mirror is populated by the same merge
-            // that filled `qualified_variant_to_enum`; the bare-map
-            // fallback only covers a (theoretical) producer snapshot
-            // that exported the variant mapping without its enum.
-            if let Some(info) = self
-                .qualified_enums
-                .get(&enum_key)
-                .or_else(|| self.enums.get(&enum_bare))
-                .cloned()
-            {
-                return CtorQualifierResolution::Module(enum_bare, info);
+            None => {
+                let message = if in_pattern {
+                    format!("undefined record type '{name}' in pattern")
+                } else {
+                    format!("undefined type '{name}'")
+                };
+                self.error(Code::UndefinedType, message, span);
+                None
             }
         }
-        let qual_str = resolve(qualifier);
-        let name_str = resolve(name);
-        if self.qualified_records.contains_key(&key) {
-            // `util.Pt(x)` where `Pt` is a record — same shape hint the
-            // bare path gives for `Pt(x)`.
-            self.error(
-                Code::InvalidPatternUse,
-                format!(
-                    "'{name_str}' is a record type; use record-pattern syntax \
-                     `{qual_str}.{name_str} {{ ... }}` instead of constructor-pattern syntax"
-                ),
-                span,
-            );
-        } else if self.imported_modules.contains(&qualifier) {
-            let prefix = format!("{qual_str}.");
-            let candidates: Vec<String> = self
-                .qualified_variant_to_enum
-                .keys()
-                .filter_map(|k| resolve(*k).strip_prefix(&prefix).map(str::to_string))
-                .collect();
-            let help = suggest_similar(&name_str, candidates.iter())
-                .map(|cand| format!("did you mean `{cand}`?"));
-            self.error_help(
-                Code::NoSuchVariant,
-                (
-                    format!("module '{qual_str}' has no variant '{name_str}'"),
-                    help,
-                ),
-                span,
-            );
-        } else {
-            self.error(
-                Code::UndefinedConstructor,
-                format!(
-                    "undefined constructor '{qual_str}.{name_str}' in pattern — '{qual_str}' \
-                     is neither an imported module nor an enum type"
-                ),
-                span,
-            );
-        }
-        CtorQualifierResolution::Invalid
     }
 
     /// Bind names in a pattern to their types in the environment.
@@ -2064,34 +1809,19 @@ impl TypeChecker {
                 }
             }
             PatternKind::Constructor {
-                qualifier,
                 name,
                 args: sub_pats,
                 ..
             } => {
-                // Round 94: validate/resolve the qualifier first. A
-                // module qualifier picks the producer module's enum
-                // (disambiguating bare-name conflicts); an enum-name
-                // qualifier (or none) resolves by bare name as before.
-                let by_bare_name = |tc: &Self| {
-                    tc.variant_to_enum
-                        .get(name)
-                        .copied()
-                        .and_then(|e| tc.enums.get(&e).cloned().map(|i| (e, i)))
-                };
-                let resolved: Option<(Symbol, EnumInfo)> = if qualifier.is_empty() {
-                    by_bare_name(self)
-                } else {
-                    match self.resolve_pattern_ctor_qualifier(qualifier, *name, pattern.span, env) {
-                        CtorQualifierResolution::Module(enum_name, info) => Some((enum_name, info)),
-                        CtorQualifierResolution::EnumOwned => by_bare_name(self),
-                        CtorQualifierResolution::Invalid => {
-                            for sp in sub_pats {
-                                let tv = self.fresh_var();
-                                self.bind_pattern(sp, &tv, env, span);
-                            }
-                            return;
+                let resolved: Option<(Symbol, EnumInfo)> = match self.ctor_target(pattern) {
+                    CtorTarget::Enum(enum_name, info) => Some((enum_name, info)),
+                    CtorTarget::Unknown => None,
+                    CtorTarget::Silent => {
+                        for sp in sub_pats {
+                            let tv = self.fresh_var();
+                            self.bind_pattern(sp, &tv, env, span);
                         }
+                        return;
                     }
                 };
                 // Look up the constructor to find inner types
@@ -2159,7 +1889,7 @@ impl TypeChecker {
                         ),
                         pattern.span,
                     );
-                } else if !self.poisoned_names.contains(name) {
+                } else {
                     self.error(
                         Code::UndefinedConstructor,
                         format!("undefined constructor '{name}' in pattern"),
@@ -2184,12 +1914,7 @@ impl TypeChecker {
                     self.bind_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
-            PatternKind::Record {
-                module,
-                name,
-                fields,
-                ..
-            } => {
+            PatternKind::Record { name, fields, .. } => {
                 // BROKEN (round 52): duplicate field names in record
                 // patterns slipped through — both the explicit-sub form
                 // (`Point { x: a, x: b }` — distinct binders, so the
@@ -2199,34 +1924,12 @@ impl TypeChecker {
                 // BROKEN-4: `let Name { f } = v` used to silently bind `f`
                 // to a fresh TyVar when the base wasn't a record, or when
                 // the field didn't exist. Both were deferred to VM runtime
-                // errors. Reject them at the type-check stage.
-                //
-                // Round 94: a module qualifier (`util.Pt { x }`) resolves
-                // through the qualified mirrors (its own error path lives
-                // in `lookup_qualified_record`); the type identity stays
-                // the bare name.
+                // errors. Reject them at the type-check stage. The type
+                // identity is the bare name (`util.Pt { x }` names `Pt`).
                 let resolved = self.apply(ty);
-                let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match (name, module) {
-                    (Some(rec_name), Some(q)) => {
-                        self.lookup_qualified_record(q.name, *rec_name, pattern.span, true, env)
-                    }
-                    (Some(rec_name), None) => match self.records.get(rec_name).cloned() {
-                        Some(info) => {
-                            let ids = self.record_param_var_ids.get(rec_name).cloned();
-                            Some((info, ids))
-                        }
-                        None => {
-                            if !self.poisoned_names.contains(rec_name) {
-                                self.error(
-                                    Code::UndefinedType,
-                                    format!("undefined record type '{rec_name}' in pattern"),
-                                    span,
-                                );
-                            }
-                            None
-                        }
-                    },
-                    (None, _) => None,
+                let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match name {
+                    Some(rec_name) => self.named_record(pattern.res, *rec_name, span, true),
+                    None => None,
                 };
                 let pattern_record: Option<(Symbol, Vec<(Symbol, Type)>)> =
                     if let (Some(rec_name), Some((rec_info, param_ids))) = (name, looked) {
@@ -2557,36 +2260,17 @@ impl TypeChecker {
         }
     }
 
-    /// Round 64 item 6A helper: when the Call arm sees a callee shape
-    /// `module_ident.field` and the qualified `module.field` scheme is
-    /// in env, we want to use that scheme directly so where-clause
-    /// constraints flow through (`instantiate_with_constraints` carries
-    /// them, but `infer_expr` on the FieldAccess discards them via
-    /// `instantiate`). This shortcut is only safe when the FieldAccess
-    /// arm's import-gating side-effect would have succeeded — i.e. the
-    /// module is either a non-builtin (user) name OR a builtin already
-    /// listed in `imported_modules`. Otherwise we fall through to the
-    /// regular `infer_expr` so the FieldAccess arm can emit the
-    /// "module 'X' is not imported" diagnostic at this call site.
-    /// Round 94: also requires that no value binding shadows the module
-    /// name (`env`) — a shadowed head identifier means the callee is a
-    /// field access on the binding, not a module-qualified call, so the
-    /// qualified `module.fn` scheme must not be consulted.
-    fn callee_module_is_in_scope(&self, callee: &Expr, env: &TypeEnv) -> bool {
+    /// Whether `callee` is a member of a module, `m.f`, as the resolver
+    /// resolved it: the Call arm then uses the qualified `m.f` scheme
+    /// directly, so that its where-clause constraints flow through
+    /// (`instantiate_with_constraints` carries them; the FieldAccess arm's
+    /// `instantiate` would drop them).
+    fn callee_module_is_in_scope(&self, callee: &Expr, _env: &TypeEnv) -> bool {
         let ExprKind::FieldAccess(obj, _, _) = &callee.kind else {
             return false;
         };
-        let ExprKind::Ident(mod_name) = &obj.kind else {
-            return false;
-        };
-        if self.value_binding_shadows_module(env, *mod_name) {
-            return false;
-        }
-        let mod_str = resolve(*mod_name);
-        if !crate::module::is_builtin_module(&mod_str) {
-            return true;
-        }
-        self.imported_modules.contains(mod_name)
+        matches!(obj.res, Some(crate::defs::Res::Module(_)))
+            && !matches!(callee.res, Some(crate::defs::Res::Error))
     }
 
     /// Whether the function that `callee` names declares its last
@@ -2827,7 +2511,23 @@ impl TypeChecker {
 
             ExprKind::Ident(name) => {
                 let name = *name;
-                if let Some(scheme) = env.lookup(name) {
+                let variant_enum = self.res_variant_enum(expr.res);
+                if expr.res == Some(crate::defs::Res::Error) {
+                    // The resolver reported the name, or it comes from a
+                    // module that failed to load.
+                    Type::Error
+                } else if let Some(enum_name) = variant_enum {
+                    // A variant: its constructor is bound as
+                    // `Enum.Variant`, two enums may have variants of one
+                    // name.
+                    match env.lookup(intern(&format!("{enum_name}.{name}"))) {
+                        Some(scheme) => {
+                            let scheme = scheme.clone();
+                            self.instantiate(&scheme)
+                        }
+                        None => self.fresh_var(),
+                    }
+                } else if let Some(scheme) = env.lookup(name) {
                     let scheme = scheme.clone();
                     self.instantiate(&scheme)
                 } else if name == intern("self") {
@@ -2843,207 +2543,57 @@ impl TypeChecker {
             ExprKind::FieldAccess(obj, field, _) => {
                 self.last_field_access_was_method = false;
                 let field = *field;
-                // `m.Shape.Circle`: a variant of an enum reached through
-                // its module.
-                if let ExprKind::FieldAccess(head, enum_name, _) = &obj.kind
-                    && let ExprKind::Ident(module) = &head.kind
-                    && self.module_prefixes.contains_key(module)
-                    && !self.value_binding_shadows_module(env, *module)
-                    && self
-                        .qualified_enums
-                        .contains_key(&intern(&format!("{module}.{enum_name}")))
-                {
-                    let ty = self.infer_module_enum_variant(*module, *enum_name, field, span, env);
-                    expr.ty = Some(ty.clone());
-                    return ty;
-                }
-                // Capture module name before mutable borrow for inference
-                let module_name = if let ExprKind::Ident(n) = &obj.kind {
-                    Some(*n)
-                } else {
-                    None
-                };
-
-                // Check for module-style access first (e.g., string.split)
-                // Do this BEFORE inferring obj to avoid false "possibly undefined variable" warnings
-                // for stdlib module names like list, string, map, io, etc.
-                //
-                // Round 94 (BROKEN): module names used to take precedence
-                // over local bindings here, so `fn f(other: P) { other.year }`
-                // with `import other` in scope resolved `other` to the
-                // MODULE and errored with "unknown function 'year' on
-                // module 'other'". This also broke every synthesized
-                // auto-derive body (their comparison parameter is
-                // literally named `other`), so importing any module named
-                // `other` broke `==` / `<` on ALL records and on builtin
-                // Date. Lexical shadowing: when a value binding with the
-                // same name is in scope, skip the entire module/enum
-                // resolution block and fall through to ordinary
-                // field/method access on the binding. (The compiler has
-                // always resolved locals first in its qualified-call
-                // emission, so this also removes a typechecker/runtime
-                // divergence.)
-                // A member of a module that failed to load: the failure is
-                // reported at the import, and nothing is known about the
-                // member.
-                if let Some(module_name) = module_name
-                    && self.poisoned_names.contains(&module_name)
-                    && (env
-                        .lookup(module_name)
-                        .is_none_or(|scheme| matches!(scheme.ty, Type::Error))
-                        || !self.value_binding_shadows_module(env, module_name))
-                {
+                // What the resolver said the access names: nothing (it
+                // reported why, or the module failed to load), a variant
+                // (`m.Red`, `Shape.Red`, `m.Shape.Red`), whose constructor
+                // is bound as `Enum.Variant`, or a member of a module
+                // (`m.f`, `m.Pt`), bound as `m.f`.
+                if expr.res == Some(crate::defs::Res::Error) {
                     expr.ty = Some(Type::Error);
                     return Type::Error;
                 }
-                if let Some(module_name) = module_name
-                    && !self.value_binding_shadows_module(env, module_name)
+                let member_key = match (&obj.kind, obj.res) {
+                    _ if self.res_variant_enum(expr.res).is_some() => {
+                        let enum_name = self.res_variant_enum(expr.res).expect("a variant");
+                        Some(intern(&format!("{enum_name}.{field}")))
+                    }
+                    (ExprKind::Ident(module), Some(crate::defs::Res::Module(_))) => {
+                        Some(intern(&format!("{module}.{field}")))
+                    }
+                    _ => None,
+                };
+                if let Some(key) = member_key {
+                    let ty = match env.lookup(key) {
+                        Some(scheme) => {
+                            let scheme = scheme.clone();
+                            let ty = self.instantiate(&scheme);
+                            self.apply(&ty)
+                        }
+                        // A member the resolver found that the module's
+                        // check did not export: a type alias or a trait
+                        // used as a value.
+                        None => {
+                            self.error(
+                                Code::UndefinedVariable,
+                                format!("'{}' is not a value", resolve(key)),
+                                span,
+                            );
+                            Type::Error
+                        }
+                    };
+                    expr.ty = Some(ty.clone());
+                    return ty;
+                }
+                // `Type.method`: a method of a type, called through it.
+                if let ExprKind::Ident(type_name) = &obj.kind
+                    && obj.res != Some(crate::defs::Res::Local)
+                    && let Some(scheme) = env.lookup(intern(&format!("{type_name}.{field}")))
                 {
-                    // Round 56 item 4: stdlib should be opaque until imported.
-                    // Before this gate, `list.sum(...)` without `import list`
-                    // would typecheck silently (qualified names are
-                    // pre-registered in the environment by `register_builtins`),
-                    // and the compiler would later catch the missing import.
-                    // The audit decision is to surface the recommendation at
-                    // typecheck time so the LSP/CLI/REPL all agree.
-                    //
-                    // The gate fires only when the LHS identifier is a known
-                    // builtin module name AND it was never imported. Non-
-                    // builtin LHS identifiers (record values, enum types,
-                    // fresh vars) fall through to the usual FieldAccess
-                    // resolution paths below.
-                    let module_name_str = resolve(module_name);
-                    if crate::module::is_builtin_module(&module_name_str)
-                        && !self.imported_modules.contains(&module_name)
-                    {
-                        self.errors.push(
-                            Diagnostic::error(
-                                Code::ModuleNotImported,
-                                span,
-                                format!("module '{module_name_str}' is not imported"),
-                            )
-                            .with_help(format!(
-                                "add `import {module_name_str}` at the top of the file"
-                            ))
-                            .with_fix(
-                                format!("Add import for `{module_name_str}`"),
-                                vec![(
-                                    Span::point(span.file, 0),
-                                    format!("import {module_name_str}\n"),
-                                )],
-                            ),
-                        );
-                        let fresh = self.fresh_var();
-                        expr.ty = Some(fresh.clone());
-                        return fresh;
-                    }
-                    let qualified = intern(&format!("{module_name}.{field}"));
-                    if let Some(scheme) = env.lookup(qualified) {
-                        let scheme = scheme.clone();
-                        let result = self.instantiate(&scheme);
-                        let resolved = self.apply(&result);
-                        expr.ty = Some(resolved.clone());
-                        return resolved;
-                    }
-                    // Qualified variant access: `EnumName.Variant`. Variants
-                    // are registered globally by bare name, so when the LHS
-                    // is an enum type and the RHS is one of its variants,
-                    // resolve to the variant's scheme. Handles both unit
-                    // variants used as values and variants about to be
-                    // called with args (the outer `Call` path reuses the
-                    // resolved scheme).
-                    if self.enums.contains_key(&module_name) {
-                        match self.variant_to_enum.get(&field).copied() {
-                            Some(owner) if owner == module_name => {
-                                if let Some(scheme) = env.lookup(field).cloned() {
-                                    let result = self.instantiate(&scheme);
-                                    let resolved = self.apply(&result);
-                                    expr.ty = Some(resolved.clone());
-                                    return resolved;
-                                }
-                            }
-                            Some(owner) => {
-                                self.error(
-                                    Code::NoSuchVariant,
-                                    format!(
-                                        "'{}' is not a variant of enum '{}' (it belongs to '{}')",
-                                        resolve(field),
-                                        resolve(module_name),
-                                        resolve(owner),
-                                    ),
-                                    span,
-                                );
-                                let fresh = self.fresh_var();
-                                expr.ty = Some(fresh.clone());
-                                return fresh;
-                            }
-                            None => {
-                                self.error(
-                                    Code::NoSuchVariant,
-                                    format!(
-                                        "enum '{}' has no variant '{}'",
-                                        resolve(module_name),
-                                        resolve(field),
-                                    ),
-                                    span,
-                                );
-                                let fresh = self.fresh_var();
-                                expr.ty = Some(fresh.clone());
-                                return fresh;
-                            }
-                        }
-                    }
-                    // G5: when `<module>` is a known builtin module (list,
-                    // string, map, ...) and `<member>` is not registered,
-                    // emit a specific "unknown function on module" error
-                    // BEFORE falling through to the generic obj-inference
-                    // path (which would misleadingly report `undefined
-                    // variable '<module>'`). We deliberately do NOT short
-                    // circuit: we emit the error and return a fresh var
-                    // so downstream inference continues.
-                    let module_str = resolve(module_name);
-                    if crate::module::is_builtin_module(&module_str) {
-                        let msg = format_unknown_module_function_message(field, &module_str);
-                        self.error_help(Code::UnknownModuleMember, msg, span);
-                        let fresh = self.fresh_var();
-                        expr.ty = Some(fresh.clone());
-                        return fresh;
-                    }
-                    // Round 89 (BROKEN): the same misleading "undefined
-                    // variable '<module>'" appears for USER modules. When the
-                    // LHS is a known imported module (the symbol the user
-                    // wrote — bare name or alias, both tracked in
-                    // `imported_modules`) and the qualified `module.field`
-                    // lookup above failed, the fault is that `field` is not a
-                    // member of that module, not that the module name is an
-                    // undefined variable. Mirror the builtin branch and emit a
-                    // member-specific diagnostic on the field span. User-module
-                    // exports are not enumerable here, so no did-you-mean hint.
-                    if self.imported_modules.contains(&module_name) {
-                        let field_str = resolve(field);
-                        match self.imported_private_fns.get(&module_name) {
-                            Some((module, private)) if private.contains(&field) => {
-                                let module = resolve(*module);
-                                self.error(
-                                    Code::NotExported,
-                                    format!(
-                                        "`{field_str}` exists in module `{module}` but is not \
-                                         `pub` — mark it `pub fn {field_str}` in {module}.silt \
-                                         to export it"
-                                    ),
-                                    span,
-                                );
-                            }
-                            _ => self.error(
-                                Code::UnknownModuleMember,
-                                format!("unknown function '{field_str}' on module '{module_str}'"),
-                                span,
-                            ),
-                        }
-                        let fresh = self.fresh_var();
-                        expr.ty = Some(fresh.clone());
-                        return fresh;
-                    }
+                    let scheme = scheme.clone();
+                    let ty = self.instantiate(&scheme);
+                    let ty = self.apply(&ty);
+                    expr.ty = Some(ty.clone());
+                    return ty;
                 }
 
                 // Could be record.field — infer the object type
@@ -3909,6 +3459,7 @@ impl TypeChecker {
                             self.unify(&fn_type, &fn_ty, span);
                             ret
                         }
+                        Type::Error => Type::Error,
                         _ => {
                             self.error(
                                 Code::TypeMismatch,
@@ -3978,6 +3529,9 @@ impl TypeChecker {
                         }
                         args[0].clone()
                     }
+                    // An operand already reported (or from a module that
+                    // failed to load): nothing more to say.
+                    Type::Error => Type::Error,
                     Type::Var(_) => {
                         // BROKEN (round 93): this arm used to stay lenient
                         // and DROP the obligation entirely, which made
@@ -4338,13 +3892,7 @@ impl TypeChecker {
                 Type::Fun(param_types, Box::new(lambda_ret))
             }
 
-            ExprKind::RecordCreate {
-                module,
-                name,
-                fields,
-                ..
-            } => {
-                let module = module.map(|q| q.name);
+            ExprKind::RecordCreate { name, fields, .. } => {
                 let name = *name;
                 // GAP (round 35 F4): duplicate fields in a record literal
                 // (e.g. `User { name: "a", name: "b" }`) used to slip past
@@ -4368,22 +3916,9 @@ impl TypeChecker {
                         }
                     }
                 }
-                // Round 94: a module qualifier (`util.Pt { x: 1 }`)
-                // resolves through the qualified mirrors so the literal
-                // is checked against the PRODUCER module's declaration
-                // even when a bare-name conflict made `self.records`
-                // keep a different module's `Pt`. The constructed type
-                // identity is the bare name either way (mirroring how
-                // qualified enum-constructor CALLS resolve to the bare
-                // variant), so the qualified and bare spellings build
-                // interchangeable values.
-                let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match module {
-                    Some(q) => self.lookup_qualified_record(q, name, span, false, env),
-                    None => self.records.get(&name).cloned().map(|info| {
-                        let ids = self.record_param_var_ids.get(&name).cloned();
-                        (info, ids)
-                    }),
-                };
+                // The type identity is the bare name: `util.Pt { x: 1 }`
+                // builds a `Pt`.
+                let looked = self.named_record(expr.res, name, span, false);
                 if let Some((rec_info, param_ids)) = looked {
                     // For parameterized record types, create fresh type variables
                     // for each type parameter and substitute them into field types.
@@ -4452,22 +3987,13 @@ impl TypeChecker {
 
                     Type::Record(name, instantiated_fields)
                 } else {
-                    // G2: Unknown record type — this used to silently synthesize
-                    // an anonymous record. Emit an error so the user notices a
-                    // typo or missing type declaration. We still walk the field
+                    // G2: Unknown record type (reported by `named_record`
+                    // or the resolver) — this used to silently synthesize
+                    // an anonymous record. We still walk the field
                     // expressions so nested errors are reported, but return
-                    // Type::Error to prevent downstream cascades. (Qualified
-                    // lookups already emitted their own, more specific
-                    // diagnostic inside `lookup_qualified_record`.)
+                    // Type::Error to prevent downstream cascades.
                     for (_, e) in fields.iter_mut() {
                         let _ = self.infer_expr(e, env);
-                    }
-                    if module.is_none() && !self.poisoned_names.contains(&name) {
-                        self.error(
-                            Code::UndefinedType,
-                            format!("undefined type '{name}'"),
-                            span,
-                        );
                     }
                     Type::Error
                 }
@@ -4843,6 +4369,11 @@ impl TypeChecker {
                             // in the arm pattern before check_pattern walks
                             // it and defines them in `arm_env`.
                             self.check_pattern_duplicate_bindings(&arm.pattern);
+                            // A name in the pattern the resolver reported:
+                            // what the arm covers is not known.
+                            if names_unresolved(&arm.pattern) {
+                                any_pattern_mismatch = true;
+                            }
                             let pat_err_count = self.errors.len();
                             self.check_pattern(
                                 &arm.pattern,
@@ -4891,8 +4422,9 @@ impl TypeChecker {
                         // Skipped when the scrutinee type already failed to
                         // match the arms — exhaustiveness over a broken match
                         // is a cascade, not new information (round 93).
-                        if !any_pattern_mismatch {
-                            let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
+                        // So is a scrutinee of a type already reported.
+                        let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
+                        if !any_pattern_mismatch && resolved_scrutinee_ty != Type::Error {
                             self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee_span);
                         }
 
@@ -5370,44 +4902,25 @@ impl TypeChecker {
                 }
             }
             PatternKind::Constructor {
-                qualifier,
                 name,
                 args: sub_pats,
                 ..
             } => {
-                // Round 94: validate the qualifier, then prefer the
-                // QUALIFIED scheme (`env` carries every export under
-                // `prefix.Name` — see `merge_imported_module_exports`)
-                // so a module qualifier picks the producer module's
-                // constructor under bare-name conflicts. Bare fallback
-                // covers the enum-name qualifier spelling
-                // (`Shape.Circle(r)`), whose schemes are bare-only.
-                let scheme = match qualifier.first() {
-                    Some(q) => {
-                        match self.resolve_pattern_ctor_qualifier(
-                            qualifier,
-                            *name,
-                            pattern.span,
-                            env,
-                        ) {
-                            CtorQualifierResolution::Invalid => {
-                                for sp in sub_pats {
-                                    let tv = self.fresh_var();
-                                    self.check_pattern(sp, &tv, env, span);
-                                }
-                                return;
-                            }
-                            CtorQualifierResolution::Module(..) => {
-                                let key =
-                                    intern(&format!("{}.{}", resolve(q.name), resolve(*name)));
-                                env.lookup(key)
-                                    .cloned()
-                                    .or_else(|| env.lookup(*name).cloned())
-                            }
-                            CtorQualifierResolution::EnumOwned => env.lookup(*name).cloned(),
+                // The variant's constructor is bound as `Enum.Variant`:
+                // two enums may have variants of one name. A name that is
+                // no variant is looked up bare, for the hints below.
+                let scheme = match self.ctor_target(pattern) {
+                    CtorTarget::Silent => {
+                        for sp in sub_pats {
+                            let tv = self.fresh_var();
+                            self.check_pattern(sp, &tv, env, span);
                         }
+                        return;
                     }
-                    None => env.lookup(*name).cloned(),
+                    CtorTarget::Enum(enum_name, _) => {
+                        env.lookup(intern(&format!("{enum_name}.{name}"))).cloned()
+                    }
+                    CtorTarget::Unknown => env.lookup(*name).cloned(),
                 };
                 // Look up the constructor type
                 if let Some(scheme) = scheme {
@@ -5490,13 +5003,11 @@ impl TypeChecker {
                     // constructor pattern, not the enclosing match
                     // scrutinee — round-17 F4 threaded pattern.span
                     // through arity sites but missed this fallback.
-                    if !self.poisoned_names.contains(name) {
-                        self.error(
-                            Code::UndefinedConstructor,
-                            format!("undefined constructor '{name}' in pattern"),
-                            pattern.span,
-                        );
-                    }
+                    self.error(
+                        Code::UndefinedConstructor,
+                        format!("undefined constructor '{name}' in pattern"),
+                        pattern.span,
+                    );
                     for sp in sub_pats {
                         let tv = self.fresh_var();
                         self.check_pattern(sp, &tv, env, span);
@@ -5516,29 +5027,14 @@ impl TypeChecker {
                     self.check_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
-            PatternKind::Record {
-                module,
-                name,
-                fields,
-                ..
-            } => {
+            PatternKind::Record { name, fields, .. } => {
                 // BROKEN (round 52): same duplicate-field guard as in
                 // `bind_pattern`'s Record arm — match-arm record patterns
                 // flow through `check_pattern`, so the check has to fire
                 // on both paths.
                 self.check_record_pattern_duplicate_fields(fields, pattern.span);
                 if let Some(rec_name) = name {
-                    // Round 94: module qualifier resolves through the
-                    // qualified mirrors (see bind_pattern's Record arm).
-                    let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match module {
-                        Some(q) => {
-                            self.lookup_qualified_record(q.name, *rec_name, pattern.span, true, env)
-                        }
-                        None => self.records.get(rec_name).cloned().map(|info| {
-                            let ids = self.record_param_var_ids.get(rec_name).cloned();
-                            (info, ids)
-                        }),
-                    };
+                    let looked = self.named_record(pattern.res, *rec_name, span, true);
                     if let Some((rec_info, param_ids)) = looked {
                         let instantiated_fields =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());
@@ -5579,16 +5075,6 @@ impl TypeChecker {
                             }
                         }
                     } else {
-                        // Qualified lookups already emitted their own,
-                        // more specific diagnostic inside
-                        // `lookup_qualified_record`.
-                        if module.is_none() && !self.poisoned_names.contains(rec_name) {
-                            self.error(
-                                Code::UndefinedType,
-                                format!("undefined record type '{rec_name}' in pattern"),
-                                span,
-                            );
-                        }
                         for (_, _, sub_pat) in fields {
                             if let Some(sp) = sub_pat {
                                 let tv = self.fresh_var();
