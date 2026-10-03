@@ -461,7 +461,7 @@ pub fn builtin_names() -> Vec<String> {
 /// input binds them: what it and the earlier inputs declared, the items
 /// they imported, and for each module bound by an import (`import list`,
 /// `import list as l`) its members, `l.map`, and for each enum its
-/// variants, `C.Red`. A variant name that is ambiguous for the next input
+/// variants, `C.Red`, `time.Weekday.Monday`. A variant name that is ambiguous for the next input
 /// (the input's own `type D { Red }` beside an earlier `type C { Red }`)
 /// and a name of a module that failed to load are left out.
 pub fn scope_completion_names<'a>(
@@ -498,6 +498,15 @@ pub fn scope_completion_names<'a>(
                     .flat_map(|e| e.values.keys().chain(e.types.keys()))
                 {
                     names.push(format!("{name}.{member}"));
+                }
+                // An enum of the module offers its variants:
+                // `time.Weekday.Monday`.
+                for (ty, binding) in exports.into_iter().flat_map(|e| &e.types) {
+                    if let Binding::Def(ty_id) = binding {
+                        for v in defs.variants(*ty_id) {
+                            names.push(format!("{name}.{ty}.{}", defs.get(*v).name));
+                        }
+                    }
                 }
             }
             Binding::Ambiguous(_) | Binding::Poisoned => {}

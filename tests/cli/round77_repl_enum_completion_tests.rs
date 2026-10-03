@@ -102,3 +102,17 @@ fn an_ambiguous_variant_is_not_offered_and_an_enum_offers_its_variants() {
     repl.eval("type D { Red, Blue }");
     assert!(!repl.eval("Red").committed, "a bare `Red` is ambiguous");
 }
+
+#[test]
+fn an_enum_of_an_imported_module_offers_its_variants() {
+    let names = names_after(&["import time"]);
+    let matches: Vec<&String> = names
+        .iter()
+        .filter(|s| s.starts_with("time.Weekday.T"))
+        .collect();
+    assert_eq!(
+        matches,
+        vec!["time.Weekday.Thursday", "time.Weekday.Tuesday"],
+        "{names:?}"
+    );
+}

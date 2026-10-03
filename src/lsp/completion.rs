@@ -404,11 +404,28 @@ impl Server {
             return None;
         }
         let scope = &self.checked_module(doc)?.scope;
-        let Some(Binding::Def(ty)) = scope.types.get(&intern(prefix)) else {
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        let defs = session.defs();
+        // `T.` or `m.T.` (a type of an imported module).
+        let (_, builtin) = crate::typechecker::names::builtins();
+        let binding = match prefix.split_once('.') {
+            None => scope.types.get(&intern(prefix)),
+            Some((m, t)) => {
+                let Some(Binding::Module(id)) = scope.values.get(&intern(m)) else {
+                    return None;
+                };
+                let exports = if id.is_builtin() {
+                    builtin.modules.get(id)
+                } else {
+                    session.module_analysis(*id).map(|a| &a.scope.exports)
+                };
+                exports?.types.get(&intern(t))
+            }
+        };
+        let Some(Binding::Def(ty)) = binding else {
             return None;
         };
-        let module = doc.module.as_ref()?;
-        let defs = self.projects.get(&module.project)?.session.defs();
         let variants = defs.variants(*ty);
         if variants.is_empty() {
             return None;
@@ -683,7 +700,9 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
         }
         utf16_offset += ch.len_utf16();
     }
-    let before = &line[..byte_offset];
+    // A word being typed after the dot (`time.Weekday.T`) is the
+    // client's to filter by.
+    let before = line[..byte_offset].trim_end_matches(|c: char| c.is_alphanumeric() || c == '_');
     // The last character should be '.' (cursor is right after it)
     if !before.ends_with('.') {
         return None;

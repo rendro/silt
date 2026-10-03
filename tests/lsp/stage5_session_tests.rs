@@ -628,7 +628,7 @@ fn module_names_and_imported_items_in_hover_and_completion() {
 #[test]
 fn completion_follows_the_import_rule() {
     let lib = "pub type Shape { Sq(Int), Ci(Int) }\npub fn area(s: Shape) -> Int { 1 }\n";
-    let main = "import lib\nimport lib.{ Sq, Shape }\nimport list as l\n\ntype Color { Red, Green }\n\nfn main() {\n  \n  l.\n  bytes.\n  Color.\n  Shape.\n}\n";
+    let main = "import lib\nimport lib.{ Sq, Shape }\nimport list as l\nimport time\n\ntype Color { Red, Green }\n\nfn main() {\n  \n  l.\n  bytes.\n  Color.\n  Shape.\n  lib.Shape.\n  time.Weekday.T\n}\n";
     let dir = project("rule", &[("lib.silt", lib), ("main.silt", main)]);
     let main_uri = uri(&dir.join("main.silt"));
     let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
@@ -701,7 +701,7 @@ fn completion_follows_the_import_rule() {
         vec!["Red".to_string(), "Green".to_string()],
         "{variants:?}"
     );
-    let after_imported = position_of(main, "Shape.\n}", 6);
+    let after_imported = position_of(main, "Shape.\n  lib.Shape", 6);
     let variants = labels(&request_at(
         &mut client,
         "textDocument/completion",
@@ -713,6 +713,28 @@ fn completion_follows_the_import_rule() {
         vec!["Sq".to_string(), "Ci".to_string()],
         "{variants:?}"
     );
+    let after_qualified = position_of(main, "lib.Shape.\n  time", 10);
+    let variants = labels(&request_at(
+        &mut client,
+        "textDocument/completion",
+        &main_uri,
+        after_qualified,
+    ));
+    assert_eq!(
+        variants,
+        vec!["Sq".to_string(), "Ci".to_string()],
+        "{variants:?}"
+    );
+    let in_builtin_variant = position_of(main, "time.Weekday.T\n}", 14);
+    let days = labels(&request_at(
+        &mut client,
+        "textDocument/completion",
+        &main_uri,
+        in_builtin_variant,
+    ));
+    for day in ["Monday", "Tuesday", "Sunday"] {
+        assert!(days.iter().any(|d| d == day), "missing {day}: {days:?}");
+    }
 
     let after_unbound = position_of(main, "bytes.\n  Color", 6);
     let none = labels(&request_at(
