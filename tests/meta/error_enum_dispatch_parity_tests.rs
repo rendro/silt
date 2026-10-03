@@ -148,6 +148,7 @@ fn module_helpers_agree_on_error_enum_variant_names() {
 #[test]
 fn typechecker_error_enums_match_arity_registry() {
     let mut src = String::new();
+    let mut imports = std::collections::BTreeSet::new();
     for (enum_name, variants) in builtin_error_enum_variants_with_arity() {
         // Feature-gated enums are registered only when the feature is on.
         if (*enum_name == "PgError" && !cfg!(feature = "postgres"))
@@ -155,21 +156,30 @@ fn typechecker_error_enums_match_arity_registry() {
         {
             continue;
         }
+        // Each enum is reached through the builtin module declaring it.
+        let module = silt::module::builtin_type_module(enum_name)
+            .expect("every stdlib error enum belongs to a module");
+        imports.insert(module);
         src.push_str(&format!(
-            "fn probe_{}(e: {enum_name}) -> Int {{\n  match e {{\n",
+            "fn probe_{}(e: {module}.{enum_name}) -> Int {{\n  match e {{\n",
             enum_name.to_lowercase()
         ));
         for (variant, arity) in variants.iter() {
             let pattern = if *arity == 0 {
-                (*variant).to_string()
+                format!("{module}.{variant}")
             } else {
-                format!("{variant}({})", vec!["_"; *arity].join(", "))
+                format!("{module}.{variant}({})", vec!["_"; *arity].join(", "))
             };
             src.push_str(&format!("    {pattern} -> 0\n"));
         }
         src.push_str("  }\n}\n");
     }
     src.push_str("fn main() { () }\n");
+    let src = imports
+        .iter()
+        .map(|m| format!("import {m}\n"))
+        .collect::<String>()
+        + &src;
 
     let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), &src)
         .tokenize()

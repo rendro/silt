@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: unknown type 'Shape'
+-- stderr-contains: help: did you mean `shapes.Shape`? or import the name: `import shapes.{ Shape }`
+-- stderr-contains: error[type]: undefined variable 'Circle'
+-- stderr-contains: help: did you mean `shapes.Circle`? or import the name: `import shapes.{ Circle }`
+-- `import shapes` binds `shapes` and nothing else.
+import shapes
+fn area(s: Shape) -> Int { 1 }
+fn main() {
+  println(area(Circle(2)))
+}

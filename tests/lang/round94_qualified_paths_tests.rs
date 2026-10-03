@@ -83,7 +83,7 @@ fn formatter_roundtrips_qualified_forms() {
             ("shapes.silt", SHAPES),
             (
                 "main.silt",
-                "import shapes\nimport util\n\nfn main() {\n  let p = util.Pt { x: 1, y: 2 }\n  let m = match shapes.Circle(1.0) {\n    shapes.Circle(r) -> p.x,\n    Shape.Rect(w, h) -> p.y,\n  }\n  let n = match p {\n    util.Pt { x, .. } -> x,\n  }\n  print(m + n)\n}\n",
+                "import shapes\nimport util\n\nfn main() {\n  let p = util.Pt { x: 1, y: 2 }\n  let m = match shapes.Circle(1.0) {\n    shapes.Circle(r) -> p.x,\n    shapes.Shape.Rect(w, h) -> p.y,\n  }\n  let n = match p {\n    util.Pt { x, .. } -> x,\n  }\n  print(m + n)\n}\n",
             ),
         ],
     );
@@ -94,7 +94,7 @@ fn formatter_roundtrips_qualified_forms() {
     assert!(
         once.contains("util.Pt { x: 1, y: 2 }")
             && once.contains("shapes.Circle(r)")
-            && once.contains("Shape.Rect(w, h)")
+            && once.contains("shapes.Shape.Rect(w, h)")
             && once.contains("util.Pt { x, .. }"),
         "fmt must preserve the qualified spellings; got:\n{once}"
     );

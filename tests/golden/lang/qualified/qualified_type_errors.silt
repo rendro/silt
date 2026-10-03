@@ -4,7 +4,7 @@
 -- stderr-contains: module 'time' has no type 'Weekdy'
 -- stderr-contains: did you mean `Weekday`?
 -- stderr-contains: module 'http' is not imported
--- stderr-contains: module 'time' has no variant 'Circle'
+-- stderr-contains: enum 'time.Weekday' has no variant 'Circle'
 import time
 
 fn a(s: nope.Shape) -> Int { 1 }

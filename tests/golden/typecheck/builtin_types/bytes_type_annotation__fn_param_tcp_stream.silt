@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 0
--- `TcpStream` is a valid parameter annotation.
+-- `tcp.TcpStream` is a valid parameter annotation.
 import tcp
-fn handle(s: TcpStream) -> Int { 1 }
+fn handle(s: tcp.TcpStream) -> Int { 1 }
 fn main() {
   println("ok")
 }

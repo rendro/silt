@@ -1,3 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: modules 'a' and 'b' both declare a type 'Pt': one module cannot use two types of one name
+-- The checker knows a type by its name, so two imported types of one
+-- name cannot be told apart in one module: the second import is
+-- rejected, with the first as a label.
 import a
 import b
 

@@ -1,9 +1,9 @@
 -- cmd: check
 -- exit: 0
--- TcpListener, TcpStream and Bytes together in one signature.
+-- tcp.TcpListener, tcp.TcpStream and Bytes together in one signature.
 import tcp
 import bytes
-fn handle(l: TcpListener, s: TcpStream, b: Bytes) -> Int { 1 }
+fn handle(l: tcp.TcpListener, s: tcp.TcpStream, b: Bytes) -> Int { 1 }
 fn main() {
   println("ok")
 }

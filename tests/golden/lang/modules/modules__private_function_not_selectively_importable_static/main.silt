@@ -1,6 +1,7 @@
 -- exit: 1
 -- cmd: check
--- stderr-contains: undefined variable 'secret'
+-- stderr-contains: error[type]: 'secret' is private to module 'calc'
+-- stderr-contains: --> main.silt:5:15
 import calc.{ secret }
 
 fn main() {

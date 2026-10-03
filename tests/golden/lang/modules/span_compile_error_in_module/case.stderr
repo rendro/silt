@@ -1,5 +1,0 @@
-error[compile]: 'Monday' requires `import time`
- --> m3.silt:1:15
-   |
- 1 | pub fn mk() { Monday }
-   |               ^^^^^^ 'Monday' requires `import time`

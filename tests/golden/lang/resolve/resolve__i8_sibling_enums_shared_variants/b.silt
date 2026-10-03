@@ -1,0 +1,2 @@
+pub type ColorB { Blue, Red }
+pub fn first() -> ColorB { ColorB.Blue }

@@ -91,15 +91,15 @@ fn every_registered_error_enum_message_dispatches() {
             )
         });
 
-        // Determine which module to import so the constructor and the
-        // trait dispatch are both visible.
-        let module = silt::module::gated_constructor_module(variant)
-            .expect("every stdlib error variant maps to a module");
+        // The module that declares the variant: the constructor is
+        // reached through it.
+        let module = silt::module::builtin_variant_module(variant)
+            .expect("every stdlib error variant belongs to a module");
 
         let src = format!(
             "import {module}\n\
              fn main() {{\n\
-                 let e = {call}\n\
+                 let e = {module}.{call}\n\
                  println(e.message())\n\
              }}\n"
         );

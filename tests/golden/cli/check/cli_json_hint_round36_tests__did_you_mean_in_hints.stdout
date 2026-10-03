@@ -1,1 +1,1 @@
-[{"code":"E0302","col":13,"end_col":19,"end_line":3,"file":"cli_json_hint_round36_tests__did_you_mean_in_hints.silt","help":["did you mean `println`?"],"kind":"type","labels":[],"line":3,"message":"undefined variable 'prntln'","notes":[],"severity":"error"}]
+[{"code":"E0201","col":13,"end_col":19,"end_line":3,"file":"cli_json_hint_round36_tests__did_you_mean_in_hints.silt","help":["did you mean `println`?"],"kind":"type","labels":[],"line":3,"message":"undefined variable 'prntln'","notes":[],"severity":"error"}]

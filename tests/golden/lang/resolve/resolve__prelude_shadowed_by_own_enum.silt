@@ -1,0 +1,26 @@
+-- verdict: same
+-- A module's own declaration shadows the prelude: after
+-- `type Maybe { Some(a), None }`, bare `Some` and `None` are `Maybe`'s,
+-- and the prelude's are still `Option.Some` and `Option.None`.
+type Maybe(a) { Some(a), None }
+
+fn mine(m: Maybe(Int)) -> String {
+  match m {
+    Some(v) -> "Maybe.Some {v}"
+    None -> "Maybe.None"
+  }
+}
+
+fn prelude(o: Option(Int)) -> String {
+  match o {
+    Option.Some(v) -> "Option.Some {v}"
+    Option.None -> "Option.None"
+  }
+}
+
+fn main() {
+  println(mine(None))
+  println(mine(Some(1)))
+  println(prelude(Option.None))
+  println(prelude(Option.Some(2)))
+}

@@ -10,7 +10,6 @@ mod bytes_module_tests;
 mod call_method_yield_tests;
 mod canonical_resolver_isolation_tests;
 mod compiler_literal_bounds_tests;
-mod cross_enum_variant_shadow_tests;
 mod crypto_module_tests;
 mod deep_value_stack_tests;
 mod encoding_module_tests;

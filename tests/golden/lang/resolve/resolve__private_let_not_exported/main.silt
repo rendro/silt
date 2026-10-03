@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: `hidden` exists in module `config` but is not `pub`
+-- A `let` without `pub` stays in its module.
+import config
+fn main() {
+  println(config.shown)
+  println(config.hidden)
+}

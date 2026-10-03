@@ -1,0 +1,13 @@
+-- verdict: same
+-- A module's `Circle` and this file's own `Circle` are different
+-- variants: `shapes.Circle(n)` is the module's, bare `Circle` this
+-- file's.
+import shapes
+type Local { Circle(String) }
+fn main() {
+  let n = 3
+  println(shapes.size(shapes.Circle(n)))
+  match Circle("mine") {
+    Circle(s) -> println(s)
+  }
+}

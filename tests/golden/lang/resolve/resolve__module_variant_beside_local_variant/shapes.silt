@@ -1,0 +1,7 @@
+pub type Shape { Circle(Int), Square(Int) }
+pub fn size(s: Shape) -> Int {
+  match s {
+    Circle(r) -> r
+    Square(w) -> w
+  }
+}

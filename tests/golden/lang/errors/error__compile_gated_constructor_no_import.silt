@@ -1,3 +1,0 @@
--- exit: 1
--- stderr-contains: requires `import list`
-fn main() { Stop }

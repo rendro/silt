@@ -1,0 +1,9 @@
+-- A module's own declaration of a prelude name shadows the prelude:
+-- `Ok` is the record here, and the prelude's variant is `Result.Ok`.
+type Ok { x: Int }
+
+fn main() {
+  let r = Ok { x: 1 }
+  println(r.x)
+  println(Result.Ok(2))
+}

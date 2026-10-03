@@ -1,0 +1,6 @@
+pub type Box(a) { Box(a) }
+pub fn open(b: Box(a)) -> a {
+  match b {
+    Box(v) -> v
+  }
+}

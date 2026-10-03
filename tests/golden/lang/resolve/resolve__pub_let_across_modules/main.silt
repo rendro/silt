@@ -1,0 +1,11 @@
+-- verdict: same
+-- A `pub let`, plain or destructuring, is exported: `config.limit`,
+-- `config.low`, and by name through `import config.{ high }`.
+import config
+import config.{ high }
+fn main() {
+  println(config.limit)
+  println(config.low)
+  println(high)
+  println(config.span())
+}

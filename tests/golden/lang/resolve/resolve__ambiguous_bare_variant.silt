@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- Declaring two enums that share a variant name is fine; a bare use of
+-- the shared name is an error at the use, with a label at each
+-- declaration.
+type C { Red, Green }
+type D { Red, Blue }
+fn main() {
+  println(Red)
+}

@@ -1,0 +1,14 @@
+error[type]: 'Red' is ambiguous: it is a variant of 'C' and 'D'
+ --> resolve__ambiguous_bare_variant.silt:10:11
+    |
+ 10 |   println(Red)
+    |           ^^^ 'Red' is ambiguous: it is a variant of 'C' and 'D'
+ ::: resolve__ambiguous_bare_variant.silt:7:10
+   |
+ 7 | type C { Red, Green }
+   |          --- variant of 'C'
+ ::: resolve__ambiguous_bare_variant.silt:8:10
+   |
+ 8 | type D { Red, Blue }
+   |          --- variant of 'D'
+  = help: write `C.Red` or `D.Red`

@@ -77,8 +77,8 @@ fn every_registry_enum_message_routes_through_table() {
                  here to lock the dispatch-table wiring."
             )
         });
-        let module = silt::module::gated_constructor_module(variant)
-            .expect("every stdlib error variant maps to a module");
+        let module = silt::module::builtin_variant_module(variant)
+            .expect("every stdlib error variant belongs to a module");
 
         // The script prints the raw `.message()` output. We don't pin
         // the exact wording (that's a typed-message detail owned by the
@@ -90,7 +90,7 @@ fn every_registry_enum_message_routes_through_table() {
         let src = format!(
             "import {module}\n\
              fn main() {{\n\
-                 let e = {call}\n\
+                 let e = {module}.{call}\n\
                  println(e.message())\n\
              }}\n"
         );

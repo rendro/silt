@@ -44,7 +44,6 @@ mod round69_formatter_scanner_collapse_lock_tests;
 mod round69_misc_lock_tests;
 mod round71_dispatch_collapse_and_parity_tests;
 mod round71_doc_drift_lock_tests;
-mod round71_gated_constructor_module_parity_tests;
 mod round73_descriptor_parity_tests;
 mod round73_error_enum_registry_parity_tests;
 mod round73_error_enum_runtime_dedup_tests;

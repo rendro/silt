@@ -1,0 +1,6 @@
+error[type]: undefined variable 'Monday'
+ --> m3.silt:1:15
+   |
+ 1 | pub fn mk() { Monday }
+   |               ^^^^^^ undefined variable 'Monday'
+  = help: `Monday` is in module `time`: write `time.Monday` after `import time`, or add `import time.{ Monday }`

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: module 'list' is not imported
+-- `import list.{ sum }` binds `sum` and nothing else: not `list`.
+import list.{sum}
+fn main() -> Int {
+    list.length([1, 2, 3])
+}

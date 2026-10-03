@@ -1,6 +1,0 @@
-error[type]: type 'Some' shadows variant of builtin enum 'Option'
- --> record_shadow_builtin_variant__some_single_shadow_diagnostic.silt:3:6
-   |
- 3 | type Some { x: Int }
-   |      ^^^^ type 'Some' shadows variant of builtin enum 'Option'
-  = help: choose a different name or fully-qualify the variant

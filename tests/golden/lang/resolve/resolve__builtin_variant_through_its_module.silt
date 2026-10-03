@@ -1,0 +1,16 @@
+-- verdict: same
+-- `import channel` gives `channel.Message`; `import channel.{ Message }`
+-- gives the bare `Message`.
+import channel
+import channel.{ Closed }
+fn show(r) -> String {
+  match r {
+    channel.Message(v) -> "message {v}"
+    Closed -> "closed"
+    _ -> "other"
+  }
+}
+fn main() {
+  println(show(channel.Message(1)))
+  println(show(Closed))
+}

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: undefined variable 'Message'
+-- stderr-contains: help: `Message` is in module `channel`: write `channel.Message` after `import channel`, or add `import channel.{ Message }`
+-- A builtin module's variants are its members, not prelude names.
+fn main() {
+  let m = Message(1)
+  println("x")
+}

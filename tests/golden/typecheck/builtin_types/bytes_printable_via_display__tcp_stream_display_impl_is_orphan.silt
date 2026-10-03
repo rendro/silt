@@ -3,8 +3,8 @@
 -- A user Display impl for builtin TcpStream hits the orphan rule, not "not a declared type".
 -- stderr-contains: orphan impl
 -- stderr-not-contains: not a declared type
-
-trait Display for TcpStream {
+import tcp
+trait Display for tcp.TcpStream {
   fn display(b) -> String { "x" }
 }
 fn main() {}

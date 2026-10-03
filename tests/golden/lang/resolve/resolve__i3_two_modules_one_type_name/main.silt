@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: modules 'a' and 'b' both declare a type 'Pt': one module cannot use two types of one name
+-- stderr-contains: --> main.silt:10:1
+-- Audit repro I3: two modules each export a type `Pt`, with different
+-- fields. Passing `b`'s `Pt` to `a`'s function must not type-check; the
+-- module that would see both is rejected at the second import.
+import a
+import b
+fn main() {
+  println(a.get_x(b.mk()))
+}
