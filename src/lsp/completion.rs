@@ -487,7 +487,7 @@ impl Server {
             Binding::Ambiguous(_) | Binding::Poisoned => return None,
         };
         let def = match defs {
-            Some(defs) => defs.get(id).clone(),
+            Some(defs) => *defs.get(id),
             None => crate::typechecker::names::builtin_def(id)?,
         };
         Some(match def.kind {
