@@ -1,0 +1,2 @@
+import b
+pub fn get() -> b.Node { b.mk() }

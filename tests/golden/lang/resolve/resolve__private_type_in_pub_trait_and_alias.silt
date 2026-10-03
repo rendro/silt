@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: private trait 'P' is a supertrait of public trait 'Q'
+-- stderr-contains: error[type]: private type 'H' in the type of public trait 'Q'
+-- stderr-contains: error[type]: private type 'H' in the type of public let 'pairs'
+-- stderr-contains: error[type]: private type 'H' in the type of public fn 'f'
+-- A private type reaches an importer through a pub trait's method, a pub
+-- let's inferred type and a private alias that stands for it; a private
+-- trait, as the supertrait of a pub trait. Each is reported.
+type H { a: Int }
+type Al = List(H)
+trait P { fn p(self) -> Int }
+pub trait Q: P { fn q(self) -> H }
+pub let pairs = [(H { a: 1 }, 2)]
+pub fn f(x: Al) -> Int { 1 }
+fn main() { println(1) }

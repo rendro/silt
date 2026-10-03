@@ -373,6 +373,51 @@ pub struct TyVarSupply {
     pub(super) subst: Vec<Option<Type>>,
     /// Counter for generating fresh type variables.
     pub(super) next: TyVar,
+    /// The first variable of the module being checked.
+    base: TyVar,
+    /// The variables below `base` the module's check bound: an earlier
+    /// module's, which a later module may resolve (`pub let xs = []`).
+    trail: Vec<TyVar>,
+    /// The variables each checked module allocated, in the order of the
+    /// checks, and whether the module was forgotten since.
+    ranges: Vec<(crate::session::ModuleId, TyVar, bool)>,
+}
+
+impl TyVarSupply {
+    /// Resolve the variable `v` to `t`.
+    pub(super) fn bind(&mut self, v: TyVar, t: Type) {
+        if v < self.base {
+            self.trail.push(v);
+        }
+        self.subst[v] = Some(t);
+    }
+
+    /// Start the check of `module`: its variables come next.
+    fn begin(&mut self, module: crate::session::ModuleId) {
+        self.base = self.next;
+        self.trail.clear();
+        self.ranges.push((module, self.next, false));
+    }
+
+    /// Forget the check of `module`: undo what it bound of the earlier
+    /// modules' variables (`trail`), and give back the variables of the
+    /// checks at the end of the supply that are all forgotten, so a long
+    /// session (an editor, a REPL) does not grow with each check again.
+    fn forget(&mut self, module: crate::session::ModuleId, trail: &[TyVar]) {
+        for v in trail {
+            if let Some(slot) = self.subst.get_mut(*v) {
+                *slot = None;
+            }
+        }
+        for range in self.ranges.iter_mut().filter(|r| r.0 == module) {
+            range.2 = true;
+        }
+        while let Some(&(_, start, true)) = self.ranges.last() {
+            self.ranges.pop();
+            self.subst.truncate(start);
+            self.next = start;
+        }
+    }
 }
 
 /// What the checks of one session share: the type variables, the
@@ -1054,13 +1099,13 @@ impl TypeChecker {
                     tail: new_tail,
                 };
                 if !occurs_in(v1, &to_v1) {
-                    self.tables.vars.subst[v1] = Some(to_v1);
+                    self.tables.vars.bind(v1, to_v1);
                 } else {
                     let msg = Self::infinite_type_message(&to_v1);
                     self.error(Code::InfiniteType, msg, span);
                 }
                 if !occurs_in(v2, &to_v2) {
-                    self.tables.vars.subst[v2] = Some(to_v2);
+                    self.tables.vars.bind(v2, to_v2);
                 } else {
                     let msg = Self::infinite_type_message(&to_v2);
                     self.error(Code::InfiniteType, msg, span);
@@ -1110,7 +1155,7 @@ impl TypeChecker {
             tail: RowTail::Closed,
         };
         if !occurs_in(v, &leftover) {
-            self.tables.vars.subst[v] = Some(leftover);
+            self.tables.vars.bind(v, leftover);
         } else {
             self.error(
                 Code::InfiniteType,
@@ -1189,7 +1234,7 @@ impl TypeChecker {
                     tail: RowTail::Closed,
                 };
                 if !occurs_in(v, &leftover) {
-                    self.tables.vars.subst[v] = Some(leftover);
+                    self.tables.vars.bind(v, leftover);
                 } else {
                     self.error(
                         Code::InfiniteType,
@@ -1257,7 +1302,7 @@ impl TypeChecker {
                         self.error(Code::InfiniteType, Self::infinite_type_message(t), span);
                     }
                 } else {
-                    self.tables.vars.subst[*v] = Some(t.clone());
+                    self.tables.vars.bind(*v, t.clone());
                 }
             }
 
@@ -7810,6 +7855,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         tables,
     } = context;
     tables.forget(module);
+    tables.vars.begin(module);
     let before = tables.keys();
     let (mut checker, mut env) = builtin_env().start();
     tables.module_names.insert(module, module_name);
@@ -7874,6 +7920,8 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
 /// What one module's check added to the session's [`Tables`].
 #[derive(Clone, Default)]
 pub struct Rows {
+    /// The earlier modules' variables the check bound.
+    trail: Vec<TyVar>,
     types: Vec<TypeRef>,
     traits: Vec<TraitKey>,
     methods: Vec<(TypeRef, Symbol)>,
@@ -7934,6 +7982,7 @@ impl Tables {
     fn added_since(&self, before: &TableKeys) -> Rows {
         let after = self.keys();
         Rows {
+            trail: self.vars.trail.clone(),
             types: after.types.difference(&before.types).copied().collect(),
             traits: after.traits.difference(&before.traits).copied().collect(),
             methods: after.methods.difference(&before.methods).copied().collect(),
@@ -7948,6 +7997,7 @@ impl Tables {
         let Some(rows) = self.rows.remove(&module) else {
             return;
         };
+        self.vars.forget(module, &rows.trail);
         for ty in rows.types {
             self.enums.remove(&ty);
             self.records.remove(&ty);

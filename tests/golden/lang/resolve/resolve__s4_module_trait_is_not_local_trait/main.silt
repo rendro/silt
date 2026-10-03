@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: type 'X' does not implement trait 'Describe'
+-- An impl of `lib.Describe` does not satisfy a bound on the local
+-- `Describe` of the same name.
+import lib
+trait Describe { fn describe(self) -> Int }
+type X { X(Int) }
+trait lib.Describe for X { fn describe(self) -> String { "lib" } }
+fn count(a: a) -> Int where a: Describe { a.describe() }
+fn main() {
+  println(count(X(1)))
+}

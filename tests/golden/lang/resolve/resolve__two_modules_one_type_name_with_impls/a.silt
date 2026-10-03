@@ -1,0 +1,3 @@
+pub type Pt { x: Int }
+trait Display for Pt { fn display(self) -> String { "a-pt {self.x}" } }
+pub fn mk() -> Pt { Pt { x: 1 } }

@@ -1,0 +1,2 @@
+import b
+pub fn get() -> b.Color { b.red() }

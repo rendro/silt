@@ -1,0 +1,22 @@
+-- verdict: same
+-- Two modules each declare a `Pt` with a Display impl: each value runs
+-- its own module's impl, through a method call, through the type and in
+-- a function that takes both; a record of either prints with its
+-- module's name, as the two are told apart.
+import a
+import b
+fn both(p: a.Pt, q: b.Pt) -> String {
+  "{p.display()} / {q.display()} / {p.x} {q.y}"
+}
+fn main() {
+  println(a.mk().display())
+  println(b.mk().display())
+  println(a.Pt.display(a.mk()))
+  println(both(a.mk(), b.mk()))
+  println(a.mk())
+  println(b.mk())
+  match b.Pt { y: "q" } {
+    b.Pt { y } -> println(y)
+  }
+  println(a.mk() == a.mk())
+}

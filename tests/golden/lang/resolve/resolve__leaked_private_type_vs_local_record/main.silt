@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: type mismatch: expected Hidden, got lib.Hidden
+-- lib's private Hidden leaks through a pub fn's annotation (reported in
+-- lib) and is not this module's own Hidden.
+import lib
+type Hidden { b: String }
+fn get(h: Hidden) -> String { h.b }
+fn main() { println(get(lib.leak())) }
