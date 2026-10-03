@@ -575,10 +575,36 @@ impl TypeChecker {
                 // `type_name_for_impl`).
                 let name = self.type_name_for_impl(&inner)?;
                 let entry = self.method_table.get(&(name, field)).cloned()?;
+                if let Some(trait_name) = entry.trait_name
+                    && self.private_traits.contains_key(&trait_name)
+                {
+                    self.private_method(trait_name, field, span);
+                    return Some(Type::Error);
+                }
                 let (instantiated, _constraints) = self.instantiate_method_entry(&entry);
                 Some(self.apply(&instantiated))
             }
         }
+    }
+
+    /// Report `T.field` where the type `T` has no method `field`. A builtin
+    /// module named like the type with a function of that name (`int.parse`
+    /// for `Int.parse`) is suggested.
+    fn no_type_method(&mut self, ty: &Type, field: Symbol, span: Span) {
+        let type_name = format!("{ty}");
+        let module = type_name.to_lowercase();
+        let mut d = Diagnostic::error(
+            Code::UnresolvedName,
+            span,
+            format!("type '{type_name}' has no method '{field}'"),
+        );
+        let qualified = intern(&format!("{module}.{field}"));
+        if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
+            d = d.with_help(format!(
+                "did you mean `{module}.{field}`, a function of module `{module}`?"
+            ));
+        }
+        self.errors.push(d);
     }
 
     /// Expand a list of trait names to include all transitive supertraits.
@@ -2670,8 +2696,12 @@ impl TypeChecker {
                         expr.ty = Some(ty.clone());
                         return ty;
                     }
-                    // Fall through to the generic "unknown field on type"
-                    // error below.
+                    // A concrete type with no such method (a type
+                    // variable's case is reported above).
+                    let inner = self.apply(&gargs[0]);
+                    if !matches!(inner, Type::Var(_) | Type::Error) {
+                        self.no_type_method(&inner, field, span);
+                    }
                     return Type::Error;
                 }
                 match &obj_ty {

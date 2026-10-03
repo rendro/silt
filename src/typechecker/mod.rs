@@ -8496,6 +8496,11 @@ pub fn builtin_derived_impls() -> Rc<Vec<Decl>> {
     builtin_env().impls.clone()
 }
 
+/// Whether the builtin scope binds `name` (`int.parse`).
+pub(super) fn builtin_env_has(name: Symbol) -> bool {
+    builtin_env().root.bindings.contains_key(&name)
+}
+
 /// The builtin environment, built on first use and after each
 /// `intern::reset`.
 fn builtin_env() -> Rc<BuiltinEnv> {
