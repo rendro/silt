@@ -385,6 +385,12 @@ impl TypeChecker {
             self.private_method(trait_name, method_name, span);
             return Type::Error;
         }
+        if let Some(head) = self.type_name_for_impl(&self.apply(receiver_ty))
+            && self.ambiguous_method_call(head, method_name, span)
+        {
+            return Type::Error;
+        }
+        self.method_trait = entry.trait_name;
         let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
         // Reject value-receiver calls on no-self trait methods (`empty`,
         // `default`, etc.). The method has no slot for the receiver, so
@@ -573,6 +579,7 @@ impl TypeChecker {
                 // TraitInfo.methods stores bare Types whose TyVars were
                 // allocated once at register_trait_decl; instantiate so
                 // repeated call sites don't share bindings.
+                self.method_trait = Some(matches[0].0);
                 let instantiated = self.instantiate_method_type(&matches[0].1);
                 let resolved = self.apply(&instantiated);
                 Some(resolved)
@@ -589,6 +596,10 @@ impl TypeChecker {
                     self.private_method(trait_name, field, span);
                     return Some(Type::Error);
                 }
+                if self.ambiguous_method_call(name, field, span) {
+                    return Some(Type::Error);
+                }
+                self.method_trait = entry.trait_name;
                 let (instantiated, _constraints) = self.instantiate_method_entry(&entry);
                 Some(self.apply(&instantiated))
             }
@@ -1030,6 +1041,10 @@ impl TypeChecker {
                     if let Some(entry) = self.tables.method_table.get(&(type_name, field)).cloned()
                     {
                         let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
+                        // The access was inferred already: its trait is
+                        // not recorded, and the VM finds the method by
+                        // the receiver's type.
+                        self.method_trait = None;
                         let method_ty = self.apply(&instantiated);
                         // Method types include `self` as the first param.
                         // When the call site originally saw this field
@@ -2373,6 +2388,21 @@ impl TypeChecker {
     // ── Expression type inference ───────────────────────────────────
 
     pub(super) fn infer_expr(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
+        if !matches!(expr.kind, ExprKind::FieldAccess(..)) {
+            return self.infer_expr_kind(expr, env);
+        }
+        // A method call names its method's trait: the access records it
+        // (`Expr::res`), and the compiler keys the call by it.
+        let outer = self.method_trait.take();
+        let ty = self.infer_expr_kind(expr, env);
+        if let Some(t) = self.method_trait.take() {
+            expr.res = Some(crate::defs::Res::Def(t.id.0));
+        }
+        self.method_trait = outer;
+        ty
+    }
+
+    fn infer_expr_kind(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
         let span = expr.span;
         let ty = match &mut expr.kind {
             ExprKind::Int(_) => Type::Int,
@@ -2673,6 +2703,11 @@ impl TypeChecker {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
+                        if self.ambiguous_method_call(key.0, field, span) {
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
+                        self.method_trait = entry.trait_name;
                         let scheme = Self::method_scheme(&entry);
                         let ty = self.instantiate(&scheme);
                         let ty = self.apply(&ty);
@@ -3040,8 +3075,9 @@ impl TypeChecker {
                                     span,
                                 );
                                 Type::Error
-                            } else if let Some((_, method_ty)) = matches.first() {
+                            } else if let Some((trait_name, method_ty)) = matches.first() {
                                 self.last_field_access_was_method = true;
+                                self.method_trait = Some(*trait_name);
                                 // Instantiate with fresh TyVars rather than
                                 // returning the trait declaration's template
                                 // type directly. TraitInfo.methods stores

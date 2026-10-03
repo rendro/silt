@@ -306,7 +306,18 @@ fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (
         //   CallBuiltin(name_index, argc)
         // The two arms shared a byte-identical operand-decode shape
         // (round 84 audit): consolidated into `fmt_u16_u8_with_const`.
-        Op::CallMethod | Op::CallBuiltin => fmt_u16_u8_with_const(chunk, code, offset, name),
+        Op::CallBuiltin => fmt_u16_u8_with_const(chunk, code, offset, name),
+        // CallMethod: the method name, argc, and the trait whose method
+        // it calls (shown after the name when the call names one).
+        Op::CallMethod => {
+            let (line, next) = fmt_u16_u8_with_const(chunk, code, offset, name);
+            let trait_index = read_u16(code, next);
+            let line = match globals.trait_name(trait_index) {
+                Some(t) => format!("{line} of {t}"),
+                None => line,
+            };
+            (line, next + 2)
+        }
 
         // ── MakeClosure: u16 func_index, u8 upvalue_count, then descriptors
         Op::MakeClosure => {
@@ -646,11 +657,14 @@ mod tests {
         chunk.emit_op(Op::CallMethod, span);
         chunk.emit_u16(method_idx, span);
         chunk.emit_u8(0, span); // argc = 0
+        chunk.emit_u16(crate::bytecode::NO_TRAIT, span);
         chunk.emit_op(Op::Return, span);
 
         let output = disassemble_chunk(&chunk, &Globals::default(), "method");
         assert!(output.contains("CallMethod"));
         assert!(output.contains("\"len\""));
+        // The next instruction is decoded after the trait operand.
+        assert!(output.contains("0006  Return"), "{output}");
     }
 
     #[test]

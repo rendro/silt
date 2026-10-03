@@ -497,13 +497,14 @@ impl Compiler {
         ti: &crate::ast::TraitImpl,
         globals: &mut Globals,
     ) -> Result<(), Diagnostic> {
-        let Some(ty) = self.impl_type(ti) else {
+        let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti)) else {
             return Ok(());
         };
         let type_name = self.type_info(ty).name.clone();
         for method in &ti.methods {
             globals
                 .add_method(
+                    t,
                     ty,
                     &resolve(method.name),
                     format!("{type_name}.{}", method.name),
@@ -788,7 +789,8 @@ impl Compiler {
                 // type of the receiver.
                 // An impl whose target names no type (`trait Display
                 // for a`) is never dispatched to: it has no code.
-                let Some(ty) = self.impl_type(trait_impl) else {
+                let (Some(ty), Some(t)) = (self.impl_type(trait_impl), self.impl_trait(trait_impl))
+                else {
                     return Ok(());
                 };
                 let type_name = self.type_info(ty).name.clone();
@@ -834,7 +836,7 @@ impl Compiler {
 
                     let slot = self
                         .globals
-                        .method(ty, &resolve(method.name))
+                        .method(Some(t), ty, &resolve(method.name))
                         .ok_or_else(|| checker_missed(span, "an impl method with no slot"))?;
                     self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
                     self.current_chunk().emit_op(Op::Pop, span);
@@ -1321,11 +1323,7 @@ impl Compiler {
                         // builtin type, which is native, not a global; the
                         // first argument is the receiver.
                         self.compile_operands(args)?;
-                        let method_idx =
-                            self.add_constant(Value::String(resolve(*method)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::CallMethod, method_idx, span);
-                        self.current_chunk().emit_u8(args.len() as u8, span);
+                        self.emit_call_method(*method, args.len() as u8, callee.res, span)?;
                     } else if let Some(slot) = self.qualified_type_member(callee)? {
                         // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                         // through its type.
@@ -1356,11 +1354,7 @@ impl Compiler {
                         }
                         self.compile_operands(std::iter::once(&**receiver).chain(args))?;
                         let argc = (args.len() + 1) as u8; // receiver + args
-                        let method_idx =
-                            self.add_constant(Value::String(resolve(*method)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::CallMethod, method_idx, span);
-                        self.current_chunk().emit_u8(argc, span);
+                        self.emit_call_method(*method, argc, callee.res, span)?;
                     }
                 } else {
                     // Normal function call. A decoder imported by name
@@ -2460,6 +2454,56 @@ impl Compiler {
         Some(canonical_head(self.resolver(), written?).id)
     }
 
+    /// The trait the impl `ti` is of. The derived impls of the builtin
+    /// types, which the builtin environment makes, name a builtin trait
+    /// unresolved.
+    fn impl_trait(&self, ti: &crate::ast::TraitImpl) -> Option<crate::defs::TraitId> {
+        match ti.trait_res {
+            Some(crate::defs::Res::Def(id)) => Some(crate::defs::TraitId(id)),
+            _ => crate::defs::builtin_trait_id(&resolve(ti.trait_name)),
+        }
+    }
+
+    /// The trait a method call's resolution names: the trait of the
+    /// method the checker resolved the call to. `None` when it is not
+    /// known where the call is compiled.
+    fn res_trait(&self, res: Option<crate::defs::Res>) -> Option<crate::defs::TraitId> {
+        let Some(crate::defs::Res::Def(id)) = res else {
+            return None;
+        };
+        match self.units.defs.get(id).kind {
+            crate::defs::DefKind::Trait(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// Emit `CallMethod` of `method` with `argc` values (the receiver
+    /// first) on the stack, for the trait the call's resolution `res`
+    /// names.
+    fn emit_call_method(
+        &mut self,
+        method: Symbol,
+        argc: u8,
+        res: Option<crate::defs::Res>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let method_idx = self.add_constant(Value::String(resolve(method)), span)?;
+        let trait_operand = match self.res_trait(res) {
+            Some(t) => {
+                let name = self.units.defs.get(t.0).name;
+                self.globals
+                    .trait_index(t, resolve(name))
+                    .ok_or_else(|| too_many_globals(span))?
+            }
+            None => crate::bytecode::NO_TRAIT,
+        };
+        self.current_chunk()
+            .emit_op_u16(Op::CallMethod, method_idx, span);
+        self.current_chunk().emit_u8(argc, span);
+        self.current_chunk().emit_u16(trait_operand, span);
+        Ok(())
+    }
+
     /// Whether `callee` is `T.method` for a builtin type (`Int`, `List`,
     /// `io.IoError`, ...) and a method of a builtin trait (Display,
     /// Compare, Equal, Hash, Error), which the VM implements natively for
@@ -2509,7 +2553,7 @@ impl Compiler {
             },
         );
         self.globals
-            .method(ty.id, &resolve(*field))
+            .method(self.res_trait(expr.res), ty.id, &resolve(*field))
             .map(Some)
             .ok_or_else(|| {
                 checker_missed(

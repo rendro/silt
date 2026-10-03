@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::defs::{DefId, TypeId};
+use crate::defs::{DefId, TraitId, TypeId};
 use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
@@ -36,17 +36,27 @@ enum ConstantKey {
 
 /// The global slots of a program. Every top-level function, `let` and
 /// host function of its modules has one, and so has every method of an
-/// impl, by the type the impl is for and the method's name. A REPL
-/// session keeps one `Globals` for all its entries: a definition an
-/// entry makes again is a new definition with a slot of its own.
+/// impl, by the impl's trait, the type it is for and the method's name.
+/// A REPL session keeps one `Globals` for all its entries: a definition
+/// an entry makes again is a new definition with a slot of its own.
 #[derive(Debug, Clone, Default)]
 pub struct Globals {
     /// The name of each slot's definition, as disassembly and errors
     /// show it.
     names: Vec<String>,
     defs: HashMap<DefId, u16>,
-    methods: HashMap<TypeId, HashMap<String, u16>>,
+    methods: HashMap<(TraitId, TypeId), HashMap<String, u16>>,
+    /// The methods of each type whatever their trait, for a call whose
+    /// trait is not known where it is compiled.
+    by_type: HashMap<TypeId, HashMap<String, u16>>,
+    /// The traits a `CallMethod` names, by the index its operand holds,
+    /// each with its name.
+    traits: Vec<(TraitId, String)>,
 }
+
+/// The `CallMethod` trait operand of a call whose trait is not known
+/// where it is compiled.
+pub const NO_TRAIT: u16 = u16::MAX;
 
 impl Globals {
     /// The number of slots.
@@ -63,14 +73,44 @@ impl Globals {
         self.defs.get(&def).copied()
     }
 
-    /// The slot of the method `method` of the impls for the type `ty`.
-    pub fn method(&self, ty: TypeId, method: &str) -> Option<u16> {
-        self.methods.get(&ty)?.get(method).copied()
+    /// The slot of the method `method` of the impl of the trait `t` (any
+    /// trait's, for `None`) for the type `ty`.
+    pub fn method(&self, t: Option<TraitId>, ty: TypeId, method: &str) -> Option<u16> {
+        match t {
+            Some(t) => self.methods.get(&(t, ty))?.get(method).copied(),
+            None => self.by_type.get(&ty)?.get(method).copied(),
+        }
+    }
+
+    /// [`Globals::method`] for a `CallMethod` trait operand.
+    pub fn call_method(&self, trait_index: u16, ty: TypeId, method: &str) -> Option<u16> {
+        let t = self.traits.get(trait_index as usize).map(|(t, _)| *t);
+        self.method(t, ty, method)
     }
 
     /// The name of slot `slot`.
     pub fn name(&self, slot: u16) -> &str {
         self.names.get(slot as usize).map_or("?", String::as_str)
+    }
+
+    /// The name of the trait a `CallMethod` operand names.
+    pub fn trait_name(&self, trait_index: u16) -> Option<&str> {
+        self.traits
+            .get(trait_index as usize)
+            .map(|(_, n)| n.as_str())
+    }
+
+    /// The `CallMethod` operand of the trait `t`, named `name`; `None`
+    /// when 65,535 traits are named already.
+    pub fn trait_index(&mut self, t: TraitId, name: String) -> Option<u16> {
+        if let Some(k) = self.traits.iter().position(|(known, _)| *known == t) {
+            return Some(k as u16);
+        }
+        let k = u16::try_from(self.traits.len())
+            .ok()
+            .filter(|k| *k != NO_TRAIT)?;
+        self.traits.push((t, name));
+        Some(k)
     }
 
     /// A new slot named `name`; `None` when all 65,536 slots are taken.
@@ -91,15 +131,26 @@ impl Globals {
         Some(slot)
     }
 
-    /// The slot of the method `method` of the type `ty`, named `name`: a
-    /// new one the first time. A later impl of the method for the type
-    /// (a REPL entry's) takes the slot over.
-    pub fn add_method(&mut self, ty: TypeId, method: &str, name: String) -> Option<u16> {
-        if let Some(slot) = self.method(ty, method) {
+    /// The slot of the method `method` of the impl of the trait `t` for
+    /// the type `ty`, named `name`: a new one the first time. A later
+    /// impl of the trait for the type (a REPL entry's) takes the slot
+    /// over.
+    pub fn add_method(
+        &mut self,
+        t: TraitId,
+        ty: TypeId,
+        method: &str,
+        name: String,
+    ) -> Option<u16> {
+        if let Some(slot) = self.method(Some(t), ty, method) {
             return Some(slot);
         }
         let slot = self.add(name)?;
         self.methods
+            .entry((t, ty))
+            .or_default()
+            .insert(method.to_string(), slot);
+        self.by_type
             .entry(ty)
             .or_default()
             .insert(method.to_string(), slot);
@@ -312,10 +363,13 @@ pub enum Op {
     /// Panic with message string on TOS.
     Panic,
 
-    /// Runtime method dispatch: the method of the receiver's type named
-    /// by the constant (see [`Globals::method`]), else a builtin trait
-    /// method or a record field holding a function; call it.
-    /// operands: u16 method_name_index, u8 argc (including receiver)
+    /// Runtime method dispatch: the method named by the constant, of the
+    /// impl of the trait the third operand names (see
+    /// [`Globals::call_method`]; [`NO_TRAIT`] for any trait's) for the
+    /// receiver's type, else a builtin trait method or a record field
+    /// holding a function; call it.
+    /// operands: u16 method_name_index, u8 argc (including receiver),
+    /// u16 trait
     CallMethod,
 
     /// Move TOS down to `stack[frame_base + u16]` and drop every value that

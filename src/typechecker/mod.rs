@@ -434,8 +434,14 @@ pub struct Tables {
     pub(super) records: HashMap<TypeRef, RecordInfo>,
     /// Declared traits.
     pub(super) traits: HashMap<TraitKey, TraitInfo>,
-    /// Method table: (type, method_name) → method entry.
+    /// Method table: (type, method_name) → method entry. For a type and
+    /// name that the impls of two traits provide (two modules' `Show`
+    /// for `Int`), it holds the one the module being checked means (see
+    /// `TypeChecker::select_visible_methods`).
     pub(super) method_table: HashMap<(TypeRef, Symbol), MethodEntry>,
+    /// Every method of a written trait impl, by its type, its name and
+    /// its trait.
+    pub(super) trait_methods: HashMap<(TypeRef, Symbol, TraitKey), MethodEntry>,
     /// Tracks which (trait_name, type) pairs have been implemented.
     pub(super) trait_impl_set: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// Round 93: `(trait_name, canonical type name)` pairs for which a
@@ -635,6 +641,18 @@ pub struct TypeChecker {
     /// callee to decide arity semantics (method call adds implicit self;
     /// field/module calls do not).
     pub(super) last_field_access_was_method: bool,
+    /// The trait whose method the field access being inferred calls,
+    /// which `infer_expr` records on the access (`Expr::res`): the
+    /// compiler keys the call by it.
+    pub(super) method_trait: Option<TraitKey>,
+    /// The methods the impls of two or more traits provide for one type,
+    /// with the traits, where this module sees none or several of the
+    /// traits: a call of one is ambiguous.
+    pub(super) ambiguous_methods: HashMap<(TypeRef, Symbol), Vec<TraitKey>>,
+    /// The traits the module names by its imports (`import m.{ T }`),
+    /// and the modules it imports: their traits it sees too.
+    pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
+    pub(super) seen_modules: std::collections::HashSet<crate::session::ModuleId>,
     /// Trait-orphan check (round 63 item 5): the package symbol whose
     /// source we're currently typechecking. `Some(pkg)` is set by
     /// `check_module` (the entry point the session checks every module
@@ -738,6 +756,10 @@ impl TypeChecker {
             current_fn_param_tyvars: Vec::new(),
             tyvar_trait_constraints: HashMap::new(),
             last_field_access_was_method: false,
+            method_trait: None,
+            ambiguous_methods: HashMap::new(),
+            seen_traits: std::collections::HashSet::new(),
+            seen_modules: std::collections::HashSet::new(),
             current_package: None,
             defs: None,
             module: crate::session::ModuleId(0),
@@ -3157,6 +3179,7 @@ impl TypeChecker {
                 _ => {}
             }
         }
+        self.select_visible_methods();
 
         // Process top-level let bindings (after functions are registered so
         // the value expression can call functions, and before function body
@@ -6940,30 +6963,11 @@ impl TypeChecker {
 
             let fn_type = Type::Fun(param_types, Box::new(ret_type));
 
-            // GAP (round 17 F3): method-name coherence across distinct
-            // traits on the same target. If `(target, method_name)` is
-            // already in the method table and came from a *different*
-            // user-defined trait, registering this impl would silently
-            // overwrite the earlier one and route every `.method()`
-            // call to the last-registered trait. Reject with an
-            // ambiguity error that names both traits.
-            if let Some(existing) = self.tables.method_table.get(&(target_type, method.name))
-                && !existing.is_auto_derived
-                && let Some(existing_trait) = existing.trait_name
-                && existing_trait != trait_key
-            {
-                self.error(
-                    Code::AmbiguousMethod,
-                    format!(
-                        "ambiguous method '{}' on type '{}': provided by traits {}, {}",
-                        method.name,
-                        self.show_type(&Type::Generic(target_type, vec![])),
-                        self.show_trait(existing_trait),
-                        self.show_trait(trait_key)
-                    ),
-                    ti.span,
-                );
-            }
+            // Two traits may each provide a method of one name for one
+            // type (two modules' `Show` for `Int`): each impl is kept, by
+            // its trait, and a call means the one whose trait the module
+            // of the call sees (`select_visible_methods`); a call that
+            // sees both is ambiguous.
 
             // Collect constraints for this method:
             //   (a) every impl-level constraint, verbatim (they reference
@@ -7061,16 +7065,21 @@ impl TypeChecker {
             // points at the impl block header) so the
             // `validate_trait_impls` signature-mismatch unify error
             // lands on the offending method's signature line.
-            self.tables.method_table.insert(
-                (target_type, method.name),
-                MethodEntry {
-                    method_type: fn_type.clone(),
-                    span: method.span,
-                    is_auto_derived: ti.is_auto_derived,
-                    trait_name: Some(trait_key),
-                    method_constraints: method_constraints.clone(),
-                },
-            );
+            let entry = MethodEntry {
+                method_type: fn_type.clone(),
+                span: method.span,
+                is_auto_derived: ti.is_auto_derived,
+                trait_name: Some(trait_key),
+                method_constraints: method_constraints.clone(),
+            };
+            if !ti.is_auto_derived {
+                self.tables
+                    .trait_methods
+                    .insert((target_type, method.name, trait_key), entry.clone());
+            }
+            self.tables
+                .method_table
+                .insert((target_type, method.name), entry);
 
             // Bind the method in the module's scope under its impl key
             // (`impl_method_key`), where `check_decl_bodies` checks its
@@ -7960,6 +7969,90 @@ pub(super) fn register_auto_derived_impls_for(
     }
 }
 
+impl TypeChecker {
+    /// For each type and method name that the impls of two or more traits
+    /// provide, put in the method table the one the module checked
+    /// means: the one whose trait the module sees, by `scope`: a trait it
+    /// declares, a trait it names by an import, a trait of a module it
+    /// imports, or a builtin trait. Where it sees none or several of the
+    /// traits, a call is ambiguous (`ambiguous_methods`). Run once the
+    /// module's impls are registered.
+    fn select_visible_methods(&mut self) {
+        let mut providers: HashMap<(TypeRef, Symbol), Vec<TraitKey>> = HashMap::new();
+        for (ty, method, t) in self.tables.trait_methods.keys() {
+            providers.entry((*ty, *method)).or_default().push(*t);
+        }
+        let module = self.module;
+        let defs = self.defs.clone();
+        let sees = |t: &TraitKey| {
+            let Some(defs) = &defs else {
+                return true;
+            };
+            let def = defs.get(t.id.0);
+            def.module == module
+                || def.module.is_builtin()
+                || self.seen_traits.contains(&t.id.0)
+                || self.seen_modules.contains(&def.module)
+        };
+        self.ambiguous_methods.clear();
+        for ((ty, method), mut traits) in providers {
+            if traits.len() < 2 {
+                continue;
+            }
+            traits.sort_by_key(|t| self.show_trait(*t));
+            let seen: Vec<TraitKey> = traits.iter().copied().filter(|t| sees(t)).collect();
+            match seen.as_slice() {
+                [t] => {
+                    let entry = self.tables.trait_methods[&(ty, method, *t)].clone();
+                    self.tables.method_table.insert((ty, method), entry);
+                }
+                [] => {
+                    self.ambiguous_methods.insert((ty, method), traits);
+                }
+                _ => {
+                    self.ambiguous_methods.insert((ty, method), seen);
+                }
+            }
+        }
+    }
+
+    /// Keep what the check learned of each written impl method (its
+    /// body's type) for the modules checked later.
+    fn keep_trait_methods(&mut self) {
+        for ((ty, method), entry) in &self.tables.method_table {
+            if let Some(t) = entry.trait_name
+                && let Some(kept) = self.tables.trait_methods.get_mut(&(*ty, *method, t))
+            {
+                *kept = entry.clone();
+            }
+        }
+    }
+
+    /// Whether a call of `method` of `ty` is ambiguous here; if so, it is
+    /// reported at `span`.
+    pub(super) fn ambiguous_method_call(
+        &mut self,
+        ty: TypeRef,
+        method: Symbol,
+        span: Span,
+    ) -> bool {
+        let Some(traits) = self.ambiguous_methods.get(&(ty, method)).cloned() else {
+            return false;
+        };
+        let shown: Vec<String> = traits.iter().map(|t| self.show_trait(*t)).collect();
+        self.error(
+            Code::AmbiguousMethod,
+            format!(
+                "ambiguous method '{method}' on type '{}': provided by traits {}",
+                self.show_type(&Type::Generic(ty, vec![])),
+                shown.join(", ")
+            ),
+            span,
+        );
+        true
+    }
+}
+
 /// What checking one module gives.
 pub struct ModuleCheck {
     /// The module's errors and warnings.
@@ -8033,7 +8126,18 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.defs = Some(defs);
     checker.module = module;
     checker.module_name = module_name;
+    for binding in scope.types.values() {
+        if let names::Binding::Def(id) = binding {
+            checker.seen_traits.insert(*id);
+        }
+    }
+    for binding in scope.values.values() {
+        if let names::Binding::Module(id) = binding {
+            checker.seen_modules.insert(*id);
+        }
+    }
     let env = checker.check_program_in(program, env);
+    checker.keep_trait_methods();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_pub_let_types(program, &env);
     checker.enter_schemes(&env);
@@ -8081,6 +8185,7 @@ pub struct Rows {
     types: Vec<TypeRef>,
     traits: Vec<TraitKey>,
     methods: Vec<(TypeRef, Symbol)>,
+    trait_methods: Vec<(TypeRef, Symbol, TraitKey)>,
     impls: Vec<(TraitKey, TypeRef)>,
     schemes: Vec<crate::defs::DefId>,
 }
@@ -8090,6 +8195,7 @@ pub struct TableKeys {
     types: std::collections::HashSet<TypeRef>,
     traits: std::collections::HashSet<TraitKey>,
     methods: std::collections::HashSet<(TypeRef, Symbol)>,
+    trait_methods: std::collections::HashSet<(TypeRef, Symbol, TraitKey)>,
     impls: std::collections::HashSet<(TraitKey, TypeRef)>,
     schemes: std::collections::HashSet<crate::defs::DefId>,
 }
@@ -8130,6 +8236,7 @@ impl Tables {
                 .collect(),
             traits: self.traits.keys().copied().collect(),
             methods: self.method_table.keys().copied().collect(),
+            trait_methods: self.trait_methods.keys().copied().collect(),
             impls: self.trait_impl_set.iter().copied().collect(),
             schemes: self.schemes.keys().copied().collect(),
         }
@@ -8142,6 +8249,11 @@ impl Tables {
             types: after.types.difference(&before.types).copied().collect(),
             traits: after.traits.difference(&before.traits).copied().collect(),
             methods: after.methods.difference(&before.methods).copied().collect(),
+            trait_methods: after
+                .trait_methods
+                .difference(&before.trait_methods)
+                .copied()
+                .collect(),
             impls: after.impls.difference(&before.impls).copied().collect(),
             schemes: after.schemes.difference(&before.schemes).copied().collect(),
         }
@@ -8167,6 +8279,9 @@ impl Tables {
         }
         for key in rows.methods {
             self.method_table.remove(&key);
+        }
+        for key in rows.trait_methods {
+            self.trait_methods.remove(&key);
         }
         for key in rows.impls {
             self.trait_impl_set.remove(&key);

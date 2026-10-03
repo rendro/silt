@@ -1,9 +1,10 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]: type 'P' does not implement trait 'b.Show'
--- stderr-contains: error[type]: ambiguous method 'show' on type 'Int': provided by traits a.Show, Show
+-- stderr-not-contains: ambiguous method
 -- Two modules' traits named Show: messages that name one write it with
--- its module; a module's own keeps its bare name.
+-- its module; a module's own keeps its bare name. Each module's impl
+-- of its own Show for Int is no ambiguity.
 import a
 import b
 type P { v: Int }

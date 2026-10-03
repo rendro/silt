@@ -76,6 +76,7 @@ fn l6_callmethod_argc_zero_returns_internal_vm_error() {
         chunk.emit_op(Op::CallMethod, span());
         chunk.emit_u16(method_idx, span());
         chunk.emit_u8(0, span()); // argc = 0 (corrupt — receiver missing)
+        chunk.emit_u16(silt::bytecode::NO_TRAIT, span());
         chunk.emit_op(Op::Return, span());
     });
 

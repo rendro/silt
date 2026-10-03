@@ -2430,6 +2430,7 @@ impl Vm {
             Op::CallMethod => {
                 let method_name_index = self.read_u16()? as usize;
                 let argc = self.read_u8()? as usize;
+                let trait_index = self.read_u16()?;
                 let method_name = self.read_constant_string(method_name_index)?;
                 // Defense-in-depth: the compiler always emits
                 // `argc = (args.len() + 1) as u8` (the receiver counts
@@ -2460,7 +2461,7 @@ impl Vm {
                 );
                 let method = self
                     .global_slots
-                    .method(receiver_type, &method_name)
+                    .call_method(trait_index, receiver_type, &method_name)
                     .and_then(|slot| self.globals.get(slot as usize).cloned().flatten());
                 if let Some(func) = method {
                     let args: Vec<Value> = if descriptor_receiver {
