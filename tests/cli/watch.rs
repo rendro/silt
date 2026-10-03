@@ -347,7 +347,12 @@ fn watch_terminated_stops_its_running_program() {
     unsafe {
         libc::kill(pid, libc::SIGTERM);
     }
-    let _ = proc.child.wait();
+    let status = proc.child.wait().expect("the watcher ends");
+    // It dies of the signal, as its parent should see.
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(libc::SIGTERM)
+    );
     // The watcher leads its process group (see `spawn_with`); once its
     // program is gone too, signalling the group finds no process.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -363,6 +368,33 @@ fn watch_terminated_stops_its_running_program() {
         );
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// After its program ended on its own, SIGTERM ends the watcher by the
+/// signal (its handler signals no stale child).
+#[cfg(unix)]
+#[test]
+fn watch_terminated_after_its_program_ended() {
+    let dir = TempDir::new("sigterm-done");
+    let file = dir.path().join("main.silt");
+    fs::write(&file, "fn main() { println(\"done-once\") }\n").unwrap();
+
+    let mut proc = WatchProc::spawn(&file);
+    proc.wait_until("'done-once'", Duration::from_secs(10), |snap| {
+        snap.contains("done-once")
+    });
+    // Let the watcher see that its program finished.
+    thread::sleep(Duration::from_millis(500));
+    let pid = libc::pid_t::try_from(proc.child.id()).expect("a pid");
+    // SAFETY: signals the watcher, our child.
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    let status = proc.child.wait().expect("the watcher ends");
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(libc::SIGTERM)
+    );
 }
 
 // ── 6. A change to an imported module reruns ─────────────────────

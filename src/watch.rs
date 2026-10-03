@@ -228,26 +228,39 @@ pub trait Runner {
 static RUNNING_CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// On SIGTERM or SIGINT, stop the command the watcher runs, wait for it,
-/// and end the watcher with the signal's status: killing the watcher
-/// leaves no orphaned program behind.
+/// and end the watcher by the same signal: killing the watcher leaves no
+/// orphaned program behind, and its parent sees it die of the signal. A
+/// signal the watcher was started with ignored stays ignored.
 #[cfg(unix)]
 fn forward_termination_to_the_child() {
     extern "C" fn on_signal(signal: libc::c_int) {
         let pid = RUNNING_CHILD.load(std::sync::atomic::Ordering::SeqCst);
-        // SAFETY: kill(2), waitpid(2) and _exit(2) are async-signal-safe.
+        // SAFETY: kill(2), waitpid(2), signal(2) and raise(3) are
+        // async-signal-safe.
         unsafe {
             if pid > 0 {
                 libc::kill(pid, libc::SIGTERM);
                 libc::waitpid(pid, std::ptr::null_mut(), 0);
             }
-            libc::_exit(128 + signal);
+            libc::signal(signal, libc::SIG_DFL);
+            libc::raise(signal);
         }
     }
-    let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
-    // SAFETY: the handler only makes async-signal-safe calls.
-    unsafe {
-        libc::signal(libc::SIGTERM, handler);
-        libc::signal(libc::SIGINT, handler);
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        // SAFETY: sigaction(2) with a zeroed, then filled, action; the
+        // handler only makes async-signal-safe calls.
+        unsafe {
+            let mut old: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(signal, std::ptr::null(), &mut old) != 0
+                || old.sa_sigaction == libc::SIG_IGN
+            {
+                continue;
+            }
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(signal, &action, std::ptr::null_mut());
+        }
     }
 }
 
@@ -275,10 +288,17 @@ impl Runner for ChildRunner {
     }
 
     fn finished(&mut self) -> bool {
-        match &mut self.child {
+        let finished = match &mut self.child {
             Some(child) => !matches!(child.try_wait(), Ok(None)),
             None => true,
+        };
+        // A reaped child's pid may be reused: the signal handler must not
+        // signal it any more.
+        #[cfg(unix)]
+        if finished {
+            RUNNING_CHILD.store(0, std::sync::atomic::Ordering::SeqCst);
         }
+        finished
     }
 
     fn stop(&mut self) {
