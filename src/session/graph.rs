@@ -902,27 +902,6 @@ pub(super) fn canonical_key(path: &Path) -> PathBuf {
     crate::source::canonical_path(path)
 }
 
-/// `p` canonicalized, also when `p` itself does not exist (a module that
-/// was looked for and not found): the nearest existing ancestor is
-/// canonicalized and the rest of the path appended. On Windows this also
-/// resolves short (8.3) directory names, so a path under a short-named
-/// working directory still compares with its long form.
-fn canonicalize_existing_prefix(p: &Path) -> Option<PathBuf> {
-    let mut rest = Vec::new();
-    let mut current = p;
-    loop {
-        if let Ok(canon) = std::fs::canonicalize(current) {
-            let mut out = canon;
-            for part in rest.iter().rev() {
-                out.push(part);
-            }
-            return Some(out);
-        }
-        rest.push(current.file_name()?.to_os_string());
-        current = current.parent()?;
-    }
-}
-
 /// How a module file is named in a "cannot load module" diagnostic: its
 /// path relative to the working directory when it lies under it,
 /// unescaped. A module outside the working directory (a dependency under
@@ -933,12 +912,11 @@ fn module_path_for_display(p: &Path) -> String {
         if let Ok(rel) = p.strip_prefix(&cwd) {
             return rel.display().to_string();
         }
-        // On Windows, `p` may be in extended-length form (`\\?\C:\...`)
-        // while `cwd` is not; canonicalizing both makes them comparable.
-        if let (Some(p_canon), Ok(cwd_canon)) =
-            (canonicalize_existing_prefix(p), std::fs::canonicalize(&cwd))
-            && let Ok(rel) = p_canon.strip_prefix(&cwd_canon)
-        {
+        // On Windows the two may name one place differently (a short
+        // 8.3 name, a verbatim prefix); their canonical forms agree.
+        let p_canon = crate::source::canonical_path_lenient(p);
+        let cwd_canon = crate::source::canonical_path_lenient(&cwd);
+        if let Ok(rel) = p_canon.strip_prefix(&cwd_canon) {
             return rel.display().to_string();
         }
     }

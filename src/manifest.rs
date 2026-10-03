@@ -243,38 +243,44 @@ impl Manifest {
 
 /// How a package file's path is shown: relative to the working
 /// directory, with `..` when the file is above it (`silt check main.silt`
-/// run in `src/` shows `../silt.toml`), else as it is. A path that does
-/// not exist (a missing dependency) is made relative lexically.
+/// run in `src/` shows `../silt.toml`), written with `/` as a manifest
+/// entry is; else (only the root in common) as it is. Both sides are
+/// compared in canonical form, a path that does not exist (a missing
+/// dependency) by its nearest existing ancestor, so two spellings of one
+/// place (on Windows a short 8.3 name, a verbatim prefix) agree.
 pub fn display_path(path: &Path) -> PathBuf {
-    let (cwd, path) = match (
-        std::env::current_dir().and_then(std::fs::canonicalize),
-        std::fs::canonicalize(path),
-    ) {
-        (Ok(cwd), Ok(path)) => (cwd, path),
-        // The dependency's path is made from a canonical package root,
-        // so the working directory is made canonical too when it can be.
-        _ => {
-            match std::env::current_dir().and_then(|cwd| std::fs::canonicalize(&cwd).or(Ok(cwd))) {
-                Ok(cwd) => (cwd, absolutize(path)),
-                Err(_) => return path.to_path_buf(),
-            }
+    let Ok(cwd) = std::env::current_dir() else {
+        return path.to_path_buf();
+    };
+    let cwd = crate::source::canonical_path_lenient(&cwd);
+    let path = crate::source::canonical_path_lenient(path);
+    let same = |a: &std::path::Component, b: &std::path::Component| {
+        if cfg!(windows) {
+            a.as_os_str().eq_ignore_ascii_case(b.as_os_str())
+        } else {
+            a == b
         }
     };
     let common = cwd
         .components()
         .zip(path.components())
-        .take_while(|(a, b)| a == b)
+        .take_while(|(a, b)| same(a, b))
         .count();
     // Only the root in common: the absolute path says more.
     if common <= 1 {
         return path;
     }
-    let mut shown = PathBuf::new();
-    for _ in cwd.components().skip(common) {
-        shown.push("..");
-    }
-    shown.extend(path.components().skip(common));
-    shown
+    let mut parts: Vec<String> = cwd
+        .components()
+        .skip(common)
+        .map(|_| "..".to_string())
+        .collect();
+    parts.extend(
+        path.components()
+            .skip(common)
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+    );
+    PathBuf::from(parts.join("/"))
 }
 
 // ── The TOML parser's message ─────────────────────────────────────────

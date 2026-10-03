@@ -294,6 +294,39 @@ pub fn canonical_path(path: &Path) -> PathBuf {
     }
 }
 
+/// [`canonical_path`], also for a path that does not exist: its nearest
+/// existing ancestor made canonical, with the rest of the path appended
+/// as given. Two spellings of one place (on Windows a short `RUNNER~1`
+/// name and its long form, a verbatim prefix or none) come out the same.
+pub fn canonical_path_lenient(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(path),
+            Err(_) => return path.to_path_buf(),
+        }
+    };
+    let mut rest = Vec::new();
+    let mut current = absolute.as_path();
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(current) {
+            let mut out = without_verbatim_prefix(&canonical);
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match (current.file_name(), current.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return absolute,
+        }
+    }
+}
+
 /// `path` without the `\\?\` (verbatim) prefix of a Windows path, which
 /// no user writes: `\\?\C:\x` is `C:\x`, `\\?\UNC\server\share` is
 /// `\\server\share`. Any other path is returned as it is.
