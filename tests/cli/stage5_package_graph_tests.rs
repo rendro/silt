@@ -805,7 +805,9 @@ fn three_packages_of_one_name_are_all_reported() {
     assert_eq!(d.message, "three different packages are named `x`", "{d:?}");
     for dir in ["x1", "x2", "x3"] {
         assert!(
-            d.notes.iter().any(|n| n.ends_with(dir)),
+            d.notes
+                .iter()
+                .any(|n| n.replace('\\', "/").ends_with(&format!("{dir}/silt.toml"))),
             "a note for {dir}: {d:?}"
         );
     }

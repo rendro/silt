@@ -492,6 +492,34 @@ pub(crate) fn active_colors() -> &'static Colors {
     if use_color() { &COLORS_ON } else { &COLORS_OFF }
 }
 
+/// An I/O error in silt's own words, by its kind ("no such file",
+/// "permission denied", ...): the same on every platform, where the
+/// operating system's text differs and ends in "(os error N)". An error
+/// of another kind keeps its text, without that suffix.
+pub fn io_error_text(err: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+    let text = match err.kind() {
+        ErrorKind::NotFound => "no such file",
+        ErrorKind::PermissionDenied => "permission denied",
+        ErrorKind::AlreadyExists => "it already exists",
+        ErrorKind::IsADirectory => "it is a directory",
+        ErrorKind::NotADirectory => "a part of the path is not a directory",
+        ErrorKind::InvalidData => "it is not valid UTF-8 text",
+        ErrorKind::UnexpectedEof => "it ended unexpectedly",
+        ErrorKind::Interrupted => "it was interrupted",
+        ErrorKind::BrokenPipe => "the pipe was closed",
+        ErrorKind::OutOfMemory => "out of memory",
+        _ => {
+            let text = err.to_string();
+            return match text.rfind(" (os error ") {
+                Some(at) if text.ends_with(')') => text[..at].to_string(),
+                _ => text,
+            };
+        }
+    };
+    text.to_string()
+}
+
 // ── Human rendering ─────────────────────────────────────────────────
 
 /// `d` as a terminal shows it, colored when stderr takes color:

@@ -513,8 +513,13 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // silt.toml doesn't lose that work the first time they run `silt
     // add`. We only insert the new entry; everything else stays as-is.
     let manifest_path = root.join("silt.toml");
-    let manifest_text = fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("failed to read {}: {e}", manifest_path.display()))?;
+    let manifest_text = fs::read_to_string(&manifest_path).map_err(|e| {
+        format!(
+            "failed to read {}: {}",
+            manifest_path.display(),
+            silt::diagnostic::io_error_text(&e)
+        )
+    })?;
     // Reported the way loading the manifest reports it. The parser's
     // own rendering of the error is not used: it quotes a line of the
     // file.

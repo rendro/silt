@@ -781,7 +781,10 @@ pub fn module_load_error(
     let mut d = crate::diagnostic::Diagnostic::error(
         crate::diagnostic::Code::ModuleNotFound,
         span,
-        format!("cannot load module '{module_name}': {err}"),
+        format!(
+            "cannot load module '{module_name}': {}",
+            crate::diagnostic::io_error_text(err)
+        ),
     )
     .with_note(format!("looked for `{attempted_display}`"));
     if err.kind() == std::io::ErrorKind::NotFound {

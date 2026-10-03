@@ -164,7 +164,12 @@ pub(crate) fn dispatch(args: &[String]) {
 }
 
 fn format_file(path: &str) -> Result<(), String> {
-    let source = fs::read_to_string(path).map_err(|e| format!("error reading {path}: {e}"))?;
+    let source = fs::read_to_string(path).map_err(|e| {
+        format!(
+            "error reading {path}: {}",
+            silt::diagnostic::io_error_text(&e)
+        )
+    })?;
     let formatted =
         silt::formatter::format(&source).map_err(|e| render_fmt_error(&e, &source, path))?;
     // Skip the write when the file is already formatted. An
@@ -235,7 +240,10 @@ fn check_format(path: &str) -> CheckOutcome {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("error reading {path}: {e}");
+            eprintln!(
+                "error reading {path}: {}",
+                silt::diagnostic::io_error_text(&e)
+            );
             return CheckOutcome::InfraError;
         }
     };

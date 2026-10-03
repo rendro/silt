@@ -128,7 +128,7 @@ impl Manifest {
                     Span::point(file, 0),
                     format!(
                         "cannot read manifest: {}",
-                        escape_for_display(&e.to_string())
+                        escape_for_display(&crate::diagnostic::io_error_text(&e))
                     ),
                 ));
             }

@@ -168,7 +168,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 // An unreadable file cannot be asked for its tests, so
                 // `--filter` does not rule it out: the error is reported.
                 files_considered += 1;
-                eprintln!("{path}: failed to read — {e}");
+                eprintln!(
+                    "{path}: failed to read — {}",
+                    silt::diagnostic::io_error_text(&e)
+                );
                 counts.file_errors += 1;
                 continue;
             }

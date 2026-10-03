@@ -91,7 +91,10 @@ pub(crate) fn open_entry_or_exit(path: &str, lock: LockPolicy) -> (Session, File
     match open_entry(path, lock) {
         Ok(opened) => opened,
         Err(e) => {
-            eprintln!("error reading {path}: {e}");
+            eprintln!(
+                "error reading {path}: {}",
+                silt::diagnostic::io_error_text(&e)
+            );
             std::process::exit(1);
         }
     }

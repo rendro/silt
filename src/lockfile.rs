@@ -134,7 +134,7 @@ impl Lockfile {
                     Span::point(file, 0),
                     format!(
                         "cannot read lockfile: {}",
-                        git::escape_for_display(&e.to_string())
+                        git::escape_for_display(&crate::diagnostic::io_error_text(&e))
                     ),
                 ));
             }

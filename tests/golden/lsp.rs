@@ -232,7 +232,10 @@ impl Client {
 /// diagnostics, and shut the server down. Everything happens before
 /// `timeout` runs out.
 pub fn session(dir: &Path, entry: &str, timeout: Duration) -> LspSession {
-    let root = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    // The case directory as an editor names it, and as the server names
+    // the files it publishes for: canonical (on Windows the long form of
+    // a short 8.3 name such as `RUNNER~1`), without the `\\?\` prefix.
+    let root = silt::source::canonical_path(dir);
     let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
         .arg("lsp")
         .current_dir(&root)

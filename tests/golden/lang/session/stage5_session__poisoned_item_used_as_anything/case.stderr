@@ -1,7 +1,7 @@
-error[compile]: cannot load module 'missing': No such file or directory (os error 2)
+error[compile]: cannot load module 'missing': no such file
  --> main.silt:6:1
    |
  6 | import missing.{ x }
-   | ^^^^^^^^^^^^^^^^^^^^ cannot load module 'missing': No such file or directory (os error 2)
+   | ^^^^^^^^^^^^^^^^^^^^ cannot load module 'missing': no such file
   = note: looked for `missing.silt`
   = help: if 'missing' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add missing`)

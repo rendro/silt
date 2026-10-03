@@ -303,13 +303,11 @@ fn door_verdict_and_stderr(
 /// canonicalised, `/`-separated.
 fn roots(dir: &Path) -> Vec<String> {
     let mut roots = vec![dir.to_string_lossy().replace('\\', "/")];
-    if let Ok(c) = std::fs::canonicalize(dir) {
-        let c = c.to_string_lossy().replace('\\', "/");
-        // `canonicalize` gives a verbatim path on Windows.
-        let c = c.strip_prefix("//?/").unwrap_or(&c).to_string();
-        if !roots.contains(&c) {
-            roots.push(c);
-        }
+    let c = silt::source::canonical_path(dir)
+        .to_string_lossy()
+        .replace('\\', "/");
+    if !roots.contains(&c) {
+        roots.push(c);
     }
     // The longest first, so a root inside another is replaced whole.
     roots.sort_by_key(|r| std::cmp::Reverse(r.len()));

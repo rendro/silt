@@ -431,7 +431,7 @@ impl Resolver<'_> {
                     entry.value,
                     format!(
                         "dependency `{key_name}`: cannot read its sources: {}",
-                        escape_for_display(&e.to_string())
+                        escape_for_display(&crate::diagnostic::io_error_text(&e))
                     ),
                 ));
                 self.failed.insert(source);
@@ -561,8 +561,10 @@ impl Resolver<'_> {
                         .to_string()
                 )
             ),
+            // A path package by its manifest, whose path is shown as every
+            // `silt.toml` is.
             LockedSource::Path { path } => {
-                escape_for_display(&display_path(path).display().to_string())
+                escape_for_display(&display_path(&path.join("silt.toml")).display().to_string())
             }
             LockedSource::Git {
                 url, resolved_sha, ..

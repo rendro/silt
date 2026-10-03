@@ -1174,6 +1174,18 @@ mod tests {
         ] {
             assert_eq!(validate_git_url(url), Ok(()), "{url:?} must be accepted");
         }
+        // A Windows drive-letter path is a local path on Windows, and is
+        // checked as `host:path` elsewhere.
+        let drive = "C:\\my repos\\pkg.git";
+        if cfg!(windows) {
+            assert_eq!(
+                validate_git_url(drive),
+                Ok(()),
+                "{drive:?} must be accepted"
+            );
+        } else {
+            assert!(rejection_reason(drive).starts_with(RULE_SPACE));
+        }
         for url in [
             "https://example.com/my repos/pkg.git",
             "http://127.0.0.1:1/my repos/pkg.git",
@@ -1181,8 +1193,6 @@ mod tests {
             "git://example.com/my repos/pkg.git",
             "git@example.com:my repos/pkg.git",
             "example.com:my repos/pkg.git",
-            // A Windows drive-letter path is checked as `host:path`.
-            "C:\\my repos\\pkg.git",
             // Neither local form: the value does not start with one.
             " /srv/repos/pkg.git",
             "my repos/pkg.git",
