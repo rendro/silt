@@ -477,9 +477,9 @@ pub struct Tables {
     /// `canonicalize` and `canonical_head` at every read site, and by
     /// the compiler when it names impl globals.
     pub(super) resolver: crate::types::canonical::Resolver,
-    /// The scheme of each definition of a checked module and of each
-    /// builtin: a function, a `let`, a variant's constructor, a type
-    /// written as a value.
+    /// The scheme of each definition of a checked module: a function, a
+    /// `let`, a variant's constructor, a type written as a value. (A
+    /// builtin's is the builtin scope's.)
     pub(super) schemes: HashMap<crate::defs::DefId, Scheme>,
     /// What each module's check added to the tables, so that it can be
     /// forgotten when the module is checked again.
@@ -2681,6 +2681,9 @@ impl TypeChecker {
             return None;
         };
         let def = self.def(id)?;
+        if def.module.is_builtin() {
+            return builtin_scheme(&def);
+        }
         if def.module == self.module && !matches!(def.kind, crate::defs::DefKind::Variant { .. }) {
             return env.lookup(def.name).cloned();
         }
@@ -7638,8 +7641,13 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     // earlier value where its own is not bound yet (`let n = n + 1`):
     // what it imports from the earlier cells is in its scope by name.
     for (name, id) in earlier {
-        if let Some(scheme) = checker.tables.schemes.get(id) {
-            env.define(*name, scheme.clone());
+        let def = defs.get(*id);
+        let scheme = match def.module.is_builtin() {
+            true => builtin_scheme(def),
+            false => checker.tables.schemes.get(id).cloned(),
+        };
+        if let Some(scheme) = scheme {
+            env.define(*name, scheme);
         }
     }
     checker.signatures_only = kind == names::ModuleKind::Host;
@@ -7666,12 +7674,10 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         };
         for name in names {
             let scheme = match scope.values.get(&name) {
-                Some(names::Binding::Def(id))
-                    if checker.def(*id).is_some_and(|d| d.module != module) =>
-                {
-                    checker.tables.schemes.get(id)
+                Some(names::Binding::Def(id)) => {
+                    checker.def_scheme(Some(crate::defs::Res::Def(*id)), &env)
                 }
-                _ => env.lookup(name),
+                _ => env.lookup(name).cloned(),
             };
             if let Some(scheme) = scheme {
                 top_level.insert(name, checker.apply(&scheme.ty));
@@ -7709,7 +7715,7 @@ pub struct TableKeys {
 impl Tables {
     /// The tables a session starts from: the builtins'.
     pub fn for_session() -> Tables {
-        builtin_env().session_tables().clone()
+        builtin_env().tables.clone()
     }
 
     /// The records of the tables: each record type with its fields.
@@ -7801,12 +7807,9 @@ impl Tables {
 struct BuiltinEnv {
     /// A checker with no tables: what each check starts from.
     checker: TypeChecker,
-    /// The builtin types, traits, impls and type variables.
+    /// The builtin types, traits, impls and type variables: what a
+    /// session's tables start from.
     tables: Tables,
-    /// `tables`, with the scheme of each builtin definition: what a
-    /// session starts from. Made on first use, when the builtin
-    /// definitions exist (they are made from this environment).
-    session: std::cell::OnceCell<Tables>,
     /// The scope of the builtin names: the parent of every program's
     /// top-level scope.
     root: Rc<TypeEnv>,
@@ -7880,7 +7883,6 @@ impl BuiltinEnv {
         BuiltinEnv {
             checker,
             tables,
-            session: std::cell::OnceCell::new(),
             root: Rc::new(env),
             impls: Rc::new(impls),
         }
@@ -7890,33 +7892,6 @@ impl BuiltinEnv {
     /// the builtins.
     fn start(&self) -> (TypeChecker, TypeEnv) {
         (self.checker.clone(), TypeEnv::child_of(self.root.clone()))
-    }
-
-    /// The tables a session starts from: the builtin ones, and the scheme
-    /// of each builtin definition, the one the builtin scope binds under
-    /// its name (`println`, `list.map`, `Weekday.Monday`, `Option`).
-    fn session_tables(&self) -> &Tables {
-        self.session.get_or_init(|| {
-            let mut tables = self.tables.clone();
-            let (defs, _) = names::builtins();
-            for (k, def) in defs.defs.iter().enumerate() {
-                let key = match def.kind {
-                    crate::defs::DefKind::Variant { ty, .. } => {
-                        format!("{}.{}", defs.defs[ty.0.0 as usize].name, def.name)
-                    }
-                    _ => match def.module.builtin_name() {
-                        Some(module) if !def.is_type() => format!("{module}.{}", def.name),
-                        _ => resolve(def.name),
-                    },
-                };
-                if let Some(scheme) = self.root.lookup(intern(&key)) {
-                    tables
-                        .schemes
-                        .insert(crate::defs::DefId(k as u32), scheme.clone());
-                }
-            }
-            tables
-        })
     }
 }
 
@@ -7948,6 +7923,23 @@ fn builtin_env() -> Rc<BuiltinEnv> {
     let env = Rc::new(BuiltinEnv::build());
     BUILTIN_ENV.with(|cell| *cell.borrow_mut() = Some((generation, env.clone())));
     env
+}
+
+/// The scheme of the builtin definition `def`: the one the builtin scope
+/// binds under its name (`println`, `list.map`, `Weekday.Monday`,
+/// `Option`).
+fn builtin_scheme(def: &crate::defs::Def) -> Option<Scheme> {
+    let key = match def.kind {
+        crate::defs::DefKind::Variant { ty, .. } => {
+            let enum_name = names::builtin_def(ty.0)?.name;
+            format!("{enum_name}.{}", def.name)
+        }
+        _ => match def.module.builtin_name() {
+            Some(module) if !def.is_type() => format!("{module}.{}", def.name),
+            _ => resolve(def.name),
+        },
+    };
+    builtin_env().root.lookup(intern(&key)).cloned()
 }
 
 /// The builtin names, as the resolver enters them: every name the builtin
