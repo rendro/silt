@@ -158,7 +158,7 @@ impl TypeChecker {
         // Resolve type variables, then canonicalise so user-declared aliases
         // (e.g. `type Aliased = Empty`) expand to their head before we look
         // up enum metadata or run the usefulness algorithm. Without this,
-        // `is_uninhabited` would search `self.enums` for the alias name,
+        // `is_uninhabited` would search `self.tables.enums` for the alias name,
         // miss the underlying empty enum, and the bottom-eliminator
         // short-circuit below would not fire — leading to a spurious
         // "non-exhaustive match" error on `match x { }` where `x: Aliased`
@@ -166,7 +166,8 @@ impl TypeChecker {
         // (`type_name_for_impl`, `type_args_of`, the `unify` entry) already
         // canonicalise after `apply`; we follow the same recipe here.
         let scrutinee_ty = self.apply(scrutinee_ty);
-        let scrutinee_ty = crate::types::canonical::canonicalize(&self.resolver, &scrutinee_ty);
+        let scrutinee_ty =
+            crate::types::canonical::canonicalize(&self.tables.resolver, &scrutinee_ty);
 
         // Uninhabited-type short-circuit: a `match x { }` with zero arms on
         // a scrutinee type that has no inhabitants is vacuously exhaustive
@@ -325,7 +326,7 @@ impl TypeChecker {
         // Same preparation as `check_exhaustiveness`: resolve type
         // variables, then expand aliases to their head.
         let ty = self.apply(ty);
-        let ty = crate::types::canonical::canonicalize(&self.resolver, &ty);
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &ty);
 
         self.exhaustiveness_depth_exceeded.set(false);
         self.exhaustiveness_span.set(pattern.span);
@@ -372,7 +373,7 @@ impl TypeChecker {
             return None;
         };
         let enum_ty = self.pattern_variant_enum(pattern.res, qualifier)?;
-        let info = self.enums.get(&enum_ty)?;
+        let info = self.tables.enums.get(&enum_ty)?;
         Some((enum_ty, info))
     }
 
@@ -557,7 +558,7 @@ impl TypeChecker {
                     || self.is_useful(matrix, &false_pat, ty, depth + 1)
             }
             Type::Generic(name, type_args) => {
-                if let Some(enum_info) = self.enums.get(name).cloned() {
+                if let Some(enum_info) = self.tables.enums.get(name).cloned() {
                     for variant in &enum_info.variants {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
                             .map(|_| self.synth(PatternKind::Wildcard))
@@ -573,39 +574,41 @@ impl TypeChecker {
                         }
                     }
                     false
-                } else if let Some(rec_info) = self.records.get(name).cloned() {
+                } else if let Some(rec_info) = self.tables.records.get(name).cloned() {
                     // B1 (round 15): records surface as `Type::Generic(name, args)`
                     // at function boundaries because `resolve_type_expr` maps the
                     // user's record annotation through `TypeExpr::Generic`. When
                     // reached here we must instantiate the record's field
                     // templates (substituting the type args) and delegate to
                     // `is_record_useful`, matching the `Type::Record` arm below.
-                    let fields: Vec<(Symbol, Type)> =
-                        if let Some(param_var_ids) = self.record_param_var_ids.get(name).cloned() {
-                            let mapping: HashMap<TyVar, Type> =
-                                if type_args.len() == param_var_ids.len() {
-                                    param_var_ids
-                                        .iter()
-                                        .zip(type_args.iter())
-                                        .map(|(&v, t)| (v, t.clone()))
-                                        .collect()
-                                } else {
-                                    HashMap::new()
-                                };
-                            rec_info
-                                .fields
-                                .iter()
-                                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                                .collect()
-                        } else {
-                            rec_info.fields.clone()
-                        };
+                    let fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
+                        self.tables.record_param_var_ids.get(name).cloned()
+                    {
+                        let mapping: HashMap<TyVar, Type> =
+                            if type_args.len() == param_var_ids.len() {
+                                param_var_ids
+                                    .iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&v, t)| (v, t.clone()))
+                                    .collect()
+                            } else {
+                                HashMap::new()
+                            };
+                        rec_info
+                            .fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect()
+                    } else {
+                        rec_info.fields.clone()
+                    };
                     self.is_record_useful(matrix, *name, &fields, depth)
                 } else {
                     // Neither an enum nor a record. A column type that
                     // still names an alias is judged by the alias's
                     // target.
-                    let canonical = crate::types::canonical::canonicalize(&self.resolver, ty);
+                    let canonical =
+                        crate::types::canonical::canonicalize(&self.tables.resolver, ty);
                     if canonical != *ty {
                         return self.is_wildcard_useful(matrix, &canonical, depth);
                     }
@@ -1454,6 +1457,7 @@ impl TypeChecker {
     pub(super) fn is_uninhabited(&self, ty: &Type) -> bool {
         match ty {
             Type::Generic(name, _) => self
+                .tables
                 .enums
                 .get(name)
                 .is_some_and(|info| info.variants.is_empty()),
@@ -1493,7 +1497,7 @@ impl TypeChecker {
             // variants `constructors_for_query` can emit; record-backed
             // and parameter generics fall through to the non-enumerable
             // path so the witness-split fires.
-            Type::Generic(name, _) => !tc.enums.contains_key(name),
+            Type::Generic(name, _) => !tc.tables.enums.contains_key(name),
             // Non-enumerable scalars with effectively infinite inhabitants —
             // literal-row dedupe + synthetic "not-in-matrix" witness is
             // the only sound approach.
@@ -1565,7 +1569,7 @@ impl TypeChecker {
                         self.synth(PatternKind::Bool(false)),
                     ],
                     Type::Generic(name, _) => {
-                        if let Some(info) = self.enums.get(name) {
+                        if let Some(info) = self.tables.enums.get(name) {
                             info.variants
                                 .iter()
                                 .map(|v| {
@@ -1683,6 +1687,7 @@ impl TypeChecker {
         let parent_enum = match parent_ty {
             Type::Generic(name, _)
                 if self
+                    .tables
                     .enums
                     .get(name)
                     .is_some_and(|e| e.variants.iter().any(|v| v.name == ctor_name)) =>
@@ -1692,7 +1697,7 @@ impl TypeChecker {
             _ => None,
         };
         if let Some(enum_name) = parent_enum
-            && let Some(enum_info) = self.enums.get(&enum_name)
+            && let Some(enum_info) = self.tables.enums.get(&enum_name)
             && let Some(variant) = enum_info.variants.iter().find(|v| v.name == ctor_name)
         {
             if variant.field_types.len() == 1 {
@@ -1740,7 +1745,7 @@ impl TypeChecker {
                 }
             }
             Type::Generic(name, type_args) => {
-                if let Some(enum_info) = self.enums.get(name).cloned() {
+                if let Some(enum_info) = self.tables.enums.get(name).cloned() {
                     let mut missing = Vec::new();
                     for variant in &enum_info.variants {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
@@ -1766,29 +1771,30 @@ impl TypeChecker {
                         };
                         format!("missing {} {}", word, missing.join(", "))
                     }
-                } else if let Some(rec_info) = self.records.get(name).cloned() {
+                } else if let Some(rec_info) = self.tables.records.get(name).cloned() {
                     // B1 (round 15): mirror the enum branch for records
                     // reached via `Type::Generic` at fn boundaries.
-                    let fields: Vec<(Symbol, Type)> =
-                        if let Some(param_var_ids) = self.record_param_var_ids.get(name).cloned() {
-                            let mapping: HashMap<TyVar, Type> =
-                                if type_args.len() == param_var_ids.len() {
-                                    param_var_ids
-                                        .iter()
-                                        .zip(type_args.iter())
-                                        .map(|(&v, t)| (v, t.clone()))
-                                        .collect()
-                                } else {
-                                    HashMap::new()
-                                };
-                            rec_info
-                                .fields
-                                .iter()
-                                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                                .collect()
-                        } else {
-                            rec_info.fields.clone()
-                        };
+                    let fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
+                        self.tables.record_param_var_ids.get(name).cloned()
+                    {
+                        let mapping: HashMap<TyVar, Type> =
+                            if type_args.len() == param_var_ids.len() {
+                                param_var_ids
+                                    .iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&v, t)| (v, t.clone()))
+                                    .collect()
+                            } else {
+                                HashMap::new()
+                            };
+                        rec_info
+                            .fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect()
+                    } else {
+                        rec_info.fields.clone()
+                    };
                     let record_ty = Type::Record(*name, fields);
                     self.missing_description(patterns, &record_ty)
                 } else {
@@ -2147,7 +2153,7 @@ fn main() { area(Circle(1.0)) }
         let pair_name = intern("ExhaustivenessDepthPair");
         let expr_ty = Type::Generic(expr_name, vec![]);
 
-        tc.enums.insert(
+        tc.tables.enums.insert(
             expr_name,
             EnumInfo {
                 params: vec![],

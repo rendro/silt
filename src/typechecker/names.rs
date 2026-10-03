@@ -300,7 +300,6 @@ pub fn resolve_module(
         &mut scope,
         &mut diagnostics,
     );
-    report_type_name_clashes(program, imports, defs, &scope, &mut diagnostics);
     let mut resolver = Resolver {
         defs,
         scope: &scope,
@@ -316,10 +315,10 @@ pub fn resolve_module(
     Resolution { scope, diagnostics }
 }
 
-/// Resolve a program checked on its own, outside a session: it imports
-/// builtin modules only.
-pub fn resolve_standalone(program: &mut Program, defs: &mut DefTable) -> Vec<Diagnostic> {
-    let imports: HashMap<Symbol, Imported<'_>> = program
+/// What the imports of a program checked on its own, outside a session,
+/// name: builtin modules; any other module is unknown.
+pub fn standalone_imports(program: &Program) -> HashMap<Symbol, Imported<'static>> {
+    program
         .decls
         .iter()
         .filter_map(|decl| match decl {
@@ -333,8 +332,7 @@ pub fn resolve_standalone(program: &mut Program, defs: &mut DefTable) -> Vec<Dia
             };
             (module, imported)
         })
-        .collect();
-    resolve_module(program, ModuleId(0), ModuleKind::File, &imports, defs).diagnostics
+        .collect()
 }
 
 /// The module an import names.
@@ -594,93 +592,6 @@ fn bind_imported(
         Binding::Def(id) => bind_variant_aware(namespace, name, id, defs),
         other => {
             namespace.entry(name).or_insert(other);
-        }
-    }
-}
-
-/// Report two record or enum types of one name that one module would
-/// see: its own and an imported module's, or two imported modules'. The
-/// checker knows a type by its name, so it cannot tell such two apart.
-/// (An earlier REPL cell's type that a cell declares again is replaced,
-/// not a clash.)
-fn report_type_name_clashes(
-    program: &Program,
-    imports: &HashMap<Symbol, Imported<'_>>,
-    defs: &DefTable,
-    scope: &ModuleScope,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    let is_type = |id: DefId| matches!(defs.get(id).kind, DefKind::Type(_));
-    // Each type name, with the type and the module it comes from.
-    let mut seen: HashMap<Symbol, (DefId, Option<Symbol>)> = HashMap::new();
-    for decl in &program.decls {
-        if let Decl::Type(td) = decl
-            && let Some(Binding::Def(id)) = scope.types.get(&td.name)
-            && is_type(*id)
-        {
-            seen.insert(td.name, (*id, None));
-        }
-    }
-    let mut reported: HashSet<Symbol> = HashSet::new();
-    for decl in &program.decls {
-        let Decl::Import(target, span) = decl else {
-            continue;
-        };
-        let module = import_module(target);
-        let Some(Imported::Module(_, imported)) = imports.get(&module) else {
-            continue;
-        };
-        let mut types: Vec<(Symbol, DefId)> = imported
-            .exports
-            .types
-            .iter()
-            .filter_map(|(name, b)| match b {
-                Binding::Def(id) if is_type(*id) => Some((*name, *id)),
-                _ => None,
-            })
-            .collect();
-        types.sort_by_key(|(name, _)| resolve(*name));
-        for (name, id) in types {
-            match seen.get(&name).copied() {
-                None => {
-                    seen.insert(name, (id, Some(module)));
-                }
-                Some((other, _)) if other == id => {}
-                Some((other, from)) => {
-                    if !reported.insert(name) {
-                        continue;
-                    }
-                    let other_def = defs.get(other);
-                    let (message, label) = match from {
-                        Some(m) => (
-                            format!("modules '{m}' and '{module}' both declare a type '{name}'"),
-                            format!("module '{m}' imported here"),
-                        ),
-                        None => (
-                            format!(
-                                "module '{module}' declares a type '{name}', as this module does"
-                            ),
-                            "declared here".to_string(),
-                        ),
-                    };
-                    let mut d = Diagnostic::error(
-                        Code::DuplicateDeclaration,
-                        *span,
-                        format!("{message}: one module cannot use two types of one name"),
-                    );
-                    if from.is_none() && other_def.span != Span::BUILTIN {
-                        d = d.with_label(other_def.span, label);
-                    } else if let Some(m) = from
-                        && let Some(Decl::Import(_, import_span)) = program.decls.iter().find(
-                            |decl| matches!(decl, Decl::Import(t, _) if import_module(t) == m),
-                        )
-                    {
-                        d = d.with_label(*import_span, label);
-                    }
-                    d = d.with_help("rename one of the two types");
-                    diagnostics.push(d);
-                }
-            }
         }
     }
 }

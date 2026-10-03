@@ -1,0 +1,13 @@
+-- verdict: same
+-- A local record `Pt` beside `geo.Pt`: literals, fields and patterns
+-- name the right one.
+import geo
+type Pt { name: String }
+fn f(p: geo.Pt) -> Int { geo.sum(p) }
+fn main() {
+  let q = geo.Pt { x: 1, y: 2 }
+  println(f(q))
+  let l = Pt { name: "n" }
+  println(l.name)
+  match q { geo.Pt { x, .. } -> println(x) }
+}

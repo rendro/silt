@@ -162,9 +162,6 @@ codes! {
     InvalidControlFlow = "E0325", Type;
     /// An operation the operand types do not support.
     UnsupportedOperation = "E0326", Type;
-    /// An import of a module the checker does not know. A warning: the
-    /// compiler decides whether the module exists.
-    UnknownModule = "E0327", Type;
     /// A use of a builtin module that is not imported.
     ModuleNotImported = "E0328", Type;
     /// A function or constant a builtin module does not have.

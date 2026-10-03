@@ -101,7 +101,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         (intern("created"), opt_datetime_ty),
     ];
     let file_stat_ty = Type::Record(TypeRef::builtin("FileStat"), file_stat_fields.clone());
-    checker.records.insert(
+    checker.tables.records.insert(
         TypeRef::builtin("FileStat"),
         RecordInfo {
             fields: file_stat_fields,

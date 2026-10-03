@@ -1,0 +1,11 @@
+-- verdict: same
+-- A local `Shape` beside `shapes.Shape`: each annotation names its own,
+-- and each runs.
+import shapes
+type Shape { Tri(Int) }
+fn f(s: shapes.Shape) -> Int { shapes.area(s) }
+fn g(s: Shape) -> Int { match s { Tri(n) -> n } }
+fn main() {
+  println(f(shapes.Circle(2)))
+  println(g(Tri(7)))
+}

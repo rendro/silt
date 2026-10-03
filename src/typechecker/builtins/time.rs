@@ -42,7 +42,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     let weekday_ty = Type::builtin("Weekday", vec![]);
 
     // Register Weekday enum
-    checker.enums.insert(
+    checker.tables.enums.insert(
         TypeRef::builtin("Weekday"),
         EnumInfo {
             params: vec![],

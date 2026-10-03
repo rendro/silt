@@ -74,6 +74,13 @@ impl Server {
             .module_analysis(module.id)
     }
 
+    /// What the checks of the open document `doc`'s session found: its
+    /// types, records and methods.
+    pub(super) fn checked_tables(&self, doc: &Document) -> Option<&crate::typechecker::Tables> {
+        let module = doc.module.as_ref()?;
+        Some(self.projects.get(&module.project)?.session.tables())
+    }
+
     /// The module the name `name` stands for in the open document `doc`:
     /// the one `import name` imports, or `import m as name`.
     pub(super) fn imported_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView<'_>> {

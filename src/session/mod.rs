@@ -32,9 +32,8 @@ use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, SourceMap, SourceName};
 use crate::typechecker::names::{self, Imported, ModuleKind, ModuleScope};
-use crate::typechecker::{self, ModuleContext, ModuleExports};
+use crate::typechecker::{self, ModuleContext, Tables};
 use crate::types::Type;
-use crate::types::canonical::Resolver;
 use crate::value::{HostFn, HostShape};
 
 pub use entry::{
@@ -99,21 +98,10 @@ pub struct ModuleAnalysis {
     pub ast: Arc<ast::Program>,
     /// The module's top-level names, and what it offers its importers.
     pub scope: ModuleScope,
-    /// What the module offers its importers, as the checker sees it.
-    pub exports: ModuleExports,
     /// The inferred type of each top-level value the module binds.
     pub top_level: HashMap<crate::intern::Symbol, Type>,
-    /// Every method a value has in the module, as (the type impls key
-    /// the value's type by, method name).
-    pub methods: Vec<(crate::types::TypeRef, Symbol)>,
-    /// The fields of each record type the module sees.
-    pub record_fields: HashMap<crate::types::TypeRef, Vec<(Symbol, Type)>>,
     /// The module's type errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
-    /// The type aliases and associated-type bindings the module sees:
-    /// those of the modules it imports, then its own. The compiler
-    /// canonicalizes the module's impl targets with them.
-    pub resolver: Arc<Resolver>,
 }
 
 /// What the VM runs: the compiled functions, the first of which is the
@@ -188,6 +176,10 @@ pub struct Session {
     /// The definitions of every module the session has checked, and of
     /// the builtins.
     defs: Arc<DefTable>,
+    /// What the checks of the modules share: the type variables, the
+    /// types, traits and impls, and the scheme of every definition of a
+    /// checked module.
+    tables: Tables,
     /// The analysis of each entry asked for, until anything changes.
     results: HashMap<ModuleId, Analysis>,
     /// The REPL cells added.
@@ -215,6 +207,7 @@ impl Session {
             entry_paths: HashMap::new(),
             analyses: HashMap::new(),
             defs: Arc::new(names::new_def_table()),
+            tables: Tables::for_session(),
             results: HashMap::new(),
             cells: cells::Cells::default(),
             module_name_problems: Vec::new(),
@@ -297,6 +290,17 @@ impl Session {
     /// or statements whose value [`Entry::Cell`] returns. It sees what
     /// the committed cells bind (see [`Session::commit_cell`]).
     pub fn add_cell(&mut self, text: String) -> FileId {
+        // What an earlier cell that was not committed declared is gone.
+        let dropped: Vec<ModuleId> = self
+            .cells
+            .info
+            .keys()
+            .filter(|cell| !self.cells.is_committed(**cell))
+            .copied()
+            .collect();
+        for cell in dropped {
+            self.tables.forget(cell);
+        }
         self.cells.count += 1;
         let n = self.cells.count;
         let file = self.enter_text(
@@ -366,8 +370,10 @@ impl Session {
     /// it, and every analysis.
     fn invalidate(&mut self, id: ModuleId) {
         self.analyses.remove(&id);
+        self.tables.forget(id);
         for dependent in self.graph.reverse_dependents(id) {
             self.analyses.remove(&dependent);
+            self.tables.forget(dependent);
         }
         self.results.clear();
     }
@@ -380,6 +386,12 @@ impl Session {
     /// The definitions the session's modules and the builtins declare.
     pub fn defs(&self) -> &DefTable {
         &self.defs
+    }
+
+    /// What the checks of the session's modules found: every type,
+    /// trait, impl and method, and the scheme of each definition.
+    pub fn tables(&self) -> &Tables {
+        &self.tables
     }
 
     /// The check of module `id`, once [`Session::analyze`] has made it.
@@ -443,62 +455,23 @@ impl Session {
             .ast
             .clone()
             .unwrap_or(ast::Program { decls: Vec::new() });
-        if module.host.is_some() {
-            let resolution = names::resolve_module(
-                &mut ast,
-                id,
-                ModuleKind::Host,
-                &HashMap::new(),
-                Arc::make_mut(&mut self.defs),
-            );
-            let mut resolver = Resolver::new();
-            let check =
-                typechecker::check_host_module(&mut ast, id, &mut resolver, self.defs.clone());
-            return ModuleAnalysis {
-                ast: Arc::new(ast),
-                scope: resolution.scope,
-                exports: check.exports,
-                top_level: check.top_level,
-                methods: check.methods,
-                record_fields: check.record_fields,
-                diagnostics: resolution
-                    .diagnostics
-                    .into_iter()
-                    .chain(check.diagnostics)
-                    .collect(),
-                resolver: Arc::new(resolver),
-            };
-        }
-        let mut imports = HashMap::new();
         let mut imported: HashMap<Symbol, Imported<'_>> = HashMap::new();
-        let mut poisoned = HashSet::new();
         let mut bugs = Vec::new();
-        let mut resolver = Resolver::new();
         for import in &module.imports {
-            match &import.resolution {
-                ImportResolution::Builtin => {
-                    let builtin = ModuleId::builtin(&resolve(import.name));
-                    imported.insert(
-                        import.name,
-                        builtin.map_or(Imported::Poisoned, Imported::Builtin),
-                    );
-                }
+            let resolution = match &import.resolution {
+                ImportResolution::Builtin => ModuleId::builtin(&resolve(import.name))
+                    .map_or(Imported::Poisoned, Imported::Builtin),
                 ImportResolution::Cell(cell) => match self.analyses.get(cell) {
-                    Some(analysis) => {
-                        imports.insert(import.name, analysis.exports.clone());
-                        imported.insert(import.name, Imported::Cell(*cell, &analysis.scope));
-                        resolver.absorb(&analysis.resolver);
-                    }
+                    Some(analysis) => Imported::Cell(*cell, &analysis.scope),
                     // A committed cell is checked; this is a bug of the
                     // session, reported rather than a panic of the REPL.
                     None => {
-                        poisoned.insert(import.name);
-                        imported.insert(import.name, Imported::Poisoned);
                         bugs.push(Diagnostic::error(
                             Code::CompilerBug,
                             import.span,
                             format!("silt bug: the REPL entry {} is not checked", import.name),
                         ));
+                        Imported::Poisoned
                     }
                 },
                 ImportResolution::Module(target) => match self.analyses.get(target) {
@@ -506,58 +479,58 @@ impl Session {
                         if !self.graph.module(*target).failed()
                             && !ordering.back_edges.contains(&(id, *target)) =>
                     {
-                        imports.insert(import.name, analysis.exports.clone());
-                        imported.insert(import.name, Imported::Module(*target, &analysis.scope));
-                        resolver.absorb(&analysis.resolver);
+                        Imported::Module(*target, &analysis.scope)
                     }
-                    _ => {
-                        poisoned.insert(import.name);
-                        imported.insert(import.name, Imported::Poisoned);
-                    }
+                    _ => Imported::Poisoned,
                 },
-                ImportResolution::Unresolved(_) => {
-                    poisoned.insert(import.name);
-                    imported.insert(import.name, Imported::Poisoned);
-                }
-            }
+                ImportResolution::Unresolved(_) => Imported::Poisoned,
+            };
+            imported.insert(import.name, resolution);
         }
-        let is_cell = self.cells.info.contains_key(&id);
-        let kind = if is_cell {
+        let kind = if module.host.is_some() {
+            ModuleKind::Host
+        } else if self.cells.info.contains_key(&id) {
             ModuleKind::Cell
         } else {
             ModuleKind::File
         };
+        // What a cell imports from the earlier cells, by name.
+        let mut earlier = Vec::new();
+        for decl in &ast.decls {
+            if let ast::Decl::Import(ast::ImportTarget::Items(m, items), _) = decl
+                && let Some(Imported::Cell(_, scope)) = imported.get(m)
+            {
+                for (item, _) in items {
+                    if let Some(names::Binding::Def(def)) = scope.exports.values.get(item) {
+                        earlier.push((*item, *def));
+                    }
+                }
+            }
+        }
         let resolution =
             names::resolve_module(&mut ast, id, kind, &imported, Arc::make_mut(&mut self.defs));
-        let check_module = if is_cell {
-            typechecker::check_cell
-        } else {
-            typechecker::check_module
-        };
-        let check = check_module(
+        let check = typechecker::check_module(
             &mut ast,
             ModuleContext {
-                package: Some(module.package_name),
-                imports,
-                poisoned,
-                resolver: &mut resolver,
-                defs: self.defs.clone(),
                 module: id,
+                module_name: module.name,
+                kind,
+                package: (kind != ModuleKind::Host).then_some(module.package_name),
+                scope: &resolution.scope,
+                earlier: &earlier,
+                defs: self.defs.clone(),
+                tables: &mut self.tables,
             },
         );
         ModuleAnalysis {
             ast: Arc::new(ast),
             scope: resolution.scope,
-            exports: check.exports,
             top_level: check.top_level,
-            methods: check.methods,
-            record_fields: check.record_fields,
             diagnostics: bugs
                 .into_iter()
                 .chain(resolution.diagnostics)
                 .chain(check.diagnostics)
                 .collect(),
-            resolver: Arc::new(resolver),
         }
     }
 
@@ -728,6 +701,7 @@ impl Session {
         };
         let units = ProgramUnits {
             defs: Some(self.defs.clone()),
+            resolver: Arc::new(self.tables.resolver().clone()),
             earlier,
             modules: modules
                 .iter()
@@ -736,7 +710,6 @@ impl Session {
                     let (imports, bindings) = unit_imports(module, &index);
                     ModuleUnit {
                         program: self.analyses[m].ast.clone(),
-                        resolver: self.analyses[m].resolver.clone(),
                         name: resolve(module.name),
                         global: globals
                             .get(m)

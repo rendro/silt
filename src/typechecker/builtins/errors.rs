@@ -218,12 +218,13 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         let enum_ty = TypeRef::builtin(enum_name);
         for trait_name in &["Error", "Display"] {
             checker
+                .tables
                 .trait_impl_set
                 .insert((TraitKey::builtin(trait_name), enum_ty));
         }
         let self_ty = Type::Generic(enum_ty, vec![]);
         // Error::message(self) -> String
-        checker.method_table.insert(
+        checker.tables.method_table.insert(
             (enum_ty, intern("message")),
             MethodEntry {
                 method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
@@ -236,7 +237,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         // Display::display(self) -> String — provided automatically
         // via the Error trait's Display supertrait requirement, so
         // calling `err.display()` also works.
-        checker.method_table.insert(
+        checker.tables.method_table.insert(
             (enum_ty, intern("display")),
             MethodEntry {
                 method_type: Type::Fun(vec![self_ty], Box::new(Type::String)),
@@ -300,7 +301,7 @@ fn register_enum(
     let enum_ty = TypeRef::builtin(enum_name);
     let result_ty = Type::Generic(enum_ty, vec![]);
 
-    checker.enums.insert(
+    checker.tables.enums.insert(
         enum_ty,
         EnumInfo {
             params: vec![],

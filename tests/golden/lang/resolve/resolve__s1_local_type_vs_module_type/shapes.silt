@@ -1,0 +1,7 @@
+pub type Shape { Circle(Int), Square(Int) }
+pub fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) -> 3 * r * r
+    Square(w) -> w * w
+  }
+}

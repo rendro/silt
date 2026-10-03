@@ -11,8 +11,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // We don't redeclare those types here; we just refer to them by
     // name via `Type::Generic(intern("..."), vec![])`. Unification
     // resolves them once the user's `pg.silt` is parsed (which adds
-    // the matching record / enum entries to `checker.enums` /
-    // `checker.records`).
+    // the matching record / enum entries to `checker.tables.enums` /
+    // `checker.tables.records`).
     //
     // This means: the postgres module is only useful when paired with
     // a silt-side pg.silt that declares PgPool, PgError, QueryResult,

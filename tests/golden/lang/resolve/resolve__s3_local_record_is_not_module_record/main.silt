@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: type mismatch: expected geo.Pt, got Pt {name: String}
+-- A value of the local record `Pt` is not a `geo.Pt`.
+import geo
+type Pt { name: String }
+fn f(p: geo.Pt) -> Int { geo.sum(p) }
+fn main() {
+  let l = Pt { name: "n" }
+  println(f(l))
+}

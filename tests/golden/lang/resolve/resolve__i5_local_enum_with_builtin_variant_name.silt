@@ -1,0 +1,16 @@
+-- verdict: same
+-- Audit repro I5: a local enum with a variant named like a builtin
+-- module's (`channel.Empty`) is just a local enum; nothing of the
+-- builtin's leaks into its checks.
+type Node { Leaf(String), Empty }
+fn show(n: Node) -> String {
+  match n {
+    Leaf(s) -> s
+    Empty -> "empty"
+  }
+}
+fn main() {
+  println(show(Leaf("a")))
+  println(show(Empty))
+  println(Leaf("b") == Leaf("b"))
+}

@@ -316,9 +316,6 @@ fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), Diagnostic
 pub struct ModuleUnit {
     /// The module's declarations, after the typechecker filled them in.
     pub program: Arc<Program>,
-    /// The type aliases and associated-type bindings the module was
-    /// checked with: its impl targets are canonicalized with them.
-    pub resolver: Arc<Resolver>,
     /// The module's name in its package (`"lib"` for a dependency's
     /// library, `"util"` for `src/util.silt`).
     pub name: String,
@@ -355,6 +352,10 @@ pub struct ProgramUnits {
     /// For a REPL entry: what the earlier entries left in the VM. Empty
     /// for any other program.
     pub earlier: EarlierCells,
+    /// The type aliases and associated-type bindings of the session:
+    /// impl targets are canonicalized with them, as the checker keyed
+    /// the impls.
+    pub resolver: Arc<Resolver>,
 }
 
 /// What the earlier entries of a REPL session installed, which the entry
@@ -472,13 +473,6 @@ pub struct Compiler {
     record_decls: HashMap<String, RecordDecl>,
     /// Type alias declarations, collected together with `record_decls`.
     alias_decls: HashMap<String, AliasDecl>,
-    /// The alias / assoc-binding registries of a compiler with no
-    /// modules ([`Compiler::new`]); a module of a program uses its own (see
-    /// [`Compiler::resolver`]). Read via
-    /// [`crate::types::canonical::canonical_head`] when emitting
-    /// trait-impl global keys, so registration and lookup keys agree
-    /// across the typecheck → compile boundary.
-    resolver: Resolver,
     /// The name the entry's top-level `let` being compiled binds: its
     /// initializer reads the value the name had before (a REPL entry's
     /// `let x = x + 1`).
@@ -525,9 +519,9 @@ impl Default for Compiler {
 impl Compiler {
     /// Shared constructor body for [`Compiler::new`] and
     /// [`Compiler::for_program`]. The two public constructors differ
-    /// only in the modules and the resolver; everything else is seeded
-    /// identically here so the two paths can never drift apart.
-    fn build(units: ProgramUnits, resolver: Resolver) -> Self {
+    /// only in the modules; everything else is seeded identically here
+    /// so the two paths can never drift apart.
+    fn build(units: ProgramUnits) -> Self {
         Self {
             contexts: Vec::new(),
             functions: Vec::new(),
@@ -547,30 +541,27 @@ impl Compiler {
             selective_imports: HashMap::new(),
             record_decls: HashMap::new(),
             alias_decls: HashMap::new(),
-            resolver,
             initializing: None,
         }
     }
 
     /// A compiler for a program with no modules but the builtin ones.
     pub fn new() -> Self {
-        Self::build(ProgramUnits::default(), Resolver::new())
+        Self::build(ProgramUnits::default())
     }
 
     /// A compiler for the modules of a program, as the session analysed
     /// them.
     pub fn for_program(units: ProgramUnits) -> Self {
-        Self::build(units, Resolver::new())
+        Self::build(units)
     }
 
-    /// The alias registries of the module being compiled: the ones it
-    /// was checked with, or the compiler's own when it has no modules.
+    /// The alias registries the program was checked with: read via
+    /// [`crate::types::canonical::canonical_head`] when emitting
+    /// trait-impl global keys, so registration and lookup keys agree
+    /// across the typecheck → compile boundary.
     fn resolver(&self) -> &Resolver {
-        let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
-        match self.units.modules.get(current) {
-            Some(unit) => &unit.resolver,
-            None => &self.resolver,
-        }
+        &self.units.resolver
     }
 
     /// Returns warnings emitted during compilation.

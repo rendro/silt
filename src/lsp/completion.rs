@@ -322,10 +322,11 @@ impl Server {
     /// session's analysis of its module.
     fn checked_facts(&self, doc: &Document) -> Option<Checked> {
         let checked = self.checked_module(doc)?;
+        let tables = self.checked_tables(doc)?;
         Some(Checked {
             program: checked.ast.clone(),
-            methods: checked.methods.clone(),
-            record_fields: checked.record_fields.clone(),
+            methods: tables.methods(),
+            record_fields: tables.record_fields(),
         })
     }
 
@@ -425,10 +426,11 @@ impl Server {
         let id = project.set_text(&path, &Arc::from(fixed))?;
         let file = project.file(id);
         project.session.analyze(file);
+        let tables = project.session.tables();
         let checked = project.session.module_analysis(id).map(|checked| Checked {
             program: checked.ast.clone(),
-            methods: checked.methods.clone(),
-            record_fields: checked.record_fields.clone(),
+            methods: tables.methods(),
+            record_fields: tables.record_fields(),
         });
         project.set_text(&path, &original);
         for id in open {
@@ -664,11 +666,7 @@ mod tests {
     fn methods(source: &str) -> Vec<(crate::types::TypeRef, Symbol)> {
         let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
         session.analyze(file);
-        session
-            .module_analysis(session.module_of(file))
-            .expect("the entry is analysed")
-            .methods
-            .clone()
+        session.tables().methods()
     }
 
     const IMPLS: &str = "trait UpperCaser { fn to_upper(self) -> String }\n\

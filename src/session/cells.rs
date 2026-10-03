@@ -117,6 +117,11 @@ struct Committed {
 }
 
 impl Cells {
+    /// Whether the cell `id` is committed.
+    pub fn is_committed(&self, id: ModuleId) -> bool {
+        self.committed.iter().any(|cell| cell.id == id)
+    }
+
     /// Make the parsed cell `id`, the `n`th, see the committed cells: its
     /// own declarations become exported (a later cell imports all of
     /// them), and the imports of what it sees are put before them.

@@ -4,8 +4,7 @@
 //! auto-derive exemption are golden cases
 //! `tests/golden/lang/traits/orphan_rule__*`. The CLI always typechecks
 //! under a package (`__local__` for a lone file), so the "no current
-//! package" mode below is reachable only through
-//! `typechecker::check_with_package(.., None)`.
+//! package" mode below is reachable only through `typechecker::check`.
 
 use silt::diagnostic::Severity;
 use silt::lexer::Lexer;
@@ -21,7 +20,7 @@ fn errors_no_pkg(input: &str) -> Vec<String> {
     let mut program = Parser::new(tokens, input)
         .parse_program()
         .expect("parse error");
-    typechecker::check_with_package(&mut program, None)
+    typechecker::check(&mut program)
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
         .map(|e| e.message)
@@ -56,5 +55,5 @@ trait Display for List(a) {
 // The pseudo-code in the implementation prompt suggests a white-box
 // alternative when multi-package scaffolding is heavy: directly
 // constructing the typechecker's package state. We exercise the same
-// rule through the public `check_with_package` API instead — the test
-// authoring is simpler and the rule's behaviour is identical.
+// rule through the public `check` API instead — the test authoring is
+// simpler and the rule's behaviour is identical.

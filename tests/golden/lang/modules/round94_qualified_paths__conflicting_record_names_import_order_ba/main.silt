@@ -1,0 +1,11 @@
+-- verdict: same
+-- Two imported types of one name, imported b then a: each literal builds
+-- its own module's `Pt`, whatever the order of the imports.
+import b
+import a
+
+fn main() {
+  let q = b.Pt { label: "hi", v: 3 }
+  let p = a.Pt { x: 1, y: 2 }
+  print(p.x + q.v)
+}

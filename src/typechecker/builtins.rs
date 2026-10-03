@@ -51,7 +51,7 @@ pub(super) fn duration_ty() -> Type {
     )
 }
 
-/// Register a record type with `checker.records` and return the
+/// Register a record type with `checker.tables.records` and return the
 /// corresponding `Type::Record` binding. Collapses the two-vec-literal
 /// pattern used across the `time` module (each record had to spell out
 /// its field vec both in the `Type::Record` binding and the
@@ -62,7 +62,7 @@ pub(super) fn record_with_fields(
     fields: Vec<(Symbol, Type)>,
 ) -> Type {
     let sym = TypeRef::builtin(name);
-    checker.records.insert(
+    checker.tables.records.insert(
         sym,
         RecordInfo {
             fields: fields.clone(),
@@ -188,7 +188,7 @@ impl TypeChecker {
         // Option(a): Some(a) | None
         {
             let (opt_a, opt_av) = self.fresh_tv();
-            self.enums.insert(
+            self.tables.enums.insert(
                 TypeRef::builtin("Option"),
                 EnumInfo {
                     params: vec![intern("a")],
@@ -213,7 +213,7 @@ impl TypeChecker {
         {
             let (res_a, res_av) = self.fresh_tv();
             let (res_e, res_ev) = self.fresh_tv();
-            self.enums.insert(
+            self.tables.enums.insert(
                 TypeRef::builtin("Result"),
                 EnumInfo {
                     params: vec![intern("a"), intern("e")],
@@ -237,7 +237,7 @@ impl TypeChecker {
         // Step enum: Stop(a) / Continue(a) — for list.fold_until
         {
             let (step_a, step_av) = self.fresh_tv();
-            self.enums.insert(
+            self.tables.enums.insert(
                 TypeRef::builtin("Step"),
                 EnumInfo {
                     params: vec![intern("a")],
@@ -285,7 +285,7 @@ impl TypeChecker {
         // ChannelResult enum: Message(a) / Closed — for channel.receive
         {
             let (cr_a, cr_av) = self.fresh_tv();
-            self.enums.insert(
+            self.tables.enums.insert(
                 TypeRef::builtin("ChannelResult"),
                 EnumInfo {
                     params: vec![intern("a")],
@@ -373,7 +373,7 @@ impl TypeChecker {
         {
             let (co_a, co_av) = self.fresh_tv();
             let ch_a = Type::Channel(Box::new(co_a.clone()));
-            self.enums.insert(
+            self.tables.enums.insert(
                 TypeRef::builtin("ChannelOp"),
                 EnumInfo {
                     params: vec![intern("a")],

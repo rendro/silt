@@ -27,11 +27,10 @@ impl Server {
 
         // Check if cursor is on a field name in a field access expression.
         // e.g., for `data.response`, hovering on `response` shows the field type.
-        let no_records = RecordFields::new();
         let records = self
-            .checked_module(doc)
-            .map_or(&no_records, |checked| &checked.record_fields);
-        if let Some((field_name, field_ty)) = find_field_type_at_offset(program, records, cursor) {
+            .checked_tables(doc)
+            .map_or_else(RecordFields::new, |tables| tables.record_fields());
+        if let Some((field_name, field_ty)) = find_field_type_at_offset(program, &records, cursor) {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,

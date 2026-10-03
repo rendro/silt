@@ -11,7 +11,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // Method enum
     let method_ty = Type::builtin("Method", vec![]);
 
-    checker.enums.insert(
+    checker.tables.enums.insert(
         TypeRef::builtin("Method"),
         EnumInfo {
             params: vec![],
@@ -67,7 +67,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
 
-    checker.records.insert(
+    checker.tables.records.insert(
         TypeRef::builtin("Response"),
         RecordInfo {
             fields: vec![
@@ -91,7 +91,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
 
-    checker.records.insert(
+    checker.tables.records.insert(
         TypeRef::builtin("Request"),
         RecordInfo {
             fields: vec![

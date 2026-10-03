@@ -1,11 +1,11 @@
 -- cmd: check
 -- exit: 1
 -- verdict: same
--- stderr-contains: error[type]: modules 'a' and 'b' both declare a type 'Pt': one module cannot use two types of one name
--- stderr-contains: --> main.silt:10:1
+-- stderr-contains: error[type]: type mismatch: expected a.Pt, got b.Pt
+-- stderr-contains: --> main.silt:12:19
 -- Audit repro I3: two modules each export a type `Pt`, with different
--- fields. Passing `b`'s `Pt` to `a`'s function must not type-check; the
--- module that would see both is rejected at the second import.
+-- fields: two types. Passing `b`'s `Pt` to `a`'s function is a type
+-- error, which names the two types by their modules.
 import a
 import b
 fn main() {

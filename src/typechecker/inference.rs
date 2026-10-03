@@ -353,7 +353,12 @@ impl TypeChecker {
         // A method of a trait another module declares without `pub` can
         // be called only in that module.
         if let Some(trait_name) = entry.trait_name
-            && let Some(module) = self.private_traits.get(&trait_name).copied()
+            && let Some((owner, module)) = self
+                .tables
+                .traits
+                .get(&trait_name)
+                .and_then(|t| t.private_to)
+            && owner != self.module
         {
             self.errors.push(
                 Diagnostic::error(
@@ -495,7 +500,7 @@ impl TypeChecker {
                 };
                 let mut matches: Vec<(TraitKey, Type)> = Vec::new();
                 for trait_name in &trait_names {
-                    if let Some(trait_info) = self.traits.get(trait_name).cloned()
+                    if let Some(trait_info) = self.tables.traits.get(trait_name).cloned()
                         && let Some((_, method_ty)) =
                             trait_info.methods.iter().find(|(n, _)| *n == field)
                     {
@@ -568,7 +573,7 @@ impl TypeChecker {
                 // the effective type name (same path as
                 // `type_name_for_impl`).
                 let name = self.type_name_for_impl(&inner)?;
-                let entry = self.method_table.get(&(name, field)).cloned()?;
+                let entry = self.tables.method_table.get(&(name, field)).cloned()?;
                 let (instantiated, _constraints) = self.instantiate_method_entry(&entry);
                 Some(self.apply(&instantiated))
             }
@@ -596,7 +601,7 @@ impl TypeChecker {
         while let Some(t) = stack.pop() {
             if seen.insert(t) {
                 expanded.push(t);
-                if let Some(info) = self.traits.get(&t) {
+                if let Some(info) = self.tables.traits.get(&t) {
                     stack.extend(info.supertraits.iter().copied());
                 }
             }
@@ -630,7 +635,7 @@ impl TypeChecker {
             let trait_args = &wc.trait_args;
             let Some(trait_name) = self
                 .named_trait(wc.trait_res, wc.trait_name)
-                .filter(|t| self.traits.contains_key(t))
+                .filter(|t| self.tables.traits.contains_key(t))
             else {
                 self.error(
                     Code::UnknownTrait,
@@ -698,7 +703,7 @@ impl TypeChecker {
             }
             // Propagate supertrait args from the enclosing trait's
             // bindings to each named supertrait.
-            if let Some(info) = self.traits.get(trait_name).cloned() {
+            if let Some(info) = self.tables.traits.get(trait_name).cloned() {
                 let base_args: Vec<Type> = self
                     .trait_arg_bindings
                     .get(&(*tv, *trait_name))
@@ -953,14 +958,14 @@ impl TypeChecker {
                     // the record definition and validate the field.
                     let type_name = *type_name;
                     let type_args = type_args.clone();
-                    if let Some(rec_info) = self.records.get(&type_name).cloned()
+                    if let Some(rec_info) = self.tables.records.get(&type_name).cloned()
                         && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
                     {
                         // Same fresh-var fallback as in infer_expr (T1 audit fix):
                         // never return the template TyVar; if the caller's
                         // type_args are missing/mismatched, use fresh vars.
                         let field_ty = if let Some(param_var_ids) =
-                            self.record_param_var_ids.get(&type_name).cloned()
+                            self.tables.record_param_var_ids.get(&type_name).cloned()
                         {
                             let mapping: HashMap<TyVar, Type> =
                                 if type_args.len() == param_var_ids.len() {
@@ -984,7 +989,8 @@ impl TypeChecker {
                         continue;
                     }
                     // Also check the method table for trait methods.
-                    if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
+                    if let Some(entry) = self.tables.method_table.get(&(type_name, field)).cloned()
+                    {
                         let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                         let method_ty = self.apply(&instantiated);
                         // Method types include `self` as the first param.
@@ -1021,7 +1027,7 @@ impl TypeChecker {
                     // GAP (round 35 F7): thread did-you-mean suggestion
                     // through the Generic/named-record deferred path.
                     let base = format!("unknown field or method '{field}' on type {type_name}");
-                    let msg = if let Some(rec_info) = self.records.get(&type_name) {
+                    let msg = if let Some(rec_info) = self.tables.records.get(&type_name) {
                         format_record_field_suggestion(base, field, &rec_info.fields)
                     } else {
                         (base, None)
@@ -1657,7 +1663,7 @@ impl TypeChecker {
             return CtorTarget::Silent;
         }
         let enum_name = self.pattern_variant_enum(pattern.res, qualifier);
-        match enum_name.and_then(|e| self.enums.get(&e).map(|info| (e, info))) {
+        match enum_name.and_then(|e| self.tables.enums.get(&e).map(|info| (e, info))) {
             Some((e, info)) if info.variants.iter().any(|v| v.name == *name) => {
                 CtorTarget::Enum(e, info.clone())
             }
@@ -1669,7 +1675,7 @@ impl TypeChecker {
     pub(super) fn names_record(&self, res: Option<crate::defs::Res>, name: Symbol) -> bool {
         self.res_type(res)
             .or_else(|| self.named_type(None, name))
-            .is_some_and(|ty| self.records.contains_key(&ty))
+            .is_some_and(|ty| self.tables.records.contains_key(&ty))
     }
 
     /// The record type a record pattern or literal names, with its type
@@ -1688,9 +1694,9 @@ impl TypeChecker {
         }
         let ty = self.named_type(res, name);
         let name = ty.map_or(name, |ty| ty.name);
-        match ty.and_then(|ty| Some((ty, self.records.get(&ty).cloned()?))) {
+        match ty.and_then(|ty| Some((ty, self.tables.records.get(&ty).cloned()?))) {
             Some((ty, info)) => {
-                let ids = self.record_param_var_ids.get(&ty).cloned();
+                let ids = self.tables.record_param_var_ids.get(&ty).cloned();
                 Some((ty, info, ids))
             }
             None => {
@@ -1961,14 +1967,14 @@ impl TypeChecker {
                 // so the declared and inferred instantiations stay linked.
                 let generic_record_fields: Option<(TypeRef, Vec<(Symbol, Type)>)> =
                     if let Type::Generic(type_name, type_args) = &resolved
-                        && let Some(rec_info) = self.records.get(type_name).cloned()
+                        && let Some(rec_info) = self.tables.records.get(type_name).cloned()
                     {
                         let fields = if let Some((pname, pfields)) = &pattern_record
                             && *pname == *type_name
                         {
                             pfields.clone()
                         } else if let Some(param_var_ids) =
-                            self.record_param_var_ids.get(type_name).cloned()
+                            self.tables.record_param_var_ids.get(type_name).cloned()
                         {
                             let mapping: HashMap<TyVar, Type> =
                                 if type_args.len() == param_var_ids.len() {
@@ -2287,21 +2293,28 @@ impl TypeChecker {
     /// path counts only when it really is a module-qualified name, by
     /// the same test the Call arm uses to pick the qualified scheme.
     fn callee_declares_optional_last_param(&self, callee: &Expr, env: &TypeEnv) -> bool {
-        let name = match &callee.kind {
-            ExprKind::Ident(name) => *name,
-            ExprKind::FieldAccess(obj, field, _) => {
-                let ExprKind::Ident(module) = &obj.kind else {
-                    return false;
-                };
-                if !self.callee_module_is_in_scope(callee, env) {
-                    return false;
-                }
-                intern(&format!("{}.{field}", resolve(*module)))
-            }
-            _ => return false,
-        };
-        env.lookup(name)
+        self.callee_scheme(callee, env)
             .is_some_and(|scheme| scheme.optional_last_param)
+    }
+
+    /// The scheme of the function a callee names: a bare name (a local,
+    /// a function of the module or one it imports, a builtin) or a
+    /// `module.function` path. `None` for any other callee, a function
+    /// value.
+    fn callee_scheme(&self, callee: &Expr, env: &TypeEnv) -> Option<Scheme> {
+        match &callee.kind {
+            ExprKind::Ident(name) => {
+                if callee.res == Some(crate::defs::Res::Error) {
+                    return None;
+                }
+                self.def_scheme(callee.res, env)
+                    .or_else(|| env.lookup(*name).cloned())
+            }
+            ExprKind::FieldAccess(..) if self.callee_module_is_in_scope(callee, env) => {
+                self.def_scheme(callee.res, env)
+            }
+            _ => None,
+        }
     }
 
     // ── Expression type inference ───────────────────────────────────
@@ -2324,6 +2337,7 @@ impl TypeChecker {
                         let resolved = self.apply(&t);
                         if let Some(type_name) = self.type_name_for_impl(&resolved)
                             && !self
+                                .tables
                                 .trait_impl_set
                                 .contains(&(TraitKey::builtin("Display"), type_name))
                         {
@@ -2516,28 +2530,28 @@ impl TypeChecker {
 
             ExprKind::Ident(name) => {
                 let name = *name;
-                let variant_enum = self.res_variant_enum(expr.res);
                 if expr.res == Some(crate::defs::Res::Error) {
                     // The resolver reported the name, or it comes from a
                     // module that failed to load.
                     Type::Error
-                } else if let Some(enum_name) = variant_enum {
-                    // A variant: its constructor is bound as
-                    // `Enum.Variant`, two enums may have variants of one
-                    // name.
-                    match env.lookup(intern(&format!("{enum_name}.{name}"))) {
-                        Some(scheme) => {
-                            let scheme = scheme.clone();
-                            self.instantiate(&scheme)
-                        }
-                        None => self.fresh_var(),
-                    }
-                } else if let Some(scheme) = env.lookup(name) {
-                    let scheme = scheme.clone();
+                } else if let Some(scheme) = self
+                    .def_scheme(expr.res, env)
+                    .or_else(|| env.lookup(name).cloned())
+                {
                     self.instantiate(&scheme)
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
+                } else if matches!(expr.res, Some(crate::defs::Res::Def(_))) {
+                    // A definition with no scheme: a type alias or a
+                    // trait used as a value, or a definition whose
+                    // check failed.
+                    self.error(
+                        Code::UndefinedVariable,
+                        format!("'{name}' is not a value"),
+                        span,
+                    );
+                    Type::Error
                 } else {
                     let msg = format_undefined_variable_message(name, env, "");
                     self.error_help(Code::UndefinedVariable, msg, span);
@@ -2557,30 +2571,25 @@ impl TypeChecker {
                     expr.ty = Some(Type::Error);
                     return Type::Error;
                 }
-                let member_key = match (&obj.kind, obj.res) {
-                    _ if self.res_variant_enum(expr.res).is_some() => {
-                        let enum_name = self.res_variant_enum(expr.res).expect("a variant");
-                        Some(intern(&format!("{enum_name}.{field}")))
-                    }
-                    (ExprKind::Ident(module), Some(crate::defs::Res::Module(_))) => {
-                        Some(intern(&format!("{module}.{field}")))
-                    }
-                    _ => None,
-                };
-                if let Some(key) = member_key {
-                    let ty = match env.lookup(key) {
+                let names_member = self.res_variant_enum(expr.res).is_some()
+                    || matches!(obj.res, Some(crate::defs::Res::Module(_)));
+                if names_member {
+                    let ty = match self.def_scheme(expr.res, env) {
                         Some(scheme) => {
-                            let scheme = scheme.clone();
                             let ty = self.instantiate(&scheme);
                             self.apply(&ty)
                         }
-                        // A member the resolver found that the module's
-                        // check did not export: a type alias or a trait
-                        // used as a value.
+                        // A member the resolver found that has no
+                        // scheme: a type alias or a trait used as a
+                        // value.
                         None => {
+                            let module = match &obj.kind {
+                                ExprKind::Ident(m) => format!("{m}."),
+                                _ => String::new(),
+                            };
                             self.error(
                                 Code::UndefinedVariable,
-                                format!("'{}' is not a value", resolve(key)),
+                                format!("'{module}{field}' is not a value"),
                                 span,
                             );
                             Type::Error
@@ -2590,11 +2599,14 @@ impl TypeChecker {
                     return ty;
                 }
                 // `Type.method`: a method of a type, called through it.
-                if let ExprKind::Ident(type_name) = &obj.kind
-                    && obj.res != Some(crate::defs::Res::Local)
-                    && let Some(scheme) = env.lookup(intern(&format!("{type_name}.{field}")))
+                if matches!(obj.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+                    && let Some(ty) = self.res_type(obj.res)
+                    && let Some(entry) = self
+                        .tables
+                        .method_table
+                        .get(&(canonical_head(&self.tables.resolver, ty), field))
                 {
-                    let scheme = scheme.clone();
+                    let scheme = Self::method_scheme(entry);
                     let ty = self.instantiate(&scheme);
                     let ty = self.apply(&ty);
                     expr.ty = Some(ty.clone());
@@ -2611,7 +2623,7 @@ impl TypeChecker {
                 // separate Range redirect to the List method table
                 // is needed because the Range form has been collapsed
                 // away upstream of this match.
-                let obj_ty = crate::types::canonical::canonicalize(&self.resolver, &obj_ty);
+                let obj_ty = crate::types::canonical::canonicalize(&self.tables.resolver, &obj_ty);
 
                 // Field / method access
                 //
@@ -2677,7 +2689,7 @@ impl TypeChecker {
                         if let Some((_, ft)) = fields.iter().find(|(n, _)| *n == field) {
                             ft.clone()
                         } else if let Some(entry) =
-                            self.method_table.get(&(*rec_name, field)).cloned()
+                            self.tables.method_table.get(&(*rec_name, field)).cloned()
                         {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
@@ -2710,7 +2722,7 @@ impl TypeChecker {
                     }
                     Type::Generic(type_name, type_args) => {
                         // Check record field definitions, substituting type parameters
-                        if let Some(rec_info) = self.records.get(type_name).cloned()
+                        if let Some(rec_info) = self.tables.records.get(type_name).cloned()
                             && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
                         {
                             // Substitute the record's type parameters with concrete type args.
@@ -2721,7 +2733,7 @@ impl TypeChecker {
                             // template TyVar, which would get mutated across uses
                             // (T1 audit fix; mirrors the check_pattern path).
                             let resolved = if let Some(param_var_ids) =
-                                self.record_param_var_ids.get(type_name).cloned()
+                                self.tables.record_param_var_ids.get(type_name).cloned()
                             {
                                 let mapping: HashMap<TyVar, Type> =
                                     if type_args.len() == param_var_ids.len() {
@@ -2748,7 +2760,9 @@ impl TypeChecker {
                             return resolved;
                         }
                         // Check method table (trait methods)
-                        if let Some(entry) = self.method_table.get(&(*type_name, field)).cloned() {
+                        if let Some(entry) =
+                            self.tables.method_table.get(&(*type_name, field)).cloned()
+                        {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
@@ -2779,7 +2793,7 @@ impl TypeChecker {
                         // path so `u.nam` on `type User { name, age }`
                         // prints `did you mean 'name'?`.
                         let base = format!("unknown field or method '{field}' on type {type_name}");
-                        let msg = if let Some(rec_info) = self.records.get(type_name) {
+                        let msg = if let Some(rec_info) = self.tables.records.get(type_name) {
                             format_record_field_suggestion(base, field, &rec_info.fields)
                         } else {
                             (base, None)
@@ -2809,7 +2823,9 @@ impl TypeChecker {
                         // dispatch_name_for_value(Value::Unit)), `Fn` of a
                         // function.
                         let type_name = head_of(&obj_ty).expect("a primitive head has a type");
-                        if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
+                        if let Some(entry) =
+                            self.tables.method_table.get(&(type_name, field)).cloned()
+                        {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
@@ -2828,7 +2844,7 @@ impl TypeChecker {
                             format_unknown_method_message(
                                 field,
                                 &display,
-                                &self.method_table,
+                                &self.tables.method_table,
                                 type_name,
                             ),
                             span,
@@ -2857,7 +2873,9 @@ impl TypeChecker {
                         let type_name = self
                             .type_name_for_impl(t)
                             .expect("container head has canonical name");
-                        if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
+                        if let Some(entry) =
+                            self.tables.method_table.get(&(type_name, field)).cloned()
+                        {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
@@ -2897,7 +2915,7 @@ impl TypeChecker {
                             format_unknown_method_message(
                                 field,
                                 &display,
-                                &self.method_table,
+                                &self.tables.method_table,
                                 type_name,
                             ),
                             span,
@@ -2910,7 +2928,8 @@ impl TypeChecker {
                             // Collect all traits that provide this method
                             let mut matches: Vec<(TraitKey, Type)> = Vec::new();
                             for trait_name in &trait_names {
-                                if let Some(trait_info) = self.traits.get(trait_name).cloned()
+                                if let Some(trait_info) =
+                                    self.tables.traits.get(trait_name).cloned()
                                     && let Some((_, method_ty)) =
                                         trait_info.methods.iter().find(|(n, _)| *n == field)
                                 {
@@ -2939,7 +2958,7 @@ impl TypeChecker {
                                 // once at register_trait_decl time and shared
                                 // across all call sites. Without instantiation,
                                 // unification at the downstream Call arm binds
-                                // those shared template TyVars in self.subst,
+                                // those shared template TyVars in self.tables.vars.subst,
                                 // so a second constrained call site on a
                                 // different concrete type sees the first
                                 // site's bindings instead of polymorphic vars.
@@ -2980,8 +2999,9 @@ impl TypeChecker {
                             // working unchanged.
                             let result_ty = self.fresh_var();
                             let is_known_impl_method =
-                                self.method_table.keys().any(|(_, m)| *m == field);
+                                self.tables.method_table.keys().any(|(_, m)| *m == field);
                             let is_declared_trait_method = self
+                                .tables
                                 .traits
                                 .values()
                                 .any(|info| info.methods.iter().any(|(n, _)| *n == field));
@@ -3307,8 +3327,8 @@ impl TypeChecker {
                             self.callee_declares_optional_last_param(callee, env);
 
                         // If callee is a named function, use instantiate_with_constraints
-                        let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
-                            if let Some(scheme) = env.lookup(name).cloned() {
+                        let (callee_ty, where_constraints) = if callee_fn_name.is_some() {
+                            if let Some(scheme) = self.callee_scheme(callee, env) {
                                 let (ty, constraints) = self.instantiate_with_constraints(&scheme);
                                 let applied = self.apply(&ty);
                                 // Round-101 GAP fix: same stash as the
@@ -3620,18 +3640,8 @@ impl TypeChecker {
                 // imported fn's `where` constraints, so the obligation
                 // never reaches `verify_trait_obligation` at the call
                 // site.
-                let qualified_call_name = if let ExprKind::FieldAccess(obj, field, _) = &callee.kind
-                {
-                    if let ExprKind::Ident(mod_name) = &obj.kind {
-                        Some(intern(&format!("{}.{field}", resolve(*mod_name))))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
-                    if let Some(scheme) = env.lookup(name).cloned() {
+                let (callee_ty, where_constraints) = if callee_fn_name.is_some() {
+                    if let Some(scheme) = self.callee_scheme(callee, env) {
                         let (ty, constraints) = self.instantiate_with_constraints(&scheme);
                         let applied = self.apply(&ty);
                         // Round-101 GAP fix: this named-callee shortcut
@@ -3651,9 +3661,8 @@ impl TypeChecker {
                         let ty = self.infer_expr(callee, env);
                         (self.apply(&ty), vec![])
                     }
-                } else if let Some(name) = qualified_call_name
-                    && let Some(scheme) = env.lookup(name).cloned()
-                    && self.callee_module_is_in_scope(callee, env)
+                } else if self.callee_module_is_in_scope(callee, env)
+                    && let Some(scheme) = self.callee_scheme(callee, env)
                 {
                     let (ty, constraints) = self.instantiate_with_constraints(&scheme);
                     // Mirror the FieldAccess side-effect: pre-set the
@@ -4082,10 +4091,10 @@ impl TypeChecker {
                     }
                     handled = true;
                 } else if let Type::Generic(type_name, type_args) = &resolved
-                    && let Some(rec_info) = self.records.get(type_name).cloned()
+                    && let Some(rec_info) = self.tables.records.get(type_name).cloned()
                 {
                     let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                        self.record_param_var_ids.get(type_name).cloned()
+                        self.tables.record_param_var_ids.get(type_name).cloned()
                     {
                         let mapping: HashMap<TyVar, Type> =
                             if type_args.len() == param_var_ids.len() {
@@ -4161,7 +4170,8 @@ impl TypeChecker {
                     // records once so the per-field check is O(1). A
                     // HashSet keeps this independent of record count.
                     let known_record_fields: std::collections::HashSet<Symbol> = if is_var_base {
-                        self.records
+                        self.tables
+                            .records
                             .values()
                             .flat_map(|r| r.fields.iter().map(|(n, _)| *n))
                             .collect()
@@ -4234,7 +4244,7 @@ impl TypeChecker {
                     let base_ty = self.infer_expr(base_expr, env);
                     let base_ty = self.apply(&base_ty);
                     let base_canon =
-                        crate::types::canonical::canonicalize(&self.resolver, &base_ty);
+                        crate::types::canonical::canonicalize(&self.tables.resolver, &base_ty);
                     // Determine base's known fields and tail.
                     let (base_fields, base_tail): (BTreeMap<Symbol, Type>, RowTail) =
                         match &base_canon {
@@ -4246,10 +4256,10 @@ impl TypeChecker {
                                 }
                                 (m, RowTail::Closed)
                             }
-                            Type::Generic(name, args) if self.records.contains_key(name) => {
-                                let rec_info = self.records.get(name).cloned().unwrap();
+                            Type::Generic(name, args) if self.tables.records.contains_key(name) => {
+                                let rec_info = self.tables.records.get(name).cloned().unwrap();
                                 let inst: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                                    self.record_param_var_ids.get(name).cloned()
+                                    self.tables.record_param_var_ids.get(name).cloned()
                                 {
                                     let mapping: HashMap<TyVar, Type> =
                                         if args.len() == param_var_ids.len() {
@@ -4898,8 +4908,9 @@ impl TypeChecker {
                 args: sub_pats,
                 ..
             } => {
-                // The variant's constructor is bound as `Enum.Variant`:
-                // two enums may have variants of one name. A name that is
+                // The variant's constructor is its definition's scheme
+                // (in the builtin environment, whose derived impls are
+                // not resolved, bound as `Enum.Variant`). A name that is
                 // no variant is looked up bare, for the hints below.
                 let scheme = match self.ctor_target(pattern) {
                     CtorTarget::Silent => {
@@ -4909,9 +4920,9 @@ impl TypeChecker {
                         }
                         return;
                     }
-                    CtorTarget::Enum(enum_name, _) => {
-                        env.lookup(intern(&format!("{enum_name}.{name}"))).cloned()
-                    }
+                    CtorTarget::Enum(enum_name, _) => self
+                        .def_scheme(pattern.res, env)
+                        .or_else(|| env.lookup(intern(&format!("{enum_name}.{name}"))).cloned()),
                     CtorTarget::Unknown => env.lookup(*name).cloned(),
                 };
                 // Look up the constructor type
@@ -5282,11 +5293,11 @@ impl TypeChecker {
                 let Some(ty) = self.named_type(te.res, *sym) else {
                     return;
                 };
-                let arity = if let Some(info) = self.enums.get(&ty) {
+                let arity = if let Some(info) = self.tables.enums.get(&ty) {
                     info.params.len()
-                } else if let Some(ids) = self.record_param_var_ids.get(&ty) {
+                } else if let Some(ids) = self.tables.record_param_var_ids.get(&ty) {
                     ids.len()
-                } else if let Some(info) = self.resolver.lookup_alias(ty) {
+                } else if let Some(info) = self.tables.resolver.lookup_alias(ty) {
                     info.params.len()
                 } else {
                     // Builtins like Int/Float/String are 0-arity by design.

@@ -1,0 +1,3 @@
+pub type Pt { y: String }
+pub fn mk() -> Pt { Pt { y: "s" } }
+pub fn get_y(p: Pt) -> String { p.y }
