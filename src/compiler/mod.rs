@@ -285,6 +285,18 @@ fn checker_missed(span: Span, what: &str) -> Diagnostic {
     )
 }
 
+/// A defect in silt: a name that the resolver resolved (every name
+/// that resolves to nothing is an error of the analysis, and a program
+/// with one is not compiled) but that is no local, upvalue or global the
+/// compiler has.
+fn name_without_binding(span: Span, name: Symbol) -> Diagnostic {
+    Diagnostic::error(
+        Code::CompilerBug,
+        span,
+        format!("compiler bug: the name '{name}' has no binding in the compiled code"),
+    )
+}
+
 /// Validate that a computed `JumpBack` distance fits in the instruction's
 /// `u16` operand. Mirrors the check in [`Chunk::patch_jump`] for forward
 /// jumps — a loop body larger than 65_535 bytes of bytecode would wrap
@@ -1279,10 +1291,7 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
-                    return Err(checker_missed(
-                        span,
-                        &format!("the unresolved name '{name}'"),
-                    ));
+                    return Err(name_without_binding(span, *name));
                 }
             }
 

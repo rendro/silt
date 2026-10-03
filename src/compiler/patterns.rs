@@ -10,7 +10,7 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::source::Span;
 use crate::value::Value;
 
-use super::{BindDestructKind, Compiler, checker_missed};
+use super::{BindDestructKind, Compiler, name_without_binding};
 use crate::diagnostic::{Code, Diagnostic};
 
 impl Compiler {
@@ -394,10 +394,7 @@ impl Compiler {
                 } else if let Some(def) = self.value_def(pattern.res) {
                     self.emit_global_value(def, span)?;
                 } else {
-                    return Err(checker_missed(
-                        span,
-                        &format!("the unresolved pin '{name}'"),
-                    ));
+                    return Err(name_without_binding(span, *name));
                 }
 
                 // Stack: [... scrutinee, scrutinee_copy, pin_value]
@@ -514,10 +511,7 @@ impl Compiler {
                 } else if let Some(def) = self.value_def(pattern.res) {
                     self.emit_global_value(def, span)?;
                 } else {
-                    return Err(checker_missed(
-                        span,
-                        &format!("the unresolved pin '{name}'"),
-                    ));
+                    return Err(name_without_binding(span, *name));
                 }
                 self.current_chunk().emit_op(Op::Eq, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);

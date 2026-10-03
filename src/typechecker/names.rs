@@ -2080,12 +2080,21 @@ impl Resolver<'_> {
     fn ident(&mut self, name: Symbol, span: Span) -> Res {
         match self.lookup_value(name) {
             Some(Found::Local) => Res::Local,
+            // Modules and values are different namespaces: a bare name
+            // where a module of the name is imported is the prelude's
+            // value of that name when there is one (`import println`, then
+            // `println("x")`); `println.hello()` is the module's.
+            Some(Found::Binding(Binding::Module(_)))
+                if let Some(binding @ Binding::Def(_)) =
+                    self.builtins.prelude.values.get(&name) =>
+            {
+                self.binding_res(binding)
+            }
             Some(Found::Binding(Binding::Ambiguous(ids))) => {
                 self.ambiguous(name, span, &ids, None);
                 Res::Error
             }
             Some(Found::Binding(binding)) => self.binding_res(&binding),
-            None if resolve(name) == "self" => Res::Local,
             None => {
                 self.unresolved_value(name, span);
                 Res::Error
@@ -2104,6 +2113,10 @@ impl Resolver<'_> {
             "if" => {
                 Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'")
             }
+            "self" => Some(
+                "`self` is bound only as the first parameter of a trait method; name the \
+                 value as a parameter instead",
+            ),
             "while" | "for" => Some(
                 "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / \
                  'list.map'",
@@ -2301,10 +2314,6 @@ impl Resolver<'_> {
                 );
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
-            }
-            None if resolve(head_name) == "self" => {
-                obj.res = Some(Res::Local);
-                None
             }
             // `m.x` after `import m.{ ... }` of a module that failed to
             // load: the failure is reported at the import.

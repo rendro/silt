@@ -1,0 +1,10 @@
+-- A module named like a prelude function: modules and values are
+-- different namespaces, so `println(...)` and `println` as a value are
+-- the prelude's function and `println.hello()` is the module's.
+import println
+fn main() {
+  println(println.hello())
+  println.hello() |> println
+  let f = println
+  f("x")
+}
