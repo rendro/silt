@@ -1,0 +1,1 @@
+pub type Shape { Sq, Circle }

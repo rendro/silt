@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: type Time { label: String }\nTime { label: "a" }\n:quit\n
+-- A REPL type named like the builtin time.Time prints bare, as `silt run`
+-- prints it.
