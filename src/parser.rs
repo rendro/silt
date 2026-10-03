@@ -527,18 +527,22 @@ fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
 /// name is bound once: two imports of the same name, an import and a
 /// declaration, or two declarations may not share it, so which one a use
 /// refers to never depends on their order. (Shadowing inside a function
-/// body is unaffected.)
+/// body is unaffected.) Two items of `import m.{ ... }` lines are left
+/// to the resolver: they are one binding when they name one definition
+/// (`int.{ ParseError }` and `float.{ ParseError }`).
 fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
-    let mut first: std::collections::HashMap<Symbol, (Span, &'static str)> =
+    let mut first: std::collections::HashMap<Symbol, (Span, &'static str, bool)> =
         std::collections::HashMap::new();
     let mut errors = Vec::new();
     for decl in decls {
+        let is_item = matches!(decl, Decl::Import(ImportTarget::Items(..), _));
         for (name, span, kind) in top_level_binders(decl) {
             if intern::resolve(name) == "_" {
                 continue;
             }
             match first.get(&name) {
-                Some(&(first_span, first_kind)) => errors.push(
+                Some(&(_, _, true)) if is_item => {}
+                Some(&(first_span, first_kind, _)) => errors.push(
                     Diagnostic::error(
                         Code::DuplicateTopLevel,
                         span,
@@ -551,7 +555,7 @@ fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
                     .with_note("a top-level name can be bound only once"),
                 ),
                 None => {
-                    first.insert(name, (span, kind));
+                    first.insert(name, (span, kind, is_item));
                 }
             }
         }

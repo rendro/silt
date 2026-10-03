@@ -484,6 +484,23 @@ pub struct Compiler {
     initializing: Option<Symbol>,
 }
 
+/// Whether `item` is a function or constant of the builtin module
+/// `module`, which has a global at run time: a type or a variant of the
+/// module has none (a variant is compiled from its definition).
+fn builtin_module_function(module: &str, item: Symbol) -> bool {
+    let (_, scopes) = crate::typechecker::names::builtins();
+    let Some(id) = crate::session::ModuleId::builtin(module) else {
+        return false;
+    };
+    let Some(crate::typechecker::names::Binding::Def(def)) =
+        scopes.modules.get(&id).and_then(|e| e.values.get(&item))
+    else {
+        return false;
+    };
+    crate::typechecker::names::builtin_def(*def)
+        .is_some_and(|d| matches!(d.kind, crate::defs::DefKind::Fn))
+}
+
 /// The builtin enums, which seed `known_enums`.
 fn initial_known_enums() -> HashSet<String> {
     module::builtin_enum_variants()
@@ -1234,13 +1251,10 @@ impl Compiler {
                     // A variant is a global by its bare name already, and a
                     // type has no value at run time.
                     for (item, _) in items {
-                        let item_str = resolve(*item);
-                        if module::builtin_variant_module(&item_str) == Some(mod_str.as_str())
-                            || module::builtin_type_module(&item_str) == Some(mod_str.as_str())
-                        {
+                        if !builtin_module_function(&mod_str, *item) {
                             continue;
                         }
-                        let qualified = format!("{mod_str}.{item_str}");
+                        let qualified = format!("{mod_str}.{item}");
                         let qi = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
                         let bare_i =

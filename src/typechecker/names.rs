@@ -548,6 +548,7 @@ fn bind_imports(
     scope: &mut ModuleScope,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    let mut item_bindings: HashMap<Symbol, (Binding, Span)> = HashMap::new();
     for decl in &program.decls {
         let Decl::Import(target, _) = decl else {
             continue;
@@ -575,6 +576,32 @@ fn bind_imports(
             ImportTarget::Items(m, items) => {
                 let is_cell = matches!(imported, Imported::Cell(..));
                 for (item, item_span) in items {
+                    // An item two `import m.{ ... }` lines bind: fine when
+                    // both name one definition, an error otherwise.
+                    let named = exports.and_then(|e| e.member(*item)).cloned();
+                    match item_bindings.get(item) {
+                        Some((first, _)) if Some(first) == named.as_ref() => continue,
+                        Some((_, first_span)) => {
+                            diagnostics.push(
+                                Diagnostic::error(
+                                    Code::DuplicateTopLevel,
+                                    *item_span,
+                                    format!(
+                                        "'{item}' is bound twice at the top level: by the import \
+                                         and by the import here"
+                                    ),
+                                )
+                                .with_label(*first_span, "first bound here, by the import")
+                                .with_note("a top-level name can be bound only once"),
+                            );
+                            continue;
+                        }
+                        None => {
+                            if let Some(binding) = &named {
+                                item_bindings.insert(*item, (binding.clone(), *item_span));
+                            }
+                        }
+                    }
                     let Some(exports) = exports else {
                         scope.values.entry(*item).or_insert(Binding::Poisoned);
                         scope.types.entry(*item).or_insert(Binding::Poisoned);

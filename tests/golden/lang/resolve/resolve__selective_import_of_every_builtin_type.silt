@@ -1,0 +1,25 @@
+-- requires-feature: postgres
+-- requires-feature: tcp
+-- verdict: same
+-- Every type and every enum of the builtin modules can be imported by
+-- name: a type has no value at run time, so the import binds nothing
+-- the program has to load.
+import list.{ Step, Stop, Continue }
+import channel.{ ChannelResult, ChannelOp, ChannelError, Message }
+import time.{ Instant, Date, Time, DateTime, Duration, Weekday, TimeError, Monday }
+import http.{ Method, Response, Request, HttpError, GET }
+import fs.{ FileStat }
+import io.{ IoError, IoNotFound }
+import json.{ JsonError }
+import toml.{ TomlError }
+import int.{ ParseError }
+import float.{ ParseError }
+import regex.{ RegexError }
+import bytes.{ BytesError }
+import postgres.{ PgError, PgPool, PgTx, PgCursor, QueryResult, ExecResult, Value }
+import tcp.{ TcpError, TcpStream, TcpListener }
+import task.{ Handle }
+fn main() {
+  println(Monday)
+  println(GET)
+}
