@@ -1,0 +1,8 @@
+-- cmd: repl
+-- stdin: import lib.{ Circle, Shape }\ntype T { Circle(Int) }\nlet z: T = Circle(9)\nz\nlet s: Shape = Shape.Circle(1)\ns\nimport lib.{ Circle }\nlet w: Shape = Circle(2)\nw\n:quit\n
+-- Each input is a scope over the earlier ones: a variant an input
+-- declares shadows the name an earlier input imported, and a later
+-- import shadows it in turn.
+fn main() {
+  println("not run")
+}

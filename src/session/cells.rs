@@ -302,6 +302,23 @@ impl Cells {
             );
         }
         let own = &checked.decls[info.synthesized..];
+        // A variant the cell declares shadows a name an earlier cell
+        // imported by name: later cells see the variant.
+        for decl in own {
+            if let Decl::Type(t) = decl
+                && let ast::TypeBody::Enum(variants) = &t.body
+            {
+                for v in variants {
+                    if self
+                        .scope
+                        .get(&v.name)
+                        .is_some_and(|b| b.kind == Kind::Item)
+                    {
+                        self.scope.remove(&v.name);
+                    }
+                }
+            }
+        }
         let types: Vec<Decl> = own
             .iter()
             .filter(|decl| matches!(decl, Decl::Type(_)))
