@@ -291,6 +291,7 @@ pub fn resolve_module(
     report_type_name_clashes(program, imports, defs, &scope, &mut diagnostics);
     let mut resolver = Resolver {
         defs,
+        kind,
         scope: &scope,
         imports,
         builtins: &builtins,
@@ -914,6 +915,7 @@ fn written(segments: &[Symbol]) -> String {
 
 struct Resolver<'a> {
     defs: &'a DefTable,
+    kind: ModuleKind,
     scope: &'a ModuleScope,
     imports: &'a HashMap<Symbol, Imported<'a>>,
     builtins: &'a BuiltinScopes,
@@ -925,6 +927,14 @@ struct Resolver<'a> {
 impl Resolver<'_> {
     fn error(&mut self, d: Diagnostic) {
         self.diagnostics.push(d);
+    }
+
+    /// The help for a builtin module used without its import.
+    fn import_help(&self, module: &str) -> String {
+        match self.kind {
+            ModuleKind::Cell => format!("enter `import {module}` first"),
+            _ => format!("add `import {module}` at the top of the file"),
+        }
     }
 
     // ── Scopes ──
@@ -1387,7 +1397,7 @@ impl Resolver<'_> {
                     let candidates: Vec<String> =
                         exports.types.keys().map(|t| resolve(*t)).collect();
                     let mut d = Diagnostic::error(
-                        Code::UnknownModuleMember,
+                        Code::NotExported,
                         span,
                         format!("module '{}' has no {what} '{name}'", module.name),
                     );
@@ -1407,14 +1417,28 @@ impl Resolver<'_> {
         let module_str = resolve(module.name);
         let mut segments = vec![module.name];
         segments.extend_from_slice(rest);
-        if crate::module::is_builtin_module(&module_str) {
+        if let Some(help) = self.alias_help(module.name) {
+            let code = if what == "trait" {
+                Code::UnknownTrait
+            } else {
+                Code::UndefinedType
+            };
+            self.error(
+                Diagnostic::error(
+                    code,
+                    module.span,
+                    format!("undefined {what} '{}'", written(&segments)),
+                )
+                .with_help(help),
+            );
+        } else if crate::module::is_builtin_module(&module_str) {
             self.error(
                 Diagnostic::error(
                     Code::ModuleNotImported,
                     module.span,
                     format!("module '{module_str}' is not imported"),
                 )
-                .with_help(format!("add `import {module_str}` at the top of the file")),
+                .with_help(self.import_help(&module_str)),
             );
         } else {
             let mut d = Diagnostic::error(
@@ -1557,7 +1581,7 @@ impl Resolver<'_> {
                         Some(Res::Error)
                     }
                     _ => {
-                        self.error(Diagnostic::error(
+                        let mut d = Diagnostic::error(
                             Code::UndefinedConstructor,
                             span,
                             format!(
@@ -1566,7 +1590,12 @@ impl Resolver<'_> {
                                 written(&[q.name, name]),
                                 q.name
                             ),
-                        ));
+                        );
+                        let elsewhere = self.elsewhere(q.name);
+                        if !elsewhere.is_empty() {
+                            d = d.with_help(self.elsewhere_help(q.name, &elsewhere));
+                        }
+                        self.error(d);
                         Some(Res::Error)
                     }
                 }
@@ -1688,7 +1717,7 @@ impl Resolver<'_> {
                         )
                     } else {
                         Diagnostic::error(
-                            Code::UnknownModuleMember,
+                            Code::NotExported,
                             e.span,
                             format!("module '{}' has no type '{}'", q.name, e.name),
                         )
@@ -1821,15 +1850,24 @@ impl Resolver<'_> {
                     Some(Binding::Poisoned) => return Some(Res::Error),
                     _ => {
                         let where_ = if in_pattern { " in pattern" } else { "" };
-                        self.error(Diagnostic::error(
-                            Code::UndefinedType,
-                            span,
-                            format!(
-                                "undefined type '{m}.{name}'{where_} — no module '{m}' in scope; \
-                                 import it with `import {m}`",
-                                m = q.name
+                        let d = match self.alias_help(q.name) {
+                            Some(help) => Diagnostic::error(
+                                Code::UndefinedType,
+                                span,
+                                format!("undefined type '{}.{name}'{where_}", q.name),
+                            )
+                            .with_help(help),
+                            None => Diagnostic::error(
+                                Code::UndefinedType,
+                                span,
+                                format!(
+                                    "undefined type '{m}.{name}'{where_} — no module '{m}' in \
+                                     scope; import it with `import {m}`",
+                                    m = q.name
+                                ),
                             ),
-                        ));
+                        };
+                        self.error(d);
                         return Some(Res::Error);
                     }
                 };
@@ -2083,6 +2121,8 @@ impl Resolver<'_> {
                 let elsewhere = self.elsewhere(name);
                 if !elsewhere.is_empty() {
                     Some(self.elsewhere_help(name, &elsewhere))
+                } else if let Some(help) = self.alias_help(name) {
+                    Some(help)
                 } else if let Some(module) = self.items_import_of(name) {
                     Some(format!(
                         "`import {module}.{{ ... }}` binds only the names it lists; add \
@@ -2092,6 +2132,13 @@ impl Resolver<'_> {
                     let candidates = self.visible_names();
                     suggest_similar(&name_str, candidates.iter())
                         .map(|hint| format!("did you mean `{hint}`?"))
+                        .or_else(|| {
+                            let module = self.builtin_function_module(name)?;
+                            Some(format!(
+                                "`{name}` is in module `{module}`: write `{module}.{name}` \
+                                 after `import {module}`, or add `import {module}.{{ {name} }}`"
+                            ))
+                        })
                 }
             }
         };
@@ -2100,6 +2147,42 @@ impl Resolver<'_> {
             d = d.with_help(help);
         }
         self.error(d);
+    }
+
+    /// The name the module imported as `name` is bound as, when an
+    /// `import name as n` binds it.
+    fn alias_of(&self, name: Symbol) -> Option<Symbol> {
+        let target = match self.imports.get(&name)? {
+            Imported::Builtin(id) | Imported::Module(id, _) | Imported::Cell(id, _) => *id,
+            Imported::Poisoned => return None,
+        };
+        let mut bound: Vec<Symbol> = self
+            .scope
+            .values
+            .iter()
+            .filter_map(|(n, b)| (*b == Binding::Module(target) && *n != name).then_some(*n))
+            .collect();
+        bound.sort_by_key(|n| resolve(*n));
+        bound.first().copied()
+    }
+
+    /// The help for the module `name` used by its name where an `as`
+    /// import binds it under another.
+    fn alias_help(&self, name: Symbol) -> Option<String> {
+        let bound_as = self.alias_of(name)?;
+        Some(format!(
+            "module `{name}` is imported as `{bound_as}` here: write `{bound_as}.<name>`"
+        ))
+    }
+
+    /// The first builtin module (in the order of `BUILTIN_MODULES`) with a
+    /// function `name`.
+    fn builtin_function_module(&self, name: Symbol) -> Option<&'static str> {
+        crate::module::BUILTIN_MODULES.iter().copied().find(|m| {
+            ModuleId::builtin(m)
+                .and_then(|id| self.builtins.modules.get(&id))
+                .is_some_and(|exports| exports.values.contains_key(&name))
+        })
     }
 
     /// The module `name` names, when the module imports items of it but
@@ -2205,7 +2288,9 @@ impl Resolver<'_> {
                 obj.res = Some(Res::Def(d));
                 None
             }
-            None if crate::module::is_builtin_module(&resolve(head_name)) => {
+            None if crate::module::is_builtin_module(&resolve(head_name))
+                && self.alias_of(head_name).is_none() =>
+            {
                 let module_str = resolve(head_name);
                 self.error(
                     Diagnostic::error(
@@ -2213,7 +2298,7 @@ impl Resolver<'_> {
                         span,
                         format!("module '{module_str}' is not imported"),
                     )
-                    .with_help(format!("add `import {module_str}` at the top of the file"))
+                    .with_help(self.import_help(&module_str))
                     .with_fix(
                         format!("Add import for `{module_str}`"),
                         vec![(Span::point(span.file, 0), format!("import {module_str}\n"))],
@@ -2257,35 +2342,8 @@ impl Resolver<'_> {
             }
             Some(binding) => self.binding_res(&binding),
             None => {
-                let field_str = resolve(field);
-                if id.is_builtin() {
-                    let module_str = id.builtin_name().unwrap_or_default().to_string();
-                    let (message, help) = super::inference::format_unknown_module_function_message(
-                        field,
-                        &module_str,
-                    );
-                    let mut d = Diagnostic::error(Code::UnknownModuleMember, span, message);
-                    if let Some(help) = help {
-                        d = d.with_help(help);
-                    }
-                    self.error(d);
-                } else if exports.private.contains_key(&field) {
-                    let module = self.module_name(id).unwrap_or(bound_as);
-                    self.error(Diagnostic::error(
-                        Code::PrivateItem,
-                        span,
-                        format!(
-                            "`{field_str}` exists in module `{module}` but is not `pub` — mark \
-                             it `pub` in {module}.silt to export it"
-                        ),
-                    ));
-                } else {
-                    self.error(Diagnostic::error(
-                        Code::UnknownModuleMember,
-                        span,
-                        format!("unknown function '{field_str}' on module '{bound_as}'"),
-                    ));
-                }
+                let d = missing_item(bound_as, field, span, exports);
+                self.error(d);
                 Res::Error
             }
         }

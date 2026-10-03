@@ -1,2 +1,2 @@
-9:13 error unknown function 'twice' on module 'helper'
+9:13 error module 'helper' has no member 'twice'
 helper.silt:5:24 error type mismatch: expected Int, got String

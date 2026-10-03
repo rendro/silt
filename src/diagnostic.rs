@@ -113,7 +113,8 @@ codes! {
     UnresolvedName = "E0201", Resolve;
     /// A bare variant name that variants of several enums share.
     AmbiguousVariant = "E0202", Resolve;
-    /// A name an import asks for that the module does not have.
+    /// A member a module does not have: `m.nope`, `import m.{ nope }`,
+    /// `m.Nope` as a type, trait or variant.
     NotExported = "E0203", Resolve;
     /// A name of another module that is not `pub` there.
     PrivateItem = "E0204", Resolve;
@@ -167,8 +168,6 @@ codes! {
     UnknownModule = "E0327", Type;
     /// A use of a builtin module that is not imported.
     ModuleNotImported = "E0328", Type;
-    /// A function or constant a builtin module does not have.
-    UnknownModuleMember = "E0329", Type;
     /// A trait declaration that breaks a trait rule.
     InvalidTraitDeclaration = "E0330", Type;
     /// An impl that breaks a trait rule: a missing or undeclared method,

@@ -118,7 +118,7 @@ A host module is checked from its signatures, like a module's `pub fn`s:
   anything runs (`mylib.double("hello")`: expected Int, got String).
 - A call with the wrong number of arguments is an error.
 - A function the module does not declare is an error
-  (`mylib.triple(3)`: unknown function 'triple' on module 'mylib').
+  (`mylib.triple(3)`: module 'mylib' has no member 'triple').
 
 What is wrong with the module itself is reported in every analysis,
 whether or not the program imports it, at `<host:mylib>`:

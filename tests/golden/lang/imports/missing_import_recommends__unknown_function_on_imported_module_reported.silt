@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown function 'notafunction'
+-- stderr-contains: has no member 'notafunction'
 import list
 fn main() {
     list.notafunction([1, 2, 3])

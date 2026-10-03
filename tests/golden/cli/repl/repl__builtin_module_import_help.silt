@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stdin: list.length([1, 2])\nimport list\nlist.length([1, 2])\n:quit\n
+-- stderr-contains: error[type]: module 'list' is not imported
+-- stderr-contains: help: enter `import list` first
+-- stderr-not-contains: top of the file
+-- In the REPL the help for a missing builtin module import does not
+-- speak of a file.

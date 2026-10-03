@@ -208,29 +208,6 @@ pub(super) fn format_undefined_variable_message(
     (base, help)
 }
 
-/// Format an "unknown function '<field>' on module '<module>'" error
-/// with a "did you mean `<cand>`?" hint when one of the module's builtin
-/// functions is a close edit-distance match. See
-/// `src/module.rs::builtin_module_functions` for the candidate source.
-pub(super) fn format_unknown_module_function_message(
-    field: Symbol,
-    module_str: &str,
-) -> (String, Option<String>) {
-    let field_str = resolve(field);
-    let base = format!("unknown function '{field_str}' on module '{module_str}'");
-    let fns = crate::module::builtin_module_functions(module_str);
-    let consts = crate::module::builtin_module_constants(module_str);
-    // Merge functions and constants so e.g. `math.pj` gets suggested
-    // `pi`. The header says "unknown function" either way — the hint is
-    // still useful.
-    let mut merged: Vec<&str> = fns.into_iter().chain(consts).collect();
-    merged.sort();
-    merged.dedup();
-    let help =
-        suggest_similar(&field_str, merged.iter()).map(|hint| format!("did you mean `{hint}`?"));
-    (base, help)
-}
-
 /// GAP (round 26 L5): append a "did you mean `<cand>`?" hint when a
 /// record-field diagnostic mentions a name that's close in edit
 /// distance to one of the record's declared fields. Used by every

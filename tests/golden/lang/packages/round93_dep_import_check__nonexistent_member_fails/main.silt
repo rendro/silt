@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown function 'nonexistent' on module 'mathutil'
+-- stderr-contains: module 'mathutil' has no member 'nonexistent'
 import mathutil
 
 fn main() {

@@ -79,7 +79,7 @@ fn wrong_arity_is_a_type_error_at_check_time() {
 fn undeclared_host_function_is_unknown_at_check_time() {
     let errors = errors("import mylib\nfn main() { mylib.triple(3) }", mylib());
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert_eq!(errors[0].code, Code::UnknownModuleMember, "{errors:?}");
+    assert_eq!(errors[0].code, Code::NotExported, "{errors:?}");
 }
 
 #[test]
