@@ -230,26 +230,38 @@ impl Type {
         }
     }
 
-    /// Render `self` and `other`, the two types of one message, telling
-    /// apart two types of one name: each is written with the name
-    /// `qualify` gives it (`a.Pt` and `b.Pt`). Any other named type is
-    /// written by its declared name.
-    pub fn show_apart(
-        &self,
-        other: &Type,
-        qualify: impl Fn(TypeRef) -> String,
-    ) -> (String, String) {
+    /// Render the types of one message, a record type by its name. Each
+    /// named type is written as `qualify` says, given whether another
+    /// type of the message has its name (`a.Pt` and `b.Pt`); `None`
+    /// writes its declared name.
+    pub fn show_all(
+        types: &[&Type],
+        qualify: impl Fn(TypeRef, bool) -> Option<String>,
+    ) -> Vec<String> {
         let mut refs = Vec::new();
-        self.collect_refs(&mut refs);
-        other.collect_refs(&mut refs);
+        for ty in types {
+            ty.collect_refs(&mut refs);
+        }
         let mut names: HashMap<TypeId, String> = HashMap::new();
         for r in &refs {
-            if refs.iter().any(|o| o.name == r.name && o.id != r.id) {
-                names.entry(r.id).or_insert_with(|| qualify(*r));
+            let clash = refs.iter().any(|o| o.name == r.name && o.id != r.id);
+            if !names.contains_key(&r.id)
+                && let Some(name) = qualify(*r, clash)
+            {
+                names.insert(r.id, name);
             }
         }
-        let show = |ty: &Type| Shown { ty, names: &names }.to_string();
-        (show(self), show(other))
+        types
+            .iter()
+            .map(|ty| {
+                Shown {
+                    ty,
+                    names: &names,
+                    brief: true,
+                }
+                .to_string()
+            })
+            .collect()
     }
 
     /// Every named type `self` mentions.
@@ -313,7 +325,8 @@ impl std::fmt::Display for Type {
             "{}",
             Shown {
                 ty: self,
-                names: &HashMap::new()
+                names: &HashMap::new(),
+                brief: false,
             }
         )
     }
@@ -324,6 +337,8 @@ impl std::fmt::Display for Type {
 struct Shown<'a> {
     ty: &'a Type,
     names: &'a HashMap<TypeId, String>,
+    /// A record type is written by its name only.
+    brief: bool,
 }
 
 impl Shown<'_> {
@@ -331,6 +346,7 @@ impl Shown<'_> {
         Shown {
             ty,
             names: self.names,
+            brief: self.brief,
         }
     }
 
@@ -383,6 +399,7 @@ impl std::fmt::Display for Shown<'_> {
                 }
                 write!(f, ")")
             }
+            Type::Record(name, _) if self.brief => write!(f, "{}", self.name(name)),
             Type::Record(name, fields) => {
                 write!(f, "{} {{", self.name(name))?;
                 for (i, (n, t)) in fields.iter().enumerate() {

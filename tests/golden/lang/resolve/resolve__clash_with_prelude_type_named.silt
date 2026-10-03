@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Option(_), got prelude.Option(Int)
+-- stderr-contains: error[type]: type mismatch: expected Bigger, got Smaller
+-- A module's own Option beside the prelude's: the prelude's is written
+-- prelude.Option. A record type in a mismatch is written by its name.
+type Option(a) { Just(a), Nothing }
+type Bigger { a: Int, b: Int }
+type Smaller { a: Int }
+import list
+fn big(x: Bigger) -> Int { x.a }
+fn main() {
+  let h = list.head([1])
+  match h {
+    Just(x) -> println(x)
+    Nothing -> println("n")
+  }
+  println(big(Smaller { a: 1 }))
+}

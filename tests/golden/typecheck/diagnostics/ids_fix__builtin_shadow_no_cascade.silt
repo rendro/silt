@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- A type named like a builtin type is rejected at its declaration; its
+-- uses and its variants' uses report nothing more.
+-- stderr-contains: error[type]: type 'Int' shadows builtin type 'Int'
+-- stderr-contains: error[type]: type 'Bool' shadows builtin type 'Bool'
+-- stderr-not-contains: is not a value
+-- stderr-not-contains: type mismatch
+-- stderr-not-contains: does not implement
+-- stderr-not-contains: undefined constructor
+type Int { Zero, Succ(Int) }
+type Bool { Yes, No }
+fn f(x: Int) -> Int { x }
+fn g(b: Bool) -> Bool { b }
+fn main() {
+  println(f(Zero))
+  println(f(3))
+  let b: Bool = true
+  println(g(b))
+  match Zero {
+    Zero -> println("z")
+    Succ(_) -> println("s")
+  }
+}

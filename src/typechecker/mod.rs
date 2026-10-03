@@ -658,9 +658,16 @@ pub struct TypeChecker {
     pub(super) own_types: HashMap<Symbol, TypeRef>,
     /// The traits the module's own declarations declare, by name.
     pub(super) own_traits: HashMap<Symbol, TraitKey>,
+    /// The module's type declarations that are rejected (a reserved or
+    /// builtin type's name): a use of one, or of a variant of one, is
+    /// already reported, so it is an error type, silently.
+    pub(super) rejected_types: std::collections::HashSet<TypeRef>,
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
+    /// Whether the module is a REPL cell: its `let`s are offered to the
+    /// next cell, which may fix what is unknown of their types.
+    pub(super) is_cell: bool,
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
@@ -737,7 +744,9 @@ impl TypeChecker {
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),
+            rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
+            is_cell: false,
             signatures_only: false,
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
@@ -2066,7 +2075,8 @@ impl TypeChecker {
                 Code::MissingTraitImpl,
                 format!(
                     "type '{}' does not implement trait '{}'",
-                    type_name, trait_name
+                    self.show_type(&Type::Generic(type_name, vec![])),
+                    self.show_trait(trait_name)
                 ),
                 span,
             );
@@ -2109,11 +2119,14 @@ impl TypeChecker {
             if obligated_args.len() == impl_args.len()
                 && !self.impl_self_args_consistent(&obligated_args, &impl_args)
             {
+                let (obligated, only) = self.show_apart(&resolved, &impl_self);
                 self.error(
                     Code::MissingTraitImpl,
                     format!(
                         "type '{}' does not implement trait '{}': the only impl is for '{}'",
-                        resolved, trait_name, impl_self
+                        obligated,
+                        self.show_trait(trait_name),
+                        only
                     ),
                     span,
                 );
@@ -2144,8 +2157,8 @@ impl TypeChecker {
                         format!(
                             "type '{}' does not implement trait '{}({})': \
                              the matched impl is '{}({})'",
-                            type_name,
-                            resolve(trait_name.name),
+                            self.show_type(&Type::Generic(type_name, vec![])),
+                            self.show_trait(trait_name),
                             bound_trait_args
                                 .iter()
                                 .map(|t| format!("{t}"))
@@ -2477,6 +2490,17 @@ impl TypeChecker {
         crate::defs::builtin_type_id(name_str).map(|id| TypeRef { id, name })
     }
 
+    /// Whether a type name, or a variant's resolution, names a type
+    /// declaration the module's check rejected (see `rejected_types`).
+    pub(super) fn names_rejected(&self, res: Option<crate::defs::Res>, name: Symbol) -> bool {
+        if self.rejected_types.is_empty() {
+            return false;
+        }
+        self.named_type(res, name)
+            .or_else(|| self.res_variant_enum(res))
+            .is_some_and(|ty| self.rejected_types.contains(&ty))
+    }
+
     /// The number of type parameters of a record, enum or alias type;
     /// `None` for a type that is none of these.
     pub(super) fn type_arity(&self, ty: TypeRef) -> Option<usize> {
@@ -2565,19 +2589,80 @@ impl TypeChecker {
     /// told apart by their modules (`a.Pt` and `b.Pt`); the module's own
     /// type keeps its bare name.
     pub(super) fn show_apart(&self, a: &Type, b: &Type) -> (String, String) {
-        a.show_apart(b, |r| {
-            let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-                Some((_, module)) => module.map(intern),
-                None => self
-                    .def(r.id.0)
-                    .filter(|def| def.module != self.module)
-                    .and_then(|def| self.tables.module_names.get(&def.module).copied()),
-            };
-            match module {
-                Some(module) => format!("{module}.{}", r.name),
-                None => r.name.to_string(),
-            }
+        let mut shown = self.show_types(&[a, b], false).into_iter();
+        let a = shown.next().unwrap_or_default();
+        (a, shown.next().unwrap_or_default())
+    }
+
+    /// The type of a message that names one type: a named type is
+    /// qualified by its module when another type the session knows has
+    /// its name (`other.Shape`, with `shapes.Shape` imported too).
+    pub(super) fn show_type(&self, ty: &Type) -> String {
+        self.show_types(&[ty], true).pop().unwrap_or_default()
+    }
+
+    /// The types of one message (see `show_apart`, `show_type`): a named
+    /// type that another type of the message has the name of, or, with
+    /// `session`, another type the session knows, is written with its
+    /// module; a module's own type keeps its bare name unless the other
+    /// is its own too.
+    fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
+        Type::show_all(types, |r, clash| {
+            (clash || (session && self.type_name_clashes(r))).then(|| self.qualified_type(r))
         })
+    }
+
+    /// Whether another type the session knows has the name of `r`.
+    fn type_name_clashes(&self, r: TypeRef) -> bool {
+        let other = |o: &TypeRef| o.name == r.name && o.id != r.id;
+        self.tables.enums.keys().any(other)
+            || self.tables.records.keys().any(other)
+            || crate::defs::builtin_type_id(&resolve(r.name)).is_some_and(|id| id != r.id)
+    }
+
+    /// The name of `r` written with its module: `a.Pt`, `time.Weekday`,
+    /// `prelude.Option` for a prelude type; a module's own type keeps its
+    /// bare name.
+    fn qualified_type(&self, r: TypeRef) -> String {
+        let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, module)) => Some(intern(module.unwrap_or("prelude"))),
+            None => self
+                .def(r.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module).copied()),
+        };
+        match module {
+            Some(module) => format!("{module}.{}", r.name),
+            None => r.name.to_string(),
+        }
+    }
+
+    /// The name of the trait `t` in a message: written with its module
+    /// when another trait the session knows has its name (`a.Show`).
+    pub(super) fn show_trait(&self, t: TraitKey) -> String {
+        let clashes = self
+            .tables
+            .traits
+            .keys()
+            .any(|o| o.name == t.name && o.id != t.id);
+        if !clashes {
+            return t.name.to_string();
+        }
+        let first = crate::defs::builtin_types().len();
+        let module = if (t.id.0.0 as usize)
+            .checked_sub(first)
+            .is_some_and(|k| k < crate::defs::BUILTIN_TRAITS.len())
+        {
+            Some(intern("prelude"))
+        } else {
+            self.def(t.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module).copied())
+        };
+        match module {
+            Some(module) => format!("{module}.{}", t.name),
+            None => t.name.to_string(),
+        }
     }
 
     /// The quick fix for a value where a `Result` is expected: wrap the
@@ -2827,6 +2912,45 @@ impl TypeChecker {
         }
     }
 
+    /// Report each `pub let` whose type the module's check leaves partly
+    /// unknown (`pub let ch = channel.new(1)` before anything sends on
+    /// it): an importer would fix the rest, and two importers could fix it
+    /// two ways. The declaration is where it is reported, whichever
+    /// module is checked first.
+    fn report_unknown_pub_let_types(&mut self, program: &Program, env: &TypeEnv) {
+        if self.is_cell {
+            return;
+        }
+        for decl in &program.decls {
+            if !matches!(decl, Decl::Let { is_pub: true, .. }) {
+                continue;
+            }
+            for (name, span, _) in crate::parser::top_level_binders(decl) {
+                let Some(scheme) = env.lookup(name).cloned() else {
+                    continue;
+                };
+                let ty = self.apply(&scheme.ty);
+                if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
+                    continue;
+                }
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousType,
+                        span,
+                        format!(
+                            "the type of public let '{name}' is not fully known here: {}",
+                            self.show_type(&ty)
+                        ),
+                    )
+                    .with_help(format!(
+                        "annotate it, e.g. `pub let {name}: <type> = ...`: a module that \
+                         imports it cannot decide it"
+                    )),
+                );
+            }
+        }
+    }
+
     /// Enter the scheme of each definition the module declares in the
     /// session's tables, from the module's scope `env`: what an importer
     /// of the module reads.
@@ -2846,7 +2970,27 @@ impl TypeChecker {
                 continue;
             }
             if let Some(scheme) = env.lookup(def.name) {
-                let scheme = scheme.clone();
+                let mut scheme = scheme.clone();
+                // A `pub let` whose type is partly unknown is reported at
+                // its declaration (`report_unknown_pub_let_types`); its
+                // importers see the unknown part as an error type, so no
+                // importer fixes it.
+                if def.kind == crate::defs::DefKind::Let
+                    && def.vis == crate::defs::Vis::Pub
+                    && !self.is_cell
+                {
+                    let ty = self.apply(&scheme.ty);
+                    let mut rows = Vec::new();
+                    row_tail_vars(&ty, &mut rows);
+                    let unknown: HashMap<TyVar, Type> = free_vars_in(&ty)
+                        .into_iter()
+                        .filter(|v| !scheme.vars.contains(v) && !rows.contains(v))
+                        .map(|v| (v, Type::Error))
+                        .collect();
+                    if !unknown.is_empty() {
+                        scheme.ty = substitute_vars(&ty, &unknown);
+                    }
+                }
                 self.tables.schemes.insert(*id, scheme);
             }
         }
@@ -2867,6 +3011,9 @@ impl TypeChecker {
         let def = self.def(id)?;
         if def.module.is_builtin() {
             return builtin_scheme(&def);
+        }
+        if self.names_rejected(res, def.name) {
+            return Some(Scheme::mono(Type::Error));
         }
         if def.module == self.module && !matches!(def.kind, crate::defs::DefKind::Variant { .. }) {
             return env.lookup(def.name).cloned();
@@ -2911,11 +3058,13 @@ impl TypeChecker {
         // below overwrites the placeholders.
         for decl in &program.decls {
             if let Decl::Type(td) = decl {
-                let td_name_str = resolve(td.name);
-                if td_name_str == "TypeOf" {
+                let ty = self.own_type(td.name);
+                // A declaration `register_type_decl` rejects declares
+                // nothing: what names it or its variants is not checked.
+                if rejected_type_name(&resolve(td.name)) {
+                    self.rejected_types.insert(ty);
                     continue;
                 }
-                let ty = self.own_type(td.name);
                 match &td.body {
                     TypeBody::Enum(_) => {
                         let pkg = self.defining_package();
@@ -4228,6 +4377,9 @@ impl TypeChecker {
                     return tv.clone();
                 }
                 let name_str = resolve(*name);
+                if self.names_rejected(te.res, *name) {
+                    return Type::Error;
+                }
                 let Some(ty) = self.named_type(te.res, *name) else {
                     // Lowercase names in type annotations are type variables
                     // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
@@ -4328,6 +4480,9 @@ impl TypeChecker {
                     .map(|a| self.resolve_type_expr(a, param_vars))
                     .collect();
                 let name_str = resolve(*name);
+                if self.names_rejected(te.res, *name) {
+                    return Type::Error;
+                }
                 let ty = self.named_type(te.res, *name);
                 if let Some(builtin) = ty.and_then(builtin_type_name) {
                     let n = resolved_args.len();
@@ -6017,6 +6172,9 @@ impl TypeChecker {
         // Widget` would attach methods to a phantom type. A lowercase
         // target (`trait Display for a { ... }`) names a type variable,
         // not a type: there is nothing to register it for.
+        if self.names_rejected(ti.target_res, ti.target_type) {
+            return;
+        }
         let Some(written) = self.named_type(ti.target_res, ti.target_type) else {
             let name_str = resolve(ti.target_type);
             if !name_str.starts_with(|c: char| c.is_lowercase()) {
@@ -6798,7 +6956,10 @@ impl TypeChecker {
                     Code::AmbiguousMethod,
                     format!(
                         "ambiguous method '{}' on type '{}': provided by traits {}, {}",
-                        method.name, ti.target_type, existing_trait, ti.trait_name
+                        method.name,
+                        self.show_type(&Type::Generic(target_type, vec![])),
+                        self.show_trait(existing_trait),
+                        self.show_trait(trait_key)
                     ),
                     ti.span,
                 );
@@ -6982,11 +7143,52 @@ impl TypeChecker {
 
 // ── Helper functions ────────────────────────────────────────────────
 
+/// Whether a type declaration of this name is rejected: `TypeOf`, the
+/// type system's own, or a builtin scalar or container type's name.
+fn rejected_type_name(name: &str) -> bool {
+    name == "TypeOf" || crate::types::builtins::lookup(name).is_some()
+}
+
 /// The name of a builtin type; `None` for a type a module declares.
 pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
     crate::defs::builtin_types()
         .get(ty.id.0.0 as usize)
         .map(|(name, _)| *name)
+}
+
+/// The row variables of the anonymous record types in `ty`, which stand
+/// for fields, not for a type.
+fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
+    match ty {
+        Type::AnonRecord { fields, tail } => {
+            if let RowTail::Var(v) = tail {
+                out.push(*v);
+            }
+            fields.values().for_each(|t| row_tail_vars(t, out));
+        }
+        Type::Record(_, fields) => fields.iter().for_each(|(_, t)| row_tail_vars(t, out)),
+        Type::Generic(_, args) | Type::Tuple(args) => {
+            args.iter().for_each(|t| row_tail_vars(t, out))
+        }
+        Type::Fun(params, ret) => {
+            params.iter().for_each(|t| row_tail_vars(t, out));
+            row_tail_vars(ret, out);
+        }
+        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => row_tail_vars(t, out),
+        Type::Map(k, v) => {
+            row_tail_vars(k, out);
+            row_tail_vars(v, out);
+        }
+        Type::AssocProj { receiver, .. } => row_tail_vars(receiver, out),
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Var(_)
+        | Type::Error
+        | Type::Never => {}
+    }
 }
 
 /// The definitions the type names written in `te` resolve to.
@@ -7826,12 +8028,14 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         }
     }
     checker.signatures_only = kind == names::ModuleKind::Host;
+    checker.is_cell = kind == names::ModuleKind::Cell;
     checker.current_package = package;
     checker.defs = Some(defs);
     checker.module = module;
     checker.module_name = module_name;
     let env = checker.check_program_in(program, env);
     checker.report_private_in_schemes(program, &env);
+    checker.report_unknown_pub_let_types(program, &env);
     checker.enter_schemes(&env);
     // The type of each top-level value: the module's own, by name; an
     // imported item, by its definition.

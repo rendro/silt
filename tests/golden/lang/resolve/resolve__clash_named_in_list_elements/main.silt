@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: list elements must have the same type: first element is a.Pt, but element 2 is b.Pt
+-- Two modules' Pt in one list: the message tells them apart.
+import a
+import b
+import list
+fn f(p: a.Pt) -> Int { p.x }
+fn main() {
+  let xs: List(a.Pt) = [a.mk(1), b.mk(2)]
+  println(f(b.mk(1)))
+  println(a.mk(1) == b.mk(1))
+  let g: b.Pt = a.mk(1)
+}

@@ -555,7 +555,7 @@ impl TypeChecker {
                 if matches.len() > 1 {
                     let trait_list = matches
                         .iter()
-                        .map(|(name, _)| format!("{name}"))
+                        .map(|(name, _)| self.show_trait(*name))
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.error(
@@ -1064,7 +1064,8 @@ impl TypeChecker {
                     }
                     // GAP (round 35 F7): thread did-you-mean suggestion
                     // through the Generic/named-record deferred path.
-                    let base = format!("unknown field or method '{field}' on type {type_name}");
+                    let shown = self.show_type(&Type::Generic(type_name, vec![]));
+                    let base = format!("unknown field or method '{field}' on type {shown}");
                     let msg = if let Some(rec_info) = self.tables.records.get(&type_name) {
                         format_record_field_suggestion(base, field, &rec_info.fields)
                     } else {
@@ -1075,7 +1076,10 @@ impl TypeChecker {
                 _ => {
                     self.error(
                         Code::UnknownField,
-                        format!("unknown field or method '{field}' on type {resolved}"),
+                        format!(
+                            "unknown field or method '{field}' on type {}",
+                            self.show_type(&resolved)
+                        ),
                         span,
                     );
                 }
@@ -1707,7 +1711,7 @@ impl TypeChecker {
         else {
             return CtorTarget::Unknown;
         };
-        if pattern.res == Some(crate::defs::Res::Error) {
+        if pattern.res == Some(crate::defs::Res::Error) || self.names_rejected(pattern.res, *name) {
             return CtorTarget::Silent;
         }
         let enum_name = self.pattern_variant_enum(pattern.res, qualifier);
@@ -1737,7 +1741,7 @@ impl TypeChecker {
         span: Span,
         in_pattern: bool,
     ) -> Option<(TypeRef, RecordInfo, Option<Vec<TyVar>>)> {
-        if res == Some(crate::defs::Res::Error) {
+        if res == Some(crate::defs::Res::Error) || self.names_rejected(res, name) {
             return None;
         }
         let ty = self.named_type(res, name);
@@ -2468,12 +2472,14 @@ impl TypeChecker {
                                 self.apply(t)
                             };
                             let first_resolved = self.apply(&first_ty);
+                            let (first_shown, elem_shown) =
+                                self.show_apart(&first_resolved, &elem_ty);
                             self.error(Code::TypeMismatch,
                                 format!(
                                     "list elements must have the same type: first element is {}, but element {} is {}",
-                                    first_resolved,
+                                    first_shown,
                                     idx + 1,
-                                    elem_ty
+                                    elem_shown
                                 ),
                                 *espan,
                             );
@@ -2591,10 +2597,13 @@ impl TypeChecker {
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
-                } else if matches!(expr.res, Some(crate::defs::Res::Def(_))) {
-                    // A definition with no scheme: a type alias or a
-                    // trait used as a value, or a definition whose
-                    // check failed.
+                } else if self.res_def(expr.res).is_some_and(|def| {
+                    matches!(
+                        def.kind,
+                        crate::defs::DefKind::TypeAlias | crate::defs::DefKind::Trait(_)
+                    )
+                }) {
+                    // A type alias or a trait used as a value.
                     self.error(
                         Code::UndefinedVariable,
                         format!("'{name}' is not a value"),
@@ -2865,7 +2874,8 @@ impl TypeChecker {
                         // through the Generic/named-record field-access
                         // path so `u.nam` on `type User { name, age }`
                         // prints `did you mean 'name'?`.
-                        let base = format!("unknown field or method '{field}' on type {type_name}");
+                        let shown = self.show_type(&Type::Generic(*type_name, vec![]));
+                        let base = format!("unknown field or method '{field}' on type {shown}");
                         let msg = if let Some(rec_info) = self.tables.records.get(type_name) {
                             format_record_field_suggestion(base, field, &rec_info.fields)
                         } else {
@@ -3020,7 +3030,7 @@ impl TypeChecker {
                             if matches.len() > 1 {
                                 let trait_list = matches
                                     .iter()
-                                    .map(|(name, _)| format!("{name}"))
+                                    .map(|(name, _)| self.show_trait(*name))
                                     .collect::<Vec<_>>()
                                     .join(", ");
                                 self.error(Code::AmbiguousMethod,
@@ -3121,7 +3131,10 @@ impl TypeChecker {
                     _ => {
                         self.error(
                             Code::UnknownField,
-                            format!("unknown field or method '{field}' on type {obj_ty}"),
+                            format!(
+                                "unknown field or method '{field}' on type {}",
+                                self.show_type(&obj_ty)
+                            ),
                             span,
                         );
                         Type::Error
