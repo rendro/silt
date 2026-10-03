@@ -47,8 +47,10 @@ pub struct Globals {
     defs: HashMap<DefId, u16>,
     methods: HashMap<(TraitId, TypeId), HashMap<String, u16>>,
     /// The methods of each type whatever their trait, for a call whose
-    /// trait is not known where it is compiled.
-    by_type: HashMap<TypeId, HashMap<String, u16>>,
+    /// trait is not known where it is compiled (a call in a polymorphic
+    /// function with no bound for the receiver). `None` where two traits
+    /// provide the method for the type: such a call is ambiguous.
+    by_type: HashMap<TypeId, HashMap<String, Option<u16>>>,
     /// The traits a `CallMethod` names, by the index its operand holds,
     /// each with its name.
     traits: Vec<(TraitId, String)>,
@@ -78,8 +80,17 @@ impl Globals {
     pub fn method(&self, t: Option<TraitId>, ty: TypeId, method: &str) -> Option<u16> {
         match t {
             Some(t) => self.methods.get(&(t, ty))?.get(method).copied(),
-            None => self.by_type.get(&ty)?.get(method).copied(),
+            None => self.by_type.get(&ty)?.get(method).copied().flatten(),
         }
+    }
+
+    /// Whether two traits provide the method `method` for the type `ty`,
+    /// so that a call that names no trait is ambiguous.
+    pub fn ambiguous(&self, ty: TypeId, method: &str) -> bool {
+        matches!(
+            self.by_type.get(&ty).and_then(|m| m.get(method)),
+            Some(None)
+        )
     }
 
     /// [`Globals::method`] for a `CallMethod` trait operand.
@@ -153,7 +164,9 @@ impl Globals {
         self.by_type
             .entry(ty)
             .or_default()
-            .insert(method.to_string(), slot);
+            .entry(method.to_string())
+            .and_modify(|known| *known = None)
+            .or_insert(Some(slot));
         Some(slot)
     }
 }

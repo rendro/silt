@@ -956,6 +956,49 @@ impl TypeChecker {
     /// `fn get_x(obj) { obj.x }`. Instead, the deferred-check pass ONLY
     /// fires when the operand / receiver has resolved to a concrete,
     /// non-conforming type (e.g. a monomorphic `let s = "hi"; -s`).
+    /// A method call whose receiver was a type variable when it was
+    /// inferred and is the type `type_name` now: `true` when the type has
+    /// the method. The call's trait is recorded by its span
+    /// (`deferred_method_traits`), which `resolve_all_types` writes on
+    /// the access; a call that sees the method in two traits is
+    /// ambiguous, as anywhere.
+    fn deferred_method_call(
+        &mut self,
+        type_name: TypeRef,
+        field: Symbol,
+        obj_ty: &Type,
+        result_ty: &Type,
+        span: Span,
+    ) -> bool {
+        let Some(entry) = self.tables.method_table.get(&(type_name, field)).cloned() else {
+            return false;
+        };
+        let instantiated = self.dispatch_method_entry(&entry, field, obj_ty, span);
+        if let Some(t) = self.method_trait.take() {
+            self.deferred_method_traits.insert(span, t);
+        }
+        let method_ty = self.apply(&instantiated);
+        // Method types include `self` as the first param. When the call
+        // site originally saw this field access as an unknown Var, it
+        // unified the var with a function type built from the *explicit*
+        // args only (no receiver). Strip `self` when adapting.
+        let result_resolved = self.apply(result_ty);
+        match (&result_resolved, &method_ty) {
+            (Type::Fun(call_params, call_ret), Type::Fun(method_params, method_ret))
+                if method_params.len() == call_params.len() + 1 =>
+            {
+                for (cp, mp) in call_params.iter().zip(method_params.iter().skip(1)) {
+                    self.unify(cp, mp, span);
+                }
+                self.unify(call_ret, method_ret, span);
+            }
+            _ => {
+                self.unify(result_ty, &method_ty, span);
+            }
+        }
+        true
+    }
+
     pub(super) fn finalize_deferred_checks(&mut self) {
         // B4: pending field accesses on type variables. Only flag when
         // the receiver resolved to a concrete type.
@@ -1038,35 +1081,7 @@ impl TypeChecker {
                         continue;
                     }
                     // Also check the method table for trait methods.
-                    if let Some(entry) = self.tables.method_table.get(&(type_name, field)).cloned()
-                    {
-                        let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
-                        // The access was inferred already: its trait is
-                        // not recorded, and the VM finds the method by
-                        // the receiver's type.
-                        self.method_trait = None;
-                        let method_ty = self.apply(&instantiated);
-                        // Method types include `self` as the first param.
-                        // When the call site originally saw this field
-                        // access as an unknown Var, it unified the var with
-                        // a function type built from the *explicit* args
-                        // only (no receiver). Strip `self` when adapting.
-                        let result_resolved = self.apply(&result_ty);
-                        match (&result_resolved, &method_ty) {
-                            (
-                                Type::Fun(call_params, call_ret),
-                                Type::Fun(method_params, method_ret),
-                            ) if method_params.len() == call_params.len() + 1 => {
-                                for (cp, mp) in call_params.iter().zip(method_params.iter().skip(1))
-                                {
-                                    self.unify(cp, mp, span);
-                                }
-                                self.unify(call_ret, method_ret, span);
-                            }
-                            _ => {
-                                self.unify(&result_ty, &method_ty, span);
-                            }
-                        }
+                    if self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span) {
                         continue;
                     }
                     // Round 93: the field-aware auto-derive gate removed
@@ -1088,7 +1103,13 @@ impl TypeChecker {
                     };
                     self.error_help(Code::UnknownField, msg, span);
                 }
+                // A builtin type (`Int`, `List`, ...): its trait methods.
                 _ => {
+                    if let Some(type_name) = self.type_name_for_impl(&resolved)
+                        && self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span)
+                    {
+                        continue;
+                    }
                     self.error(
                         Code::UnknownField,
                         format!(

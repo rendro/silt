@@ -645,6 +645,10 @@ pub struct TypeChecker {
     /// which `infer_expr` records on the access (`Expr::res`): the
     /// compiler keys the call by it.
     pub(super) method_trait: Option<TraitKey>,
+    /// The traits of the method calls resolved in the deferred pass, by
+    /// the span of the access; `resolve_all_types` records each on its
+    /// access.
+    pub(super) deferred_method_traits: HashMap<Span, TraitKey>,
     /// The methods the impls of two or more traits provide for one type,
     /// with the traits, where this module sees none or several of the
     /// traits: a call of one is ambiguous.
@@ -757,6 +761,7 @@ impl TypeChecker {
             tyvar_trait_constraints: HashMap::new(),
             last_field_access_was_method: false,
             method_trait: None,
+            deferred_method_traits: HashMap::new(),
             ambiguous_methods: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),

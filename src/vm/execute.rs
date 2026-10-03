@@ -2459,6 +2459,15 @@ impl Vm {
                     &receiver,
                     Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
                 );
+                if trait_index == crate::bytecode::NO_TRAIT
+                    && self.global_slots.ambiguous(receiver_type, &method_name)
+                {
+                    return Err(VmError::new(format!(
+                        "ambiguous method '{method_name}' for type '{}': two traits provide it, \
+                         and this call names neither; add a `where` bound for the receiver",
+                        crate::types::canonical::dispatch_type_name(&receiver)
+                    )));
+                }
                 let method = self
                     .global_slots
                     .call_method(trait_index, receiver_type, &method_name)
