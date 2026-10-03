@@ -250,9 +250,10 @@ fn transitive_option_shaped_git_url_runs_nothing() {
         assert_marker_absent(&marker, &context, &out);
         assert_clean_url_rejection(&out, &context);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let inner_manifest = Path::new("inner").join("silt.toml");
+        // Manifest paths are shown relative to the working directory with
+        // `/` on every platform.
         assert!(
-            stderr.contains(&inner_manifest.display().to_string()),
+            stderr.contains("inner/silt.toml"),
             "{context}: the error must point at the dependency's manifest; stderr={stderr}"
         );
 
