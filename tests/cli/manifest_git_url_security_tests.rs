@@ -30,6 +30,19 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
+/// The git cache of the workspace `ws`, whose cache directory the
+/// tests point `XDG_CACHE_HOME` (Unix) and `LOCALAPPDATA` (Windows) at:
+/// `silt/git` under it on Unix, `silt\cache\git` on Windows (see
+/// `git::cache_dir`).
+fn git_cache(ws: &Path) -> PathBuf {
+    let cache = ws.join("cache").join("silt");
+    if cfg!(windows) {
+        cache.join("cache").join("git")
+    } else {
+        cache.join("git")
+    }
+}
+
 /// A fresh workspace directory, unique per call so parallel tests never
 /// share state. Holds an empty `gitconfig` for [`isolate_git`].
 fn fresh_workspace(tag: &str) -> PathBuf {
@@ -573,7 +586,7 @@ fn assert_git_dependency_resolves(ws: &Path, url: &str, locked_url: &str, head: 
     );
 
     // The checkout landed in the workspace's cache, under the commit.
-    let cache_root = ws.join("cache").join("silt").join("git");
+    let cache_root = git_cache(ws);
     let checkouts: Vec<PathBuf> = fs::read_dir(&cache_root)
         .expect("cache root exists")
         .map(|entry| entry.unwrap().path().join(head))

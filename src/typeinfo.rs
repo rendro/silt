@@ -712,6 +712,13 @@ mod tests {
         for (variant, name) in constants {
             let tag = variant.tag();
             assert_eq!(tag.name(), *name);
+            // The checker declares the error enums of the postgres and tcp
+            // modules only when those features are built.
+            if (variant.ty == ty::PG_ERROR && !cfg!(feature = "postgres"))
+                || (variant.ty == ty::TCP_ERROR && !cfg!(feature = "tcp"))
+            {
+                continue;
+            }
             // The variants of the builtin handle types (`PgPool`,
             // postgres `Value`) are the run time's own: the checker sees
             // the types as opaque.

@@ -27,7 +27,7 @@ fn main() {
     let _ = postgres.PgError.PgConnect("nope")
 }
 "#;
-    let (_, errors) = silt::session::testing::analyze_str(&src);
+    let (_, errors) = silt::session::testing::analyze_str(src);
     let messages: Vec<String> = errors
         .into_iter()
         .filter(|e| e.severity == Severity::Error)

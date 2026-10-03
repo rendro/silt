@@ -56,7 +56,7 @@ impl Drop for TempDir {
 /// RAII handle around a spawned `silt -w` subprocess that collects its
 /// stdout into a shared buffer on a background thread. Kills the child,
 /// and the program it runs, on drop so tests never leak processes, even
-/// on panic.
+/// on panic (a process group on Unix, the process tree on Windows).
 struct WatchProc {
     child: Child,
     stdout: Arc<Mutex<Vec<u8>>>,
@@ -146,6 +146,15 @@ impl Drop for WatchProc {
                 libc::kill(-pid, libc::SIGKILL);
             }
         }
+        // Windows has no process groups to signal: end the watcher's
+        // process tree, the program it runs included, which would
+        // otherwise keep the stdout pipe open.
+        #[cfg(windows)]
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &self.child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

@@ -99,6 +99,12 @@ struct Outcome {
     timed_out: bool,
 }
 
+/// The relative path `path`, written with `/`, as a diagnostic shows it
+/// on this platform: with the platform's separator, as module paths are.
+fn native(path: &str) -> String {
+    path.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
+
 /// A fresh workspace directory, unique per call so parallel tests never
 /// share state. Holds an empty `gitconfig` for [`isolate_git`].
 fn fresh_workspace(tag: &str) -> PathBuf {
@@ -638,7 +644,9 @@ fn value_in_a_transitive_manifest_is_escaped() {
         );
         assert!(
             out.stderr.starts_with("error[package]: invalid manifest: ")
-                && out.stderr.contains(" --> ../inner/silt.toml:3:11"),
+                && out
+                    .stderr
+                    .contains(&format!(" --> {}:3:11", native("../inner/silt.toml"))),
             "{context}: the error must point at the manifest of `inner`; {out:?}"
         );
         let _ = fs::remove_dir_all(&ws);
@@ -954,11 +962,14 @@ fn visible_characters_in_the_path_of_a_manifest_are_printed_as_they_are() {
     let out = silt(&ws, &ws, &["check", &entry]);
 
     assert_printable_outcome(&out, 1, "visible_manifest_path");
+    // The manifest's path starts as the user wrote it (with `/`) and goes
+    // on with the platform's separator.
     assert!(
         out.stderr.starts_with(
             "error[package]: invalid manifest: invalid package version `not-a-version`: "
         ) && out
             .stderr
+            .replace('\\', "/")
             .contains(&format!(" --> {dir_name}/app/silt.toml:3:11")),
         "expected the manifest error with the directory name as it is; {out:?}"
     );
@@ -1550,7 +1561,9 @@ fn version_with_a_malformed_build_part_is_rejected() {
             );
             assert!(
                 out.stderr.starts_with(&expected)
-                    && out.stderr.contains(" --> ../dep/silt.toml:3:"),
+                    && out
+                        .stderr
+                        .contains(&format!(" --> {}:3:", native("../dep/silt.toml"))),
                 "{context}: expected `{expected}` at the dependency's manifest; {out:?}"
             );
             assert!(

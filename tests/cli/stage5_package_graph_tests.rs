@@ -19,6 +19,19 @@ use silt::intern;
 use silt::package_graph::{LockPolicy, resolve_packages};
 use silt::source::SourceMap;
 
+/// The git cache of the workspace `ws`, whose cache directory the
+/// tests point `XDG_CACHE_HOME` (Unix) and `LOCALAPPDATA` (Windows) at:
+/// `silt/git` under it on Unix, `silt\cache\git` on Windows (see
+/// `git::cache_dir`).
+fn git_cache(ws: &Path) -> PathBuf {
+    let cache = ws.join("cache").join("silt");
+    if cfg!(windows) {
+        cache.join("cache").join("git")
+    } else {
+        cache.join("git")
+    }
+}
+
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn fresh_workspace(tag: &str) -> PathBuf {
@@ -497,7 +510,7 @@ fn a_symlink_in_a_git_dependency_is_rejected() {
         "{err}"
     );
     // Nothing was left in the cache for it.
-    let cached: Vec<PathBuf> = fs::read_dir(ws.join("cache/silt/git"))
+    let cached: Vec<PathBuf> = fs::read_dir(git_cache(&ws))
         .map(|dirs| {
             dirs.flatten()
                 .flat_map(|d| fs::read_dir(d.path()).into_iter().flatten().flatten())
@@ -711,7 +724,7 @@ fn concurrent_cold_cache_fetches_all_succeed() {
     for out in &outs {
         assert!(out.status.success(), "{}", stderr(out));
     }
-    let url_dirs: Vec<PathBuf> = fs::read_dir(ws.join("cache/silt/git"))
+    let url_dirs: Vec<PathBuf> = fs::read_dir(git_cache(&ws))
         .unwrap()
         .flatten()
         .map(|e| e.path())

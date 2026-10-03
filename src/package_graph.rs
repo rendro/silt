@@ -753,8 +753,13 @@ mod tests {
     #[test]
     fn a_relative_git_url_resolves_against_the_manifest_directory() {
         let base = Path::new("/srv/app");
-        assert_eq!(resolve_git_url("../repo", base), "/srv/repo");
-        assert_eq!(resolve_git_url("./vendor/r", base), "/srv/app/vendor/r");
+        // A resolved path is written with the platform's separator.
+        let native = |path: &str| path.replace('/', std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(resolve_git_url("../repo", base), native("/srv/repo"));
+        assert_eq!(
+            resolve_git_url("./vendor/r", base),
+            native("/srv/app/vendor/r")
+        );
         assert_eq!(resolve_git_url("/abs/r", base), "/abs/r");
         assert_eq!(
             resolve_git_url("https://example.com/r.git", base),
