@@ -2072,7 +2072,8 @@ impl TypeChecker {
                 Code::MissingTraitImpl,
                 format!(
                     "type '{}' does not implement trait '{}'",
-                    type_name, trait_name
+                    self.show_type(&Type::Generic(type_name, vec![])),
+                    self.show_trait(trait_name)
                 ),
                 span,
             );
@@ -2115,11 +2116,14 @@ impl TypeChecker {
             if obligated_args.len() == impl_args.len()
                 && !self.impl_self_args_consistent(&obligated_args, &impl_args)
             {
+                let (obligated, only) = self.show_apart(&resolved, &impl_self);
                 self.error(
                     Code::MissingTraitImpl,
                     format!(
                         "type '{}' does not implement trait '{}': the only impl is for '{}'",
-                        resolved, trait_name, impl_self
+                        obligated,
+                        self.show_trait(trait_name),
+                        only
                     ),
                     span,
                 );
@@ -2150,8 +2154,8 @@ impl TypeChecker {
                         format!(
                             "type '{}' does not implement trait '{}({})': \
                              the matched impl is '{}({})'",
-                            type_name,
-                            resolve(trait_name.name),
+                            self.show_type(&Type::Generic(type_name, vec![])),
+                            self.show_trait(trait_name),
                             bound_trait_args
                                 .iter()
                                 .map(|t| format!("{t}"))
@@ -2582,19 +2586,80 @@ impl TypeChecker {
     /// told apart by their modules (`a.Pt` and `b.Pt`); the module's own
     /// type keeps its bare name.
     pub(super) fn show_apart(&self, a: &Type, b: &Type) -> (String, String) {
-        a.show_apart(b, |r| {
-            let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
-                Some((_, module)) => module.map(intern),
-                None => self
-                    .def(r.id.0)
-                    .filter(|def| def.module != self.module)
-                    .and_then(|def| self.tables.module_names.get(&def.module).copied()),
-            };
-            match module {
-                Some(module) => format!("{module}.{}", r.name),
-                None => r.name.to_string(),
-            }
+        let mut shown = self.show_types(&[a, b], false).into_iter();
+        let a = shown.next().unwrap_or_default();
+        (a, shown.next().unwrap_or_default())
+    }
+
+    /// The type of a message that names one type: a named type is
+    /// qualified by its module when another type the session knows has
+    /// its name (`other.Shape`, with `shapes.Shape` imported too).
+    pub(super) fn show_type(&self, ty: &Type) -> String {
+        self.show_types(&[ty], true).pop().unwrap_or_default()
+    }
+
+    /// The types of one message (see `show_apart`, `show_type`): a named
+    /// type that another type of the message has the name of, or, with
+    /// `session`, another type the session knows, is written with its
+    /// module; a module's own type keeps its bare name unless the other
+    /// is its own too.
+    fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
+        Type::show_all(types, |r, clash| {
+            (clash || (session && self.type_name_clashes(r))).then(|| self.qualified_type(r))
         })
+    }
+
+    /// Whether another type the session knows has the name of `r`.
+    fn type_name_clashes(&self, r: TypeRef) -> bool {
+        let other = |o: &TypeRef| o.name == r.name && o.id != r.id;
+        self.tables.enums.keys().any(other)
+            || self.tables.records.keys().any(other)
+            || crate::defs::builtin_type_id(&resolve(r.name)).is_some_and(|id| id != r.id)
+    }
+
+    /// The name of `r` written with its module: `a.Pt`, `time.Weekday`,
+    /// `prelude.Option` for a prelude type; a module's own type keeps its
+    /// bare name.
+    fn qualified_type(&self, r: TypeRef) -> String {
+        let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, module)) => Some(intern(module.unwrap_or("prelude"))),
+            None => self
+                .def(r.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module).copied()),
+        };
+        match module {
+            Some(module) => format!("{module}.{}", r.name),
+            None => r.name.to_string(),
+        }
+    }
+
+    /// The name of the trait `t` in a message: written with its module
+    /// when another trait the session knows has its name (`a.Show`).
+    pub(super) fn show_trait(&self, t: TraitKey) -> String {
+        let clashes = self
+            .tables
+            .traits
+            .keys()
+            .any(|o| o.name == t.name && o.id != t.id);
+        if !clashes {
+            return t.name.to_string();
+        }
+        let first = crate::defs::builtin_types().len();
+        let module = if (t.id.0.0 as usize)
+            .checked_sub(first)
+            .is_some_and(|k| k < crate::defs::BUILTIN_TRAITS.len())
+        {
+            Some(intern("prelude"))
+        } else {
+            self.def(t.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module).copied())
+        };
+        match module {
+            Some(module) => format!("{module}.{}", t.name),
+            None => t.name.to_string(),
+        }
     }
 
     /// The quick fix for a value where a `Result` is expected: wrap the
@@ -6844,7 +6909,10 @@ impl TypeChecker {
                     Code::AmbiguousMethod,
                     format!(
                         "ambiguous method '{}' on type '{}': provided by traits {}, {}",
-                        method.name, ti.target_type, existing_trait, ti.trait_name
+                        method.name,
+                        self.show_type(&Type::Generic(target_type, vec![])),
+                        self.show_trait(existing_trait),
+                        self.show_trait(trait_key)
                     ),
                     ti.span,
                 );

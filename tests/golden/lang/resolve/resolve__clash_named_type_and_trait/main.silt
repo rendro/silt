@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'b.Pt' does not implement trait 'a.Conv'
+-- Two modules each declare Pt and Conv: the message names both by module.
+import a
+import b
+fn main() {
+  println(a.run(b.Pt { s: "z" }))
+}

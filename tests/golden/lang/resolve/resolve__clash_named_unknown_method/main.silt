@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: unknown field or method 'area' on type other.Shape
+-- other.Shape has no area method; shapes.Shape, imported too, has: the
+-- message names the type by its module.
+import other
+import shapes
+fn main() {
+  let c = other.mk()
+  println(c.area())
+  let d = other.Circle("five")
+  println(d.area())
+}
