@@ -1,4 +1,4 @@
-trait Speak { fn speak(self, times: Int) -> Int }
+pub trait Speak { fn speak(self, times: Int) -> Int }
 pub type Cat { name: String }
 trait Speak for Cat { fn speak(self, times: Int) -> Int { times } }
 pub fn talk(x: t) -> Int where t: Speak { x.speak(2) }

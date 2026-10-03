@@ -165,7 +165,9 @@ fn default(type a) -> a where a: Default {
   a.default()
 }
 
-fn parse(body: String, type a) -> Result(a, int.ParseError) where a: Decode {
+type DecodeError { Malformed(String) }
+
+fn parse(body: String, type a) -> Result(a, DecodeError) where a: Decode {
   a.decode(body)
 }
 
@@ -201,12 +203,12 @@ are grouped contiguously when there are multiple:
 
 ```silt
 -- Correct
-fn parse(body: String, type a) -> Result(a, int.ParseError)
+fn parse(body: String, type a) -> Result(a, DecodeError)
 fn cast(x: a, type b) -> b
 fn convert(x: a, type b, type c) -> (b, c)
 
 -- Incorrect — type param before data, won't parse
-fn broken(type a, body: String) -> Result(a, int.ParseError)
+fn broken(type a, body: String) -> Result(a, DecodeError)
 ```
 
 The reason is **pipe ergonomics**. Silt's `|>` operator inserts the
@@ -673,8 +675,8 @@ fn map_err(r: Result(a, e), f: Fn(e) -> f) -> Result(a, f)
 ### Type-directed decoding
 
 ```silt
-fn parse(body: String, type a) -> Result(a, int.ParseError) where a: Decode
-fn from_toml(content: String, type a) -> Result(a, int.ParseError) where a: Decode
+fn parse(body: String, type a) -> Result(a, DecodeError) where a: Decode
+fn from_toml(content: String, type a) -> Result(a, DecodeError) where a: Decode
 
 -- call sites
 let config = from_toml(raw, AppConfig)?

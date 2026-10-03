@@ -1,7 +1,7 @@
 import json
+import time
 import toml
 
-import time
 type Address { city: String }
 type User {
   name: String,

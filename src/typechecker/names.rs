@@ -300,7 +300,10 @@ pub fn resolve_module(
     for decl in &mut program.decls {
         resolver.decl(decl);
     }
-    let diagnostics = resolver.diagnostics;
+    let mut diagnostics = resolver.diagnostics;
+    if kind == ModuleKind::File {
+        report_private_in_public(program, module, defs, &mut diagnostics);
+    }
     Resolution { scope, diagnostics }
 }
 
@@ -668,6 +671,112 @@ fn report_type_name_clashes(
                     d = d.with_help("rename one of the two types");
                     diagnostics.push(d);
                 }
+            }
+        }
+    }
+}
+
+/// Report each private type or trait of `module` that a public
+/// declaration names: a `pub fn`'s parameter and return types and its
+/// where-bounds, a `pub type`'s fields, variants and alias target. An
+/// importer could use the public declaration but never name the private
+/// item it leaks.
+fn report_private_in_public(
+    program: &Program,
+    module: ModuleId,
+    defs: &DefTable,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let private = |res: Option<Res>| match res {
+        Some(Res::Def(id)) => {
+            let def = defs.get(id);
+            (def.module == module && def.vis == Vis::Private).then_some(def)
+        }
+        _ => None,
+    };
+    let mut report = |def: &Def, span: Span, owner: String| {
+        let what = if matches!(def.kind, DefKind::Trait(_)) {
+            "trait"
+        } else {
+            "type"
+        };
+        diagnostics.push(
+            Diagnostic::error(
+                Code::PrivateItem,
+                span,
+                format!("private {what} '{}' in the signature of {owner}", def.name),
+            )
+            .with_label(def.span, format!("'{}' is declared without `pub`", def.name))
+            .with_help(format!(
+                "mark `{}` `pub`, or the {owner} private, so that an importer can name what \
+                 it uses",
+                def.name
+            )),
+        );
+    };
+    fn type_names(te: &TypeExpr, out: &mut Vec<(Option<Res>, Span)>) {
+        match &te.kind {
+            TypeExprKind::Named { name_span, .. } => out.push((te.res, *name_span)),
+            TypeExprKind::Generic {
+                name_span, args, ..
+            } => {
+                out.push((te.res, *name_span));
+                for a in args {
+                    type_names(a, out);
+                }
+            }
+            TypeExprKind::Tuple(elems) => elems.iter().for_each(|e| type_names(e, out)),
+            TypeExprKind::Function(params, ret) => {
+                params.iter().for_each(|p| type_names(p, out));
+                type_names(ret, out);
+            }
+            TypeExprKind::AssocProj { receiver, .. } => type_names(receiver, out),
+            TypeExprKind::AnonRecord { fields, .. } => {
+                fields.iter().for_each(|(_, t)| type_names(t, out))
+            }
+            TypeExprKind::SelfType => {}
+        }
+    }
+    for decl in &program.decls {
+        let mut names: Vec<(Option<Res>, Span)> = Vec::new();
+        let owner = match decl {
+            Decl::Fn(f) if f.is_pub => {
+                for p in &f.params {
+                    if let Some(ty) = &p.ty {
+                        type_names(ty, &mut names);
+                    }
+                }
+                if let Some(ret) = &f.return_type {
+                    type_names(ret, &mut names);
+                }
+                for wc in &f.where_clauses {
+                    names.push((wc.trait_res, wc.trait_name_span));
+                    wc.trait_args.iter().for_each(|a| type_names(a, &mut names));
+                }
+                format!("public fn '{}'", f.name)
+            }
+            Decl::Type(td) if td.is_pub => {
+                match &td.body {
+                    TypeBody::Enum(variants) => variants
+                        .iter()
+                        .flat_map(|v| &v.fields)
+                        .for_each(|t| type_names(t, &mut names)),
+                    TypeBody::Record(fields) => {
+                        fields.iter().for_each(|f| type_names(&f.ty, &mut names))
+                    }
+                    TypeBody::Alias(target) => type_names(target, &mut names),
+                }
+                format!("public type '{}'", td.name)
+            }
+            _ => continue,
+        };
+        let mut seen: HashSet<DefId> = HashSet::new();
+        for (res, span) in names {
+            if let Some(def) = private(res)
+                && let Some(Res::Def(id)) = res
+                && seen.insert(id)
+            {
+                report(def, span, owner.clone());
             }
         }
     }

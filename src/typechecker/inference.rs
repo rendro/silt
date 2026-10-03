@@ -2592,7 +2592,9 @@ impl TypeChecker {
                 // (`Shape.describe`, `m.Shape.describe`).
                 let type_name = match (&obj.kind, obj.res) {
                     (_, Some(crate::defs::Res::Local)) => None,
-                    (_, res) if self.res_def(res).is_some_and(|def| def.is_type()) => {
+                    (ExprKind::Ident(_) | ExprKind::FieldAccess(..), res)
+                        if self.res_def(res).is_some_and(|def| def.is_type()) =>
+                    {
                         self.res_def(res).map(|def| def.name)
                     }
                     (ExprKind::Ident(name), _) => Some(*name),
