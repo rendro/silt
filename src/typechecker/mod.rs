@@ -2658,14 +2658,16 @@ impl TypeChecker {
         };
         for id in defs.of_module(self.module) {
             let def = defs.get(*id);
-            let key = match def.kind {
-                crate::defs::DefKind::Variant { ty, .. } => {
-                    intern(&format!("{}.{}", defs.get(ty.0).name, def.name))
-                }
-                crate::defs::DefKind::Trait(_) | crate::defs::DefKind::TypeAlias => continue,
-                _ => def.name,
-            };
-            if let Some(scheme) = env.lookup(key) {
+            // A variant's scheme is entered when its type is.
+            if matches!(
+                def.kind,
+                crate::defs::DefKind::Variant { .. }
+                    | crate::defs::DefKind::Trait(_)
+                    | crate::defs::DefKind::TypeAlias
+            ) {
+                continue;
+            }
+            if let Some(scheme) = env.lookup(def.name) {
                 let scheme = scheme.clone();
                 self.tables.schemes.insert(*id, scheme);
             }
@@ -2685,14 +2687,8 @@ impl TypeChecker {
             return None;
         };
         let def = self.def(id)?;
-        if def.module == self.module {
-            let key = match def.kind {
-                crate::defs::DefKind::Variant { ty, .. } => {
-                    intern(&format!("{}.{}", self.def(ty.0)?.name, def.name))
-                }
-                _ => def.name,
-            };
-            return env.lookup(key).cloned();
+        if def.module == self.module && !matches!(def.kind, crate::defs::DefKind::Variant { .. }) {
+            return env.lookup(def.name).cloned();
         }
         self.tables.schemes.get(&id).cloned()
     }
@@ -3463,6 +3459,7 @@ impl TypeChecker {
         match &td.body {
             TypeBody::Enum(variants) => {
                 let mut variant_infos = Vec::new();
+                let variant_defs = self.variant_resolutions(ty);
 
                 // Compute the TyVar ids for each type parameter once,
                 // before the variant loop (they are the same for every variant).
@@ -3544,15 +3541,11 @@ impl TypeChecker {
                         constraints: vec![],
                         optional_last_param: false,
                     };
-                    // Bound as `Enum.Variant`, which is what a resolved use
-                    // of the variant reads: two enums may have variants of
-                    // one name. The bare name serves the impls the checker
-                    // derives itself.
-                    env.define(
-                        intern(&format!("{}.{}", td.name, variant.name)),
-                        scheme.clone(),
-                    );
-                    env.define(variant.name, scheme);
+                    // The variant's definition's scheme, which a use of it
+                    // reads: two enums may have variants of one name.
+                    if let Some(crate::defs::Res::Def(id)) = variant_defs.get(&variant.name) {
+                        self.tables.schemes.insert(*id, scheme);
+                    }
                 }
 
                 // Register the enum type name as a value so it can be
