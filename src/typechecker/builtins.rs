@@ -891,16 +891,15 @@ impl TypeChecker {
         // ── Built-in doc strings (round 62 phase-2 LSP doc inlining) ──
         //
         // Attach the inlined markdown for the globals (`println`,
-        // `print`, `panic`, `Ok`/`Err`/`Some`/`None`, plus the
-        // builtin modules' constructors `Stop`/`Continue`/`Message`/
-        // `Closed`/`Empty`/`Sent`/`Recv`/`Send`) and the regex
+        // `print`, `panic`, `Ok`/`Err`/`Some`/`None`), the sections of
+        // the builtin modules' constructors `Stop`/`Continue`/`Message`/
+        // `Closed`/`Empty`/`Sent`/`Recv`/`Send`, and the regex
         // module — those names are registered here in this file
         // rather than in a per-module submodule, so the attach
         // calls run here. The per-module submodules attach their
         // own blobs from their `register` entry points.
         //
-        // For globals we attach the FULL `GLOBALS_MD` body to every
-        // prelude / import-gated name. The summary tables ("Always
+        // For the prelude names we attach the FULL `GLOBALS_MD` body. The summary tables ("Always
         // Available" / "Available After Import") are at the top of
         // the doc and describe every name; per-`##` slicing would
         // hide the table from `Sent`/`Recv`/`Send` even though they
@@ -921,15 +920,21 @@ impl TypeChecker {
         // sub-set hand-rolled to track the markdown contents.
         let mut doc_targets: Vec<&'static str> =
             crate::module::builtin_free_function_names().to_vec();
-        doc_targets.extend_from_slice(&[
-            "Ok", "Err", "Some", "None", "Stop", "Continue", "Message", "Closed", "Empty", "Sent",
-            "Recv", "Send",
-        ]);
+        doc_targets.extend_from_slice(&["Ok", "Err", "Some", "None"]);
         let globals_doc = docs::strip_frontmatter(docs::GLOBALS_MD);
         for name in &doc_targets {
             let sym = intern(name);
             if env.bindings.contains_key(&sym) {
                 env.builtin_docs.insert(sym, globals_doc.to_string());
+            }
+        }
+        // A builtin module's variant gets its own section: hover on
+        // `channel.Message` shows `Message`, not the whole page.
+        for (keys, body) in docs::iter_sections(docs::GLOBALS_MD) {
+            for key in keys {
+                if crate::module::builtin_variant_module(&key).is_some() {
+                    env.attach_doc(intern(&key), &body);
+                }
             }
         }
         docs::attach_module_docs(env, docs::REGEX_MD);

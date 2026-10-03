@@ -706,7 +706,10 @@ fn report_private_in_public(
                 span,
                 format!("private {what} '{}' in the signature of {owner}", def.name),
             )
-            .with_label(def.span, format!("'{}' is declared without `pub`", def.name))
+            .with_label(
+                def.span,
+                format!("'{}' is declared without `pub`", def.name),
+            )
             .with_help(format!(
                 "mark `{}` `pub`, or the {owner} private, so that an importer can name what \
                  it uses",
