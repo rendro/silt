@@ -30,7 +30,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::ast::*;
-use crate::defs::{BuiltinDefs, Def, DefId, DefKind, DefTable, Res, TraitId, TypeId, Vis};
+use crate::defs::{
+    ANON_RECORD, BuiltinDefs, Def, DefId, DefKind, DefTable, Res, TYPE_OF, TraitId, TypeId, Vis,
+    builtin_types,
+};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::session::ModuleId;
@@ -123,13 +126,6 @@ pub struct BuiltinScopes {
 /// The value names of the prelude that are not variants or types.
 const PRELUDE_FUNCTIONS: &[&str] = &["panic", "print", "println"];
 
-/// The enums of the prelude, with their variants.
-const PRELUDE_ENUMS: &[&str] = &["Option", "Result"];
-
-/// The builtin types that are reached through a builtin module but have
-/// no record or enum declaration (opaque handles).
-const OPAQUE_MODULE_TYPES: &[(&str, &str)] = &[("TcpListener", "tcp"), ("TcpStream", "tcp")];
-
 thread_local! {
     static BUILTINS: RefCell<Option<(u64, Arc<BuiltinDefs>, Arc<BuiltinScopes>)>> =
         const { RefCell::new(None) };
@@ -177,45 +173,58 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         });
         id
     };
-    let self_type = |defs: &BuiltinDefs| TypeId(DefId(defs.defs.len() as u32));
-    // A type and, for an enum, its variants.
-    let add_type =
-        |defs: &mut BuiltinDefs, exports: &mut Exports, module: ModuleId, name: Symbol| {
-            let ty = self_type(defs);
-            let id = add(defs, module, name, DefKind::Type(ty));
+    // The types first, so that their ids are those of
+    // `defs::builtin_types`; then each enum's variants.
+    let mut prelude_exports = Exports::default();
+    let mut module_exports: HashMap<ModuleId, Exports> = HashMap::new();
+    let mut types = Vec::new();
+    for (k, (name, module)) in builtin_types().iter().enumerate() {
+        let ty = TypeId(DefId(k as u32));
+        let module_id = module.map_or(ModuleId::PRELUDE, |m| {
+            ModuleId::builtin(m).expect("a builtin module")
+        });
+        let name = intern(name);
+        let id = add(&mut defs, module_id, name, DefKind::Type(ty));
+        debug_assert_eq!(id, ty.0);
+        if ![TYPE_OF, ANON_RECORD].contains(&resolve(name).as_str()) {
+            let exports = match module {
+                None => &mut prelude_exports,
+                Some(_) => module_exports.entry(module_id).or_default(),
+            };
             exports.types.insert(name, Binding::Def(id));
-            if let Some((_, variants)) = names.enums.iter().find(|(e, _)| *e == name) {
-                let mut ids = Vec::new();
-                for (ordinal, (variant, arity)) in variants.iter().enumerate() {
-                    let v = add(
-                        defs,
-                        module,
-                        *variant,
-                        DefKind::Variant {
-                            ty,
-                            ordinal: ordinal as u16,
-                            arity: *arity as u16,
-                        },
-                    );
-                    exports.values.insert(*variant, Binding::Def(v));
-                    ids.push(v);
-                }
-                defs.variants.insert(id, ids);
-            }
-        };
-
-    // The prelude.
-    let prelude = ModuleId::PRELUDE;
-    let mut exports = Exports::default();
-    for ty in crate::types::builtins::BUILTIN_TYPES {
-        if OPAQUE_MODULE_TYPES.iter().any(|(name, _)| *name == ty.name) || ty.name == "()" {
-            continue;
         }
-        add_type(&mut defs, &mut exports, prelude, intern(ty.name));
+        types.push((id, module_id, name));
     }
-    for name in PRELUDE_ENUMS {
-        add_type(&mut defs, &mut exports, prelude, intern(name));
+    for (id, module_id, name) in types {
+        let Some((_, variants)) = names.enums.iter().find(|(e, _)| *e == name) else {
+            continue;
+        };
+        let exports = if module_id == ModuleId::PRELUDE {
+            &mut prelude_exports
+        } else {
+            module_exports.entry(module_id).or_default()
+        };
+        let mut ids = Vec::new();
+        for (ordinal, (variant, arity)) in variants.iter().enumerate() {
+            let v = add(
+                &mut defs,
+                module_id,
+                *variant,
+                DefKind::Variant {
+                    ty: TypeId(id),
+                    ordinal: ordinal as u16,
+                    arity: *arity as u16,
+                },
+            );
+            exports.values.insert(*variant, Binding::Def(v));
+            ids.push(v);
+        }
+        defs.variants.insert(id, ids);
     }
+
+    // The prelude's functions and traits.
+    let prelude = ModuleId::PRELUDE;
+    let mut exports = prelude_exports;
     for name in PRELUDE_FUNCTIONS {
         let name = intern(name);
         let id = add(&mut defs, prelude, name, DefKind::Fn);
@@ -228,10 +237,10 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
     }
     scopes.prelude = exports;
 
-    // The builtin modules.
+    // The builtin modules' functions.
     for module_name in crate::module::BUILTIN_MODULES {
         let module = ModuleId::builtin(module_name).expect("a builtin module");
-        let mut exports = Exports::default();
+        let mut exports = module_exports.remove(&module).unwrap_or_default();
         let prefix = format!("{module_name}.");
         let mut members: Vec<Symbol> = names
             .bindings
@@ -247,15 +256,6 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         for member in members {
             let id = add(&mut defs, module, member, DefKind::Fn);
             exports.values.insert(member, Binding::Def(id));
-        }
-        let types = crate::module::builtin_module_type_names(module_name).chain(
-            OPAQUE_MODULE_TYPES
-                .iter()
-                .filter(|(_, m)| m == module_name)
-                .map(|(name, _)| *name),
-        );
-        for ty in types {
-            add_type(&mut defs, &mut exports, module, intern(ty));
         }
         scopes.modules.insert(module, exports);
     }
@@ -1199,11 +1199,15 @@ impl Resolver<'_> {
         let what = if is_trait { "trait" } else { "type" };
         let Some(module) = module else {
             let name_str = resolve(name);
-            if name_str.starts_with(|c: char| c.is_lowercase() || c == '_') {
+            if name_str.starts_with(char::is_lowercase) {
                 return Some(Res::Local);
             }
             if let Some(binding) = self.lookup_type(name) {
                 return Some(self.binding_res(&binding));
+            }
+            // `_a` is a type variable, unless a type is named so.
+            if name_str.starts_with('_') {
+                return Some(Res::Local);
             }
             let elsewhere = self.elsewhere(name);
             if elsewhere.is_empty() {

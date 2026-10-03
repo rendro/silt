@@ -140,7 +140,7 @@ fn names_unresolved(pattern: &Pattern) -> bool {
 /// `TypeChecker::ctor_target`.
 enum CtorTarget {
     /// A variant of this enum.
-    Enum(Symbol, EnumInfo),
+    Enum(TypeRef, EnumInfo),
     /// Nothing to report: the resolver reported the name, or it comes
     /// from a module that failed to load.
     Silent,
@@ -260,8 +260,8 @@ pub(super) fn format_record_field_suggestion(
 pub(super) fn format_unknown_method_message(
     field: Symbol,
     display_type_name: &str,
-    method_table: &HashMap<(Symbol, Symbol), MethodEntry>,
-    table_key: Symbol,
+    method_table: &HashMap<(TypeRef, Symbol), MethodEntry>,
+    table_key: TypeRef,
 ) -> (String, Option<String>) {
     let field_str = resolve(field);
     let base = format!("unknown method '{field_str}' on {display_type_name}");
@@ -383,7 +383,7 @@ impl TypeChecker {
         {
             let suggestion = self
                 .type_name_for_impl(&self.apply(receiver_ty))
-                .map(|sym| format!("`{}.{method_name}()`", resolve(sym)))
+                .map(|ty| format!("`{ty}.{method_name}()`"))
                 .unwrap_or_else(|| format!("`SomeType.{method_name}()`"));
             self.error(
                 Code::InvalidMethodCall,
@@ -750,7 +750,9 @@ impl TypeChecker {
             let applied = self.apply(pt);
             match &applied {
                 Type::Var(v) => self.current_fn_param_tyvars.push(*v),
-                Type::Generic(name, args) if resolve(*name) == "TypeOf" && args.len() == 1 => {
+                Type::Generic(name, args)
+                    if name.is_builtin(crate::defs::TYPE_OF) && args.len() == 1 =>
+                {
                     if let Type::Var(v) = self.apply(&args[0]) {
                         self.current_fn_param_tyvars.push(v);
                     }
@@ -863,7 +865,7 @@ impl TypeChecker {
         let ret_resolved = self.apply(ret_ty);
         let is_qmark_shape = matches!(
             &ret_resolved,
-            Type::Generic(n, _) if resolve(*n) == "Result" || resolve(*n) == "Option"
+            Type::Generic(n, _) if n.is_builtin("Result") || n.is_builtin("Option")
         );
         if !is_qmark_shape {
             return;
@@ -1115,10 +1117,10 @@ impl TypeChecker {
             let resolved = self.apply(&inner_ty);
             let (head, args) = match &resolved {
                 Type::Error | Type::Never | Type::Var(_) => continue,
-                Type::Generic(name, args) if *name == intern("Result") && args.len() == 2 => {
+                Type::Generic(name, args) if name.is_builtin("Result") && args.len() == 2 => {
                     ("Result", args.clone())
                 }
-                Type::Generic(name, args) if *name == intern("Option") && args.len() == 1 => {
+                Type::Generic(name, args) if name.is_builtin("Option") && args.len() == 1 => {
                     ("Option", args.clone())
                 }
                 other => {
@@ -1145,10 +1147,10 @@ impl TypeChecker {
             let ret_resolved = self.apply(&ret);
             let expected_wrapper = if head == "Result" {
                 let fresh_ok = self.fresh_var();
-                Type::Generic(intern("Result"), vec![fresh_ok, args[1].clone()])
+                Type::builtin("Result", vec![fresh_ok, args[1].clone()])
             } else {
                 let fresh_inner = self.fresh_var();
-                Type::Generic(intern("Option"), vec![fresh_inner])
+                Type::option(fresh_inner)
             };
             match &ret_resolved {
                 Type::Error | Type::Never => {}
@@ -1157,7 +1159,7 @@ impl TypeChecker {
                 Type::Var(_) => {
                     self.unify(&ret_resolved, &expected_wrapper, span);
                 }
-                Type::Generic(n, _) if resolve(*n) == head => {
+                Type::Generic(n, _) if n.is_builtin(head) => {
                     self.unify(&ret_resolved, &expected_wrapper, span);
                 }
                 // Concrete non-matching return type: this is the unsound
@@ -1640,10 +1642,8 @@ impl TypeChecker {
         }
     }
 
-    /// The variant the constructor pattern `pattern` names: the one the
-    /// resolver resolved it to. A pattern the checker made itself has no
-    /// resolution: its variant is the one of the enum written before it
-    /// (`Shape.Circle`), or the one its bare name is registered for.
+    /// The variant the constructor pattern `pattern` names (see
+    /// `pattern_variant_enum`).
     fn ctor_target(&self, pattern: &Pattern) -> CtorTarget {
         let PatternKind::Constructor {
             qualifier, name, ..
@@ -1651,14 +1651,10 @@ impl TypeChecker {
         else {
             return CtorTarget::Unknown;
         };
-        let enum_name = match pattern.res {
-            Some(crate::defs::Res::Error) => return CtorTarget::Silent,
-            Some(_) => self.res_variant_enum(pattern.res),
-            None => match qualifier.last() {
-                Some(q) => Some(q.name),
-                None => self.variant_to_enum.get(name).copied(),
-            },
-        };
+        if pattern.res == Some(crate::defs::Res::Error) {
+            return CtorTarget::Silent;
+        }
+        let enum_name = self.pattern_variant_enum(pattern.res, qualifier);
         match enum_name.and_then(|e| self.enums.get(&e).map(|info| (e, info))) {
             Some((e, info)) if info.variants.iter().any(|v| v.name == *name) => {
                 CtorTarget::Enum(e, info.clone())
@@ -1667,26 +1663,33 @@ impl TypeChecker {
         }
     }
 
+    /// Whether a name written as a constructor names a record type.
+    pub(super) fn names_record(&self, res: Option<crate::defs::Res>, name: Symbol) -> bool {
+        self.res_type(res)
+            .or_else(|| self.named_type(None, name))
+            .is_some_and(|ty| self.records.contains_key(&ty))
+    }
+
     /// The record type a record pattern or literal names, with its type
-    /// parameters' variables: the one the resolver resolved it to (a
-    /// bare name the resolver left alone is looked up by name). Reports
-    /// a name that names no record type, unless the resolver reported it
-    /// already.
+    /// parameters' variables: the one the resolver resolved it to.
+    /// Reports a name that names no record type, unless the resolver
+    /// reported it already.
     pub(super) fn named_record(
         &mut self,
         res: Option<crate::defs::Res>,
         name: Symbol,
         span: Span,
         in_pattern: bool,
-    ) -> Option<(RecordInfo, Option<Vec<TyVar>>)> {
+    ) -> Option<(TypeRef, RecordInfo, Option<Vec<TyVar>>)> {
         if res == Some(crate::defs::Res::Error) {
             return None;
         }
-        let name = self.res_def(res).map_or(name, |def| def.name);
-        match self.records.get(&name).cloned() {
-            Some(info) => {
-                let ids = self.record_param_var_ids.get(&name).cloned();
-                Some((info, ids))
+        let ty = self.named_type(res, name);
+        let name = ty.map_or(name, |ty| ty.name);
+        match ty.and_then(|ty| Some((ty, self.records.get(&ty).cloned()?))) {
+            Some((ty, info)) => {
+                let ids = self.record_param_var_ids.get(&ty).cloned();
+                Some((ty, info, ids))
             }
             None => {
                 let message = if in_pattern {
@@ -1813,7 +1816,7 @@ impl TypeChecker {
                 args: sub_pats,
                 ..
             } => {
-                let resolved: Option<(Symbol, EnumInfo)> = match self.ctor_target(pattern) {
+                let resolved: Option<(TypeRef, EnumInfo)> = match self.ctor_target(pattern) {
                     CtorTarget::Enum(enum_name, info) => Some((enum_name, info)),
                     CtorTarget::Unknown => None,
                     CtorTarget::Silent => {
@@ -1882,7 +1885,7 @@ impl TypeChecker {
                 // LATENT (round 26 L3): also point the caret at
                 // `pattern.span`, not the outer `span` (the outer span
                 // is the enclosing let/match scrutinee).
-                if self.records.contains_key(name) {
+                if self.names_record(pattern.res, *name) {
                     self.error(Code::InvalidPatternUse,
                         format!(
                             "'{name}' is a record type; use record-pattern syntax `{name} {{ ... }}` instead of constructor-pattern syntax"
@@ -1927,15 +1930,15 @@ impl TypeChecker {
                 // errors. Reject them at the type-check stage. The type
                 // identity is the bare name (`util.Pt { x }` names `Pt`).
                 let resolved = self.apply(ty);
-                let looked: Option<(RecordInfo, Option<Vec<TyVar>>)> = match name {
+                let looked = match name {
                     Some(rec_name) => self.named_record(pattern.res, *rec_name, span, true),
                     None => None,
                 };
-                let pattern_record: Option<(Symbol, Vec<(Symbol, Type)>)> =
-                    if let (Some(rec_name), Some((rec_info, param_ids))) = (name, looked) {
+                let pattern_record: Option<(TypeRef, Vec<(Symbol, Type)>)> =
+                    if let Some((rec_ty, rec_info, param_ids)) = looked {
                         let instantiated_fields =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());
-                        Some((*rec_name, instantiated_fields))
+                        Some((rec_ty, instantiated_fields))
                     } else {
                         None
                     };
@@ -1954,7 +1957,7 @@ impl TypeChecker {
                 // pattern case — `let Pair { a, b } = p` — has already
                 // computed these fields in `pattern_record`; prefer those
                 // so the declared and inferred instantiations stay linked.
-                let generic_record_fields: Option<(Symbol, Vec<(Symbol, Type)>)> =
+                let generic_record_fields: Option<(TypeRef, Vec<(Symbol, Type)>)> =
                     if let Type::Generic(type_name, type_args) = &resolved
                         && let Some(rec_info) = self.records.get(type_name).cloned()
                     {
@@ -2619,7 +2622,7 @@ impl TypeChecker {
                 // parameter slots line up one-for-one with the user's
                 // explicit arguments.
                 if let Type::Generic(gname, gargs) = &obj_ty
-                    && resolve(*gname) == "TypeOf"
+                    && gname.is_builtin(crate::defs::TYPE_OF)
                     && gargs.len() == 1
                 {
                     let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
@@ -2799,22 +2802,11 @@ impl TypeChecker {
                     | Type::Unit
                     | Type::Channel(_)
                     | Type::Fun(_, _) => {
-                        let type_name = match &obj_ty {
-                            Type::Int => intern("Int"),
-                            Type::Float => intern("Float"),
-                            Type::Bool => intern("Bool"),
-                            Type::String => intern("String"),
-                            // Round 75 TYPE-3 LATENT: canonical key is
-                            // "Unit" (matches canonical_name(Type::Unit)
-                            // and dispatch_name_for_value(Value::Unit)).
-                            // canonicalize_type_name collapses the "()"
-                            // alias onto "Unit" — a user `trait T for ()`
-                            // registers under method_table[("T","Unit")].
-                            Type::Unit => intern("Unit"),
-                            Type::Channel(_) => intern("Channel"),
-                            Type::Fun(_, _) => intern("Fn"),
-                            _ => unreachable!(),
-                        };
+                        // `Unit` is the key of `()` (it matches
+                        // canonical_name(Type::Unit) and
+                        // dispatch_name_for_value(Value::Unit)), `Fn` of a
+                        // function.
+                        let type_name = head_of(&obj_ty).expect("a primitive head has a type");
                         if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
@@ -2897,7 +2889,7 @@ impl TypeChecker {
                                 return Type::Error;
                             }
                         }
-                        let display = resolve(type_name).to_string();
+                        let display = resolve(type_name.name).to_string();
                         self.error_help(
                             Code::UnknownMethod,
                             format_unknown_method_message(
@@ -3500,12 +3492,11 @@ impl TypeChecker {
                 // ? operator on Result(a,e) returns a, propagates Err(e)
                 // ? operator on Option(a) returns a, propagates None
                 match &inner_ty {
-                    Type::Generic(name, args) if *name == intern("Result") && args.len() == 2 => {
+                    Type::Generic(name, args) if name.is_builtin("Result") && args.len() == 2 => {
                         if let Some(expected_ret) = self.current_return_type.clone() {
                             let err_ty = args[1].clone();
                             let fresh_ok = self.fresh_var();
-                            let expected_result =
-                                Type::Generic(intern("Result"), vec![fresh_ok, err_ty]);
+                            let expected_result = Type::builtin("Result", vec![fresh_ok, err_ty]);
                             self.unify(&expected_ret, &expected_result, span);
                         } else {
                             self.error(Code::InvalidQuestion,
@@ -3515,11 +3506,10 @@ impl TypeChecker {
                         }
                         args[0].clone()
                     }
-                    Type::Generic(name, args) if *name == intern("Option") && args.len() == 1 => {
+                    Type::Generic(name, args) if name.is_builtin("Option") && args.len() == 1 => {
                         if let Some(expected_ret) = self.current_return_type.clone() {
                             let fresh_inner = self.fresh_var();
-                            let expected_option =
-                                Type::Generic(intern("Option"), vec![fresh_inner]);
+                            let expected_option = Type::option(fresh_inner);
                             self.unify(&expected_ret, &expected_option, span);
                         } else {
                             self.error(Code::InvalidQuestion,
@@ -3919,7 +3909,7 @@ impl TypeChecker {
                 // The type identity is the bare name: `util.Pt { x: 1 }`
                 // builds a `Pt`.
                 let looked = self.named_record(expr.res, name, span, false);
-                if let Some((rec_info, param_ids)) = looked {
+                if let Some((rec_ty, rec_info, param_ids)) = looked {
                     // For parameterized record types, create fresh type variables
                     // for each type parameter and substitute them into field types.
                     // This prevents different instantiations from sharing the same
@@ -3985,7 +3975,7 @@ impl TypeChecker {
                         }
                     }
 
-                    Type::Record(name, instantiated_fields)
+                    Type::Record(rec_ty, instantiated_fields)
                 } else {
                     // G2: Unknown record type (reported by `named_record`
                     // or the resolver) — this used to silently synthesize
@@ -4964,7 +4954,7 @@ impl TypeChecker {
                             // Zero-arg constructor
                             if sub_pats.is_empty() {
                                 self.unify(expected, &ctor_ty, span);
-                            } else if self.records.contains_key(name) {
+                            } else if self.names_record(pattern.res, *name) {
                                 // GAP (round 23 #4): the user wrote
                                 // `Circle(r)` where `Circle` is a record
                                 // type, not an enum constructor. The old
@@ -5035,11 +5025,11 @@ impl TypeChecker {
                 self.check_record_pattern_duplicate_fields(fields, pattern.span);
                 if let Some(rec_name) = name {
                     let looked = self.named_record(pattern.res, *rec_name, span, true);
-                    if let Some((rec_info, param_ids)) = looked {
+                    if let Some((rec_ref, rec_info, param_ids)) = looked {
                         let instantiated_fields =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());
 
-                        let rec_ty = Type::Record(*rec_name, instantiated_fields.clone());
+                        let rec_ty = Type::Record(rec_ref, instantiated_fields.clone());
                         self.unify(expected, &rec_ty, span);
 
                         for (field_name, _, sub_pat) in fields {
@@ -5286,19 +5276,18 @@ impl TypeChecker {
                 if trait_info.params.iter().any(|p| p == sym) {
                     return;
                 }
-                // Builtins like Int/Float/String are 0-arity by design.
-                match resolve(*sym).as_str() {
-                    "Int" | "Float" | "Bool" | "String" => return,
-                    _ => {}
-                }
-                let arity = if let Some(info) = self.enums.get(sym) {
+                // Unknown name — leave to other diagnostics.
+                let Some(ty) = self.named_type(te.res, *sym) else {
+                    return;
+                };
+                let arity = if let Some(info) = self.enums.get(&ty) {
                     info.params.len()
-                } else if let Some(ids) = self.record_param_var_ids.get(sym) {
+                } else if let Some(ids) = self.record_param_var_ids.get(&ty) {
                     ids.len()
-                } else if let Some(info) = self.resolver.lookup_alias(*sym) {
+                } else if let Some(info) = self.resolver.lookup_alias(ty) {
                     info.params.len()
                 } else {
-                    // Unknown name — leave to other diagnostics.
+                    // Builtins like Int/Float/String are 0-arity by design.
                     return;
                 };
                 if arity == 0 {
@@ -5413,6 +5402,28 @@ impl TypeChecker {
     }
 }
 
+/// The type a type expression written in a trait declaration names: its
+/// resolution (a type's id is its definition's), else the builtin type
+/// of that name.
+fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
+    match te.res {
+        Some(crate::defs::Res::Def(id)) => Some(TypeRef {
+            id: crate::defs::TypeId(id),
+            name,
+        }),
+        Some(_) => None,
+        None => {
+            let name_str = resolve(name);
+            let name_str = if name_str == "()" {
+                "Unit"
+            } else {
+                name_str.as_str()
+            };
+            crate::defs::builtin_type_id(name_str).map(|id| TypeRef { id, name })
+        }
+    }
+}
+
 /// Resolve a supertrait reference's TypeExpr argument against the
 /// enclosing trait's params. `Named("a")` where `"a"` is in
 /// `trait_info.params` maps to the corresponding entry in `base_args`
@@ -5449,13 +5460,16 @@ pub(super) fn resolve_supertrait_arg(
             // impl side produces, spuriously failing
             // `trait_arg_compatible_canon` with identical Display
             // strings on both sides of the error.
-            match resolve(*sym).as_str() {
-                "Int" => Type::Int,
-                "Float" => Type::Float,
-                "Bool" => Type::Bool,
-                "String" => Type::String,
-                "()" | "Unit" => Type::Unit,
-                _ => Type::Generic(*sym, Vec::new()),
+            let Some(ty) = written_type(te, *sym) else {
+                return Type::Error;
+            };
+            match builtin_type_name(ty) {
+                Some("Int") => Type::Int,
+                Some("Float") => Type::Float,
+                Some("Bool") => Type::Bool,
+                Some("String") => Type::String,
+                Some("Unit") => Type::Unit,
+                _ => Type::Generic(ty, Vec::new()),
             }
         }
         TypeExprKind::Generic {
@@ -5475,7 +5489,10 @@ pub(super) fn resolve_supertrait_arg(
             // `Type::Generic` (they can't match any canonical impl
             // shape, and resolve_type_expr diagnoses the arity at the
             // declaration site).
-            match resolve(*sym).as_str() {
+            let Some(ty) = written_type(te, *sym) else {
+                return Type::Error;
+            };
+            match builtin_type_name(ty).unwrap_or_default() {
                 "List" if resolved.len() == 1 => Type::List(Box::new(resolved.pop().unwrap())),
                 "Range" if resolved.len() == 1 => Type::Range(Box::new(resolved.pop().unwrap())),
                 "Set" if resolved.len() == 1 => Type::Set(Box::new(resolved.pop().unwrap())),
@@ -5487,7 +5504,7 @@ pub(super) fn resolve_supertrait_arg(
                     let k = resolved.pop().unwrap();
                     Type::Map(Box::new(k), Box::new(v))
                 }
-                _ => Type::Generic(*sym, resolved),
+                _ => Type::Generic(ty, resolved),
             }
         }
         TypeExprKind::Tuple(elems) => Type::Tuple(

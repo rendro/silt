@@ -13,7 +13,7 @@
 //! what the name means at that place.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::intern::Symbol;
 use crate::session::ModuleId;
@@ -59,7 +59,7 @@ pub enum DefKind {
 }
 
 /// One definition.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Def {
     pub module: ModuleId,
     pub name: Symbol,
@@ -119,6 +119,77 @@ impl ModuleId {
         let k = self.0.checked_sub(BUILTIN_MODULE_BASE + 1)?;
         crate::module::BUILTIN_MODULES.get(k as usize).copied()
     }
+}
+
+/// The builtin types that are reached through a builtin module but have
+/// no record or enum declaration (opaque handles).
+pub const OPAQUE_MODULE_TYPES: &[(&str, &str)] = &[
+    ("TcpListener", "tcp"),
+    ("TcpStream", "tcp"),
+    ("PgPool", "postgres"),
+    ("PgTx", "postgres"),
+    ("PgCursor", "postgres"),
+    ("QueryResult", "postgres"),
+    ("ExecResult", "postgres"),
+    ("Value", "postgres"),
+];
+
+/// The enums of the prelude.
+pub const PRELUDE_ENUMS: &[&str] = &["Option", "Result"];
+
+/// The type of a type written as a value (`json.parse(s, Pt)`, a `type a`
+/// parameter): `TypeOf(Pt)`. A builtin type no program can name.
+pub const TYPE_OF: &str = "TypeOf";
+
+/// The dispatch key of an anonymous record type, which no impl can
+/// target: `type '<anon>' does not implement trait 'T'`. A builtin type
+/// no program can name.
+pub const ANON_RECORD: &str = "<anon>";
+
+/// Every builtin type, with the builtin module that declares it (`None`
+/// for the prelude), in the order of their ids: the `k`th is
+/// `TypeId(DefId(k))`. The builtin definitions begin with them, so their
+/// ids are known before anything else of the builtins is built.
+pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
+    static TYPES: OnceLock<Vec<(&'static str, Option<&'static str>)>> = OnceLock::new();
+    TYPES.get_or_init(|| {
+        let mut types: Vec<(&'static str, Option<&'static str>)> = Vec::new();
+        for ty in crate::types::builtins::BUILTIN_TYPES {
+            if ty.name == "()" || OPAQUE_MODULE_TYPES.iter().any(|(name, _)| *name == ty.name) {
+                continue;
+            }
+            types.push((ty.name, None));
+        }
+        types.extend(PRELUDE_ENUMS.iter().map(|name| (*name, None)));
+        types.push((TYPE_OF, None));
+        types.push((ANON_RECORD, None));
+        for module in crate::module::BUILTIN_MODULES {
+            let declared = crate::module::builtin_module_type_names(module).chain(
+                OPAQUE_MODULE_TYPES
+                    .iter()
+                    .filter(|(_, m)| m == module)
+                    .map(|(name, _)| *name),
+            );
+            types.extend(declared.map(|name| (name, Some(*module))));
+        }
+        types
+    })
+}
+
+/// The id of the builtin type `name`; `None` when no builtin type has
+/// that name. Builtin type names are unique.
+pub fn builtin_type_id(name: &str) -> Option<TypeId> {
+    static INDEX: OnceLock<HashMap<&'static str, u32>> = OnceLock::new();
+    INDEX
+        .get_or_init(|| {
+            builtin_types()
+                .iter()
+                .enumerate()
+                .map(|(k, (name, _))| (*name, k as u32))
+                .collect()
+        })
+        .get(name)
+        .map(|k| TypeId(DefId(*k)))
 }
 
 /// The builtin definitions, shared by every [`DefTable`]: ids

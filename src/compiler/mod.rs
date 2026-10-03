@@ -18,7 +18,8 @@ use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::module;
 use crate::source::Span;
-use crate::types::canonical::{Resolver, canonicalize_type_name};
+use crate::types::TypeRef;
+use crate::types::canonical::{Resolver, canonical_head};
 use crate::value::{HostFn, Value};
 
 mod patterns;
@@ -474,7 +475,7 @@ pub struct Compiler {
     /// The alias / assoc-binding registries of a compiler with no
     /// modules ([`Compiler::new`]); a module of a program uses its own (see
     /// [`Compiler::resolver`]). Read via
-    /// [`crate::types::canonical::canonicalize_type_name`] when emitting
+    /// [`crate::types::canonical::canonical_head`] when emitting
     /// trait-impl global keys, so registration and lookup keys agree
     /// across the typecheck → compile boundary.
     resolver: Resolver,
@@ -1106,15 +1107,15 @@ impl Compiler {
             Decl::TraitImpl(trait_impl) => {
                 // Compile each method and register as "TypeName.method_name" global.
                 //
-                // The target type is routed through `canonicalize_type_name`
-                // so the emitted global key matches the typechecker's
+                // The target type is routed through `canonical_head` so
+                // the emitted global key matches the typechecker's
                 // registration site (`register_trait_impl` in
                 // src/typechecker/mod.rs) and the VM's runtime dispatch
                 // name (`Vm::value_type_name_for_dispatch`). The
-                // collapse rules — `Range -> List`, `Fun -> Fn`,
-                // `() -> Unit`, and user-alias routing (see
-                // `src/types/canonical.rs::canonicalize_type_name`) —
-                // all apply here. For example, a
+                // collapse rules — `Range -> List`, `Fun -> Fn`, and
+                // user-alias routing (see
+                // `src/types/canonical.rs::canonical_head`) — all apply
+                // here. For example, a
                 // `trait Foo for Range(a) { fn bar(self) { ... } }` impl
                 // emits `"List.bar"` here, matches the `"List.bar"` key
                 // the typechecker registered, and is found by the VM
@@ -1122,8 +1123,7 @@ impl Compiler {
                 // receiver. Without this canonicalisation the compiler
                 // would emit `"Range.bar"` while the typechecker
                 // registers `"List.bar"`, leaving the impl unreachable.
-                let canonical_target =
-                    canonicalize_type_name(self.resolver(), trait_impl.target_type);
+                let canonical_target = self.impl_target_name(trait_impl);
 
                 for method in &trait_impl.methods {
                     let span = method.span;
@@ -2959,6 +2959,40 @@ impl Compiler {
 
     // ── Helper: qualified variants ───────────────────────────────
 
+    /// The definition `id`. A compiler with no session knows the builtin
+    /// definitions only.
+    fn def(&self, id: crate::defs::DefId) -> Option<crate::defs::Def> {
+        match &self.units.defs {
+            Some(defs) => Some(*defs.get(id)),
+            None => crate::typechecker::names::builtin_def(id),
+        }
+    }
+
+    /// The name of the type the impl `ti` is for, as the checker keys
+    /// impls and the VM dispatches: the canonical head of its target
+    /// (`Range` is `List`, an alias is the type it stands for). A target
+    /// that names no type (`trait Display for a`) keeps its name.
+    fn impl_target_name(&self, ti: &crate::ast::TraitImpl) -> Symbol {
+        let written = match ti.target_res {
+            Some(crate::defs::Res::Def(id)) => self.def(id).map(|def| TypeRef {
+                id: crate::defs::TypeId(id),
+                name: def.name,
+            }),
+            _ => {
+                let name = resolve(ti.target_type);
+                let name = if name == "()" { "Unit" } else { name.as_str() };
+                crate::defs::builtin_type_id(name).map(|id| TypeRef {
+                    id,
+                    name: ti.target_type,
+                })
+            }
+        };
+        match written {
+            Some(ty) => canonical_head(self.resolver(), ty).name,
+            None => ti.target_type,
+        }
+    }
+
     /// The value of the variant `expr` names, as the resolver resolved
     /// it (`Red`, `Color.Red`, `m.Red`, `m.Color.Red`): a nullary variant
     /// is the value, any other its constructor. Two enums may have
@@ -2967,11 +3001,7 @@ impl Compiler {
         let Some(crate::defs::Res::Def(id)) = expr.res else {
             return None;
         };
-        // A compiler with no session knows the builtin definitions only.
-        let def = match &self.units.defs {
-            Some(defs) => defs.get(id).clone(),
-            None => crate::typechecker::names::builtin_def(id)?,
-        };
+        let def = self.def(id)?;
         let crate::defs::DefKind::Variant { arity, .. } = def.kind else {
             return None;
         };
@@ -3076,7 +3106,11 @@ impl Compiler {
 
         // Builtin types are matched by their canonical name: a range type
         // is described like the list type it is the same type as.
-        let canonical = resolve(canonicalize_type_name(self.resolver(), name));
+        let canonical = if name_str == "Range" {
+            "List".to_string()
+        } else {
+            name_str.clone()
+        };
         match (canonical.as_str(), args) {
             ("Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime", []) => {
                 Ok(canonical.clone())

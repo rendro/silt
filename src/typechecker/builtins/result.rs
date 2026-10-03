@@ -17,10 +17,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av, bv, ev],
                 ty: Type::Fun(
                     vec![
-                        Type::Generic(intern("Result"), vec![a, e.clone()]),
+                        Type::builtin("Result", vec![a, e.clone()]),
                         Type::Fun(vec![Type::Var(av)], Box::new(b.clone())),
                     ],
-                    Box::new(Type::Generic(intern("Result"), vec![b, e])),
+                    Box::new(Type::builtin("Result", vec![b, e])),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -37,10 +37,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Scheme {
                 vars: vec![av, ev],
                 ty: Type::Fun(
-                    vec![
-                        Type::Generic(intern("Result"), vec![a.clone(), e]),
-                        a.clone(),
-                    ],
+                    vec![Type::builtin("Result", vec![a.clone(), e]), a.clone()],
                     Box::new(a),
                 ),
                 constraints: vec![],
@@ -60,10 +57,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av, ev, fv],
                 ty: Type::Fun(
                     vec![
-                        Type::Generic(intern("Result"), vec![a.clone(), e.clone()]),
+                        Type::builtin("Result", vec![a.clone(), e.clone()]),
                         Type::Fun(vec![e], Box::new(f.clone())),
                     ],
-                    Box::new(Type::Generic(intern("Result"), vec![a, f])),
+                    Box::new(Type::builtin("Result", vec![a, f])),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -80,14 +77,14 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Scheme {
                 vars: vec![av, ev],
                 ty: Type::Fun(
-                    vec![Type::Generic(
-                        intern("Result"),
+                    vec![Type::builtin(
+                        "Result",
                         vec![
-                            Type::Generic(intern("Result"), vec![a.clone(), e.clone()]),
+                            Type::builtin("Result", vec![a.clone(), e.clone()]),
                             e.clone(),
                         ],
                     )],
-                    Box::new(Type::Generic(intern("Result"), vec![a, e])),
+                    Box::new(Type::builtin("Result", vec![a, e])),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -106,13 +103,13 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av, bv, ev],
                 ty: Type::Fun(
                     vec![
-                        Type::Generic(intern("Result"), vec![a.clone(), e.clone()]),
+                        Type::builtin("Result", vec![a.clone(), e.clone()]),
                         Type::Fun(
                             vec![a],
-                            Box::new(Type::Generic(intern("Result"), vec![b.clone(), e.clone()])),
+                            Box::new(Type::builtin("Result", vec![b.clone(), e.clone()])),
                         ),
                     ],
-                    Box::new(Type::Generic(intern("Result"), vec![b, e])),
+                    Box::new(Type::builtin("Result", vec![b, e])),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -129,7 +126,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Scheme {
                 vars: vec![av, ev],
                 ty: Type::Fun(
-                    vec![Type::Generic(intern("Result"), vec![a, e])],
+                    vec![Type::builtin("Result", vec![a, e])],
                     Box::new(Type::Bool),
                 ),
                 constraints: vec![],
@@ -147,7 +144,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Scheme {
                 vars: vec![av, ev],
                 ty: Type::Fun(
-                    vec![Type::Generic(intern("Result"), vec![a, e])],
+                    vec![Type::builtin("Result", vec![a, e])],
                     Box::new(Type::Bool),
                 ),
                 constraints: vec![],

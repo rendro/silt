@@ -16,7 +16,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![kv, vv],
                 ty: Type::Fun(
                     vec![Type::Map(Box::new(k.clone()), Box::new(v.clone())), k],
-                    Box::new(Type::Generic(intern("Option"), vec![v])),
+                    Box::new(Type::option(v)),
                 ),
                 constraints: vec![(kv, intern("Hash"))],
                 optional_last_param: false,

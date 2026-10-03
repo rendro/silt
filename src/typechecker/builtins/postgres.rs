@@ -19,16 +19,16 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // ExecResult, and the Value(VInt|VStr|VBool|VFloat|VNull|VList)
     // ADT used for parameters.
 
-    let pg_pool = Type::Generic(intern("PgPool"), vec![]);
-    let pg_tx = Type::Generic(intern("PgTx"), vec![]);
-    let pg_error = Type::Generic(intern("PgError"), vec![]);
-    let pg_value = Type::Generic(intern("Value"), vec![]);
-    let query_result = Type::Generic(intern("QueryResult"), vec![]);
-    let exec_result = Type::Generic(intern("ExecResult"), vec![]);
+    let pg_pool = Type::builtin("PgPool", vec![]);
+    let pg_tx = Type::builtin("PgTx", vec![]);
+    let pg_error = Type::builtin("PgError", vec![]);
+    let pg_value = Type::builtin("Value", vec![]);
+    let query_result = Type::builtin("QueryResult", vec![]);
+    let exec_result = Type::builtin("ExecResult", vec![]);
 
-    let result_pool = Type::Generic(intern("Result"), vec![pg_pool.clone(), pg_error.clone()]);
-    let result_query = Type::Generic(intern("Result"), vec![query_result, pg_error.clone()]);
-    let result_exec = Type::Generic(intern("Result"), vec![exec_result, pg_error.clone()]);
+    let result_pool = Type::builtin("Result", vec![pg_pool.clone(), pg_error.clone()]);
+    let result_query = Type::builtin("Result", vec![query_result, pg_error.clone()]);
+    let result_exec = Type::builtin("Result", vec![exec_result, pg_error.clone()]);
 
     // postgres.connect: (String) -> Result(PgPool, PgError)
     //
@@ -108,7 +108,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // handle to share the transactional connection.
     {
         let (a, av) = checker.fresh_tv();
-        let inner_result = Type::Generic(intern("Result"), vec![a.clone(), pg_error.clone()]);
+        let inner_result = Type::builtin("Result", vec![a.clone(), pg_error.clone()]);
         env.define(
             intern("postgres.transact"),
             Scheme {
@@ -145,14 +145,12 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         let (a, av) = checker.fresh_tv();
         let row_type = Type::Map(
             Box::new(Type::String),
-            Box::new(Type::Generic(intern("Value"), vec![])),
+            Box::new(Type::builtin("Value", vec![])),
         );
         let _ = row_type; // element type kept abstract (see comment)
         let channel_ty = Type::Channel(Box::new(a));
-        let result_channel = Type::Generic(
-            intern("Result"),
-            vec![channel_ty, Type::Generic(intern("PgError"), vec![])],
-        );
+        let result_channel =
+            Type::builtin("Result", vec![channel_ty, Type::builtin("PgError", vec![])]);
         env.define(
             intern("postgres.stream"),
             Scheme {
@@ -161,7 +159,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     vec![
                         t,
                         Type::String,
-                        Type::List(Box::new(Type::Generic(intern("Value"), vec![]))),
+                        Type::List(Box::new(Type::builtin("Value", vec![]))),
                     ],
                     Box::new(result_channel),
                 ),
@@ -173,18 +171,16 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // postgres.cursor: (PgTx, String, List(Value), Int) -> Result(PgCursor, PgError)
     {
-        let pg_cursor = Type::Generic(intern("PgCursor"), vec![]);
-        let result_cursor = Type::Generic(
-            intern("Result"),
-            vec![pg_cursor, Type::Generic(intern("PgError"), vec![])],
-        );
+        let pg_cursor = Type::builtin("PgCursor", vec![]);
+        let result_cursor =
+            Type::builtin("Result", vec![pg_cursor, Type::builtin("PgError", vec![])]);
         env.define(
             intern("postgres.cursor"),
             Scheme::mono(Type::Fun(
                 vec![
                     pg_tx.clone(),
                     Type::String,
-                    Type::List(Box::new(Type::Generic(intern("Value"), vec![]))),
+                    Type::List(Box::new(Type::builtin("Value", vec![]))),
                     Type::Int,
                 ],
                 Box::new(result_cursor),
@@ -194,15 +190,12 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // postgres.cursor_next: (PgCursor) -> Result(List(Map(String, Value)), PgError)
     {
-        let pg_cursor = Type::Generic(intern("PgCursor"), vec![]);
+        let pg_cursor = Type::builtin("PgCursor", vec![]);
         let row_list = Type::List(Box::new(Type::Map(
             Box::new(Type::String),
-            Box::new(Type::Generic(intern("Value"), vec![])),
+            Box::new(Type::builtin("Value", vec![])),
         )));
-        let result_rows = Type::Generic(
-            intern("Result"),
-            vec![row_list, Type::Generic(intern("PgError"), vec![])],
-        );
+        let result_rows = Type::builtin("Result", vec![row_list, Type::builtin("PgError", vec![])]);
         env.define(
             intern("postgres.cursor_next"),
             Scheme::mono(Type::Fun(vec![pg_cursor], Box::new(result_rows))),
@@ -211,11 +204,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // postgres.cursor_close: (PgCursor) -> Result((), PgError)
     {
-        let pg_cursor = Type::Generic(intern("PgCursor"), vec![]);
-        let result_unit = Type::Generic(
-            intern("Result"),
-            vec![Type::Unit, Type::Generic(intern("PgError"), vec![])],
-        );
+        let pg_cursor = Type::builtin("PgCursor", vec![]);
+        let result_unit =
+            Type::builtin("Result", vec![Type::Unit, Type::builtin("PgError", vec![])]);
         env.define(
             intern("postgres.cursor_close"),
             Scheme::mono(Type::Fun(vec![pg_cursor], Box::new(result_unit))),
@@ -234,10 +225,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     {
         let (a, av) = checker.fresh_tv();
         let channel_ty = Type::Channel(Box::new(a));
-        let result_channel = Type::Generic(
-            intern("Result"),
-            vec![channel_ty, Type::Generic(intern("PgError"), vec![])],
-        );
+        let result_channel =
+            Type::builtin("Result", vec![channel_ty, Type::builtin("PgError", vec![])]);
         env.define(
             intern("postgres.listen"),
             Scheme {
@@ -256,10 +245,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // First arg polymorphic so either a PgPool or PgTx works.
     {
         let (t, tv) = checker.fresh_tv();
-        let result_unit = Type::Generic(
-            intern("Result"),
-            vec![Type::Unit, Type::Generic(intern("PgError"), vec![])],
-        );
+        let result_unit =
+            Type::builtin("Result", vec![Type::Unit, Type::builtin("PgError", vec![])]);
         env.define(
             intern("postgres.notify"),
             Scheme {

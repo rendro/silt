@@ -18,9 +18,9 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("int.parse"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(Type::Generic(
-                intern("Result"),
-                vec![Type::Int, Type::Generic(intern("ParseError"), vec![])],
+            Box::new(Type::builtin(
+                "Result",
+                vec![Type::Int, Type::builtin("ParseError", vec![])],
             )),
         )),
     );

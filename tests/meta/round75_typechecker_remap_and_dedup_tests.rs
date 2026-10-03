@@ -3,54 +3,13 @@
 //! - **TYPE-2 LATENT** — `align_tyvars_into` must walk parallel
 //!   AnonRecord and AssocProj structure so pass-3 narrowing keeps
 //!   where-clause tyvars in lock-step with the post-narrowing scheme.
-//! - **TYPE-3 LATENT** — `src/types/canonical.rs::canonicalize_type_name`
-//!   collapses the `()` alias onto `Unit`.
 //!
 //! The behavioural locks of this round (Unit trait dispatch, duplicate
 //! top-level `let`/`fn`, open/closed row unification, where-clause
 //! instantiation) are golden cases named
 //! `round75_typechecker_remap_and_dedup_tests__*` under tests/golden/meta/.
 
-use silt::intern::{intern, resolve};
-use silt::types::canonical::{Resolver, canonicalize_type_name};
-
-#[test]
-fn type3_canonical_module_canonicalize_collapses_paren_paren_to_unit() {
-    let res = Resolver::new();
-    let canonical = canonicalize_type_name(&res, intern("()"));
-    assert_eq!(
-        resolve(canonical),
-        "Unit",
-        "src/types/canonical.rs::canonicalize_type_name should collapse \
-         the surface alias \"()\" onto \"Unit\" — mirror of the parallel \
-         collapse in src/typechecker/mod.rs (round 75 TYPE-3 LATENT)."
-    );
-}
-
-#[test]
-fn type3_canonical_module_canonicalize_unrelated_names_round_trip() {
-    // Ensure the `() → Unit` collapse doesn't perturb other names.
-    // Note: `()` is the alias; it does NOT round-trip — it collapses
-    // to "Unit". Everything else round-trips.
-    let res = Resolver::new();
-    for n in [
-        "Int", "List", "Map", "Set", "Tuple", "Foo", "Bar", "Bool", "Unit",
-    ] {
-        let s = intern(n);
-        assert_eq!(
-            canonicalize_type_name(&res, s),
-            s,
-            "expected round-trip for {n}"
-        );
-    }
-    // `()` does NOT round-trip — it collapses to "Unit".
-    let alias = intern("()");
-    assert_eq!(
-        resolve(canonicalize_type_name(&res, alias)),
-        "Unit",
-        "the `()` alias should collapse onto `Unit`, not round-trip"
-    );
-}
+use silt::intern::intern;
 
 #[test]
 fn type2_align_tyvars_walks_anon_record_fields() {

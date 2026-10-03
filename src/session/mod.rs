@@ -103,12 +103,11 @@ pub struct ModuleAnalysis {
     pub exports: ModuleExports,
     /// The inferred type of each top-level value the module binds.
     pub top_level: HashMap<crate::intern::Symbol, Type>,
-    /// Every method a value has in the module, as (canonical type name,
-    /// method name).
-    pub methods: Vec<(Symbol, Symbol)>,
-    /// The fields of each record type the module sees, by the name it is
-    /// written with.
-    pub record_fields: HashMap<Symbol, Vec<(Symbol, Type)>>,
+    /// Every method a value has in the module, as (the type impls key
+    /// the value's type by, method name).
+    pub methods: Vec<(crate::types::TypeRef, Symbol)>,
+    /// The fields of each record type the module sees.
+    pub record_fields: HashMap<crate::types::TypeRef, Vec<(Symbol, Type)>>,
     /// The module's type errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
     /// The type aliases and associated-type bindings the module sees:
@@ -453,7 +452,8 @@ impl Session {
                 Arc::make_mut(&mut self.defs),
             );
             let mut resolver = Resolver::new();
-            let check = typechecker::check_host_module(&mut ast, &mut resolver, self.defs.clone());
+            let check =
+                typechecker::check_host_module(&mut ast, id, &mut resolver, self.defs.clone());
             return ModuleAnalysis {
                 ast: Arc::new(ast),
                 scope: resolution.scope,
@@ -542,6 +542,7 @@ impl Session {
                 poisoned,
                 resolver: &mut resolver,
                 defs: self.defs.clone(),
+                module: id,
             },
         );
         ModuleAnalysis {

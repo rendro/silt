@@ -130,7 +130,7 @@ pub(super) fn build_signature_from_def(
             // internal descriptor name.
             let param_label = match pty {
                 Type::Generic(sym, args)
-                    if crate::intern::resolve(*sym) == "TypeOf" && args.len() == 1 =>
+                    if sym.is_builtin(crate::defs::TYPE_OF) && args.len() == 1 =>
                 {
                     format!("type {pname}")
                 }

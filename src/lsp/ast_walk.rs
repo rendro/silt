@@ -723,11 +723,11 @@ mod tests {
     #[test]
     fn test_has_unresolved_vars_nested() {
         assert!(has_unresolved_vars(&Type::Record(
-            crate::intern::intern("Foo"),
+            crate::types::TypeRef::test("Foo"),
             vec![(crate::intern::intern("x"), Type::Var(0))]
         )));
         assert!(!has_unresolved_vars(&Type::Record(
-            crate::intern::intern("Foo"),
+            crate::types::TypeRef::test("Foo"),
             vec![(crate::intern::intern("x"), Type::Int)]
         )));
     }

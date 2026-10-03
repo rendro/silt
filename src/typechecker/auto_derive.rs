@@ -67,9 +67,13 @@
 //! `if cx != 0 { cx } else { ... }`-style chaining (encoded as nested
 //! `match cx { 0 -> ..., _ -> cx }`).
 
+use std::collections::HashMap;
+
 use crate::ast::*;
+use crate::defs::Res;
 use crate::intern::{Symbol, intern};
 use crate::source::Span;
+use crate::types::TypeRef;
 
 /// The synthesis of the derived impls of one type. Every node it makes
 /// takes `span`, the span of the type's declaration, so a diagnostic or a
@@ -78,7 +82,11 @@ pub(super) struct Derive {
     pub(super) span: Span,
     /// The type the impls are for. A variant pattern is written with it
     /// (`Shape.Circle(r)`): two enums may have variants of one name.
-    pub(super) ty: Symbol,
+    pub(super) ty: TypeRef,
+    /// What each variant of the type resolves to: every node the
+    /// synthesis makes that names the type or a variant is resolved
+    /// already.
+    pub(super) variants: HashMap<Symbol, Res>,
 }
 
 impl Derive {
@@ -91,10 +99,10 @@ impl Derive {
     }
 
     fn ctor_pat(&self, name: Symbol, args: Vec<Pattern>) -> Pattern {
-        Pattern::new(
+        let mut pattern = Pattern::new(
             PatternKind::Constructor {
                 qualifier: vec![Qualifier {
-                    name: self.ty,
+                    name: self.ty.name,
                     span: self.span,
                 }],
                 name,
@@ -102,7 +110,14 @@ impl Derive {
                 args,
             },
             self.span,
-        )
+        );
+        pattern.res = self.variants.get(&name).copied();
+        pattern
+    }
+
+    /// What the type resolves to.
+    fn ty_res(&self) -> Option<Res> {
+        Some(Res::Def(self.ty.id.0))
     }
 
     fn tuple_pat(&self, elems: Vec<Pattern>) -> Pattern {
@@ -358,7 +373,7 @@ impl Derive {
     /// `Box(a)` → `Generic(Box, [Named(a)])`; non-generic `Color` →
     /// `Named(Color)`.
     fn type_te(&self, name: Symbol, params: &[Symbol]) -> TypeExpr {
-        if params.is_empty() {
+        let mut te = if params.is_empty() {
             self.named_te(name)
         } else {
             let args: Vec<TypeExpr> = params.iter().map(|p| self.named_te(*p)).collect();
@@ -371,7 +386,9 @@ impl Derive {
                 },
                 self.span,
             )
-        }
+        };
+        te.res = self.ty_res();
+        te
     }
 
     /// Build a `Param { kind: Data, pattern: Ident(name), ty: Some(<ty>) }`.
@@ -449,7 +466,7 @@ impl Derive {
             trait_args: Vec::new(),
             target_module: None,
             target_type: type_name,
-            target_res: None,
+            target_res: self.ty_res(),
             target_type_span: self.span,
             target_type_args,
             target_param_names,
@@ -863,7 +880,7 @@ impl Derive {
 
     // ── Display on enum ──────────────────────────────────────────────────
 
-    /// Detect whether `type_name` is one of the stdlib error enums whose
+    /// Detect whether the type is one of the stdlib error enums whose
     /// `Error::message()` is the canonical user-facing rendering. The
     /// authoritative registry lives in `module.rs` (same one consulted by
     /// `vm::dispatch::render_stdlib_error_message`), so this stays in
@@ -877,11 +894,10 @@ impl Derive {
     /// dual-shape bug the round-73f fix was meant to close. By delegating
     /// `display(self)` to `self.message()` for stdlib error enums, both
     /// shapes converge on the same rendering.
-    fn is_stdlib_error_enum(&self, type_name: Symbol) -> bool {
-        let name = crate::intern::resolve(type_name);
+    fn is_stdlib_error_enum(&self) -> bool {
         crate::module::builtin_error_enum_variants_with_arity()
             .iter()
-            .any(|(enum_name, _)| *enum_name == name.as_str())
+            .any(|(enum_name, _)| self.ty.is_builtin(enum_name))
     }
 
     pub(super) fn synth_display_impl_for_enum(
@@ -895,7 +911,7 @@ impl Derive {
         // is also routed through `message()` via the
         // `render_stdlib_error_message` arm in `value.rs::Display`). User
         // enums keep the constructor-form body.
-        if self.is_stdlib_error_enum(type_name) {
+        if self.is_stdlib_error_enum() {
             let self_sym = intern("self");
             let self_te = self.type_te(type_name, type_params);
             let body = self.method_call(self.ident_expr(self_sym), intern("message"), vec![]);

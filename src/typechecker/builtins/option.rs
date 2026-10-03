@@ -16,10 +16,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av, bv],
                 ty: Type::Fun(
                     vec![
-                        Type::Generic(intern("Option"), vec![a.clone()]),
+                        Type::option(a.clone()),
                         Type::Fun(vec![a], Box::new(b.clone())),
                     ],
-                    Box::new(Type::Generic(intern("Option"), vec![b])),
+                    Box::new(Type::option(b)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -37,13 +37,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars: vec![av, bv],
                 ty: Type::Fun(
                     vec![
-                        Type::Generic(intern("Option"), vec![a.clone()]),
-                        Type::Fun(
-                            vec![a],
-                            Box::new(Type::Generic(intern("Option"), vec![b.clone()])),
-                        ),
+                        Type::option(a.clone()),
+                        Type::Fun(vec![a], Box::new(Type::option(b.clone()))),
                     ],
-                    Box::new(Type::Generic(intern("Option"), vec![b])),
+                    Box::new(Type::option(b)),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -58,10 +55,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("option.unwrap_or"),
             Scheme {
                 vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Generic(intern("Option"), vec![a.clone()]), a.clone()],
-                    Box::new(a),
-                ),
+                ty: Type::Fun(vec![Type::option(a.clone()), a.clone()], Box::new(a)),
                 constraints: vec![],
                 optional_last_param: false,
             },
@@ -77,8 +71,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Scheme {
                 vars: vec![av, ev],
                 ty: Type::Fun(
-                    vec![Type::Generic(intern("Option"), vec![a.clone()]), e.clone()],
-                    Box::new(Type::Generic(intern("Result"), vec![a, e])),
+                    vec![Type::option(a.clone()), e.clone()],
+                    Box::new(Type::builtin("Result", vec![a, e])),
                 ),
                 constraints: vec![],
                 optional_last_param: false,
@@ -93,10 +87,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("option.is_some"),
             Scheme {
                 vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Generic(intern("Option"), vec![a])],
-                    Box::new(Type::Bool),
-                ),
+                ty: Type::Fun(vec![Type::option(a)], Box::new(Type::Bool)),
                 constraints: vec![],
                 optional_last_param: false,
             },
@@ -110,10 +101,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("option.is_none"),
             Scheme {
                 vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Generic(intern("Option"), vec![a])],
-                    Box::new(Type::Bool),
-                ),
+                ty: Type::Fun(vec![Type::option(a)], Box::new(Type::Bool)),
                 constraints: vec![],
                 optional_last_param: false,
             },

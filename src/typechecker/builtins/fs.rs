@@ -16,15 +16,15 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // arms receive a typed enum that can be destructured. Phase 1 of
     // the stdlib error redesign (implemented and proposal removed in
     // commit 7680536).
-    let io_error_ty = Type::Generic(intern("IoError"), vec![]);
+    let io_error_ty = Type::builtin("IoError", vec![]);
 
     // fs.list_dir: (String) -> Result(List(String), IoError)
     env.define(
         intern("fs.list_dir"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(Type::Generic(
-                intern("Result"),
+            Box::new(Type::builtin(
+                "Result",
                 vec![Type::List(Box::new(Type::String)), io_error_ty.clone()],
             )),
         )),
@@ -33,8 +33,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fs.mkdir / fs.remove: (String) -> Result(Unit, IoError)
     let string_to_result = Scheme::mono(Type::Fun(
         vec![Type::String],
-        Box::new(Type::Generic(
-            intern("Result"),
+        Box::new(Type::builtin(
+            "Result",
             vec![Type::Unit, io_error_ty.clone()],
         )),
     ));
@@ -45,8 +45,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fs.rename / fs.copy: (String, String) -> Result(Unit, IoError)
     let ss_to_result = Scheme::mono(Type::Fun(
         vec![Type::String, Type::String],
-        Box::new(Type::Generic(
-            intern("Result"),
+        Box::new(Type::builtin(
+            "Result",
             vec![Type::Unit, io_error_ty.clone()],
         )),
     ));
@@ -68,7 +68,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // field pre-Linux-4.11) do not expose the respective timestamp, in
     // which case `None` is returned rather than failing the whole stat.
     let date_ty = Type::Record(
-        intern("Date"),
+        TypeRef::builtin("Date"),
         vec![
             (intern("year"), Type::Int),
             (intern("month"), Type::Int),
@@ -76,7 +76,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
     let time_of_day_ty = Type::Record(
-        intern("Time"),
+        TypeRef::builtin("Time"),
         vec![
             (intern("hour"), Type::Int),
             (intern("minute"), Type::Int),
@@ -85,10 +85,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
     let datetime_ty = Type::Record(
-        intern("DateTime"),
+        TypeRef::builtin("DateTime"),
         vec![(intern("date"), date_ty), (intern("time"), time_of_day_ty)],
     );
-    let opt_datetime_ty = Type::Generic(intern("Option"), vec![datetime_ty.clone()]);
+    let opt_datetime_ty = Type::option(datetime_ty.clone());
     let file_stat_fields = vec![
         (intern("size"), Type::Int),
         (intern("is_file"), Type::Bool),
@@ -100,9 +100,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         (intern("accessed"), opt_datetime_ty.clone()),
         (intern("created"), opt_datetime_ty),
     ];
-    let file_stat_ty = Type::Record(intern("FileStat"), file_stat_fields.clone());
+    let file_stat_ty = Type::Record(TypeRef::builtin("FileStat"), file_stat_fields.clone());
     checker.records.insert(
-        intern("FileStat"),
+        TypeRef::builtin("FileStat"),
         RecordInfo {
             fields: file_stat_fields,
             defined_in: super::super::TypeChecker::builtin_pkg(),
@@ -119,8 +119,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("fs.stat"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(Type::Generic(
-                intern("Result"),
+            Box::new(Type::builtin(
+                "Result",
                 vec![file_stat_ty, io_error_ty.clone()],
             )),
         )),
@@ -131,8 +131,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("fs.read_link"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(Type::Generic(
-                intern("Result"),
+            Box::new(Type::builtin(
+                "Result",
                 vec![Type::String, io_error_ty.clone()],
             )),
         )),
@@ -142,8 +142,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fs.glob: (String) -> Result(List(String), IoError)
     let string_to_result_list_string = Scheme::mono(Type::Fun(
         vec![Type::String],
-        Box::new(Type::Generic(
-            intern("Result"),
+        Box::new(Type::builtin(
+            "Result",
             vec![Type::List(Box::new(Type::String)), io_error_ty],
         )),
     ));

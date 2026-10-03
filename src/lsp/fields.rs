@@ -10,7 +10,7 @@ use crate::types::Type;
 
 /// The fields of each record type a module sees, by the name it is
 /// written with (`ModuleAnalysis::record_fields`).
-pub(super) type RecordFields = HashMap<Symbol, Vec<(Symbol, Type)>>;
+pub(super) type RecordFields = HashMap<crate::types::TypeRef, Vec<(Symbol, Type)>>;
 
 /// Check if the cursor is on the field name of a `FieldAccess` expression.
 /// If so, return the field's type by looking it up in the receiver's record type.
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn test_get_field_type_record() {
         let ty = Type::Record(
-            crate::intern::intern("User"),
+            crate::types::TypeRef::test("User"),
             vec![
                 (crate::intern::intern("name"), Type::String),
                 (crate::intern::intern("age"), Type::Int),
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn test_get_field_type_missing_field() {
         let ty = Type::Record(
-            crate::intern::intern("Point"),
+            crate::types::TypeRef::test("Point"),
             vec![
                 (crate::intern::intern("x"), Type::Float),
                 (crate::intern::intern("y"), Type::Float),
@@ -352,10 +352,13 @@ mod tests {
             kind: ExprKind::Ident(crate::intern::intern("d")),
             span: at(0, 1),
             ty: Some(Type::Record(
-                crate::intern::intern("Outer"),
+                crate::types::TypeRef::test("Outer"),
                 vec![(
                     inner_sym,
-                    Type::Record(crate::intern::intern("Inner"), vec![(value_sym, Type::Int)]),
+                    Type::Record(
+                        crate::types::TypeRef::test("Inner"),
+                        vec![(value_sym, Type::Int)],
+                    ),
                 )],
             )),
             res: None,
@@ -366,7 +369,7 @@ mod tests {
             kind: ExprKind::FieldAccess(Box::new(d_expr), inner_sym, at(2, 7)),
             span: at(0, 7),
             ty: Some(Type::Record(
-                crate::intern::intern("Inner"),
+                crate::types::TypeRef::test("Inner"),
                 vec![(value_sym, Type::Int)],
             )),
             res: None,
@@ -417,10 +420,13 @@ mod tests {
             kind: ExprKind::Ident(crate::intern::intern("d")),
             span: at(0, 1),
             ty: Some(Type::Record(
-                crate::intern::intern("Outer"),
+                crate::types::TypeRef::test("Outer"),
                 vec![(
                     inner_sym,
-                    Type::Record(crate::intern::intern("Inner"), vec![(value_sym, Type::Int)]),
+                    Type::Record(
+                        crate::types::TypeRef::test("Inner"),
+                        vec![(value_sym, Type::Int)],
+                    ),
                 )],
             )),
             res: None,
@@ -430,7 +436,7 @@ mod tests {
             kind: ExprKind::FieldAccess(Box::new(d_expr), inner_sym, at(2, 7)),
             span: at(0, 7),
             ty: Some(Type::Record(
-                crate::intern::intern("Inner"),
+                crate::types::TypeRef::test("Inner"),
                 vec![(value_sym, Type::Int)],
             )),
             res: None,
@@ -461,7 +467,7 @@ mod tests {
         assert_eq!(name, "inner");
         // `inner` field type is Record("Inner", ...)
         if let Type::Record(sym, _) = &ty {
-            assert_eq!(crate::intern::resolve(*sym), "Inner");
+            assert_eq!(crate::intern::resolve(sym.name), "Inner");
         } else {
             panic!("expected Record type for 'inner' field, got {:?}", ty);
         }

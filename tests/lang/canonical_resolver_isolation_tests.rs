@@ -50,7 +50,10 @@ fn two_resolvers_do_not_share_aliases() {
     let mut a = Resolver::new();
     let b = Resolver::new();
 
-    let name = silt::intern::intern("ResolverIso_Mass");
+    let name = silt::types::TypeRef {
+        id: silt::defs::TypeId(silt::defs::DefId(u32::MAX - 1)),
+        name: silt::intern::intern("ResolverIso_Mass"),
+    };
     a.register_alias(
         name,
         AliasInfo {

@@ -14,9 +14,9 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("float.parse"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(Type::Generic(
-                intern("Result"),
-                vec![Type::Float, Type::Generic(intern("ParseError"), vec![])],
+            Box::new(Type::builtin(
+                "Result",
+                vec![Type::Float, Type::builtin("ParseError", vec![])],
             )),
         )),
     );

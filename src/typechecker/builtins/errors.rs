@@ -7,9 +7,7 @@
 //! change in this phase — the enums simply become available.
 //!
 //! Each variant name is module-prefixed (`IoNotFound`, `JsonSyntax`,
-//! etc.) to avoid silt's one-to-one `variant_to_enum` collision, which
-//! prevents two enums from sharing a variant name. This is deliberate
-//! and final.
+//! etc.); renaming them belongs to the stdlib conventions.
 
 use super::super::*;
 use super::docs::attach_module_docs;
@@ -217,15 +215,14 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         })
         .collect();
     for enum_name in &enum_names {
+        let enum_ty = TypeRef::builtin(enum_name);
         for trait_name in &["Error", "Display"] {
-            checker
-                .trait_impl_set
-                .insert((intern(trait_name), intern(enum_name)));
+            checker.trait_impl_set.insert((intern(trait_name), enum_ty));
         }
-        let self_ty = Type::Generic(intern(enum_name), vec![]);
+        let self_ty = Type::Generic(enum_ty, vec![]);
         // Error::message(self) -> String
         checker.method_table.insert(
-            (intern(enum_name), intern("message")),
+            (enum_ty, intern("message")),
             MethodEntry {
                 method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
                 span: dummy_span,
@@ -238,7 +235,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         // via the Error trait's Display supertrait requirement, so
         // calling `err.display()` also works.
         checker.method_table.insert(
-            (intern(enum_name), intern("display")),
+            (enum_ty, intern("display")),
             MethodEntry {
                 method_type: Type::Fun(vec![self_ty], Box::new(Type::String)),
                 span: dummy_span,
@@ -298,11 +295,11 @@ fn register_enum(
     enum_name: &'static str,
     variants: &[(&'static str, &[Type])],
 ) {
-    let enum_sym = intern(enum_name);
-    let result_ty = Type::Generic(enum_sym, vec![]);
+    let enum_ty = TypeRef::builtin(enum_name);
+    let result_ty = Type::Generic(enum_ty, vec![]);
 
     checker.enums.insert(
-        enum_sym,
+        enum_ty,
         EnumInfo {
             params: vec![],
             param_var_ids: vec![],
@@ -319,7 +316,6 @@ fn register_enum(
 
     for (variant_name, fields) in variants {
         let variant_sym = intern(variant_name);
-        checker.variant_to_enum.insert(variant_sym, enum_sym);
         let scheme = if fields.is_empty() {
             // Nullary: register as a value of the enum type.
             Scheme::mono(result_ty.clone())

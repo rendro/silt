@@ -13,7 +13,6 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::lexer::{KEYWORD_LITERALS, KEYWORDS};
 use crate::module;
 use crate::types::Type;
-use crate::types::canonical::canonical_name;
 
 use super::Server;
 use super::ast_walk::find_ident_type_by_name;
@@ -278,7 +277,11 @@ impl Server {
         // 3. A record type's name as the prefix (`Point.|`): offer its
         //    fields even though the prefix is not a value binding.
         if receiver_ty.is_none()
-            && let Some(fields) = checked.record_fields.get(&intern(prefix))
+            && let Some(fields) = checked
+                .record_fields
+                .iter()
+                .find(|(ty, _)| resolve(ty.name) == prefix)
+                .map(|(_, fields)| fields)
         {
             for (name, field_ty) in fields {
                 let label = resolve(*name);
@@ -463,25 +466,25 @@ fn member_item(view: &ModuleView, member: Symbol, kind: MemberKind) -> Completio
 /// it.
 struct Checked {
     program: Arc<Program>,
-    methods: Vec<(Symbol, Symbol)>,
+    methods: Vec<(crate::types::TypeRef, Symbol)>,
     record_fields: RecordFields,
 }
 
 // ── Method enumeration for dot-completion ──────────────────────────
 
 /// The names of the methods a value of type `receiver_ty` has, from the
-/// checker's `methods` (canonical type name, method name): those of the
-/// type's canonical name, or every method when the type is unknown.
-fn methods_for_receiver(methods: &[(Symbol, Symbol)], receiver_ty: Option<&Type>) -> Vec<String> {
-    // `_` / `<anon>` / `Never` are the canonical names of unresolved
-    // variables, anonymous records and bottom-typed expressions: they
-    // name no dispatch head, so they do not narrow.
-    let head = receiver_ty
-        .map(canonical_name)
-        .filter(|canon| !matches!(canon.as_str(), "_" | "<anon>" | "Never"));
+/// checker's `methods` (the type impls key it by, method name): those of
+/// the type's head, or every method when the type is unknown.
+fn methods_for_receiver(
+    methods: &[(crate::types::TypeRef, Symbol)],
+    receiver_ty: Option<&Type>,
+) -> Vec<String> {
+    // Unresolved variables, anonymous records and bottom-typed
+    // expressions have no dispatch head: they do not narrow.
+    let head = receiver_ty.and_then(crate::types::canonical::head_of_canon);
     let mut names: Vec<String> = methods
         .iter()
-        .filter(|(ty, _)| head.as_ref().is_none_or(|head| resolve(*ty) == *head))
+        .filter(|(ty, _)| head.is_none_or(|head| *ty == head))
         .map(|(_, method)| resolve(*method))
         .collect();
     names.sort();
@@ -658,7 +661,7 @@ mod tests {
 
     /// The methods of a user impl and of the builtin derives, as the
     /// session's analysis of `source` has them.
-    fn methods(source: &str) -> Vec<(Symbol, Symbol)> {
+    fn methods(source: &str) -> Vec<(crate::types::TypeRef, Symbol)> {
         let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
         session.analyze(file);
         session

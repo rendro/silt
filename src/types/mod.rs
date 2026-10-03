@@ -8,7 +8,8 @@ pub mod canonical;
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::intern::Symbol;
+use crate::defs::TypeId;
+use crate::intern::{Symbol, intern};
 
 // ── Type representation ─────────────────────────────────────────────
 
@@ -25,6 +26,71 @@ pub enum RowTail {
     /// The record may have additional fields. The TyVar is a row variable
     /// that unification can bind to a record carrying the leftover fields.
     Var(TyVar),
+}
+
+/// A record, enum or alias type, or a builtin type that has no variant of
+/// its own in [`Type`] (`Option`, `time.Duration`): its definition, and
+/// the name it is declared with, for display. Two refs are one type when
+/// their ids are equal; two types of one name from two modules are not.
+#[derive(Debug, Clone, Copy)]
+pub struct TypeRef {
+    pub id: TypeId,
+    pub name: Symbol,
+}
+
+impl TypeRef {
+    /// The builtin type `name`. Panics when no builtin type has that
+    /// name.
+    pub fn builtin(name: &str) -> TypeRef {
+        let id = crate::defs::builtin_type_id(name)
+            .unwrap_or_else(|| panic!("'{name}' is not a builtin type"));
+        TypeRef {
+            id,
+            name: intern(name),
+        }
+    }
+
+    /// Whether this is the builtin type `name`, and not a type of a
+    /// module that has the same name.
+    pub fn is_builtin(&self, name: &str) -> bool {
+        crate::defs::builtin_type_id(name) == Some(self.id)
+    }
+}
+
+#[cfg(test)]
+impl TypeRef {
+    /// A type of a module, named `name`, with an id no definition table
+    /// hands out (unit tests that build types by hand).
+    pub fn test(name: &str) -> TypeRef {
+        let k = name
+            .bytes()
+            .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+            % 100_000;
+        TypeRef {
+            id: TypeId(crate::defs::DefId(u32::MAX - 1 - k)),
+            name: intern(name),
+        }
+    }
+}
+
+impl PartialEq for TypeRef {
+    fn eq(&self, other: &TypeRef) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for TypeRef {}
+
+impl std::hash::Hash for TypeRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl std::fmt::Display for TypeRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
 }
 
 /// The core type representation used during inference.
@@ -49,10 +115,10 @@ pub enum Type {
     Range(Box<Type>),
     /// Tuple type (fixed length, heterogeneous).
     Tuple(Vec<Type>),
-    /// A nominal record type: name + field name/type pairs.
-    Record(Symbol, Vec<(Symbol, Type)>),
-    /// A generic/parameterized type like Result(Int, String).
-    Generic(Symbol, Vec<Type>),
+    /// A nominal record type: the type and its field name/type pairs.
+    Record(TypeRef, Vec<(Symbol, Type)>),
+    /// A named type with its arguments, like `Result(Int, String)`.
+    Generic(TypeRef, Vec<Type>),
     /// Map type: key type -> value type.
     Map(Box<Type>, Box<Type>),
     /// Set type: element type.
@@ -86,6 +152,42 @@ pub enum Type {
         fields: BTreeMap<Symbol, Type>,
         tail: RowTail,
     },
+}
+
+impl Type {
+    /// The builtin type `name` with `args` (`Option(a)`, `time.Duration`).
+    pub fn builtin(name: &str, args: Vec<Type>) -> Type {
+        Type::Generic(TypeRef::builtin(name), args)
+    }
+
+    /// `Option(t)`.
+    pub fn option(t: Type) -> Type {
+        Type::builtin("Option", vec![t])
+    }
+
+    /// `Result(t, e)`.
+    pub fn result(t: Type, e: Type) -> Type {
+        Type::builtin("Result", vec![t, e])
+    }
+
+    /// `TypeOf(t)`: the type of the type `t` written as a value.
+    pub fn type_of(t: Type) -> Type {
+        Type::builtin(crate::defs::TYPE_OF, vec![t])
+    }
+
+    /// The named type this is (a record, an enum, an alias, a builtin
+    /// with arguments); `None` for any other type.
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        match self {
+            Type::Record(r, _) | Type::Generic(r, _) => Some(*r),
+            _ => None,
+        }
+    }
+
+    /// Whether this is the builtin type `name` (with any arguments).
+    pub fn is_builtin(&self, name: &str) -> bool {
+        self.type_ref().is_some_and(|r| r.is_builtin(name))
+    }
 }
 
 impl std::fmt::Display for Type {
@@ -143,7 +245,7 @@ impl std::fmt::Display for Type {
                 // `TypeOf(a)` is the internal lowering of a `type a`
                 // parameter. Render it as `type a` so diagnostics use the
                 // surface syntax the user wrote — never leak `TypeOf`.
-                if crate::intern::resolve(*name) == "TypeOf" && args.len() == 1 {
+                if name.is_builtin(crate::defs::TYPE_OF) && args.len() == 1 {
                     return write!(f, "type {}", args[0]);
                 }
                 write!(f, "{name}")?;

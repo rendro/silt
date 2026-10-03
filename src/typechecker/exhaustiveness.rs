@@ -363,28 +363,17 @@ impl TypeChecker {
     }
 
     /// The enum that owns the variant a constructor pattern names, with
-    /// its name: the one the resolver resolved it to; in a pattern the
-    /// checker made itself, the enum written before it (`Shape.Circle`)
-    /// or the one its bare name is registered for.
+    /// its type (see `pattern_variant_enum`).
     pub(super) fn pattern_constructor_enum(
         &self,
         pattern: &Pattern,
-    ) -> Option<(Symbol, &EnumInfo)> {
-        let PatternKind::Constructor {
-            qualifier, name, ..
-        } = &pattern.kind
-        else {
+    ) -> Option<(TypeRef, &EnumInfo)> {
+        let PatternKind::Constructor { qualifier, .. } = &pattern.kind else {
             return None;
         };
-        let enum_name = match self.res_variant_enum(pattern.res) {
-            Some(enum_name) => enum_name,
-            None => match qualifier.last() {
-                Some(q) if self.enums.contains_key(&q.name) => q.name,
-                _ => self.variant_to_enum.get(name).copied()?,
-            },
-        };
-        let info = self.enums.get(&enum_name)?;
-        Some((enum_name, info))
+        let enum_ty = self.pattern_variant_enum(pattern.res, qualifier)?;
+        let info = self.enums.get(&enum_ty)?;
+        Some((enum_ty, info))
     }
 
     /// Expand *every* or-pattern in `pat`, at any nesting level, into the
@@ -946,7 +935,7 @@ impl TypeChecker {
     fn is_record_useful(
         &self,
         matrix: &[&Pattern],
-        _rec_name: Symbol,
+        _rec_name: TypeRef,
         rec_fields: &[(Symbol, Type)],
         depth: usize,
     ) -> bool {
@@ -1703,9 +1692,7 @@ impl TypeChecker {
             _ => None,
         };
         if let Some(enum_name) = parent_enum
-            .as_ref()
-            .or_else(|| self.variant_to_enum.get(&ctor_name))
-            && let Some(enum_info) = self.enums.get(enum_name)
+            && let Some(enum_info) = self.enums.get(&enum_name)
             && let Some(variant) = enum_info.variants.iter().find(|v| v.name == ctor_name)
         {
             if variant.field_types.len() == 1 {
@@ -2152,7 +2139,10 @@ fn main() { area(Circle(1.0)) }
         // Register a recursive enum `Expr { Leaf(Int), Pair(Expr, Expr) }`.
         // (Constructed directly because writing a depth-20+ nested pattern
         // in source would be unwieldy and fragile.)
-        let expr_name = intern("ExhaustivenessDepthExpr");
+        let expr_name = TypeRef {
+            id: crate::defs::TypeId(crate::defs::DefId(u32::MAX - 1)),
+            name: intern("ExhaustivenessDepthExpr"),
+        };
         let leaf_name = intern("ExhaustivenessDepthLeaf");
         let pair_name = intern("ExhaustivenessDepthPair");
         let expr_ty = Type::Generic(expr_name, vec![]);
@@ -2175,8 +2165,6 @@ fn main() { area(Circle(1.0)) }
                 defined_in: super::TypeChecker::builtin_pkg(),
             },
         );
-        tc.variant_to_enum.insert(leaf_name, expr_name);
-        tc.variant_to_enum.insert(pair_name, expr_name);
 
         // Build a two-arm match that IS logically exhaustive — every
         // `Expr` is either a `Leaf` or a `Pair`. Pre-fix, the Maranget

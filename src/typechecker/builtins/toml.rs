@@ -16,13 +16,13 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // surfaces `Err(TomlError)` instead of `Err(String)` so downstream
     // match arms can destructure the typed enum, and can fall back to
     // `e.message()` via `trait Error for TomlError`.
-    let toml_error_ty = Type::Generic(intern("TomlError"), vec![]);
+    let toml_error_ty = Type::builtin("TomlError", vec![]);
 
     // toml.parse: (String, type a) -> Result(a, TomlError)
     {
         let (a, av) = checker.fresh_tv();
-        let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
-        let result_ty = Type::Generic(intern("Result"), vec![a, toml_error_ty.clone()]);
+        let descriptor_ty = Type::type_of(a.clone());
+        let result_ty = Type::builtin("Result", vec![a, toml_error_ty.clone()]);
         env.define(
             intern("toml.parse"),
             Scheme {
@@ -37,9 +37,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // toml.parse_list: (String, type a) -> Result(List(a), TomlError)
     {
         let (a, av) = checker.fresh_tv();
-        let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
-        let result_ty = Type::Generic(
-            intern("Result"),
+        let descriptor_ty = Type::type_of(a.clone());
+        let result_ty = Type::builtin(
+            "Result",
             vec![Type::List(Box::new(a)), toml_error_ty.clone()],
         );
         env.define(
@@ -56,9 +56,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // toml.parse_map: (String, type v) -> Result(Map(String, v), TomlError)
     {
         let (a, av) = checker.fresh_tv();
-        let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
-        let result_ty = Type::Generic(
-            intern("Result"),
+        let descriptor_ty = Type::type_of(a.clone());
+        let result_ty = Type::builtin(
+            "Result",
             vec![
                 Type::Map(Box::new(Type::String), Box::new(a)),
                 toml_error_ty.clone(),
@@ -82,7 +82,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // Result to keep the API honest.
     {
         let (a, av) = checker.fresh_tv();
-        let result_ty = Type::Generic(intern("Result"), vec![Type::String, toml_error_ty.clone()]);
+        let result_ty = Type::builtin("Result", vec![Type::String, toml_error_ty.clone()]);
         env.define(
             intern("toml.stringify"),
             Scheme {
@@ -97,7 +97,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // toml.pretty: (a) -> Result(String, TomlError)
     {
         let (a, av) = checker.fresh_tv();
-        let result_ty = Type::Generic(intern("Result"), vec![Type::String, toml_error_ty]);
+        let result_ty = Type::builtin("Result", vec![Type::String, toml_error_ty]);
         env.define(
             intern("toml.pretty"),
             Scheme {
