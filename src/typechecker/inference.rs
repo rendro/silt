@@ -342,6 +342,48 @@ impl TypeChecker {
     /// via `type_name_for_impl`; for unresolved-tyvar receivers it defers
     /// via `pending_where_constraints` and resolves during
     /// `finalize_deferred_checks` after all Calls have unified args.
+    /// Report a call of `method`, of the trait `trait_name` another module
+    /// declares without `pub`: its methods can be called only there.
+    pub(super) fn private_method(&mut self, trait_name: Symbol, method: Symbol, span: Span) {
+        let module = self.private_traits[&trait_name];
+        self.errors.push(
+            Diagnostic::error(
+                Code::PrivateItem,
+                span,
+                format!(
+                    "method `{method}` belongs to trait '{trait_name}', which is private to \
+                     module '{module}'"
+                ),
+            )
+            .with_help(format!(
+                "mark it `pub trait {trait_name}` in module '{module}' to call its methods \
+                 from another module"
+            )),
+        );
+    }
+
+    /// The private trait of another module that alone provides `method`:
+    /// every impl that has a method of that name is of such a trait, and
+    /// no trait this module may name declares it.
+    fn only_private_provider(&self, method: Symbol) -> Option<Symbol> {
+        let mut providers = self
+            .method_table
+            .iter()
+            .filter(|((_, m), _)| *m == method)
+            .map(|(_, entry)| entry.trait_name);
+        let first = providers.next()??;
+        if !self.private_traits.contains_key(&first)
+            || providers.any(|t| t.is_none_or(|t| !self.private_traits.contains_key(&t)))
+        {
+            return None;
+        }
+        let visible_declares = self.traits.iter().any(|(name, info)| {
+            !self.private_traits.contains_key(name)
+                && info.methods.iter().any(|(n, _)| *n == method)
+        });
+        (!visible_declares).then_some(first)
+    }
+
     pub(super) fn dispatch_method_entry(
         &mut self,
         entry: &MethodEntry,
@@ -353,22 +395,9 @@ impl TypeChecker {
         // A method of a trait another module declares without `pub` can
         // be called only in that module.
         if let Some(trait_name) = entry.trait_name
-            && let Some(module) = self.private_traits.get(&trait_name).copied()
+            && self.private_traits.contains_key(&trait_name)
         {
-            self.errors.push(
-                Diagnostic::error(
-                    Code::PrivateItem,
-                    span,
-                    format!(
-                        "method `{method_name}` belongs to trait '{trait_name}', which is private \
-                         to module '{module}'"
-                    ),
-                )
-                .with_help(format!(
-                    "mark it `pub trait {trait_name}` in module '{module}' to call its methods \
-                     from another module"
-                )),
-            );
+            self.private_method(trait_name, method_name, span);
             return Type::Error;
         }
         let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
@@ -2601,6 +2630,17 @@ impl TypeChecker {
                     _ => None,
                 };
                 if let Some(type_name) = type_name
+                    && let Some(trait_name) = self
+                        .method_table
+                        .get(&(type_name, field))
+                        .and_then(|entry| entry.trait_name)
+                    && self.private_traits.contains_key(&trait_name)
+                {
+                    self.private_method(trait_name, field, span);
+                    expr.ty = Some(Type::Error);
+                    return Type::Error;
+                }
+                if let Some(type_name) = type_name
                     && let Some(scheme) = env.lookup(intern(&format!("{type_name}.{field}")))
                 {
                     let scheme = scheme.clone();
@@ -2998,6 +3038,14 @@ impl TypeChecker {
                             // is a method name, fall back to the legacy
                             // deferred-check path so trait dispatch keeps
                             // working unchanged.
+                            // A method only another module's private trait
+                            // provides cannot be called here, whatever the
+                            // receiver turns out to be.
+                            if let Some(trait_name) = self.only_private_provider(field) {
+                                self.private_method(trait_name, field, span);
+                                expr.ty = Some(Type::Error);
+                                return Type::Error;
+                            }
                             let result_ty = self.fresh_var();
                             let is_known_impl_method =
                                 self.method_table.keys().any(|(_, m)| *m == field);
