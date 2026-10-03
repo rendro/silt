@@ -104,7 +104,7 @@ jobs:
       - name: cargo nextest (default features)
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
-            cargo nextest run --lib --bin silt --test golden
+            cargo nextest run --no-fail-fast --lib --bin silt --test golden
 
   test-release-deep-values:
     # The tests whose limits depend on native stack frames in a release
