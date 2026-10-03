@@ -823,13 +823,7 @@ fn main() {
 fn double(x) { x * 2 }
 fn main() { double(5) }
         "#;
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), input)
-            .tokenize()
-            .expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens, input)
-            .parse_program()
-            .expect("parse error");
-        let errors = check(&mut program);
+        let (program, errors) = crate::session::testing::analyze_str(input);
         assert!(
             errors
                 .iter()

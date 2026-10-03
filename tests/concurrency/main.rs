@@ -11,7 +11,6 @@ mod cancel_path_join_io_waker_leak_tests;
 mod cancel_path_waker_leak_tests;
 mod concurrency_stress_property_tests;
 mod main_thread_waker_leak_tests;
-mod round80_stream_error_parity_tests;
 mod scheduler_cancel_setup_race_tests;
 mod scheduler_deadlock_detector_tests;
 mod scheduler_race_tests;

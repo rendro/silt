@@ -81,15 +81,10 @@
 //!   `task.spawn`), and tears everything down before returning.
 //!   Tests that want N trials loop over `run_trial`.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::compiler::Compiler;
-use crate::lexer::Lexer;
-use crate::parser::Parser;
 use crate::value::Value;
-use crate::vm::Vm;
 
 /// Outcome of a single in-process trial.
 ///
@@ -309,35 +304,17 @@ impl InProcessRunner {
 /// the latter approach; see `scheduler_deadlock_detector_tests.rs`.
 fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) {
     let stdout = String::new();
-    let tokens = match Lexer::new(crate::source::FileId::default(), source).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            return (
-                stdout,
-                Err(crate::vm::VmError::new(format!("lexer error: {e:?}"))),
-            );
-        }
-    };
-    let mut program = match Parser::new(tokens, source).parse_program() {
+    let program = match crate::session::testing::compile_str(source) {
         Ok(p) => p,
-        Err(e) => {
-            return (
-                stdout,
-                Err(crate::vm::VmError::new(format!("parse error: {e:?}"))),
-            );
+        Err(errors) => {
+            let message = errors
+                .first()
+                .map(|d| d.message.clone())
+                .unwrap_or_default();
+            return (stdout, Err(crate::vm::VmError::new(message)));
         }
     };
-    let _ = crate::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => {
-            return (stdout, Err(crate::vm::VmError::new(e.message)));
-        }
-    };
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.load_types(&compiler.types());
+    let (mut vm, script) = crate::session::testing::vm_for(&program);
     let result = vm.run(script);
     (stdout, result)
 }

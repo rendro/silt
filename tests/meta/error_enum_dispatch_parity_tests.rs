@@ -38,13 +38,7 @@ fn main() {
     let _ = postgres.PgError.PgConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens, src)
-        .parse_program()
-        .expect("parse error");
-    let errors = silt::typechecker::check(&mut program);
+    let (_, errors) = silt::session::testing::analyze_str(&src);
     let messages: Vec<String> = errors
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
@@ -74,13 +68,7 @@ fn main() {
     let _ = tcp.TcpError.TcpConnect("nope")
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens, src)
-        .parse_program()
-        .expect("parse error");
-    let errors = silt::typechecker::check(&mut program);
+    let (_, errors) = silt::session::testing::analyze_str(&src);
     let messages: Vec<String> = errors
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
@@ -181,13 +169,8 @@ fn typechecker_error_enums_match_arity_registry() {
         .collect::<String>()
         + &src;
 
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), &src)
-        .tokenize()
-        .expect("lex error");
-    let mut program = silt::parser::Parser::new(tokens, &src)
-        .parse_program()
-        .expect("parse error");
-    let errors: Vec<String> = silt::typechecker::check(&mut program)
+    let errors: Vec<String> = silt::session::testing::analyze_str(&src)
+        .1
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
         .map(|e| e.message)

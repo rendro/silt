@@ -1960,25 +1960,13 @@ fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
 mod tests {
     use super::*;
     use crate::bytecode::VmClosure;
-    use crate::compiler::Compiler;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
     use crate::typeinfo::bv;
     use crate::vm::CallFrame;
 
     /// Compile a Silt snippet and return a VM ready for execute_slice.
     fn make_vm(src: &str) -> Vm {
-        let tokens = Lexer::new(crate::source::FileId::default(), src)
-            .tokenize()
-            .expect("lexer error");
-        let mut program = Parser::new(tokens, src)
-            .parse_program()
-            .expect("parse error");
-        let _ = crate::typechecker::check(&mut program);
-        let mut compiler = Compiler::new();
-        let functions = compiler.compile_program(&program).expect("compile error");
-        let script = Arc::new(functions.into_iter().next().unwrap());
-        let mut vm = Vm::new();
+        let program = crate::session::testing::compile_str(src).expect("compile error");
+        let (mut vm, script) = crate::session::testing::vm_for(&program);
         vm.is_scheduled_task = true;
         let closure = Arc::new(VmClosure {
             function: script,

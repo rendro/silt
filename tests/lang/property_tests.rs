@@ -229,12 +229,11 @@ proptest! {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let mut program = match Parser::new(tokens, &input).parse_program() {
-            Ok(p) => p,
-            Err(_) => return Ok(()),
-        };
+        if Parser::new(tokens, &input).parse_program().is_err() {
+            return Ok(());
+        }
         // Must not panic — type errors are acceptable.
-        let _ = silt::typechecker::check(&mut program);
+        let _ = silt::session::testing::analyze_str(&input);
     }
 
     /// The compiler must never panic on arbitrary input that lexes, parses,
@@ -245,17 +244,12 @@ proptest! {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let mut program = match Parser::new(tokens, &input).parse_program() {
-            Ok(p) => p,
-            Err(_) => return Ok(()),
-        };
-        let type_errors = silt::typechecker::check(&mut program);
-        if !type_errors.is_empty() {
+        if Parser::new(tokens, &input).parse_program().is_err() {
             return Ok(());
         }
-        // Must not panic — compile errors are acceptable.
-        let mut compiler = silt::compiler::Compiler::new();
-        let _ = compiler.compile_program(&program);
+        // Must not panic — type and compile errors are acceptable (a
+        // program with a type error is not compiled).
+        let _ = silt::session::testing::compile_decls_str(&input);
     }
 }
 
@@ -275,27 +269,17 @@ proptest! {
         b in -1000i64..1000,
         op in prop_oneof![Just("+"), Just("-"), Just("*")],
     ) {
-        let source = format!("{a} {op} {b}");
-        let tokens = match Lexer::new(silt::source::FileId::default(), &source).tokenize() {
-            Ok(t) => t,
-            Err(_) => return Ok(()),
-        };
-        let mut program = match Parser::new(tokens, &source).parse_program() {
+        let source = format!("fn main() {{ {a} {op} {b} }}");
+        let program = match silt::session::testing::compile_str(&source) {
             Ok(p) => p,
-            Err(_) => return Ok(()),
+            Err(errors) => {
+                return Err(TestCaseError::Fail(
+                    format!("silt {a} {op} {b} did not compile: {errors:?}").into(),
+                ));
+            }
         };
-        let _ = silt::typechecker::check(&mut program);
-        let mut compiler = silt::compiler::Compiler::new();
-        let functions = match compiler.compile_program(&program) {
-            Ok(f) => f,
-            Err(_) => return Ok(()),
-        };
-        let script = match functions.into_iter().next() {
-            Some(s) => s,
-            None => return Ok(()),
-        };
-        let mut vm = silt::vm::Vm::new();
-        let vm_result = vm.run(std::sync::Arc::new(script));
+        let (mut vm, script) = silt::session::testing::vm_for(&program);
+        let vm_result = vm.run(script);
 
         // Reference semantics via Rust's checked arithmetic.
         let expected = match op {

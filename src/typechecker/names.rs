@@ -342,26 +342,6 @@ pub fn resolve_module(
     Resolution { scope, diagnostics }
 }
 
-/// What the imports of a program checked on its own, outside a session,
-/// name: builtin modules; any other module is unknown.
-pub fn standalone_imports(program: &Program) -> HashMap<Symbol, Imported<'static>> {
-    program
-        .decls
-        .iter()
-        .filter_map(|decl| match decl {
-            Decl::Import(target, _) => Some(import_module(target)),
-            _ => None,
-        })
-        .map(|module| {
-            let imported = match ModuleId::builtin(&resolve(module)) {
-                Some(id) => Imported::Builtin(id),
-                None => Imported::Poisoned,
-            };
-            (module, imported)
-        })
-        .collect()
-}
-
 /// The module an import names.
 fn import_module(target: &ImportTarget) -> Symbol {
     match target {

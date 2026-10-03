@@ -8,11 +8,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::ast;
+use crate::bytecode::Function;
 use crate::diagnostic::Diagnostic;
 use crate::value::Value;
 use crate::vm::Vm;
 
-use super::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
+use super::{Config, Entry, HostModule, LockPolicy, Program, ProjectSetup, Session};
 
 /// The directory the in-memory files of a test program are in.
 const TEST_DIR: &str = "/silt-test";
@@ -74,25 +76,78 @@ pub fn run_files(files: &[(&str, &str)]) -> Result<Value, String> {
 /// [`run_files`] with the host modules `host`.
 pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Value, String> {
     let (mut session, entry) = session(files, host);
-    let analysis = session.analyze(entry);
-    if let Some(error) = analysis.diagnostics.iter().find(|d| d.is_error()) {
-        return Err(error.message.clone());
-    }
-    let program = session.compile(entry, Entry::Main).map_err(|errors| {
+    let program = compile_in(&mut session, entry, Entry::Main).map_err(|errors| {
         errors
             .first()
             .map(|d| d.message.clone())
             .unwrap_or_default()
     })?;
-    let types = program.types;
+    let (mut vm, script) = vm_for(&program);
+    vm.run(script).map_err(|e| e.to_string())
+}
+
+/// Compile `source` as a program that starts at `main`. `Err` holds the
+/// errors of its analysis, or what compiling it found.
+pub fn compile_str(source: &str) -> Result<Program, Vec<Diagnostic>> {
+    let (mut session, entry) = session(&[("main.silt", source)], Vec::new());
+    compile_in(&mut session, entry, Entry::Main)
+}
+
+/// Compile the declarations of `source`, which needs no `main`, as
+/// `silt test` compiles a file.
+pub fn compile_decls_str(source: &str) -> Result<Program, Vec<Diagnostic>> {
+    let (mut session, entry) = session(&[("main.silt", source)], Vec::new());
+    compile_in(&mut session, entry, Entry::Tests { filter: None })
+}
+
+/// The entry `entry` of `session`, analysed and compiled for `target`.
+fn compile_in(
+    session: &mut Session,
+    entry: crate::source::FileId,
+    target: Entry,
+) -> Result<Program, Vec<Diagnostic>> {
+    let errors: Vec<Diagnostic> = session
+        .analyze(entry)
+        .diagnostics
+        .iter()
+        .filter(|d| d.is_error())
+        .cloned()
+        .collect();
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    session.compile(entry, target)
+}
+
+/// The declarations of `source` as the checker left them (expression
+/// types filled in), and the diagnostics of its analysis.
+pub fn analyze_str(source: &str) -> (Arc<ast::Program>, Vec<Diagnostic>) {
+    analyze_files(&[("main.silt", source)])
+}
+
+/// [`analyze_str`] for a program of several files; the first is the
+/// entry.
+pub fn analyze_files(files: &[(&str, &str)]) -> (Arc<ast::Program>, Vec<Diagnostic>) {
+    let (mut session, entry) = session(files, Vec::new());
+    let diagnostics = session.analyze(entry).diagnostics.clone();
+    let ast = session
+        .module_analysis(session.module_of(entry))
+        .map(|analysis| analysis.ast.clone())
+        .expect("an opened file is analysed");
+    (ast, diagnostics)
+}
+
+/// A VM that has loaded `program`, and the program's script, ready for
+/// [`Vm::run`].
+pub fn vm_for(program: &Program) -> (Vm, Arc<Function>) {
+    let mut vm = Vm::new();
+    vm.load_types(&program.types);
     let script = program
         .functions
-        .into_iter()
-        .next()
+        .first()
+        .cloned()
         .expect("a compiled program has a script");
-    let mut vm = Vm::new();
-    vm.load_types(&types);
-    vm.run(Arc::new(script)).map_err(|e| e.to_string())
+    (vm, Arc::new(script))
 }
 
 /// The path of the in-memory file `name` of a test program, for a test

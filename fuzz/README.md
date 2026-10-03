@@ -8,7 +8,7 @@ silt ships six libfuzzer targets:
 | `fuzz_parser`      | `Parser::parse_program` (must not panic)           |
 | `fuzz_formatter`   | `formatter::format` + round-trip invariants        |
 | `fuzz_roundtrip`   | parse → format → parse (must preserve structure)   |
-| `fuzz_typechecker` | `typechecker::check` + diagnostic well-formedness  |
+| `fuzz_typechecker` | the session's analysis + diagnostic well-formedness |
 | `fuzz_compiler`    | `Compiler::compile_program` on clean programs + disassembly decode |
 
 Invariant helpers live in `src/fuzz_invariants.rs` and are exercised

@@ -640,8 +640,7 @@ pub struct TypeChecker {
     /// `check_module` (the entry point the session checks every module
     /// of a program with) so per-package
     /// decls (traits/enums/records) are stamped with the right
-    /// `defined_in`. `None` means "a check outside a session"
-    /// (`typechecker::check`) or a host module: treat every decl as
+    /// `defined_in`. `None` means a host module: treat every decl as
     /// local (sentinel
     /// `__builtin__`) so the orphan rule never trips on a program that
     /// has no package context.
@@ -7761,38 +7760,6 @@ pub(super) fn register_auto_derived_impls_for(
     }
 }
 
-/// Resolve and check a program on its own, outside a session (it can
-/// import builtin modules only). Returns its diagnostics.
-pub fn check(program: &mut Program) -> Vec<Diagnostic> {
-    let mut defs = names::new_def_table();
-    let resolution = names::resolve_module(
-        program,
-        crate::session::ModuleId(0),
-        names::ModuleKind::File,
-        &names::standalone_imports(program),
-        &mut defs,
-    );
-    let mut tables = Tables::for_session();
-    let check = check_module(
-        program,
-        ModuleContext {
-            module: crate::session::ModuleId(0),
-            module_name: intern("main"),
-            kind: names::ModuleKind::File,
-            package: None,
-            scope: &resolution.scope,
-            earlier: &[],
-            defs: std::sync::Arc::new(defs),
-            tables: &mut tables,
-        },
-    );
-    resolution
-        .diagnostics
-        .into_iter()
-        .chain(check.diagnostics)
-        .collect()
-}
-
 /// What checking one module gives.
 pub struct ModuleCheck {
     /// The module's errors and warnings.
@@ -8553,13 +8520,7 @@ pub(super) mod test_helpers {
     use super::*;
 
     pub(super) fn check_errors(input: &str) -> Vec<Diagnostic> {
-        let tokens = crate::lexer::Lexer::new(crate::source::FileId::default(), input)
-            .tokenize()
-            .expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens, input)
-            .parse_program()
-            .expect("parse error");
-        check(&mut program)
+        crate::session::testing::analyze_str(input).1
     }
 
     pub(super) fn assert_no_errors(input: &str) {

@@ -14,9 +14,7 @@
 //!   past the lock.
 //!
 //! Post-fix: all six sites call `Self::infinite_type_message(...)`
-//! producing the canonical form. The audit GAP-3 follow-up assertion
-//! lives in `tests/lang/round73f_deferred_fixes_tests.rs` (updated to pin
-//! the suffix).
+//! producing the canonical form.
 //!
 //! The user-visible wording of the main occurs-check arm is locked by
 //! the golden case

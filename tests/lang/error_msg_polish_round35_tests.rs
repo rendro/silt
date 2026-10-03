@@ -5,77 +5,9 @@
 //!   F12 — http client errors echoed URL credentials verbatim.
 //!   F18 — `Colors.dim` field was dead (written, never read); deleted.
 //!
-//! F11 and F12 are behaviour tests that must fail before the fix and pass
-//! after. F11 runs an ill-typed program on purpose (a runtime defence), so
-//! it cannot be a golden case; F12 calls the redactor directly.
-
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
-use silt::vm::Vm;
-use std::sync::Arc;
-
-// ── Helper: run a silt program and return the runtime error string ────
-
-fn run_err(input: &str) -> String {
-    let tokens = Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lexer error");
-    let mut program = Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse error");
-    let _ = typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => return e.message,
-    };
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    match vm.run(script) {
-        Err(e) => format!("{e}"),
-        Ok(v) => panic!("expected runtime error, got: {v:?}"),
-    }
-}
-
-// ── F11: invoke_callable identifier leak ──────────────────────────────
-//
-// The `_` arm of `Vm::invoke_callable` used to emit the literal string
-// `"cannot call value in invoke_callable"`, exposing a Rust function
-// name to end-users. The sibling error at `execute.rs:624` uses the
-// canonical phrasing `"cannot call value of type {type}"`; this test
-// locks the invoke_callable arm into the same shape.
-//
-// Trigger path: `list.map` calls `vm.invoke_callable(func, ...)` on the
-// second argument. Passing a non-callable (e.g. an `Int`) reaches the
-// `_` arm. If the typechecker rejects the call at compile time we fall
-// back to a VM-level construction test below.
-
-#[test]
-fn f11_invoke_callable_error_does_not_leak_rust_identifier() {
-    // The integration-style trigger: pass a non-callable as the fn
-    // argument to a higher-order builtin that uses `invoke_callable`.
-    // `list.unfold` dispatches through `invoke_callable` with a fresh
-    // state per iteration, so a non-callable there hits the `_` arm
-    // before the callback ever sees the state.
-    let err = run_err(
-        r#"
-import list
-fn main() {
-  list.unfold(0, 42)
-}
-    "#,
-    );
-    assert!(
-        !err.contains("invoke_callable"),
-        "F11 regression: VM error leaks Rust identifier 'invoke_callable': {err}"
-    );
-    assert!(
-        err.contains("cannot call value"),
-        "F11: expected canonical 'cannot call value ...' phrasing, got: {err}"
-    );
-}
+//! F12 is a behaviour test that must fail before the fix and pass after;
+//! it calls the redactor directly. F11's runtime defence needs an
+//! ill-typed program, which no front door runs.
 
 // ── F12: http credential scrubber ─────────────────────────────────────
 

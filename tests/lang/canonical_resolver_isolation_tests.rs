@@ -24,15 +24,11 @@
 //!    the golden case
 //!    `tests/golden/lang/modules/canonical_resolver_isolation__cross_module_alias_shared`.
 //! 3. `lsp_pull_does_not_inherit_other_files_aliases` — two independent
-//!    `typechecker::check` calls (the legacy LSP entry point allocates
-//!    a fresh resolver internally per call). The first registers an
+//!    analyses (each allocates a fresh resolver). The first registers an
 //!    alias; the second references the same name without import and
 //!    sees an "unknown type" diagnostic. Locks the LSP isolation goal.
 
 use silt::diagnostic::Severity;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
 use silt::types::Type;
 use silt::types::canonical::{AliasInfo, Resolver};
 
@@ -74,17 +70,9 @@ fn two_resolvers_do_not_share_aliases() {
     );
 }
 
-fn parse(src: &str) -> silt::ast::Program {
-    let tokens = Lexer::new(silt::source::FileId::default(), src)
-        .tokenize()
-        .expect("lex");
-    Parser::new(tokens, src).parse_program().expect("parse")
-}
-
 // ── 3. LSP-style isolation: fresh resolver per pull ────────────────
 
-/// Two consecutive `typechecker::check(...)` calls — the legacy LSP
-/// entry point — must NOT share alias state. The first call registers
+/// Two consecutive analyses must NOT share alias state. The first call registers
 /// `type FooLsp_Mass = Float`; the second call uses the bare name
 /// `FooLsp_Mass` without any import or declaration and must therefore
 /// produce an "undefined type" diagnostic.
@@ -92,14 +80,16 @@ fn parse(src: &str) -> silt::ast::Program {
 /// Pre-refactor this test would have FAILED: the second call's
 /// `canonicalize` would have found the alias via the process-global
 /// registry and silently treated `FooLsp_Mass` as `Float`. Post-
-/// refactor each `typechecker::check` call constructs a fresh
+/// refactor each analysis constructs a fresh
 /// `TypeChecker` (and therefore a fresh `Resolver`), so cross-pull
 /// contamination is structurally impossible.
 #[test]
 fn lsp_pull_does_not_inherit_other_files_aliases() {
     // First "pull": file with the alias declaration.
-    let mut prog_first = parse("type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) { x }\n");
-    let errs_first = typechecker::check(&mut prog_first);
+    let errs_first = silt::session::testing::analyze_str(
+        "type FooLsp_Mass = Float\nfn use_it(x: FooLsp_Mass) { x }\n",
+    )
+    .1;
     let hard_first: Vec<_> = errs_first
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
@@ -111,10 +101,9 @@ fn lsp_pull_does_not_inherit_other_files_aliases() {
 
     // Second "pull": different file, references `FooLsp_Mass` without
     // declaring or importing it. Post-refactor the second
-    // `typechecker::check` allocates a fresh Resolver internally, so
+    // analysis allocates a fresh Resolver internally, so
     // the alias the first pull registered is invisible.
-    let mut prog_second = parse("fn use_other(x: FooLsp_Mass) { x }\n");
-    let errs_second = typechecker::check(&mut prog_second);
+    let errs_second = silt::session::testing::analyze_str("fn use_other(x: FooLsp_Mass) { x }\n").1;
     let saw_unknown = errs_second.iter().any(|e| {
         e.severity == Severity::Error
             && (e.message.contains("undefined type")

@@ -59,16 +59,9 @@
 //! below.
 
 use silt::diagnostic::Severity;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
 
 fn typecheck(source: &str) -> Vec<silt::diagnostic::Diagnostic> {
-    let tokens = Lexer::new(silt::source::FileId::default(), source)
-        .tokenize()
-        .expect("lex");
-    let mut program = Parser::new(tokens, source).parse_program().expect("parse");
-    typechecker::check(&mut program)
+    silt::session::testing::analyze_str(source).1
 }
 
 fn errors_only(errs: &[silt::diagnostic::Diagnostic]) -> Vec<&silt::diagnostic::Diagnostic> {

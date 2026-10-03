@@ -27,7 +27,6 @@ fn manifest_dir() -> PathBuf {
 fn fuzz_typechecker_runs_on_existing_corpus() {
     use silt::lexer::Lexer;
     use silt::parser::Parser;
-    use silt::typechecker;
 
     let corpus = manifest_dir().join("fuzz/corpus/fuzz_parser");
     if !corpus.exists() {
@@ -55,10 +54,10 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
         let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() else {
             continue;
         };
-        let Ok(mut program) = Parser::new(tokens, s).parse_program() else {
+        let Ok(_) = Parser::new(tokens, s).parse_program() else {
             continue;
         };
-        let errors = typechecker::check(&mut program);
+        let errors = silt::session::testing::analyze_str(s).1;
         assert!(
             errors.len() <= max_diagnostics,
             "typechecker produced {} diagnostics on corpus seed {:?} (cap {})",

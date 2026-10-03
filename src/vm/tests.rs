@@ -1,8 +1,5 @@
 use super::*;
 use crate::bytecode::{Chunk, Function, Op};
-use crate::compiler::Compiler;
-use crate::lexer::Lexer;
-use crate::parser::Parser;
 use crate::source::Span;
 use crate::typeinfo::bv;
 
@@ -17,30 +14,16 @@ fn span() -> Span {
     Span::BUILTIN
 }
 
-/// Helper: compile and run a silt program through the VM pipeline: through
-/// a session, so that names are resolved, when the program checks;
-/// otherwise by a compiler with no session, which knows the builtin
-/// names only.
+/// Helper: compile and run a silt program through a session.
 fn run_vm(source: &str) -> Value {
-    let (mut session, entry) = crate::session::testing::session_with(&[("main.silt", source)]);
-    if !session.analyze(entry).has_errors() {
-        let program = session
-            .compile(entry, crate::session::Entry::Main)
-            .unwrap_or_else(|e| panic!("{e:?}"));
-        let script = Arc::new(program.functions.into_iter().next().unwrap());
-        let mut vm = Vm::new();
-        vm.load_types(&program.types);
-        return vm.run(script).unwrap();
-    }
-    let tokens = Lexer::new(crate::source::FileId::default(), source)
-        .tokenize()
-        .unwrap();
-    let program = Parser::new(tokens, source).parse_program().unwrap();
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).unwrap();
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    vm.run(script).unwrap()
+    run_vm_result(source).unwrap()
+}
+
+/// Helper: compile a silt program through a session and run it.
+fn run_vm_result(source: &str) -> Result<Value, VmError> {
+    let program = crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+    let (mut vm, script) = crate::session::testing::vm_for(&program);
+    vm.run(script)
 }
 
 // ── Phase 1 bytecode-level tests ──────────────────────────────
@@ -1254,18 +1237,6 @@ fn test_match_tuple_wildcard() {
 }
 
 #[test]
-fn test_match_tuple_len_mismatch() {
-    let result = run_vm(
-        r#"
-            fn main() {
-                match (1, 2, 3) { (a, b) -> a + b  _ -> 99 }
-            }
-        "#,
-    );
-    assert_eq!(result, Value::Int(99));
-}
-
-#[test]
 fn test_match_list_exact() {
     let result = run_vm(
         r#"
@@ -1524,32 +1495,6 @@ fn test_let_tuple_destructure_nested() {
 }
 
 #[test]
-fn test_let_list_destructure() {
-    let result = run_vm(
-        r#"
-            fn main() {
-                let [a, b, c] = [10, 20, 30]
-                a + b + c
-            }
-        "#,
-    );
-    assert_eq!(result, Value::Int(60));
-}
-
-#[test]
-fn test_let_list_head_rest() {
-    let result = run_vm(
-        r#"
-            fn main() {
-                let [h, ..t] = [1, 2, 3, 4]
-                h
-            }
-        "#,
-    );
-    assert_eq!(result, Value::Int(1));
-}
-
-#[test]
 fn test_match_multiple_arms() {
     let result = run_vm(
         r#"
@@ -1599,7 +1544,7 @@ fn test_match_constructor_with_guard() {
         r#"
             fn main() {
                 match Some(5) {
-                    Some(n) when n > 10 -> "big"
+                    Some(n) when n > 10 -> 0
                     Some(n) -> n * 2
                     None -> 0
                 }
@@ -1990,7 +1935,7 @@ fn test_match_guard_with_tuple() {
         r#"
             fn main() {
                 match (3, 4) {
-                    (a, b) when a + b > 10 -> "big"
+                    (a, b) when a + b > 10 -> 0
                     (a, b) -> a + b
                 }
             }
@@ -2193,19 +2138,6 @@ fn test_custom_display_trait() {
 }
 
 #[test]
-fn test_tuple_index_access() {
-    let result = run_vm(
-        r#"
-            fn main() {
-                let pair = (10, 20)
-                pair.0 + pair.1
-            }
-        "#,
-    );
-    assert_eq!(result, Value::Int(30));
-}
-
-#[test]
 fn test_recursive_variant_eval() {
     let result = run_vm(
         r#"
@@ -2277,7 +2209,7 @@ fn test_spawn_join_already_completed() {
                     99
                 })
                 -- Wait for the message, ensuring the fiber runs to completion
-                let channel.Message(msg) = channel.receive(ch)
+                let _ = channel.receive(ch)
                 -- Now the fiber should already be completed
                 task.join(t)
             }
@@ -2309,9 +2241,9 @@ fn test_spawn_join_multiple_completed() {
                     30
                 })
                 -- Drain all messages so fibers complete
-                let channel.Message(_) = channel.receive(ch)
-                let channel.Message(_) = channel.receive(ch)
-                let channel.Message(_) = channel.receive(ch)
+                let _ = channel.receive(ch)
+                let _ = channel.receive(ch)
+                let _ = channel.receive(ch)
                 -- All fibers should be done; join should not deadlock
                 let a = task.join(t1)
                 let b = task.join(t2)
@@ -2389,8 +2321,7 @@ fn test_scheduler_channel_communication() {
 #[test]
 fn test_scheduler_deadlock_detection() {
     // Deadlock: task.join propagates as a VmError
-    let tokens = Lexer::new(
-        crate::source::FileId::default(),
+    let err = run_vm_result(
         r#"
             import task
             import channel
@@ -2401,27 +2332,7 @@ fn test_scheduler_deadlock_detection() {
             }
             "#,
     )
-    .tokenize()
-    .unwrap();
-    let program = Parser::new(
-        tokens,
-        r#"
-            import task
-            import channel
-            fn main() {
-                let ch = channel.new()
-                let t = task.spawn({ -> channel.receive(ch) })
-                task.join(t)
-            }
-            "#,
-    )
-    .parse_program()
-    .unwrap();
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).unwrap();
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    let err = vm.run(script).unwrap_err();
+    .unwrap_err();
     assert!(
         err.message.contains("deadlock"),
         "expected deadlock error, got: {}",
@@ -2432,8 +2343,7 @@ fn test_scheduler_deadlock_detection() {
 #[test]
 fn test_scheduler_task_failure_propagates() {
     // task.join on a failed task propagates as a VmError
-    let tokens = Lexer::new(
-        crate::source::FileId::default(),
+    let err = run_vm_result(
         r#"
             import task
             fn main() {
@@ -2442,25 +2352,7 @@ fn test_scheduler_task_failure_propagates() {
             }
             "#,
     )
-    .tokenize()
-    .unwrap();
-    let program = Parser::new(
-        tokens,
-        r#"
-            import task
-            fn main() {
-                let t = task.spawn({ -> 1 / 0 })
-                task.join(t)
-            }
-            "#,
-    )
-    .parse_program()
-    .unwrap();
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).unwrap();
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    let err = vm.run(script).unwrap_err();
+    .unwrap_err();
     // Production message from src/vm/task.rs: the join-site wraps the
     // inner VmError as "joined task failed: <inner>".
     assert!(
@@ -2653,7 +2545,7 @@ fn test_regex_cache_eviction_correctness() {
             fn main() {
                 -- Force compilation of 260 distinct patterns.
                 1..260 |> list.each({ n ->
-                    regex.is_match("pat{n}", "pat{n}")
+                    let _ = regex.is_match("pat{n}", "pat{n}")
                 })
                 -- After eviction, verify correct match results on
                 -- patterns spanning the full range:

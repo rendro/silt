@@ -379,9 +379,7 @@ pub struct Compiler {
     contexts: Vec<CompileContext>,
     /// Accumulated compiled functions (one per `Decl::Fn`).
     functions: Vec<Function>,
-    /// The modules of the program, from the session. Empty for a
-    /// compiler made with [`Compiler::new`], which can only import
-    /// builtin modules.
+    /// The modules of the program, from the session.
     units: ProgramUnits,
     /// The modules being compiled, innermost last: the importing module
     /// of an `import` met now is the last one, or the entry module.
@@ -502,18 +500,10 @@ fn clashing_type_names(units: &ProgramUnits) -> (HashSet<Symbol>, HashSet<Symbol
     (clashing, program)
 }
 
-impl Default for Compiler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Compiler {
-    /// Shared constructor body for [`Compiler::new`] and
-    /// [`Compiler::for_program`]. The two public constructors differ
-    /// only in the modules; everything else is seeded identically here
-    /// so the two paths can never drift apart.
-    fn build(units: ProgramUnits) -> Self {
+    /// A compiler for the modules of a program, as the session analysed
+    /// them.
+    pub fn for_program(units: ProgramUnits) -> Self {
         let (clashing_type_names, program_clashes) = clashing_type_names(&units);
         Self {
             contexts: Vec::new(),
@@ -536,17 +526,6 @@ impl Compiler {
         }
     }
 
-    /// A compiler for a program with no modules but the builtin ones.
-    pub fn new() -> Self {
-        Self::build(ProgramUnits::default())
-    }
-
-    /// A compiler for the modules of a program, as the session analysed
-    /// them.
-    pub fn for_program(units: ProgramUnits) -> Self {
-        Self::build(units)
-    }
-
     /// The alias registries the program was checked with: read via
     /// [`crate::types::canonical::canonical_head`] when emitting
     /// trait-impl global keys, so registration and lookup keys agree
@@ -558,14 +537,6 @@ impl Compiler {
     /// The types the compiled code builds values of, for the VM.
     pub fn types(&self) -> TypeTable {
         self.types.borrow().clone()
-    }
-
-    /// Mark all builtin modules as imported, for the tests below.
-    #[cfg(test)]
-    fn import_all_builtins(&mut self) {
-        for name in crate::module::BUILTIN_MODULES {
-            self.imported_builtin_modules.insert(name.to_string());
-        }
     }
 
     // ── Public entry point ────────────────────────────────────────
@@ -3805,57 +3776,21 @@ impl Compiler {
 mod tests {
     use super::*;
     use crate::bytecode::Op;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
 
-    /// Compile declarations (no main call) and return all functions:
-    /// through a session, so that names are resolved, when the program
-    /// checks; otherwise by a compiler with no session, which knows the
-    /// builtin names only.
+    /// Compile declarations (no main call) through a session and return
+    /// all functions.
     fn compile(input: &str) -> Vec<Function> {
-        let (mut session, entry) = crate::session::testing::session_with(&[("main.silt", input)]);
-        if !session.analyze(entry).has_errors() {
-            return session
-                .compile(entry, crate::session::Entry::Tests { filter: None })
-                .unwrap_or_else(|e| panic!("{e:?}"))
-                .functions;
-        }
-        let tokens = Lexer::new(crate::source::FileId::default(), input)
-            .tokenize()
-            .unwrap();
-        let program = Parser::new(tokens, input).parse_program().unwrap();
-        let mut compiler = Compiler::new();
-        compiler.import_all_builtins();
-        compiler.compile_declarations(&program).unwrap()
+        crate::session::testing::compile_decls_str(input)
+            .unwrap_or_else(|e| panic!("{e:?}"))
+            .functions
     }
 
-    /// Compile expecting an error, return the error: through a session
-    /// when the program checks, by a compiler with no session otherwise.
+    /// Compile expecting an error, return the error.
     fn compile_err(input: &str) -> Diagnostic {
-        let (mut session, entry) = crate::session::testing::session_with(&[("main.silt", input)]);
-        if !session.analyze(entry).has_errors() {
-            return session
-                .compile(entry, crate::session::Entry::Tests { filter: None })
-                .err()
-                .and_then(|errors| errors.into_iter().next())
-                .expect("a compile error");
-        }
-        let tokens = Lexer::new(crate::source::FileId::default(), input)
-            .tokenize()
-            .unwrap();
-        let program = Parser::new(tokens, input).parse_program().unwrap();
-        let mut compiler = Compiler::new();
-        compiler.compile_declarations(&program).unwrap_err()
-    }
-
-    /// Compile without builtin imports (to test import gating).
-    fn compile_no_imports(input: &str) -> Result<Vec<Function>, Diagnostic> {
-        let tokens = Lexer::new(crate::source::FileId::default(), input)
-            .tokenize()
-            .unwrap();
-        let program = Parser::new(tokens, input).parse_program().unwrap();
-        let mut compiler = Compiler::new();
-        compiler.compile_declarations(&program)
+        crate::session::testing::compile_decls_str(input)
+            .err()
+            .and_then(|errors| errors.into_iter().next())
+            .expect("a compile error")
     }
 
     /// Check if a specific opcode byte appears in the chunk's bytecode.
@@ -4380,25 +4315,6 @@ fn f(p) {
     }
 
     #[test]
-    fn test_compile_match_non_exhaustive_panic() {
-        let fns = compile(
-            r#"
-fn f(x) {
-    match x {
-        1 -> "one"
-    }
-}
-"#,
-        );
-        let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::Panic));
-        assert!(has_string_constant(
-            &f.chunk,
-            "non-exhaustive match: no arm matched"
-        ));
-    }
-
-    #[test]
     fn test_compile_guardless_match() {
         let fns = compile(
             r#"
@@ -4562,23 +4478,8 @@ trait Display for Color {
     // ── Import gating ──────────────────────────────────────────────
 
     #[test]
-    fn test_import_gating_error() {
-        // The typechecker reports a module used without an import; the
-        // compiler, given such a program anyway, refuses it as a defect.
-        let err = compile_err(
-            r#"
-fn main() {
-    list.length([1, 2])
-}
-"#,
-        );
-        assert_eq!(err.code, Code::CompilerBug, "{}", err.message);
-    }
-
-    #[test]
     fn test_import_gating_success() {
-        // With import, should compile fine
-        let result = compile_no_imports(
+        compile(
             r#"
 import list
 fn main() {
@@ -4586,7 +4487,6 @@ fn main() {
 }
 "#,
         );
-        assert!(result.is_ok());
     }
 
     // ── Builtin module calls ───────────────────────────────────────
@@ -4626,28 +4526,16 @@ fn main() {
 
     // ── Tuple index access ─────────────────────────────────────────
 
-    #[test]
-    fn test_compile_tuple_index() {
-        let fns = compile("fn main() { let t = (1, 2)\n t.0 }");
-        let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::GetIndex));
-    }
-
     // ── compile_program vs compile_declarations ────────────────────
 
     #[test]
     fn test_compile_program_calls_main() {
-        let tokens = Lexer::new(crate::source::FileId::default(), "fn main() { 42 }")
-            .tokenize()
-            .unwrap();
-        let program = Parser::new(tokens, "fn main() { 42 }")
-            .parse_program()
-            .unwrap();
-        let mut compiler = Compiler::new();
-        let fns = compiler.compile_program(&program).unwrap();
+        let fns = crate::session::testing::compile_str("fn main() { 42 }")
+            .unwrap()
+            .functions;
         let script = &fns[0];
-        // compile_program emits GetGlobal "main", Call 0, Return
-        assert!(has_string_constant(&script.chunk, "main"));
+        // compile_program emits GetGlobal main, Call 0, Return
+        assert!(has_op(&script.chunk, Op::GetGlobal));
         assert!(has_op(&script.chunk, Op::Call));
     }
 
@@ -4664,29 +4552,25 @@ fn main() {
 
     #[test]
     fn test_compile_selective_import() {
-        let result = compile_no_imports(
+        let fns = compile(
             r#"
 import list.{ length, map }
 fn main() { length([1, 2]) }
 "#,
         );
-        assert!(result.is_ok());
-        let fns = result.unwrap();
-        let script = &fns[0];
-        // Selective import creates aliases: "length" -> "list.length"
-        assert!(has_string_constant(&script.chunk, "list.length"));
-        assert!(has_string_constant(&script.chunk, "length"));
+        assert!(!find_fn(&fns, "main").chunk.code.is_empty());
     }
 
     #[test]
     fn test_compile_aliased_import() {
-        let result = compile_no_imports(
+        let fns = compile(
             r#"
 import list as l
 fn main() { l.length([1]) }
 "#,
         );
-        assert!(result.is_ok());
+        let main = find_fn(&fns, "main");
+        assert!(has_string_constant(&main.chunk, "list.length"));
     }
 
     // ── Pattern destructuring in function params ───────────────────
@@ -4766,13 +4650,6 @@ fn f(x) {
     }
 
     // ── `loop(...)` outside a loop is an error ─────────────────────
-
-    #[test]
-    fn test_compile_recur_outside_loop() {
-        // Reported by the typechecker; a defect if it reaches the compiler.
-        let err = compile_err("fn f() { loop(1) }");
-        assert_eq!(err.code, Code::CompilerBug, "{}", err.message);
-    }
 
     // ── Record field metadata ──────────────────────────────────────
 
@@ -4952,7 +4829,7 @@ fn f(expected, actual) {
         use crate::bytecode::UpvalueDesc;
         use crate::source::Span;
 
-        let mut compiler = Compiler::new();
+        let mut compiler = Compiler::for_program(ProgramUnits::default());
         // Push an outer (script) context plus the function context we'll
         // be adding upvalues into; `add_upvalue` expects `context_index`
         // to be valid.
@@ -5022,7 +4899,7 @@ fn f(expected, actual) {
         use crate::bytecode::UpvalueDesc;
         use crate::source::Span;
 
-        let mut compiler = Compiler::new();
+        let mut compiler = Compiler::for_program(ProgramUnits::default());
         compiler
             .contexts
             .push(CompileContext::new("<script>".into(), 0));

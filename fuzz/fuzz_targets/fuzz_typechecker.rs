@@ -2,7 +2,6 @@
 use libfuzzer_sys::fuzz_target;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
-use silt::typechecker;
 
 /// Cap on the number of diagnostics any single typecheck pass may
 /// emit before we treat it as a runaway. Real programs (even the
@@ -30,13 +29,13 @@ fuzz_target!(|data: &[u8]| {
     //    parser's own panic-freedom is the subject of fuzz_parser; here
     //    we skip parse errors so this driver focuses on the
     //    typechecker.
-    let Ok(mut program) = Parser::new(tokens, s).parse_program() else {
+    let Ok(_) = Parser::new(tokens, s).parse_program() else {
         return;
     };
 
-    // 4. Run the typechecker. Must never panic / unwind on any input
-    //    that lexed and parsed.
-    let errors = typechecker::check(&mut program);
+    // 4. Analyse it as every front door does. Must never panic /
+    //    unwind on any input that lexed and parsed.
+    let errors = silt::session::testing::analyze_str(s).1;
 
     // 5. Diagnostic count must be bounded — runaway diagnostic
     //    generation indicates a cascade-reporting bug.

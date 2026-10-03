@@ -5,35 +5,21 @@
 //! Each benchmark compiles a Silt program once, then runs it `ITERATIONS` times
 //! and reports the average. This measures VM execution, not compilation.
 
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
-use silt::typechecker;
+use silt::session::Program;
 use silt::value::Value;
-use silt::vm::Vm;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const ITERATIONS: u32 = 100;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-fn compile(source: &str) -> Arc<silt::bytecode::Function> {
-    let tokens = Lexer::new(silt::source::FileId::default(), source)
-        .tokenize()
-        .expect("lex error");
-    let mut program = Parser::new(tokens, source)
-        .parse_program()
-        .expect("parse error");
-    let _ = typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
-    Arc::new(functions.into_iter().next().unwrap())
+fn compile(source: &str) -> Program {
+    silt::session::testing::compile_str(source).expect("compile error")
 }
 
-fn run_once(script: &Arc<silt::bytecode::Function>) -> Value {
-    let mut vm = Vm::new();
-    vm.run(Arc::clone(script)).expect("runtime error")
+fn run_once(program: &Program) -> Value {
+    let (mut vm, script) = silt::session::testing::vm_for(program);
+    vm.run(script).expect("runtime error")
 }
 
 fn bench(name: &str, source: &str) -> Duration {

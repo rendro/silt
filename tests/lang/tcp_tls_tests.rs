@@ -162,13 +162,7 @@ fn main() {
   }
 }
 "#;
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), src)
-        .tokenize()
-        .expect("lex");
-    let mut program = silt::parser::Parser::new(tokens, src)
-        .parse_program()
-        .expect("parse");
-    let errors = silt::typechecker::check(&mut program);
+    let (_, errors) = silt::session::testing::analyze_str(src);
     let hard: Vec<_> = errors
         .into_iter()
         .filter(|e| e.severity == silt::diagnostic::Severity::Error)

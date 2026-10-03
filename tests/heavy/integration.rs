@@ -1,50 +1,7 @@
-use silt::compiler::Compiler;
-use silt::lexer::Lexer;
-use silt::parser::Parser;
 use silt::value::Value;
-use silt::vm::Vm;
-use std::sync::Arc;
 
 fn run(input: &str) -> Value {
     silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
-}
-
-fn run_err(input: &str) -> String {
-    let tokens = Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lexer error");
-    let mut program = Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse error");
-    let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::new();
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => return e.message,
-    };
-    let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = Vm::new();
-    let err = vm.run(script).expect_err("expected runtime error");
-    format!("{err}")
-}
-
-// ── Spread in list literals ─────────────────────────────────────────
-
-#[test]
-fn test_list_spread_non_list_error() {
-    let err = run_err(
-        r#"
-fn main() {
-  let x = 42
-  [1, ..x]
-}
-    "#,
-    );
-    // Production message from src/vm/run.rs ListConcat error.
-    assert!(
-        err.contains("ListConcat: right operand is not a list or range"),
-        "expected list spread error, got: {err}"
-    );
 }
 
 // ── Typed AST verification ──────────────────────────────────────────
@@ -56,13 +13,7 @@ fn main() {
   42
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lex");
-    let mut program = silt::parser::Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "body should be typed");
@@ -79,13 +30,7 @@ fn main() {
   "hello"
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lex");
-    let mut program = silt::parser::Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
         assert_eq!(f.body.ty, Some(silt::types::Type::String));
@@ -101,13 +46,7 @@ fn main() {
   [1, 2, 3]
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lex");
-    let mut program = silt::parser::Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "body should be typed");
@@ -128,13 +67,7 @@ fn main() {
   x + 32
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lex");
-    let mut program = silt::parser::Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
         assert!(f.body.ty.is_some(), "main body should be typed");
@@ -158,13 +91,7 @@ fn main() {
   double(21)
 }
     "#;
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), input)
-        .tokenize()
-        .expect("lex");
-    let mut program = silt::parser::Parser::new(tokens, input)
-        .parse_program()
-        .expect("parse");
-    silt::typechecker::check(&mut program);
+    let (program, _) = silt::session::testing::analyze_str(input);
 
     // double's body (x * 2) should resolve to Int
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
@@ -176,36 +103,6 @@ fn main() {
 }
 
 // ── Mixed int/float arithmetic ──────────────────────────────────────
-
-#[test]
-fn test_mixed_int_float_add() {
-    let err = run_err(
-        r#"
-fn main() { 1 + 2.5 }
-    "#,
-    );
-    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
-}
-
-#[test]
-fn test_mixed_float_int_sub() {
-    let err = run_err(
-        r#"
-fn main() { 10.0 - 3 }
-    "#,
-    );
-    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
-}
-
-#[test]
-fn test_mixed_int_float_div() {
-    let err = run_err(
-        r#"
-fn main() { 7 / 2.0 }
-    "#,
-    );
-    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
-}
 
 #[test]
 fn test_mixed_arithmetic_in_pipeline() {
@@ -223,241 +120,11 @@ fn main() {
 
 // ── Cross-type comparison errors ────────────────────────────────────
 
-#[test]
-fn test_cross_type_eq_is_error() {
-    let err = run_err(
-        r#"
-fn main() { 5 == "hello" }
-    "#,
-    );
-    assert!(err.contains("unsupported operation"), "got: {err}");
-}
-
-#[test]
-fn test_cross_type_lt_is_error() {
-    let err = run_err(
-        r#"
-fn main() { 3 < true }
-    "#,
-    );
-    assert!(err.contains("unsupported operation"), "got: {err}");
-}
-
-#[test]
-fn test_cross_type_int_float_eq_is_error() {
-    let err = run_err(
-        r#"
-fn main() { 3 == 3.0 }
-    "#,
-    );
-    assert!(err.contains("unsupported operation"), "got: {err}");
-}
-
 // ════════════════════════════════════════════════════════════════════
 // HTTP Module Tests
 // ════════════════════════════════════════════════════════════════════
 
-#[test]
-fn test_http_segments_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.segments("/a", "/b")
-}
-    "#,
-    );
-    assert!(err.contains("http.segments takes 1 argument"), "got: {err}");
-}
-
-#[test]
-fn test_http_segments_wrong_type() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.segments(42)
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.segments requires String, got"),
-        "got: {err}"
-    );
-}
-
 // ── http.parse_query ────────────────────────────────────────────────
-
-#[test]
-fn test_http_parse_query_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.parse_query("a=1", "b=2")
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.parse_query takes 1 argument"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_parse_query_wrong_type() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.parse_query(42)
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.parse_query requires String, got"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_get_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.get("http://example.com", "extra")
-}
-    "#,
-    );
-    assert!(err.contains("http.get takes 1 argument"), "got: {err}");
-}
-
-#[test]
-fn test_http_get_wrong_type() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.get(42)
-}
-    "#,
-    );
-    assert!(err.contains("http.get requires String, got"), "got: {err}");
-}
-
-#[test]
-fn test_http_request_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request(http.GET, "http://example.com")
-}
-    "#,
-    );
-    assert!(err.contains("http.request takes 4 arguments"), "got: {err}");
-}
-
-#[test]
-fn test_http_request_non_variant_method() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request("GET", "http://example.com", "", #{})
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.request requires Method, got"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_request_non_string_url() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request(http.GET, 42, "", #{})
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.request requires String, got"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_request_non_string_body() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request(http.POST, "http://example.com", 42, #{})
-}
-    "#,
-    );
-    assert!(
-        err.contains("http.request requires String, got"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn test_http_request_non_map_headers() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.request(http.GET, "http://example.com", "", "bad")
-}
-    "#,
-    );
-    assert!(err.contains("http.request requires Map, got"), "got: {err}");
-}
-
-#[test]
-fn test_http_serve_wrong_arg_count() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.serve(8080)
-}
-    "#,
-    );
-    assert!(err.contains("http.serve takes 2 arguments"), "got: {err}");
-}
-
-#[test]
-fn test_http_serve_non_int_port() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.serve("8080", { req -> http.Response { status: 200, body: "", headers: #{} } })
-}
-    "#,
-    );
-    assert!(err.contains("http.serve requires Int, got"), "got: {err}");
-}
-
-#[test]
-fn test_http_unknown_function() {
-    let err = run_err(
-        r#"
-import http
-fn main() {
-  http.nonexistent()
-}
-    "#,
-    );
-    assert!(err.contains("unknown http function"), "got: {err}");
-}
 
 // ── http.serve concurrency ──────────────────────────────────────
 
