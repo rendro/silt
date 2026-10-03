@@ -54,7 +54,10 @@ fn type2_align_tyvars_walks_assoc_proj_receiver() {
     use silt::types::{TyVar, Type};
     let old_recv: TyVar = 3;
     let new_recv: TyVar = 5;
-    let trait_name = intern("Iterator");
+    let trait_name = silt::types::TraitKey {
+        id: silt::defs::TraitId(silt::defs::DefId(u32::MAX - 1)),
+        name: intern("Iterator"),
+    };
     let assoc_name = intern("Item");
     let old = Type::AssocProj {
         receiver: Box::new(Type::Var(old_recv)),

@@ -84,7 +84,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
-                    constraints: vec![(av, intern("Display"))],
+                    constraints: vec![(av, TraitKey::builtin("Display"))],
                     optional_last_param: false,
                 },
             );
@@ -96,7 +96,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
-                    constraints: vec![(av, intern("Display"))],
+                    constraints: vec![(av, TraitKey::builtin("Display"))],
                     optional_last_param: false,
                 },
             );
@@ -110,7 +110,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::Never)),
-                    constraints: vec![(av, intern("Display"))],
+                    constraints: vec![(av, TraitKey::builtin("Display"))],
                     optional_last_param: false,
                 },
             );

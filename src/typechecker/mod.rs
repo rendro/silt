@@ -24,7 +24,7 @@ pub(super) use crate::intern::{Symbol, intern, resolve};
 pub(super) use crate::source::Span;
 pub(super) use crate::types::*;
 
-pub use crate::types::{Scheme, TyVar, Type, TypeRef};
+pub use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
 use std::rc::Rc;
@@ -53,8 +53,8 @@ pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash"];
 /// Round 93: human adjective for the gated built-in traits, used by
 /// the field-aware auto-derive gate's diagnostics ("... which is not
 /// comparable").
-fn builtin_trait_adjective(trait_sym: Symbol) -> &'static str {
-    match resolve(trait_sym).as_str() {
+fn builtin_trait_adjective(trait_sym: TraitKey) -> &'static str {
+    match resolve(trait_sym.name).as_str() {
         "Compare" => "comparable",
         "Equal" => "equatable",
         "Hash" => "hashable",
@@ -260,14 +260,14 @@ pub(super) struct TraitInfo {
     /// `trait HashTable(k) where k: Hash`. Each `(param_name, trait_name)`
     /// entry is checked at `register_trait_impl` against the concrete
     /// type the impl supplies for that param.
-    pub(super) param_where_clauses: Vec<(Symbol, Symbol)>,
+    pub(super) param_where_clauses: Vec<(Symbol, TraitKey)>,
     /// Supertrait names (e.g. `trait Ordered: Equal` yields `[Equal]`).
     /// Implementing this trait on a type requires every supertrait to also
     /// be implemented for the same type (validated in
     /// `validate_trait_impls`). `expand_with_supertraits` walks this list
     /// transitively to enable supertrait method calls inside `where`
     /// clauses.
-    pub(super) supertraits: Vec<Symbol>,
+    pub(super) supertraits: Vec<TraitKey>,
     /// Parallel to `supertraits`: the TypeExpr args supplied to each
     /// supertrait reference. For `trait Sub(a): Super(a)` the entry for
     /// `Super` is `[TypeExpr::Named("a")]`. Empty when the supertrait
@@ -311,7 +311,7 @@ pub(super) struct TraitInfo {
 #[derive(Debug, Clone)]
 pub(super) struct AssocTypeInfo {
     pub(super) name: Symbol,
-    pub(super) bounds: Vec<(Symbol, Vec<TypeExpr>)>,
+    pub(super) bounds: Vec<(TraitKey, Vec<TypeExpr>)>,
     pub(super) span: Span,
 }
 
@@ -326,7 +326,7 @@ pub(super) struct MethodEntry {
     /// a method with the same name for the same target type. `None`
     /// for auto-derived entries (Showable on every type, etc.) that
     /// don't participate in user-visible coherence rules.
-    pub(super) trait_name: Option<Symbol>,
+    pub(super) trait_name: Option<TraitKey>,
     /// Trait constraints that must hold at every call site of this
     /// method. Accumulated from:
     ///
@@ -348,7 +348,7 @@ pub(super) struct MethodEntry {
     /// `TryInto(Float) for ...` against a `where a: TryInto(Int)` bound).
     /// Empty for parameterless traits and the legacy parameterless
     /// where-clause path.
-    pub(super) method_constraints: Vec<(TyVar, Symbol, Vec<Type>)>,
+    pub(super) method_constraints: Vec<(TyVar, TraitKey, Vec<Type>)>,
 }
 
 /// A deferred where-clause obligation captured at a call site whose
@@ -359,7 +359,7 @@ pub(super) struct PendingWhereConstraint {
     /// The tyvar at the call site that carries the obligation.
     pub(super) tyvar: TyVar,
     /// The trait name the obligation requires.
-    pub(super) trait_name: Symbol,
+    pub(super) trait_name: TraitKey,
     /// Name of the callee function (for nicer diagnostics).
     pub(super) callee_fn_name: Option<Symbol>,
     /// Span of the call site.
@@ -367,7 +367,7 @@ pub(super) struct PendingWhereConstraint {
     /// Snapshot of the enclosing fn's active constraints at the
     /// time of the call (used to decide whether the obligation is
     /// already covered).
-    pub(super) active_snapshot: HashMap<TyVar, Vec<Symbol>>,
+    pub(super) active_snapshot: HashMap<TyVar, Vec<TraitKey>>,
     /// Snapshot of the enclosing fn's param tyvars at the time of
     /// the call (used to decide whether the obligation touches the
     /// enclosing fn's own polymorphism).
@@ -428,7 +428,7 @@ pub(super) fn remap_scheme(
         .map(|v| *tv_remap.get(v).unwrap_or(v))
         .collect();
     let new_ty = substitute_vars(&scheme.ty, ty_remap);
-    let new_constraints: Vec<(TyVar, Symbol)> = scheme
+    let new_constraints: Vec<(TyVar, TraitKey)> = scheme
         .constraints
         .iter()
         .map(|(tv, t)| (*tv_remap.get(tv).unwrap_or(tv), *t))
@@ -483,10 +483,10 @@ pub struct ModuleExports {
     pub(super) alias_arity: Vec<usize>,
     /// `trait T { ... }` snapshots: every trait, since the module's impls
     /// of them are program-wide.
-    pub(super) traits: Vec<(Symbol, TraitInfo)>,
+    pub(super) traits: Vec<(TraitKey, TraitInfo)>,
     /// The traits declared without `pub`: their methods can be called
     /// only in the module.
-    pub(super) private_traits: Vec<Symbol>,
+    pub(super) private_traits: Vec<TraitKey>,
     /// Trait-impl table snapshots — every `(trait_name, target_type)`
     /// pair the producer registered, with its method entries, span,
     /// constraints, and trait-arg bindings.
@@ -510,10 +510,10 @@ pub struct ModuleExports {
 /// belong to the producer's compile, not the importer's).
 #[derive(Debug, Clone)]
 pub(super) struct TraitImplExport {
-    pub(super) trait_name: Symbol,
+    pub(super) trait_name: TraitKey,
     pub(super) target_type: TypeRef,
     pub(super) span: Span,
-    pub(super) impl_constraints: Vec<(usize, Symbol, Vec<Type>)>,
+    pub(super) impl_constraints: Vec<(usize, TraitKey, Vec<Type>)>,
     pub(super) impl_trait_args: Vec<Type>,
     /// The impl's full canonicalized self type (see
     /// `TypeChecker::impl_self_types`). `None` for impls the producer
@@ -546,11 +546,11 @@ pub struct TypeChecker {
     /// Declared record types.
     pub(super) records: HashMap<TypeRef, RecordInfo>,
     /// Declared traits.
-    pub(super) traits: HashMap<Symbol, TraitInfo>,
+    pub(super) traits: HashMap<TraitKey, TraitInfo>,
     /// Method table: (type, method_name) → method entry.
     pub(super) method_table: HashMap<(TypeRef, Symbol), MethodEntry>,
     /// Tracks which (trait_name, type) pairs have been implemented.
-    pub(super) trait_impl_set: std::collections::HashSet<(Symbol, TypeRef)>,
+    pub(super) trait_impl_set: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// Round 93: `(trait_name, canonical type name)` pairs for which a
     /// user-declared record / enum CANNOT soundly support the built-in
     /// trait because some field / variant payload does not satisfy it
@@ -561,12 +561,12 @@ pub struct TypeChecker {
     /// Consulted by the operator-operand checks in `inference.rs` and to
     /// enrich "unknown method" diagnostics at `.equal()` / `.compare()`
     /// / `.hash()` call sites.
-    pub(super) auto_derive_negatives: HashMap<(Symbol, TypeRef), String>,
+    pub(super) auto_derive_negatives: HashMap<(TraitKey, TypeRef), String>,
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
     /// block's real source location.
-    pub(super) trait_impl_spans: HashMap<(Symbol, TypeRef), Span>,
+    pub(super) trait_impl_spans: HashMap<(TraitKey, TypeRef), Span>,
     /// Maps `(trait_name, target_head)` → impl-level where-clause
     /// obligations expressed as `(target_arg_index, required_trait,
     /// required_trait_args)` triples. Populated from
@@ -584,7 +584,7 @@ pub struct TypeChecker {
     /// reject `Conv(String) for Int` (a mismatched impl) instead of
     /// silently accepting any `Conv(*) for Int`. Empty for
     /// parameterless trait bounds.
-    pub(super) impl_constraints: HashMap<(Symbol, TypeRef), Vec<(usize, Symbol, Vec<Type>)>>,
+    pub(super) impl_constraints: HashMap<(TraitKey, TypeRef), Vec<(usize, TraitKey, Vec<Type>)>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`
@@ -593,7 +593,7 @@ pub struct TypeChecker {
     /// Float) is rejected — closing the soundness hole where parameterized-
     /// trait where-clause verification previously ignored trait args.
     /// Absent for parameter-less traits.
-    pub(super) impl_trait_args: HashMap<(Symbol, TypeRef), Vec<Type>>,
+    pub(super) impl_trait_args: HashMap<(TraitKey, TypeRef), Vec<Type>>,
     /// Maps `(trait_name, target_head)` → the impl's full (canonicalized)
     /// self type as constructed by `register_trait_impl`. Coherence
     /// guarantees at most one user impl per key. Consulted by
@@ -609,7 +609,7 @@ pub struct TypeChecker {
     /// they keep matching every instantiation. Absent for impls that
     /// never pass through `register_trait_impl` (builtin pre-stamps,
     /// auto-derive synthesis) — the check silently skips those.
-    pub(super) impl_self_types: HashMap<(Symbol, TypeRef), Type>,
+    pub(super) impl_self_types: HashMap<(TraitKey, TypeRef), Type>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<Diagnostic>,
@@ -619,7 +619,7 @@ pub struct TypeChecker {
     /// Active trait constraints for type variables in the current function body.
     /// Maps type variable → list of trait names it must satisfy.
     /// Populated during `check_fn_body` to enable method resolution on constrained vars.
-    pub(super) active_constraints: HashMap<TyVar, Vec<Symbol>>,
+    pub(super) active_constraints: HashMap<TyVar, Vec<TraitKey>>,
     /// Side channel holding trait arguments for parameterized-trait
     /// constraints, e.g. `where a: TryInto(Int)` stores `[Int]` under
     /// the key `(tyvar_of_a, TryInto)`. Populated during
@@ -627,7 +627,7 @@ pub struct TypeChecker {
     /// parallel monomorphic `active_constraints`; consumed during
     /// descriptor method resolution to substitute trait params.
     /// Absent for bare `where a: Display` entries.
-    pub(super) trait_arg_bindings: HashMap<(TyVar, Symbol), Vec<Type>>,
+    pub(super) trait_arg_bindings: HashMap<(TyVar, TraitKey), Vec<Type>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
     /// Maps record type names to their type parameter TyVar ids.
@@ -718,7 +718,7 @@ pub struct TypeChecker {
     /// constraints is instantiated, the fresh type variables inherit the
     /// constraints here. `generalize` then consults this map to propagate
     /// constraints into newly created schemes (e.g. `let f = constrained_fn`).
-    pub(super) tyvar_trait_constraints: HashMap<TyVar, Vec<Symbol>>,
+    pub(super) tyvar_trait_constraints: HashMap<TyVar, Vec<TraitKey>>,
     /// Set by the FieldAccess arm of infer_expr: `true` when the last
     /// FieldAccess resolved via method dispatch (trait method table),
     /// `false` when it resolved via record-field or module-qualified
@@ -746,9 +746,11 @@ pub struct TypeChecker {
     /// declaration (which has no resolution of its own) and a name the
     /// checker writes itself refer to.
     pub(super) own_types: HashMap<Symbol, TypeRef>,
+    /// The traits the module's own declarations declare, by name.
+    pub(super) own_traits: HashMap<Symbol, TraitKey>,
     /// The traits imported modules declare without `pub`, each with its
     /// module: their methods cannot be called here.
-    pub(super) private_traits: HashMap<Symbol, Symbol>,
+    pub(super) private_traits: HashMap<TraitKey, Symbol>,
     /// Cross-module typechecking (round 64 item 6A): exports from
     /// previously-typechecked sibling modules, keyed by module name as
     /// it appears in `import` statements. Populated by callers (the
@@ -863,6 +865,7 @@ impl TypeChecker {
             defs: None,
             module: crate::session::ModuleId(0),
             own_types: HashMap::new(),
+            own_traits: HashMap::new(),
             private_traits: HashMap::new(),
             module_exports: HashMap::new(),
             poisoned_modules: std::collections::HashSet::new(),
@@ -909,6 +912,18 @@ impl TypeChecker {
         self.current_package.unwrap_or_else(Self::builtin_pkg)
     }
 
+    /// The trait the module's own declaration `name` declares; a
+    /// builtin trait's declaration (the builtin environment) declares
+    /// the builtin trait.
+    pub(super) fn own_trait(&self, name: Symbol) -> TraitKey {
+        if let Some(t) = self.own_traits.get(&name) {
+            return *t;
+        }
+        let id = crate::defs::builtin_trait_id(&resolve(name))
+            .unwrap_or_else(|| panic!("the module declares a trait '{name}'"));
+        TraitKey { id, name }
+    }
+
     /// The type the module's own declaration `name` declares.
     pub(super) fn own_type(&self, name: Symbol) -> TypeRef {
         *self
@@ -923,30 +938,32 @@ impl TypeChecker {
         let Some(defs) = &self.defs else {
             return;
         };
-        self.own_types = defs
-            .of_module(self.module)
-            .iter()
-            .filter_map(|id| {
-                let def = defs.get(*id);
-                match def.kind {
-                    crate::defs::DefKind::Type(ty) => Some((
-                        def.name,
-                        TypeRef {
-                            id: ty,
-                            name: def.name,
-                        },
-                    )),
-                    crate::defs::DefKind::TypeAlias => Some((
-                        def.name,
+        let mut types = HashMap::new();
+        let mut traits = HashMap::new();
+        for id in defs.of_module(self.module) {
+            let def = defs.get(*id);
+            let name = def.name;
+            match def.kind {
+                crate::defs::DefKind::Type(ty) => {
+                    types.insert(name, TypeRef { id: ty, name });
+                }
+                crate::defs::DefKind::TypeAlias => {
+                    types.insert(
+                        name,
                         TypeRef {
                             id: crate::defs::TypeId(*id),
-                            name: def.name,
+                            name,
                         },
-                    )),
-                    _ => None,
+                    );
                 }
-            })
-            .collect();
+                crate::defs::DefKind::Trait(t) => {
+                    traits.insert(name, TraitKey { id: t, name });
+                }
+                _ => {}
+            }
+        }
+        self.own_types = types;
+        self.own_traits = traits;
     }
 
     // ── Fresh variables ─────────────────────────────────────────────
@@ -1874,7 +1891,7 @@ impl TypeChecker {
             .collect();
         // Collect constraints: for each entry in tyvar_trait_constraints,
         // resolve the tyvar and check if it matches a quantified var.
-        let mut constraints: Vec<(TyVar, Symbol)> = Vec::new();
+        let mut constraints: Vec<(TyVar, TraitKey)> = Vec::new();
         if !vars.is_empty() {
             for (&tv, trait_names) in &self.tyvar_trait_constraints {
                 let resolved = self.apply(&Type::Var(tv));
@@ -1925,7 +1942,7 @@ impl TypeChecker {
 
     /// Instantiate a `MethodEntry`'s template type AND its where-clause
     /// constraints through a single shared substitution, so the returned
-    /// `(Type, Vec<(TyVar, Symbol)>)` pair uses consistent fresh TyVars.
+    /// `(Type, Vec<(TyVar, TraitKey)>)` pair uses consistent fresh TyVars.
     ///
     /// Constraint TyVars that appear in `method_type`'s free-var set map
     /// through the same fresh-var substitution as the type itself; any
@@ -1941,7 +1958,7 @@ impl TypeChecker {
     pub(super) fn instantiate_method_entry(
         &mut self,
         entry: &MethodEntry,
-    ) -> (Type, Vec<(TyVar, Symbol, Vec<Type>)>) {
+    ) -> (Type, Vec<(TyVar, TraitKey, Vec<Type>)>) {
         let ty = self.apply(&entry.method_type);
         let mut fvs: Vec<TyVar> = free_vars_in(&ty);
         for (tv, _, args) in &entry.method_constraints {
@@ -1973,7 +1990,7 @@ impl TypeChecker {
             mapping.insert(v, self.fresh_var());
         }
         let new_ty = substitute_vars(&ty, &mapping);
-        let new_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = entry
+        let new_constraints: Vec<(TyVar, TraitKey, Vec<Type>)> = entry
             .method_constraints
             .iter()
             .map(|(tv, trait_name, args)| {
@@ -2007,13 +2024,13 @@ impl TypeChecker {
     pub(super) fn instantiate_with_constraints(
         &mut self,
         scheme: &Scheme,
-    ) -> (Type, Vec<(TyVar, Symbol)>) {
+    ) -> (Type, Vec<(TyVar, TraitKey)>) {
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         for &v in &scheme.vars {
             mapping.insert(v, self.fresh_var());
         }
         let ty = substitute_vars(&scheme.ty, &mapping);
-        let constraints: Vec<(TyVar, Symbol)> = scheme
+        let constraints: Vec<(TyVar, TraitKey)> = scheme
             .constraints
             .iter()
             .map(|(v, trait_name)| match mapping.get(v) {
@@ -2166,7 +2183,7 @@ impl TypeChecker {
     /// wrapping; finite types finish in O(depth).
     pub(super) fn verify_trait_obligation(
         &mut self,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         bound_trait_args: &[Type],
         ty: &Type,
         span: Span,
@@ -2255,13 +2272,13 @@ impl TypeChecker {
                             "type '{}' does not implement trait '{}({})': \
                              the matched impl is '{}({})'",
                             type_name,
-                            resolve(trait_name),
+                            resolve(trait_name.name),
                             bound_trait_args
                                 .iter()
                                 .map(|t| format!("{t}"))
                                 .collect::<Vec<_>>()
                                 .join(", "),
-                            resolve(trait_name),
+                            resolve(trait_name.name),
                             impl_args
                                 .iter()
                                 .map(|t| format!("{t}"))
@@ -2542,6 +2559,25 @@ impl TypeChecker {
         }
     }
 
+    /// The trait of a trait definition. A builtin trait is known by its
+    /// id alone (see `def_type`).
+    pub(super) fn def_trait(&self, id: crate::defs::DefId) -> Option<TraitKey> {
+        let first = crate::defs::builtin_types().len();
+        if let Some(k) = (id.0 as usize).checked_sub(first)
+            && let Some(name) = crate::defs::BUILTIN_TRAITS.get(k)
+        {
+            return Some(TraitKey::builtin(name));
+        }
+        let def = self.def(id)?;
+        match def.kind {
+            crate::defs::DefKind::Trait(t) => Some(TraitKey {
+                id: t,
+                name: def.name,
+            }),
+            _ => None,
+        }
+    }
+
     /// The type a resolver slot names.
     pub(super) fn res_type(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
         match res {
@@ -2582,6 +2618,28 @@ impl TypeChecker {
             .or_else(|| self.enums.get(&ty).map(|e| e.params.len()))
             .or_else(|| self.records.contains_key(&ty).then_some(0))
             .or_else(|| self.type_alias_arity.get(&ty).copied())
+    }
+
+    /// The trait a trait name names: its resolution; for a name with none
+    /// (the checker wrote it itself), the module's own trait of that
+    /// name, else the builtin trait of that name.
+    pub(super) fn named_trait(
+        &self,
+        res: Option<crate::defs::Res>,
+        name: Symbol,
+    ) -> Option<TraitKey> {
+        match res {
+            Some(crate::defs::Res::Def(id)) => self.def_trait(id),
+            Some(_) => None,
+            None => self.own_traits.get(&name).copied().or_else(|| {
+                crate::defs::builtin_trait_id(&resolve(name)).map(|id| TraitKey { id, name })
+            }),
+        }
+    }
+
+    /// The trait the impl `ti` implements.
+    pub(super) fn impl_trait(&self, ti: &TraitImpl) -> Option<TraitKey> {
+        self.named_trait(ti.trait_res, ti.trait_name)
     }
 
     /// The type the impl `ti` is for, as impls are keyed: the canonical
@@ -2987,7 +3045,7 @@ impl TypeChecker {
             self.trait_impl_set.insert(key);
             self.trait_impl_spans.insert(key, entry.span);
             if !entry.impl_constraints.is_empty() {
-                let remapped_impl_constraints: Vec<(usize, Symbol, Vec<Type>)> = entry
+                let remapped_impl_constraints: Vec<(usize, TraitKey, Vec<Type>)> = entry
                     .impl_constraints
                     .iter()
                     .map(|(idx, t, args)| {
@@ -3012,7 +3070,7 @@ impl TypeChecker {
             }
             for (mname, m) in &entry.methods {
                 let new_method_type = substitute_vars(&m.method_type, &ty_remap);
-                let new_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = m
+                let new_constraints: Vec<(TyVar, TraitKey, Vec<Type>)> = m
                     .method_constraints
                     .iter()
                     .map(|(tv, t, args)| {
@@ -3087,7 +3145,7 @@ impl TypeChecker {
             .chain(exports.records.iter().map(|(name, _)| *name))
             .chain(exports.aliases.iter().copied())
             .collect();
-        let declared_traits: std::collections::HashSet<Symbol> =
+        let declared_traits: std::collections::HashSet<TraitKey> =
             exports.traits.iter().map(|(name, _)| *name).collect();
         let mut enums: Vec<(&TypeRef, &EnumInfo)> = self
             .enums
@@ -3123,12 +3181,12 @@ impl TypeChecker {
                 exports.type_name_schemes.push((*name, scheme.clone()));
             }
         }
-        let mut traits: Vec<(&Symbol, &TraitInfo)> = self
+        let mut traits: Vec<(&TraitKey, &TraitInfo)> = self
             .traits
             .iter()
             .filter(|(name, info)| info.defined_in == local && !declared_traits.contains(*name))
             .collect();
-        traits.sort_by_key(|(name, _)| resolve(**name));
+        traits.sort_by_key(|(name, _)| resolve(name.name));
         for (name, info) in traits {
             exports.traits.push((*name, info.clone()));
         }
@@ -3226,11 +3284,12 @@ impl TypeChecker {
                 }
                 Decl::Trait(t) => {
                     pub_trait_names.insert(t.name);
-                    if let Some(info) = self.traits.get(&t.name) {
-                        exports.traits.push((t.name, info.clone()));
+                    let key = self.own_trait(t.name);
+                    if let Some(info) = self.traits.get(&key) {
+                        exports.traits.push((key, info.clone()));
                     }
                     if !t.is_pub {
-                        exports.private_traits.push(t.name);
+                        exports.private_traits.push(key);
                     }
                 }
                 _ => {}
@@ -3805,30 +3864,11 @@ impl TypeChecker {
     // ── Validate trait implementations ────────────────────────────────
 
     fn validate_trait_impls(&mut self) {
-        // (a) Validate supertrait names: every supertrait listed on every
-        // declared trait must itself be a declared trait. Done up-front so
-        // unknown-supertrait errors are surfaced even when the declaring
-        // trait has no impls. We snapshot the names+supertraits up-front
-        // because `self.error` borrows `self` mutably.
-        let trait_supertrait_pairs: Vec<(Symbol, Vec<Symbol>, Span)> = self
-            .traits
-            .iter()
-            .map(|(name, info)| (*name, info.supertraits.clone(), info.decl_span))
-            .collect();
-        for (trait_name, supertraits, decl_span) in &trait_supertrait_pairs {
-            for sup in supertraits {
-                if !self.traits.contains_key(sup) {
-                    self.error(
-                        Code::UnknownTrait,
-                        format!("trait '{trait_name}' lists unknown supertrait '{sup}'"),
-                        *decl_span,
-                    );
-                }
-            }
-        }
+        // (a) An unknown supertrait is reported where the trait is
+        // registered (`register_trait_decl_inner`).
 
         // Validate using method_table + trait_impl_set (the new system).
-        let impl_pairs: Vec<(Symbol, TypeRef)> = self.trait_impl_set.iter().cloned().collect();
+        let impl_pairs: Vec<(TraitKey, TypeRef)> = self.trait_impl_set.iter().cloned().collect();
         for (trait_name, type_name) in &impl_pairs {
             // GAP-2: Prefer the impl block's real span (stored at
             // registration time) over a method span. Fall back to the
@@ -3941,13 +3981,13 @@ impl TypeChecker {
                     self.error(Code::InvalidTraitImpl,
                         format!(
                             "impl {}({}) for {} requires impl {}({}) for {}, but found impl {}({}) for {}",
-                            resolve(*trait_name),
+                            resolve(trait_name.name),
                             fmt_args(&enclosing_args),
                             type_name,
-                            resolve(*supertrait),
+                            resolve(supertrait.name),
                             fmt_args(&expected_super_args),
                             type_name,
-                            resolve(*supertrait),
+                            resolve(supertrait.name),
                             fmt_args(&actual_super_args),
                             type_name,
                         ),
@@ -4387,7 +4427,8 @@ impl TypeChecker {
         // and allows the synthesized impl to overwrite it.
         let dummy_span = td.span;
         for trait_name in BUILTIN_AUTO_DERIVED_TRAIT_NAMES {
-            self.trait_impl_set.insert((intern(trait_name), ty));
+            self.trait_impl_set
+                .insert((TraitKey::builtin(trait_name), ty));
         }
         // Register auto-derived method entries
         let builtin_methods: &[(&str, Type)] = &[
@@ -4960,9 +5001,17 @@ impl TypeChecker {
                 // by canonicalize. Walk the supertrait chain in DFS
                 // order (LIFO via `Vec::pop`); the first popped trait
                 // that declares the assoc-type wins.
+                let Some(trait_key) = self.named_trait(te.res, *trait_name) else {
+                    self.error(
+                        Code::UnknownTrait,
+                        format!("unknown trait '{trait_name}'"),
+                        te.span,
+                    );
+                    return Type::Error;
+                };
                 let declaring_trait = self
-                    .find_assoc_type_declaring_trait(*trait_name, *assoc_name)
-                    .unwrap_or(*trait_name);
+                    .find_assoc_type_declaring_trait(trait_key, *assoc_name)
+                    .unwrap_or(trait_key);
                 Type::AssocProj {
                     receiver: Box::new(recv_ty),
                     trait_name: declaring_trait,
@@ -5020,11 +5069,11 @@ impl TypeChecker {
     /// trait" diagnostic at use-site).
     fn find_assoc_type_declaring_trait(
         &self,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         assoc_name: Symbol,
-    ) -> Option<Symbol> {
-        let mut frontier: Vec<Symbol> = vec![trait_name];
-        let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+    ) -> Option<TraitKey> {
+        let mut frontier: Vec<TraitKey> = vec![trait_name];
+        let mut seen: std::collections::HashSet<TraitKey> = std::collections::HashSet::new();
         while let Some(t) = frontier.pop() {
             if !seen.insert(t) {
                 continue;
@@ -5149,15 +5198,18 @@ impl TypeChecker {
             let trait_args = &wc.trait_args;
             if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
-                if let Type::Var(tv) = resolved {
-                    scheme.constraints.push((tv, *trait_name));
+                // An unknown trait is reported when the body is checked.
+                if let Type::Var(tv) = resolved
+                    && let Some(trait_name) = self.named_trait(wc.trait_res, *trait_name)
+                {
+                    scheme.constraints.push((tv, trait_name));
                     if !trait_args.is_empty() {
                         let resolved_args: Vec<Type> = trait_args
                             .iter()
                             .map(|te| self.resolve_type_expr(te, &mut param_map))
                             .collect();
                         self.trait_arg_bindings
-                            .insert((tv, *trait_name), resolved_args);
+                            .insert((tv, trait_name), resolved_args);
                     }
                 }
             } else {
@@ -5225,6 +5277,51 @@ impl TypeChecker {
     /// (after the redefinition guard in `register_trait_decl_user`) and
     /// built-in synthetic decls (via `builtin_trait_decls`).
     pub(super) fn register_trait_decl_inner(&mut self, t: &TraitDecl) {
+        let key = self.own_trait(t.name);
+        // The supertraits and the associated types' bounds. A trait name
+        // that names no trait is reported here, unless the resolver
+        // reported it.
+        let mut supertraits: Vec<(TraitKey, Vec<TypeExpr>)> = Vec::new();
+        for r in &t.supertraits {
+            match self.named_trait(r.res, r.name) {
+                Some(sup) => supertraits.push((sup, r.args.clone())),
+                None if r.res == Some(crate::defs::Res::Error) => {}
+                None => self.error(
+                    Code::UnknownTrait,
+                    format!("trait '{}' lists unknown supertrait '{}'", t.name, r.name),
+                    t.span,
+                ),
+            }
+        }
+        let assoc_types: Vec<AssocTypeInfo> = t
+            .assoc_types
+            .iter()
+            .map(|a| AssocTypeInfo {
+                name: a.name,
+                bounds: a
+                    .bounds
+                    .iter()
+                    .filter_map(|b| Some((self.named_trait(b.res, b.name)?, b.args.clone())))
+                    .collect(),
+                span: a.span,
+            })
+            .collect();
+        for a in &t.assoc_types {
+            for b in &a.bounds {
+                if b.res != Some(crate::defs::Res::Error)
+                    && self.named_trait(b.res, b.name).is_none()
+                {
+                    self.error(
+                        Code::UnknownTrait,
+                        format!(
+                            "unknown trait '{}' in bound on associated type '{}::{}'",
+                            b.name, t.name, a.name
+                        ),
+                        a.span,
+                    );
+                }
+            }
+        }
         // GAP (round 35 F6): duplicate method names in a trait
         // declaration used to silently overwrite each other in the
         // trait's `methods` Vec (first entry won for method lookup but
@@ -5252,19 +5349,11 @@ impl TypeChecker {
         // be visible during method-type resolution. The stub is
         // overwritten with the fully-populated TraitInfo at the end
         // of this function.
-        let pre_assoc_types: Vec<AssocTypeInfo> = t
-            .assoc_types
-            .iter()
-            .map(|a| AssocTypeInfo {
-                name: a.name,
-                bounds: a.bounds.iter().map(|b| (b.name, b.args.clone())).collect(),
-                span: a.span,
-            })
-            .collect();
-        let pre_supertraits: Vec<Symbol> = t.supertraits.iter().map(|r| r.name).collect();
+        let pre_assoc_types = assoc_types.clone();
+        let pre_supertraits: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
         let pkg = self.defining_package();
         self.traits.insert(
-            t.name,
+            key,
             TraitInfo {
                 params: t.params.clone(),
                 param_var_ids: Vec::new(),
@@ -5363,15 +5452,20 @@ impl TypeChecker {
         // trait_name) shape is kept; trait_args on the bound are not
         // yet honored (reserved for a future extension where bounds
         // can themselves reference other trait args).
-        let param_where_clauses: Vec<(Symbol, Symbol)> = t
+        let param_where_clauses: Vec<(Symbol, TraitKey)> = t
             .param_where_clauses
             .iter()
-            .map(|wc| (wc.type_param, wc.trait_name))
+            .filter_map(|wc| {
+                Some((
+                    wc.type_param,
+                    self.named_trait(wc.trait_res, wc.trait_name)?,
+                ))
+            })
             .collect();
 
-        let supertrait_names: Vec<Symbol> = t.supertraits.iter().map(|r| r.name).collect();
+        let supertrait_names: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
         let supertrait_args: Vec<Vec<TypeExpr>> =
-            t.supertraits.iter().map(|r| r.args.clone()).collect();
+            supertraits.into_iter().map(|(_, args)| args).collect();
 
         // Reject duplicate assoc-type names within the same trait.
         // Mirrors the duplicate-method check above.
@@ -5389,18 +5483,8 @@ impl TypeChecker {
                 );
             }
         }
-        let assoc_types: Vec<AssocTypeInfo> = t
-            .assoc_types
-            .iter()
-            .map(|a| AssocTypeInfo {
-                name: a.name,
-                bounds: a.bounds.iter().map(|b| (b.name, b.args.clone())).collect(),
-                span: a.span,
-            })
-            .collect();
-
         self.traits.insert(
-            t.name,
+            key,
             TraitInfo {
                 params: t.params.clone(),
                 param_var_ids,
@@ -5459,7 +5543,9 @@ impl TypeChecker {
         decls.retain(|decl| match decl {
             Decl::TraitImpl(ti)
                 if !ti.is_auto_derived
-                    && SEALED_TRAIT_NAMES.contains(&resolve(ti.trait_name).as_str()) =>
+                    && self
+                        .impl_trait(ti)
+                        .is_some_and(|t| SEALED_TRAIT_NAMES.iter().any(|n| t.is_builtin(n))) =>
             {
                 errors.push((ti.trait_name, ti.span));
                 false
@@ -5503,7 +5589,7 @@ impl TypeChecker {
     /// - The `Alias` body kind (handled separately by
     ///   `register_type_alias`).
     fn synthesize_auto_derive_impls(&mut self, decls: &mut Vec<Decl>) {
-        let display_sym = intern("Display");
+        let display_sym = TraitKey::builtin("Display");
         // Scan for user-written `Display` impls so we can skip synthesis
         // for the types the user already covered. Use the canonical
         // target-type symbol so an impl on an alias skips synthesis on
@@ -5513,7 +5599,7 @@ impl TypeChecker {
         for decl in decls.iter() {
             if let Decl::TraitImpl(ti) = decl
                 && !ti.is_auto_derived
-                && ti.trait_name == display_sym
+                && self.named_trait(ti.trait_res, ti.trait_name) == Some(display_sym)
             {
                 if let Some(target) = self.impl_target(ti) {
                     user_display_impls.insert(target);
@@ -5533,9 +5619,9 @@ impl TypeChecker {
             }
         }
 
-        let compare_sym = intern("Compare");
-        let equal_sym = intern("Equal");
-        let hash_sym = intern("Hash");
+        let compare_sym = TraitKey::builtin("Compare");
+        let equal_sym = TraitKey::builtin("Equal");
+        let hash_sym = TraitKey::builtin("Hash");
 
         // Pre-collect type names + body kind so we can check field types
         // against `trait_impl_set` without holding a borrow on
@@ -5761,7 +5847,7 @@ impl TypeChecker {
                     .map(|ids| ids.iter().copied().collect())
                     .unwrap_or_default(),
             };
-            let supports = |_trait_sym: Symbol, ty: &Type| -> bool {
+            let supports = |_trait_sym: TraitKey, ty: &Type| -> bool {
                 // Self-references — same nominal head as the type we're
                 // synthesizing for — are always allowed (the recursive
                 // body will lookup the same global we register).
@@ -5818,7 +5904,7 @@ impl TypeChecker {
             // otherwise produce a `Compare:Option` impl that breaks
             // `tests/cli/trait_init_parity_tests.rs`.
             let policy_allows =
-                |trait_sym: Symbol| -> bool { self.trait_impl_set.contains(&(trait_sym, key)) };
+                |trait_sym: TraitKey| -> bool { self.trait_impl_set.contains(&(trait_sym, key)) };
 
             match body {
                 TypeBodyKind::Enum(variants) => {
@@ -5941,7 +6027,7 @@ impl TypeChecker {
     /// unresolved tyvars or unknown nominal heads. Used by
     /// `synthesize_auto_derive_impls` to decide whether a record / enum
     /// can have a sound auto-derived impl.
-    fn field_type_supports_trait(&self, trait_name: Symbol, ty: &Type) -> bool {
+    fn field_type_supports_trait(&self, trait_name: TraitKey, ty: &Type) -> bool {
         let Some(type_name) = self.type_name_for_impl(ty) else {
             return false;
         };
@@ -5969,7 +6055,7 @@ impl TypeChecker {
         // `dispatch_trait_method`'s Value-level behaviour at runtime).
         for (trait_sym, canon) in negatives.keys() {
             self.trait_impl_set.remove(&(*trait_sym, *canon));
-            let method_sym = match resolve(*trait_sym).as_str() {
+            let method_sym = match resolve(trait_sym.name).as_str() {
                 "Equal" => intern("equal"),
                 "Compare" => intern("compare"),
                 "Hash" => intern("hash"),
@@ -6015,8 +6101,12 @@ impl TypeChecker {
     fn compute_auto_derive_field_negatives(
         &self,
         user_type_names: &std::collections::HashSet<TypeRef>,
-    ) -> HashMap<(Symbol, TypeRef), String> {
-        let gated_traits = [intern("Equal"), intern("Compare"), intern("Hash")];
+    ) -> HashMap<(TraitKey, TypeRef), String> {
+        let gated_traits = [
+            TraitKey::builtin("Equal"),
+            TraitKey::builtin("Compare"),
+            TraitKey::builtin("Hash"),
+        ];
 
         // Owned snapshot of each user type's resolved body so the
         // fixpoint can walk without re-borrowing `self.enums` /
@@ -6035,7 +6125,7 @@ impl TypeChecker {
         }
         entries.sort_by_key(|(name, ..)| resolve(name.name));
 
-        let mut negatives: HashMap<(Symbol, TypeRef), String> = HashMap::new();
+        let mut negatives: HashMap<(TraitKey, TypeRef), String> = HashMap::new();
         loop {
             let mut changed = false;
             for (name, canon, body) in &entries {
@@ -6075,7 +6165,7 @@ impl TypeChecker {
                             format!(
                                 "type '{}' cannot derive '{}': {}, which is not {}",
                                 resolve(name.name),
-                                resolve(trait_sym),
+                                resolve(trait_sym.name),
                                 field_desc,
                                 builtin_trait_adjective(trait_sym),
                             ),
@@ -6107,9 +6197,9 @@ impl TypeChecker {
     ///     rather than risk a stack overflow.
     fn gate_field_supports_trait(
         &self,
-        trait_sym: Symbol,
+        trait_sym: TraitKey,
         ty: &Type,
-        negatives: &HashMap<(Symbol, TypeRef), String>,
+        negatives: &HashMap<(TraitKey, TypeRef), String>,
         depth: usize,
     ) -> bool {
         if depth > 64 {
@@ -6137,7 +6227,7 @@ impl TypeChecker {
             // Channels carry identity-based equality (round 82:
             // `Value::Channel(a) == Value::Channel(b)` iff ids match)
             // but no ordering or hashing through the trait surface.
-            Type::Channel(_) => trait_sym == intern("Equal"),
+            Type::Channel(_) => trait_sym == TraitKey::builtin("Equal"),
             Type::List(t) | Type::Range(t) | Type::Set(t) => {
                 let head = self
                     .type_name_for_impl(&ty)
@@ -6177,9 +6267,9 @@ impl TypeChecker {
         is_equality: bool,
     ) -> Option<String> {
         let trait_sym = if is_equality {
-            intern("Equal")
+            TraitKey::builtin("Equal")
         } else {
-            intern("Compare")
+            TraitKey::builtin("Compare")
         };
         let resolved = crate::types::canonical::canonicalize(&self.resolver, &self.apply(ty));
         let (name, args) = match &resolved {
@@ -6199,7 +6289,7 @@ impl TypeChecker {
                         format!(
                             "type '{}' cannot derive '{}': field '{}' has type '{}', which is not {}",
                             resolve(name.name),
-                            resolve(trait_sym),
+                            resolve(trait_sym.name),
                             resolve(*fname),
                             self.apply(fty),
                             builtin_trait_adjective(trait_sym),
@@ -6224,7 +6314,7 @@ impl TypeChecker {
                     .then(|| {
                         format!(
                             "type '{resolved}' cannot derive '{}': element type is not {}",
-                            resolve(trait_sym),
+                            resolve(trait_sym.name),
                             builtin_trait_adjective(trait_sym),
                         )
                     });
@@ -6256,7 +6346,7 @@ impl TypeChecker {
                 (!check(&concrete)).then(|| {
                     format!(
                         "type '{resolved}' cannot derive '{}': field '{}' has type '{}', which is not {}",
-                        resolve(trait_sym),
+                        resolve(trait_sym.name),
                         resolve(*fname),
                         self.apply(&concrete),
                         builtin_trait_adjective(trait_sym),
@@ -6280,7 +6370,7 @@ impl TypeChecker {
                     (!check(&concrete)).then(|| {
                         format!(
                             "type '{resolved}' cannot derive '{}': variant '{}' payload #{} has type '{}', which is not {}",
-                            resolve(trait_sym),
+                            resolve(trait_sym.name),
                             resolve(v.name),
                             i + 1,
                             self.apply(&concrete),
@@ -6303,9 +6393,9 @@ impl TypeChecker {
         method: Symbol,
     ) -> Option<String> {
         let trait_sym = match resolve(method).as_str() {
-            "equal" => intern("Equal"),
-            "compare" => intern("Compare"),
-            "hash" => intern("Hash"),
+            "equal" => TraitKey::builtin("Equal"),
+            "compare" => TraitKey::builtin("Compare"),
+            "hash" => TraitKey::builtin("Hash"),
             _ => return None,
         };
         let canon = canonical_head(&self.resolver, type_name);
@@ -6317,7 +6407,7 @@ impl TypeChecker {
             let Decl::TraitImpl(ti) = decl else {
                 continue;
             };
-            let Some(trait_info) = self.traits.get(&ti.trait_name) else {
+            let Some(trait_info) = self.impl_trait(ti).and_then(|t| self.traits.get(&t)) else {
                 // Unknown trait — let validate_trait_impls / dispatch
                 // surface the diagnostic; nothing to synthesize here.
                 continue;
@@ -6342,7 +6432,10 @@ impl TypeChecker {
     /// caller to skip the rest of registration. See the call site in
     /// `register_trait_impl` for the rule statement.
     fn check_orphan_rule(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
-        let trait_pkg = self.traits.get(&ti.trait_name).map(|t| t.defined_in);
+        let trait_pkg = self
+            .impl_trait(ti)
+            .and_then(|t| self.traits.get(&t))
+            .map(|t| t.defined_in);
         // Compute the head-type package by reconstructing a Type from
         // the impl's target name + args. We use the canonicalised
         // `target_type` symbol because the round-23 GAP #1 unknown-
@@ -6474,7 +6567,15 @@ impl TypeChecker {
             return;
         };
         let target_type = canonical_head(&self.resolver, written);
-        let impl_key = (ti.trait_name, target_type);
+        let Some(trait_key) = self.impl_trait(ti) else {
+            self.error(
+                Code::UnknownTrait,
+                format!("trait '{}' is not declared", ti.trait_name),
+                ti.span,
+            );
+            return;
+        };
+        let impl_key = (trait_key, target_type);
 
         // Coherence check: reject duplicate user-defined impls.
         if self.trait_impl_set.contains(&impl_key) {
@@ -6774,7 +6875,7 @@ impl TypeChecker {
         // impls above, and the one permitted overwrite (a user Display
         // impl overriding the auto-derived one) should win here too.
         self.impl_self_types
-            .insert((ti.trait_name, target_type), self_type.clone());
+            .insert((trait_key, target_type), self_type.clone());
 
         // Resolve impl-level where clauses (e.g. `trait X for Box(a) where
         // a: Show`) to `(TyVar, trait)` pairs against the impl_param_map.
@@ -6787,7 +6888,7 @@ impl TypeChecker {
         // from parse_where_clauses_opt as separate (tv, trait) entries
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
-        let mut impl_level_constraints: Vec<(TyVar, Symbol, Vec<Type>)> = Vec::new();
+        let mut impl_level_constraints: Vec<(TyVar, TraitKey, Vec<Type>)> = Vec::new();
         // Parallel structure used to populate self.impl_constraints below so
         // that call-site constraint resolution can recursively verify the
         // impl's own where clauses against the actual concrete type
@@ -6813,24 +6914,27 @@ impl TypeChecker {
         // before, where `args.get(idx)` returned `None` at verify time
         // and the obligation was skipped.
         let expanded_self_args = self.type_args_of(&self_type);
-        let mut impl_obligations_by_index: Vec<(usize, Symbol, Vec<Type>)> = Vec::new();
+        let mut impl_obligations_by_index: Vec<(usize, TraitKey, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
             let type_param = &wc.type_param;
-            let trait_name = &wc.trait_name;
             let trait_args = &wc.trait_args;
-            if !self.traits.contains_key(trait_name) {
+            let Some(trait_key) = self
+                .named_trait(wc.trait_res, wc.trait_name)
+                .filter(|t| self.traits.contains_key(t))
+            else {
                 self.error(
                     Code::UnknownTrait,
                     format!(
                         "unknown trait '{}' in where clause on trait impl '{} for {}'",
-                        resolve(*trait_name),
+                        resolve(wc.trait_name),
                         resolve(ti.trait_name),
                         resolve(ti.target_type)
                     ),
                     ti.span,
                 );
                 continue;
-            }
+            };
+            let trait_name = &trait_key;
             // Round 101: the bound's arity must match the trait's
             // declared param count in BOTH directions (see
             // check_where_bound_arity). Skip registering the malformed
@@ -6896,7 +7000,7 @@ impl TypeChecker {
         }
         if !impl_obligations_by_index.is_empty() {
             self.impl_constraints
-                .insert((ti.trait_name, target_type), impl_obligations_by_index);
+                .insert((trait_key, target_type), impl_obligations_by_index);
         }
 
         // GAP (round 35 F5): extraneous trait-impl methods — methods on
@@ -6916,7 +7020,7 @@ impl TypeChecker {
         // declared bounds — concrete types are checked now via
         // `verify_trait_obligation`; unresolved tyvars are added as
         // impl-level constraints so body checking sees them.
-        let trait_info_clone = self.traits.get(&ti.trait_name).cloned();
+        let trait_info_clone = self.traits.get(&trait_key).cloned();
         if let Some(trait_info) = &trait_info_clone {
             if ti.trait_args.len() != trait_info.params.len() {
                 let expected = trait_info.params.len();
@@ -6945,7 +7049,7 @@ impl TypeChecker {
                     .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
                     .collect();
                 self.impl_trait_args
-                    .insert((ti.trait_name, target_type), resolved_trait_args.clone());
+                    .insert((trait_key, target_type), resolved_trait_args.clone());
                 if !trait_info.param_where_clauses.is_empty() {
                     for (param_name, bound_trait) in &trait_info.param_where_clauses {
                         let Some(idx) = trait_info.params.iter().position(|p| p == param_name)
@@ -6986,7 +7090,7 @@ impl TypeChecker {
         // that each binding satisfies the trait's declared bounds.
         let trait_assoc_types: Vec<AssocTypeInfo> = self
             .traits
-            .get(&ti.trait_name)
+            .get(&trait_key)
             .map(|info| info.assoc_types.clone())
             .unwrap_or_default();
         // Index the impl's bindings by name for lookup + duplicate check.
@@ -7011,8 +7115,8 @@ impl TypeChecker {
             // unknown — in that case the per-impl unknown-trait error
             // already fired and we silently skip the binding.)
             let known = trait_assoc_types.iter().any(|a| a.name == binding.name);
-            if (!trait_assoc_types.is_empty() || self.traits.contains_key(&ti.trait_name))
-                && self.traits.contains_key(&ti.trait_name)
+            if (!trait_assoc_types.is_empty() || self.traits.contains_key(&trait_key))
+                && self.traits.contains_key(&trait_key)
                 && !known
             {
                 self.error(
@@ -7038,7 +7142,7 @@ impl TypeChecker {
             // signature check below reports a clean "missing required
             // assoc-type" rather than walking through a poisoned entry.
             match self.resolver.register_assoc_binding(
-                ti.trait_name,
+                trait_key,
                 target_type,
                 binding.name,
                 resolved.clone(),
@@ -7047,12 +7151,9 @@ impl TypeChecker {
                     impl_binding_map.insert(binding.name, resolved);
                 }
                 Err(cycle) => {
-                    let via_msg = if (cycle.via.0.as_str(), cycle.via.1, cycle.via.2.as_str())
-                        == (
-                            cycle.trait_name.as_str(),
-                            cycle.head,
-                            cycle.assoc_name.as_str(),
-                        ) {
+                    let via_msg = if (cycle.via.0, cycle.via.1, cycle.via.2.as_str())
+                        == (cycle.trait_name, cycle.head, cycle.assoc_name.as_str())
+                    {
                         String::new()
                     } else {
                         format!(
@@ -7093,7 +7194,7 @@ impl TypeChecker {
                         Code::UnknownTrait,
                         format!(
                             "unknown trait '{}' in bound on associated type '{}::{}'",
-                            resolve(*bound_trait),
+                            resolve(bound_trait.name),
                             resolve(ti.trait_name),
                             resolve(assoc.name),
                         ),
@@ -7123,7 +7224,7 @@ impl TypeChecker {
 
         let trait_method_names: Option<std::collections::HashSet<Symbol>> = self
             .traits
-            .get(&ti.trait_name)
+            .get(&trait_key)
             .map(|info| info.methods.iter().map(|(n, _)| *n).collect());
         let mut seen_impl_methods: std::collections::HashSet<Symbol> =
             std::collections::HashSet::new();
@@ -7211,7 +7312,7 @@ impl TypeChecker {
             if let Some(existing) = self.method_table.get(&(target_type, method.name))
                 && !existing.is_auto_derived
                 && let Some(existing_trait) = existing.trait_name
-                && existing_trait != ti.trait_name
+                && existing_trait != trait_key
             {
                 self.error(
                     Code::AmbiguousMethod,
@@ -7239,21 +7340,24 @@ impl TypeChecker {
             let mut method_constraints = impl_level_constraints.clone();
             for wc in &method.where_clauses {
                 let type_param = &wc.type_param;
-                let trait_name = &wc.trait_name;
                 let trait_args = &wc.trait_args;
-                if !self.traits.contains_key(trait_name) {
+                let Some(trait_key) = self
+                    .named_trait(wc.trait_res, wc.trait_name)
+                    .filter(|t| self.traits.contains_key(t))
+                else {
                     self.error(
                         Code::UnknownTrait,
                         format!(
                             "unknown trait '{}' in where clause on '{}.{}'",
-                            resolve(*trait_name),
+                            resolve(wc.trait_name),
                             resolve(ti.target_type),
                             resolve(method.name)
                         ),
                         method.span,
                     );
                     continue;
-                }
+                };
+                let trait_name = &trait_key;
                 // Round 101: bound arity must match the trait's declared
                 // param count (see check_where_bound_arity — it dedupes
                 // against the identical diagnostic the method body's
@@ -7318,7 +7422,7 @@ impl TypeChecker {
                     method_type: fn_type.clone(),
                     span: method.span,
                     is_auto_derived: ti.is_auto_derived,
-                    trait_name: Some(ti.trait_name),
+                    trait_name: Some(trait_key),
                     method_constraints: method_constraints.clone(),
                 },
             );
@@ -7366,7 +7470,7 @@ impl TypeChecker {
     /// diagnostic single.
     pub(super) fn check_where_bound_arity(
         &mut self,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         got: usize,
         span: Span,
     ) -> bool {
@@ -7379,7 +7483,7 @@ impl TypeChecker {
         }
         let msg = format!(
             "trait '{}' expects {} {} in bound, got {}",
-            resolve(trait_name),
+            resolve(trait_name.name),
             n,
             inference::plural(n, "type argument", "type arguments"),
             got
@@ -8096,7 +8200,7 @@ pub(super) fn register_auto_derived_impls_for(
         for trait_name in trait_names {
             checker
                 .trait_impl_set
-                .insert((intern(trait_name), TypeRef::builtin(type_name)));
+                .insert((TraitKey::builtin(trait_name), TypeRef::builtin(type_name)));
         }
         // Build method entries only for traits in `trait_names`.
         let mut methods: Vec<(&str, Type)> = Vec::with_capacity(4);
@@ -8452,7 +8556,7 @@ pub(super) fn builtin_names() -> BuiltinNames {
         })
         .collect();
     enums.sort_by_key(|(name, _)| resolve(*name));
-    let mut traits: Vec<Symbol> = env.checker.traits.keys().copied().collect();
+    let mut traits: Vec<Symbol> = env.checker.traits.keys().map(|t| t.name).collect();
     traits.sort_by_key(|name| resolve(*name));
     BuiltinNames {
         bindings,
@@ -8747,7 +8851,7 @@ pub fn __trait_init_fingerprint_check_program() -> (
     let trait_impls: BTreeSet<String> = checker
         .trait_impl_set
         .iter()
-        .map(|(tr, ty)| format!("{}:{}", resolve(*tr), resolve(ty.name)))
+        .map(|(tr, ty)| format!("{}:{}", resolve(tr.name), resolve(ty.name)))
         .collect();
     let method_keys: BTreeSet<String> = checker
         .method_table
@@ -8787,10 +8891,9 @@ pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     let names = ["Display", "Compare", "Equal", "Hash"];
     let mut out = Vec::new();
     for name in names {
-        let sym = intern(name);
         let info = checker
             .traits
-            .get(&sym)
+            .get(&TraitKey::builtin(name))
             .unwrap_or_else(|| panic!("built-in trait {name} not registered"));
         assert_eq!(
             info.methods.len(),

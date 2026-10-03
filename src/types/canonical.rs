@@ -65,9 +65,9 @@
 //!   6364552 replaced that with the per-session `Resolver` to close
 //!   the cross-pull contamination hazard.
 //! - An alias is keyed by its [`TypeId`]: two modules may each declare
-//!   an alias of one name. A trait and an associated-type name are keyed
-//!   by their resolved `String`s, because the interner is
-//!   `thread_local!` (see `crate::intern`).
+//!   an alias of one name; a trait by its [`TraitKey`]. An associated
+//!   type's name is keyed by its resolved `String`, because the interner is `thread_local!`
+//!   (see `crate::intern`).
 //! - Phase A unit tests in this module continue to pass because they
 //!   exercise built-in types only — no aliases registered.
 //! - The substitution helper for parametric aliases is the existing
@@ -77,7 +77,7 @@
 
 use crate::defs::TypeId;
 use crate::intern::{Symbol, resolve};
-use crate::types::{TyVar, Type, TypeRef};
+use crate::types::{TraitKey, TyVar, Type, TypeRef};
 use crate::value::Value;
 use std::collections::HashMap;
 
@@ -114,8 +114,9 @@ pub struct AliasInfo {
 // ── Associated-type bindings registry (Phase: associated types) ──────
 //
 // Mirrors the alias-registry pattern above. Keys are
-// `(trait_name, target_canonical_head, assoc_name)`, the names resolved
-// to strings (for the `Symbol`-vs-thread-local-interner reason).
+// `(trait, target_canonical_head, assoc_name)`, the associated type's
+// name resolved to a string (for the `Symbol`-vs-thread-local-interner
+// reason).
 // The typechecker populates this at impl registration; the
 // canonicaliser reads it when reducing `Type::AssocProj` whose
 // receiver canonicalises to a concrete head.
@@ -135,8 +136,8 @@ pub struct AssocBinding {
 /// triple being registered. Round 76 BROKEN T1 fix.
 #[derive(Debug, Clone)]
 pub struct AssocBindingCycle {
-    /// Trait name of the binding under registration.
-    pub trait_name: String,
+    /// Trait of the binding under registration.
+    pub trait_name: TraitKey,
     /// Canonical target head of the binding under registration.
     pub head: TypeRef,
     /// Associated-type name of the binding under registration.
@@ -144,12 +145,12 @@ pub struct AssocBindingCycle {
     /// Triple at which the cycle closes (may equal `(trait_name,
     /// head, assoc_name)` for direct self-reference, or a different
     /// triple for mutual cycles through other registered bindings).
-    pub via: (String, TypeRef, String),
+    pub via: (TraitKey, TypeRef, String),
 }
 
 /// The key of an associated-type binding: the trait, the canonical head
 /// of the impl's target, the associated type's name.
-type AssocKey = (String, TypeRef, String);
+type AssocKey = (TraitKey, TypeRef, String);
 
 /// Compile-session-scoped storage for the alias and associated-type
 /// binding registries.
@@ -238,7 +239,7 @@ impl Resolver {
     #[allow(clippy::result_large_err)]
     pub fn register_assoc_binding(
         &mut self,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         target_head: TypeRef,
         assoc_name: Symbol,
         ty: Type,
@@ -251,7 +252,7 @@ impl Resolver {
         // covers both direct self-reference (`type Item =
         // <Int as Container>::Item`) and mutual cycles through other
         // bindings already in the registry.
-        let target_triple = (resolve(trait_name), head_canon, resolve(assoc_name));
+        let target_triple = (trait_name, head_canon, resolve(assoc_name));
         let mut visited: std::collections::HashSet<AssocKey> = std::collections::HashSet::new();
         // Treat the triple under registration as already-visited so a
         // direct AssocProj on the RHS that resolves to the same triple
@@ -259,7 +260,7 @@ impl Resolver {
         visited.insert(target_triple.clone());
         if let Some(cycle) = self.find_assoc_cycle(&canon_ty, &mut visited) {
             return Err(AssocBindingCycle {
-                trait_name: target_triple.0.clone(),
+                trait_name: target_triple.0,
                 head: target_triple.1,
                 assoc_name: target_triple.2.clone(),
                 via: cycle,
@@ -286,7 +287,7 @@ impl Resolver {
             } => {
                 if let Some(head) = head_of_canon(receiver) {
                     let head_canon = canonical_head(self, head);
-                    let triple = (resolve(*trait_name), head_canon, resolve(*assoc_name));
+                    let triple = (*trait_name, head_canon, resolve(*assoc_name));
                     if visited.contains(&triple) {
                         return Some(triple);
                     }
@@ -362,13 +363,13 @@ impl Resolver {
     /// binding.
     pub fn lookup_assoc_binding(
         &self,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         target_head: TypeRef,
         assoc_name: Symbol,
     ) -> Option<AssocBinding> {
         let head_canon = canonical_head(self, target_head);
         self.assoc_bindings
-            .get(&(resolve(trait_name), head_canon, resolve(assoc_name)))
+            .get(&(trait_name, head_canon, resolve(assoc_name)))
             .cloned()
     }
 }

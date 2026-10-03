@@ -1,8 +1,7 @@
 -- cmd: check
 -- exit: 1
--- a.silt and b.silt each declare `trait Speak`, with different arities.
--- The type error points into b.silt, at the impl whose method takes
--- two arguments: it is labelled with b.silt and shows b.silt's line.
+-- a.silt and b.silt each declare a `trait Speak`: two traits. Cat
+-- implements b's, and a.talk asks for a's, so the call is the error.
 import a
 import b
 fn main() {

@@ -286,7 +286,7 @@ impl TypeChecker {
     /// So we iterate the active constraints and, for each `(tv, traits)`,
     /// check whether `apply(Type::Var(tv))` lands on the same resolved
     /// tyvar as `resolved`, on either side of the chain.
-    fn covered_by_active_constraint(&self, resolved: &Type, trait_name: Symbol) -> bool {
+    fn covered_by_active_constraint(&self, resolved: &Type, trait_name: TraitKey) -> bool {
         let resolved = self.apply(resolved);
         let resolved_var = match &resolved {
             Type::Var(v) => *v,
@@ -493,7 +493,7 @@ impl TypeChecker {
                     );
                     return None;
                 };
-                let mut matches: Vec<(Symbol, Type)> = Vec::new();
+                let mut matches: Vec<(TraitKey, Type)> = Vec::new();
                 for trait_name in &trait_names {
                     if let Some(trait_info) = self.traits.get(trait_name).cloned()
                         && let Some((_, method_ty)) =
@@ -588,11 +588,11 @@ impl TypeChecker {
     /// inputs like `trait A: B { } trait B: A { }`. Cycle behaviour at
     /// the data level is otherwise unspecified for v0.6 — we don't reject
     /// cycles, we just don't blow the stack on them.
-    pub(super) fn expand_with_supertraits(&self, traits: &[Symbol]) -> Vec<Symbol> {
+    pub(super) fn expand_with_supertraits(&self, traits: &[TraitKey]) -> Vec<TraitKey> {
         use std::collections::HashSet;
         let mut expanded = Vec::new();
-        let mut stack: Vec<Symbol> = traits.to_vec();
-        let mut seen: HashSet<Symbol> = HashSet::new();
+        let mut stack: Vec<TraitKey> = traits.to_vec();
+        let mut seen: HashSet<TraitKey> = HashSet::new();
         while let Some(t) = stack.pop() {
             if seen.insert(t) {
                 expanded.push(t);
@@ -627,19 +627,21 @@ impl TypeChecker {
         // Validate where clauses
         for wc in &f.where_clauses {
             let type_param = &wc.type_param;
-            let trait_name = &wc.trait_name;
             let trait_args = &wc.trait_args;
-            if !self.traits.contains_key(trait_name) {
+            let Some(trait_name) = self
+                .named_trait(wc.trait_res, wc.trait_name)
+                .filter(|t| self.traits.contains_key(t))
+            else {
                 self.error(
                     Code::UnknownTrait,
                     format!(
                         "unknown trait '{}' in where clause for '{}'",
-                        trait_name, type_param
+                        wc.trait_name, type_param
                     ),
                     f.span,
                 );
                 continue;
-            }
+            };
             // G1 (round 60, extended round 101): a where-clause bound
             // must supply exactly the trait's declared number of type
             // arguments. Zero args on a parameterized trait
@@ -657,7 +659,7 @@ impl TypeChecker {
             // `register_trait_impl`) because bare `&[]` is legitimate
             // for supertrait sub-obligations inside
             // `verify_trait_obligation` itself.
-            self.check_where_bound_arity(*trait_name, trait_args.len(), f.span);
+            self.check_where_bound_arity(trait_name, trait_args.len(), f.span);
         }
 
         // Look up the function's registered type and instantiate it.
@@ -2323,7 +2325,7 @@ impl TypeChecker {
                         if let Some(type_name) = self.type_name_for_impl(&resolved)
                             && !self
                                 .trait_impl_set
-                                .contains(&(intern("Display"), type_name))
+                                .contains(&(TraitKey::builtin("Display"), type_name))
                         {
                             self.error(Code::MissingTraitImpl,
                                 format!(
@@ -2906,7 +2908,7 @@ impl TypeChecker {
                         // Check if this type variable has trait constraints
                         if let Some(trait_names) = self.active_constraints.get(v).cloned() {
                             // Collect all traits that provide this method
-                            let mut matches: Vec<(Symbol, Type)> = Vec::new();
+                            let mut matches: Vec<(TraitKey, Type)> = Vec::new();
                             for trait_name in &trait_names {
                                 if let Some(trait_info) = self.traits.get(trait_name).cloned()
                                     && let Some((_, method_ty)) =

@@ -447,6 +447,9 @@ impl Derive {
     ) -> TraitImpl {
         let target_type_args: Vec<TypeExpr> = params.iter().map(|p| self.named_te(*p)).collect();
         let target_param_names: Vec<Symbol> = params.to_vec();
+        // The derived traits are builtin traits.
+        let trait_res = crate::defs::builtin_trait_id(&crate::intern::resolve(trait_name))
+            .map(|t| Res::Def(t.0));
         let where_clauses: Vec<WhereClause> = params
             .iter()
             .map(|p| WhereClause {
@@ -455,13 +458,13 @@ impl Derive {
                 trait_name,
                 trait_args: Vec::new(),
                 trait_name_span: self.span,
-                trait_res: None,
+                trait_res,
             })
             .collect();
         TraitImpl {
             trait_module: None,
             trait_name,
-            trait_res: None,
+            trait_res,
             trait_name_span: self.span,
             trait_args: Vec::new(),
             target_module: None,

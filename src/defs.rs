@@ -176,6 +176,20 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
     })
 }
 
+/// The builtin traits, in the order of their ids: the `k`th is
+/// `TraitId(DefId(builtin_types().len() + k))`. The builtin definitions
+/// enter them right after the builtin types.
+pub const BUILTIN_TRAITS: &[&str] = &["Compare", "Display", "Equal", "Error", "Hash"];
+
+/// The id of the builtin trait `name`; `None` when no builtin trait has
+/// that name.
+pub fn builtin_trait_id(name: &str) -> Option<TraitId> {
+    BUILTIN_TRAITS
+        .iter()
+        .position(|t| *t == name)
+        .map(|k| TraitId(DefId((builtin_types().len() + k) as u32)))
+}
+
 /// The id of the builtin type `name`; `None` when no builtin type has
 /// that name. Builtin type names are unique.
 pub fn builtin_type_id(name: &str) -> Option<TypeId> {

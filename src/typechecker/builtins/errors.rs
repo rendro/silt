@@ -217,7 +217,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     for enum_name in &enum_names {
         let enum_ty = TypeRef::builtin(enum_name);
         for trait_name in &["Error", "Display"] {
-            checker.trait_impl_set.insert((intern(trait_name), enum_ty));
+            checker
+                .trait_impl_set
+                .insert((TraitKey::builtin(trait_name), enum_ty));
         }
         let self_ty = Type::Generic(enum_ty, vec![]);
         // Error::message(self) -> String
@@ -227,7 +229,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
                 span: dummy_span,
                 is_auto_derived: false,
-                trait_name: Some(intern("Error")),
+                trait_name: Some(TraitKey::builtin("Error")),
                 method_constraints: Vec::new(),
             },
         );
@@ -240,7 +242,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 method_type: Type::Fun(vec![self_ty], Box::new(Type::String)),
                 span: dummy_span,
                 is_auto_derived: false,
-                trait_name: Some(intern("Display")),
+                trait_name: Some(TraitKey::builtin("Display")),
                 method_constraints: Vec::new(),
             },
         );

@@ -8,7 +8,7 @@ pub mod canonical;
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::defs::TypeId;
+use crate::defs::{TraitId, TypeId};
 use crate::intern::{Symbol, intern};
 
 // ── Type representation ─────────────────────────────────────────────
@@ -93,6 +93,52 @@ impl std::fmt::Display for TypeRef {
     }
 }
 
+/// A trait, by its definition, and the name it is declared with, for
+/// display. Two refs are one trait when their ids are equal.
+#[derive(Debug, Clone, Copy)]
+pub struct TraitKey {
+    pub id: TraitId,
+    pub name: Symbol,
+}
+
+impl TraitKey {
+    /// The builtin trait `name`. Panics when no builtin trait has that
+    /// name.
+    pub fn builtin(name: &str) -> TraitKey {
+        let id = crate::defs::builtin_trait_id(name)
+            .unwrap_or_else(|| panic!("'{name}' is not a builtin trait"));
+        TraitKey {
+            id,
+            name: intern(name),
+        }
+    }
+
+    /// Whether this is the builtin trait `name`.
+    pub fn is_builtin(&self, name: &str) -> bool {
+        crate::defs::builtin_trait_id(name) == Some(self.id)
+    }
+}
+
+impl PartialEq for TraitKey {
+    fn eq(&self, other: &TraitKey) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for TraitKey {}
+
+impl std::hash::Hash for TraitKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl std::fmt::Display for TraitKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
 /// The core type representation used during inference.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -141,7 +187,7 @@ pub enum Type {
     ///     have the same receiver, trait_name, and assoc_name.
     AssocProj {
         receiver: Box<Type>,
-        trait_name: Symbol,
+        trait_name: TraitKey,
         assoc_name: Symbol,
     },
     /// An anonymous structural record type (row-polymorphic capable).
@@ -324,7 +370,7 @@ impl std::fmt::Display for Type {
 pub struct Scheme {
     pub vars: Vec<TyVar>,
     pub ty: Type,
-    pub constraints: Vec<(TyVar, Symbol)>,
+    pub constraints: Vec<(TyVar, TraitKey)>,
     pub optional_last_param: bool,
 }
 

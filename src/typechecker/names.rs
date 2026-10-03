@@ -195,6 +195,20 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         }
         types.push((id, module_id, name));
     }
+    // The traits, so that their ids are those of
+    // `defs::builtin_trait_id`.
+    debug_assert_eq!(
+        names.traits.iter().map(|t| resolve(*t)).collect::<Vec<_>>(),
+        crate::defs::BUILTIN_TRAITS,
+        "the builtin traits are the ones defs::BUILTIN_TRAITS lists"
+    );
+    let mut traits = Vec::new();
+    for name in crate::defs::BUILTIN_TRAITS {
+        let name = intern(name);
+        let trait_id = TraitId(DefId(defs.defs.len() as u32));
+        let id = add(&mut defs, ModuleId::PRELUDE, name, DefKind::Trait(trait_id));
+        traits.push((id, name));
+    }
     for (id, module_id, name) in types {
         let Some((_, variants)) = names.enums.iter().find(|(e, _)| *e == name) else {
             continue;
@@ -230,10 +244,8 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         let id = add(&mut defs, prelude, name, DefKind::Fn);
         exports.values.insert(name, Binding::Def(id));
     }
-    for name in &names.traits {
-        let trait_id = TraitId(DefId(defs.defs.len() as u32));
-        let id = add(&mut defs, prelude, *name, DefKind::Trait(trait_id));
-        exports.types.insert(*name, Binding::Def(id));
+    for (id, name) in traits {
+        exports.types.insert(name, Binding::Def(id));
     }
     scopes.prelude = exports;
 

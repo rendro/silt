@@ -1,5 +1,5 @@
-error[type]: function expects 1 argument, got 2
- --> b.silt:3:23
+error[type]: type 'Cat' does not implement trait 'Speak'
+ --> main.silt:9:11
    |
- 3 | trait Speak for Cat { fn speak(self, times: Int) -> Int { times } }
-   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function expects 1 argument, got 2
+ 9 |   println(a.talk(c))
+   |           ^^^^^^^^^ type 'Cat' does not implement trait 'Speak'
