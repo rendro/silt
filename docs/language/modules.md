@@ -19,14 +19,13 @@ pub fn add(a, b) { a + b }
 fn helper(x) { x * 2 }   -- private
 ```
 
-A file in a subdirectory is imported with a dotted path:
+A module path is one name: there is no `import net.http`, and a file in a
+subdirectory of `src/` is not a module.
 
 ```
 src/
   main.silt
   geometry.silt      -- imported as `geometry`
-  net/
-    http.silt        -- imported as `net.http`
 ```
 
 ## Visibility
@@ -36,6 +35,9 @@ Items are **private by default**. Only `pub` items are exported:
 ```silt
 pub fn add(a, b) { a + b }
 fn helper(x) { x * 2 }       -- not exported
+
+pub let limit = 10                  -- exported
+pub let (low, high) = (1, 99)       -- exports `low` and `high`
 
 pub type Point { x: Int, y: Int }   -- exports the type and its constructor
 pub type Shape {                     -- exports the type and all variants
@@ -53,8 +55,16 @@ pub trait Describe {
 }
 ```
 
+The methods of a trait declared without `pub` can be called only inside
+its module, even on a value of an exported type.
+
 An impl is never exported or imported: `trait Describe for Point { ... }`
 applies wherever the trait and the type are used.
+
+Naming a private item from another module is an error at the name:
+`import geometry.{ helper }` reports that `helper` is private to
+`geometry`, and `import geometry.{ nope }` that `geometry` has no member
+`nope`.
 
 ## Imports
 
@@ -82,10 +92,46 @@ module is reached through it, in every position:
 `geometry.Circle` works when `Circle` is the only variant of that name
 among the module's exports; `geometry.Shape.Circle` always works.
 
-`import geometry.{ add, Shape }` binds exactly `add` and `Shape`. An enum
-imported this way does not bring its variants: write `Shape.Circle(2.0)`,
-or list `Circle` as well. To also use other items as `geometry.sub`, add a
-separate `import geometry`.
+`import geometry.{ add, Shape }` binds exactly `add` and `Shape`, and not
+`geometry`. An enum imported this way does not bring its variants: write
+`Shape.Circle(2.0)`, or list `Circle` as well. To also use other items as
+`geometry.sub`, add a separate `import geometry`.
+
+A member used without its module is an error that says how to reach it:
+
+```
+error[type]: undefined variable 'add'
+  = help: did you mean `geometry.add`? or import the name: `import geometry.{ add }`
+```
+
+### Variants of one name
+
+Two enums may have variants of one name. `Shape.Red` and `Color.Red` say
+which; a bare `Red` where both enums are in scope is an error, with a
+label at each declaration:
+
+```silt
+type Shape { Red, Square }
+type Color { Red, Blue }
+
+fn main() {
+  let s = Shape.Red
+  let c = Color.Red
+  println("{s} {c}")     -- Red Red
+}
+```
+
+From another module, `geometry.Red` works when `Red` is the only variant of
+that name among the module's exports, and `geometry.Shape.Red` always
+works. `import geometry.{ Red }` of a name two of its enums share is an
+error: import the enum and write `Shape.Red`.
+
+### Two types of one name
+
+A module cannot use two record or enum types of one name: its own and an
+imported module's, or two imported modules'. Importing a second module
+that declares a type of a name already in use is an error at that
+`import`; rename one of the two types.
 
 ## Module names and shadowing
 
@@ -126,9 +172,8 @@ the import.
 ## Multi-file projects
 
 `silt init` creates a package with a `silt.toml` manifest and a `src/` tree.
-The entry point is `src/main.silt`, and every `.silt` file under `src/` is a
-module in the package. Modules in subdirectories use dotted paths: `net/`,
-`util/crypto/`, etc.
+The entry point is `src/main.silt`, and every `.silt` file directly in
+`src/` is a module of the package, imported by its file name.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url>`. After adding, imports from
@@ -196,9 +241,15 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
 `channel.Closed`, `http.Request` and `http.GET`, `io.IoError` and
-`io.IoNotFound(path)`, `list.Stop(acc)`. Only `Option`, `Result`, `Some`,
-`None`, `Ok` and `Err` need no import. A selective import works for them
-too: `import channel.{ Message }`.
+`io.IoNotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`. A selective
+import works for them too: `import channel.{ Message }`.
+
+The **prelude** needs no import: the primitive and container types (`Int`,
+`Float`, `Bool`, `String`, `Bytes`, `List`, `Map`, `Set`, `Channel`, ...),
+`Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
+`panic`. A module's own declaration or import of one of these names
+shadows the prelude: after `type Maybe { Some(a), None }`, a bare `None`
+is `Maybe.None`, and the prelude's is still `Option.None`.
 
 The order of rows matches the order of entries in `BUILTIN_MODULES`; a
 parity-lock test in `tests/meta/round74_modules_doc_lists_all_builtins_tests.rs`
