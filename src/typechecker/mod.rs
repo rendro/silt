@@ -614,6 +614,9 @@ pub struct TypeChecker {
     pub(super) own_types: HashMap<Symbol, TypeRef>,
     /// The traits the module's own declarations declare, by name.
     pub(super) own_traits: HashMap<Symbol, TraitKey>,
+    /// The methods of the impls whose trait or type the resolver resolved
+    /// to nothing: a call of one is not reported again as unknown.
+    pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
@@ -690,6 +693,7 @@ impl TypeChecker {
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),
+            unresolved_impl_methods: std::collections::HashSet::new(),
             signatures_only: false,
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
@@ -4115,7 +4119,10 @@ impl TypeChecker {
                         // Opaque resource / value types from builtin
                         // modules: the shape the builtin schemes produce
                         // (round 72 GAP G1).
-                        _ if is_opaque_builtin(builtin) => return Type::Generic(ty, vec![]),
+                        _ if let Some(arity) = opaque_arity(builtin) => {
+                            let args = (0..arity).map(|_| self.fresh_var()).collect();
+                            return Type::Generic(ty, args);
+                        }
                         _ => {}
                     }
                 }
@@ -4174,15 +4181,15 @@ impl TypeChecker {
                         // empty-paren surface form `Bytes()` (mirrors
                         // `List()`/`Map()` etc.) and report `Bytes(Int)`
                         // (round 72 GAP G1).
-                        (b, 0) if is_opaque_builtin(b) => {
-                            return Type::Generic(ty.expect("a builtin type"), vec![]);
-                        }
-                        (b, _) if is_opaque_builtin(b) => {
+                        (b, n) if let Some(arity) = opaque_arity(b) => {
+                            if n == arity {
+                                return Type::Generic(ty.expect("a builtin type"), resolved_args);
+                            }
                             let err_span = self.current_type_anno_span.unwrap_or(te.span);
                             self.error(
                                 Code::ArityMismatch,
                                 format!(
-                                    "type argument count mismatch for builtin type '{b}': expected 0, got {n}"
+                                    "type argument count mismatch for builtin type '{b}': expected {arity}, got {n}"
                                 ),
                                 err_span,
                             );
@@ -5822,6 +5829,8 @@ impl TypeChecker {
         if ti.trait_res == Some(crate::defs::Res::Error)
             || ti.target_res == Some(crate::defs::Res::Error)
         {
+            self.unresolved_impl_methods
+                .extend(ti.methods.iter().map(|m| m.name));
             return;
         }
         // Phase B: canonicalise the target-type symbol so an impl
@@ -6214,6 +6223,10 @@ impl TypeChecker {
         let expanded_self_args = self.type_args_of(&self_type);
         let mut impl_obligations_by_index: Vec<(usize, TraitKey, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
+            // A bound the resolver resolved to nothing: it reported why.
+            if wc.trait_res == Some(crate::defs::Res::Error) {
+                continue;
+            }
             let type_param = &wc.type_param;
             let trait_args = &wc.trait_args;
             let Some(trait_key) = self
@@ -6641,6 +6654,10 @@ impl TypeChecker {
             // follow-up folds that latent gap into the same code path.
             let mut method_constraints = impl_level_constraints.clone();
             for wc in &method.where_clauses {
+                // A bound the resolver resolved to nothing: it reported why.
+                if wc.trait_res == Some(crate::defs::Res::Error) {
+                    continue;
+                }
                 let type_param = &wc.type_param;
                 let trait_args = &wc.trait_args;
                 let Some(trait_key) = self
@@ -6810,14 +6827,14 @@ pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
-/// Whether the builtin type `name` is an opaque handle or value type of
-/// a builtin module (`Bytes`, `tcp.TcpStream`): it has no parameters, no
-/// variants and no fields.
-fn is_opaque_builtin(name: &str) -> bool {
-    name == "Bytes"
-        || crate::defs::OPAQUE_MODULE_TYPES
-            .iter()
-            .any(|(opaque, _)| *opaque == name)
+/// The number of type arguments of the builtin type `name` when it is
+/// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
+/// has no variants and no fields. `None` for any other builtin type.
+fn opaque_arity(name: &str) -> Option<usize> {
+    crate::defs::OPAQUE_TYPE_ARITY
+        .iter()
+        .find(|(opaque, _)| *opaque == name)
+        .map(|(_, arity)| *arity)
 }
 
 pub(crate) use crate::types::canonical::{canonical_head, head_of_canon as head_of};
@@ -7908,6 +7925,11 @@ thread_local! {
 /// a builtin type's value finds its `<Type>.<method>` global.
 pub fn builtin_derived_impls() -> Rc<Vec<Decl>> {
     builtin_env().impls.clone()
+}
+
+/// Whether the builtin scope binds `name` (`int.parse`).
+pub(super) fn builtin_env_has(name: Symbol) -> bool {
+    builtin_env().root.bindings.contains_key(&name)
 }
 
 /// The builtin environment, built on first use and after each

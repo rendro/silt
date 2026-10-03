@@ -1,0 +1,8 @@
+-- verdict: same
+-- A private type alias may appear in a public signature: it is only
+-- another name for its type, which the importer can name.
+import ids
+fn main() {
+  println(ids.next(1))
+  println(ids.both(3))
+}

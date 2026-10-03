@@ -375,20 +375,25 @@ fn main() {
 
 #[test]
 fn test_import_nonexistent_builtin_item() {
-    // Asserts exact VM message from src/vm/execute.rs GetGlobal handler.
-    // The `import list.{ nonexistent_function }` statement registers an
-    // alias pointing at `list.nonexistent_function`, but that global was
-    // never defined, so runtime resolution fails with
-    // "undefined global: list.nonexistent_function".
-    let err = run_err(
-        r#"
-import list.{ nonexistent_function }
-fn main() { nonexistent_function([1, 2]) }
-    "#,
-    );
+    // An import of a name a builtin module does not have is rejected
+    // when the program is checked, at the item.
+    let source =
+        "import list.{ nonexistent_function }\nfn main() { nonexistent_function([1, 2]) }\n";
+    let tokens = Lexer::new(silt::source::FileId::default(), source)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = Parser::new(tokens, source)
+        .parse_program()
+        .expect("parse error");
+    let errors: Vec<String> = typechecker::check(&mut program)
+        .into_iter()
+        .map(|d| d.message)
+        .collect();
     assert!(
-        err.contains("undefined global: list.nonexistent_function"),
-        "got: {err}"
+        errors
+            .iter()
+            .any(|m| m.contains("module 'list' has no member 'nonexistent_function'")),
+        "got: {errors:?}"
     );
 }
 

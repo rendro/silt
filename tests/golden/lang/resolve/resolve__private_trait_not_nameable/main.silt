@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: trait 'Hidden' is private to module 'lib'
+-- stderr-contains: --> main.silt:12:11
+-- stderr-contains: --> main.silt:13:32
+-- stderr-contains: error[type]: unknown trait 'Hidden'
+-- stderr-contains: help: module 'lib' has a trait 'Hidden', but it is private there
+-- A trait without `pub` cannot be named from another module, qualified
+-- or bare, in an impl or a bound, as a private type cannot.
+import lib
+trait lib.Hidden for String { fn hid(self) -> Int { 1 } }
+fn f(a: a) -> Int where a: lib.Hidden { 1 }
+trait Hidden for Bool { fn hid(self) -> Int { 2 } }
+fn main() {
+  println(lib.seven())
+}

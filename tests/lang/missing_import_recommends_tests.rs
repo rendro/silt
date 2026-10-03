@@ -30,7 +30,7 @@ fn aliased_import_does_not_expose_original_name() {
     );
     let joined = errs.join("\n");
     assert!(
-        joined.contains("module 'list' is not imported"),
+        joined.contains("undefined variable 'list'"),
         "aliased import should NOT expose original name, got:\n{joined}"
     );
 }

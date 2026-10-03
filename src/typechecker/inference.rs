@@ -208,29 +208,6 @@ pub(super) fn format_undefined_variable_message(
     (base, help)
 }
 
-/// Format an "unknown function '<field>' on module '<module>'" error
-/// with a "did you mean `<cand>`?" hint when one of the module's builtin
-/// functions is a close edit-distance match. See
-/// `src/module.rs::builtin_module_functions` for the candidate source.
-pub(super) fn format_unknown_module_function_message(
-    field: Symbol,
-    module_str: &str,
-) -> (String, Option<String>) {
-    let field_str = resolve(field);
-    let base = format!("unknown function '{field_str}' on module '{module_str}'");
-    let fns = crate::module::builtin_module_functions(module_str);
-    let consts = crate::module::builtin_module_constants(module_str);
-    // Merge functions and constants so e.g. `math.pj` gets suggested
-    // `pi`. The header says "unknown function" either way — the hint is
-    // still useful.
-    let mut merged: Vec<&str> = fns.into_iter().chain(consts).collect();
-    merged.sort();
-    merged.dedup();
-    let help =
-        suggest_similar(&field_str, merged.iter()).map(|hint| format!("did you mean `{hint}`?"));
-    (base, help)
-}
-
 /// GAP (round 26 L5): append a "did you mean `<cand>`?" hint when a
 /// record-field diagnostic mentions a name that's close in edit
 /// distance to one of the record's declared fields. Used by every
@@ -316,6 +293,56 @@ impl TypeChecker {
         false
     }
 
+    /// Report a call of `method`, of the trait `trait_name` another module
+    /// declares without `pub`: its methods can be called only there.
+    pub(super) fn private_method(&mut self, trait_name: TraitKey, method: Symbol, span: Span) {
+        let module = self.private_owner(trait_name).unwrap_or(self.module_name);
+        self.errors.push(
+            Diagnostic::error(
+                Code::PrivateItem,
+                span,
+                format!(
+                    "method `{method}` belongs to trait '{trait_name}', which is private to \
+                     module '{module}'"
+                ),
+            )
+            .with_help(format!(
+                "mark it `pub trait {trait_name}` in module '{module}' to call its methods \
+                 from another module"
+            )),
+        );
+    }
+
+    /// The module that declares the trait `trait_name` without `pub`, by
+    /// name, when it is another module: the trait's methods cannot be
+    /// called here.
+    pub(super) fn private_owner(&self, trait_name: TraitKey) -> Option<Symbol> {
+        let (owner, module) = self.tables.traits.get(&trait_name)?.private_to?;
+        (owner != self.module).then_some(module)
+    }
+
+    /// The private trait of another module that alone provides `method`:
+    /// every impl that has a method of that name is of such a trait, and
+    /// no trait this module may name declares it.
+    fn only_private_provider(&self, method: Symbol) -> Option<TraitKey> {
+        let mut providers = self
+            .tables
+            .method_table
+            .iter()
+            .filter(|((_, m), _)| *m == method)
+            .map(|(_, entry)| entry.trait_name);
+        let first = providers.next()??;
+        if self.private_owner(first).is_none()
+            || providers.any(|t| t.is_none_or(|t| self.private_owner(t).is_none()))
+        {
+            return None;
+        }
+        let visible_declares = self.tables.traits.iter().any(|(key, info)| {
+            self.private_owner(*key).is_none() && info.methods.iter().any(|(n, _)| *n == method)
+        });
+        (!visible_declares).then_some(first)
+    }
+
     /// Dispatch a method lookup through a `MethodEntry`, returning the
     /// instantiated method type AND plumbing any impl- or method-level
     /// where-clause constraints into `pending_where_constraints` for
@@ -353,27 +380,9 @@ impl TypeChecker {
         // A method of a trait another module declares without `pub` can
         // be called only in that module.
         if let Some(trait_name) = entry.trait_name
-            && let Some((owner, module)) = self
-                .tables
-                .traits
-                .get(&trait_name)
-                .and_then(|t| t.private_to)
-            && owner != self.module
+            && self.private_owner(trait_name).is_some()
         {
-            self.errors.push(
-                Diagnostic::error(
-                    Code::PrivateItem,
-                    span,
-                    format!(
-                        "method `{method_name}` belongs to trait '{trait_name}', which is private \
-                         to module '{module}'"
-                    ),
-                )
-                .with_help(format!(
-                    "mark it `pub trait {trait_name}` in module '{module}' to call its methods \
-                     from another module"
-                )),
-            );
+            self.private_method(trait_name, method_name, span);
             return Type::Error;
         }
         let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
@@ -574,10 +583,35 @@ impl TypeChecker {
                 // `type_name_for_impl`).
                 let name = self.type_name_for_impl(&inner)?;
                 let entry = self.tables.method_table.get(&(name, field)).cloned()?;
+                if let Some(trait_name) = entry.trait_name
+                    && self.private_owner(trait_name).is_some()
+                {
+                    self.private_method(trait_name, field, span);
+                    return Some(Type::Error);
+                }
                 let (instantiated, _constraints) = self.instantiate_method_entry(&entry);
                 Some(self.apply(&instantiated))
             }
         }
+    }
+
+    /// Report `T.field` where the type `T` has no method `field`. A builtin
+    /// module named like the type with a function of that name (`int.parse`
+    /// for `Int.parse`) is suggested.
+    fn no_type_method(&mut self, type_name: &str, field: Symbol, span: Span) {
+        let module = type_name.to_lowercase();
+        let mut d = Diagnostic::error(
+            Code::UnresolvedName,
+            span,
+            format!("type '{type_name}' has no method '{field}'"),
+        );
+        let qualified = intern(&format!("{module}.{field}"));
+        if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
+            d = d.with_help(format!(
+                "did you mean `{module}.{field}`, a function of module `{module}`?"
+            ));
+        }
+        self.errors.push(d);
     }
 
     /// Expand a list of trait names to include all transitive supertraits.
@@ -631,6 +665,10 @@ impl TypeChecker {
 
         // Validate where clauses
         for wc in &f.where_clauses {
+            // A bound the resolver resolved to nothing: it reported why.
+            if wc.trait_res == Some(crate::defs::Res::Error) {
+                continue;
+            }
             let type_param = &wc.type_param;
             let trait_args = &wc.trait_args;
             let Some(trait_name) = self
@@ -1315,7 +1353,9 @@ impl TypeChecker {
         let bind_failed = self.errors[errors_before..]
             .iter()
             .any(|e| matches!(e.severity, Severity::Error));
-        if !bind_failed {
+        // A name in the pattern the resolver reported: what it matches
+        // is not known.
+        if !bind_failed && !names_unresolved(pattern) {
             self.require_irrefutable(pattern, ty, span, site);
         }
     }
@@ -1650,6 +1690,14 @@ impl TypeChecker {
         }
     }
 
+    /// Bind the names `pattern` binds to the error type: its head names
+    /// something the resolver reported, so nothing is known of its parts.
+    fn bind_unresolved(&mut self, pattern: &Pattern, env: &mut TypeEnv) {
+        for name in collect_pattern_vars(pattern) {
+            env.define(name, Scheme::mono(Type::Error));
+        }
+    }
+
     /// The variant the constructor pattern `pattern` names (see
     /// `pattern_variant_enum`).
     fn ctor_target(&self, pattern: &Pattern) -> CtorTarget {
@@ -1828,10 +1876,7 @@ impl TypeChecker {
                     CtorTarget::Enum(enum_name, info) => Some((enum_name, info)),
                     CtorTarget::Unknown => None,
                     CtorTarget::Silent => {
-                        for sp in sub_pats {
-                            let tv = self.fresh_var();
-                            self.bind_pattern(sp, &tv, env, span);
-                        }
+                        self.bind_unresolved(pattern, env);
                         return;
                     }
                 };
@@ -1937,6 +1982,10 @@ impl TypeChecker {
                 // the field didn't exist. Both were deferred to VM runtime
                 // errors. Reject them at the type-check stage. The type
                 // identity is the bare name (`util.Pt { x }` names `Pt`).
+                if pattern.res == Some(crate::defs::Res::Error) {
+                    self.bind_unresolved(pattern, env);
+                    return;
+                }
                 let resolved = self.apply(ty);
                 let looked = match name {
                     Some(rec_name) => self.named_record(pattern.res, *rec_name, span, true),
@@ -2598,19 +2647,39 @@ impl TypeChecker {
                     expr.ty = Some(ty.clone());
                     return ty;
                 }
-                // `Type.method`: a method of a type, called through it.
-                if matches!(obj.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
-                    && let Some(ty) = self.res_type(obj.res)
-                    && let Some(entry) = self
-                        .tables
-                        .method_table
-                        .get(&(canonical_head(&self.tables.resolver, ty), field))
-                {
-                    let scheme = Self::method_scheme(entry);
-                    let ty = self.instantiate(&scheme);
-                    let ty = self.apply(&ty);
-                    expr.ty = Some(ty.clone());
-                    return ty;
+                // `Type.method`: a method of a type, called through it
+                // (`Shape.describe`, `m.Shape.describe`, `Int.display`).
+                let type_ref = match (&obj.kind, obj.res) {
+                    (ExprKind::Ident(name), None) => self.named_type(None, *name),
+                    (ExprKind::Ident(_) | ExprKind::FieldAccess(..), res) => self.res_type(res),
+                    _ => None,
+                };
+                if let Some(ty) = type_ref {
+                    let key = (canonical_head(&self.tables.resolver, ty), field);
+                    if let Some(entry) = self.tables.method_table.get(&key).cloned() {
+                        if let Some(trait_name) = entry.trait_name
+                            && self.private_owner(trait_name).is_some()
+                        {
+                            self.private_method(trait_name, field, span);
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
+                        let scheme = Self::method_scheme(&entry);
+                        let ty = self.instantiate(&scheme);
+                        let ty = self.apply(&ty);
+                        expr.ty = Some(ty.clone());
+                        return ty;
+                    }
+                    // A type with no such method, whose name is no value
+                    // either (`Option.compare`, `time.Weekday.nope`): the
+                    // method is what is missing.
+                    if matches!(obj.kind, ExprKind::FieldAccess(..))
+                        || self.def_scheme(obj.res, env).is_none()
+                    {
+                        self.no_type_method(&resolve(ty.name), field, span);
+                        expr.ty = Some(Type::Error);
+                        return Type::Error;
+                    }
                 }
 
                 // Could be record.field — infer the object type
@@ -2645,8 +2714,12 @@ impl TypeChecker {
                         expr.ty = Some(ty.clone());
                         return ty;
                     }
-                    // Fall through to the generic "unknown field on type"
-                    // error below.
+                    // A concrete type with no such method (a type
+                    // variable's case is reported above).
+                    let inner = self.apply(&gargs[0]);
+                    if !matches!(inner, Type::Var(_) | Type::Error) {
+                        self.no_type_method(&format!("{inner}"), field, span);
+                    }
                     return Type::Error;
                 }
                 match &obj_ty {
@@ -2838,6 +2911,10 @@ impl TypeChecker {
                         // header so prior-lock tests that match only the
                         // header prefix still pass; the hint is appended
                         // on its own `help:` line.
+                        // A method of an impl the resolver rejected: reported there.
+                        if self.unresolved_impl_methods.contains(&field) {
+                            return Type::Error;
+                        }
                         let display = format!("type {type_name}");
                         self.error_help(
                             Code::UnknownMethod,
@@ -2908,6 +2985,10 @@ impl TypeChecker {
                                 );
                                 return Type::Error;
                             }
+                        }
+                        // A method of an impl the resolver rejected: reported there.
+                        if self.unresolved_impl_methods.contains(&field) {
+                            return Type::Error;
                         }
                         let display = resolve(type_name.name).to_string();
                         self.error_help(
@@ -2997,6 +3078,14 @@ impl TypeChecker {
                             // is a method name, fall back to the legacy
                             // deferred-check path so trait dispatch keeps
                             // working unchanged.
+                            // A method only another module's private trait
+                            // provides cannot be called here, whatever the
+                            // receiver turns out to be.
+                            if let Some(trait_name) = self.only_private_provider(field) {
+                                self.private_method(trait_name, field, span);
+                                expr.ty = Some(Type::Error);
+                                return Type::Error;
+                            }
                             let result_ty = self.fresh_var();
                             let is_known_impl_method =
                                 self.tables.method_table.keys().any(|(_, m)| *m == field);
@@ -4914,10 +5003,7 @@ impl TypeChecker {
                 // no variant is looked up bare, for the hints below.
                 let scheme = match self.ctor_target(pattern) {
                     CtorTarget::Silent => {
-                        for sp in sub_pats {
-                            let tv = self.fresh_var();
-                            self.check_pattern(sp, &tv, env, span);
-                        }
+                        self.bind_unresolved(pattern, env);
                         return;
                     }
                     CtorTarget::Enum(enum_name, _) => self
@@ -5036,6 +5122,10 @@ impl TypeChecker {
                 // flow through `check_pattern`, so the check has to fire
                 // on both paths.
                 self.check_record_pattern_duplicate_fields(fields, pattern.span);
+                if pattern.res == Some(crate::defs::Res::Error) {
+                    self.bind_unresolved(pattern, env);
+                    return;
+                }
                 if let Some(rec_name) = name {
                     let looked = self.named_record(pattern.res, *rec_name, span, true);
                     if let Some((rec_ref, rec_info, param_ids)) = looked {

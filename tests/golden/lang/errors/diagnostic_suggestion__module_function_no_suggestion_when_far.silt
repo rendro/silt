@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown function 'zzzzzzzzz'
+-- stderr-contains: has no member 'zzzzzzzzz'
 -- stderr-not-contains: did you mean
 import list
 fn main() {

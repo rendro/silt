@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: type 'Int' has no method 'parse'
+-- stderr-contains: help: did you mean `int.parse`, a function of module `int`?
+-- stderr-contains: --> resolve__type_method_that_is_a_module_function.silt:11:11
+-- `Int.parse` names a method of the type Int, which has none of that
+-- name: the parser is the function `int.parse`. It is reported when the
+-- program is checked, not when it runs.
+fn main() {
+  println(Int.parse("3"))
+  println(Int.display(3))
+}

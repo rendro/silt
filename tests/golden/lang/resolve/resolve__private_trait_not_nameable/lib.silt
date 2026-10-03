@@ -1,0 +1,3 @@
+trait Hidden { fn hid(self) -> Int }
+trait Hidden for Int { fn hid(self) -> Int { 7 } }
+pub fn seven() -> Int { 7.hid() }

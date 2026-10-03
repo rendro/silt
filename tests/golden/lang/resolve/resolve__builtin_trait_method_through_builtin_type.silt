@@ -1,0 +1,18 @@
+-- verdict: same
+-- The builtin traits' methods of a builtin type are reached through the
+-- type as through a value: `Int.display(1)` is `1.display()`, called or
+-- as a function value.
+fn main() {
+  println(Int.display(1))
+  println(Int.compare(1, 2))
+  println(Int.equal(1, 1))
+  println(Int.hash(1) == 1.hash())
+  println(Float.compare(1.5, 0.5))
+  println(String.equal("a", "b"))
+  println(Bool.display(true))
+  println(List.display([1, 2]))
+  let show = Int.display
+  println(show(4))
+  let cmp = String.compare
+  println(cmp("a", "b"))
+}

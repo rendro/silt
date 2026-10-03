@@ -479,6 +479,23 @@ pub struct Compiler {
     initializing: Option<Symbol>,
 }
 
+/// Whether `item` is a function or constant of the builtin module
+/// `module`, which has a global at run time: a type or a variant of the
+/// module has none (a variant is compiled from its definition).
+fn builtin_module_function(module: &str, item: Symbol) -> bool {
+    let (_, scopes) = crate::typechecker::names::builtins();
+    let Some(id) = crate::session::ModuleId::builtin(module) else {
+        return false;
+    };
+    let Some(crate::typechecker::names::Binding::Def(def)) =
+        scopes.modules.get(&id).and_then(|e| e.values.get(&item))
+    else {
+        return false;
+    };
+    crate::typechecker::names::builtin_def(*def)
+        .is_some_and(|d| matches!(d.kind, crate::defs::DefKind::Fn))
+}
+
 /// The builtin enums, which seed `known_enums`.
 fn initial_known_enums() -> HashSet<String> {
     module::builtin_enum_variants()
@@ -1225,13 +1242,10 @@ impl Compiler {
                     // A variant is a global by its bare name already, and a
                     // type has no value at run time.
                     for (item, _) in items {
-                        let item_str = resolve(*item);
-                        if module::builtin_variant_module(&item_str) == Some(mod_str.as_str())
-                            || module::builtin_type_module(&item_str) == Some(mod_str.as_str())
-                        {
+                        if !builtin_module_function(&mod_str, *item) {
                             continue;
                         }
-                        let qualified = format!("{mod_str}.{item_str}");
+                        let qualified = format!("{mod_str}.{item}");
                         let qi = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk().emit_op_u16(Op::GetGlobal, qi, span);
                         let bare_i =
@@ -2073,6 +2087,23 @@ impl Compiler {
                         self.compile_operands_above(1, args)?;
                         let argc = args.len() as u8;
                         self.emit_call(argc, tail, span);
+                    } else if self.builtin_trait_method_of_builtin_type(callee) && !args.is_empty()
+                    {
+                        // `Int.display(1)`: a builtin trait's method of a
+                        // builtin type, which is native, not a global; the
+                        // first argument is the receiver.
+                        self.compile_operands(args)?;
+                        let method_idx =
+                            self.add_constant(Value::String(resolve(*method)), span)?;
+                        self.current_chunk()
+                            .emit_op_u16(Op::CallMethod, method_idx, span);
+                        self.current_chunk().emit_u8(args.len() as u8, span);
+                    } else if let Some(global) = self.qualified_type_member(callee) {
+                        let idx = self.add_constant(Value::String(global), span)?;
+                        self.current_chunk().emit_op_u16(Op::GetGlobal, idx, span);
+                        self.compile_operands_above(1, args)?;
+                        let argc = args.len() as u8;
+                        self.emit_call(argc, tail, span);
                     } else if let ExprKind::Ident(name) = &receiver.kind
                         && is_module_call
                         && self.known_unit_variants.contains(&resolve(*name))
@@ -2169,6 +2200,51 @@ impl Compiler {
             ExprKind::FieldAccess(..) if let Some(variant) = self.variant_value(expr) => {
                 let idx = self.add_constant(variant, span)?;
                 self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            }
+
+            // `Int.display` as a value: the function `{ a -> a.display() }`
+            // (`{ a, b -> a.compare(b) }` for the two-argument methods).
+            ExprKind::FieldAccess(_, method, _)
+                if self.builtin_trait_method_of_builtin_type(expr) =>
+            {
+                let names: &[&str] = match resolve(*method).as_str() {
+                    "compare" | "equal" => &["__self__", "__other__"],
+                    _ => &["__self__"],
+                };
+                let ident = |name: &str| Expr::new(ExprKind::Ident(intern(name)), span);
+                let call = Expr::new(
+                    ExprKind::Call(
+                        Box::new(Expr::new(
+                            ExprKind::FieldAccess(Box::new(ident(names[0])), *method, span),
+                            span,
+                        )),
+                        names[1..].iter().map(|n| ident(n)).collect(),
+                    ),
+                    span,
+                );
+                let lambda = Expr::new(
+                    ExprKind::Lambda {
+                        params: names
+                            .iter()
+                            .map(|n| crate::ast::Param {
+                                kind: crate::ast::ParamKind::Data,
+                                pattern: crate::ast::Pattern::new(
+                                    crate::ast::PatternKind::Ident(intern(n)),
+                                    span,
+                                ),
+                                ty: None,
+                            })
+                            .collect(),
+                        body: Box::new(call),
+                    },
+                    span,
+                );
+                self.compile_expr(&lambda)?;
+            }
+
+            ExprKind::FieldAccess(..) if let Some(global) = self.qualified_type_member(expr) => {
+                let idx = self.add_constant(Value::String(global), span)?;
+                self.current_chunk().emit_op_u16(Op::GetGlobal, idx, span);
             }
 
             ExprKind::FieldAccess(expr, field, _) => {
@@ -2982,6 +3058,56 @@ impl Compiler {
             Some(ty) => canonical_head(self.resolver(), ty).name,
             None => ti.target_type,
         }
+    }
+
+    /// Whether `callee` is `T.method` for a builtin type (`Int`, `List`,
+    /// `io.IoError`, ...) and a method of a builtin trait (Display,
+    /// Compare, Equal, Hash, Error), which the VM implements natively for
+    /// it, or as a derived impl it dispatches to.
+    fn builtin_trait_method_of_builtin_type(&self, callee: &Expr) -> bool {
+        let ExprKind::FieldAccess(obj, method, _) = &callee.kind else {
+            return false;
+        };
+        if !matches!(
+            resolve(*method).as_str(),
+            "display" | "compare" | "equal" | "hash" | "message"
+        ) {
+            return false;
+        }
+        let Some(crate::defs::Res::Def(id)) = obj.res else {
+            return false;
+        };
+        let Some(def) = self.def(id) else {
+            return false;
+        };
+        def.module.is_builtin() && def.is_type()
+    }
+
+    /// The global of `m.T.method`, a method of the type `T` of a module
+    /// reached through the type, as the resolver resolved `m.T`: the
+    /// impl's `<T>.<method>` global, as `T.method` reaches it.
+    fn qualified_type_member(&self, expr: &Expr) -> Option<String> {
+        let ExprKind::FieldAccess(obj, field, _) = &expr.kind else {
+            return None;
+        };
+        if !matches!(obj.kind, ExprKind::FieldAccess(..)) {
+            return None;
+        }
+        let Some(crate::defs::Res::Def(id)) = obj.res else {
+            return None;
+        };
+        let def = self.def(id)?;
+        if !def.is_type() {
+            return None;
+        }
+        let ty = canonical_head(
+            self.resolver(),
+            TypeRef {
+                id: crate::defs::TypeId(id),
+                name: def.name,
+            },
+        );
+        Some(format!("{}.{field}", ty.name))
     }
 
     /// The value of the variant `expr` names, as the resolver resolved

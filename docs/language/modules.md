@@ -58,6 +58,13 @@ pub trait Describe {
 The methods of a trait declared without `pub` can be called only inside
 its module, even on a value of an exported type.
 
+A public declaration cannot name a private record, enum or trait of its
+module: a `pub fn` whose parameter, return type or `where` bound, or a
+`pub type` whose field or variant, names one is an error, since an
+importer could use the declaration but never name what it uses. A
+private type alias may appear there: an alias is only another name for
+its type.
+
 An impl is never exported or imported: `trait Describe for Point { ... }`
 applies wherever the trait and the type are used.
 
@@ -128,10 +135,10 @@ error: import the enum and write `Shape.Red`.
 
 ### Two types of one name
 
-A module cannot use two record or enum types of one name: its own and an
-imported module's, or two imported modules'. Importing a second module
-that declares a type of a name already in use is an error at that
-`import`; rename one of the two types.
+Two modules may each declare a type of one name. They are different
+types, kept apart by their qualifiers: `a.Pt` and `b.Pt`, or a module's
+own `Pt` and an imported `b.Pt`. A value of one is not a value of the
+other.
 
 ## Module names and shadowing
 
@@ -241,12 +248,17 @@ modules is enumerated by `silt::module::BUILTIN_MODULES`:
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
 `channel.Closed`, `http.Request` and `http.GET`, `io.IoError` and
-`io.IoNotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`. A selective
-import works for them too: `import channel.{ Message }`.
+`io.IoNotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`,
+`task.Handle(a)`, `postgres.PgPool` (and `PgTx`, `PgCursor`,
+`QueryResult`, `ExecResult`, `Value`). `ParseError`, the error of both
+`int.parse` and `float.parse`, is declared in `int` and reached through
+either module: `int.ParseError` and `float.ParseError` are one type. A
+selective import works for them too: `import channel.{ Message }`.
 
 The **prelude** needs no import: the primitive and container types (`Int`,
 `Float`, `Bool`, `String`, `Bytes`, `List`, `Map`, `Set`, `Channel`, ...),
-`Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
+`TypeOf(a)` (the type of a type used as a value, like `Int` or a
+`type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
 `panic`. A module's own declaration or import of one of these names
 shadows the prelude: after `type Maybe { Some(a), None }`, a bare `None`
 is `Maybe.None`, and the prelude's is still `Option.None`.

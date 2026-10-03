@@ -1,0 +1,27 @@
+-- verdict: same
+-- A method of a type is reached through the qualified type as through
+-- the bare one: `lib.Shape.describe(s)`, and as a value,
+-- `io.IoError.into_app_error`.
+import io
+import lib
+import result
+
+type AppError { IoProblem(io.IoError) }
+trait IntoAppError { fn into_app_error(self) -> AppError }
+trait IntoAppError for io.IoError {
+  fn into_app_error(self) -> AppError { AppError.IoProblem(self) }
+}
+
+fn load(path: String) -> Result(String, AppError) {
+  let raw = result.map_err(io.read_file(path), io.IoError.into_app_error)?
+  Ok(raw)
+}
+
+fn main() {
+  println(lib.Shape.describe(lib.Shape.Circle(1)))
+  println(lib.Pt.describe(lib.Pt { x: 2 }))
+  match load("/nonexistent/silt/golden") {
+    Ok(_) -> println("ok")
+    Err(AppError.IoProblem(_)) -> println("io problem")
+  }
+}

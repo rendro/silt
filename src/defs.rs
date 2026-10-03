@@ -126,6 +126,7 @@ impl ModuleId {
 pub const OPAQUE_MODULE_TYPES: &[(&str, &str)] = &[
     ("TcpListener", "tcp"),
     ("TcpStream", "tcp"),
+    ("Handle", "task"),
     ("PgPool", "postgres"),
     ("PgTx", "postgres"),
     ("PgCursor", "postgres"),
@@ -134,11 +135,29 @@ pub const OPAQUE_MODULE_TYPES: &[(&str, &str)] = &[
     ("Value", "postgres"),
 ];
 
+/// The builtin types with no declaration of their own, each with the
+/// number of its type arguments: the opaque handles of the builtin
+/// modules, `Bytes`, and the prelude's `TypeOf`, the type of a type used
+/// as a value (`Int`, a `type a` parameter).
+pub const OPAQUE_TYPE_ARITY: &[(&str, usize)] = &[
+    ("Bytes", 0),
+    ("TcpListener", 0),
+    ("TcpStream", 0),
+    ("Handle", 1),
+    (TYPE_OF, 1),
+    ("PgPool", 0),
+    ("PgTx", 0),
+    ("PgCursor", 0),
+    ("QueryResult", 0),
+    ("ExecResult", 0),
+    ("Value", 0),
+];
+
 /// The enums of the prelude.
 pub const PRELUDE_ENUMS: &[&str] = &["Option", "Result"];
 
 /// The type of a type written as a value (`json.parse(s, Pt)`, a `type a`
-/// parameter): `TypeOf(Pt)`. A builtin type no program can name.
+/// parameter): `TypeOf(Pt)`, a prelude type.
 pub const TYPE_OF: &str = "TypeOf";
 
 /// The dispatch key of an anonymous record type, which no impl can

@@ -1,0 +1,5 @@
+error[type]: undefined constructor 'Unknown' in pattern
+ --> inference_round26__undefined_ctor_span_in_let.silt:9:7
+   |
+ 9 |   let Unknown(x) = c
+   |       ^^^^^^^^^^ undefined constructor 'Unknown' in pattern

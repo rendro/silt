@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: 'lib.Circle' is a variant of enum 'lib.Shape', not a type: write `lib.Circle` or `lib.Shape.Circle`
+-- stderr-contains: --> main.silt:11:15
+-- stderr-contains: --> main.silt:13:9
+-- A variant written where its enum belongs is told apart from a missing
+-- type, in an expression and in a pattern alike.
+import lib
+fn main() {
+  println(lib.Circle.Circle(3))
+  match lib.Shape.Circle(1) {
+    lib.Circle.Circle(n) -> println(n)
+    _ -> println(0)
+  }
+}

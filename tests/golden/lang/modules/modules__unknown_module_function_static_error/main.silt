@@ -1,6 +1,6 @@
 -- exit: 1
 -- cmd: check
--- stderr-contains: unknown function 'genuinely_missing' on module 'mymod'
+-- stderr-contains: module 'mymod' has no member 'genuinely_missing'
 -- stderr-not-contains: but is not `pub`
 import mymod
 

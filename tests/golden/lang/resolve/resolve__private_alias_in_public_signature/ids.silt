@@ -1,0 +1,4 @@
+type Id = Int
+type Pair(a) = (a, a)
+pub fn next(x: Id) -> Id { x + 1 }
+pub fn both(x: Int) -> Pair(Int) { (x, x) }

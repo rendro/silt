@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown function 'toupper'
+-- stderr-contains: has no member 'toupper'
 -- stderr-contains: help: did you mean `to_upper`?
 import string
 fn main() {

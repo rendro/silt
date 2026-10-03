@@ -182,7 +182,7 @@ pub(super) fn strip_frontmatter(md: &str) -> &str {
 /// next line through the line before the next heading at the same or
 /// lower level (or end-of-file). Leading/trailing empty lines are
 /// stripped.
-fn iter_sections(md: &str) -> Vec<(Vec<String>, String)> {
+pub(super) fn iter_sections(md: &str) -> Vec<(Vec<String>, String)> {
     let mut sections: Vec<(Vec<String>, String)> = Vec::new();
     let lines: Vec<&str> = md.lines().collect();
     let mut i = 0;
@@ -1555,23 +1555,43 @@ Additionally, four **type descriptors** are in the global namespace for use with
 | `String` | String type descriptor |
 | `Bool` | Boolean type descriptor |
 
-## Available After Import
+## Variants of builtin modules
 
-These constructors become available after importing their respective modules.
-No module qualification is needed once imported.
+The enums of a builtin module are members of the module like its
+functions: reach a variant through the module, or import it by name.
 
-| Name | Signature | Import | Description |
-|------|-----------|--------|-------------|
-| `Stop` | `(a) -> Step(a)` | `import list` | Signal early termination in `list.fold_until` |
-| `Continue` | `(a) -> Step(a)` | `import list` | Signal continuation in `list.fold_until` |
-| `Message` | `(a) -> ChannelResult(a)` | `import channel` | Wraps a received channel value |
-| `Closed` | `ChannelResult(a)` | `import channel` | Channel is closed |
-| `Empty` | `ChannelResult(a)` | `import channel` | Channel buffer empty (non-blocking receive) |
-| `Sent` | `ChannelResult(a)` | `import channel` | Result variant for a completed `channel.select` send arm |
-| `Recv` | `(Channel(a)) -> ChannelOp(a)` | `import channel` | Build a receive arm for `channel.select` |
-| `Send` | `(Channel(a), a) -> ChannelOp(a)` | `import channel` | Build a send arm for `channel.select` |
-| `Monday`..`Sunday` | `Weekday` | `import time` | Day-of-week constructors |
-| `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` | `Method` | `import http` | HTTP method constructors |
+```silt
+import channel
+import list
+import list.{ Stop }
+
+fn main() {
+    let ch = channel.new(1)
+    channel.send(ch, 1)
+    match channel.receive(ch) {
+        channel.Message(v) -> println(v)
+        _ -> println("no value")
+    }
+    println(list.fold_until([1, 2, 3], 0) { acc, x -> Stop(acc + x) })
+}
+```
+
+| Name | Signature | Description |
+|------|-----------|-------------|
+| `list.Stop` | `(a) -> list.Step(a)` | Signal early termination in `list.fold_until` |
+| `list.Continue` | `(a) -> list.Step(a)` | Signal continuation in `list.fold_until` |
+| `channel.Message` | `(a) -> channel.ChannelResult(a)` | Wraps a received channel value |
+| `channel.Closed` | `channel.ChannelResult(a)` | Channel is closed |
+| `channel.Empty` | `channel.ChannelResult(a)` | Channel buffer empty (non-blocking receive) |
+| `channel.Sent` | `channel.ChannelResult(a)` | Result variant for a completed `channel.select` send arm |
+| `channel.Recv` | `(Channel(a)) -> channel.ChannelOp(a)` | Build a receive arm for `channel.select` |
+| `channel.Send` | `(Channel(a), a) -> channel.ChannelOp(a)` | Build a send arm for `channel.select` |
+| `time.Monday`..`time.Sunday` | `time.Weekday` | Day-of-week constructors |
+| `http.GET`, `http.POST`, ... | `http.Method` | HTTP method constructors |
+
+The error enums of the builtin modules (`io.IoError`, `json.JsonError`,
+...) and their variants (`io.IoNotFound(path)`, ...) are reached the
+same way.
 
 
 ## `print`
@@ -1699,9 +1719,10 @@ fn main() {
 ## `Stop`
 
 ```
-Stop(value: a) -> Step(a)
+list.Stop(value: a) -> list.Step(a)
 ```
 
+A variant of `list`: write `list.Stop(acc)`, or `import list.{ Stop }`.
 Signals early termination from `list.fold_until`. The value becomes the final
 accumulator result.
 
@@ -1722,9 +1743,10 @@ fn main() {
 ## `Continue`
 
 ```
-Continue(value: a) -> Step(a)
+list.Continue(value: a) -> list.Step(a)
 ```
 
+A variant of `list`: write `list.Continue(acc)`, or `import list.{ Continue }`.
 Signals continuation in `list.fold_until`. The value becomes the next
 accumulator.
 
@@ -1732,10 +1754,11 @@ accumulator.
 ## `Message`
 
 ```
-Message(value: a) -> ChannelResult(a)
+channel.Message(value: a) -> channel.ChannelResult(a)
 ```
 
-Wraps a value received from a channel. Returned by `channel.receive` and
+A variant of `channel`: write `channel.Message(v)`, or
+`import channel.{ Message }`. Wraps a value received from a channel. Returned by `channel.receive` and
 `channel.try_receive` when a value is available.
 
 ```silt
@@ -1752,8 +1775,10 @@ fn main() {
 ## `Closed`
 
 ```
-Closed : ChannelResult(a)
+channel.Closed : channel.ChannelResult(a)
 ```
+
+A variant of `channel`: write `channel.Closed`.
 
 Indicates the channel has been closed. Returned by `channel.receive` and
 `channel.try_receive` when no more messages will arrive.
@@ -1762,8 +1787,10 @@ Indicates the channel has been closed. Returned by `channel.receive` and
 ## `Empty`
 
 ```
-Empty : ChannelResult(a)
+channel.Empty : channel.ChannelResult(a)
 ```
+
+A variant of `channel`: write `channel.Empty`.
 
 Indicates the channel buffer is currently empty but not closed. Only returned by
 `channel.try_receive` (the non-blocking variant).
@@ -1772,15 +1799,37 @@ Indicates the channel buffer is currently empty but not closed. Only returned by
 ## `Sent`
 
 ```
-Sent : ChannelResult(a)
+channel.Sent : channel.ChannelResult(a)
 ```
 
-Indicates a successful send operation inside `channel.select`. When a select
-arm is built with `Send(ch, value)` (a `ChannelOp(a)` value), the matching
-tuple result is `(ch, Sent)` once that send completes. `Recv(ch)` arms still
-produce `Message(v)` / `Closed`; `Sent` is the send-side counterpart to
-`Message`. See `channel.select` in [channel / task](./channel-task.md) for
-the mixed send/receive form.
+A variant of `channel`: write `channel.Sent`. Indicates a successful send
+operation inside `channel.select`. When a select arm is built with
+`channel.Send(ch, value)` (a `channel.ChannelOp(a)` value), the matching
+tuple result is `(ch, channel.Sent)` once that send completes.
+`channel.Recv(ch)` arms still produce `channel.Message(v)` /
+`channel.Closed`; `Sent` is the send-side counterpart to `Message`. See
+`channel.select` in [channel / task](./channel-task.md) for the mixed
+send/receive form.
+
+
+## `Recv`
+
+```
+channel.Recv(ch: Channel(a)) -> channel.ChannelOp(a)
+```
+
+A variant of `channel`: write `channel.Recv(ch)`. Builds a receive arm for
+`channel.select`.
+
+
+## `Send`
+
+```
+channel.Send(ch: Channel(a), value: a) -> channel.ChannelOp(a)
+```
+
+A variant of `channel`: write `channel.Send(ch, value)`. Builds a send arm
+for `channel.select`.
 "#;
 
 /// Verbatim former `docs/stdlib/http.md`.
