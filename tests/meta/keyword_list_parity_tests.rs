@@ -99,7 +99,7 @@ fn lexer_keyword_literals_const_contains_true_false() {
 /// LATENT X1 follow-up: we lock the bool-literal const bidirectionally
 /// so that, if a future change adds (say) `null` to `KEYWORD_LITERALS`,
 /// the test fails until both this list and downstream consumers
-/// (`src/lsp/completion.rs::builtins`, `src/repl.rs::builtin_names`,
+/// (`src/lsp/completion.rs::completion`, `src/repl.rs::builtin_names`,
 /// `src/lsp/rename.rs::is_user_renameable`) are updated.
 const EXPECTED_KEYWORD_LITERALS: &[&str] = &["true", "false"];
 
@@ -114,7 +114,7 @@ fn lexer_keyword_literals_const_equals_expected_set() {
         lexer_set, expected_set,
         "lexer::KEYWORD_LITERALS drift: update EXPECTED_KEYWORD_LITERALS \
          in this file and verify that downstream consumers \
-         (src/lsp/completion.rs::builtins iterates KEYWORD_LITERALS, \
+         (src/lsp/completion.rs::completion iterates KEYWORD_LITERALS, \
          src/repl.rs::builtin_names iterates KEYWORD_LITERALS, \
          src/lsp/rename.rs consults KEYWORD_LITERALS) handle the new \
          entry."
