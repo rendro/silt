@@ -1,0 +1,27 @@
+-- A derived impl's body calls the builtin trait's method of each field
+-- (`display` of Display, `compare` of Compare, ...), whatever trait of
+-- the program has a method of that name for the field's type.
+import list
+import map
+trait Describe { fn display(self) -> String }
+trait Describe for Int { fn display(self) -> String { "described {self}" } }
+trait Ranked { fn compare(self, other: Self) -> Int }
+trait Ranked for Int { fn compare(self, other: Self) -> Int { 99 } }
+trait Same { fn equal(self, other: Self) -> Bool }
+trait Same for Int { fn equal(self, other: Self) -> Bool { false } }
+trait Hashy { fn hash(self) -> Int }
+trait Hashy for Int { fn hash(self) -> Int { 7 } }
+type Pt { x: Int }
+type Wrap { p: Pt }
+fn by_bound(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn main() {
+  println(Pt { x: 1 }.display())
+  println(Pt { x: 1 } < Pt { x: 2 })
+  println(by_bound(Pt { x: 1 }, Pt { x: 2 }))
+  println(Wrap { p: Pt { x: 1 } }.compare(Wrap { p: Pt { x: 2 } }))
+  println([Pt { x: 2 }, Pt { x: 1 }] |> list.sort)
+  println(Pt { x: 1 } == Pt { x: 1 })
+  println(Pt { x: 1 }.equal(Pt { x: 1 }))
+  println(Pt { x: 1 }.hash() == Pt { x: 2 }.hash())
+  println(map.get(#{ Pt { x: 1 }: "a" }, Pt { x: 1 }))
+}

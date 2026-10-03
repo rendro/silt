@@ -645,6 +645,11 @@ pub struct TypeChecker {
     /// which `infer_expr` records on the access (`Expr::res`): the
     /// compiler keys the call by it.
     pub(super) method_trait: Option<TraitKey>,
+    /// The trait the method call being inferred names already: a derived
+    /// impl's body calls the builtin trait's method of a field
+    /// (`display` of Display), whatever other trait has a method of the
+    /// name.
+    pub(super) forced_trait: Option<TraitKey>,
     /// The traits of the method calls resolved in the deferred pass, by
     /// the span of the access; `resolve_all_types` records each on its
     /// access.
@@ -761,6 +766,7 @@ impl TypeChecker {
             tyvar_trait_constraints: HashMap::new(),
             last_field_access_was_method: false,
             method_trait: None,
+            forced_trait: None,
             deferred_method_traits: HashMap::new(),
             ambiguous_methods: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
@@ -7070,6 +7076,29 @@ impl TypeChecker {
             // points at the impl block header) so the
             // `validate_trait_impls` signature-mismatch unify error
             // lands on the offending method's signature line.
+            // The method of another trait this impl's method shares its
+            // name with, for its type, is kept by its trait: a builtin
+            // trait's method of a builtin type (`display` of Int) has no
+            // trait in the method table.
+            if let Some(existing) = self
+                .tables
+                .method_table
+                .get(&(target_type, method.name))
+                .cloned()
+                && let Some(existing_trait) = existing.trait_name.or_else(|| {
+                    crate::defs::builtin_trait_of_method(&resolve(method.name))
+                        .and_then(|t| self.trait_key(t.0))
+                })
+                && existing_trait != trait_key
+            {
+                self.tables
+                    .trait_methods
+                    .entry((target_type, method.name, existing_trait))
+                    .or_insert(MethodEntry {
+                        trait_name: Some(existing_trait),
+                        ..existing
+                    });
+            }
             let entry = MethodEntry {
                 method_type: fn_type.clone(),
                 span: method.span,
@@ -8019,6 +8048,44 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    /// The trait the definition `id` is, if it is one.
+    pub(super) fn trait_key(&self, id: crate::defs::DefId) -> Option<TraitKey> {
+        let first = crate::defs::builtin_types().len();
+        if let Some(k) = (id.0 as usize).checked_sub(first)
+            && let Some(name) = crate::defs::BUILTIN_TRAITS.get(k)
+        {
+            return Some(TraitKey::builtin(name));
+        }
+        let def = self.defs.as_ref()?.get(id);
+        match def.kind {
+            crate::defs::DefKind::Trait(t) => Some(TraitKey {
+                id: t,
+                name: def.name,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The trait a method entry is of: its own, or for a builtin trait's
+    /// method of a builtin type, which the table keeps without one, that
+    /// builtin trait.
+    pub(super) fn entry_trait(&self, entry: &MethodEntry, method: Symbol) -> Option<TraitKey> {
+        entry.trait_name.or_else(|| {
+            crate::defs::builtin_trait_of_method(&resolve(method)).and_then(|t| self.trait_key(t.0))
+        })
+    }
+
+    /// The entry of the method `method` of the trait `t` for the type
+    /// `ty`, when the impls of two or more traits provide the method.
+    pub(super) fn trait_method_entry(
+        &self,
+        ty: TypeRef,
+        method: Symbol,
+        t: TraitKey,
+    ) -> Option<MethodEntry> {
+        self.tables.trait_methods.get(&(ty, method, t)).cloned()
     }
 
     /// Keep what the check learned of each written impl method (its

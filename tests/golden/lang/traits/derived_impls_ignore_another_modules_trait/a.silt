@@ -1,0 +1,4 @@
+pub trait Describe { fn display(self) -> String }
+trait Describe for Int { fn display(self) -> String { "A{self}" } }
+fn show(x: t) -> String where t: Describe { x.display() }
+pub fn f() -> String { show(1) }

@@ -71,7 +71,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::defs::Res;
-use crate::intern::{Symbol, intern};
+use crate::intern::{Symbol, intern, resolve};
 use crate::source::Span;
 use crate::types::TypeRef;
 
@@ -148,11 +148,16 @@ impl Derive {
     /// `self.x.equal(other.x)`, etc. The implementation is `Call(FieldAccess)`
     /// because that is what the parser produces for surface-syntax method
     /// calls.
+    ///
+    /// The access names the builtin trait the method is of (`display` of
+    /// Display): a derived body calls that trait's method of a field,
+    /// whatever other trait of the program has a method of the name.
     fn method_call(&self, recv: Expr, method: Symbol, args: Vec<Expr>) -> Expr {
-        let fa = Expr::new(
+        let mut fa = Expr::new(
             ExprKind::FieldAccess(Box::new(recv), method, self.span),
             self.span,
         );
+        fa.res = crate::defs::builtin_trait_of_method(&resolve(method)).map(|t| Res::Def(t.0));
         Expr::new(ExprKind::Call(Box::new(fa), args), self.span)
     }
 

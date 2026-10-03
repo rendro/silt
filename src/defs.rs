@@ -212,6 +212,20 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
 /// enter them right after the builtin types.
 pub const BUILTIN_TRAITS: &[&str] = &["Compare", "Display", "Equal", "Error", "Hash"];
 
+/// The builtin trait whose method `method` is (`display` of Display,
+/// `message` of Error); `None` for any other name.
+pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
+    let name = match method {
+        "display" => "Display",
+        "compare" => "Compare",
+        "equal" => "Equal",
+        "hash" => "Hash",
+        "message" => "Error",
+        _ => return None,
+    };
+    builtin_trait_id(name)
+}
+
 /// The id of the builtin trait `name`; `None` when no builtin trait has
 /// that name.
 pub fn builtin_trait_id(name: &str) -> Option<TraitId> {

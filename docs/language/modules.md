@@ -150,7 +150,12 @@ Two modules may also each declare a trait of one name, say `Show` with
 a method `show`, and implement it for one type. A method call means the
 method of the trait its module sees: a trait it declares, imports by
 name, or reaches through a module it imports. A call that sees both
-traits is an error at the call.
+traits is an error at the call. The builtin traits (`Display`,
+`Compare`, `Equal`, `Hash`, `Error`) are always seen: a trait of the
+program with a method named `display` implemented for `Int` makes
+`5.display()` ambiguous; call it through a `where` bound for the
+trait. A derived impl always calls the builtin trait's methods of its
+fields.
 
 ## Module names and shadowing
 

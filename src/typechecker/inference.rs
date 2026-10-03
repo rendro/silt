@@ -377,6 +377,16 @@ impl TypeChecker {
         span: Span,
     ) -> Type {
         self.last_field_access_was_method = true;
+        let head = self.type_name_for_impl(&self.apply(receiver_ty));
+        // A call that names its trait (a derived impl's body) calls that
+        // trait's method.
+        let forced_entry = match (self.forced_trait, head) {
+            (Some(t), Some(head)) if self.entry_trait(entry, method_name) != Some(t) => {
+                self.trait_method_entry(head, method_name, t)
+            }
+            _ => None,
+        };
+        let entry = forced_entry.as_ref().unwrap_or(entry);
         // A method of a trait another module declares without `pub` can
         // be called only in that module.
         if let Some(trait_name) = entry.trait_name
@@ -385,12 +395,15 @@ impl TypeChecker {
             self.private_method(trait_name, method_name, span);
             return Type::Error;
         }
-        if let Some(head) = self.type_name_for_impl(&self.apply(receiver_ty))
+        if self.forced_trait.is_none()
+            && let Some(head) = head
             && self.ambiguous_method_call(head, method_name, span)
         {
             return Type::Error;
         }
-        self.method_trait = entry.trait_name;
+        self.method_trait = self
+            .forced_trait
+            .or_else(|| self.entry_trait(entry, method_name));
         let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
         // Reject value-receiver calls on no-self trait methods (`empty`,
         // `default`, etc.). The method has no slot for the receiver, so
@@ -558,6 +571,9 @@ impl TypeChecker {
                     );
                     return None;
                 }
+                if let Some(t) = self.forced_trait {
+                    matches.retain(|(n, _)| *n == t);
+                }
                 if matches.len() > 1 {
                     let trait_list = matches
                         .iter()
@@ -599,7 +615,7 @@ impl TypeChecker {
                 if self.ambiguous_method_call(name, field, span) {
                     return Some(Type::Error);
                 }
-                self.method_trait = entry.trait_name;
+                self.method_trait = self.entry_trait(&entry, field);
                 let (instantiated, _constraints) = self.instantiate_method_entry(&entry);
                 Some(self.apply(&instantiated))
             }
@@ -2415,7 +2431,18 @@ impl TypeChecker {
         // A method call names its method's trait: the access records it
         // (`Expr::res`), and the compiler keys the call by it.
         let outer = self.method_trait.take();
+        // A trait the access names already (a derived impl's body) is
+        // taken off it while it is inferred, and written back below.
+        let forced = match expr.res {
+            Some(crate::defs::Res::Def(id)) => self.trait_key(id),
+            _ => None,
+        };
+        if forced.is_some() {
+            expr.res = None;
+        }
+        let outer_forced = std::mem::replace(&mut self.forced_trait, forced);
         let ty = self.infer_expr_kind(expr, env);
+        self.forced_trait = outer_forced;
         if let Some(t) = self.method_trait.take() {
             expr.res = Some(crate::defs::Res::Def(t.id.0));
         }
@@ -2728,7 +2755,7 @@ impl TypeChecker {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
-                        self.method_trait = entry.trait_name;
+                        self.method_trait = self.entry_trait(&entry, field);
                         let scheme = Self::method_scheme(&entry);
                         let ty = self.instantiate(&scheme);
                         let ty = self.apply(&ty);
@@ -3082,6 +3109,9 @@ impl TypeChecker {
                                 {
                                     matches.push((*trait_name, method_ty.clone()));
                                 }
+                            }
+                            if let Some(t) = self.forced_trait {
+                                matches.retain(|(n, _)| *n == t);
                             }
                             if matches.len() > 1 {
                                 let trait_list = matches
