@@ -222,6 +222,35 @@ pub trait Runner {
     fn stop(&mut self);
 }
 
+/// The process id of the command the watcher runs now; 0 when none
+/// runs. The watcher's SIGTERM / SIGINT handler stops it.
+#[cfg(unix)]
+static RUNNING_CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// On SIGTERM or SIGINT, stop the command the watcher runs, wait for it,
+/// and end the watcher with the signal's status: killing the watcher
+/// leaves no orphaned program behind.
+#[cfg(unix)]
+fn forward_termination_to_the_child() {
+    extern "C" fn on_signal(signal: libc::c_int) {
+        let pid = RUNNING_CHILD.load(std::sync::atomic::Ordering::SeqCst);
+        // SAFETY: kill(2), waitpid(2) and _exit(2) are async-signal-safe.
+        unsafe {
+            if pid > 0 {
+                libc::kill(pid, libc::SIGTERM);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+            libc::_exit(128 + signal);
+        }
+    }
+    let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    // SAFETY: the handler only makes async-signal-safe calls.
+    unsafe {
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGINT, handler);
+    }
+}
+
 /// The `silt` binary run with `args`, as a child process.
 struct ChildRunner {
     exe: PathBuf,
@@ -233,7 +262,14 @@ impl Runner for ChildRunner {
     fn start(&mut self) {
         eprint!("{}", clear_screen_seq());
         match Command::new(&self.exe).args(&self.args).spawn() {
-            Ok(child) => self.child = Some(child),
+            Ok(child) => {
+                #[cfg(unix)]
+                RUNNING_CHILD.store(
+                    i32::try_from(child.id()).unwrap_or(0),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                self.child = Some(child);
+            }
             Err(e) => eprintln!("error: failed to run {}: {e}", self.exe.display()),
         }
     }
@@ -247,6 +283,8 @@ impl Runner for ChildRunner {
 
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
+            #[cfg(unix)]
+            RUNNING_CHILD.store(0, std::sync::atomic::Ordering::SeqCst);
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -315,6 +353,8 @@ pub fn watch_and_rerun(target: Target, args: &[String]) {
         args: args.to_vec(),
         child: None,
     };
+    #[cfg(unix)]
+    forward_termination_to_the_child();
     let mut watched: BTreeSet<(PathBuf, bool)> = BTreeSet::new();
     let mut first = true;
     run(

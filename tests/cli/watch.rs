@@ -329,6 +329,42 @@ fn watch_kills_a_running_program_on_change() {
     );
 }
 
+/// SIGTERM to the watcher alone stops the program it runs too: nothing
+/// of the watcher's process group is left.
+#[cfg(unix)]
+#[test]
+fn watch_terminated_stops_its_running_program() {
+    let dir = TempDir::new("sigterm");
+    let file = dir.path().join("main.silt");
+    fs::write(&file, endless_program_printing("endless")).unwrap();
+
+    let mut proc = WatchProc::spawn(&file);
+    proc.wait_until("'endless'", Duration::from_secs(10), |snap| {
+        snap.contains("endless")
+    });
+    let pid = libc::pid_t::try_from(proc.child.id()).expect("a pid");
+    // SAFETY: signals the watcher, our child.
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    let _ = proc.child.wait();
+    // The watcher leads its process group (see `spawn_with`); once its
+    // program is gone too, signalling the group finds no process.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        // SAFETY: signal 0 only checks that the group has a process.
+        let alive = unsafe { libc::kill(-pid, 0) } == 0;
+        if !alive {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the program the watcher ran outlived the watcher"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 // ── 6. A change to an imported module reruns ─────────────────────
 
 #[test]
