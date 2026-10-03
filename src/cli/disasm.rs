@@ -1,5 +1,6 @@
 //! `silt disasm [<file>]` — show bytecode disassembly without running.
 
+use std::io::Write;
 use std::process;
 
 use silt::diagnostic::Diagnostic;
@@ -96,9 +97,20 @@ pub(crate) fn disasm_file(path: &str) {
         _ => process::exit(1),
     };
 
-    // Print disassembly of each function
+    // Print disassembly of each function. A closed pipe (`silt disasm
+    // x.silt | head`) ends the process quietly, as a death by SIGPIPE.
+    let mut out = std::io::stdout().lock();
     for func in &program.functions {
-        print!("{}", disassemble_function(func, &program.globals));
-        println!();
+        let text = format!("{}\n", disassemble_function(func, &program.globals));
+        if let Err(e) = out.write_all(text.as_bytes()) {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                process::exit(141);
+            }
+            eprintln!(
+                "silt disasm: cannot write to stdout: {}",
+                silt::diagnostic::io_error_text(&e)
+            );
+            process::exit(1);
+        }
     }
 }

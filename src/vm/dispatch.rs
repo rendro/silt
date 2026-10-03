@@ -29,6 +29,24 @@ use crate::value::{HostFn, Value};
 // must produce the expected output, which it cannot do via the
 // catch-all error arm that remains in `dispatch_trait_method`.
 
+/// Write `text` to stdout for `print` / `println`. A closed pipe (`silt
+/// run x.silt | head -1`) ends the process quietly, with the status a
+/// death by SIGPIPE gives (141), whatever the signal's disposition or
+/// mask: `println!` would panic there. Any other failure is a runtime
+/// error.
+fn write_stdout(text: &str) -> Result<(), VmError> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match out.write_all(text.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => std::process::exit(141),
+        Err(e) => Err(VmError::new(format!(
+            "cannot write to stdout: {}",
+            crate::diagnostic::io_error_text(&e)
+        ))),
+    }
+}
+
 /// Call the host function `host` while catching panics that escape it.
 ///
 /// A panicking host function would otherwise tear down the scheduler
@@ -574,7 +592,9 @@ impl Vm {
                             args.len()
                         )));
                     }
-                    println!("{}", self.display_value(&args[0]));
+                    let mut text = self.display_value(&args[0]);
+                    text.push('\n');
+                    write_stdout(&text)?;
                     Ok(Value::Unit)
                 }
                 "print" => {
@@ -584,7 +604,7 @@ impl Vm {
                             args.len()
                         )));
                     }
-                    print!("{}", self.display_value(&args[0]));
+                    write_stdout(&self.display_value(&args[0]))?;
                     Ok(Value::Unit)
                 }
                 "panic" => {
