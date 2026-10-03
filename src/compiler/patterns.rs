@@ -170,7 +170,8 @@ impl Compiler {
 
                 // Test tag if present
                 if let Some(type_name) = name {
-                    let idx = self.add_constant(Value::String(resolve(*type_name)), span)?;
+                    let tag = self.runtime_name_of(pattern.res, *type_name);
+                    let idx = self.add_constant(Value::String(tag), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::TestRecordTag, idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -610,7 +611,8 @@ impl Compiler {
                 let mut all_jumps = Vec::new();
 
                 if let Some(type_name) = name {
-                    let idx = self.add_constant(Value::String(resolve(*type_name)), span)?;
+                    let tag = self.runtime_name_of(pattern.res, *type_name);
+                    let idx = self.add_constant(Value::String(tag), span)?;
                     self.current_chunk()
                         .emit_op_u16(Op::TestRecordTag, idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);

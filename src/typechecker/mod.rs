@@ -2647,6 +2647,142 @@ impl TypeChecker {
         }
     }
 
+    /// Report each private record or enum type of the module that a
+    /// public definition's checked type names: a `pub fn`'s or `pub let`'s
+    /// scheme (inferred parts and aliases included), a `pub trait`'s method
+    /// signatures; and each private trait a `pub trait` lists as a
+    /// supertrait. An importer could reach the value but never name its
+    /// type. A private type written in the definition's own annotations is
+    /// reported by the resolver already.
+    fn report_private_in_schemes(&mut self, program: &Program, env: &TypeEnv) {
+        let Some(defs) = self.defs.clone() else {
+            return;
+        };
+        let module = self.module;
+        let private_type = |r: &TypeRef| {
+            let def = defs.get(r.id.0);
+            def.module == module
+                && def.vis == crate::defs::Vis::Private
+                && matches!(def.kind, crate::defs::DefKind::Type(_))
+        };
+        let mut found: Vec<(TypeRef, String, Symbol, Span)> = Vec::new();
+        let leaks = |this: &Self,
+                     ty: &Type,
+                     written: &std::collections::HashSet<crate::defs::DefId>,
+                     owner: String,
+                     owner_name: Symbol,
+                     span: Span,
+                     found: &mut Vec<(TypeRef, String, Symbol, Span)>| {
+            let ty = crate::types::canonical::canonicalize(&this.tables.resolver, &this.apply(ty));
+            let mut refs = Vec::new();
+            ty.collect_refs(&mut refs);
+            let mut seen = std::collections::HashSet::new();
+            for r in refs {
+                if private_type(&r) && !written.contains(&r.id.0) && seen.insert(r.id) {
+                    found.push((r, owner.clone(), owner_name, span));
+                }
+            }
+        };
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(f) if f.is_pub => {
+                    let mut written = std::collections::HashSet::new();
+                    for te in f
+                        .params
+                        .iter()
+                        .filter_map(|p| p.ty.as_ref())
+                        .chain(&f.return_type)
+                    {
+                        written_defs(te, &mut written);
+                    }
+                    if let Some(scheme) = env.lookup(f.name) {
+                        let owner = format!("public fn '{}'", f.name);
+                        leaks(
+                            self,
+                            &scheme.ty,
+                            &written,
+                            owner,
+                            f.name,
+                            f.name_span,
+                            &mut found,
+                        );
+                    }
+                }
+                Decl::Let { is_pub: true, .. } => {
+                    for (name, span, _) in crate::parser::top_level_binders(decl) {
+                        if let Some(scheme) = env.lookup(name) {
+                            let none = std::collections::HashSet::new();
+                            let owner = format!("public let '{name}'");
+                            leaks(self, &scheme.ty, &none, owner, name, span, &mut found);
+                        }
+                    }
+                }
+                Decl::Trait(t) if t.is_pub => {
+                    let key = self.own_trait(t.name);
+                    let Some(info) = self.tables.traits.get(&key).cloned() else {
+                        continue;
+                    };
+                    let none = std::collections::HashSet::new();
+                    for (_, method_ty) in &info.methods {
+                        let owner = format!("public trait '{}'", t.name);
+                        leaks(
+                            self,
+                            method_ty,
+                            &none,
+                            owner,
+                            t.name,
+                            t.name_span,
+                            &mut found,
+                        );
+                    }
+                    for sup in &info.supertraits {
+                        if let Some(sup_info) = self.tables.traits.get(sup)
+                            && sup_info
+                                .private_to
+                                .is_some_and(|(owner, _)| owner == module)
+                        {
+                            let def = defs.get(sup.id.0);
+                            self.errors.push(
+                                Diagnostic::error(
+                                    Code::PrivateItem,
+                                    t.name_span,
+                                    format!(
+                                        "private trait '{}' is a supertrait of public trait '{}'",
+                                        sup.name, t.name
+                                    ),
+                                )
+                                .with_label(
+                                    def.span,
+                                    format!("'{}' is declared without `pub`", sup.name),
+                                )
+                                .with_help(format!(
+                                    "mark `{}` `pub`, or drop the `pub` of '{}'",
+                                    sup.name, t.name
+                                )),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (ty, owner, owner_name, span) in found {
+            let def = defs.get(ty.id.0);
+            self.errors.push(
+                Diagnostic::error(
+                    Code::PrivateItem,
+                    span,
+                    format!("private type '{}' in the type of {owner}", ty.name),
+                )
+                .with_label(def.span, format!("'{}' is declared without `pub`", ty.name))
+                .with_help(format!(
+                    "mark `{}` `pub`, or drop the `pub` of '{owner_name}'",
+                    ty.name
+                )),
+            );
+        }
+    }
+
     /// Enter the scheme of each definition the module declares in the
     /// session's tables, from the module's scope `env`: what an importer
     /// of the module reads.
@@ -3099,7 +3235,7 @@ impl TypeChecker {
     /// `register_trait_impl` registers a method under the canonical name
     /// of the impl's target type (`Range` and a user alias of `List(..)`
     /// collapse to `List`, `Fun` to `Fn`, `()` to `Unit`), both in
-    /// `method_table` and as the `"<Type>.<method>"` binding in `env`.
+    /// `method_table` and as the `impl_method_key` binding in `env`.
     /// The lookup key is therefore built from the canonical name too; a
     /// key built from the name as written would miss the binding for an
     /// impl written against an alias, and the body would go unchecked.
@@ -3128,7 +3264,7 @@ impl TypeChecker {
             };
             for method in ti.methods.iter_mut() {
                 let method_name = method.name;
-                let key = intern(&format!("{target}.{method_name}"));
+                let key = impl_method_key(target, method_name);
                 let Some(ty) = self.check_fn_body_with_name(method, env, key) else {
                     continue;
                 };
@@ -6746,15 +6882,12 @@ impl TypeChecker {
                 },
             );
 
-            // Legacy: register in TypeEnv as "TypeName.method_name".
-            // Attach the same constraints to the scheme so the method
-            // body's check_fn_body_with_name sees them as active.
-            // Phase B: use the canonicalised `target_type` so a Range-
-            // targeted impl registers under "List.<m>" — matching the
-            // dispatch path in inference.rs (FieldAccess) which now
-            // looks up `(intern("List"), method)` for both List and
-            // Range receivers.
-            let key = intern(&format!("{}.{}", target_type, method.name));
+            // Bind the method in the module's scope under its impl key
+            // (`impl_method_key`), where `check_decl_bodies` checks its
+            // body; attach the same constraints to the scheme so the
+            // body's check_fn_body_with_name sees them as active. The key
+            // is built from the canonical target (`List` for `Range`).
+            let key = impl_method_key(target_type, method.name);
             let mut scheme = self.generalize(env, &fn_type);
             for (tv, trait_name, _trait_args) in &method_constraints {
                 if !scheme.constraints.contains(&(*tv, *trait_name)) {
@@ -6825,6 +6958,33 @@ pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
     crate::defs::builtin_types()
         .get(ty.id.0.0 as usize)
         .map(|(name, _)| *name)
+}
+
+/// The definitions the type names written in `te` resolve to.
+fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::DefId>) {
+    if let Some(crate::defs::Res::Def(id)) = te.res {
+        out.insert(id);
+    }
+    match &te.kind {
+        TypeExprKind::Generic { args, .. } => args.iter().for_each(|a| written_defs(a, out)),
+        TypeExprKind::Tuple(elems) => elems.iter().for_each(|e| written_defs(e, out)),
+        TypeExprKind::Function(params, ret) => {
+            params.iter().for_each(|p| written_defs(p, out));
+            written_defs(ret, out);
+        }
+        TypeExprKind::AssocProj { receiver, .. } => written_defs(receiver, out),
+        TypeExprKind::AnonRecord { fields, .. } => {
+            fields.iter().for_each(|(_, t)| written_defs(t, out))
+        }
+        TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
+    }
+}
+
+/// The key an impl's method is bound under in its module's scope, where
+/// its body is checked: the method of that type, two types of one name
+/// (a module's own `Pt` and an imported one) apart.
+fn impl_method_key(target: TypeRef, method: Symbol) -> Symbol {
+    intern(&format!("{}#{}.{method}", target.name, target.id.0.0))
 }
 
 /// The number of type arguments of the builtin type `name` when it is
@@ -7673,6 +7833,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.module = module;
     checker.module_name = module_name;
     let env = checker.check_program_in(program, env);
+    checker.report_private_in_schemes(program, &env);
     checker.enter_schemes(&env);
     // The type of each top-level value: the module's own, by name; an
     // imported item, by its definition.

@@ -314,6 +314,8 @@ fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), Diagnostic
 /// A module of the program, as the session hands it to the compiler:
 /// parsed and typechecked, with what each of its imports names.
 pub struct ModuleUnit {
+    /// The module, as the session knows it.
+    pub id: crate::session::ModuleId,
     /// The module's declarations, after the typechecker filled them in.
     pub program: Arc<Program>,
     /// The module's name in its package (`"lib"` for a dependency's
@@ -473,6 +475,10 @@ pub struct Compiler {
     record_decls: HashMap<String, RecordDecl>,
     /// Type alias declarations, collected together with `record_decls`.
     alias_decls: HashMap<String, AliasDecl>,
+    /// The names of the program's types that two of its types have (two
+    /// modules' `Pt`, or a module's own `Result` beside the builtin one):
+    /// see [`Compiler::runtime_type_name`].
+    clashing_type_names: HashSet<Symbol>,
     /// The name the entry's top-level `let` being compiled binds: its
     /// initializer reads the value the name had before (a REPL entry's
     /// `let x = x + 1`).
@@ -494,6 +500,30 @@ fn builtin_module_function(module: &str, item: Symbol) -> bool {
     };
     crate::typechecker::names::builtin_def(*def)
         .is_some_and(|d| matches!(d.kind, crate::defs::DefKind::Fn))
+}
+
+/// The names two or more types of the program have: two modules' types,
+/// or a module's type and a builtin type.
+fn clashing_type_names(units: &ProgramUnits) -> HashSet<Symbol> {
+    let Some(defs) = &units.defs else {
+        return HashSet::new();
+    };
+    let mut seen: HashMap<Symbol, crate::defs::DefId> = HashMap::new();
+    let mut clashing = HashSet::new();
+    for unit in &units.modules {
+        for id in defs.of_module(unit.id) {
+            let def = defs.get(*id);
+            if !matches!(def.kind, crate::defs::DefKind::Type(_)) {
+                continue;
+            }
+            if crate::defs::builtin_type_id(&resolve(def.name)).is_some()
+                || seen.insert(def.name, *id).is_some_and(|other| other != *id)
+            {
+                clashing.insert(def.name);
+            }
+        }
+    }
+    clashing
 }
 
 /// The builtin enums, which seed `known_enums`.
@@ -539,6 +569,7 @@ impl Compiler {
     /// only in the modules; everything else is seeded identically here
     /// so the two paths can never drift apart.
     fn build(units: ProgramUnits) -> Self {
+        let clashing_type_names = clashing_type_names(&units);
         Self {
             contexts: Vec::new(),
             functions: Vec::new(),
@@ -558,6 +589,7 @@ impl Compiler {
             selective_imports: HashMap::new(),
             record_decls: HashMap::new(),
             alias_decls: HashMap::new(),
+            clashing_type_names,
             initializing: None,
         }
     }
@@ -1006,8 +1038,8 @@ impl Compiler {
                 let span = type_decl.span;
                 match &type_decl.body {
                     crate::ast::TypeBody::Enum(variants) => {
-                        let enum_name = resolve(type_decl.name);
-                        self.known_enums.insert(enum_name.clone());
+                        let enum_name = self.declared_type_name(type_decl.name);
+                        self.known_enums.insert(resolve(type_decl.name));
 
                         // Register the enum type name as a type descriptor
                         // global so it can be passed as a `type a` argument
@@ -1057,7 +1089,7 @@ impl Compiler {
                             let mapping_key = format!("__type_of__{vname}");
                             let key_idx = self.add_constant(Value::String(mapping_key), span)?;
                             let type_val_idx =
-                                self.add_constant(Value::String(resolve(type_decl.name)), span)?;
+                                self.add_constant(Value::String(enum_name.clone()), span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::Constant, type_val_idx, span);
                             self.current_chunk()
@@ -1067,12 +1099,13 @@ impl Compiler {
                     }
                     crate::ast::TypeBody::Record(fields) => {
                         // Register the record type name as a TypeDescriptor global.
-                        let val = Value::TypeDescriptor(resolve(type_decl.name));
+                        let record_name = self.declared_type_name(type_decl.name);
+                        let val = Value::TypeDescriptor(record_name.clone());
                         let val_idx = self.add_constant(val, span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::Constant, val_idx, span);
                         let name_idx =
-                            self.add_constant(Value::String(resolve(type_decl.name)), span)?;
+                            self.add_constant(Value::String(record_name.clone()), span)?;
                         self.current_chunk()
                             .emit_op_u16(Op::SetGlobal, name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -1094,7 +1127,7 @@ impl Compiler {
                             span,
                         );
                         let meta_key = self.add_constant(
-                            Value::String(format!("__record_fields__{}", type_decl.name)),
+                            Value::String(format!("__record_fields__{record_name}")),
                             span,
                         )?;
                         self.current_chunk()
@@ -1631,7 +1664,7 @@ impl Compiler {
                             }
                             // Register the type name itself as a qualified global
                             // (pointing to the type name string for use in `import mod.{ Type }`).
-                            let type_val = Value::String(resolve(type_decl.name));
+                            let type_val = Value::String(self.declared_type_name(type_decl.name));
                             let type_val_idx = self.add_constant(type_val, span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::Constant, type_val_idx, span);
@@ -1643,9 +1676,9 @@ impl Compiler {
                             self.current_chunk().emit_op(Op::Pop, span);
                         }
                         crate::ast::TypeBody::Record(_) => {
-                            // Copy bare type name -> "module.TypeName"
-                            let bare_idx =
-                                self.add_constant(Value::String(resolve(type_decl.name)), span)?;
+                            // Copy the type's global -> "module.TypeName"
+                            let declared = self.declared_type_name(type_decl.name);
+                            let bare_idx = self.add_constant(Value::String(declared), span)?;
                             self.current_chunk()
                                 .emit_op_u16(Op::GetGlobal, bare_idx, span);
                             let qual = format!("{global}.{}", type_decl.name);
@@ -2012,8 +2045,10 @@ impl Compiler {
                     // If we're inside a module and this name matches a sibling function,
                     // qualify it so intra-module calls resolve correctly.
                     // Public fns: "module.name", private fns: "__module__name".
-                    let resolved_name = if let Some((ref mod_name, ref fn_map)) = self.module_scope
-                    {
+                    // A type used as a value is its descriptor's global.
+                    let resolved_name = if let Some(ty) = self.res_type(expr.res) {
+                        self.runtime_type_name(ty)
+                    } else if let Some((ref mod_name, ref fn_map)) = self.module_scope {
                         match fn_map.get(&name_str) {
                             Some(true) => format!("{mod_name}.{name_str}"),
                             Some(false) => format!("__{mod_name}__{name_str}"),
@@ -2601,7 +2636,8 @@ impl Compiler {
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(fields.iter().map(|(_, val)| val))?;
-                let type_name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
+                let tag = self.runtime_name_of(expr.res, *name);
+                let type_name_idx = self.add_constant(Value::String(tag), span)?;
                 self.current_chunk()
                     .emit_op_u16(Op::MakeRecord, type_name_idx, span);
                 self.current_chunk().emit_u8(field_names.len() as u8, span);
@@ -3035,11 +3071,78 @@ impl Compiler {
         }
     }
 
+    /// The name the values, descriptors, field lists and impl globals of
+    /// the type `ty` carry at run time: its name, or for a module's type
+    /// whose name another type of the program has too, the module's
+    /// global prefix and the name (`a.Pt`), so that two modules' `Pt`
+    /// do not share their impls. (Values carry type ids in a later
+    /// step.)
+    fn runtime_type_name(&self, ty: TypeRef) -> String {
+        if crate::defs::builtin_types()
+            .get(ty.id.0.0 as usize)
+            .is_some()
+            || !self.clashing_type_names.contains(&ty.name)
+        {
+            return resolve(ty.name);
+        }
+        let module = self.def(ty.id.0).map(|def| def.module);
+        match self
+            .units
+            .modules
+            .iter()
+            .find(|unit| Some(unit.id) == module)
+        {
+            Some(unit) => format!("{}.{}", unit.global, ty.name),
+            None => resolve(ty.name),
+        }
+    }
+
+    /// The type a resolution names, if it names a record or enum type.
+    fn res_type(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
+        let Some(crate::defs::Res::Def(id)) = res else {
+            return None;
+        };
+        let def = self.def(id)?;
+        matches!(def.kind, crate::defs::DefKind::Type(_)).then_some(TypeRef {
+            id: crate::defs::TypeId(id),
+            name: def.name,
+        })
+    }
+
+    /// The run-time name of the type `name` written with the resolution
+    /// `res` (a record literal or pattern, a type used as a value).
+    pub(super) fn runtime_name_of(&self, res: Option<crate::defs::Res>, name: Symbol) -> String {
+        match self.res_type(res) {
+            Some(ty) => self.runtime_type_name(ty),
+            None => resolve(name),
+        }
+    }
+
+    /// The run-time name of the type the module being compiled declares
+    /// as `name`.
+    fn declared_type_name(&self, name: Symbol) -> String {
+        let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        let declared = self.units.defs.as_ref().and_then(|defs| {
+            let unit = self.units.modules.get(current)?;
+            defs.of_module(unit.id).iter().copied().find(|id| {
+                let def = defs.get(*id);
+                def.name == name && matches!(def.kind, crate::defs::DefKind::Type(_))
+            })
+        });
+        match declared {
+            Some(id) => self.runtime_type_name(TypeRef {
+                id: crate::defs::TypeId(id),
+                name,
+            }),
+            None => resolve(name),
+        }
+    }
+
     /// The name of the type the impl `ti` is for, as the checker keys
     /// impls and the VM dispatches: the canonical head of its target
     /// (`Range` is `List`, an alias is the type it stands for). A target
     /// that names no type (`trait Display for a`) keeps its name.
-    fn impl_target_name(&self, ti: &crate::ast::TraitImpl) -> Symbol {
+    fn impl_target_name(&self, ti: &crate::ast::TraitImpl) -> String {
         let written = match ti.target_res {
             Some(crate::defs::Res::Def(id)) => self.def(id).map(|def| TypeRef {
                 id: crate::defs::TypeId(id),
@@ -3055,8 +3158,8 @@ impl Compiler {
             }
         };
         match written {
-            Some(ty) => canonical_head(self.resolver(), ty).name,
-            None => ti.target_type,
+            Some(ty) => self.runtime_type_name(canonical_head(self.resolver(), ty)),
+            None => resolve(ti.target_type),
         }
     }
 
@@ -3083,14 +3186,17 @@ impl Compiler {
         def.module.is_builtin() && def.is_type()
     }
 
-    /// The global of `m.T.method`, a method of the type `T` of a module
-    /// reached through the type, as the resolver resolved `m.T`: the
-    /// impl's `<T>.<method>` global, as `T.method` reaches it.
+    /// The global of `T.method` or `m.T.method`, a method of a type
+    /// reached through the type, as the resolver resolved `T` / `m.T`:
+    /// the impl's `<T>.<method>` global, named by the type's run-time
+    /// name.
     fn qualified_type_member(&self, expr: &Expr) -> Option<String> {
         let ExprKind::FieldAccess(obj, field, _) = &expr.kind else {
             return None;
         };
-        if !matches!(obj.kind, ExprKind::FieldAccess(..)) {
+        if !matches!(obj.kind, ExprKind::FieldAccess(..) | ExprKind::Ident(_))
+            || self.variant_value(expr).is_some()
+        {
             return None;
         }
         let Some(crate::defs::Res::Def(id)) = obj.res else {
@@ -3107,7 +3213,7 @@ impl Compiler {
                 name: def.name,
             },
         );
-        Some(format!("{}.{field}", ty.name))
+        Some(format!("{}.{field}", self.runtime_type_name(ty)))
     }
 
     /// The value of the variant `expr` names, as the resolver resolved
@@ -3264,7 +3370,7 @@ impl Compiler {
                         .is_none_or(|decl| decl.params.is_empty()) =>
             {
                 records.push(name_str.clone());
-                Ok(format!("Record:{name_str}"))
+                Ok(format!("Record:{}", self.runtime_name_of(te.res, name)))
             }
             // Everything else: type parameters, enums, generic records,
             // Set, Channel, functions, Map with a non-String key, ...

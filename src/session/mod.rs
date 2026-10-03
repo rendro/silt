@@ -709,6 +709,7 @@ impl Session {
                     let module = self.graph.module(*m);
                     let (imports, bindings) = unit_imports(module, &index);
                     ModuleUnit {
+                        id: *m,
                         program: self.analyses[m].ast.clone(),
                         name: resolve(module.name),
                         global: globals

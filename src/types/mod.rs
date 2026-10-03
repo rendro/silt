@@ -253,7 +253,7 @@ impl Type {
     }
 
     /// Every named type `self` mentions.
-    fn collect_refs(&self, out: &mut Vec<TypeRef>) {
+    pub fn collect_refs(&self, out: &mut Vec<TypeRef>) {
         match self {
             Type::Record(r, fields) => {
                 out.push(*r);
