@@ -2663,6 +2663,18 @@ impl TypeChecker {
                     expr.ty = Some(ty.clone());
                     return ty;
                 }
+                // A method of a builtin type that the VM implements natively
+                // (`io.IoError.message`) has no `T.method` binding: its
+                // impl's entry gives its type, the receiver first.
+                if let Some(type_name) = type_name
+                    && self.res_def(obj.res).is_some_and(|def| def.is_type())
+                    && let Some(entry) = self.method_table.get(&(type_name, field)).cloned()
+                {
+                    let (ty, _) = self.instantiate_method_entry(&entry);
+                    let ty = self.apply(&ty);
+                    expr.ty = Some(ty.clone());
+                    return ty;
+                }
 
                 // Could be record.field — infer the object type
                 let obj_ty = self.infer_expr(obj, env);

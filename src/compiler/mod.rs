@@ -3035,16 +3035,17 @@ impl Compiler {
 
     // ── Helper: qualified variants ───────────────────────────────
 
-    /// Whether `callee` is `T.method` for a type of the prelude (`Int`,
-    /// `List`, ...) and a method of a builtin trait (Display, Compare,
-    /// Equal, Hash), which the VM implements natively for it.
+    /// Whether `callee` is `T.method` for a builtin type (`Int`, `List`,
+    /// `io.IoError`, ...) and a method of a builtin trait (Display,
+    /// Compare, Equal, Hash, Error), which the VM implements natively for
+    /// it, or as a derived impl it dispatches to.
     fn builtin_trait_method_of_builtin_type(&self, callee: &Expr) -> bool {
         let ExprKind::FieldAccess(obj, method, _) = &callee.kind else {
             return false;
         };
         if !matches!(
             resolve(*method).as_str(),
-            "display" | "compare" | "equal" | "hash"
+            "display" | "compare" | "equal" | "hash" | "message"
         ) {
             return false;
         }
@@ -3058,7 +3059,7 @@ impl Compiler {
                 None => return false,
             },
         };
-        def.module == crate::session::ModuleId::PRELUDE && def.is_type()
+        def.module.is_builtin() && def.is_type()
     }
 
     /// The global of `m.T.method`, a method of the type `T` of a module
