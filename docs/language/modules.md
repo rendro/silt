@@ -58,6 +58,11 @@ pub trait Describe {
 The methods of a trait declared without `pub` can be called only inside
 its module, even on a value of an exported type.
 
+A public declaration cannot name a private type or trait of its module:
+a `pub fn` whose parameter, return type or `where` bound, or a `pub type`
+whose field or variant, names one is an error, since an importer could
+use the declaration but never name what it uses.
+
 An impl is never exported or imported: `trait Describe for Point { ... }`
 applies wherever the trait and the type are used.
 
