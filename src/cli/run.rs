@@ -207,7 +207,7 @@ pub(crate) fn vm_run_file(path: &str) {
         .unwrap_or(Span::point(file, 0));
     let sources = session.into_sources();
 
-    let Some(script) = program.functions.into_iter().next() else {
+    let Some(script) = program.functions.first().cloned() else {
         eprintln!("{path}: internal error: empty function list");
         process::exit(1);
     };
@@ -218,7 +218,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // scheduler.
     silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new();
-    vm.load_types(&program.types);
+    vm.load(&program);
     let run_result = vm.run(script);
     // The program has ended. The tasks that failed by now and that
     // nobody joined or cancelled are reported, and make the run fail. A

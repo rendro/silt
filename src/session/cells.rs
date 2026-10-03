@@ -14,16 +14,16 @@
 //! Redefinition is early-bound: a cell's definitions are new ones. A name
 //! a later cell binds again shadows the earlier binding for the cells
 //! after it, while the code of the cells before keeps the definition it
-//! was checked against. In the VM, a value whose name an earlier cell
-//! already installed a global under gets a global of its own,
-//! `<repl:n>.name`; the compiler installs and reads it under that global
-//! (see `EarlierCells::globals`). A `let` that binds a name again reads
-//! the old value in its initializer (`let x = x + 1`).
+//! was checked against. In the VM each definition has a global slot of
+//! its own, which the session keeps for every cell (see
+//! `EarlierCells::globals`). A `let` that binds a name again reads the
+//! old value in its initializer (`let x = x + 1`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::ast::{self, Decl, ImportTarget};
+use crate::bytecode::Globals;
 use crate::compiler::EarlierCells;
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, Span};
@@ -51,9 +51,6 @@ struct Binder {
     span: Span,
     /// For an import, the declaration as written and its span.
     import: Option<(ImportTarget, Span)>,
-    /// For a value (a function, a `let`, an imported item), the VM
-    /// global it is installed under.
-    global: Option<String>,
 }
 
 /// One cell added to the session.
@@ -69,11 +66,6 @@ pub(super) struct CellInfo {
     cell_imports: usize,
     /// The names the cell binds, with what they are.
     own: Vec<(Symbol, Span, Kind, Option<(ImportTarget, Span)>)>,
-    /// The global of each value the cell binds.
-    globals: HashMap<Symbol, String>,
-    /// For each name a `let` of the cell binds again, the global of the
-    /// value it had: the `let`'s initializer reads that one.
-    previous: HashMap<Symbol, String>,
 }
 
 impl CellInfo {
@@ -102,10 +94,11 @@ pub(super) struct Cells {
     committed: Vec<Committed>,
     /// What binds each top-level name the committed cells bind.
     scope: HashMap<Symbol, Binder>,
-    /// The VM globals the committed cells' values are installed under.
-    taken: HashSet<String>,
     /// The modules (not cells) whose code the committed cells installed.
     installed: HashSet<ModuleId>,
+    /// The global slots of the cells compiled so far: a slot is never
+    /// given to another definition, even when its cell failed.
+    pub globals: Globals,
 }
 
 /// A committed cell.
@@ -159,13 +152,6 @@ impl Cells {
                 own.push((name, span, kind, import.clone()));
             }
         }
-        let globals = own
-            .iter()
-            .filter(|(_, _, kind, _)| matches!(kind, Kind::Fn | Kind::Let | Kind::Item))
-            .filter(|(name, ..)| self.taken.contains(&resolve(*name)))
-            .map(|(name, ..)| (*name, format!("{}.{name}", cell_name(n))))
-            .collect();
-
         // What the cell sees: each name bound by a committed cell that the
         // cell does not bind again, but for a `let`: its initializer reads
         // the value the name had (`let x = x + 1`). A function sees
@@ -174,11 +160,6 @@ impl Cells {
             .iter()
             .filter(|(_, _, kind, _)| *kind != Kind::Let)
             .map(|(name, ..)| *name)
-            .collect();
-        let previous = own
-            .iter()
-            .filter(|(_, _, kind, _)| *kind == Kind::Let)
-            .filter_map(|(name, ..)| Some((*name, self.scope.get(name)?.global.clone()?)))
             .collect();
         let mut seen: Vec<(Symbol, Span)> = Vec::new();
         let mut carried: Vec<Decl> = Vec::new();
@@ -236,49 +217,26 @@ impl Cells {
                 synthesized: count,
                 cell_imports,
                 own,
-                globals,
-                previous,
             },
         );
     }
 
     /// What the compiler needs to know of the committed cells to compile
-    /// cell `id`; `index` numbers the modules of its program.
-    pub fn earlier(&self, id: ModuleId, index: &HashMap<ModuleId, usize>) -> EarlierCells {
-        let info = &self.info[&id];
-        let own: HashSet<Symbol> = info.own.iter().map(|(name, ..)| *name).collect();
-        let mut earlier = EarlierCells {
+    /// a cell; `index` numbers the modules of its program.
+    pub fn earlier(&self, index: &HashMap<ModuleId, usize>) -> EarlierCells {
+        EarlierCells {
             programs: self
                 .committed
                 .iter()
                 .filter_map(|cell| cell.types.clone())
                 .collect(),
-            globals: info.globals.clone(),
-            previous: info.previous.clone(),
             installed: self
                 .installed
                 .iter()
                 .filter_map(|module| index.get(module).copied())
                 .collect(),
-            ..EarlierCells::default()
-        };
-        for (name, binder) in self.scope.iter().filter(|(name, _)| !own.contains(name)) {
-            match binder.kind {
-                Kind::Fn => {
-                    earlier.fns.insert(*name);
-                }
-                Kind::Let => {
-                    earlier.lets.insert(*name);
-                }
-                _ => {}
-            }
-            if let Some(global) = &binder.global
-                && *global != resolve(*name)
-            {
-                earlier.globals.insert(*name, global.clone());
-            }
+            globals: self.globals.clone(),
         }
-        earlier
     }
 
     /// Commit cell `id`, which ran: later cells see what it binds. Its
@@ -287,22 +245,12 @@ impl Cells {
     pub fn commit(&mut self, id: ModuleId, checked: &ast::Program, modules: &[ModuleId]) {
         let info = &self.info[&id];
         for (name, span, kind, import) in &info.own {
-            let global = matches!(kind, Kind::Fn | Kind::Let | Kind::Item).then(|| {
-                info.globals
-                    .get(name)
-                    .cloned()
-                    .unwrap_or_else(|| resolve(*name))
-            });
-            if let Some(global) = &global {
-                self.taken.insert(global.clone());
-            }
             self.scope.insert(
                 *name,
                 Binder {
                     kind: *kind,
                     span: *span,
                     import: import.clone(),
-                    global,
                 },
             );
         }

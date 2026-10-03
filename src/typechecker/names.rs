@@ -330,6 +330,7 @@ pub fn resolve_module(
         imports,
         builtins: &builtins,
         locals: Vec::new(),
+        previous: HashMap::new(),
         diagnostics,
     };
     for decl in &mut program.decls {
@@ -879,6 +880,10 @@ struct Resolver<'a> {
     builtins: &'a BuiltinScopes,
     /// The local bindings in scope, innermost last.
     locals: Vec<Vec<Symbol>>,
+    /// Top-level names that mean an earlier REPL cell's definition while
+    /// the initializer of a cell's `let` that binds them again is
+    /// resolved (`let x = x + 1`).
+    previous: HashMap<Symbol, Binding>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -953,14 +958,23 @@ impl Resolver<'_> {
     /// A top-level value name: the module's own and imported names, the
     /// types used as values, then the prelude.
     fn lookup_global_value(&self, name: Symbol) -> Option<Binding> {
-        self.scope
-            .values
+        self.previous
             .get(&name)
+            .or_else(|| self.scope.values.get(&name))
             .or_else(|| self.scope.types.get(&name))
             .or_else(|| self.scope.implied.get(&name))
             .or_else(|| self.builtins.prelude.values.get(&name))
             .or_else(|| self.builtins.prelude.types.get(&name))
             .cloned()
+    }
+
+    /// What an earlier REPL cell, imported into this one, binds `name`
+    /// to.
+    fn earlier_cell_value(&self, name: Symbol) -> Option<Binding> {
+        self.imports.values().find_map(|imported| match imported {
+            Imported::Cell(_, scope) => scope.exports.values.get(&name).cloned(),
+            _ => None,
+        })
     }
 
     fn lookup_value(&self, name: Symbol) -> Option<Found> {
@@ -1176,7 +1190,19 @@ impl Resolver<'_> {
                 if let Some(ty) = ty {
                     self.type_expr(ty);
                 }
+                // A REPL cell's `let` that binds a name an earlier cell
+                // bound reads the earlier value in its initializer.
+                if self.kind == ModuleKind::Cell {
+                    let mut binders = Vec::new();
+                    crate::parser::pattern_binders(pattern, &mut binders);
+                    for (name, _) in binders {
+                        if let Some(binding) = self.earlier_cell_value(name) {
+                            self.previous.insert(name, binding);
+                        }
+                    }
+                }
                 self.expr(value);
+                self.previous.clear();
                 // The binders are the module's definitions; the patterns'
                 // constructors and records still name something.
                 self.pattern(pattern);
@@ -1485,8 +1511,15 @@ impl Resolver<'_> {
             | PatternKind::Bool(_)
             | PatternKind::StringLit(..)
             | PatternKind::Range(..)
-            | PatternKind::FloatRange(..)
-            | PatternKind::Pin(_) => {}
+            | PatternKind::FloatRange(..) => {}
+            // `^x`: the value the name has, a local or a top-level one.
+            // A name that resolves to nothing is reported by the checker.
+            PatternKind::Pin(name) => {
+                pattern.res = self.lookup_value(*name).map(|found| match found {
+                    Found::Local => Res::Local,
+                    Found::Binding(binding) => self.binding_res(&binding),
+                });
+            }
         }
     }
 

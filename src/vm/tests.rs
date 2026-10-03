@@ -142,17 +142,17 @@ fn test_boolean_not() {
 #[test]
 fn test_globals() {
     let script = make_function(|chunk| {
-        let name = chunk.add_constant(Value::String("x".to_string())).unwrap();
         let val = chunk.add_constant(Value::Int(42)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(val, span());
         chunk.emit_op(Op::SetGlobal, span());
-        chunk.emit_u16(name, span());
+        chunk.emit_u16(0, span());
         chunk.emit_op(Op::GetGlobal, span());
-        chunk.emit_u16(name, span());
+        chunk.emit_u16(0, span());
         chunk.emit_op(Op::Return, span());
     });
     let mut vm = Vm::new();
+    vm.globals.push(None);
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(42));
 }

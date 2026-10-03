@@ -4,7 +4,7 @@
 
 use std::fmt::Write;
 
-use crate::bytecode::{Chunk, Function, Op};
+use crate::bytecode::{Chunk, Function, Globals, Op};
 
 // ── Op decoding ───────────────────────────────────────────────────
 
@@ -151,7 +151,7 @@ fn fmt_u8_count_then_u16_names(
 /// Disassemble a single instruction at `offset`.
 ///
 /// Returns `(formatted_line, next_offset)`.
-fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
+fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (String, usize) {
     let code = &chunk.code;
     let byte = code[offset];
 
@@ -232,8 +232,6 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
 
         // ── u16 operand with constant comment ─────────────────
         Op::Constant
-        | Op::GetGlobal
-        | Op::SetGlobal
         | Op::TestTag
         | Op::TestEqual
         | Op::GetField
@@ -245,6 +243,15 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
             let comment = constant_comment(chunk, index);
             (
                 format!("{offset:04}  {name:<20} {index:<5} ; {comment}"),
+                offset + 3,
+            )
+        }
+
+        // ── u16 global slot, commented with its definition ────
+        Op::GetGlobal | Op::SetGlobal => {
+            let slot = read_u16(code, offset + 1);
+            (
+                format!("{offset:04}  {name:<20} {slot:<5} ; {}", globals.name(slot)),
                 offset + 3,
             )
         }
@@ -352,11 +359,12 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
 // ── Chunk disassembly ─────────────────────────────────────────────
 
 /// Disassemble a complete `Chunk`, returning the formatted output.
-fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
+/// Global slots are named by `globals`.
+fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
     let mut output = format!("== {name} ==\n");
     let mut offset = 0;
     while offset < chunk.code.len() {
-        let (line, next) = disassemble_instruction(chunk, offset);
+        let (line, next) = disassemble_instruction(chunk, globals, offset);
         output.push_str(&line);
         output.push('\n');
         offset = next;
@@ -365,20 +373,21 @@ fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
 }
 
 /// Disassemble a compiled `Function`, returning the formatted output.
+/// Global slots are named by `globals`, the program's.
 ///
 /// Recursively disassembles nested functions found as `VmClosure` constants.
-pub fn disassemble_function(func: &Function) -> String {
+pub fn disassemble_function(func: &Function, globals: &Globals) -> String {
     let header = format!(
         "{} (arity={}, upvalues={})",
         func.name, func.arity, func.upvalue_count
     );
-    let mut output = disassemble_chunk(&func.chunk, &header);
+    let mut output = disassemble_chunk(&func.chunk, globals, &header);
 
     // Recurse into nested functions stored as VmClosure constants.
     for constant in &func.chunk.constants {
         if let crate::value::Value::VmClosure(closure) = constant {
             output.push('\n');
-            output.push_str(&disassemble_function(&closure.function));
+            output.push_str(&disassemble_function(&closure.function, globals));
         }
     }
 
@@ -407,7 +416,7 @@ mod tests {
         chunk.emit_op(Op::Add, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "test");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "test");
         assert!(output.contains("== test =="));
         assert!(output.contains("0000  True"));
         assert!(output.contains("0001  False"));
@@ -424,7 +433,7 @@ mod tests {
         chunk.emit_u16(idx, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "constants");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "constants");
         assert!(output.contains("Constant"));
         assert!(output.contains("42"));
     }
@@ -438,7 +447,7 @@ mod tests {
         chunk.emit_u16(10, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "jumps");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "jumps");
         assert!(output.contains("Jump"));
         assert!(output.contains("-> 0013"));
     }
@@ -456,7 +465,7 @@ mod tests {
         chunk.emit_op(Op::JumpBack, span);
         chunk.emit_u16(5, span);
 
-        let output = disassemble_chunk(&chunk, "jumpback");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "jumpback");
         assert!(output.contains("JumpBack"));
         assert!(output.contains("-> 0002"));
     }
@@ -481,7 +490,7 @@ mod tests {
         chunk.emit_u8(0, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "closure");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "closure");
         assert!(output.contains("MakeClosure"));
         assert!(output.contains("local 3"));
         assert!(output.contains("upvalue 0"));
@@ -503,7 +512,7 @@ mod tests {
         chunk.emit_u16(y_idx, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "record");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "record");
         assert!(output.contains("MakeRecord"));
         assert!(output.contains("\"Point\""));
         assert!(output.contains("\"x\""));
@@ -521,7 +530,7 @@ mod tests {
         chunk.emit_u8(1, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "builtin");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "builtin");
         assert!(output.contains("CallBuiltin"));
         assert!(output.contains("\"print\""));
     }
@@ -538,7 +547,7 @@ mod tests {
         func.chunk.emit_op(Op::Add, span);
         func.chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_function(&func);
+        let output = disassemble_function(&func, &Globals::default());
         assert!(output.contains("== add (arity=2, upvalues=1) =="));
         assert!(output.contains("GetLocal"));
         assert!(output.contains("Add"));
@@ -556,7 +565,7 @@ mod tests {
         chunk.emit_op(Op::PopN, span);
         chunk.emit_u8(5, span);
 
-        let output = disassemble_chunk(&chunk, "u8ops");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "u8ops");
         assert!(output.contains("MakeTuple"));
         assert!(output.contains("Call"));
         assert!(output.contains("PopN"));
@@ -569,7 +578,7 @@ mod tests {
         chunk.emit_op_u16(Op::Slide, 3, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "slide");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "slide");
         assert!(output.contains("0000  Slide"));
         assert!(output.contains("0003  Return"));
     }
@@ -586,7 +595,7 @@ mod tests {
         chunk.emit_u16(x_idx, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "update");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "update");
         assert!(output.contains("RecordUpdate"));
         assert!(output.contains("\"x\""));
         // Round 84: the operand decode for RecordUpdate uses
@@ -613,7 +622,7 @@ mod tests {
         chunk.emit_u16(name_idx, span);
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "rest");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "rest");
         assert!(output.contains("DestructRecordRest"));
         assert!(output.contains("exclude "));
         // Must NOT use the sibling label — guards against the helper
@@ -639,7 +648,7 @@ mod tests {
         chunk.emit_u8(0, span); // argc = 0
         chunk.emit_op(Op::Return, span);
 
-        let output = disassemble_chunk(&chunk, "method");
+        let output = disassemble_chunk(&chunk, &Globals::default(), "method");
         assert!(output.contains("CallMethod"));
         assert!(output.contains("\"len\""));
     }

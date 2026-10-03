@@ -753,8 +753,8 @@ impl TypeChecker {
         // Parallel to records/enums: `List`, `Map`, `Set`, `Channel` are
         // registered as polymorphic type descriptors so they can be
         // passed to `type a` parameters (`make(type t) where t: Empty`
-        // called as `make(List)`). At runtime the compiler emits these
-        // as `Value::TypeDescriptor(<name>)` globals. Method dispatch
+        // called as `make(List)`). The compiler emits these as
+        // `Value::TypeDescriptor` constants. Method dispatch
         // via the descriptor routes to method_table[(<name>, method)]
         // exactly like user-defined parameterized types.
         //

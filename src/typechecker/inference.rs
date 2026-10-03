@@ -2882,7 +2882,7 @@ impl TypeChecker {
                     // `src/typechecker/mod.rs:2092`), so dispatch must route those
                     // receivers through the same `method_table` lookup. The
                     // `"Fn"` key matches `canonical_name(Type::Fun)`,
-                    // `head_of_canon`, and `dispatch_name_for_value`
+                    // `head_of_canon`, and `dispatch_type_for_value`
                     // — round 71 follow-up unified all four sites on `"Fn"`.
                     Type::Int
                     | Type::Float
@@ -2893,7 +2893,7 @@ impl TypeChecker {
                     | Type::Fun(_, _) => {
                         // `Unit` is the key of `()` (it matches
                         // canonical_name(Type::Unit) and
-                        // dispatch_name_for_value(Value::Unit)), `Fn` of a
+                        // dispatch_type_for_value(Value::Unit)), `Fn` of a
                         // function.
                         let type_name = head_of(&obj_ty).expect("a primitive head has a type");
                         if let Some(entry) =

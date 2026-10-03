@@ -42,8 +42,10 @@ assert!(!analysis.has_errors());
 
 // 4. Compile it and run it.
 let program = session.compile(file, Entry::Main).expect("compiles");
-let script = program.functions.into_iter().next().expect("a script");
-let result = Vm::new().run(Arc::new(script)).unwrap();
+let script = program.functions[0].clone();
+let mut vm = Vm::new();
+vm.load(&program);
+let result = vm.run(Arc::new(script)).unwrap();
 assert_eq!(result, Value::Int(42));
 ```
 
@@ -192,13 +194,15 @@ thread in the task scheduler's pool. The type system enforces this. Use
 
 ## Vm Lifecycle
 
-A `Vm` is a single interpreter instance. `Vm::new().run(script)` runs a
-compiled program. The program carries its host functions: the `Vm` needs
-no set-up.
+A `Vm` is a single interpreter instance. `vm.load(&program)` takes in a
+compiled program: the types of its values and its global slots, one per
+top-level function, `let`, host function and trait method. The program
+carries its host functions: the `Vm` needs no other set-up.
+`vm.run(script)` then runs the program's script, `program.functions[0]`.
 
-**Reusing a Vm.** You can call `vm.run(...)` several times with
-different scripts on the same `Vm`. Globals defined by one run persist
-into the next. For hermetic runs, build a fresh `Vm::new()` per script.
+**Reusing a Vm.** Run one program per `Vm`: build a fresh `Vm::new()`
+for each. (The entries of a REPL session are compiled to follow one
+another, and share one `Vm`.)
 
 **Thread safety.** A single `Vm` is **not** `Sync` and must be driven from
 one thread (the scheduler owns its own worker threads internally). To run

@@ -1,6 +1,6 @@
 /// Module system utilities.
-/// Known builtin module names whose functions are registered as `module.func`
-/// in the global environment rather than loaded from files.
+/// Known builtin module names: their functions (`module.func`) are
+/// builtins, not loaded from files.
 pub const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
     "regex", "json", "toml", "set", "math", "time", "http", "fs", "env", "postgres", "bytes",
@@ -9,34 +9,22 @@ pub const BUILTIN_MODULES: &[&str] = &[
 
 /// Names of the built-in primitive type descriptors (uppercase) usable
 /// as `type a` arguments and for static-style trait dispatch
-/// (`Int.parse(...)`, etc.). The runtime emits each one as a
-/// `Value::PrimitiveDescriptor("<Name>")` global; the typechecker
-/// registers each as `TypeOf(<inner>)`.
+/// (`Int.parse(...)`, etc.). The compiler emits each one, used as a
+/// value, as a `Value::PrimitiveDescriptor("<Name>")` constant; the
+/// typechecker registers each as `TypeOf(<inner>)`.
 ///
-/// Round-73 BLOAT-2 fix: hoisted from hand-rolled lists at
-/// `src/vm/dispatch.rs::register_builtins` and
-/// `src/typechecker/builtins.rs::register_builtins` so adding a new
-/// primitive descriptor only requires touching this constant. Per-name
-/// behavior (the `Type` mapping in the typechecker, the
-/// `Value::PrimitiveDescriptor` shape in the VM) still lives at the
-/// call sites — only the NAME set is hoisted to prevent drift.
+/// Round-73 BLOAT-2 fix: the name set is hoisted here so the compiler
+/// and `src/typechecker/builtins.rs::register_builtins` cannot drift.
 ///
 /// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
 pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "String", "Bool"];
 
 /// Names of the built-in generic container type descriptors (uppercase)
 /// usable as `type a` arguments and for static-style trait dispatch
-/// (`List.empty()`, etc.). The runtime emits each one as a
-/// `Value::TypeDescriptor("<Name>")` global; the typechecker registers
-/// each as a polymorphic `TypeOf(Container(...))` scheme with arity
-/// matching the container's generic parameter count.
-///
-/// Round-73 BLOAT-2 fix: hoisted from hand-rolled lists at
-/// `src/vm/dispatch.rs::register_builtins` and
-/// `src/typechecker/builtins.rs::register_builtins`. Each container
-/// still has its own per-name code path (different generic arity for
-/// `Map(k,v)` vs the others), but the NAME set is centralised so the
-/// two sites cannot drift.
+/// (`List.empty()`, etc.). The compiler emits each one, used as a value,
+/// as a `Value::TypeDescriptor` constant of the builtin type; the
+/// typechecker registers each as a polymorphic `TypeOf(Container(...))`
+/// scheme with arity matching the container's generic parameter count.
 ///
 /// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
 pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Channel", "Tuple"];
@@ -173,14 +161,13 @@ pub fn is_builtin_module(name: &str) -> bool {
 }
 
 /// Returns the set of builtin enums as `(enum_name, variant_names)`
-/// pairs. Seeds the compiler's `known_enums` set, which tells the json /
-/// toml decoders which types are enums, and names the module of each
-/// variant (`builtin_variant_module`).
+/// pairs. The compiler finds a builtin variant by its name here in the
+/// derived impls of the builtin types, which name variants unresolved;
+/// it also names the module of each variant (`builtin_variant_module`).
 ///
 /// Includes both the prelude enums (Result, Option) and the enums of
 /// the builtin modules.
-/// Keep in sync with `src/typechecker/builtins/errors.rs` enum registrations
-/// and `src/vm/dispatch.rs` variant globals.
+/// Keep in sync with `src/typechecker/builtins/errors.rs` enum registrations.
 pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static str])] {
     &[
         ("Result", &["Ok", "Err"]),
@@ -319,8 +306,7 @@ pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
 /// a module prefix: `print(...)`, not `io.print(...)`. These are the
 /// non-constructor identifiers `register_builtins` (in
 /// `src/typechecker/builtins.rs`) defines unqualified at the top of the
-/// type environment, plus the matching `BuiltinFn` globals seeded by
-/// `src/vm/dispatch.rs::register_builtins`.
+/// type environment; used as a value, each is a `BuiltinFn` constant.
 ///
 /// Authoritative for: REPL completion, LSP completion/rename, the
 /// typechecker's "did you mean" candidate set for unqualified
@@ -340,11 +326,8 @@ pub fn builtin_free_function_names() -> &'static [&'static str] {
 }
 
 /// Authoritative `(variant_name, arity)` listings for every stdlib
-/// typed-error enum. Single source of truth consulted by
-/// `src/vm/dispatch.rs::register_builtins` to seed the global
-/// `VariantConstructor` / `Variant` entries — collapsing the
-/// previously hand-rolled per-family loops at dispatch.rs:142-275 into
-/// one data-driven loop.
+/// typed-error enum. Single source of truth for the builtin types'
+/// variants (`crate::typeinfo`) and the typechecker's error enums.
 ///
 /// Phase 0 of the stdlib error redesign (implemented and proposal
 /// removed in commit 7680536) — this is the canonical doc-mention.
@@ -488,18 +471,10 @@ pub fn variant_to_error_enum(tag: &str) -> Option<&'static str> {
 
 /// Authoritative `(variant_name, arity)` listings for every builtin
 /// non-error enum: `Result`, `Option`, `Step`, `ChannelResult`,
-/// `ChannelOp`, `Weekday`, `Method`. Single source of truth consulted
-/// by `src/vm/dispatch.rs::register_builtins` to seed the global
-/// `VariantConstructor` / `Variant` entries — collapsing the
-/// previously hand-rolled per-family blocks in `register_builtins` (an
-/// `insert()` pair per variant) into one data-driven loop, mirroring
-/// the round-64 collapse done for the typed-error enums via
-/// `builtin_error_enum_variants_with_arity`.
-///
-/// Round-71 PARALLEL-ARRAY-DRIFT fix: this helper exists so adding a
-/// new variant to e.g. `ChannelOp` no longer requires a hand-rolled
-/// `globals.insert(...)` pair next to the existing ones — the loop
-/// at dispatch.rs picks up the arity automatically.
+/// `ChannelOp`, `Weekday`, `Method`. Single source of truth for the
+/// builtin types' variants (`crate::typeinfo`), as
+/// `builtin_error_enum_variants_with_arity` is for the typed-error
+/// enums.
 ///
 /// A parity-lock test at
 /// `tests/meta/round71_dispatch_collapse_and_parity_tests.rs` asserts these
@@ -619,11 +594,6 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "group_by",
             // Round-72 widen: typechecker registrations these names had
             // schemes for, but `builtin_module_functions` did not enumerate.
-            // Without these entries, `Vm::register_builtins` never seeded
-            // a global for `list.sum` (etc.), so first-class value access
-            // (`let f = list.sum`) blew up at runtime with `undefined
-            // global: list.sum` even though the call form `list.sum(xs)`
-            // worked via `Op::CallBuiltin`.
             "sum",
             "sum_float",
             "product",
@@ -982,4 +952,19 @@ pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
         "float" => vec!["max_value", "min_value", "epsilon", "min_positive"],
         _ => vec![],
     }
+}
+
+/// The value of the builtin module constant `qualified` (`math.pi`);
+/// `None` for any other name.
+pub fn builtin_constant_value(qualified: &str) -> Option<crate::value::Value> {
+    let value = match qualified {
+        "math.pi" => std::f64::consts::PI,
+        "math.e" => std::f64::consts::E,
+        "float.max_value" => f64::MAX,
+        "float.min_value" => f64::MIN,
+        "float.epsilon" => f64::EPSILON,
+        "float.min_positive" => f64::MIN_POSITIVE,
+        _ => return None,
+    };
+    Some(crate::value::Value::Float(value))
 }

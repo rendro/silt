@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::defs::TypeId;
+use crate::defs::{DefId, TypeId};
 use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
@@ -26,6 +26,85 @@ enum ConstantKey {
     Nullary(TypeId, u16),
     /// A type descriptor (a record literal's or pattern's type).
     Type(TypeId),
+    /// A builtin function used as a value (`println`), by its name.
+    Builtin(String),
+    /// A primitive type's descriptor (`Int` as a value), by its name.
+    Primitive(String),
+}
+
+// ── Global slots ───────────────────────────────────────────────────
+
+/// The global slots of a program. Every top-level function, `let` and
+/// host function of its modules has one, and so has every method of an
+/// impl, by the type the impl is for and the method's name. A REPL
+/// session keeps one `Globals` for all its entries: a definition an
+/// entry makes again is a new definition with a slot of its own.
+#[derive(Debug, Clone, Default)]
+pub struct Globals {
+    /// The name of each slot's definition, as disassembly and errors
+    /// show it.
+    names: Vec<String>,
+    defs: HashMap<DefId, u16>,
+    methods: HashMap<TypeId, HashMap<String, u16>>,
+}
+
+impl Globals {
+    /// The number of slots.
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// The slot of the definition `def`.
+    pub fn def(&self, def: DefId) -> Option<u16> {
+        self.defs.get(&def).copied()
+    }
+
+    /// The slot of the method `method` of the impls for the type `ty`.
+    pub fn method(&self, ty: TypeId, method: &str) -> Option<u16> {
+        self.methods.get(&ty)?.get(method).copied()
+    }
+
+    /// The name of slot `slot`.
+    pub fn name(&self, slot: u16) -> &str {
+        self.names.get(slot as usize).map_or("?", String::as_str)
+    }
+
+    /// A new slot named `name`; `None` when all 65,536 slots are taken.
+    fn add(&mut self, name: String) -> Option<u16> {
+        let slot = u16::try_from(self.names.len()).ok()?;
+        self.names.push(name);
+        Some(slot)
+    }
+
+    /// The slot of the definition `def`, named `name`: a new one the
+    /// first time.
+    pub fn add_def(&mut self, def: DefId, name: String) -> Option<u16> {
+        if let Some(slot) = self.def(def) {
+            return Some(slot);
+        }
+        let slot = self.add(name)?;
+        self.defs.insert(def, slot);
+        Some(slot)
+    }
+
+    /// The slot of the method `method` of the type `ty`, named `name`: a
+    /// new one the first time. A later impl of the method for the type
+    /// (a REPL entry's) takes the slot over.
+    pub fn add_method(&mut self, ty: TypeId, method: &str, name: String) -> Option<u16> {
+        if let Some(slot) = self.method(ty, method) {
+            return Some(slot);
+        }
+        let slot = self.add(name)?;
+        self.methods
+            .entry(ty)
+            .or_default()
+            .insert(method.to_string(), slot);
+        Some(slot)
+    }
 }
 
 // ── Record types ───────────────────────────────────────────────────
@@ -95,10 +174,10 @@ pub enum Op {
     GetLocal, // operand: u16 slot
     /// Store TOS into `stack[frame_base + u16]`. Does NOT pop.
     SetLocal, // operand: u16 slot
-    /// Push `globals[constants[u16]]`.
-    GetGlobal, // operand: u16 name_index
-    /// Store TOS into globals.
-    SetGlobal, // operand: u16 name_index
+    /// Push the value of global slot `u16` (see [`Globals`]).
+    GetGlobal, // operand: u16 slot
+    /// Store TOS into global slot `u16`. Does NOT pop.
+    SetGlobal, // operand: u16 slot
 
     // ── Upvalues (closures) ────────────────────────────────────
     /// Push captured upvalue at index.
@@ -233,7 +312,9 @@ pub enum Op {
     /// Panic with message string on TOS.
     Panic,
 
-    /// Runtime method dispatch: pop receiver, look up "TypeName.method" global, call.
+    /// Runtime method dispatch: the method of the receiver's type named
+    /// by the constant (see [`Globals::method`]), else a builtin trait
+    /// method or a record field holding a function; call it.
     /// operands: u16 method_name_index, u8 argc (including receiver)
     CallMethod,
 
@@ -414,6 +495,8 @@ impl Chunk {
                 Some(ConstantKey::Nullary(tag.type_id(), tag.ordinal()))
             }
             Value::TypeDescriptor(ty) => Some(ConstantKey::Type(ty.id)),
+            Value::BuiltinFn(name) => Some(ConstantKey::Builtin(name.clone())),
+            Value::PrimitiveDescriptor(name) => Some(ConstantKey::Primitive(name.clone())),
             _ => None,
         };
 
@@ -524,18 +607,15 @@ impl Function {
 
 // ── VmClosure ──────────────────────────────────────────────────────
 
-/// Build a tiny script that calls a named global function with no arguments
-/// and returns the result.  Useful for the test runner and REPL. The call
-/// is silt's own, so its code has `Span::BUILTIN`.
-pub fn call_global_script(name: &str) -> Function {
+/// Build a tiny script that calls the function in global slot `slot`,
+/// `name`, with no arguments and returns the result: the test runner
+/// calls each test so. The call is silt's own, so its code has
+/// `Span::BUILTIN`.
+pub fn call_global_script(slot: u16, name: &str) -> Function {
     let span = Span::BUILTIN;
     let mut func = Function::new(format!("<call:{name}>"), 0);
-    let idx = func
-        .chunk
-        .add_constant(Value::String(name.into()))
-        .expect("constant pool overflow in call_global_script");
     func.chunk.emit_op(Op::GetGlobal, span);
-    func.chunk.emit_u16(idx, span);
+    func.chunk.emit_u16(slot, span);
     func.chunk.emit_op(Op::Call, span);
     func.chunk.emit_u8(0, span);
     func.chunk.emit_op(Op::Return, span);

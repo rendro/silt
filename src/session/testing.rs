@@ -141,7 +141,7 @@ pub fn analyze_files(files: &[(&str, &str)]) -> (Arc<ast::Program>, Vec<Diagnost
 /// [`Vm::run`].
 pub fn vm_for(program: &Program) -> (Vm, Arc<Function>) {
     let mut vm = Vm::new();
-    vm.load_types(&program.types);
+    vm.load(program);
     let script = program
         .functions
         .first()

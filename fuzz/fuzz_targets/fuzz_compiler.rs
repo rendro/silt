@@ -63,7 +63,7 @@ fuzz_target!(|data: &[u8]| {
     //    encodings — the round-92 bug class — are caught here without
     //    ever executing the program.
     for func in functions {
-        let text = disassemble_function(func);
+        let text = disassemble_function(func, &program.globals);
         assert!(
             !text.is_empty(),
             "disassembly of function {:?} produced empty output",

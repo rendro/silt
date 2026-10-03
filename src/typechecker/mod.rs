@@ -206,7 +206,7 @@ pub(super) struct EnumInfo {
     /// sentinel `intern("__builtin__")`; user enums carry the
     /// `current_package` value at the time their decl was processed,
     /// or `intern("__builtin__")` when there is no enclosing package
-    /// (a check outside a session).
+    /// (a host module).
     pub(super) defined_in: Symbol,
 }
 
@@ -520,7 +520,7 @@ pub struct Tables {
     /// registries. Populated as the typechecker processes user
     /// `type ... = ...` decls and trait impls; consumed by
     /// `canonicalize` and `canonical_head` at every read site, and by
-    /// the compiler when it names impl globals.
+    /// the compiler when it keys impl methods.
     pub(super) resolver: crate::types::canonical::Resolver,
     /// The scheme of each definition of a checked module: a function, a
     /// `let`, a variant's constructor, a type written as a value. (A
@@ -1977,8 +1977,8 @@ impl TypeChecker {
             Type::AnonRecord { .. } => Some(TypeRef::builtin(crate::defs::ANON_RECORD)),
             // Function values resolve to `Fn`, and `Unit` is `Unit`, so
             // `where a: Trait` constraints route into the same impl
-            // table the compiler emits globals for and
-            // `dispatch_name_for_value` returns at runtime.
+            // table the compiler keys impl methods by and
+            // `dispatch_type_for_value` returns at runtime.
             _ => head_of(&ty),
         }
     }
@@ -2988,9 +2988,9 @@ impl TypeChecker {
         // Mutates `program.decls`. The synthesized TraitImpls flow
         // through `register_trait_impl` (step 2c below) and the
         // compiler's TraitImpl emit path identical to user-written
-        // impls — producing real `<TypeName>.<method>` globals so
-        // `Op::CallMethod`'s qualified-global lookup finds them at
-        // runtime, never falling through to `dispatch_trait_method`.
+        // impls — producing real impl methods with global slots so
+        // `Op::CallMethod`'s method lookup finds them at runtime, never
+        // falling through to `dispatch_trait_method`.
         // Hand-written impls of the sealed traits are rejected first.
         self.reject_sealed_trait_impls(&mut program.decls);
         self.synthesize_auto_derive_impls(&mut program.decls);
@@ -3860,8 +3860,7 @@ impl TypeChecker {
         // synthesized as real `TraitImpl` AST nodes by
         // `synthesize_auto_derive_impls`, which routes them through
         // `register_trait_impl` and the compiler emit path so
-        // `Op::CallMethod` finds a real `<TypeName>.<method>` global at
-        // dispatch time. The typecheck-stamp here remains load-bearing
+        // `Op::CallMethod` finds a real impl method at dispatch time. The typecheck-stamp here remains load-bearing
         // for two cases the synthesizer skips:
         //
         //   1. Generic types (`type Box(a) { Foo(a) }`,
@@ -4589,7 +4588,7 @@ impl TypeChecker {
                     // signature and any where clauses. The parameter's own
                     // compile-time type is the runtime type descriptor
                     // `TypeOf(a)`, which unifies with record / primitive
-                    // descriptor globals at call sites.
+                    // descriptors at call sites.
                     let name = match &param.pattern.kind {
                         PatternKind::Ident(n) => *n,
                         _ => unreachable!("parser guarantees `type` params use an Ident pattern"),
@@ -5171,9 +5170,9 @@ impl TypeChecker {
         // both maps to give them the same synth treatment as user
         // types: every built-in `(trait, type)` pair pre-stamped in
         // `trait_impl_set` (see `register_builtin_trait_impls`)
-        // receives a synthesized `<Type>.<method>` global, so
-        // `Op::CallMethod`'s qualified-global lookup resolves at
-        // runtime without falling through to `dispatch_trait_method`.
+        // receives a synthesized impl method, so `Op::CallMethod`'s
+        // method lookup resolves at runtime without falling through to
+        // `dispatch_trait_method`.
         //
         // This is the second half of the round-62 work: round 62
         // covered every user enum / record (generic + non-generic);
@@ -5302,7 +5301,7 @@ impl TypeChecker {
             let supports = |_trait_sym: TraitKey, ty: &Type| -> bool {
                 // Self-references — same nominal head as the type we're
                 // synthesizing for — are always allowed (the recursive
-                // body will lookup the same global we register).
+                // body calls the same method we register).
                 if let Some(name) = self.type_name_for_impl(ty)
                     && name == type_name
                 {
@@ -6004,8 +6003,7 @@ impl TypeChecker {
         // `trait Foo for Range(a)` registers under the same key
         // (`"List"`) that dispatch lookup will use for both `Range(_)`
         // and `List(_)` receivers. Round 61's
-        // `value_type_name_for_dispatch` fix collapsed receivers to
-        // `"List"` at runtime; with phase B's `type_name_for_impl`
+        // dispatch fix collapsed receivers to `List` at runtime; with phase B's `type_name_for_impl`
         // canonicalising at the lookup side too, the impl table
         // would otherwise be unreachable for an explicitly
         // Range-targeted impl. Without this canonicalisation the
@@ -6158,7 +6156,7 @@ impl TypeChecker {
             // receiver. Callers downstream still see the canonical
             // form (`canonical_head` collapses the impl_key
             // to `"List"`), so the dispatch lookup arrives at the
-            // right global.
+            // right method.
             if let Some(info) = self.tables.resolver.lookup_alias(written) {
                 // Build a fresh-var instantiation per alias parameter so
                 // the impl methods see polymorphic vars rather than
@@ -7591,7 +7589,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         checker,
         // Round 75 TYPE-3 LATENT: canonical key for the unit type is
         // "Unit" (matches canonical_name(Type::Unit) and
-        // dispatch_name_for_value(Value::Unit)); an impl target `()`
+        // dispatch_type_for_value(Value::Unit)); an impl target `()`
         // names it too.
         &["Int", "Float", "Bool", "String", "Unit"],
         all_auto_traits,
@@ -7610,7 +7608,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // record registered in `register_builtins`. Each entry below
     // pre-stamps `trait_impl_set` for the policy-permitted traits so
     // `synthesize_auto_derive_impls` knows which (trait, type) pairs
-    // are allowed to receive a synthesized `<Type>.<method>` global,
+    // are allowed to receive a synthesized impl method,
     // and `field_type_supports_trait` returns true for fields that
     // reference these types (e.g. `Option(DateTime)` on `FileStat`).
     //
@@ -7627,9 +7625,9 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // The synth pass (`synthesize_auto_derive_impls`) discovers these
     // types via a uniform walk over `self.tables.enums` / `self.tables.records` and
     // emits the same `TraitImpl` AST that user-declared types receive,
-    // producing real `<Type>.<method>` globals at compile time. After
-    // this round, `Op::CallMethod` always finds a qualified-global
-    // entry for built-in enum/record receivers, and the Variant /
+    // producing real impl methods at compile time. After this round,
+    // `Op::CallMethod` always finds an impl method for built-in
+    // enum/record receivers, and the Variant /
     // Record arms in `dispatch_trait_method` are dead.
 
     // Built-in enums — non-generic, all four traits.
@@ -8087,7 +8085,7 @@ thread_local! {
 
 /// The derived impls of the builtin types, checked. Every program
 /// compiles them once (`Compiler::compile_program`), so a method call on
-/// a builtin type's value finds its `<Type>.<method>` global.
+/// a builtin type's value finds its method.
 pub fn builtin_derived_impls() -> Rc<Vec<Decl>> {
     builtin_env().impls.clone()
 }

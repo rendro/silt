@@ -209,11 +209,11 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 continue;
             }
         };
-        let EntryPoint::Tests(tests) = program.entry else {
+        let EntryPoint::Tests(tests) = &program.entry else {
             unreachable!("a program compiled for its tests has tests as its entry point");
         };
         let sources = session.into_sources();
-        let Some(first) = program.functions.into_iter().next() else {
+        let Some(first) = program.functions.first().cloned() else {
             eprintln!("{path}: internal error: no functions compiled");
             counts.file_errors += 1;
             continue;
@@ -229,7 +229,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
 
         let script = Arc::new(first);
         let mut vm = Vm::new();
-        vm.load_types(&program.types);
+        vm.load(&program);
         if let Err(e) = vm.run(script) {
             owners.mark_failed(setup_owner);
             // G2 (audit round 21): frame and error-header paths follow
@@ -247,7 +247,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
 
         // Run each selected test function
-        for test in &tests {
+        for test in tests {
             let name = &test.name;
             total += 1;
             if test.kind == TestKind::Skip {
@@ -259,7 +259,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             // spawn in turn, are the test's: their failures fail it.
             let owner = owners.add_owner(file_index, Some(name.clone()));
             silt::scheduler::set_task_owner(owner);
-            let caller = silt::bytecode::call_global_script(name);
+            let caller = silt::bytecode::call_global_script(test.slot, name);
             let outcome = vm.run(Arc::new(caller));
             // The failures of spawned tasks that have happened by now.
             // Those of this test's tasks are reported under its result

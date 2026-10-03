@@ -69,12 +69,11 @@ pub fn submit_panicking_io_for_test(vm: &Vm, completion: Arc<IoCompletion>) -> V
 
 use regex::Regex;
 use std::cell::Cell;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::bytecode::{Function, VmClosure};
+use crate::bytecode::{Function, Globals, VmClosure};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
 use crate::value::{IoCompletion, Value};
@@ -294,7 +293,11 @@ pub struct Vm {
     pub(crate) runtime: Arc<Runtime>,
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) stack: Vec<Value>,
-    pub(crate) globals: HashMap<String, Value>,
+    /// The values of the program's global slots; `None` until the
+    /// definition's code has run.
+    pub(crate) globals: Vec<Option<Value>>,
+    /// What each global slot is, and the slot of each impl method.
+    pub(crate) global_slots: Arc<Globals>,
     /// The program's types, by id: the decoders find the record types
     /// of record fields here.
     pub(crate) types: Arc<TypeTable>,
@@ -582,7 +585,7 @@ impl Vm {
     }
 
     pub fn new() -> Self {
-        let mut vm = Vm {
+        Vm {
             runtime: Arc::new(Runtime {
                 scheduler: parking_lot::Mutex::new(None),
                 timer: TimerManager::new(),
@@ -590,7 +593,8 @@ impl Vm {
             }),
             frames: Vec::new(),
             stack: Vec::new(),
-            globals: HashMap::new(),
+            globals: Vec::new(),
+            global_slots: Arc::new(Globals::default()),
             types: Arc::new(TypeTable::default()),
             next_channel_id: Arc::new(AtomicU64::new(0)),
             next_task_id: Arc::new(AtomicU64::new(0)),
@@ -605,15 +609,17 @@ impl Vm {
             suspended_builtin_outer: Vec::new(),
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
-        };
-        vm.register_builtins();
-        vm
+        }
     }
 
-    /// Take in the types of a program about to run: the descriptions
-    /// its values' types carry, which the decoders look up by id.
-    pub fn load_types(&mut self, types: &TypeTable) {
-        Arc::make_mut(&mut self.types).extend(types);
+    /// Take in a program about to run: the descriptions its values'
+    /// types carry, which the decoders look up by id, and its global
+    /// slots. A REPL entry's program has the slots of the entries
+    /// before it too, whose values stay.
+    pub fn load(&mut self, program: &crate::session::Program) {
+        Arc::make_mut(&mut self.types).extend(&program.types);
+        self.global_slots = program.globals.clone();
+        self.globals.resize(self.global_slots.len(), None);
     }
 
     /// Create a child VM that shares runtime state (the scheduler, timers, the I/O pool)
@@ -625,6 +631,7 @@ impl Vm {
             frames: Vec::new(),
             stack: Vec::new(),
             globals: self.globals.clone(),
+            global_slots: self.global_slots.clone(),
             types: self.types.clone(),
             next_channel_id: self.next_channel_id.clone(),
             next_task_id: self.next_task_id.clone(),
@@ -946,9 +953,8 @@ impl Vm {
     /// user-facing display fidelity even though the dispatch layer
     /// canonicalises Range -> List).
     ///
-    /// Do NOT use this for method-dispatch keys — use
-    /// `value_type_name_for_dispatch` (which routes through the
-    /// canonical name oracle in `crate::types::canonical`) instead.
+    /// Do NOT use this for method dispatch — use
+    /// `crate::types::canonical::dispatch_type_for_value` instead.
     pub fn type_name(&self, val: &Value) -> &'static str {
         match val {
             Value::Int(_) => "Int",
@@ -970,7 +976,7 @@ impl Vm {
             Value::Variant(..) => "Variant",
             // Surface name matches `Type::Fun`'s Display (`Fn(...) -> R`)
             // and the canonical dispatch name returned by
-            // `dispatch_name_for_value`. Round 71 follow-up unified
+            // `dispatch_type_name`. Round 71 follow-up unified
             // `Function` / `Fun` / `Fn` on `"Fn"`.
             Value::VmClosure(_) => "Fn",
             Value::BuiltinFn(_) => "BuiltinFn",

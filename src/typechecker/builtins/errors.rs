@@ -185,8 +185,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // The TypeChecker registration here records the impl in
     // `trait_impl_set` and `method_table` so downstream code can call
     // `err.message()` / `err.display()` and pass the error value to
-    // fns with `where e: Error` constraints. The runtime counterpart
-    // registers `<EnumName>.message` as a BuiltinFn in the VM globals.
+    // fns with `where e: Error` constraints. The runtime counterpart is
+    // the VM's native `message` method (`Vm::dispatch_trait_method`).
     let dummy_span = crate::source::Span::BUILTIN;
     // Round-64 GAP fix: `PgError`/`TcpError` only appear in this list
     // when their cargo features are enabled — the trait-impl set must

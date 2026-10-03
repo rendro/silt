@@ -327,7 +327,7 @@ impl Repl {
                 return evaluation;
             }
         };
-        self.vm.load_types(&program.types);
+        self.vm.load(&program);
         let script = program
             .functions
             .into_iter()

@@ -7,7 +7,7 @@
 //! AST (match expressions, let bindings, calls) so they flow through the
 //! typechecker's body-check pass and the compiler's TraitImpl emit path
 //! exactly the same as a user-written impl. The result is that
-//! `Op::CallMethod`'s qualified-global lookup at runtime finds e.g.
+//! `Op::CallMethod`'s method lookup at runtime finds e.g.
 //! `Color.compare` directly, and never falls through to
 //! `dispatch_trait_method` for user-defined enum/record receivers.
 //!

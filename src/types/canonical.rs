@@ -24,10 +24,9 @@
 //! unifier (`unify` in `src/typechecker/mod.rs`) and the typechecker's
 //! `resolve_type_expr` / `type_name_for_impl` through [`canonicalize`];
 //! phase C pointed the VM's runtime dispatch (via
-//! [`dispatch_name_for_value`]) and the compiler's trait-impl
-//! global-name emission (via [`canonical_head`]) at the
-//! canonical-name oracle; phase D added the alias registry described
-//! below.
+//! [`dispatch_type_for_value`]) and the compiler's keying of impl
+//! methods (via [`canonical_head`]) at the canonical-name oracle;
+//! phase D added the alias registry described below.
 //!
 //! ## Display vs canonical name
 //!
@@ -549,10 +548,9 @@ pub fn canonical_name(ty: &Type) -> String {
 
         // ── Containers ─────────────────────────────────────────────
         // Range collapses to List per the canonicalisation rule. This
-        // is the dispatch oracle the VM's value_type_name_for_dispatch
-        // (phase C) will consult: returning "Range" here would miss
-        // the qualified-global lookup the compiler emits under the
-        // "List.<m>" key.
+        // is the dispatch oracle `dispatch_type_for_value` consults:
+        // returning "Range" here would miss the methods the compiler
+        // keys under `List`.
         Type::List(_) | Type::Range(_) => "List".to_string(),
         Type::Map(_, _) => "Map".to_string(),
         Type::Set(_) => "Set".to_string(),
@@ -650,80 +648,55 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
     Some(TypeRef::builtin(builtin))
 }
 
-/// Canonical dispatch name for a runtime [`Value`]: the name of its
-/// type that its impls' globals are installed under. A record, a
-/// variant and a type descriptor carry their type, whose
-/// [`TypeInfo::key`](crate::typeinfo::TypeInfo::key) it is.
+/// The type a runtime [`Value`] dispatches its methods on: the type the
+/// methods of its impls are keyed by. A record, a variant and a type
+/// descriptor carry their type, so `Int.default()` and
+/// `Todo.decode(...)` route to impls of `Int` / `Todo`.
 ///
 /// The mapping mirrors [`canonical_name`] applied to each `Value`
 /// variant's corresponding [`Type`] — in particular `Value::Range(..)`
-/// returns `"List"` because the type system collapses `Range(t)` to
-/// `List(t)` and the compiler emits trait-impl globals under the
-/// canonical key. Returning `"Range"` here would route a
-/// `Value::Range` receiver to a never-registered `"Range.<m>"` global
-/// and surface `no method '<m>' for type 'Range'` to the user (round
-/// 61 REGRESSION).
-pub fn dispatch_name_for_value(val: &Value) -> String {
+/// is a `List`, because the type system collapses `Range(t)` to
+/// `List(t)` and the compiler keys `for Range(a)` impls under `List`.
+/// Every function-shaped value (a closure, a builtin, a host function, a
+/// variant constructor) is an `Fn`: the typechecker types each as
+/// `Type::Fun(..)`, so a `trait T for Fn` impl serves them all.
+pub fn dispatch_type_for_value(val: &Value) -> TypeId {
+    let builtin = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
     match val {
-        // Records and variants carry their type.
-        Value::Variant(tag, _) => tag.ty().key.clone(),
-        Value::Record(ty, _) => ty.key.clone(),
-        // Type descriptors dispatch on the carried type, so
-        // `Int.default()` and `Todo.decode(...)` route to impls of
-        // `Int` / `Todo` even though the descriptor value itself is
-        // neither an Int nor a Todo.
-        Value::TypeDescriptor(ty) => ty.key.clone(),
-        Value::PrimitiveDescriptor(name) => name.clone(),
+        Value::Variant(tag, _) => tag.type_id(),
+        Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.id,
+        Value::PrimitiveDescriptor(name) => TypeRef::builtin(name).id,
+        Value::Int(_) => builtin(Type::Int),
+        Value::Float(_) => builtin(Type::Float),
+        Value::Bool(_) => builtin(Type::Bool),
+        Value::String(_) => builtin(Type::String),
+        Value::List(_) => builtin(Type::List(Box::new(Type::Unit))),
+        Value::Range(..) => builtin(Type::Range(Box::new(Type::Unit))),
+        Value::Map(_) => builtin(Type::Map(Box::new(Type::Unit), Box::new(Type::Unit))),
+        Value::Set(_) => builtin(Type::Set(Box::new(Type::Unit))),
+        Value::Tuple(_) => builtin(Type::Tuple(vec![])),
+        Value::Channel(_) => builtin(Type::Channel(Box::new(Type::Unit))),
+        Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(..) => builtin(Type::Fun(vec![], Box::new(Type::Unit))),
+        Value::Unit => builtin(Type::Unit),
+        Value::Bytes(_) => TypeRef::builtin("Bytes").id,
+        Value::Handle(_) => TypeRef::builtin("Handle").id,
+        Value::TcpListener(_) => TypeRef::builtin("TcpListener").id,
+        Value::TcpStream(_) => TypeRef::builtin("TcpStream").id,
+    }
+}
 
-        // Built-ins: route every shape through `canonical_name` of the
-        // corresponding `Type` so the dispatch oracle has exactly one
-        // source of truth. Range collapses to "List" via canonical_name.
-        Value::Int(_) => canonical_name(&Type::Int),
-        Value::Float(_) => canonical_name(&Type::Float),
-        Value::Bool(_) => canonical_name(&Type::Bool),
-        Value::String(_) => canonical_name(&Type::String),
-        Value::List(_) => canonical_name(&Type::List(Box::new(Type::Unit))),
-        Value::Range(..) => canonical_name(&Type::Range(Box::new(Type::Unit))),
-        Value::Map(_) => canonical_name(&Type::Map(Box::new(Type::Unit), Box::new(Type::Unit))),
-        Value::Set(_) => canonical_name(&Type::Set(Box::new(Type::Unit))),
-        Value::Tuple(_) => canonical_name(&Type::Tuple(vec![])),
-        Value::Channel(_) => canonical_name(&Type::Channel(Box::new(Type::Unit))),
-        // All function-shaped values dispatch under `"Fn"` — the same
-        // canonical name that `canonical_name(Type::Fun)`,
-        // `head_of_canon(Type::Fun)`, and the typechecker's
-        // `type_name_for_impl` produce. The typechecker types every
-        // function-shaped value as `Type::Fun(..)`, so a user
-        // `trait T for Fn { ... }` impl registers under the
-        // `("T", "Fn")` key. Round 71 follow-up unified the four
-        // sites that used to disagree (`"Fun"` / `"Fn"` /
-        // `"Function"`) and migrated `VmClosure` to `"Fn"`; round 77
-        // closed the gap by routing the `BuiltinFn` and
-        // `VariantConstructor` siblings through the same name. Pre-fix,
-        // those two arms returned their own variant tags
-        // (`"BuiltinFn"` / `"VariantConstructor"`), so binding a builtin
-        // (`let h = println`) or a variant constructor (`let h = May`)
-        // and then calling `h.describe()` surfaced
-        // `no method 'describe' for type 'BuiltinFn'` even though the
-        // `for Fn` impl was registered.
-        //
-        // Each arm is written out long-hand (rather than collapsed
-        // via `|`-patterns) so the round-71 source-grep lock in
-        // `tests/lang/round71_followup_fn_canonical_name_tests.rs` keeps
-        // matching. Round-77 lock:
-        // `tests/lang/round77_for_fn_builtinfn_dispatch_tests.rs`.
-        Value::VmClosure(_) => "Fn".to_string(),
-        Value::BuiltinFn(_) => "Fn".to_string(),
-        Value::HostFn(_) => "Fn".to_string(),
-        Value::VariantConstructor(..) => "Fn".to_string(),
-        Value::Unit => canonical_name(&Type::Unit),
-
-        // Resource types with no Type variant (yet): keep their
-        // historical dispatch names so any registered impls
-        // (`trait Foo for Bytes { ... }`) still resolve.
-        Value::Bytes(_) => "Bytes".to_string(),
-        Value::Handle(_) => "Handle".to_string(),
-        Value::TcpListener(_) => "TcpListener".to_string(),
-        Value::TcpStream(_) => "TcpStream".to_string(),
+/// The name of the type [`dispatch_type_for_value`] gives, as messages
+/// show it.
+pub fn dispatch_type_name(val: &Value) -> String {
+    match val {
+        Value::Variant(tag, _) => tag.ty().name.clone(),
+        Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.name.clone(),
+        _ => crate::typeinfo::builtin_type(dispatch_type_for_value(val))
+            .name
+            .clone(),
     }
 }
 
@@ -1181,58 +1154,71 @@ mod tests {
         }
     }
 
-    // ── dispatch_name_for_value ────────────────────────────────────
+    // ── dispatch_type_for_value ────────────────────────────────────
+
+    fn builtin_id(name: &str) -> TypeId {
+        TypeRef::builtin(name).id
+    }
 
     #[test]
-    fn dispatch_name_for_value_range_returns_list() {
+    fn dispatch_type_for_value_range_is_list() {
         // The whole-stack invariant: a Range receiver dispatches under
-        // the same key the compiler emits for `for List(a)` impls.
+        // the type the compiler keys `for List(a)` impls by.
         let v = Value::Range(1, 5);
-        assert_eq!(dispatch_name_for_value(&v), "List");
+        assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
+        assert_eq!(dispatch_type_name(&v), "List");
     }
 
     #[test]
-    fn dispatch_name_for_value_list_returns_list() {
+    fn dispatch_type_for_value_list_is_list() {
         let v = Value::List(std::sync::Arc::new(vec![]));
-        assert_eq!(dispatch_name_for_value(&v), "List");
+        assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
     }
 
     #[test]
-    fn dispatch_name_for_value_primitives() {
-        assert_eq!(dispatch_name_for_value(&Value::Int(0)), "Int");
-        assert_eq!(dispatch_name_for_value(&Value::Float(0.0)), "Float");
-        assert_eq!(dispatch_name_for_value(&Value::Bool(false)), "Bool");
+    fn dispatch_type_for_value_primitives() {
+        assert_eq!(dispatch_type_for_value(&Value::Int(0)), builtin_id("Int"));
         assert_eq!(
-            dispatch_name_for_value(&Value::String(String::new())),
-            "String"
+            dispatch_type_for_value(&Value::Float(0.0)),
+            builtin_id("Float")
         );
-        assert_eq!(dispatch_name_for_value(&Value::Unit), "Unit");
-    }
-
-    #[test]
-    fn dispatch_name_for_value_record_uses_carried_name() {
-        let v = Value::builtin_record(crate::typeinfo::ty::DATE, Default::default());
-        assert_eq!(dispatch_name_for_value(&v), "Date");
-    }
-
-    #[test]
-    fn dispatch_name_for_value_descriptors_use_carried_name() {
         assert_eq!(
-            dispatch_name_for_value(&Value::TypeDescriptor(
+            dispatch_type_for_value(&Value::Bool(false)),
+            builtin_id("Bool")
+        );
+        assert_eq!(
+            dispatch_type_for_value(&Value::String(String::new())),
+            builtin_id("String")
+        );
+        assert_eq!(dispatch_type_for_value(&Value::Unit), builtin_id("Unit"));
+    }
+
+    #[test]
+    fn dispatch_type_for_value_record_uses_carried_type() {
+        let v = Value::builtin_record(crate::typeinfo::ty::DATE, Default::default());
+        assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::DATE);
+        assert_eq!(dispatch_type_name(&v), "Date");
+    }
+
+    #[test]
+    fn dispatch_type_for_value_descriptors_use_carried_type() {
+        assert_eq!(
+            dispatch_type_for_value(&Value::TypeDescriptor(
                 crate::typeinfo::builtin_type(crate::typeinfo::ty::WEEKDAY).clone()
             )),
-            "Weekday"
+            crate::typeinfo::ty::WEEKDAY
         );
         assert_eq!(
-            dispatch_name_for_value(&Value::PrimitiveDescriptor("Int".to_string())),
-            "Int"
+            dispatch_type_for_value(&Value::PrimitiveDescriptor("Int".to_string())),
+            builtin_id("Int")
         );
     }
 
     #[test]
-    fn dispatch_name_for_value_variant_uses_its_type() {
+    fn dispatch_type_for_value_variant_uses_its_type() {
         let v = Value::variant(crate::typeinfo::bv::SOME, vec![Value::Int(7)]);
-        assert_eq!(dispatch_name_for_value(&v), "Option");
+        assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::OPTION);
+        assert_eq!(dispatch_type_name(&v), "Option");
     }
 
     // ── Phase D: alias registry + expansion in canonicalize ──────────

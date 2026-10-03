@@ -96,6 +96,8 @@ pub struct TestFn {
     pub kind: TestKind,
     /// The span of the function's name.
     pub span: Span,
+    /// The function's global slot, which the compiler gives it.
+    pub slot: u16,
 }
 
 /// The diagnostic for an entry file `path` (as the user named it) that
@@ -195,6 +197,7 @@ pub(super) fn select_tests(
             name,
             kind,
             span: f.name_span,
+            slot: 0,
         });
     }
     (tests, errors)

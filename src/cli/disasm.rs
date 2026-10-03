@@ -98,7 +98,7 @@ pub(crate) fn disasm_file(path: &str) {
 
     // Print disassembly of each function
     for func in &program.functions {
-        print!("{}", disassemble_function(func));
+        print!("{}", disassemble_function(func, &program.globals));
         println!();
     }
 }

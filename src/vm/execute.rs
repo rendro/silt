@@ -1569,7 +1569,7 @@ impl Vm {
                         // `BuiltinFn` / `VariantConstructor` tags). Function-
                         // shaped values, Channel, Handle and the Tcp resources
                         // collapse to their canonical name via
-                        // `dispatch_name_for_value`; the descriptor values
+                        // `dispatch_type_name`; the descriptor values
                         // (whose canonical name is the *carried* type name)
                         // fall back to their `type_name` so the diagnostic
                         // names the descriptor kind, not the reflected type.
@@ -1577,7 +1577,7 @@ impl Vm {
                             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
                                 self.type_name(&val).to_string()
                             }
-                            _ => crate::types::canonical::dispatch_name_for_value(&val),
+                            _ => crate::types::canonical::dispatch_type_name(&val),
                         };
                         return Err(VmError::new(format!(
                             "type '{name}' does not implement Display \
@@ -1651,20 +1651,30 @@ impl Vm {
                 self.stack[target] = value;
             }
             Op::GetGlobal => {
-                let name_index = self.read_u16()? as usize;
-                let name = self.read_constant_string(name_index)?;
-                let value = self
-                    .globals
-                    .get(&name)
-                    .cloned()
-                    .ok_or_else(|| VmError::new(format!("undefined global: {name}")))?;
+                let slot = self.read_u16()?;
+                let value = match self.globals.get(slot as usize) {
+                    Some(Some(value)) => value.clone(),
+                    // A top-level `let` initializer that calls code which
+                    // reads a `let` initialized after it.
+                    _ => {
+                        return Err(VmError::new(format!(
+                            "'{}' is used before its top-level definition has run",
+                            self.global_slots.name(slot)
+                        )));
+                    }
+                };
                 self.push(value);
             }
             Op::SetGlobal => {
-                let name_index = self.read_u16()? as usize;
-                let name = self.read_constant_string(name_index)?;
+                let slot = self.read_u16()? as usize;
                 let value = self.peek()?.clone();
-                self.globals.insert(name, value);
+                let Some(global) = self.globals.get_mut(slot) else {
+                    return Err(VmError::new(format!(
+                        "internal VM error: global slot {slot} out of range ({} slots)",
+                        self.globals.len()
+                    )));
+                };
+                *global = Some(value);
             }
             Op::GetUpvalue => {
                 let index = self.read_u8()? as usize;
@@ -2438,7 +2448,7 @@ impl Vm {
                 }
                 let receiver_slot = self.stack.len() - argc;
                 let receiver = self.stack[receiver_slot].clone();
-                let type_name = crate::types::canonical::dispatch_name_for_value(&receiver);
+                let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
                 // Descriptor-as-receiver (e.g. `Int.default()`,
                 // `body.decode(Todo)` where the descriptor is piped in) is
                 // a dispatch key, not a value argument. The method's
@@ -2448,8 +2458,11 @@ impl Vm {
                     &receiver,
                     Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
                 );
-                let qualified = format!("{type_name}.{method_name}");
-                if let Some(func) = self.globals.get(&qualified).cloned() {
+                let method = self
+                    .global_slots
+                    .method(receiver_type, &method_name)
+                    .and_then(|slot| self.globals.get(slot as usize).cloned().flatten());
+                if let Some(func) = method {
                     let args: Vec<Value> = if descriptor_receiver {
                         self.stack[receiver_slot + 1..].to_vec()
                     } else {
@@ -2488,7 +2501,7 @@ impl Vm {
                         if let Some(field_val) = fields.get(&method_name) {
                             let callable = field_val.clone();
                             self.stack.truncate(receiver_slot);
-                            // Resumable invoke: see qualified-global arm
+                            // Resumable invoke: see the impl-method arm
                             // above. On yield the original args we re-push
                             // are receiver + extra_args, so the same
                             // CallMethod instruction reads them again on
@@ -2507,12 +2520,14 @@ impl Vm {
                             self.push(result);
                         } else {
                             return Err(VmError::new(format!(
-                                "no method '{method_name}' for type '{type_name}'"
+                                "no method '{method_name}' for type '{}'",
+                                crate::types::canonical::dispatch_type_name(&receiver)
                             )));
                         }
                     } else {
                         return Err(VmError::new(format!(
-                            "no method '{method_name}' for type '{type_name}'"
+                            "no method '{method_name}' for type '{}'",
+                            crate::types::canonical::dispatch_type_name(&receiver)
                         )));
                     }
                 }

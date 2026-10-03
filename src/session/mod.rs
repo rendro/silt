@@ -20,12 +20,12 @@ mod host;
 mod packages;
 pub mod testing;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::ast;
-use crate::bytecode::Function;
+use crate::bytecode::{Function, Globals};
 use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
 use crate::defs::DefTable;
 use crate::diagnostic::{Code, Diagnostic};
@@ -110,8 +110,10 @@ pub struct ModuleAnalysis {
 pub struct Program {
     pub functions: Vec<Function>,
     /// The types its values are of, which the VM is given
-    /// ([`crate::vm::Vm::load_types`]).
+    /// ([`crate::vm::Vm::load`]).
     pub types: crate::typeinfo::TypeTable,
+    /// Its global slots, which the VM is given too.
+    pub globals: Arc<Globals>,
     pub entry: EntryPoint,
 }
 
@@ -125,35 +127,17 @@ pub enum EntryPoint {
 }
 
 /// What the imports of `module` name, as the compiler looks them up:
-/// by the module name written after `import`, and by each name an
-/// import binds (`m` for `import m`, `n` for `import m as n`), each
-/// mapped to the unit of the imported module.
-fn unit_imports(
-    module: &Module,
-    index: &HashMap<ModuleId, usize>,
-) -> (HashMap<Symbol, usize>, HashMap<Symbol, usize>) {
-    let imports: HashMap<Symbol, usize> = module
+/// by the module name written after `import`, each mapped to the unit
+/// of the imported module.
+fn unit_imports(module: &Module, index: &HashMap<ModuleId, usize>) -> HashMap<Symbol, usize> {
+    module
         .imports
         .iter()
         .filter_map(|import| match import.resolution {
             ImportResolution::Module(target) => Some((import.name, index[&target])),
             _ => None,
         })
-        .collect();
-    let mut bindings = HashMap::new();
-    if let Some(ast) = &module.ast {
-        for decl in &ast.decls {
-            let (name, bound) = match decl {
-                ast::Decl::Import(ast::ImportTarget::Module(name), _) => (name, name),
-                ast::Decl::Import(ast::ImportTarget::Alias(name, alias, _), _) => (name, alias),
-                _ => continue,
-            };
-            if let Some(&unit) = imports.get(name) {
-                bindings.insert(*bound, unit);
-            }
-        }
-    }
-    (imports, bindings)
+        .collect()
 }
 
 /// A compilation session. See the module documentation.
@@ -673,52 +657,23 @@ impl Session {
         // the unit of the module it names.
         let index: HashMap<ModuleId, usize> =
             modules.iter().enumerate().map(|(i, id)| (*id, i)).collect();
-        // Each module's globals take the first name it is imported by; a
-        // module imported by a name another module took already (an app's
-        // `util` and a dependency's own `util`) is told apart by its
-        // package.
-        let mut globals: HashMap<ModuleId, String> = HashMap::new();
-        let mut taken: HashSet<String> = HashSet::new();
-        for m in &modules {
-            for import in &self.graph.module(*m).imports {
-                let ImportResolution::Module(target) = import.resolution else {
-                    continue;
-                };
-                if globals.contains_key(&target) {
-                    continue;
-                }
-                let mut global = resolve(import.name);
-                if !taken.insert(global.clone()) {
-                    let module = self.graph.module(target);
-                    global = format!("{}::{}", module.package_name, resolve(module.name));
-                    taken.insert(global.clone());
-                }
-                globals.insert(target, global);
-            }
-        }
         let earlier = match target {
-            Entry::Cell if self.cells.info.contains_key(&id) => self.cells.earlier(id, &index),
+            Entry::Cell if self.cells.info.contains_key(&id) => self.cells.earlier(&index),
             _ => EarlierCells::default(),
         };
         let units = ProgramUnits {
-            defs: Some(self.defs.clone()),
+            defs: self.defs.clone(),
             resolver: Arc::new(self.tables.resolver().clone()),
             earlier,
             modules: modules
                 .iter()
                 .map(|m| {
                     let module = self.graph.module(*m);
-                    let (imports, bindings) = unit_imports(module, &index);
                     ModuleUnit {
                         id: *m,
                         program: self.analyses[m].ast.clone(),
                         name: resolve(module.name),
-                        global: globals
-                            .get(m)
-                            .cloned()
-                            .unwrap_or_else(|| resolve(module.name)),
-                        imports,
-                        bindings,
+                        imports: unit_imports(module, &index),
                         host: module
                             .host
                             .map_or_else(HashMap::new, |host| self.host_functions(module, host)),
@@ -728,9 +683,16 @@ impl Session {
             entry: index[&id],
         };
         let program = self.analyses[&id].ast.clone();
-        let mut compiler = Compiler::for_program(units);
+        let mut compiler = match Compiler::for_program(units) {
+            Ok(compiler) => compiler,
+            Err(e) => {
+                let mut errors = vec![e];
+                errors.extend(entry_errors);
+                return Err(errors);
+            }
+        };
         let compiled = match target {
-            Entry::Main => compiler.compile_program(&program),
+            Entry::Main => compiler.compile_program(&program, self.top_level_def(id, ENTRY_POINT)),
             Entry::Tests { .. } => compiler.compile_declarations(&program),
             Entry::Cell if !self.cells.info.contains_key(&id) => {
                 compiler.compile_declarations(&program)
@@ -744,7 +706,7 @@ impl Session {
                     .iter()
                     .any(|decl| matches!(decl, ast::Decl::Fn(f) if resolve(f.name) == wrapper));
                 if statements {
-                    compiler.compile_program_with_entry(&program, &wrapper)
+                    compiler.compile_program(&program, self.top_level_def(id, &wrapper))
                 } else {
                     compiler.compile_declarations(&program)
                 }
@@ -752,17 +714,53 @@ impl Session {
         };
         match compiled {
             Ok(_) if !entry_errors.is_empty() => Err(entry_errors),
-            Ok(functions) => Ok(Program {
-                functions,
-                types: compiler.types(),
-                entry: entry_point,
-            }),
+            Ok(functions) => {
+                let globals = compiler.globals().clone();
+                if matches!(target, Entry::Cell) && self.cells.info.contains_key(&id) {
+                    self.cells.globals = globals.clone();
+                }
+                let entry = match entry_point {
+                    EntryPoint::Tests(mut tests) => {
+                        for test in &mut tests {
+                            test.slot = self.global_slot(id, &test.name, &globals);
+                        }
+                        EntryPoint::Tests(tests)
+                    }
+                    other => other,
+                };
+                Ok(Program {
+                    functions,
+                    types: compiler.types(),
+                    globals: Arc::new(globals),
+                    entry,
+                })
+            }
             Err(e) => {
                 let mut errors = vec![e];
                 errors.extend(entry_errors);
                 Err(errors)
             }
         }
+    }
+
+    /// The definition the top-level name `name` of module `id` binds,
+    /// its own or an imported one.
+    fn top_level_def(&self, id: ModuleId, name: &str) -> Option<crate::defs::DefId> {
+        match self.analyses.get(&id)?.scope.values.get(&intern(name))? {
+            names::Binding::Def(def) => Some(*def),
+            _ => None,
+        }
+    }
+
+    /// The global slot of the top-level function `name` of module `id`.
+    fn global_slot(&self, id: ModuleId, name: &str, globals: &Globals) -> u16 {
+        let name = intern(name);
+        self.defs
+            .of_module(id)
+            .iter()
+            .find(|def| self.defs.get(**def).name == name)
+            .and_then(|def| globals.def(*def))
+            .expect("a selected test is a top-level function of the entry")
     }
 
     /// The functions of the host module `module`, the `host`th of the

@@ -29,9 +29,6 @@ pub struct TypeInfo {
     /// the program have that name, its module's name and its name
     /// (`a.Pt`).
     pub name: String,
-    /// The name its impls' globals are installed under: its printed
-    /// name, qualified also when a builtin type has the name.
-    pub key: String,
     pub shape: Shape,
 }
 
@@ -57,12 +54,11 @@ pub struct VariantInfo {
 
 impl TypeInfo {
     /// The enum `name` with the id `id` and the variants `(name, arity)`,
-    /// which prints, and has its impls, under its name.
+    /// which prints under its name.
     pub fn new_enum(id: TypeId, name: &str, variants: &[(&str, u16)]) -> Arc<TypeInfo> {
         Arc::new(TypeInfo {
             id,
             name: name.to_string(),
-            key: name.to_string(),
             shape: Shape::Enum(
                 variants
                     .iter()
@@ -80,7 +76,6 @@ impl TypeInfo {
         Arc::new(TypeInfo {
             id,
             name: name.to_string(),
-            key: name.to_string(),
             shape: Shape::Record(fields),
         })
     }
@@ -535,7 +530,6 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
                 Arc::new(TypeInfo {
                     id: TypeId(DefId(k as u32)),
                     name: (*name).to_string(),
-                    key: (*name).to_string(),
                     shape,
                 })
             })
@@ -551,7 +545,6 @@ fn marker_types() -> &'static [Arc<TypeInfo>] {
             Arc::new(TypeInfo {
                 id,
                 name: name.to_string(),
-                key: name.to_string(),
                 shape: Shape::Enum(vec![VariantInfo {
                     name: name.to_string(),
                     arity,
@@ -562,7 +555,6 @@ fn marker_types() -> &'static [Arc<TypeInfo>] {
             Arc::new(TypeInfo {
                 id,
                 name: name.to_string(),
-                key: name.to_string(),
                 shape: Shape::Record(Vec::new()),
             })
         };
