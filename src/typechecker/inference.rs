@@ -1026,11 +1026,13 @@ impl TypeChecker {
                 Type::Var(_) => {
                     // Polymorphic / unresolved — leave alone (see above).
                 }
-                Type::Record(_, rec_fields) => {
+                Type::Record(rec_name, rec_fields) => {
                     if let Some((_, field_ty)) = rec_fields.iter().find(|(n, _)| *n == field) {
                         let ft = field_ty.clone();
                         self.unify(&result_ty, &ft, span);
-                    } else {
+                    } else if !self
+                        .deferred_method_call(*rec_name, field, &obj_ty, &result_ty, span)
+                    {
                         // GAP (round 35 F7): thread did-you-mean suggestion
                         // through the deferred-field-access path so typos
                         // on Record-shaped receivers get the same hint.
@@ -3182,6 +3184,20 @@ impl TypeChecker {
                                 self.private_method(trait_name, field, span);
                                 expr.ty = Some(Type::Error);
                                 return Type::Error;
+                            }
+                            // A call that stays polymorphic names the one
+                            // trait the module sees with a method of the
+                            // name, when there is one: the VM looks the
+                            // method up in that trait's impls.
+                            let mut seen = self
+                                .tables
+                                .traits
+                                .iter()
+                                .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
+                                .map(|(t, _)| *t)
+                                .filter(|t| self.sees_trait(*t));
+                            if let (Some(t), None) = (seen.next(), seen.next()) {
+                                self.method_trait = Some(t);
                             }
                             let result_ty = self.fresh_var();
                             let is_known_impl_method =

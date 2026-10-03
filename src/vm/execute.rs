@@ -2444,7 +2444,11 @@ impl Vm {
                     Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
                 );
                 if trait_index == crate::bytecode::NO_TRAIT
-                    && self.global_slots.ambiguous(receiver_type, &method_name)
+                    && self.global_slots.ambiguous(
+                        receiver_type,
+                        &method_name,
+                        !matches!(receiver, Value::Record(..) | Value::Variant(..)),
+                    )
                 {
                     return Err(VmError::new(format!(
                         "ambiguous method '{method_name}' for type '{}': two traits provide it, \

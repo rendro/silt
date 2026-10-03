@@ -1,0 +1,9 @@
+-- a's pub Show and b's private Show, both for Int: main sees only
+-- a's, so its calls call a's; b's own call calls b's.
+import a
+import b
+fn main() {
+  println(b.sb(1))
+  println(2.show())
+  println(Int.show(3))
+}

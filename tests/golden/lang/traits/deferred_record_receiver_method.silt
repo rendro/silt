@@ -1,0 +1,12 @@
+-- A method call on a lambda parameter that becomes a record type only
+-- once the call is inferred (`list.map(ps) { p -> p.greet() }`) is the
+-- record type's method, as for an Int or a List receiver.
+import list
+type P { v: Int }
+trait Greet { fn greet(self) -> String }
+trait Greet for P { fn greet(self) -> String { "p{self.v}" } }
+trait Greet for Int { fn greet(self) -> String { "i" } }
+fn main() {
+  println(list.map([P { v: 1 }, P { v: 2 }]) { p -> p.greet() })
+  println(list.map([1]) { p -> p.greet() })
+}

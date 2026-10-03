@@ -6240,12 +6240,22 @@ impl TypeChecker {
                 .first()
                 .map(|m| m.name)
                 .unwrap_or_else(|| intern("display"));
-            let is_overriding_auto = self
+            // The impl of this trait already registered, not a method of
+            // another trait of one name (`trait Describe for Pt { fn
+            // display }` is no impl of Display).
+            let existing = self
                 .tables
-                .method_table
-                .get(&(target_type, first_method))
-                .map(|e| e.is_auto_derived)
-                .unwrap_or(true);
+                .trait_methods
+                .get(&(target_type, first_method, trait_key))
+                .cloned()
+                .or_else(|| {
+                    self.tables
+                        .method_table
+                        .get(&(target_type, first_method))
+                        .filter(|e| self.entry_trait(e, first_method) == Some(trait_key))
+                        .cloned()
+                });
+            let is_overriding_auto = existing.map(|e| e.is_auto_derived).unwrap_or(true);
             if !is_overriding_auto {
                 self.error(
                     Code::DuplicateDeclaration,
@@ -8016,18 +8026,13 @@ impl TypeChecker {
         for (ty, method, t) in self.tables.trait_methods.keys() {
             providers.entry((*ty, *method)).or_default().push(*t);
         }
-        let module = self.module;
-        let defs = self.defs.clone();
-        let sees = |t: &TraitKey| {
-            let Some(defs) = &defs else {
-                return true;
-            };
-            let def = defs.get(t.id.0);
-            def.module == module
-                || def.module.is_builtin()
-                || self.seen_traits.contains(&t.id.0)
-                || self.seen_modules.contains(&def.module)
-        };
+        let seen: std::collections::HashSet<TraitKey> = providers
+            .values()
+            .flatten()
+            .copied()
+            .filter(|t| self.sees_trait(*t))
+            .collect();
+        let sees = |t: &TraitKey| seen.contains(t);
         self.ambiguous_methods.clear();
         for ((ty, method), mut traits) in providers {
             if traits.len() < 2 {
@@ -8086,6 +8091,24 @@ impl TypeChecker {
         t: TraitKey,
     ) -> Option<MethodEntry> {
         self.tables.trait_methods.get(&(ty, method, t)).cloned()
+    }
+
+    /// Whether the module checked sees the trait `t`: a builtin trait, a
+    /// trait it declares, names by an import or reaches through a module
+    /// it imports. Another module's private trait it never sees.
+    pub(super) fn sees_trait(&self, t: TraitKey) -> bool {
+        let Some(defs) = &self.defs else {
+            return true;
+        };
+        let def = defs.get(t.id.0);
+        if def.module == self.module || def.module.is_builtin() {
+            return true;
+        }
+        let private = self.tables.traits.get(&t).is_some_and(|info| {
+            info.private_to
+                .is_some_and(|(owner, _)| owner != self.module)
+        });
+        !private && (self.seen_traits.contains(&t.id.0) || self.seen_modules.contains(&def.module))
     }
 
     /// Keep what the check learned of each written impl method (its

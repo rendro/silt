@@ -1,0 +1,2 @@
+pub trait Show { fn show(self) -> String }
+trait Show for Int { fn show(self) -> String { "a-int {self}" } }
