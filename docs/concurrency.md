@@ -1298,14 +1298,14 @@ tasks that are stuck while `main` is not waiting on them stay parked.
 |---|---|---|
 | Create channel | `channel.new()` / `channel.new(n)` | `Channel` |
 | Send (blocking) | `channel.send(ch, val)` | `Unit` |
-| Receive (blocking) | `channel.receive(ch)` | `ChannelResult(a)` -- `Message(val)` or `Closed` in practice; `Empty`/`Sent` are unreachable here but still required by exhaustiveness |
+| Receive (blocking) | `channel.receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)` or `channel.Closed` in practice; `channel.Empty`/`channel.Sent` are unreachable here but still required by exhaustiveness |
 | Close | `channel.close(ch)` | `Unit` |
 | Try send | `channel.try_send(ch, val)` | `true` or `false` |
-| Try receive | `channel.try_receive(ch)` | `ChannelResult(a)` -- `Message(val)`, `Empty`, or `Closed` in practice; `Sent` is unreachable here but still required by exhaustiveness |
+| Try receive | `channel.try_receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)`, `channel.Empty`, or `channel.Closed` in practice; `channel.Sent` is unreachable here but still required by exhaustiveness |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
-| Select | `channel.select([Recv(ch1), Send(ch2, v)])` | `(channel, Message(val))`, `(channel, Closed)`, `(channel, Sent)` |
+| Select | `channel.select([channel.Recv(ch1), channel.Send(ch2, v)])` | `(channel, channel.Message(val))`, `(channel, channel.Closed)`, `(channel, channel.Sent)` |
 | Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
-| Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, ChannelError)` -- `Ok(val)`, `Err(ChannelTimeout)`, or `Err(ChannelClosed)`; a buffered value wins over an expired timer |
+| Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, channel.ChannelError)` -- `Ok(val)`, `Err(channel.ChannelTimeout)`, or `Err(channel.ChannelClosed)`; a buffered value wins over an expired timer |
 | Spawn task | `task.spawn({ -> ... })` | `Handle` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
 | Cancel task | `task.cancel(handle)` | `Unit` (a failure of the task is then not reported) |

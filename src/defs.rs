@@ -186,11 +186,6 @@ impl DefTable {
         }
     }
 
-    /// The definitions of module `module`, in the order they were entered.
-    pub fn of_module(&self, module: ModuleId) -> &[DefId] {
-        self.by_module.get(&module).map_or(&[], Vec::as_slice)
-    }
-
     /// Forget the definitions of `module` before it is entered again:
     /// its slots are reused by [`DefTable::add`].
     pub fn clear_module(&mut self, module: ModuleId) {

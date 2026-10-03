@@ -133,10 +133,10 @@ error: import the enum and write `Shape.Red`.
 
 ### Two types of one name
 
-A module cannot use two record or enum types of one name: its own and an
-imported module's, or two imported modules'. Importing a second module
-that declares a type of a name already in use is an error at that
-`import`; rename one of the two types.
+Two modules may each declare a type of one name. They are different
+types, kept apart by their qualifiers: `a.Pt` and `b.Pt`, or a module's
+own `Pt` and an imported `b.Pt`. A value of one is not a value of the
+other.
 
 ## Module names and shadowing
 

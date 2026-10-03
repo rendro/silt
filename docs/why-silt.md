@@ -39,7 +39,7 @@ Three design commitments shape everything:
 - Every value is immutable. Data races are not part of the language — a
   task running in parallel can see a shared value without a lock.
 - Errors are values of a typed enum, not interface-typed strings. You
-  pattern-match on specific variants (`Err(IoNotFound(path)) -> ...`)
+  pattern-match on specific variants (`Err(io.IoNotFound(path)) -> ...`)
   and fall back to `.message()` for the long tail.
 - No `nil`. `Option(a)` is the only way to model absence, and the type
   checker makes you handle the `None` case.

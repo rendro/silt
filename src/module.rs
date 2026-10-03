@@ -173,8 +173,9 @@ pub fn is_builtin_module(name: &str) -> bool {
 }
 
 /// Returns the set of builtin enums as `(enum_name, variant_names)`
-/// pairs. Seeds the compiler's `known_enum_variants` map, which tells the
-/// json / toml decoders which types are enums.
+/// pairs. Seeds the compiler's `known_enums` set, which tells the json /
+/// toml decoders which types are enums, and names the module of each
+/// variant (`builtin_variant_module`).
 ///
 /// Includes both the prelude enums (Result, Option) and the enums of
 /// the builtin modules.
