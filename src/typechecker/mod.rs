@@ -748,6 +748,9 @@ pub struct TypeChecker {
     /// The traits imported modules declare without `pub`, each with its
     /// module: their methods cannot be called here.
     pub(super) private_traits: HashMap<Symbol, Symbol>,
+    /// The methods of the impls whose trait or type the resolver resolved
+    /// to nothing: a call of one is not reported again as unknown.
+    pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
     /// Cross-module typechecking (round 64 item 6A): exports from
     /// previously-typechecked sibling modules, keyed by module name as
     /// it appears in `import` statements. Populated by callers (the
@@ -862,6 +865,7 @@ impl TypeChecker {
             current_package: None,
             defs: None,
             private_traits: HashMap::new(),
+            unresolved_impl_methods: std::collections::HashSet::new(),
             module_exports: HashMap::new(),
             poisoned_modules: std::collections::HashSet::new(),
             signatures_only: false,
@@ -6437,6 +6441,8 @@ impl TypeChecker {
         if ti.trait_res == Some(crate::defs::Res::Error)
             || ti.target_res == Some(crate::defs::Res::Error)
         {
+            self.unresolved_impl_methods
+                .extend(ti.methods.iter().map(|m| m.name));
             return;
         }
         // Phase B: canonicalise the target-type symbol so an impl

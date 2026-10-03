@@ -683,6 +683,11 @@ fn completion_follows_the_import_rule() {
     ));
     assert!(members.iter().any(|l| l == "map"), "{members:?}");
 
+    assert!(
+        members.iter().any(|l| l == "Step"),
+        "a module's types: {members:?}"
+    );
+
     let after_unbound = position_of(main, "bytes.\n}", 6);
     let none = labels(&request_at(
         &mut client,

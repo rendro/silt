@@ -2912,6 +2912,10 @@ impl TypeChecker {
                         // header so prior-lock tests that match only the
                         // header prefix still pass; the hint is appended
                         // on its own `help:` line.
+                        // A method of an impl the resolver rejected: reported there.
+                        if self.unresolved_impl_methods.contains(&field) {
+                            return Type::Error;
+                        }
                         let display = format!("type {type_name}");
                         self.error_help(
                             Code::UnknownMethod,
@@ -2980,6 +2984,10 @@ impl TypeChecker {
                                 );
                                 return Type::Error;
                             }
+                        }
+                        // A method of an impl the resolver rejected: reported there.
+                        if self.unresolved_impl_methods.contains(&field) {
+                            return Type::Error;
                         }
                         let display = resolve(type_name).to_string();
                         self.error_help(

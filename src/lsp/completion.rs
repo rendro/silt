@@ -280,6 +280,19 @@ impl Server {
                     }
                 }
             }
+            // The module's types (`time.Weekday`, `task.Handle`).
+            let (_, scopes) = crate::typechecker::names::builtins();
+            if let Some(exports) =
+                crate::session::ModuleId::builtin(prefix).and_then(|id| scopes.modules.get(&id))
+            {
+                for ty in exports.types.keys() {
+                    items.push(CompletionItem {
+                        label: resolve(*ty),
+                        kind: Some(CompletionItemKind::CLASS),
+                        ..CompletionItem::default()
+                    });
+                }
+            }
             // Deterministic ordering so clients/tests see a stable list, and
             // dedupe in case a name was declared as both function and constant.
             items.sort_by(|a, b| a.label.cmp(&b.label));
