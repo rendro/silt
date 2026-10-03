@@ -40,6 +40,7 @@
 //! COMPILE time, forcing the new variant into the three-way parity check
 //! (`three_way_kind_parity_holds_for_every_value_variant`).
 
+use silt::typeinfo::bv;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -119,8 +120,8 @@ fn build_all_variants() -> AllVariants {
             s
         })),
         tuple: Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
-        record: Value::Record("Point".to_string(), Arc::new(record_fields)),
-        variant: Value::Variant("MyVariantR76".to_string(), vec![Value::Int(1)]),
+        record: Value::Record(record_type("Point"), Arc::new(record_fields)),
+        variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
         vm_closure: Value::VmClosure(Arc::new(VmClosure {
             function: Arc::new(Function::new("f".to_string(), 0)),
             upvalues: Vec::new(),
@@ -131,8 +132,8 @@ fn build_all_variants() -> AllVariants {
             call: Arc::new(|_: &[Value]| Ok(Value::Unit)),
             returns: HostShape::Any,
         })),
-        variant_constructor: Value::VariantConstructor("Some".to_string(), 1),
-        type_descriptor: Value::TypeDescriptor("Point".to_string()),
+        variant_constructor: Value::VariantConstructor(bv::SOME.tag()),
+        type_descriptor: Value::TypeDescriptor(record_type("Point")),
         primitive_descriptor: Value::PrimitiveDescriptor("Int".to_string()),
         channel: Value::Channel(Arc::new(Channel::new(0, 0))),
         handle: Value::Handle(Arc::new(TaskHandle::new(0))),
@@ -531,4 +532,18 @@ fn three_way_kind_parity_holds_for_every_value_variant() {
          If Value grew, enroll the new variant in expected_kind, \
          build_all_variants, and the samples array."
     );
+}
+
+/// A program's record type named `name`, with an id of its own.
+fn record_type(name: &str) -> std::sync::Arc<silt::typeinfo::TypeInfo> {
+    let id = name
+        .bytes()
+        .fold(9000u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+        % 100_000
+        + 10_000;
+    silt::typeinfo::TypeInfo::new_record(
+        silt::defs::TypeId(silt::defs::DefId(id)),
+        name,
+        Vec::new(),
+    )
 }

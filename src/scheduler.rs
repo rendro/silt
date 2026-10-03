@@ -1963,6 +1963,7 @@ mod tests {
     use crate::compiler::Compiler;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
+    use crate::typeinfo::bv;
     use crate::vm::CallFrame;
 
     /// Compile a Silt snippet and return a VM ready for execute_slice.
@@ -2493,11 +2494,11 @@ fn main() {{
         // accessible via the inner `IoUnknown` variant's field.
         match result {
             Value::Variant(name, fields) => {
-                assert_eq!(name.as_str(), "Err");
+                assert_eq!(name.name(), "Err");
                 let Value::Variant(inner_name, inner_fields) = &fields[0] else {
                     panic!("expected IoError variant in Err");
                 };
-                assert_eq!(inner_name.as_str(), "IoUnknown");
+                assert_eq!(inner_name.name(), "IoUnknown");
                 let Value::String(msg) = &inner_fields[0] else {
                     panic!("expected String payload in IoUnknown");
                 };
@@ -2547,14 +2548,14 @@ fn main() {{
         let completion = IoCompletion::new();
         let past = Instant::now() - Duration::from_secs(1);
         registry.add(1, &completion, past, DeadlineSource::Global);
-        let ok_val = Value::Variant("Ok".into(), vec![Value::String("real".into())]);
+        let ok_val = Value::variant(bv::OK, vec![Value::String("real".into())]);
         assert!(completion.complete(ok_val));
         let fired = registry.scan_and_fire();
         assert_eq!(fired, 0, "no timeout should fire — I/O already completed");
         let result = completion.try_get().expect("should still have Ok");
         match result {
             Value::Variant(name, fields) => {
-                assert_eq!(name.as_str(), "Ok");
+                assert_eq!(name.name(), "Ok");
                 assert_eq!(fields[0], Value::String("real".into()));
             }
             other => panic!("expected Ok, got {other:?}"),

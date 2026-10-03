@@ -32,14 +32,14 @@ mod with_feature {
         let Value::Variant(outer_tag, outer_fields) = &v else {
             panic!("expected Value::Variant, got {v:?}");
         };
-        assert_eq!(outer_tag.as_str(), "Err", "outer tag must be `Err`");
+        assert_eq!(outer_tag.name(), "Err", "outer tag must be `Err`");
         assert_eq!(outer_fields.len(), 1, "Err must carry exactly one payload");
 
         let Value::Variant(inner_tag, inner_fields) = &outer_fields[0] else {
             panic!("expected inner Value::Variant, got {:?}", outer_fields[0]);
         };
         assert_eq!(
-            inner_tag.as_str(),
+            inner_tag.name(),
             "PgTimeout",
             "inner tag must be `PgTimeout` (typed PgError variant), \
              not `IoUnknown` (the IoError default)",
@@ -65,7 +65,7 @@ mod with_feature {
             panic!("expected inner Value::Variant, got {:?}", outer_fields[0]);
         };
         assert_ne!(
-            inner_tag.as_str(),
+            inner_tag.name(),
             "IoUnknown",
             "pg_timeout_err must not produce the IoError-flavoured \
              `IoUnknown` shape — that's the bug round-73 B3 fixed",

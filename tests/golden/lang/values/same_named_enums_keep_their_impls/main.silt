@@ -1,0 +1,12 @@
+-- Two modules' types of one name, Shape, with a shared variant Circle:
+-- each value runs its own type's Display impl, whatever the import
+-- order (stage 5 verifier F1).
+import b
+import a
+fn show(x: t) -> String where t: Display { x.display() }
+fn main() {
+  println(a.mk().display())
+  println(b.mk().display())
+  println(show(a.mk()))
+  println(show(b.mk()))
+}

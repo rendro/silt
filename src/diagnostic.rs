@@ -194,8 +194,6 @@ codes! {
     /// A construct the compiler rejects (a decoder for a type that has
     /// none, ...).
     InvalidConstruct = "E0406", Compile;
-    /// A variable named like a builtin module. A warning.
-    ShadowsModule = "E0408", Compile;
     /// A defect in silt: the compiler lost track of its own state.
     CompilerBug = "E0409", Compile;
     /// A module file named like a builtin module: `import` of the name

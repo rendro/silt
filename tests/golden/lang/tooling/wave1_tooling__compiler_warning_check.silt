@@ -1,8 +1,0 @@
--- cmd: check
--- exit: 0
--- stderr-contains: warning[compile]: variable 'list' shadows the builtin
-import test
-fn test_shadow() {
-  let list = [1, 2, 3]
-  test.assert_eq(list, [1, 2, 3])
-}

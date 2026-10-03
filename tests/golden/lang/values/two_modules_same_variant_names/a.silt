@@ -1,0 +1,8 @@
+import list
+import set
+pub type ColorA { Red, Blue }
+pub fn red_lt_blue() -> Bool { Red < Blue }
+pub fn sorted() -> List(ColorA) { [Blue, Red, Blue] |> list.sort }
+pub fn distinct() -> Int { set.length(set.from_list([Red, Blue, Red])) }
+pub fn red() -> ColorA { Red }
+pub fn blue() -> ColorA { Blue }

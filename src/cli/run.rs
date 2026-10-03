@@ -161,7 +161,7 @@ pub(crate) fn returned_err(value: &silt::Value) -> Option<String> {
     let silt::Value::Variant(tag, fields) = value else {
         return None;
     };
-    if tag.as_str() != "Err" {
+    if !tag.is(silt::typeinfo::bv::ERR) {
         return None;
     }
     // Result's Err carries exactly one payload; render it via the VM's
@@ -218,6 +218,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // scheduler.
     silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new();
+    vm.load_types(&program.types);
     let run_result = vm.run(script);
     // The program has ended. The tasks that failed by now and that
     // nobody joined or cancelled are reported, and make the run fail. A

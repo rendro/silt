@@ -1,0 +1,6 @@
+a: Red < Blue = true, sorted [Red, Blue, Blue], distinct 2
+b: Blue < Red = true, sorted [Blue, Red, Red], distinct 2
+a.red() < a.blue() = true; b.red() < b.blue() = false
+a compare: -1; b compare: 1
+a keys: [Red, Blue]; b keys: [Blue, Red]
+a == a: true; a red == a blue: false

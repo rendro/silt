@@ -1,0 +1,8 @@
+-- json.parse(s, a.Pt) decodes a's Pt, not another module's Pt of the
+-- same name, whose field has no decoder (stage 5 verifier F2).
+import a
+import b
+import json
+fn main() {
+  println(json.parse("\{\"x\": 3\}", a.Pt))
+}

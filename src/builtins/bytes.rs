@@ -14,6 +14,7 @@ use std::sync::Arc;
 use base64::Engine;
 
 use super::common::{nibble_to_hex, ok, require_bytes, require_int, require_string, value_kind};
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
@@ -70,40 +71,40 @@ pub fn call(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
 // ── Helpers ────────────────────────────────────────────────────────────
 
 fn bytes_err(variant: Value) -> Value {
-    Value::Variant("Err".into(), vec![variant])
+    Value::variant(bv::ERR, vec![variant])
 }
 
 fn err_utf8(offset: usize) -> Value {
-    bytes_err(Value::Variant(
-        "BytesInvalidUtf8".into(),
+    bytes_err(Value::variant(
+        bv::BYTES_INVALID_UTF8,
         vec![Value::Int(offset as i64)],
     ))
 }
 
 fn err_hex(msg: impl Into<String>) -> Value {
-    bytes_err(Value::Variant(
-        "BytesInvalidHex".into(),
+    bytes_err(Value::variant(
+        bv::BYTES_INVALID_HEX,
         vec![Value::String(msg.into())],
     ))
 }
 
 fn err_base64(msg: impl Into<String>) -> Value {
-    bytes_err(Value::Variant(
-        "BytesInvalidBase64".into(),
+    bytes_err(Value::variant(
+        bv::BYTES_INVALID_BASE64,
         vec![Value::String(msg.into())],
     ))
 }
 
 fn err_byte_range(value: i64) -> Value {
-    bytes_err(Value::Variant(
-        "BytesByteOutOfRange".into(),
+    bytes_err(Value::variant(
+        bv::BYTES_BYTE_OUT_OF_RANGE,
         vec![Value::Int(value)],
     ))
 }
 
 fn err_oob(idx: i64) -> Value {
-    bytes_err(Value::Variant(
-        "BytesOutOfBounds".into(),
+    bytes_err(Value::variant(
+        bv::BYTES_OUT_OF_BOUNDS,
         vec![Value::Int(idx)],
     ))
 }
@@ -382,8 +383,8 @@ fn index_of(args: &[Value]) -> Result<Value, VmError> {
     let b = require_bytes(&args[0], "bytes.index_of")?;
     let needle = require_bytes(&args[1], "bytes.index_of")?;
     match find_subslice(&b, &needle) {
-        Some(i) => Ok(Value::Variant("Some".into(), vec![Value::Int(i as i64)])),
-        None => Ok(Value::Variant("None".into(), Vec::new())),
+        Some(i) => Ok(Value::variant(bv::SOME, vec![Value::Int(i as i64)])),
+        None => Ok(Value::variant(bv::NONE, Vec::new())),
     }
 }
 

@@ -1,0 +1,4 @@
+main: Blue < Red = true
+shapes: Red < Blue = true
+shapes sorted: [Red, Green, Blue]
+main sorted: [Blue, Amber, Red]

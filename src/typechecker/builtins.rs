@@ -207,7 +207,6 @@ impl TypeChecker {
                 },
             );
         }
-        crate::value::register_variant_decl_order(["Some", "None"]);
 
         // Result(a, e): Ok(a) | Err(e)
         {
@@ -232,7 +231,6 @@ impl TypeChecker {
                 },
             );
         }
-        crate::value::register_variant_decl_order(["Ok", "Err"]);
 
         // Step enum: Stop(a) / Continue(a) — for list.fold_until
         {
@@ -256,7 +254,6 @@ impl TypeChecker {
                 },
             );
         }
-        crate::value::register_variant_decl_order(["Stop", "Continue"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -313,7 +310,6 @@ impl TypeChecker {
             );
         }
         // Also register Empty and Sent as standalones
-        crate::value::register_variant_decl_order(["Message", "Closed", "Sent", "Empty"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -392,7 +388,6 @@ impl TypeChecker {
                 },
             );
         }
-        crate::value::register_variant_decl_order(["Recv", "Send"]);
         {
             let (a, av) = self.fresh_tv();
             env.define(

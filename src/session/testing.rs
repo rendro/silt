@@ -53,9 +53,8 @@ pub fn check_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Vec<Dia
     if session.analyze(entry).has_errors() {
         return diagnostics;
     }
-    match session.compile(entry, Entry::Tests { filter: None }) {
-        Ok(program) => diagnostics.extend(program.warnings),
-        Err(errors) => diagnostics.extend(errors),
+    if let Err(errors) = session.compile(entry, Entry::Tests { filter: None }) {
+        diagnostics.extend(errors);
     }
     diagnostics
 }
@@ -85,12 +84,14 @@ pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Va
             .map(|d| d.message.clone())
             .unwrap_or_default()
     })?;
+    let types = program.types;
     let script = program
         .functions
         .into_iter()
         .next()
         .expect("a compiled program has a script");
     let mut vm = Vm::new();
+    vm.load_types(&types);
     vm.run(Arc::new(script)).map_err(|e| e.to_string())
 }
 

@@ -1,9 +1,0 @@
--- cmd: test
--- exit: 0
--- stderr-contains: warning[compile]: variable 'list' shadows the builtin
--- stderr-contains: PASS wave1_tooling__compiler_warning_test.silt::test_shadow
-import test
-fn test_shadow() {
-  let list = [1, 2, 3]
-  test.assert_eq(list, [1, 2, 3])
-}

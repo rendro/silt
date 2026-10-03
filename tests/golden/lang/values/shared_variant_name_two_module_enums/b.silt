@@ -1,0 +1,3 @@
+pub type Form { Circle(Int), Tri(Int) }
+pub fn mk() -> Form { Circle(7) }
+trait Display for Form { fn display(self) -> String { "B-shape" } }

@@ -1,0 +1,2 @@
+Red < Blue = true; Red.compare(Blue) = -1; list.sort = [Red, Blue]
+Blue < Red = true; list.sort = [Blue, Red]

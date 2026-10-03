@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::common::ok;
+use crate::typeinfo::bv;
 use crate::value::{Channel, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BuiltinAcc, SuspendedBuiltin, Vm, VmError};
 
@@ -115,28 +116,27 @@ fn push(out: &Channel, val: &Value) -> bool {
     }
 }
 
-/// Marker tag used to carry a pump-thread type error in-band. Stream
-/// transforms run on detached OS threads with no `VmError` path back to
-/// the caller, so a runtime gate that fires there (currently only the
-/// `stream.dedup` Fn gate) pushes this marker onto its output channel
-/// and closes it. `spawn_pump`-based transforms forward the marker
-/// unchanged, and the synchronous sinks (`collect` / `fold` / `each` /
-/// `count` / `first` / `last`) translate it into the canonical `VmError`.
-/// Same in-band-marker pattern as `__MapMapTypeError__` in
-/// src/builtins/collections.rs. Locked by
-/// tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.
-const STREAM_TYPE_ERROR_TAG: &str = "__StreamTypeError__";
+// The marker used to carry a pump-thread type error in-band. Stream
+// transforms run on detached OS threads with no `VmError` path back to
+// the caller, so a runtime gate that fires there (currently only the
+// `stream.dedup` Fn gate) pushes this marker onto its output channel
+// and closes it. `spawn_pump`-based transforms forward the marker
+// unchanged, and the synchronous sinks (`collect` / `fold` / `each` /
+// `count` / `first` / `last`) translate it into the canonical `VmError`.
+// Same in-band-marker pattern as `bv::MAP_ERROR` in
+// src/builtins/collections.rs. Its type is no type a program can name.
+// Locked by tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.
 
 /// Build the in-band error marker for a pump-thread type error.
 fn stream_type_error(msg: String) -> Value {
-    Value::Variant(STREAM_TYPE_ERROR_TAG.into(), vec![Value::String(msg)])
+    Value::variant(bv::STREAM_ERROR, vec![Value::String(msg)])
 }
 
 /// If `v` is the in-band pump-thread error marker, return the `VmError`
 /// it carries.
 fn take_stream_type_error(v: &Value) -> Option<VmError> {
     if let Value::Variant(tag, fields) = v
-        && tag == STREAM_TYPE_ERROR_TAG
+        && tag.is(bv::STREAM_ERROR)
         && let Some(Value::String(msg)) = fields.first()
     {
         return Some(VmError::new(msg.clone()));
@@ -184,30 +184,28 @@ fn err_io(e: &std::io::Error) -> Value {
     use std::io::ErrorKind;
     let msg = e.to_string();
     let inner = match e.kind() {
-        ErrorKind::NotFound => Value::Variant("IoNotFound".into(), vec![Value::String(msg)]),
+        ErrorKind::NotFound => Value::variant(bv::IO_NOT_FOUND, vec![Value::String(msg)]),
         ErrorKind::PermissionDenied => {
-            Value::Variant("IoPermissionDenied".into(), vec![Value::String(msg)])
+            Value::variant(bv::IO_PERMISSION_DENIED, vec![Value::String(msg)])
         }
-        ErrorKind::AlreadyExists => {
-            Value::Variant("IoAlreadyExists".into(), vec![Value::String(msg)])
-        }
+        ErrorKind::AlreadyExists => Value::variant(bv::IO_ALREADY_EXISTS, vec![Value::String(msg)]),
         ErrorKind::InvalidInput | ErrorKind::InvalidData => {
-            Value::Variant("IoInvalidInput".into(), vec![Value::String(msg)])
+            Value::variant(bv::IO_INVALID_INPUT, vec![Value::String(msg)])
         }
-        ErrorKind::Interrupted => Value::Variant("IoInterrupted".into(), vec![]),
-        ErrorKind::UnexpectedEof => Value::Variant("IoUnexpectedEof".into(), vec![]),
-        ErrorKind::WriteZero => Value::Variant("IoWriteZero".into(), vec![]),
-        _ => Value::Variant("IoUnknown".into(), vec![Value::String(msg)]),
+        ErrorKind::Interrupted => Value::variant(bv::IO_INTERRUPTED, vec![]),
+        ErrorKind::UnexpectedEof => Value::variant(bv::IO_UNEXPECTED_EOF, vec![]),
+        ErrorKind::WriteZero => Value::variant(bv::IO_WRITE_ZERO, vec![]),
+        _ => Value::variant(bv::IO_UNKNOWN, vec![Value::String(msg)]),
     };
-    Value::Variant("Err".into(), vec![inner])
+    Value::variant(bv::ERR, vec![inner])
 }
 
 /// Build an `Err(IoUnknown(msg))` for string-only failures.
 fn err_io_unknown(s: impl Into<String>) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant(
-            "IoUnknown".into(),
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(
+            bv::IO_UNKNOWN,
             vec![Value::String(s.into())],
         )],
     )
@@ -217,10 +215,10 @@ fn err_io_unknown(s: impl Into<String>) -> Value {
 /// write paths.
 #[cfg(feature = "tcp")]
 fn err_tcp_unknown(s: impl Into<String>) -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant(
-            "TcpUnknown".into(),
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(
+            bv::TCP_UNKNOWN,
             vec![Value::String(s.into())],
         )],
     )
@@ -240,15 +238,15 @@ fn err_tcp(e: &std::io::Error) -> Value {
         | ErrorKind::AddrNotAvailable
         | ErrorKind::HostUnreachable
         | ErrorKind::NetworkUnreachable => {
-            Value::Variant("TcpConnect".into(), vec![Value::String(msg)])
+            Value::variant(bv::TCP_CONNECT, vec![Value::String(msg)])
         }
         ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
-            Value::Variant("TcpClosed".into(), vec![])
+            Value::variant(bv::TCP_CLOSED, vec![])
         }
-        ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::Variant("TcpTimeout".into(), vec![]),
-        _ => Value::Variant("TcpUnknown".into(), vec![Value::String(msg)]),
+        ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::TCP_TIMEOUT, vec![]),
+        _ => Value::variant(bv::TCP_UNKNOWN, vec![Value::String(msg)]),
     };
-    Value::Variant("Err".into(), vec![inner])
+    Value::variant(bv::ERR, vec![inner])
 }
 
 // ── Sources ────────────────────────────────────────────────────────────
@@ -329,7 +327,7 @@ fn unfold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             let res = child_vm.invoke_callable(&fn_val, &[state.clone()]);
             let Ok(opt) = res else { break };
             match opt {
-                Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {
+                Value::Variant(name, fields) if name.is(bv::SOME) && fields.len() == 1 => {
                     if let Value::Tuple(pair) = &fields[0]
                         && pair.len() == 2
                     {
@@ -611,7 +609,7 @@ fn map_ok(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| match v {
-        Value::Variant(ref name, ref fields) if name == "Ok" && fields.len() == 1 => {
+        Value::Variant(ref name, ref fields) if name.is(bv::OK) && fields.len() == 1 => {
             let inner = fields[0].clone();
             match child_vm.invoke_callable(&fn_val, &[inner]) {
                 Ok(result) => push(out_ch, &ok(result)),
@@ -650,7 +648,7 @@ fn filter_ok(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let out = stage_output(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| match v {
-        Value::Variant(ref name, ref fields) if name == "Ok" && fields.len() == 1 => {
+        Value::Variant(ref name, ref fields) if name.is(bv::OK) && fields.len() == 1 => {
             let inner = fields[0].clone();
             match child_vm.invoke_callable(&fn_val, &[inner]) {
                 Ok(Value::Bool(true)) => push(out_ch, &v),
@@ -922,7 +920,7 @@ fn dedup(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     // closures by Arc identity — the exact behavior
                     // `list.unique` rejects. This pump thread has no
                     // `VmError` path, so surface the canonical error
-                    // in-band (see `STREAM_TYPE_ERROR_TAG`).
+                    // in-band (see `bv::STREAM_ERROR`).
                     if Vm::value_contains_fn(&v) {
                         let _ = push(
                             &out_clone,
@@ -1093,7 +1091,7 @@ fn collect(args: &[Value]) -> Result<Value, VmError> {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
                 // Translate an in-band pump-thread error marker (see
-                // `STREAM_TYPE_ERROR_TAG`) into the canonical VmError.
+                // `bv::STREAM_ERROR`) into the canonical VmError.
                 if let Some(e) = take_stream_type_error(&v) {
                     return Err(e);
                 }
@@ -1162,7 +1160,7 @@ fn fold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
-                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
                 if let Some(e) = take_stream_type_error(&v) {
                     return Err(e);
                 }
@@ -1234,7 +1232,7 @@ fn each(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
-                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
                 if let Some(e) = take_stream_type_error(&v) {
                     return Err(e);
                 }
@@ -1273,7 +1271,7 @@ fn count(args: &[Value]) -> Result<Value, VmError> {
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
-                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
                 if let Some(e) = take_stream_type_error(&v) {
                     return Err(e);
                 }
@@ -1293,14 +1291,14 @@ fn first(args: &[Value]) -> Result<Value, VmError> {
     let ch = require_channel(&args[0], "stream.first")?.clone();
     match ch.receive_blocking() {
         TryReceiveResult::Value(v) => {
-            // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+            // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
             if let Some(e) = take_stream_type_error(&v) {
                 return Err(e);
             }
-            Ok(Value::Variant("Some".into(), vec![v]))
+            Ok(Value::variant(bv::SOME, vec![v]))
         }
-        TryReceiveResult::Closed => Ok(Value::Variant("None".into(), vec![])),
-        _ => Ok(Value::Variant("None".into(), vec![])),
+        TryReceiveResult::Closed => Ok(Value::variant(bv::NONE, vec![])),
+        _ => Ok(Value::variant(bv::NONE, vec![])),
     }
 }
 
@@ -1313,7 +1311,7 @@ fn last(args: &[Value]) -> Result<Value, VmError> {
     loop {
         match ch.receive_blocking() {
             TryReceiveResult::Value(v) => {
-                // In-band pump-thread error marker — see `STREAM_TYPE_ERROR_TAG`.
+                // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
                 if let Some(e) = take_stream_type_error(&v) {
                     return Err(e);
                 }
@@ -1324,8 +1322,8 @@ fn last(args: &[Value]) -> Result<Value, VmError> {
         }
     }
     Ok(match last {
-        Some(v) => Value::Variant("Some".into(), vec![v]),
-        None => Value::Variant("None".into(), vec![]),
+        Some(v) => Value::variant(bv::SOME, vec![v]),
+        None => Value::variant(bv::NONE, vec![]),
     })
 }
 
@@ -1351,7 +1349,7 @@ fn write_to_tcp(args: &[Value]) -> Result<Value, VmError> {
             TryReceiveResult::Value(v) => {
                 let bytes = match v {
                     Value::Bytes(b) => b,
-                    Value::Variant(name, fields) if name == "Ok" && fields.len() == 1 => {
+                    Value::Variant(name, fields) if name.is(bv::OK) && fields.len() == 1 => {
                         match fields.into_iter().next().unwrap() {
                             Value::Bytes(b) => b,
                             other => {
@@ -1362,9 +1360,9 @@ fn write_to_tcp(args: &[Value]) -> Result<Value, VmError> {
                             }
                         }
                     }
-                    Value::Variant(name, mut fields) if name == "Err" && fields.len() == 1 => {
+                    Value::Variant(name, mut fields) if name.is(bv::ERR) && fields.len() == 1 => {
                         // Upstream typed error — forward the variant as-is.
-                        return Ok(Value::Variant("Err".into(), vec![fields.pop().unwrap()]));
+                        return Ok(Value::variant(bv::ERR, vec![fields.pop().unwrap()]));
                     }
                     other => {
                         return Ok(err_tcp_unknown(format!(
@@ -1414,7 +1412,7 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
             TryReceiveResult::Value(v) => {
                 let bytes = match v {
                     Value::Bytes(b) => b,
-                    Value::Variant(name, fields) if name == "Ok" && fields.len() == 1 => {
+                    Value::Variant(name, fields) if name.is(bv::OK) && fields.len() == 1 => {
                         match fields.into_iter().next().unwrap() {
                             Value::Bytes(b) => b,
                             other => {
@@ -1425,9 +1423,9 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
                             }
                         }
                     }
-                    Value::Variant(name, mut fields) if name == "Err" && fields.len() == 1 => {
+                    Value::Variant(name, mut fields) if name.is(bv::ERR) && fields.len() == 1 => {
                         // Upstream typed error — forward the variant as-is.
-                        return Ok(Value::Variant("Err".into(), vec![fields.pop().unwrap()]));
+                        return Ok(Value::variant(bv::ERR, vec![fields.pop().unwrap()]));
                     }
                     other => {
                         return Ok(err_io_unknown(format!(

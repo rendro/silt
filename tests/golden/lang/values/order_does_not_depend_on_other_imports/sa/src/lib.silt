@@ -1,0 +1,8 @@
+import list
+pub type ColorA { Red, Blue }
+pub fn report() -> String {
+  let lt = Red < Blue
+  let cmp = Red.compare(Blue)
+  let sorted = [Blue, Red] |> list.sort
+  "Red < Blue = {lt}; Red.compare(Blue) = {cmp}; list.sort = {sorted}"
+}

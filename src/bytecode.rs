@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::defs::TypeId;
 use crate::source::Span;
+use crate::typeinfo::TypeInfo;
 use crate::value::Value;
 
 /// A dedup key for simple constant types.  Using a dedicated enum avoids
@@ -17,24 +19,27 @@ enum ConstantKey {
     Bool(bool),
     String(String),
     Float(u64), // f64::to_bits()
+    /// A variant constructor (a pattern's variant test): its type and
+    /// ordinal.
+    Variant(TypeId, u16),
+    /// A variant without fields.
+    Nullary(TypeId, u16),
+    /// A type descriptor (a record literal's or pattern's type).
+    Type(TypeId),
 }
 
-// ── Record tags ────────────────────────────────────────────────────
+// ── Record types ───────────────────────────────────────────────────
 
-/// Runtime type name carried by a record built from an anonymous record
-/// literal (`{x: 1}`) or bound by a record rest pattern. The typechecker
-/// lets such a value flow wherever a nominal record of the same shape is
-/// expected, so at run time `<anon>` stands for "whatever record type the
-/// typechecker decided this is".
-pub const ANON_RECORD_TAG: &str = "<anon>";
-
-/// Whether a record whose runtime type name is `tag` satisfies a check for
-/// the nominal record type `expected`. An `<anon>` record satisfies every
-/// check: the typechecker has already proved the shapes agree. This is the
-/// one rule every run-time record-tag check uses (pattern tag tests,
-/// equality, builtins that accept a `Date`/`Response`/... record).
-pub fn record_tag_matches(tag: &str, expected: &str) -> bool {
-    tag == expected || tag == ANON_RECORD_TAG
+/// Whether a record of the type `ty` satisfies a check for the nominal
+/// record type `expected`. A record built from an anonymous record
+/// literal (`{x: 1}`) or bound by a record rest pattern satisfies every
+/// check: the typechecker lets such a value flow wherever a nominal
+/// record of the same shape is expected, and has already proved the
+/// shapes agree. This is the one rule every run-time record-type check
+/// uses (pattern tests, builtins that accept a `Date`/`Response`/...
+/// record).
+pub fn record_type_matches(ty: &TypeInfo, expected: TypeId) -> bool {
+    ty.id == expected || ty.is_anon()
 }
 
 // ── Opcodes ────────────────────────────────────────────────────────
@@ -123,11 +128,9 @@ pub enum Op {
     MakeMap, // operand: u16 pair_count
     /// Create a set from `u16` values.
     MakeSet, // operand: u16 count
-    /// Create a record: `u16` type name, `u8` field count,
-    /// then `u8 field_count` × `u16 field_name_index`.
-    MakeRecord, // operands: u16 type_name_index, u8 field_count, then field names
-    /// Create a variant value.
-    MakeVariant, // operands: u16 name_index, u8 field_count
+    /// Create a record: `u16` index of the type's descriptor constant,
+    /// `u8` field count, then `u8 field_count` × `u16 field_name_index`.
+    MakeRecord, // operands: u16 type_index, u8 field_count, then field names
     /// Functional record update.
     RecordUpdate, // operand: u8 field_count, then field_count × u16 field_name_index
     //
@@ -170,8 +173,9 @@ pub enum Op {
     Dup,
 
     // ── Pattern matching ───────────────────────────────────────
-    /// Test if TOS variant has tag `constants[u16]`. Peek, push bool.
-    TestTag, // operand: u16 name_index
+    /// Test if TOS is the variant whose constructor is `constants[u16]`.
+    /// Peek, push bool.
+    TestTag, // operand: u16 const_index
     /// Test if TOS equals `constants[u16]`. Peek, push bool.
     TestEqual, // operand: u16 const_index
     /// Test if TOS tuple has length `u8`. Peek, push bool.
@@ -198,14 +202,15 @@ pub enum Op {
     DestructRecordField, // operand: u16 name_index
     /// Construct a new record from TOS by removing the listed field
     /// names. The record on TOS is consumed (popped) and a new
-    /// `Value::Record(synthetic_name, fields_map_minus_excluded)` is
+    /// anonymous `Value::Record` of the fields minus the excluded ones is
     /// pushed. Used by row-polymorphic anon-record patterns to bind
     /// the `...rest` portion. Layout: u8 count, then count u16 name
     /// indices into the constant pool (string).
     DestructRecordRest, // operand: u8 count, count*u16 name indices
-    /// Test if TOS is a record with given type name, or an `<anon>` record
-    /// (see [`record_tag_matches`]). Peek, push bool.
-    TestRecordTag, // operand: u16 name_index
+    /// Test if TOS is a record of the type whose descriptor is
+    /// `constants[u16]`, or an anonymous record (see
+    /// [`record_type_matches`]). Peek, push bool.
+    TestRecordTag, // operand: u16 const_index
     /// Test if TOS map contains key. Peek, push bool.
     TestMapHasKey, // operand: u16 const_index (string key)
     /// Extract map value by key. Peek map, push value.
@@ -283,7 +288,6 @@ impl Op {
             b if b == Op::MakeMap as u8 => Some(Op::MakeMap),
             b if b == Op::MakeSet as u8 => Some(Op::MakeSet),
             b if b == Op::MakeRecord as u8 => Some(Op::MakeRecord),
-            b if b == Op::MakeVariant as u8 => Some(Op::MakeVariant),
             b if b == Op::RecordUpdate as u8 => Some(Op::RecordUpdate),
             b if b == Op::MakeRange as u8 => Some(Op::MakeRange),
             b if b == Op::ListConcat as u8 => Some(Op::ListConcat),
@@ -403,6 +407,13 @@ impl Chunk {
             Value::Bool(b) => Some(ConstantKey::Bool(*b)),
             Value::String(s) => Some(ConstantKey::String(s.clone())),
             Value::Float(f) => Some(ConstantKey::Float(f.to_bits())),
+            Value::VariantConstructor(tag) => {
+                Some(ConstantKey::Variant(tag.type_id(), tag.ordinal()))
+            }
+            Value::Variant(tag, fields) if fields.is_empty() => {
+                Some(ConstantKey::Nullary(tag.type_id(), tag.ordinal()))
+            }
+            Value::TypeDescriptor(ty) => Some(ConstantKey::Type(ty.id)),
             _ => None,
         };
 

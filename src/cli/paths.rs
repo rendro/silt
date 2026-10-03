@@ -110,7 +110,7 @@ pub(crate) fn door_diagnostics(
     let analysed_with_errors = analysis.has_errors();
     let mut diagnostics = analysis.diagnostics.clone();
     match compiled {
-        Ok(program) => diagnostics.extend(program.warnings.iter().cloned()),
+        Ok(_) => {}
         // A program whose analysis has errors is not compiled: `compile`
         // hands back the analysis's errors, which are listed already.
         Err(_) if analysed_with_errors => {}

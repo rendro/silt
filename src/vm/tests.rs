@@ -4,6 +4,7 @@ use crate::compiler::Compiler;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::source::Span;
+use crate::typeinfo::bv;
 
 /// Helper: build a Function from raw bytecode construction.
 fn make_function(build: impl FnOnce(&mut Chunk)) -> Arc<Function> {
@@ -16,8 +17,21 @@ fn span() -> Span {
     Span::BUILTIN
 }
 
-/// Helper: compile and run a silt program through the VM pipeline.
+/// Helper: compile and run a silt program through the VM pipeline: through
+/// a session, so that names are resolved, when the program checks;
+/// otherwise by a compiler with no session, which knows the builtin
+/// names only.
 fn run_vm(source: &str) -> Value {
+    let (mut session, entry) = crate::session::testing::session_with(&[("main.silt", source)]);
+    if !session.analyze(entry).has_errors() {
+        let program = session
+            .compile(entry, crate::session::Entry::Main)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        let script = Arc::new(program.functions.into_iter().next().unwrap());
+        let mut vm = Vm::new();
+        vm.load_types(&program.types);
+        return vm.run(script).unwrap();
+    }
     let tokens = Lexer::new(crate::source::FileId::default(), source)
         .tokenize()
         .unwrap();
@@ -853,7 +867,7 @@ fn test_e2e_variant_constructor() {
             }
         "#,
     );
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
+    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(42)]));
 }
 
 #[test]
@@ -2369,10 +2383,7 @@ fn test_scheduler_channel_communication() {
             }
             "#,
     );
-    assert_eq!(
-        result,
-        Value::Variant("Message".into(), vec![Value::Int(99)])
-    );
+    assert_eq!(result, Value::variant(bv::MESSAGE, vec![Value::Int(99)]));
 }
 
 #[test]

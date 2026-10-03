@@ -8,6 +8,7 @@ use std::sync::Arc;
 use silt::diagnostic::{Code, Diagnostic};
 use silt::session::HostModule;
 use silt::session::testing::{check_with_host, run_with_host};
+use silt::typeinfo::bv;
 use silt::value::{IntoValue, Value};
 use silt::vm::VmError;
 
@@ -252,7 +253,7 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
             ])))
         })
         .function("fn maybe() -> Option(String)", |_: &[Value]| {
-            Ok(Value::Variant("Some".into(), vec![Value::Int(1)]))
+            Ok(Value::variant(bv::SOME, vec![Value::Int(1)]))
         })
         .function("fn pair() -> (Int, Bool)", |_: &[Value]| {
             Ok(Value::Tuple(vec![Value::Int(1), Value::Bool(true)]))

@@ -7,6 +7,7 @@
 //! Equal`. This test pins down each cross-discriminant equal pair and
 //! asserts all three predicates.
 
+use silt::typeinfo::bv;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
@@ -202,8 +203,8 @@ fn builtin_fn_reflexive_eq_hash_dedup() {
 #[test]
 fn variant_constructor_reflexive_eq_hash_dedup() {
     // VariantConstructor equality is by (name, arity).
-    let a = Value::VariantConstructor("Some".into(), 1);
-    let b = Value::VariantConstructor("Some".into(), 1);
+    let a = Value::VariantConstructor(bv::SOME.tag());
+    let b = Value::VariantConstructor(bv::SOME.tag());
     assert_eq!(
         a, b,
         "VariantConstructor(name, arity) == VariantConstructor(name, arity) must hold"
@@ -246,7 +247,7 @@ fn opaque_values_distinct_across_discriminants() {
     let handle = Value::Handle(h);
     let vm_closure = Value::VmClosure(closure);
     let builtin = Value::BuiltinFn("f".into());
-    let ctor = Value::VariantConstructor("F".into(), 0);
+    let ctor = Value::VariantConstructor(bv::OK.tag());
     // Pairwise: must all be unequal.
     assert_ne!(handle, vm_closure);
     assert_ne!(handle, builtin);

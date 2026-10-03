@@ -229,6 +229,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
 
         let script = Arc::new(first);
         let mut vm = Vm::new();
+        vm.load_types(&program.types);
         if let Err(e) = vm.run(script) {
             owners.mark_failed(setup_owner);
             // G2 (audit round 21): frame and error-header paths follow

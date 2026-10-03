@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+-- A local named like a builtin module that the file does not import is
+-- an ordinary name: no warning (the resolver owns shadowing).
+-- stderr-not-contains: shadows
+-- stderr-not-contains: warning
+import test
+fn test_shadow() {
+  let list = [1, 2, 3]
+  test.assert_eq(list, [1, 2, 3])
+}

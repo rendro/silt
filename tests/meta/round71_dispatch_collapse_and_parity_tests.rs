@@ -77,7 +77,7 @@ fn prelude_variant_registry_exact_shape() {
         ("Step", &[("Stop", 1), ("Continue", 1)]),
         (
             "ChannelResult",
-            &[("Message", 1), ("Closed", 0), ("Empty", 0), ("Sent", 0)],
+            &[("Message", 1), ("Closed", 0), ("Sent", 0), ("Empty", 0)],
         ),
         ("ChannelOp", &[("Recv", 1), ("Send", 2)]),
         (

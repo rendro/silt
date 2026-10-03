@@ -43,6 +43,7 @@ pub mod scheduler;
 pub mod session;
 pub mod source;
 pub mod typechecker;
+pub mod typeinfo;
 pub mod types;
 // The self-updater shells out to curl/tar and replaces the running binary in
 // place. Neither mechanism applies on wasm32 — the playground is embedded via

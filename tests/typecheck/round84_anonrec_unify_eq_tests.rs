@@ -54,11 +54,17 @@ fn anon_neq_different_anon_shape_prints_false() {
     let mut fa = BTreeMap::new();
     fa.insert("x".to_string(), Value::Int(1));
     fa.insert("y".to_string(), Value::Int(2));
-    let a = Value::Record("<anon>".to_string(), Arc::new(fa));
+    let a = Value::Record(
+        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
+        Arc::new(fa),
+    );
 
     let mut fb = BTreeMap::new();
     fb.insert("x".to_string(), Value::Int(1));
-    let b = Value::Record("<anon>".to_string(), Arc::new(fb));
+    let b = Value::Record(
+        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
+        Arc::new(fb),
+    );
 
     assert_ne!(
         a, b,
@@ -89,11 +95,11 @@ fn two_distinct_nominals_with_same_fields_still_neq() {
 
     let mut fa = BTreeMap::new();
     fa.insert("x".to_string(), Value::Int(1));
-    let person = Value::Record("Person".to_string(), Arc::new(fa));
+    let person = Value::Record(record_type("Person"), Arc::new(fa));
 
     let mut fb = BTreeMap::new();
     fb.insert("x".to_string(), Value::Int(1));
-    let car = Value::Record("Car".to_string(), Arc::new(fb));
+    let car = Value::Record(record_type("Car"), Arc::new(fb));
 
     assert_ne!(
         person, car,
@@ -103,6 +109,20 @@ fn two_distinct_nominals_with_same_fields_still_neq() {
     // And sanity: same nominal, same fields ⇒ equal.
     let mut fc = BTreeMap::new();
     fc.insert("x".to_string(), Value::Int(1));
-    let person2 = Value::Record("Person".to_string(), Arc::new(fc));
+    let person2 = Value::Record(record_type("Person"), Arc::new(fc));
     assert_eq!(person, person2, "Person == Person with same fields");
+}
+
+/// A program's record type named `name`, with an id of its own.
+fn record_type(name: &str) -> std::sync::Arc<silt::typeinfo::TypeInfo> {
+    let id = name
+        .bytes()
+        .fold(9000u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+        % 100_000
+        + 10_000;
+    silt::typeinfo::TypeInfo::new_record(
+        silt::defs::TypeId(silt::defs::DefId(id)),
+        name,
+        Vec::new(),
+    )
 }

@@ -186,7 +186,7 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static st
         ("Result", &["Ok", "Err"]),
         ("Option", &["Some", "None"]),
         ("Step", &["Stop", "Continue"]),
-        ("ChannelResult", &["Message", "Closed", "Empty", "Sent"]),
+        ("ChannelResult", &["Message", "Closed", "Sent", "Empty"]),
         ("ChannelOp", &["Recv", "Send"]),
         (
             "Weekday",
@@ -513,7 +513,7 @@ pub fn builtin_prelude_enum_variants_with_arity()
         ("Step", &[("Stop", 1), ("Continue", 1)]),
         (
             "ChannelResult",
-            &[("Message", 1), ("Closed", 0), ("Empty", 0), ("Sent", 0)],
+            &[("Message", 1), ("Closed", 0), ("Sent", 0), ("Empty", 0)],
         ),
         // ChannelOp constructors for `channel.select`. `Recv(ch)` and
         // `Send(ch, value)` are the one-and-only shapes accepted by the

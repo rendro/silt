@@ -42,7 +42,7 @@ pub fn value_kind(v: &Value) -> &'static str {
 /// clones that were collapsed to call `common::ok` instead. The lock
 /// in `tests/meta/round83_dead_code_dedup_lock_tests.rs` proves the deletion
 /// was a semantic no-op by comparing this builder's output against a
-/// hand-rolled `Value::Variant("Ok".into(), vec![v])`. Thin wrapper
+/// hand-rolled `Value::variant(bv::OK, vec![v])`. Thin wrapper
 /// pattern matches `value_kind` above — we widen only this one helper,
 /// not the rest of `common.rs`.
 pub fn ok(v: Value) -> Value {
@@ -92,7 +92,7 @@ where
                 )));
             }
             let rendered = match &args[0] {
-                Value::Variant(tag, fields) => render_message(tag.as_str(), fields.as_slice())
+                Value::Variant(tag, fields) => render_message(tag.name(), fields.as_slice())
                     .unwrap_or_else(|| format!("{enum_name}: unrecognized variant shape `{tag}`")),
                 other => {
                     return Err(VmError::new(format!(

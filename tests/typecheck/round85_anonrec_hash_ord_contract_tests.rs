@@ -56,11 +56,14 @@ fn hash_of_nominal_equals_hash_of_anon_when_eq() {
 
     let mut fa = BTreeMap::new();
     fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record("P".to_string(), Arc::new(fa));
+    let p = Value::Record(record_type("P"), Arc::new(fa));
 
     let mut fb = BTreeMap::new();
     fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record("<anon>".to_string(), Arc::new(fb));
+    let r = Value::Record(
+        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
+        Arc::new(fb),
+    );
 
     // Sanity: PartialEq agrees they're equal (round-84 lock).
     assert_eq!(p, r, "round-84 PartialEq: anon-wildcard collapses name");
@@ -86,11 +89,14 @@ fn cmp_of_nominal_and_anon_returns_equal_when_eq() {
 
     let mut fa = BTreeMap::new();
     fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record("P".to_string(), Arc::new(fa));
+    let p = Value::Record(record_type("P"), Arc::new(fa));
 
     let mut fb = BTreeMap::new();
     fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record("<anon>".to_string(), Arc::new(fb));
+    let r = Value::Record(
+        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
+        Arc::new(fb),
+    );
 
     assert_eq!(p, r, "round-84 PartialEq: anon-wildcard collapses name");
     assert_eq!(
@@ -116,11 +122,14 @@ fn btreeset_dedups_anon_and_nominal() {
 
     let mut fa = BTreeMap::new();
     fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record("P".to_string(), Arc::new(fa));
+    let p = Value::Record(record_type("P"), Arc::new(fa));
 
     let mut fb = BTreeMap::new();
     fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record("<anon>".to_string(), Arc::new(fb));
+    let r = Value::Record(
+        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
+        Arc::new(fb),
+    );
 
     let mut s: BTreeSet<Value> = BTreeSet::new();
     s.insert(p);
@@ -143,11 +152,14 @@ fn hashset_dedups_anon_and_nominal() {
 
     let mut fa = BTreeMap::new();
     fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record("P".to_string(), Arc::new(fa));
+    let p = Value::Record(record_type("P"), Arc::new(fa));
 
     let mut fb = BTreeMap::new();
     fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record("<anon>".to_string(), Arc::new(fb));
+    let r = Value::Record(
+        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
+        Arc::new(fb),
+    );
 
     let mut s: HashSet<Value> = HashSet::new();
     s.insert(p);
@@ -174,11 +186,11 @@ fn two_distinct_nominals_still_distinct_in_set() {
 
     let mut fa = BTreeMap::new();
     fa.insert("x".to_string(), Value::Int(1));
-    let person = Value::Record("Person".to_string(), Arc::new(fa));
+    let person = Value::Record(record_type("Person"), Arc::new(fa));
 
     let mut fb = BTreeMap::new();
     fb.insert("x".to_string(), Value::Int(1));
-    let car = Value::Record("Car".to_string(), Arc::new(fb));
+    let car = Value::Record(record_type("Car"), Arc::new(fb));
 
     // PartialEq: still unequal (neither carries `<anon>`).
     assert_ne!(person, car, "distinct nominals must remain unequal");
@@ -215,11 +227,28 @@ fn round84_anon_eq_nominal_still_holds() {
 
     let mut fa = BTreeMap::new();
     fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record("P".to_string(), Arc::new(fa));
+    let p = Value::Record(record_type("P"), Arc::new(fa));
 
     let mut fb = BTreeMap::new();
     fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record("<anon>".to_string(), Arc::new(fb));
+    let r = Value::Record(
+        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
+        Arc::new(fb),
+    );
 
     assert_eq!(p, r, "round-84 `<anon>`-wildcard PartialEq must still hold");
+}
+
+/// A program's record type named `name`, with an id of its own.
+fn record_type(name: &str) -> std::sync::Arc<silt::typeinfo::TypeInfo> {
+    let id = name
+        .bytes()
+        .fold(9000u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+        % 100_000
+        + 10_000;
+    silt::typeinfo::TypeInfo::new_record(
+        silt::defs::TypeId(silt::defs::DefId(id)),
+        name,
+        Vec::new(),
+    )
 }
