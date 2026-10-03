@@ -11,11 +11,11 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
-use crate::ast::{Decl, Pattern, PatternKind, TypeBody};
 use crate::diagnostic::{Diagnostic, Located, SourceView, render_human};
 use crate::intern;
-use crate::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+use crate::session::{Config, Entry, LockPolicy, ModuleId, ProjectSetup, Session};
 use crate::source::{SourceMap, SourceName, Span};
+use crate::typechecker::names::{Binding, Exports, ModuleScope};
 use crate::value::Value;
 use crate::vm::Vm;
 
@@ -226,12 +226,11 @@ pub fn run_repl() {
                     println!("{value}");
                 }
                 if evaluation.committed {
-                    let mut names = names.borrow_mut();
-                    for name in evaluation.names {
-                        if !names.contains(&name) {
-                            names.push(name);
-                        }
-                    }
+                    let mut all = builtin_names();
+                    all.extend(evaluation.names);
+                    all.sort();
+                    all.dedup();
+                    *names.borrow_mut() = all;
                 }
             }
             Err(ReadlineError::Interrupted) => {
@@ -278,7 +277,8 @@ pub struct Evaluation {
     pub value: Option<Value>,
     /// Whether it ran to the end, so that later inputs see what it binds.
     pub committed: bool,
-    /// The names it binds, for completion.
+    /// When it ran: every name later inputs see, for completion, but
+    /// the prelude's (see [`builtin_names`]).
     pub names: Vec<String>,
 }
 
@@ -337,7 +337,10 @@ impl Repl {
                 self.session.commit_cell(file);
                 let module = self.session.module_of(file);
                 if let Some(analysis) = self.session.module_analysis(module) {
-                    evaluation.names = collect_decl_completion_names(&analysis.ast.decls);
+                    let session = &self.session;
+                    evaluation.names = scope_completion_names(&analysis.scope, |id| {
+                        session.module_analysis(id).map(|a| &a.scope.exports)
+                    });
                 }
                 evaluation.value = Some(value);
                 evaluation.committed = true;
@@ -422,66 +425,72 @@ fn report_task_failures(repl: &Repl) {
     }
 }
 
+/// The names `<Tab>` offers before any input: the REPL's commands, the
+/// keywords and the prelude's names. A builtin module's members are
+/// offered once it is imported (see [`scope_completion_names`]).
 pub fn builtin_names() -> Vec<String> {
-    // REPL-only short commands (not part of the language lexer) and
-    // non-constructor globals. Language keywords come from
-    // `lexer::KEYWORDS` and `lexer::KEYWORD_LITERALS` below so that
-    // additions there flow through automatically — mirrors the post-
-    // round-63 pattern in `src/lsp/completion.rs` and
-    // `src/lsp/rename.rs`. Parity lock:
-    // `tests/cli/repl_keyword_parity_with_lexer_tests.rs`.
     let mut names: Vec<String> = vec![":quit", ":q", ":help", ":h"]
         .into_iter()
         .map(String::from)
         .collect();
-
-    // Globals (non-constructor). Constructor variants come from
-    // `module::all_builtin_constructor_names` below so gated ones
-    // (IoNotFound, PgConnect, Recv, Send, Monday…) stay in sync.
-    // Free-function names (`print`/`println`/`panic`) come from
-    // `module::builtin_free_function_names()` so adding a new free
-    // function (e.g. `eprintln`, `assert`) flows through automatically.
-    // Parity lock: `tests/meta/builtin_free_function_parity_tests.rs`.
-    for name in crate::module::builtin_free_function_names() {
-        names.push((*name).to_string());
-    }
-
-    // Language keywords + reserved-word-shaped literals. Sourced from
-    // the lexer so REPL <Tab> completion automatically tracks any
-    // additions to the keyword set.
+    // Language keywords + reserved-word-shaped literals, from the lexer.
+    // Parity lock: `tests/cli/repl_keyword_parity_with_lexer_tests.rs`.
     for kw in crate::lexer::KEYWORDS {
         names.push((*kw).to_string());
     }
     for kw in crate::lexer::KEYWORD_LITERALS {
         names.push((*kw).to_string());
     }
-
-    // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
-    // every gated variant. Sourced from `module::all_builtin_constructor_names`
-    // so additions to `builtin_enum_variants` flow through automatically.
-    // Parity lock: `tests/meta/builtin_constructor_parity_tests.rs`.
-    for name in crate::module::all_builtin_constructor_names() {
-        names.push(name.to_string());
+    let (_, scopes) = crate::typechecker::names::builtins();
+    for name in scopes
+        .prelude
+        .values
+        .keys()
+        .chain(scopes.prelude.types.keys())
+    {
+        names.push(intern::resolve(*name));
     }
+    names.sort();
+    names.dedup();
+    names
+}
 
-    // Round-62 G6: primitive + container type names so REPL <Tab>
-    // completion offers `Int`, `Bool`, `List`, etc. wherever the user
-    // is typing a type annotation. Derived from the authoritative
-    // `BUILTIN_TYPES` constant so additions flow through automatically.
-    for entry in crate::types::builtins::iter_all() {
-        names.push(entry.name.to_string());
-    }
-
-    // Generate module completions from the registry.
-    for &module in crate::module::BUILTIN_MODULES {
-        for func in crate::module::builtin_module_functions(module) {
-            names.push(format!("{module}.{func}"));
+/// The names an input sees after it ran, as the session's scope of the
+/// input binds them: what it and the earlier inputs declared, the items
+/// they imported, and for each module bound by an import (`import list`,
+/// `import list as l`) its members, `l.map`. An ambiguous variant and a
+/// name of a module that failed to load are left out.
+pub fn scope_completion_names<'a>(
+    scope: &ModuleScope,
+    exports_of: impl Fn(ModuleId) -> Option<&'a Exports>,
+) -> Vec<String> {
+    let (_, builtin_scopes) = crate::typechecker::names::builtins();
+    let mut names = Vec::new();
+    for (name, binding) in scope
+        .values
+        .iter()
+        .chain(&scope.types)
+        .chain(scope.implied())
+    {
+        match binding {
+            Binding::Def(_) => names.push(intern::resolve(*name)),
+            Binding::Module(id) => {
+                names.push(intern::resolve(*name));
+                let exports = if id.is_builtin() {
+                    builtin_scopes.modules.get(id)
+                } else {
+                    exports_of(*id)
+                };
+                for member in exports
+                    .into_iter()
+                    .flat_map(|e| e.values.keys().chain(e.types.keys()))
+                {
+                    names.push(format!("{name}.{member}"));
+                }
+            }
+            Binding::Ambiguous(_) | Binding::Poisoned => {}
         }
-        for constant in crate::module::builtin_module_constants(module) {
-            names.push(format!("{module}.{constant}"));
-        }
     }
-
     names.sort();
     names.dedup();
     names
@@ -606,126 +615,6 @@ fn has_unclosed_delimiters(input: &str) -> bool {
         || in_triple_string
 }
 
-/// Collect every name a list of top-level decls introduces into the
-/// REPL's completion namespace.
-///
-/// Includes:
-/// - `fn` decl names
-/// - `let` pattern bindings (recursively)
-/// - `type` decl names AND, for enum bodies, every variant constructor
-///   name. Without the variant pass, user-defined enum constructors
-///   (e.g. `Active`/`Idle` in `type Status { Active, Idle }`) silently
-///   fall out of tab completion even though the typechecker accepts
-///   them and builtin enum variants (`Ok`/`Some`/`Recv`/`Monday`/...)
-///   from `module::all_builtin_constructor_names()` DO appear. This
-///   was REPL-1 in the round-77 audit.
-/// - `trait` decl names
-///
-/// (Trait method names and record field names are intentionally NOT
-/// surfaced here: completion at the unqualified-name layer offers the
-/// trait/type itself, and method/field access goes through the
-/// `module.member` / receiver-dispatch completion path.)
-pub fn collect_decl_completion_names(decls: &[Decl]) -> Vec<String> {
-    let mut new_names = Vec::new();
-    for decl in decls {
-        match decl {
-            Decl::Fn(f) => {
-                new_names.push(intern::resolve(f.name));
-            }
-            Decl::Let { pattern, .. } => {
-                collect_pattern_names(pattern, &mut new_names);
-            }
-            Decl::Type(t) => {
-                new_names.push(intern::resolve(t.name));
-                if let TypeBody::Enum(variants) = &t.body {
-                    // Mirror the builtin side
-                    // (`module::all_builtin_constructor_names`): every
-                    // enum variant is a callable constructor and must
-                    // be surfaced unqualified for tab-completion.
-                    for v in variants {
-                        new_names.push(intern::resolve(v.name));
-                    }
-                }
-            }
-            Decl::Trait(t) => {
-                new_names.push(intern::resolve(t.name));
-            }
-            _ => {}
-        }
-    }
-    new_names
-}
-
-/// Collect bound names from a pattern (for let bindings).
-fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
-    match &pattern.kind {
-        PatternKind::Ident(sym) => {
-            names.push(intern::resolve(*sym));
-        }
-        PatternKind::Tuple(pats) => {
-            for p in pats {
-                collect_pattern_names(p, names);
-            }
-        }
-        PatternKind::Constructor { args: pats, .. } => {
-            for p in pats {
-                collect_pattern_names(p, names);
-            }
-        }
-        PatternKind::Record { fields, .. } => {
-            for (field_name, _, sub) in fields {
-                if let Some(p) = sub {
-                    collect_pattern_names(p, names);
-                } else {
-                    // Shorthand field: `{ x }` binds `x`
-                    names.push(intern::resolve(*field_name));
-                }
-            }
-        }
-        PatternKind::AnonRecord { fields, rest } => {
-            // Round-62 B9: anonymous record destructure
-            // (`let { x, y } = anon`) binds shorthand fields just like
-            // the nominal record case. Round-101: the named rest binder
-            // (`{ x, ...rest }`) binds too — mirror the typechecker's
-            // `collect_pattern_vars`.
-            for (field_name, _, sub) in fields {
-                if let Some(p) = sub {
-                    collect_pattern_names(p, names);
-                } else {
-                    // Shorthand field: `{ x }` binds `x`
-                    names.push(intern::resolve(*field_name));
-                }
-            }
-            if let Some((r, _)) = rest {
-                names.push(intern::resolve(*r));
-            }
-        }
-        PatternKind::List(pats, rest) => {
-            for p in pats {
-                collect_pattern_names(p, names);
-            }
-            if let Some(rest_pat) = rest {
-                collect_pattern_names(rest_pat, names);
-            }
-        }
-        PatternKind::Or(alts) => {
-            // Round-101: all alternatives are validated to bind the same
-            // names; mirror `collect_pattern_vars` and take the first.
-            if let Some(p) = alts.first() {
-                collect_pattern_names(p, names);
-            }
-        }
-        PatternKind::Map(entries) => {
-            // Round-101: map-pattern values bind (`#{ "k": v }` binds
-            // `v`); keys are string literals, never binders.
-            for (_, p) in entries {
-                collect_pattern_names(p, names);
-            }
-        }
-        _ => {} // Wildcard, Int, Float, Bool, StringLit, Range, Pin, etc.
-    }
-}
-
 /// Completion candidates for a given prefix, using the REPL's builtin name
 /// list. Mirrors the logic inside `SiltHelper::complete` but takes just a
 /// prefix string so integration tests can exercise it without building a
@@ -762,14 +651,21 @@ mod tests {
     }
 
     #[test]
-    fn builtin_names_contains_module_entries() {
+    fn builtin_names_hold_no_module_member_or_module_variant() {
         let names = builtin_names();
-        assert!(names.contains(&"list.map".to_string()), "missing list.map");
-        assert!(
-            names.contains(&"string.split".to_string()),
-            "missing string.split"
-        );
-        assert!(names.contains(&"math.pi".to_string()), "missing math.pi");
+        for absent in [
+            "list.map",
+            "string.split",
+            "math.pi",
+            "Message",
+            "Monday",
+            "GET",
+        ] {
+            assert!(!names.contains(&absent.to_string()), "offered {absent}");
+        }
+        for present in ["Int", "Option", "Some", "None", "Ok", "Err", "println"] {
+            assert!(names.contains(&present.to_string()), "missing {present}");
+        }
     }
 
     #[test]
@@ -1078,7 +974,12 @@ mod tests {
         use rustyline::completion::Completer;
         use rustyline::history::DefaultHistory;
 
-        let names = Rc::new(RefCell::new(builtin_names()));
+        let mut repl = Repl::new(ProjectSetup::None);
+        let evaluation = repl.eval("import string");
+        assert!(evaluation.committed);
+        let mut all = builtin_names();
+        all.extend(evaluation.names);
+        let names = Rc::new(RefCell::new(all));
         let helper = SiltHelper {
             names: names.clone(),
         };

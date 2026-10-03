@@ -80,6 +80,14 @@ pub struct ModuleScope {
     pub exports: Exports,
 }
 
+impl ModuleScope {
+    /// For a REPL cell: the variants of the enums it imports from the
+    /// earlier cell.
+    pub fn implied(&self) -> &HashMap<Symbol, Binding> {
+        &self.implied
+    }
+}
+
 /// What an import of a module names, for the resolver.
 #[derive(Clone, Copy)]
 pub enum Imported<'a> {

@@ -7,8 +7,8 @@
 //!   * LSP rename (`src/lsp/rename.rs`) — must reject renames that
 //!     target any gated constructor (otherwise `silt rename` corrupts
 //!     user programs that call stdlib APIs).
-//!   * REPL completion (`src/repl.rs`) — tab-completion must suggest
-//!     every constructor.
+//!   * REPL completion (`src/repl.rs`) — before any input, tab-completion
+//!     offers the prelude's constructors and no builtin module's.
 //!
 //! If this test fails after adding a new gated constructor, the fix is
 //! to route the surface through `module::all_builtin_constructor_names`
@@ -109,52 +109,18 @@ fn lsp_rename_rejects_every_gated_constructor() {
 // ─── REPL completion ──────────────────────────────────────────────────
 
 #[test]
-fn repl_builtin_names_covers_every_gated_constructor() {
-    // The REPL completion list must include every gated constructor.
-    // We call the public `builtin_names` directly — this is the most
-    // robust form of the test because it exercises the actual surface
-    // the REPL consults at runtime rather than scanning source text.
+fn repl_builtin_names_offer_prelude_constructors_only() {
+    // Before any input, <Tab> offers the prelude's constructors and no
+    // builtin module's: those are reached through their module once it
+    // is imported (`time.Monday`), see
+    // tests/cli/round77_repl_enum_completion_tests.rs.
     let names = silt::repl::builtin_names();
-    let mut missing: Vec<&'static str> = Vec::new();
     for variant in all_variants() {
-        if !names.iter().any(|n| n == variant) {
-            missing.push(variant);
-        }
-    }
-    assert!(
-        missing.is_empty(),
-        "REPL `builtin_names` is missing gated constructors:\n  - {}\n\
-         Fix: source constructors from \
-         `module::all_builtin_constructor_names` in \
-         `src/repl.rs::builtin_names` rather than hand-rolling the list.",
-        missing.join("\n  - ")
-    );
-}
-
-#[test]
-fn repl_builtin_names_contains_a_sample_of_gated_constructors() {
-    // Belt-and-braces smoke test. Before round-58 the REPL hardcoded
-    // list only included `Stop`, `Continue`, `Message`, `Closed`, `Empty`
-    // — these variants below were absent and tab-completion missed them.
-    let names = silt::repl::builtin_names();
-    for expected in [
-        "Sent",
-        "Recv",
-        "Send",
-        "IoNotFound",
-        "JsonSyntax",
-        "PgConnect",
-        "Monday",
-        "GET",
-        "HttpTimeout",
-        "BytesInvalidUtf8",
-        "ChannelTimeout",
-    ] {
-        assert!(
-            names.iter().any(|n| n == expected),
-            "REPL `builtin_names` missing gated constructor `{expected}`. \
-             Before round-58 the hand-rolled list in src/repl.rs \
-             omitted every typed-error variant + Recv/Send/Sent/Monday/etc."
+        let prelude = matches!(variant, "Ok" | "Err" | "Some" | "None");
+        assert_eq!(
+            names.iter().any(|n| n == variant),
+            prelude,
+            "REPL `builtin_names` and the variant `{variant}`: offered iff a prelude name"
         );
     }
 }
