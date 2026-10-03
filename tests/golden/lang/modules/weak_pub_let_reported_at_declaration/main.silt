@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: error[type]: the type of public let 'ch' is not fully known here: Channel(_)
+-- stderr-contains: --> a.silt:2:9
+-- stderr-not-contains: type mismatch
+-- a's pub let ch is a channel of an element type a leaves unknown; b
+-- and c would each decide it, two ways. It is reported at the
+-- declaration, whatever module is checked first, and neither importer
+-- reports anything.
+import b
+import c
+fn main() {
+  b.go()
+  c.go()
+}

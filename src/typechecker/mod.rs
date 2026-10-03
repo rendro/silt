@@ -666,6 +666,9 @@ pub struct TypeChecker {
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
+    /// Whether the module is a REPL cell: its `let`s are offered to the
+    /// next cell, which may fix what is unknown of their types.
+    pub(super) is_cell: bool,
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
@@ -744,6 +747,7 @@ impl TypeChecker {
             own_traits: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
+            is_cell: false,
             signatures_only: false,
             fully_annotated_fn_names: std::collections::HashSet::new(),
             current_fn_name: None,
@@ -2909,6 +2913,45 @@ impl TypeChecker {
         }
     }
 
+    /// Report each `pub let` whose type the module's check leaves partly
+    /// unknown (`pub let ch = channel.new(1)` before anything sends on
+    /// it): an importer would fix the rest, and two importers could fix it
+    /// two ways. The declaration is where it is reported, whichever
+    /// module is checked first.
+    fn report_unknown_pub_let_types(&mut self, program: &Program, env: &TypeEnv) {
+        if self.is_cell {
+            return;
+        }
+        for decl in &program.decls {
+            if !matches!(decl, Decl::Let { is_pub: true, .. }) {
+                continue;
+            }
+            for (name, span, _) in crate::parser::top_level_binders(decl) {
+                let Some(scheme) = env.lookup(name).cloned() else {
+                    continue;
+                };
+                let ty = self.apply(&scheme.ty);
+                if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
+                    continue;
+                }
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousType,
+                        span,
+                        format!(
+                            "the type of public let '{name}' is not fully known here: {}",
+                            self.show_type(&ty)
+                        ),
+                    )
+                    .with_help(format!(
+                        "annotate it, e.g. `pub let {name}: <type> = ...`: a module that \
+                         imports it cannot decide it"
+                    )),
+                );
+            }
+        }
+    }
+
     /// Enter the scheme of each definition the module declares in the
     /// session's tables, from the module's scope `env`: what an importer
     /// of the module reads.
@@ -2928,7 +2971,27 @@ impl TypeChecker {
                 continue;
             }
             if let Some(scheme) = env.lookup(def.name) {
-                let scheme = scheme.clone();
+                let mut scheme = scheme.clone();
+                // A `pub let` whose type is partly unknown is reported at
+                // its declaration (`report_unknown_pub_let_types`); its
+                // importers see the unknown part as an error type, so no
+                // importer fixes it.
+                if def.kind == crate::defs::DefKind::Let
+                    && def.vis == crate::defs::Vis::Pub
+                    && !self.is_cell
+                {
+                    let ty = self.apply(&scheme.ty);
+                    let mut rows = Vec::new();
+                    row_tail_vars(&ty, &mut rows);
+                    let unknown: HashMap<TyVar, Type> = free_vars_in(&ty)
+                        .into_iter()
+                        .filter(|v| !scheme.vars.contains(v) && !rows.contains(v))
+                        .map(|v| (v, Type::Error))
+                        .collect();
+                    if !unknown.is_empty() {
+                        scheme.ty = substitute_vars(&ty, &unknown);
+                    }
+                }
                 self.tables.schemes.insert(*id, scheme);
             }
         }
@@ -7109,6 +7172,41 @@ pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
+/// The row variables of the anonymous record types in `ty`, which stand
+/// for fields, not for a type.
+fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
+    match ty {
+        Type::AnonRecord { fields, tail } => {
+            if let RowTail::Var(v) = tail {
+                out.push(*v);
+            }
+            fields.values().for_each(|t| row_tail_vars(t, out));
+        }
+        Type::Record(_, fields) => fields.iter().for_each(|(_, t)| row_tail_vars(t, out)),
+        Type::Generic(_, args) | Type::Tuple(args) => {
+            args.iter().for_each(|t| row_tail_vars(t, out))
+        }
+        Type::Fun(params, ret) => {
+            params.iter().for_each(|t| row_tail_vars(t, out));
+            row_tail_vars(ret, out);
+        }
+        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => row_tail_vars(t, out),
+        Type::Map(k, v) => {
+            row_tail_vars(k, out);
+            row_tail_vars(v, out);
+        }
+        Type::AssocProj { receiver, .. } => row_tail_vars(receiver, out),
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Var(_)
+        | Type::Error
+        | Type::Never => {}
+    }
+}
+
 /// The definitions the type names written in `te` resolve to.
 fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::DefId>) {
     if let Some(crate::defs::Res::Def(id)) = te.res {
@@ -7978,12 +8076,14 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         }
     }
     checker.signatures_only = kind == names::ModuleKind::Host;
+    checker.is_cell = kind == names::ModuleKind::Cell;
     checker.current_package = package;
     checker.defs = Some(defs);
     checker.module = module;
     checker.module_name = module_name;
     let env = checker.check_program_in(program, env);
     checker.report_private_in_schemes(program, &env);
+    checker.report_unknown_pub_let_types(program, &env);
     checker.enter_schemes(&env);
     // The type of each top-level value: the module's own, by name; an
     // imported item, by its definition.
