@@ -758,8 +758,6 @@ fn main() {
     assert_eq!(result, Value::Int(7));
 }
 
-// ── Tuple index access ──────────────────────────────────────────────
-
 // ── Float constants and math ────────────────────────────────────────
 
 #[test]

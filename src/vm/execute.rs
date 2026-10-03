@@ -2045,22 +2045,6 @@ impl Vm {
                     }
                 }
             }
-            Op::GetIndex => {
-                let index = self.read_u8()? as usize;
-                let target = self.pop()?;
-                if let Value::Tuple(ref elems) = target {
-                    let val = elems
-                        .get(index)
-                        .cloned()
-                        .ok_or_else(|| VmError::new("tuple index out of bounds".to_string()))?;
-                    self.push(val);
-                } else {
-                    return Err(VmError::new(format!(
-                        "cannot index into {}",
-                        self.user_facing_type_name(&target)
-                    )));
-                }
-            }
             Op::Jump => {
                 let offset = self.read_u16()? as usize;
                 self.current_frame_mut()?.ip += offset;

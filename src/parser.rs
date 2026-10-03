@@ -3065,7 +3065,8 @@ impl<'src> Parser<'src> {
                             span,
                         );
                     } else if let Token::Int(n) = self.peek() {
-                        // Tuple index access: expr.0, expr.1, etc.
+                        // `t.0`: parsed so that the checker can say tuple
+                        // indexing is not supported.
                         let field = intern::intern(&n.to_string());
                         let (_, field_span) = self.advance();
                         let span = left.span;

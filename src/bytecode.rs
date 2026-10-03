@@ -296,8 +296,6 @@ pub enum Op {
     // ── Field access ───────────────────────────────────────────
     /// Access a field by name from TOS.
     GetField, // operand: u16 name_index
-    /// Access a tuple element by index.
-    GetIndex, // operand: u8 index
 
     // ── Control flow ───────────────────────────────────────────
     /// Jump forward by `u16` offset.
@@ -440,7 +438,6 @@ impl Op {
             b if b == Op::MakeRange as u8 => Some(Op::MakeRange),
             b if b == Op::ListConcat as u8 => Some(Op::ListConcat),
             b if b == Op::GetField as u8 => Some(Op::GetField),
-            b if b == Op::GetIndex as u8 => Some(Op::GetIndex),
             b if b == Op::Jump as u8 => Some(Op::Jump),
             b if b == Op::JumpBack as u8 => Some(Op::JumpBack),
             b if b == Op::JumpIfFalse as u8 => Some(Op::JumpIfFalse),

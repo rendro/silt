@@ -1437,20 +1437,13 @@ impl Compiler {
                 self.emit_global_value(def, span)?;
             }
 
+            // A record's field. (Tuple indexing, `t.0`, is rejected by
+            // the checker.)
             ExprKind::FieldAccess(expr, field, _) => {
-                let field_str = resolve(*field);
-                if let Ok(index) = field_str.parse::<u8>() {
-                    // Tuple index access: expr.0, expr.1, etc.
-                    self.compile_expr(expr)?;
-                    self.current_chunk().emit_op(Op::GetIndex, span);
-                    self.current_chunk().emit_u8(index, span);
-                } else {
-                    // Compile the expression and access field
-                    self.compile_expr(expr)?;
-                    let name_idx = self.add_constant(Value::String(field_str), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::GetField, name_idx, span);
-                }
+                self.compile_expr(expr)?;
+                let name_idx = self.add_constant(Value::String(resolve(*field)), span)?;
+                self.current_chunk()
+                    .emit_op_u16(Op::GetField, name_idx, span);
             }
 
             ExprKind::StringInterp(parts) => {
@@ -3914,8 +3907,6 @@ fn main() {
         let main = find_fn(&fns, "main");
         assert!(has_op(&main.chunk, Op::CallMethod));
     }
-
-    // ── Tuple index access ─────────────────────────────────────────
 
     // ── compile_program vs compile_declarations ────────────────────
 

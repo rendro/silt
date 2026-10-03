@@ -51,7 +51,6 @@ fn op_name(op: Op) -> &'static str {
         Op::MakeRange => "MakeRange",
         Op::ListConcat => "ListConcat",
         Op::GetField => "GetField",
-        Op::GetIndex => "GetIndex",
         Op::Jump => "Jump",
         Op::JumpBack => "JumpBack",
         Op::JumpIfFalse => "JumpIfFalse",
@@ -197,7 +196,6 @@ fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (
         | Op::TailCall
         | Op::MakeTuple
         | Op::PopN
-        | Op::GetIndex
         | Op::TestTupleLen
         | Op::TestListMin
         | Op::TestListExact
@@ -685,8 +683,8 @@ mod tests {
         // Hand-locked count of Op variants. Bumping the Op enum without
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 71 variants.
-        const EXPECTED_OP_COUNT: usize = 71;
+        // tables. Last verified: 70 variants.
+        const EXPECTED_OP_COUNT: usize = 70;
 
         // Sweep every possible byte value. For each one that decodes,
         // verify the round-trip discriminant matches. This catches both
