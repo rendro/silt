@@ -284,34 +284,6 @@ impl Vm {
                     }
                 }
             }
-            Op::And => {
-                // Round-75 VM-2: the compiler always lowers `BinOp::And`
-                // to a `JumpIfFalse` short-circuit (see
-                // `src/compiler/mod.rs:2330`); the
-                // `BinOp::And | BinOp::Or => unreachable!()` at
-                // `compiler/mod.rs:2362` confirms no other emission
-                // path exists. Match the LoopSetup precedent
-                // (run.rs:Op::LoopSetup) and crash loudly on
-                // accidental re-emission rather than silently
-                // executing eager-eval semantics that would break
-                // short-circuiting. The variant stays in the Op enum
-                // because the bytecode discriminants are a
-                // serialization format — removing it would shift
-                // every later opcode's `as u8` value.
-                unreachable!(
-                    "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue \
-                     short-circuit; Op::And/Or should never be emitted"
-                );
-            }
-            Op::Or => {
-                // See Op::And above — same rationale. Compiler emits
-                // `JumpIfTrue` short-circuit at compiler/mod.rs:2341;
-                // `Op::Or` is reserved-but-never-emitted.
-                unreachable!(
-                    "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue \
-                     short-circuit; Op::And/Or should never be emitted"
-                );
-            }
             Op::DisplayValue => {
                 let val = self.pop()?;
                 match &val {
@@ -851,23 +823,6 @@ impl Vm {
             Op::Pop => {
                 self.pop()?;
             }
-            Op::PopN => {
-                let count = self.read_u8()? as usize;
-                // Defense-in-depth: a saturating subtraction silently
-                // truncates to an empty stack on over-pop, masking
-                // compiler bugs that emit too-large a popcount. Match
-                // the strict underflow handling used by `Op::Pop` (and
-                // the rest of the dispatch) by returning a hard error
-                // instead.
-                if count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: PopN underflow (count {count}, \
-                         stack size {})",
-                        self.stack.len()
-                    )));
-                }
-                self.stack.truncate(self.stack.len() - count);
-            }
             Op::Dup => {
                 let val = self.peek()?.clone();
                 self.push(val);
@@ -1117,14 +1072,6 @@ impl Vm {
                         self.user_facing_type_name(&val)
                     )));
                 }
-            }
-            Op::LoopSetup => {
-                // L4 fix: this opcode is reserved but never emitted by
-                // the compiler. If we ever reach it, that is a compiler
-                // bug — crash loudly rather than silently no-op.
-                unreachable!(
-                    "Op::LoopSetup is not emitted by the compiler; this is a compiler bug"
-                );
             }
             Op::Recur => {
                 let arg_count = self.read_u8()? as usize;

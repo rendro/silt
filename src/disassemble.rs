@@ -28,8 +28,6 @@ fn op_name(op: Op) -> &'static str {
         Op::Geq => "Geq",
         Op::Negate => "Negate",
         Op::Not => "Not",
-        Op::And => "And",
-        Op::Or => "Or",
         Op::StringConcat => "StringConcat",
         Op::DisplayValue => "DisplayValue",
         Op::GetLocal => "GetLocal",
@@ -56,7 +54,6 @@ fn op_name(op: Op) -> &'static str {
         Op::JumpIfFalse => "JumpIfFalse",
         Op::JumpIfTrue => "JumpIfTrue",
         Op::Pop => "Pop",
-        Op::PopN => "PopN",
         Op::Dup => "Dup",
         Op::TestTag => "TestTag",
         Op::TestEqual => "TestEqual",
@@ -75,7 +72,6 @@ fn op_name(op: Op) -> &'static str {
         Op::TestRecordTag => "TestRecordTag",
         Op::TestMapHasKey => "TestMapHasKey",
         Op::DestructMapValue => "DestructMapValue",
-        Op::LoopSetup => "LoopSetup",
         Op::Recur => "Recur",
         Op::QuestionMark => "QuestionMark",
         Op::Panic => "Panic",
@@ -178,8 +174,6 @@ fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (
         | Op::Geq
         | Op::Negate
         | Op::Not
-        | Op::And
-        | Op::Or
         | Op::DisplayValue
         | Op::Return
         | Op::Pop
@@ -195,15 +189,13 @@ fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (
         | Op::Call
         | Op::TailCall
         | Op::MakeTuple
-        | Op::PopN
         | Op::TestTupleLen
         | Op::TestListMin
         | Op::TestListExact
         | Op::DestructTuple
         | Op::DestructVariant
         | Op::DestructList
-        | Op::DestructListRest
-        | Op::LoopSetup => {
+        | Op::DestructListRest => {
             let operand = code[offset + 1];
             (format!("{offset:04}  {name:<20} {operand}"), offset + 2)
         }
@@ -584,13 +576,10 @@ mod tests {
         chunk.emit_u8(3, span);
         chunk.emit_op(Op::Call, span);
         chunk.emit_u8(2, span);
-        chunk.emit_op(Op::PopN, span);
-        chunk.emit_u8(5, span);
 
         let output = disassemble_chunk(&chunk, &Globals::default(), "u8ops");
         assert!(output.contains("MakeTuple"));
         assert!(output.contains("Call"));
-        assert!(output.contains("PopN"));
     }
 
     #[test]
@@ -684,7 +673,7 @@ mod tests {
         // bumping this constant fails the test on purpose: it forces a
         // conscious update to both `Op::from_byte` and any disassembler
         // tables. Last verified: 70 variants.
-        const EXPECTED_OP_COUNT: usize = 70;
+        const EXPECTED_OP_COUNT: usize = 66;
 
         // Sweep every possible byte value. For each one that decodes,
         // verify the round-trip discriminant matches. This catches both
