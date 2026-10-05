@@ -204,6 +204,34 @@ impl TypeChecker {
         self.register_trait_decl_inner(t);
     }
 
+    /// Report each supertrait of `t` written with another number of type
+    /// arguments than the supertrait has parameters
+    /// (`trait Bad: Holds(Int, String)` for `trait Holds(a)`).
+    pub(super) fn check_supertrait_arity(&mut self, t: &TraitDecl) {
+        for r in &t.supertraits {
+            let Some(expected) = self
+                .named_trait(r.res, r.name)
+                .and_then(|sup| self.tables.traits.get(&sup))
+                .map(|info| info.params.len())
+            else {
+                continue;
+            };
+            if expected != r.args.len() {
+                self.error(
+                    Code::ArityMismatch,
+                    format!(
+                        "trait '{}' expects {expected} {} as a supertrait of '{}', got {}",
+                        r.name,
+                        inference::plural(expected, "type argument", "type arguments"),
+                        t.name,
+                        r.args.len()
+                    ),
+                    r.span,
+                );
+            }
+        }
+    }
+
     /// Shared trait-registration body. Runs for both user-source decls
     /// (after the redefinition guard in `register_trait_decl_user`) and
     /// built-in synthetic decls (via `builtin_trait_decls`).
@@ -1590,6 +1618,7 @@ impl TypeChecker {
                 declared_bounds = Self::bounds_under(info, method.name, &mapping);
                 substitute_vars(ty, &mapping)
             });
+            let has_declared_type = seeded.is_some();
             let expected = seeded.as_ref().map(|ty| rigidify(ty, &method_rigid));
             let (expected_params, expected_ret) = match &expected {
                 Some(Type::Fun(params, ret)) => (params.clone(), Some((**ret).clone())),
@@ -1729,6 +1758,35 @@ impl TypeChecker {
                             _ => None,
                         };
                         if let Some(tv) = bounded {
+                            // The trait's signature is what a caller
+                            // through the trait knows: the impl's method
+                            // may restate a bound the trait or the impl's
+                            // header declares, not add one.
+                            let declared = method_constraints
+                                .iter()
+                                .any(|(var, bound, _)| *var == tv && bound == trait_name);
+                            if !declared && has_declared_type {
+                                self.errors.push(
+                                    Diagnostic::error(
+                                        Code::InvalidTraitImpl,
+                                        method.span,
+                                        format!(
+                                            "method '{}' of the impl of '{}' for '{}' adds the bound \
+                                             `{}: {}`, which the trait does not declare for it",
+                                            method.name,
+                                            ti.trait_name,
+                                            ti.target_type,
+                                            type_param,
+                                            wc.trait_name
+                                        ),
+                                    )
+                                    .with_help(format!(
+                                        "a call through the trait would not owe it: declare the \
+                                         bound on the method in trait '{}', or on the impl's header",
+                                        ti.trait_name
+                                    )),
+                                );
+                            }
                             method_constraints.push((tv, *trait_name, resolved_bound_args.clone()));
                         }
                     }

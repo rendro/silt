@@ -151,6 +151,9 @@ pub struct TypeChecker {
     /// call (its span, the callee as written), a name used as a value.
     /// `instantiate` takes it.
     pub(super) named_use: Option<Origin>,
+    /// In a REPL cell: the files (cells) of the checks taken up from the
+    /// earlier cells (`take_up_waiting`).
+    pub(super) taken_up: std::collections::HashSet<crate::source::FileId>,
     /// The expression being checked.
     pub(super) at: Span,
     /// The parameter types the closure literal checked next is expected
@@ -280,6 +283,7 @@ impl TypeChecker {
             wanted_marks: Vec::new(),
             closed_mark: 0,
             named_use: None,
+            taken_up: std::collections::HashSet::new(),
             at: Span::BUILTIN,
             expected_closure: None,
             sig_names: HashMap::new(),
@@ -518,6 +522,64 @@ impl TypeChecker {
         }
     }
 
+    /// A REPL cell takes up what the earlier cells left waiting for a
+    /// type still unknown: if the cell decides the type, their checks are
+    /// its to pass. (They stay the earlier cells' in the session's
+    /// tables: a cell that fails is forgotten, and the next one takes
+    /// them up again.)
+    fn take_up_waiting(&mut self) {
+        for (module, waiting) in &self.tables.waiting {
+            if *module == self.module {
+                continue;
+            }
+            self.wanted.extend(waiting.wanted.iter().cloned());
+            self.pending_field_accesses
+                .extend(waiting.field_accesses.iter().cloned());
+            self.pending_numeric_checks
+                .extend(waiting.numeric_checks.iter().cloned());
+            self.pending_question_marks
+                .extend(waiting.question_marks.iter().cloned());
+        }
+        self.taken_up = self.waiting_files();
+    }
+
+    /// Leave what this cell's own checks still wait for to the cells
+    /// after it.
+    fn leave_waiting(&mut self) {
+        let earlier = std::mem::take(&mut self.taken_up);
+        let own = |span: &Span| !earlier.contains(&span.file);
+        let waiting = Waiting {
+            wanted: std::mem::take(&mut self.wanted)
+                .into_iter()
+                .filter(|w| !w.solved && own(&w.origin.span))
+                .collect(),
+            field_accesses: std::mem::take(&mut self.pending_field_accesses)
+                .into_iter()
+                .filter(|(.., span)| own(span))
+                .collect(),
+            numeric_checks: std::mem::take(&mut self.pending_numeric_checks)
+                .into_iter()
+                .filter(|(.., span)| own(span))
+                .collect(),
+            question_marks: std::mem::take(&mut self.pending_question_marks)
+                .into_iter()
+                .filter(|(.., span)| own(span))
+                .collect(),
+        };
+        self.tables.waiting.insert(self.module, waiting);
+    }
+
+    /// The files of what is waiting: each REPL cell is a file of its own.
+    fn waiting_files(&self) -> std::collections::HashSet<crate::source::FileId> {
+        self.wanted
+            .iter()
+            .map(|w| w.origin.span.file)
+            .chain(self.pending_field_accesses.iter().map(|(.., s)| s.file))
+            .chain(self.pending_numeric_checks.iter().map(|(.., s)| s.file))
+            .chain(self.pending_question_marks.iter().map(|(.., s)| s.file))
+            .collect()
+    }
+
     /// Report each top-level `let` whose type the module's check leaves
     /// partly unknown (`let ch = channel.new(1)` when nothing in the
     /// module sends on it). A module's check is where its types are
@@ -650,6 +712,14 @@ impl TypeChecker {
         for decl in &program.decls {
             if let Decl::Trait(t) = decl {
                 self.register_trait_decl_user(t);
+            }
+        }
+        // Each supertrait is given as many arguments as it has
+        // parameters: checked where it is written, once every trait of
+        // the module is declared.
+        for decl in &program.decls {
+            if let Decl::Trait(t) = decl {
+                self.check_supertrait_arity(t);
             }
         }
 
@@ -1201,7 +1271,13 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
             checker.seen_modules.insert(*id);
         }
     }
+    if checker.is_cell {
+        checker.take_up_waiting();
+    }
     let env = checker.check_program_in(program, env);
+    if checker.is_cell {
+        checker.leave_waiting();
+    }
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);

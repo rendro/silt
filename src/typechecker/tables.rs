@@ -276,12 +276,27 @@ pub struct Tables {
     /// `let`, a variant's constructor, a type written as a value. (A
     /// builtin's is the builtin scope's.)
     pub(super) schemes: HashMap<crate::defs::DefId, Scheme>,
+    /// What the check of each REPL cell left waiting for the type of a
+    /// `let` that a later cell may decide (see [`Waiting`]).
+    pub(super) waiting: HashMap<crate::session::ModuleId, Waiting>,
     /// What each module's check added to the tables, so that it can be
     /// forgotten when the module is checked again.
     pub(super) rows: HashMap<crate::session::ModuleId, Rows>,
     /// The name of each module checked, to tell two types of one name
     /// apart in a message (`a.Pt`, `b.Pt`).
     pub(super) module_names: HashMap<crate::session::ModuleId, Symbol>,
+}
+
+/// The checks a REPL cell made on a type still unknown when its check
+/// ended: the type of a `let` of the session that is not generalised
+/// (`let ch = channel.new(4)`). The cell that decides the type is held
+/// to them.
+#[derive(Clone, Default)]
+pub(super) struct Waiting {
+    pub(super) wanted: Vec<super::solve::Wanted>,
+    pub(super) field_accesses: Vec<(Type, Symbol, Type, Span)>,
+    pub(super) numeric_checks: Vec<(Type, &'static str, Span)>,
+    pub(super) question_marks: Vec<(Type, Type, Option<Type>, Span)>,
 }
 
 /// What one module's check added to the session's [`Tables`].
@@ -369,6 +384,7 @@ impl Tables {
     /// Forget what the check of `module` added: it is checked again, or
     /// it was a REPL cell that is dropped.
     pub fn forget(&mut self, module: crate::session::ModuleId) {
+        self.waiting.remove(&module);
         let Some(rows) = self.rows.remove(&module) else {
             return;
         };
