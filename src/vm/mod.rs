@@ -293,6 +293,9 @@ impl Drop for ProgramLoop {
 
 pub struct Vm {
     pub(crate) runtime: Arc<Runtime>,
+    /// True for the VM made by [`Vm::new`], false for the VMs of its
+    /// tasks: when that VM is dropped, the runtime's threads end.
+    owns_runtime: bool,
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) stack: Vec<Value>,
     /// The values of the program's global slots; `None` until the
@@ -381,6 +384,14 @@ pub struct Vm {
     /// to its order deque on miss; a hit does not re-order, so this
     /// is pure insertion order).
     pub(crate) regex_cache: RegexCache,
+}
+
+impl Drop for Vm {
+    fn drop(&mut self) {
+        if self.owns_runtime {
+            self.runtime.shutdown();
+        }
+    }
 }
 
 /// Create a finite float Value, returning an error if the result is NaN or Infinity.
@@ -583,6 +594,12 @@ impl Vm {
 
     /// A VM whose programs write to the output of `io` and read its
     /// clock.
+    ///
+    /// Dropping it ends the program: the threads that served it (the
+    /// scheduler's, the timer's, the I/O workers) end, tasks that are
+    /// still running or waiting never run again, and the tasks that
+    /// failed since the last report and that nobody joined are reported
+    /// on the stderr of `io`.
     pub fn new(io: HostIo) -> Self {
         Vm {
             runtime: Arc::new(Runtime {
@@ -590,7 +607,10 @@ impl Vm {
                 timer: TimerManager::new(io.clone()),
                 io_pool: IoPool::new(runtime::resolve_io_pool_size(), io.clone()),
                 io,
+                rng: parking_lot::Mutex::new(None),
+                uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
             }),
+            owns_runtime: true,
             frames: Vec::new(),
             stack: Vec::new(),
             globals: Vec::new(),
@@ -612,6 +632,15 @@ impl Vm {
         }
     }
 
+    /// Report on the host's stderr the tasks that have failed so far
+    /// and that nobody joined or cancelled. Nothing while a front end
+    /// collects them (`scheduler::collect_unjoined_failures`).
+    fn report_unjoined_failures(&self) {
+        if let Some(scheduler) = self.current_scheduler() {
+            scheduler.report_unjoined_failures();
+        }
+    }
+
     /// Run a compiled program: take in its tables, then run its script.
     /// The value is the script's: `main`'s for a program compiled for
     /// `Entry::Main`. This is the one way to start a [`Program`]; the
@@ -626,16 +655,20 @@ impl Vm {
             program.functions.first().cloned().ok_or_else(|| {
                 VmError::new("internal VM error: a program without a script".into())
             })?;
-        self.run(Arc::new(script))
+        let result = self.run(Arc::new(script));
+        self.report_unjoined_failures();
+        result
     }
 
     /// Call the test function `test` of the program this VM ran with
     /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
     /// arguments, and give its value.
     pub fn call_test(&mut self, test: &crate::session::TestFn) -> Result<Value, VmError> {
-        self.run(Arc::new(crate::bytecode::call_global_script(
+        let result = self.run(Arc::new(crate::bytecode::call_global_script(
             test.slot, &test.name,
-        )))
+        )));
+        self.report_unjoined_failures();
+        result
     }
 
     /// Take in a program about to run: the descriptions its values'
@@ -654,6 +687,7 @@ impl Vm {
     pub(crate) fn spawn_child(&self) -> Self {
         Vm {
             runtime: self.runtime.clone(), // Arc clone = cheap
+            owns_runtime: false,
             frames: Vec::new(),
             stack: Vec::new(),
             globals: self.globals.clone(),

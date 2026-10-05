@@ -32,7 +32,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub trait Output: Send + Sync {
     /// Take `text`. An error returned for a program's `print` or
     /// `println` becomes a runtime error of the program; one returned
-    /// for a report on stderr is dropped.
+    /// for a report on stderr is dropped. A panic counts as an error.
     fn write(&self, text: &str) -> io::Result<()>;
 }
 
@@ -185,15 +185,17 @@ impl HostIo {
         }
     }
 
-    /// Write `text` to stdout.
+    /// Write `text` to stdout. A panic of the output is an error like
+    /// one it returns: it must not take down the thread that runs the
+    /// program or a task.
     pub(crate) fn out(&self, text: &str) -> io::Result<()> {
-        self.stdout.write(text)
+        write_caught(&*self.stdout, text)
     }
 
-    /// Write `text` to stderr. A write error is ignored: there is
-    /// nowhere left to report it.
+    /// Write `text` to stderr. A write error, or a panic of the output,
+    /// is ignored: there is nowhere left to report it.
     pub(crate) fn err(&self, text: &str) {
-        let _ = self.stderr.write(text);
+        let _ = write_caught(&*self.stderr, text);
     }
 
     /// The time since the Unix epoch.
@@ -228,6 +230,24 @@ impl HostIo {
             left
         } else {
             left.min(POLL)
+        }
+    }
+}
+
+/// `output.write(text)`, with a panic turned into an error that carries
+/// the panic's message.
+fn write_caught(output: &dyn Output, text: &str) -> io::Result<()> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| output.write(text))) {
+        Ok(result) => result,
+        Err(payload) => {
+            let message = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                s
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.as_str()
+            } else {
+                "<non-string panic payload>"
+            };
+            Err(io::Error::other(format!("the output panicked: {message}")))
         }
     }
 }

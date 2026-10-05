@@ -55,15 +55,12 @@ fn v7(vm: &Vm, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::String(now_v7(vm).to_string()))
 }
 
-/// A version 7 UUID whose timestamp is the host clock's time. One
-/// counter for the process keeps the UUIDs minted within a millisecond
-/// in order.
+/// A version 7 UUID whose timestamp is the host clock's time. The VM's
+/// counter keeps the UUIDs minted within a millisecond in order.
 pub(crate) fn now_v7(vm: &Vm) -> ::uuid::Uuid {
-    static CONTEXT: std::sync::Mutex<::uuid::ContextV7> =
-        std::sync::Mutex::new(::uuid::ContextV7::new());
     let now = vm.runtime.io.now();
     ::uuid::Uuid::new_v7(::uuid::Timestamp::from_unix(
-        &CONTEXT,
+        &vm.runtime.uuid_v7,
         now.as_secs(),
         now.subsec_nanos(),
     ))

@@ -157,16 +157,43 @@ type TimerRequest = (Duration, TimerTarget);
 /// timers has none, and a platform without threads can make a VM.
 pub(crate) struct TimerManager {
     io: HostIo,
-    /// The channel to the timer thread; `None` until the first deadline.
-    sender: parking_lot::Mutex<Option<std::sync::mpsc::Sender<TimerRequest>>>,
+    thread: parking_lot::Mutex<Threads<TimerRequest>>,
 }
+
+/// The threads of a [`TimerManager`] or an [`IoPool`], reached through
+/// the channel they take their work from.
+enum Threads<T> {
+    /// Not started: nothing has needed them yet.
+    Idle,
+    Running(std::sync::mpsc::Sender<T>),
+    /// The VM is gone ([`Runtime::shutdown`]): they have been told to
+    /// end and are not started again.
+    Stopped,
+}
+
+impl<T> Threads<T> {
+    /// Tell the threads to end: their channel closes, and what they
+    /// still held is dropped.
+    fn stop(&mut self) {
+        *self = Threads::Stopped;
+    }
+}
+
+/// Why a timer or an I/O operation finds its threads stopped.
+const VM_GONE: &str = "the VM that ran the program has been dropped";
 
 impl TimerManager {
     pub(super) fn new(io: HostIo) -> Self {
         TimerManager {
             io,
-            sender: parking_lot::Mutex::new(None),
+            thread: parking_lot::Mutex::new(Threads::Idle),
         }
+    }
+
+    /// End the timer thread. The deadlines that are pending are
+    /// discarded: they never fire.
+    fn stop(&self) {
+        self.thread.lock().stop();
     }
 
     /// The timer thread's loop: take in deadlines, and fire each when
@@ -220,20 +247,19 @@ impl TimerManager {
             .io
             .deadline_after(delay)
             .ok_or_else(|| unavailable(&"the duration is out of range"))?;
-        let mut sender = self.sender.lock();
-        if sender.is_none() {
+        let mut thread = self.thread.lock();
+        if let Threads::Idle = *thread {
             let (tx, rx) = std::sync::mpsc::channel::<TimerRequest>();
             let io = self.io.clone();
             std::thread::Builder::new()
                 .spawn(move || TimerManager::run(io, rx))
                 .map_err(|e| unavailable(&e))?;
-            *sender = Some(tx);
+            *thread = Threads::Running(tx);
         }
-        sender
-            .as_ref()
-            .expect("the timer thread was just started")
-            .send((deadline, target))
-            .map_err(|e| unavailable(&e))
+        match &*thread {
+            Threads::Running(tx) => tx.send((deadline, target)).map_err(|e| unavailable(&e)),
+            Threads::Idle | Threads::Stopped => Err(unavailable(&VM_GONE)),
+        }
     }
 
     /// Schedule a channel to be closed after `delay`.
@@ -306,10 +332,10 @@ type IoJob = Box<dyn FnOnce() + Send>;
 
 pub(crate) struct IoPool {
     io: HostIo,
-    /// The channel to the workers; `None` until the first operation,
-    /// which starts them. A program that parks no task on I/O has none,
-    /// and a platform without threads can make a VM.
-    sender: parking_lot::Mutex<Option<std::sync::mpsc::Sender<IoJob>>>,
+    /// The workers, started by the first operation. A program that
+    /// parks no task on I/O has none, and a platform without threads
+    /// can make a VM.
+    workers: parking_lot::Mutex<Threads<IoJob>>,
     /// Number of worker threads this pool runs.
     num_workers: usize,
 }
@@ -318,9 +344,14 @@ impl IoPool {
     pub(super) fn new(num_threads: usize, io: HostIo) -> Self {
         IoPool {
             io,
-            sender: parking_lot::Mutex::new(None),
+            workers: parking_lot::Mutex::new(Threads::Idle),
             num_workers: num_threads,
         }
+    }
+
+    /// End the workers, each when the operation it is running returns.
+    fn stop(&self) {
+        self.workers.lock().stop();
     }
 
     /// Start the workers. An error if not one could be started; if some
@@ -404,26 +435,32 @@ impl IoPool {
             };
             completion2.complete(result);
         });
-        let mut sender = self.sender.lock();
-        if sender.is_none() {
+        // Nothing can run the operation: it fails, with the error its
+        // builtin's signature declares.
+        let fail = |why: &dyn std::fmt::Display| {
+            let err = completion.build_timeout_err(&format!("cannot run an I/O operation: {why}"));
+            completion.complete(err);
+        };
+        let mut workers = self.workers.lock();
+        if let Threads::Idle = *workers {
             match self.start() {
-                Ok(tx) => *sender = Some(tx),
+                Ok(tx) => *workers = Threads::Running(tx),
                 Err(e) => {
-                    // Nothing can run the operation: it fails, with the
-                    // error its builtin's signature declares.
-                    drop(sender);
-                    let err = completion
-                        .build_timeout_err(&format!("cannot start an I/O worker thread: {e}"));
-                    completion.complete(err);
+                    drop(workers);
+                    fail(&e);
                     return completion;
                 }
             }
         }
-        let sent = sender
-            .as_ref()
-            .expect("the workers were just started")
-            .send(job);
-        drop(sender);
+        let sent = match &*workers {
+            Threads::Running(tx) => tx.send(job),
+            Threads::Idle | Threads::Stopped => {
+                drop(workers);
+                fail(&VM_GONE);
+                return completion;
+            }
+        };
+        drop(workers);
         if let Err(e) = sent {
             debug_assert!(false, "IoPool worker threads are gone: {e}");
             self.io.err(&format!(
@@ -454,6 +491,57 @@ pub struct Runtime {
     // ── Host ────────────────────────────────────────────────────
     /// Where the program's output goes and which clock it reads.
     pub(crate) io: HostIo,
+
+    // ── Per-VM generators ───────────────────────────────────────
+    /// The state of `math.random`; `None` until the first call seeds it
+    /// from the host clock.
+    pub(crate) rng: parking_lot::Mutex<Option<u64>>,
+    /// The counter that keeps the `uuid.v7`s minted within one
+    /// millisecond of the host clock in order.
+    pub(crate) uuid_v7: std::sync::Mutex<uuid::ContextV7>,
+}
+
+impl Runtime {
+    /// End the threads that serve the program: the scheduler's workers
+    /// and watchdog, the timer thread and the I/O workers. Called when
+    /// the VM that was made for the program is dropped. Tasks that have
+    /// not ended never run again, and pending timers never fire.
+    ///
+    /// The threads are told to end, not waited for: a worker inside a
+    /// builtin that blocks ends when the builtin returns.
+    pub(super) fn shutdown(&self) {
+        // A scheduler is made if there was none, so that a thread that
+        // outlives the VM (a stream stage) cannot start one.
+        let scheduler = self
+            .scheduler
+            .lock()
+            .get_or_insert_with(|| Arc::new(crate::scheduler::Scheduler::new(self.io.clone())))
+            .clone();
+        scheduler.shutdown();
+        self.timer.stop();
+        self.io_pool.stop();
+    }
+
+    /// The next value of `math.random`, in `[0, 1)`.
+    pub(crate) fn random(&self) -> f64 {
+        let mut state = self.rng.lock();
+        let mut s = state.unwrap_or_else(|| {
+            // splitmix64 of the host clock's time: clocks that read
+            // close to each other, or close to zero, still start far
+            // apart. xorshift64 must not be seeded with 0.
+            let mut z = (self.io.now().as_nanos() as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            (z ^ (z >> 31)).max(1)
+        });
+        // xorshift64
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        *state = Some(s);
+        // Convert to [0.0, 1.0)
+        (s >> 11) as f64 / ((1u64 << 53) as f64)
+    }
 }
 
 // ── Regex cache ──────────────────────────────────────────────────

@@ -18,9 +18,8 @@ fn run(source: &str, io: HostIo) -> Result<Value, String> {
     Vm::new(io).run_program(&program).map_err(|e| e.message)
 }
 
-/// [`run`] on a thread of its own, which ends with the program: the
-/// runtime reports the task failures that nobody joined when the thread
-/// that ran the program ends.
+/// [`run`] on a thread of its own, for a program the test watches
+/// while it runs.
 fn run_on_thread(source: &'static str, io: HostIo) -> thread::JoinHandle<Result<Value, String>> {
     thread::spawn(move || run(source, io))
 }
@@ -73,7 +72,8 @@ fn main() {
 }
 
 /// The report of a task that failed and that nobody joined is the
-/// runtime's, not the program's: it goes to stderr.
+/// runtime's, not the program's: it goes to stderr. It is there when
+/// `run_program` returns, whose result it does not change.
 #[test]
 fn unjoined_task_failure_is_reported_on_the_stderr_buffer() {
     let out = Buffer::new();
@@ -93,15 +93,53 @@ fn main() {
   println("main done")
 }
 "#;
-    let ran = run_on_thread(source, HostIo::new(out.clone(), err.clone()));
-    assert_eq!(ran.join().unwrap(), Ok(Value::Unit));
+    let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let mut vm = Vm::new(HostIo::new(out.clone(), err.clone()));
+    assert_eq!(
+        vm.run_program(&program).map_err(|e| e.message),
+        Ok(Value::Unit)
+    );
     assert_eq!(out.contents(), "main done\n");
-    let report = err.contents();
+    let report = err.take();
     assert!(
         report.contains("task <handle:0> failed and was never joined: panic: boom"),
         "{report:?}"
     );
     assert!(report.contains("task.join"), "{report:?}");
+    // Each failure is reported once.
+    drop(vm);
+    assert_eq!(err.contents(), "");
+}
+
+/// A task that fails after `run_program` has returned is reported when
+/// the VM is dropped, if it has failed by then.
+#[test]
+fn a_later_task_failure_is_reported_when_the_vm_is_dropped() {
+    let err = Buffer::new();
+    let source = r#"
+import task
+import time
+fn main() {
+  let _ = task.spawn({ ->
+    time.sleep(time.ms(100))
+    panic("late")
+  })
+}
+"#;
+    let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let mut vm = Vm::new(HostIo::new(Buffer::new(), err.clone()));
+    assert_eq!(
+        vm.run_program(&program).map_err(|e| e.message),
+        Ok(Value::Unit)
+    );
+    assert_eq!(err.contents(), "");
+    thread::sleep(Duration::from_millis(500));
+    drop(vm);
+    let report = err.contents();
+    assert!(
+        report.contains("failed and was never joined: panic: late"),
+        "{report:?}"
+    );
 }
 
 /// An output that refuses every write.
@@ -142,6 +180,72 @@ fn docs_ffi_output_of_ones_own() {
         Ok(Value::Unit)
     );
     assert_eq!(rx.try_iter().collect::<Vec<_>>(), ["a", "b\n"]);
+}
+
+/// An output that panics on every write.
+struct Panics;
+
+impl Output for Panics {
+    fn write(&self, _text: &str) -> io::Result<()> {
+        panic!("the sink panicked")
+    }
+}
+
+/// A panic of the output is a runtime error of the `print` that hit
+/// it, on the main thread and in a task: the scheduler's worker lives
+/// on and the join returns.
+#[test]
+fn a_panicking_stdout_is_a_runtime_error() {
+    let source = "fn main() {\n  println(\"x\")\n}";
+    assert_eq!(
+        run(source, HostIo::new(Panics, Buffer::new())),
+        Err("cannot write to stdout: the output panicked: the sink panicked".to_string())
+    );
+
+    let source = r#"
+import task
+fn main() {
+  let h = task.spawn({ -> println("x") })
+  task.join(h)
+  task.join(task.spawn({ -> 2 }))
+}
+"#;
+    let ran = run_on_thread(source, HostIo::new(Panics, Buffer::new()));
+    wait_until("the program ends", || ran.is_finished());
+    assert_eq!(
+        ran.join().unwrap(),
+        Err(
+            "joined task failed: cannot write to stdout: the output panicked: the sink panicked"
+                .to_string()
+        )
+    );
+}
+
+/// A panic of the stderr output is dropped, like an error it returns:
+/// the report is lost, the program's result stands.
+#[test]
+fn a_panicking_stderr_loses_the_report_only() {
+    let out = Buffer::new();
+    let source = r#"
+import channel
+import task
+import time
+fn main() {
+  let about_to_fail = channel.new(1)
+  let _ = task.spawn({ ->
+    channel.send(about_to_fail, 1)
+    panic("boom")
+  })
+  let _ = channel.receive(about_to_fail)
+  time.sleep(time.ms(300))
+  println("main done")
+}
+"#;
+    assert_eq!(
+        run(source, HostIo::new(out.clone(), Panics)),
+        Ok(Value::Unit)
+    );
+    assert_eq!(out.contents(), "main done\n");
 }
 
 // ── Clock ───────────────────────────────────────────────────────────
@@ -395,6 +499,83 @@ fn main() {
     assert_eq!(run(source, io), Ok(Value::Unit));
     assert_eq!(out.contents(), "tcp operation timed out\n");
     assert!(clock.passed() >= Duration::from_secs(3600));
+}
+
+// ── One VM does not reach into another ──────────────────────────────
+
+/// A clock whose time of day is `secs` after the epoch, for ever.
+struct Fixed(u64);
+
+impl Clock for Fixed {
+    fn now(&self) -> Duration {
+        Duration::from_secs(self.0)
+    }
+    fn monotonic(&self) -> Duration {
+        Duration::ZERO
+    }
+    fn sleep(&self, _duration: Duration) {}
+}
+
+/// The Unix time, in seconds, in the timestamp of the version 7 UUID
+/// on the first line of `text`.
+fn uuid_v7_secs(text: &str) -> u64 {
+    let hex = text.lines().next().unwrap().replace('-', "");
+    u64::from_str_radix(&hex[..12], 16).unwrap() / 1000
+}
+
+/// The timestamp of a `uuid.v7` is the time of its own VM's clock,
+/// whatever clock another VM of the process has shown.
+#[test]
+fn uuid_v7_timestamps_are_each_vms_own() {
+    let source = "import uuid\nfn main() { println(uuid.v7()) }";
+    let (future, past, system) = (Buffer::new(), Buffer::new(), Buffer::new());
+    // 2096, then 2001, then today.
+    run(source, HostIo::buffer(&future).clock(Fixed(4_000_000_000))).unwrap();
+    run(source, HostIo::buffer(&past).clock(Fixed(1_000_000_000))).unwrap();
+    run(source, HostIo::buffer(&system)).unwrap();
+    assert_eq!(uuid_v7_secs(&future.contents()), 4_000_000_000);
+    assert_eq!(uuid_v7_secs(&past.contents()), 1_000_000_000);
+    let today = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let stamped = uuid_v7_secs(&system.contents());
+    assert!(
+        today.abs_diff(stamped) < 60,
+        "{stamped} is not about {today}"
+    );
+}
+
+/// `math.random` is seeded from its own VM's clock: two VMs whose
+/// clocks read the same give the same numbers, whatever ran before,
+/// and a clock that reads zero still gives well-spread ones.
+#[test]
+fn math_random_is_seeded_per_vm_from_its_clock() {
+    let source = r#"
+import math
+fn main() {
+  println(math.random())
+  println(math.random())
+  println(math.random())
+}
+"#;
+    let numbers = |clock: Fixed| -> Vec<f64> {
+        let out = Buffer::new();
+        run(source, HostIo::buffer(&out).clock(clock)).unwrap();
+        let text = out.contents();
+        text.lines().map(|line| line.parse().unwrap()).collect()
+    };
+    let first = numbers(Fixed(1_000));
+    let other = numbers(Fixed(2_000));
+    let again = numbers(Fixed(1_000));
+    assert_eq!(first, again);
+    assert_ne!(first, other);
+
+    let zero = numbers(Fixed(0));
+    assert_eq!(zero.len(), 3);
+    assert!(zero.iter().all(|n| (0.0..1.0).contains(n)), "{zero:?}");
+    assert!(zero[0] > 0.001, "{zero:?}");
+    assert!(zero[0] != zero[1] && zero[1] != zero[2], "{zero:?}");
 }
 
 // ── docs/ffi.md ─────────────────────────────────────────────────────

@@ -661,6 +661,9 @@ impl Scheduler {
     /// Returns an error if the live-task count has reached the
     /// scheduler's hard task limit.
     pub fn submit(&self, task: Task) -> Result<(), String> {
+        if self.inner.shutdown.load(Ordering::SeqCst) {
+            return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
+        }
         self.ensure_workers()?;
         let current = self.inner.live_tasks.load(Ordering::SeqCst);
         if current >= MAX_TASKS {
@@ -691,21 +694,38 @@ impl Scheduler {
     }
 }
 
-impl Drop for Scheduler {
-    fn drop(&mut self) {
-        // The scheduler goes away with the program that used it: nobody
-        // can join a task of it any more.
+impl Scheduler {
+    /// End the scheduler with the program that used it: report the
+    /// failures that nobody joined (nobody can join a task of it any
+    /// more), tell the workers and the watchdog to end, and drop the
+    /// tasks that wait for a worker. A task submitted later is refused.
+    ///
+    /// The threads are not waited for: each ends when the slice it is
+    /// running returns.
+    pub(crate) fn shutdown(&self) {
         let _ = report_unjoined_failures(&self.inner);
         self.inner.shutdown.store(true, Ordering::SeqCst);
         self.inner.watchdog.shutdown.store(true, Ordering::SeqCst);
+        // Detach the workers.
+        drop(self.workers.lock().take());
+        // The tasks are dropped after the queue's lock is released.
+        let waiting: Vec<Task> = self.inner.run_queue.lock().drain(..).collect();
         self.inner.condvar.notify_all();
-        if let Some(workers) = self.workers.lock().take() {
+        drop(waiting);
+    }
+}
+
+impl Drop for Scheduler {
+    fn drop(&mut self) {
+        // Reached with its workers still attached only when no VM was
+        // dropped first (`shutdown`).
+        let workers = self.workers.lock().take();
+        self.shutdown();
+        if let Some(workers) = workers {
             // The runtime that owns this `Arc<Scheduler>` is itself
             // owned by a `Vm`. A worker thread may run a task whose
-            // completion drops the LAST `Arc<Runtime>` (e.g. main has
-            // already returned and dropped its own Vm, so the only
-            // remaining ref was the worker's currently-running task).
-            // In that case `Scheduler::drop` runs ON a worker thread.
+            // completion drops the LAST `Arc<Runtime>`. In that case
+            // `Scheduler::drop` runs ON a worker thread.
             // `JoinHandle::join` on an already-finished thread is fine,
             // but joining the CURRENT thread panics with EDEADLK
             // (`std::sys::thread::unix::Thread::join` line 127:
@@ -743,6 +763,11 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
             let mut queue = inner.run_queue.lock();
             loop {
                 if inner.shutdown.load(Ordering::SeqCst) {
+                    // The tasks that were put back since the shutdown
+                    // never run: drop them, with the queue unlocked.
+                    let waiting: Vec<Task> = queue.drain(..).collect();
+                    drop(queue);
+                    drop(waiting);
                     return;
                 }
                 if let Some(task) = queue.pop_front() {
