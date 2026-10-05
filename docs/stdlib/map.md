@@ -32,7 +32,7 @@ Functions for working with immutable, ordered maps (`Map(k, v)`). Maps use
 ## `map.contains`
 
 ```
-map.contains(m: Map(a, b), k: a) -> Bool where a: Hash
+map.contains(m: Map(a, b), key: a) -> Bool where a: Hash
 ```
 
 Returns `true` if the map has an entry for `key`.
@@ -50,7 +50,7 @@ fn main() {
 ## `map.delete`
 
 ```
-map.delete(m: Map(a, b), k: a) -> Map(a, b) where a: Hash
+map.delete(m: Map(a, b), key: a) -> Map(a, b) where a: Hash
 ```
 
 Returns a new map with `key` removed. No-op if key does not exist.
@@ -103,7 +103,7 @@ fn main() {
 ## `map.filter`
 
 ```
-map.filter(m: Map(a, b), pred: Fn(a, b) -> Bool) -> Map(a, b)
+map.filter(m: Map(a, b), f: Fn(a, b) -> Bool) -> Map(a, b)
 ```
 
 Returns a new map containing only entries where `f` returns `true`.
@@ -210,7 +210,7 @@ fn main() {
 ## `map.merge`
 
 ```
-map.merge(m: Map(a, b), other: Map(a, b)) -> Map(a, b) where a: Hash
+map.merge(m1: Map(a, b), m2: Map(a, b)) -> Map(a, b) where a: Hash
 ```
 
 Merges two maps. When both have the same key, the value from `m2` wins.
@@ -248,7 +248,7 @@ fn main() {
 ## `map.update`
 
 ```
-map.update(m: Map(a, b), k: a, default: b, f: Fn(b) -> b) -> Map(a, b)
+map.update(m: Map(a, b), key: a, default: b, f: Fn(b) -> b) -> Map(a, b)
 ```
 
 If `key` exists, applies `f` to the current value. If `key` does not exist,

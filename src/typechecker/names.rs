@@ -165,15 +165,12 @@ pub fn new_def_table() -> DefTable {
 
 /// The builtin definitions, from the builtin registry: the types, the
 /// traits, each enum's variants, the prelude's functions, then each
-/// module's rows. A module or a row of a cargo feature that is not built
-/// offers nothing.
+/// module's rows. A row of a cargo feature that is not built is not
+/// offered; neither are the rows of a module that is not built.
 fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
     let registry = crate::builtins::registry::registry();
-    let built =
-        |module: Option<&str>| module.is_none_or(|m| registry.module(m).is_some_and(|m| m.enabled));
     let enums: HashMap<&str, &[(&str, usize)]> = registry
         .types()
-        .filter(|(module, _)| built(*module))
         .map(|(_, ty)| (ty.name, ty.variants()))
         .filter(|(_, variants)| !variants.is_empty())
         .collect();
@@ -263,13 +260,12 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
     scopes.prelude = exports;
 
     // The builtin modules' functions and constants. A module that is
-    // not built offers nothing, its types included.
+    // not built keeps its types and variants, so that a use of one is
+    // answered with the module and the feature it needs; nothing can
+    // import it (the session rejects the import).
     for module in &registry.modules {
         let id = ModuleId::builtin(module.name).expect("a builtin module");
         let mut exports = module_exports.remove(&id).unwrap_or_default();
-        if !module.enabled {
-            exports = Exports::default();
-        }
         let mut members: Vec<Symbol> = module.enabled_rows().map(|row| intern(row.name)).collect();
         members.sort_by_key(|m| resolve(*m));
         for member in members {
@@ -581,7 +577,11 @@ fn bind_imports(
                     let value = exports.values.get(item).cloned();
                     let ty = exports.types.get(item).cloned();
                     if value.is_none() && ty.is_none() {
-                        diagnostics.push(missing_item(*m, *item, *item_span, exports));
+                        let builtin = match imported {
+                            Imported::Builtin(id) => id.builtin_name(),
+                            _ => None,
+                        };
+                        diagnostics.push(missing_item(*m, builtin, *item, *item_span, exports));
                         scope.values.entry(*item).or_insert(Binding::Poisoned);
                         continue;
                     }
@@ -750,7 +750,24 @@ fn report_private_in_public(
 }
 
 /// `import m.{ item }` where `m` does not offer `item`.
-fn missing_item(module: Symbol, item: Symbol, span: Span, exports: &Exports) -> Diagnostic {
+fn missing_item(
+    module: Symbol,
+    builtin: Option<&str>,
+    item: Symbol,
+    span: Span,
+    exports: &Exports,
+) -> Diagnostic {
+    // A member of a builtin module that this build lacks.
+    if let Some(builtin) = builtin
+        && let Some(feature) = crate::module::member_missing_feature(builtin, &resolve(item))
+    {
+        return Diagnostic::error(
+            Code::NotExported,
+            span,
+            crate::module::needs_feature(&format!("`{builtin}.{item}`"), feature),
+        )
+        .with_help(format!("rebuild silt with `--features {feature}`"));
+    }
     if exports.private.contains_key(&item) {
         return Diagnostic::error(
             Code::PrivateItem,
@@ -899,6 +916,9 @@ impl Resolver<'_> {
 
     /// The help for a builtin module used without its import.
     fn import_help(&self, module: &str) -> String {
+        if let Some(feature) = crate::module::missing_feature(module) {
+            return crate::module::needs_feature(&format!("module `{module}`"), feature);
+        }
         match self.kind {
             ModuleKind::Cell => format!("enter `import {module}` first"),
             _ => format!("add `import {module}` at the top of the file"),
@@ -1087,6 +1107,12 @@ impl Resolver<'_> {
     /// modules `elsewhere` offer.
     fn elsewhere_help(&self, name: Symbol, elsewhere: &[(Symbol, Option<Symbol>)]) -> String {
         let (module, bound_as) = elsewhere[0];
+        if let Some(feature) = crate::module::missing_feature(&resolve(module)) {
+            return format!(
+                "`{name}` is in module `{module}`, which is not part of this build of silt: it \
+                 needs the cargo feature `{feature}`"
+            );
+        }
         match bound_as {
             Some(bound_as) => format!(
                 "did you mean `{bound_as}.{name}`? or import the name: `import {module}.{{ {name} }}`"
@@ -2305,18 +2331,20 @@ impl Resolver<'_> {
                 && self.alias_of(head_name).is_none() =>
             {
                 let module_str = resolve(head_name);
-                self.error(
-                    Diagnostic::error(
-                        Code::ModuleNotImported,
-                        span,
-                        format!("module '{module_str}' is not imported"),
-                    )
-                    .with_help(self.import_help(&module_str))
-                    .with_fix(
+                let mut d = Diagnostic::error(
+                    Code::ModuleNotImported,
+                    span,
+                    format!("module '{module_str}' is not imported"),
+                )
+                .with_help(self.import_help(&module_str));
+                // An import of a module this build lacks would not help.
+                if crate::module::missing_feature(&module_str).is_none() {
+                    d = d.with_fix(
                         format!("Add import for `{module_str}`"),
                         vec![(Span::point(span.file, 0), format!("import {module_str}\n"))],
-                    ),
-                );
+                    );
+                }
+                self.error(d);
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
             }
@@ -2351,7 +2379,7 @@ impl Resolver<'_> {
             }
             Some(binding) => self.binding_res(&binding),
             None => {
-                let d = missing_item(bound_as, field, span, exports);
+                let d = missing_item(bound_as, id.builtin_name(), field, span, exports);
                 self.error(d);
                 Res::Error
             }

@@ -28,8 +28,8 @@ fn no_builtin_doc_leaks_yaml_frontmatter() {
             !body.contains("\ntitle: \""),
             "builtin doc for `{name}` contains a raw frontmatter \
              `title: \"…\"` line — YAML frontmatter leaked into hover \
-             markdown. Route the attach site through `strip_frontmatter` \
-             in src/typechecker/builtins/docs.rs."
+             markdown. A whole page is shown through `strip_frontmatter` \
+             (src/builtins/registry/docs.rs)."
         );
     }
 }

@@ -32,23 +32,67 @@ fn signature_help(tag: &str, source: &str, line: u32, character: u32) -> Value {
         .expect("signatureHelp response has a result")
 }
 
-/// The text of each parameter of the signature: the label's slice at
-/// the parameter's offsets.
+/// The text of each parameter of the signature: the parameter's label,
+/// or the label's slice at the parameter's offsets for a client that
+/// asked for offsets.
 fn parameters(signature: &Value) -> Vec<String> {
     let label = signature["label"].as_str().expect("a label");
     signature["parameters"]
         .as_array()
         .expect("a parameters array")
         .iter()
-        .map(|p| {
-            let range = p["label"].as_array().expect("label offsets");
-            let (start, end) = (
-                range[0].as_u64().expect("a start") as usize,
-                range[1].as_u64().expect("an end") as usize,
-            );
-            label[start..end].to_string()
+        .map(|p| match &p["label"] {
+            Value::String(text) => {
+                assert!(label.contains(text.as_str()), "{text} is part of {label}");
+                text.clone()
+            }
+            range => {
+                let range = range.as_array().expect("label offsets");
+                let (start, end) = (
+                    range[0].as_u64().expect("a start") as usize,
+                    range[1].as_u64().expect("an end") as usize,
+                );
+                label[start..end].to_string()
+            }
         })
         .collect()
+}
+
+/// A client that declares `labelOffsetSupport` gets offsets; one that
+/// does not (the other tests' client) gets the parameters' text.
+#[test]
+fn parameters_are_offsets_only_for_a_client_that_reads_them() {
+    let source = "import time\nfn main() {\n  time.add(time.now(), time.seconds(1))\n}\n";
+    let mut client = LspClient::spawn_uninitialized();
+    let _ = client.request(
+        "initialize",
+        json!({ "capabilities": { "textDocument": { "signatureHelp": { "signatureInformation": {
+            "parameterInformation": { "labelOffsetSupport": true }
+        } } } } }),
+    );
+    client.send_notification("initialized", json!({}));
+    let uri = format!(
+        "file:///tmp/silt_builtin_sig_offsets_{}.silt",
+        std::process::id()
+    );
+    client.did_open_and_wait(&uri, source);
+    let resp = client.request(
+        "textDocument/signatureHelp",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 23 } }),
+    );
+    client.shutdown();
+    let signature = &resp["result"]["signatures"][0];
+    assert_eq!(signature["parameters"][0]["label"], json!([12, 28]));
+    assert_eq!(
+        parameters(signature),
+        ["instant: Instant", "duration: Duration"]
+    );
+
+    let plain = signature_help("time_add_plain", source, 2, 23);
+    assert_eq!(
+        plain["signatures"][0]["parameters"][0]["label"],
+        "instant: Instant"
+    );
 }
 
 #[test]
@@ -138,4 +182,33 @@ fn completion_detail_names_a_builtin_record_by_its_name() {
     };
     assert_eq!(detail("sleep"), "Fn(Duration) -> ()");
     assert_eq!(detail("datetime"), "Fn(Date, Time) -> DateTime");
+}
+
+/// `postgres.` on a build without the postgres feature offers nothing:
+/// the module's import is the error, and the methods of every type are
+/// not its members.
+#[cfg(not(feature = "postgres"))]
+#[test]
+fn completion_after_a_module_that_is_not_built_offers_nothing() {
+    let source = "import postgres\nfn main() {\n  postgres.\n}\n";
+    let mut client = LspClient::spawn();
+    let uri = format!(
+        "file:///tmp/silt_builtin_completion_off_{}.silt",
+        std::process::id()
+    );
+    client.did_open_and_wait(&uri, source);
+    let resp = client.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 11 }
+        }),
+    );
+    client.shutdown();
+    let result = &resp["result"];
+    let items = result
+        .as_array()
+        .or_else(|| result["items"].as_array())
+        .expect("completion items");
+    assert!(items.is_empty(), "{items:?}");
 }
