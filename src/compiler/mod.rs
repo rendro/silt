@@ -131,6 +131,10 @@ struct CompileContext {
     upvalues: Vec<UpvalueDesc>,
     /// The loops the code being compiled is in, innermost last.
     loop_stack: Vec<LoopInfo>,
+    /// While the names of a pattern are being bound: the number of
+    /// locals there were before the pattern bound any. A pin in the
+    /// pattern is one of those (see `Compiler::compile_pattern_bind`).
+    pattern_floor: Option<usize>,
 }
 
 struct LoopInfo {
@@ -150,6 +154,7 @@ impl CompileContext {
             scope_starts: Vec::new(),
             upvalues: Vec::new(),
             loop_stack: Vec::new(),
+            pattern_floor: None,
         }
     }
 }

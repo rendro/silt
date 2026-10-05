@@ -856,9 +856,11 @@ fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
                 pattern_binders(rest, out);
             }
         }
+        // Every alternative binds the same names: they are the names of
+        // the first.
         PatternKind::Or(alts) => {
-            for alt in alts {
-                pattern_binders(alt, out);
+            if let Some(first) = alts.first() {
+                pattern_binders(first, out);
             }
         }
         PatternKind::Map(entries) => {

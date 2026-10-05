@@ -76,9 +76,10 @@ pub(super) enum CtorId {
 pub(super) struct Unverified;
 
 /// How many patterns one search may look at, over all the matrices it
-/// builds. A match with tens of thousands of arms stays under it; the
-/// bound stops a pattern set that would take exponential time.
-const MAX_CELLS: usize = 2_000_000;
+/// builds: about a second of work in a debug build, a tenth of that in a
+/// release build. A match of tens of thousands of arms stays far under
+/// it; the bound stops a pattern set that would take exponential time.
+const MAX_CELLS: usize = 32_000_000;
 
 /// How deep one search may recurse: about one level for every
 /// constructor on a path through a pattern.
@@ -89,6 +90,17 @@ static WILD: Pat = Pat::Wild;
 /// A row of the matrix: one pattern for each column.
 type Row<'p> = Vec<&'p Pat>;
 
+/// The variants of an enum the search counts: a variant declared a
+/// second time under a name (an error of the declaration) is none of its
+/// own, since no pattern can name it.
+fn distinct_variants(info: &EnumInfo) -> impl Iterator<Item = (usize, &VariantInfo)> {
+    let mut seen = std::collections::HashSet::new();
+    info.variants
+        .iter()
+        .enumerate()
+        .filter(move |(_, variant)| seen.insert(variant.name))
+}
+
 /// One run of the matrix algorithm.
 struct Search<'a> {
     enums: &'a HashMap<TypeRef, EnumInfo>,
@@ -97,13 +109,15 @@ struct Search<'a> {
 }
 
 impl<'a> Search<'a> {
-    fn new(enums: &'a HashMap<TypeRef, EnumInfo>) -> Self {
-        Search { enums, cells: 0 }
+    fn new(enums: &'a HashMap<TypeRef, EnumInfo>, cells: usize) -> Self {
+        Search { enums, cells }
     }
 
     /// Whether the rows together match every row of values. The rows
     /// have one width.
-    fn covers<'p>(&mut self, rows: Vec<Row<'p>>, depth: usize) -> Result<bool, Unverified> {
+    fn covers<'p>(&mut self, mut rows: Vec<Row<'p>>, depth: usize) -> Result<bool, Unverified> {
+        // A row with a test that covers nothing takes part in no answer.
+        rows.retain(|row| !row.iter().any(|pat| covers_nothing(pat)));
         let Some(first) = rows.first() else {
             return Ok(false);
         };
@@ -115,35 +129,34 @@ impl<'a> Search<'a> {
             return Err(Unverified);
         }
         // A row that takes every value answers alone.
-        for row in &rows {
-            if self.all_irrefutable(row, depth)? {
-                return Ok(true);
-            }
+        if rows
+            .iter()
+            .any(|row| row.iter().all(|pat| matches!(pat, Pat::Wild)))
+        {
+            return Ok(true);
         }
-        // A first column no row tests tells no two values apart: the
-        // answer is that of the other columns. Without this step a
-        // pattern with an or-pattern in each of n columns would be
-        // looked at once for each of the 2^n combinations.
-        let mut untested = true;
-        for row in &rows {
-            if !self.irrefutable(row[0], depth)? {
-                untested = false;
-                break;
+        // The column to split the values by: the first one the first row
+        // tests. That row has to be looked at in any case, and rows
+        // written to be read together (`(true, _, true)`,
+        // `(true, _, false)`) are decided together, where splitting by
+        // the columns from left to right would look at every combination
+        // of the columns between them.
+        let column = rows[0]
+            .iter()
+            .position(|pat| !matches!(pat, Pat::Wild))
+            .unwrap_or(0);
+        if column != 0 {
+            for row in &mut rows {
+                row.swap(0, column);
             }
-        }
-        if untested {
-            let tails = rows.iter().map(|row| row[1..].to_vec()).collect();
-            return self.covers(tails, depth + 1);
         }
 
         let mut expanded: Vec<Row<'p>> = Vec::with_capacity(rows.len());
         for row in rows {
             expand_or(row, &mut expanded);
         }
-        // What the column tests. A test that covers nothing (a pin, a
-        // float or string literal) may stand before a constructor or an
-        // integer range in it: the first of those decides how the column
-        // is split, and the rows of the other tests take part in no part.
+        expanded.retain(|row| !covers_nothing(row[0]));
+        // What the column tests: constructors, or integers.
         let firsts = || expanded.iter().map(|row| row[0]);
         let head = firsts()
             .find(|p| matches!(p, Pat::Ctor(..)))
@@ -153,56 +166,28 @@ impl<'a> Search<'a> {
                 let Some(signature) = self.signature(id, &expanded) else {
                     return self.covers(default_rows(&expanded), depth + 1);
                 };
+                // The matrices shown to be covered. Two constructors
+                // often leave the same rows (those of an or-pattern that
+                // names both, and the rows that do not test the column):
+                // the rows are looked at once.
+                let mut covered: Vec<Vec<Row<'p>>> = Vec::new();
                 for (ctor, arity) in &signature {
-                    if !self.covers(specialize(&expanded, ctor, *arity), depth + 1)? {
+                    let rows = specialize(&expanded, ctor, *arity);
+                    if covered.iter().any(|done| same_rows(done, &rows)) {
+                        continue;
+                    }
+                    if !self.covers(rows.clone(), depth + 1)? {
                         return Ok(false);
                     }
+                    covered.push(rows);
                 }
                 Ok(true)
             }
             Some(Pat::IntRange(..)) => self.covers_int_column(&expanded, depth),
-            // A column of tests that cover nothing between them: only the
-            // rows that do not test it count.
+            // No row tests the column after all (an or-pattern with an
+            // alternative that takes every value).
             _ => self.covers(default_rows(&expanded), depth + 1),
         }
-    }
-
-    /// Whether `pat` alone matches every value of its type.
-    fn irrefutable(&mut self, pat: &Pat, depth: usize) -> Result<bool, Unverified> {
-        match pat {
-            Pat::Wild => Ok(true),
-            Pat::Lit => Ok(false),
-            Pat::IntRange(lo, hi) => Ok(*lo == i64::MIN && *hi == i64::MAX),
-            Pat::Ctor(id, args) => {
-                let alone = match id {
-                    CtorId::Tuple | CtorId::Record(_) => true,
-                    CtorId::Variant(enum_ty, _) => self
-                        .enums
-                        .get(enum_ty)
-                        .is_some_and(|info| info.variants.len() == 1),
-                    CtorId::Bool(_) | CtorId::Nil | CtorId::Cons => false,
-                };
-                if !alone {
-                    return Ok(false);
-                }
-                for arg in args {
-                    if !self.irrefutable(arg, depth + 1)? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            Pat::Or(alts) => self.covers(alts.iter().map(|alt| vec![alt]).collect(), depth + 1),
-        }
-    }
-
-    fn all_irrefutable(&mut self, row: &[&Pat], depth: usize) -> Result<bool, Unverified> {
-        for pat in row {
-            if !self.irrefutable(pat, depth)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     /// Every constructor of the type `id` is a constructor of, with its
@@ -235,12 +220,7 @@ impl<'a> Search<'a> {
                 let arity = names.len();
                 vec![(CtorId::Record(names), arity)]
             }
-            CtorId::Variant(enum_ty, _) => self
-                .enums
-                .get(enum_ty)?
-                .variants
-                .iter()
-                .enumerate()
+            CtorId::Variant(enum_ty, _) => distinct_variants(self.enums.get(enum_ty)?)
                 .map(|(i, variant)| (CtorId::Variant(*enum_ty, i), variant.field_types.len()))
                 .collect(),
             CtorId::Bool(_) => vec![(CtorId::Bool(true), 0), (CtorId::Bool(false), 0)],
@@ -299,6 +279,26 @@ impl<'a> Search<'a> {
         }
         Ok(true)
     }
+}
+
+/// Whether `pat` matches no value that could be counted on: a test whose
+/// values are not recorded, an integer range without an integer, an
+/// or-pattern without alternatives.
+fn covers_nothing(pat: &Pat) -> bool {
+    match pat {
+        Pat::Lit => true,
+        Pat::IntRange(lo, hi) => lo > hi,
+        Pat::Or(alts) => alts.is_empty(),
+        Pat::Wild | Pat::Ctor(..) => false,
+    }
+}
+
+/// Whether two matrices are the same rows of the same patterns.
+fn same_rows(a: &[Row<'_>], b: &[Row<'_>]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(x, y)| x.len() == y.len() && x.iter().zip(y).all(|(p, q)| std::ptr::eq(*p, *q)))
 }
 
 /// Add `row` to `out`, as one row for each alternative of an or-pattern
@@ -360,8 +360,38 @@ fn specialize<'p>(rows: &[Row<'p>], ctor: &CtorId, arity: usize) -> Vec<Row<'p>>
 impl TypeChecker {
     /// Whether `pat` matches every value of its type: whether a `match`
     /// with it as the only arm is exhaustive.
+    #[cfg(test)]
     pub(super) fn irrefutable(&self, pat: &Pat) -> Result<bool, Unverified> {
-        Search::new(&self.tables.enums).irrefutable(pat, 0)
+        self.cover_together(&[pat], &mut 0)
+    }
+
+    /// Whether `pats`, each a pattern for the same value, match every
+    /// value of its type between them. `cells` is the number of patterns
+    /// the searches of the caller have looked at, this one included when
+    /// it returns: searches that share it share one bound.
+    pub(super) fn cover_together(
+        &self,
+        pats: &[&Pat],
+        cells: &mut usize,
+    ) -> Result<bool, Unverified> {
+        let mut search = Search::new(&self.tables.enums, *cells);
+        let answer = search.covers(pats.iter().map(|pat| vec![*pat]).collect(), 0);
+        *cells = search.cells;
+        answer
+    }
+
+    /// Whether a value built with the constructor `id` is every value of
+    /// its type: a tuple, a record, the one variant of an enum.
+    pub(super) fn stands_alone(&self, id: &CtorId) -> bool {
+        match id {
+            CtorId::Tuple | CtorId::Record(_) => true,
+            CtorId::Variant(enum_ty, _) => self
+                .tables
+                .enums
+                .get(enum_ty)
+                .is_some_and(|info| distinct_variants(info).count() == 1),
+            CtorId::Bool(_) | CtorId::Nil | CtorId::Cons => false,
+        }
     }
 
     /// Whether `rows`, each a pattern for the same value, cover every
@@ -371,7 +401,7 @@ impl TypeChecker {
         for row in rows {
             expand_or(vec![*row], &mut expanded);
         }
-        Search::new(&self.tables.enums).covers(specialize(&expanded, ctor, arity), 0)
+        Search::new(&self.tables.enums, 0).covers(specialize(&expanded, ctor, arity), 0)
     }
 
     /// Report a `match` whose arms leave a value of the scrutinee's type
@@ -404,8 +434,7 @@ impl TypeChecker {
             return;
         }
 
-        let matrix = rows.iter().map(|pat| vec![*pat]).collect();
-        match Search::new(&self.tables.enums).covers(matrix, 0) {
+        match self.cover_together(&rows, &mut 0) {
             Ok(true) => {}
             Ok(false) => {
                 let msg = self.missing_description(&rows, &scrutinee_ty);
@@ -488,10 +517,7 @@ impl TypeChecker {
             }
             Type::Generic(name, type_args) => {
                 if let Some(enum_info) = self.tables.enums.get(name) {
-                    let variants: Vec<std::string::String> = enum_info
-                        .variants
-                        .iter()
-                        .enumerate()
+                    let variants: Vec<std::string::String> = distinct_variants(enum_info)
                         .filter(|(i, variant)| {
                             missing(CtorId::Variant(*name, *i), variant.field_types.len())
                         })
