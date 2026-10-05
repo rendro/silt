@@ -6,8 +6,8 @@ import util
 
 fn main() {
   let m = match shapes.Circle(1.0) {
-    util.Circle(r) -> 1,
-    _ -> 2,
+    util.Circle(r) -> 1
+    _ -> 2
   }
   print(m)
 }

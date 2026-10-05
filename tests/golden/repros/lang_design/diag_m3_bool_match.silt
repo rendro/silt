@@ -2,6 +2,9 @@
 fn main() {
   let x = 3
   let a = match x > 2 { true -> "y" }
-  let b = match x > 2 { true -> "y", _ -> "n" }
+  let b = match x > 2 {
+    true -> "y"
+    _ -> "n"
+  }
   println(a)
 }

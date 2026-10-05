@@ -5,7 +5,10 @@ fn main() {
   let xs = 1..5 |> list.map { n -> n }
   println(xs)
   println(list.length(1..5))
-  println(match 5 { 1..5 -> "in", _ -> "out" })
+  println(match 5 {
+    1..5 -> "in"
+    _ -> "out"
+  })
   println(5..1 |> list.length())
   let r = 1..3
   println(r)

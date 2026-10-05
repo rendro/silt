@@ -2,8 +2,8 @@ import shapes.{ Shape }
 
 fn main() {
   let m = match Shape.Circle(2.0) {
-    Shape.Circle(r) -> "circle",
-    Shape.Rect(w, h) -> "rect",
+    Shape.Circle(r) -> "circle"
+    Shape.Rect(w, h) -> "rect"
   }
   print(m)
 }

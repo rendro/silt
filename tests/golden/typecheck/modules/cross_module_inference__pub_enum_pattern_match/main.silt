@@ -5,9 +5,9 @@ import a
 
 fn describe(c) {
   match c {
-    a.Red -> "red",
-    a.Green -> "green",
-    a.Blue -> "blue",
+    a.Red -> "red"
+    a.Green -> "green"
+    a.Blue -> "blue"
   }
 }
 

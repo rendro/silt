@@ -8,6 +8,9 @@ fn add(a, b) { a + b }
 fn one(a) { a }
 fn main() {
   let x = 5
-  let r = one(match x { 5 -> 50, _ -> 0 })
+  let r = one(match x {
+    5 -> 50
+    _ -> 0
+  })
   println(r)
 }

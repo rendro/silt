@@ -1,10 +1,25 @@
 -- Integer range patterns, with positive and negated heads and tails,
 -- bind the signed bounds they were written with (inclusive).
-fn pos(x: Int) -> String { match x { 1..10 -> "yes"  _ -> "no" } }
-fn both_neg(x: Int) -> String { match x { -10..-1 -> "yes"  _ -> "no" } }
-fn cross(x: Int) -> String { match x { -5..5 -> "yes"  _ -> "no" } }
-fn neg_tail(x: Int) -> String { match x { 1..-1 -> "yes"  _ -> "no" } }
-fn neg_head(x: Int) -> String { match x { -3..7 -> "yes"  _ -> "no" } }
+fn pos(x: Int) -> String { match x {
+  1..10 -> "yes"
+  _ -> "no"
+} }
+fn both_neg(x: Int) -> String { match x {
+  -10..-1 -> "yes"
+  _ -> "no"
+} }
+fn cross(x: Int) -> String { match x {
+  -5..5 -> "yes"
+  _ -> "no"
+} }
+fn neg_tail(x: Int) -> String { match x {
+  1..-1 -> "yes"
+  _ -> "no"
+} }
+fn neg_head(x: Int) -> String { match x {
+  -3..7 -> "yes"
+  _ -> "no"
+} }
 
 fn main() {
   println("1..10: {pos(0)} {pos(1)} {pos(10)} {pos(11)}")

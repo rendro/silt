@@ -3,7 +3,7 @@
 -- stderr-not-contains: error[parse]
 fn main() {
   let r = match util.Pt {
-    _ -> 1,
+    _ -> 1
   }
   print(r)
 }

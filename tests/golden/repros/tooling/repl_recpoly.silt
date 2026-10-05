@@ -1,5 +1,8 @@
 -- verdict: same
-fn rec_poly(x: a) -> a { match true { true -> x, false -> rec_poly(x + 1) } }
+fn rec_poly(x: a) -> a { match true {
+  true -> x
+  false -> rec_poly(x + 1)
+} }
 
 fn main() {
   println(rec_poly("s"))

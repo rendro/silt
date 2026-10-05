@@ -3790,7 +3790,7 @@ impl<'src> Parser<'src> {
         self.expect(&Token::Match)?;
         self.skip_nl();
 
-        // Guardless match: `match { cond -> body, ... }`
+        // Guardless match: `match { cond -> body ... }`
         let guardless = self.at(&Token::LBrace);
         let scrutinee = if guardless {
             None
@@ -3808,9 +3808,9 @@ impl<'src> Parser<'src> {
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
             arms.push(self.parse_match_arm(guardless)?);
-            // Allow optional comma between match arms
-            if self.at(&Token::Comma) {
-                self.advance();
+            // Arms are separated by line breaks, as statements are.
+            if !self.at_newline() && !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
+                return Err(self.same_line_err("match arm"));
             }
             self.skip_nl();
         }

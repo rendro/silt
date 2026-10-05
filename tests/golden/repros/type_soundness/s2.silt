@@ -1,6 +1,9 @@
 -- verdict: same
 type List(a) { Nil, Cons(a, List(a)) }
-fn len(xs: List(a)) -> Int { match xs { Nil -> 0, Cons(_, t) -> 1 + len(t) } }
+fn len(xs: List(a)) -> Int { match xs {
+  Nil -> 0
+  Cons(_, t) -> 1 + len(t)
+} }
 fn main() {
   println(len(Cons(1, Nil)))
   println(len([1, 2]))
