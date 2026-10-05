@@ -420,9 +420,6 @@ impl TypeChecker {
                     .iter()
                     .map(|te| self.resolve_type_expr(te, &mut param_map))
                     .collect();
-                if !args.is_empty() {
-                    self.trait_arg_bindings.insert((tv, bound), args.clone());
-                }
                 bounds.push((tv, bound, args));
             }
             if !bounds.is_empty() {
@@ -494,12 +491,6 @@ impl TypeChecker {
                 defined_in: pkg,
             },
         );
-        // In a default body `Self` implements the trait, at the trait's
-        // own parameters.
-        if !trait_param_vars.is_empty() {
-            let args = trait_param_vars.iter().map(|(_, ty)| ty.clone()).collect();
-            self.trait_arg_bindings.insert((self_var_id, key), args);
-        }
     }
 
     /// The signature a default method's body is checked against, once,
@@ -524,14 +515,21 @@ impl TypeChecker {
                 name: *name,
             })
             .collect();
-        let mut bounds = vec![(info.self_var, key)];
-        for (param, bound) in &info.param_where_clauses {
+        // `Self` implements the trait, at the trait's own parameters.
+        let bound = |var: TyVar, tr: TraitKey, args: Vec<Type>| Pred::Trait {
+            tr,
+            args,
+            subject: Type::Var(var),
+        };
+        let own_args = info.param_var_ids.iter().map(|v| Type::Var(*v)).collect();
+        let mut bounds = vec![bound(info.self_var, key, own_args)];
+        for (param, tr) in &info.param_where_clauses {
             if let Some(i) = info.params.iter().position(|p| p == param) {
-                bounds.push((info.param_var_ids[i], *bound));
+                bounds.push(bound(info.param_var_ids[i], *tr, Vec::new()));
             }
         }
-        for (var, bound, _) in info.method_bounds.get(&method).into_iter().flatten() {
-            bounds.push((*var, *bound));
+        for (var, tr, args) in info.method_bounds.get(&method).into_iter().flatten() {
+            bounds.push(bound(*var, *tr, args.clone()));
         }
         Some(FnSig {
             params: params.iter().map(|t| rigidify(t, &rigid)).collect(),
@@ -1217,16 +1215,6 @@ impl TypeChecker {
                     let resolved = self.apply(ty);
                     if let Type::Var(tv) = resolved {
                         impl_level_constraints.push((tv, *trait_name, resolved_bound_args.clone()));
-                        // Record the bound's args under (tv, trait) so
-                        // the call-site `bound_args` lookup in
-                        // `dispatch_method_entry` finds them when the
-                        // impl method gets dispatched. `instantiate_with_constraints`
-                        // / `instantiate_method_entry` propagate these
-                        // entries to fresh tyvars at each call site.
-                        if !resolved_bound_args.is_empty() {
-                            self.trait_arg_bindings
-                                .insert((tv, *trait_name), resolved_bound_args.clone());
-                        }
                         // Round 101 BROKEN: index in the EXPANDED-args
                         // space (see the `expanded_self_args` comment
                         // above), NOT the `target_param_names` space —
@@ -1683,11 +1671,6 @@ impl TypeChecker {
             //       the method's param_map — which sees BOTH impl-level
             //       binders AND method-local type annos.
             let mut method_constraints = impl_level_constraints.clone();
-            for (tv, bound, args) in &declared_bounds {
-                if !args.is_empty() {
-                    self.trait_arg_bindings.insert((*tv, *bound), args.clone());
-                }
-            }
             method_constraints.extend(declared_bounds);
             for wc in &method.where_clauses {
                 // A bound the resolver resolved to nothing: it reported why.
@@ -1747,10 +1730,6 @@ impl TypeChecker {
                         };
                         if let Some(tv) = bounded {
                             method_constraints.push((tv, *trait_name, resolved_bound_args.clone()));
-                            if !resolved_bound_args.is_empty() {
-                                self.trait_arg_bindings
-                                    .insert((tv, *trait_name), resolved_bound_args.clone());
-                            }
                         }
                     }
                     None => {
@@ -1796,7 +1775,11 @@ impl TypeChecker {
                         rigid: method_rigid,
                         bounds: method_constraints
                             .iter()
-                            .map(|(tv, bound, _)| (*tv, *bound))
+                            .map(|(tv, bound, args)| Pred::Trait {
+                                tr: *bound,
+                                args: args.clone(),
+                                subject: Type::Var(*tv),
+                            })
                             .collect(),
                         complete: true,
                     },

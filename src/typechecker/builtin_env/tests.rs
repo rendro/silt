@@ -64,9 +64,9 @@ fn a_row_s_scheme_is_its_signature() {
     let mut show = |name: &str| {
         let scheme = env.root.lookup(intern(name)).expect("bound").clone();
         let constraints: Vec<String> = scheme
-            .constraints
+            .preds
             .iter()
-            .map(|(_, t)| t.name.to_string())
+            .map(|Pred::Trait { tr, .. }| tr.name.to_string())
             .collect();
         let ty = checker.instantiate(&scheme);
         (format!("{ty}"), constraints, scheme.optional_last_param)

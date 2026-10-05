@@ -143,13 +143,13 @@ impl TypeChecker {
     /// what `generalize` quantifies.
     pub(super) fn enter_level(&mut self) {
         self.tables.vars.level += 1;
-        self.bound_marks.push(self.bound_log.len());
+        self.wanted_marks.push(self.wanted.len());
     }
 
     /// Leave the scope `enter_level` entered.
     pub(super) fn exit_level(&mut self) {
         self.tables.vars.level -= 1;
-        self.closed_mark = self.bound_marks.pop().expect("a level is open");
+        self.closed_mark = self.wanted_marks.pop().expect("a level is open");
     }
 
     /// Keep the unresolved variables of `ty` out of every later
@@ -306,14 +306,11 @@ impl TypeChecker {
         let owners = self.group_rigid.entry(r1.var).or_default();
         owners.extend(owners2);
         // What either's `where` clauses declare holds of the one variable.
-        if let Some(traits) = self.active_constraints.get(&r2.var).cloned() {
-            let merged = self.active_constraints.entry(r1.var).or_default();
-            for t in traits {
-                if !merged.contains(&t) {
-                    merged.push(t);
-                }
-                if let Some(args) = self.trait_arg_bindings.get(&(r2.var, t)).cloned() {
-                    self.trait_arg_bindings.entry((r1.var, t)).or_insert(args);
+        if let Some(bounds) = self.bounds.get(&r2.var).cloned() {
+            let merged = self.bounds.entry(r1.var).or_default();
+            for bound in bounds {
+                if !merged.iter().any(|(t, _)| *t == bound.0) {
+                    merged.push(bound);
                 }
             }
         }

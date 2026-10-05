@@ -499,9 +499,38 @@ impl std::fmt::Display for Shown<'_> {
 
 // ── Type scheme (polymorphic type) ──────────────────────────────────
 
-/// A type scheme represents a polymorphic type: forall vars . ty
+/// What a scheme asks of the types its variables stand for: each use of
+/// the scheme owes its predicates, at the types the use gives the
+/// variables.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pred {
+    /// `subject` implements the trait `tr`, at the trait arguments
+    /// `args` (`where a: TryInto(Int)`: `[Int]`; none for a trait without
+    /// parameters).
+    Trait {
+        tr: TraitKey,
+        args: Vec<Type>,
+        subject: Type,
+    },
+}
+
+impl Pred {
+    /// The predicate with its type variables replaced as `mapping` says.
+    pub fn substitute(&self, mapping: &HashMap<TyVar, Type>) -> Pred {
+        match self {
+            Pred::Trait { tr, args, subject } => Pred::Trait {
+                tr: *tr,
+                args: args.iter().map(|t| substitute_vars(t, mapping)).collect(),
+                subject: substitute_vars(subject, mapping),
+            },
+        }
+    }
+}
+
+/// A type scheme represents a polymorphic type: forall vars . preds => ty
 /// The `vars` are the universally quantified type variables.
-/// The `constraints` are trait bounds on type variables (from `where` clauses).
+/// The `preds` are what each use owes for them (from `where` clauses, or
+/// inferred from what the definition's body uses).
 ///
 /// `optional_last_param` is part of a function's signature: when `true`,
 /// a call may leave out the function's last parameter. Only the builtins
@@ -515,8 +544,8 @@ impl std::fmt::Display for Shown<'_> {
 #[derive(Debug, Clone)]
 pub struct Scheme {
     pub vars: Vec<TyVar>,
+    pub preds: Vec<Pred>,
     pub ty: Type,
-    pub constraints: Vec<(TyVar, TraitKey)>,
     pub optional_last_param: bool,
 }
 
@@ -524,8 +553,8 @@ impl Scheme {
     pub fn mono(ty: Type) -> Self {
         Scheme {
             vars: Vec::new(),
+            preds: Vec::new(),
             ty,
-            constraints: Vec::new(),
             optional_last_param: false,
         }
     }

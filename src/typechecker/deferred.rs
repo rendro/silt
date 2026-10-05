@@ -373,34 +373,8 @@ impl TypeChecker {
             }
         }
 
-        // The bounds owed for a variable that was unknown where they
-        // were owed (`owe_bound`). A variable known now is checked. An
-        // annotation variable must have the bound declared. One still
-        // unknown is generalised with the definition being checked, and
-        // the bound is its scheme's (`generalize`), or it belongs to a
-        // binding checked later.
-        let pending_where = std::mem::take(&mut self.pending_where_constraints);
-        for pending in pending_where {
-            let PendingWhereConstraint {
-                tyvar,
-                trait_name,
-                callee_fn_name,
-                span,
-                bound_trait_args,
-            } = pending;
-            let resolved = self.apply(&Type::Var(tyvar));
-            match &resolved {
-                Type::Error | Type::Never => {}
-                Type::Var(v) => self.pending_where_constraints.push(PendingWhereConstraint {
-                    tyvar: *v,
-                    trait_name,
-                    callee_fn_name,
-                    span,
-                    bound_trait_args,
-                }),
-                Type::Rigid(r) => self.require_declared_bound(*r, trait_name, callee_fn_name, span),
-                _ => self.verify_trait_obligation(trait_name, &bound_trait_args, &resolved, span),
-            }
-        }
+        // The predicates owed for a subject that was unknown where they
+        // were owed (`want`).
+        self.solve_wanted(0);
     }
 }

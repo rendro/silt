@@ -1,25 +1,78 @@
 use super::*;
 
-/// A bound owed for a type variable that was unknown where it was owed
-/// (`TypeChecker::owe_bound`). Resolved in `finalize_deferred_checks`,
-/// when the definitions being checked are done.
+/// A predicate a use owes (`TypeChecker::want`), until it is solved:
+/// checked against the impls once its subject is known, or against the
+/// declared bounds of an annotation variable; or taken into the scheme
+/// of the definition that is generalised over its subject.
 #[derive(Debug, Clone)]
-pub(crate) struct PendingWhereConstraint {
-    /// The tyvar at the call site that carries the obligation.
-    pub(super) tyvar: TyVar,
-    /// The trait name the obligation requires.
-    pub(super) trait_name: TraitKey,
-    /// Name of the callee function (for nicer diagnostics).
-    pub(super) callee_fn_name: Option<Symbol>,
-    /// Span of the call site.
+pub(crate) struct Wanted {
+    pub(super) pred: Pred,
+    pub(super) origin: Origin,
+    /// Whether it is checked already.
+    pub(super) solved: bool,
+}
+
+/// Where a predicate is owed, and what asked for it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Origin {
+    /// The use: a call, a name used as a value.
     pub(super) span: Span,
-    /// The trait arguments of the bound, e.g. `[Int]` for
-    /// `where a: TryInto(Int)`; empty for a trait without parameters.
-    /// The matched impl's arguments are compared against them.
-    pub(super) bound_trait_args: Vec<Type>,
+    /// The name of what is used, for a message (`hello`, `list.sort`).
+    pub(super) callee: Option<Symbol>,
 }
 
 impl TypeChecker {
+    /// A use owes `pred`. A subject that is known is checked now; an
+    /// annotation variable must have the bound declared. A subject still
+    /// unknown waits (`solve_wanted`): by the time the definitions being
+    /// checked are done it is known, or it is generalised and the
+    /// predicate is the scheme's (`generalize`), or it belongs to an
+    /// outer binding and waits on.
+    pub(super) fn want(&mut self, pred: Pred, origin: Origin) {
+        let Pred::Trait { subject, .. } = &pred;
+        let known = !matches!(self.apply(subject), Type::Var(_));
+        self.wanted.push(Wanted {
+            pred,
+            origin,
+            solved: false,
+        });
+        if known {
+            self.solve_wanted(self.wanted.len() - 1);
+        }
+    }
+
+    /// Check each predicate owed since `from` whose subject is known by
+    /// now.
+    pub(super) fn solve_wanted(&mut self, from: usize) {
+        for i in from..self.wanted.len() {
+            if self.wanted[i].solved {
+                continue;
+            }
+            let Pred::Trait { tr, args, subject } = self.wanted[i].pred.clone();
+            let origin = self.wanted[i].origin;
+            let subject = self.apply(&subject);
+            match &subject {
+                Type::Var(_) => continue,
+                Type::Error | Type::Never => {}
+                Type::Rigid(r) => self.require_declared_bound(*r, tr, origin.callee, origin.span),
+                // Recursively walk the matched impl's where clauses
+                // against the subject's arguments.
+                _ => self.verify_trait_obligation(tr, &args, &subject, origin.span),
+            }
+            self.wanted[i].solved = true;
+        }
+    }
+
+    /// Where the scheme being instantiated is used: the use that named
+    /// itself (`named_use`: a call, a name), else the expression being
+    /// checked.
+    pub(super) fn use_origin(&self) -> Origin {
+        self.named_use.unwrap_or(Origin {
+            span: self.at,
+            callee: None,
+        })
+    }
+
     // ── Type name for trait impl matching ────────────────────────────
 
     /// The type a resolved Type's impls are keyed by. Returns `None` if

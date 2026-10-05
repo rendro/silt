@@ -184,8 +184,12 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern(name),
             Scheme {
                 vars: vec![av],
+                preds: vec![Pred::Trait {
+                    tr: TraitKey::builtin("Display"),
+                    args: Vec::new(),
+                    subject: a.clone(),
+                }],
                 ty: Type::Fun(vec![a], Box::new(result)),
-                constraints: vec![(av, TraitKey::builtin("Display"))],
                 optional_last_param: false,
             },
         );
@@ -230,8 +234,8 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern(name),
             Scheme {
                 vars,
+                preds: vec![],
                 ty: Type::type_of(ty),
-                constraints: vec![],
                 optional_last_param: false,
             },
         );
@@ -378,7 +382,6 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
     );
     checker.defs = None;
     checker.own_types.clear();
-    checker.trait_arg_bindings.clear();
 }
 
 /// Test-only introspection: collect the auto-derived trait-impl and

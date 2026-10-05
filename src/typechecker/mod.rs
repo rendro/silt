@@ -47,7 +47,7 @@ pub use builtin_env::*;
 use declare_fns::FnSig;
 use derive_synth::*;
 use env::TypeEnv;
-use solve::PendingWhereConstraint;
+use solve::{Origin, Wanted};
 use std::rc::Rc;
 pub use tables::*;
 pub use unify::*;
@@ -82,17 +82,11 @@ pub struct TypeChecker {
     pub(super) loop_binding_types: Option<Vec<Type>>,
     /// The bounds in scope: for each annotation variable of a declaration
     /// whose body was or is being checked (by the variable it is in the
-    /// declaration's scheme), the traits its `where` clauses declare, and
-    /// their supertraits. A rigid variable has the methods of these.
-    pub(super) active_constraints: HashMap<TyVar, Vec<TraitKey>>,
-    /// Side channel holding trait arguments for parameterized-trait
-    /// constraints, e.g. `where a: TryInto(Int)` stores `[Int]` under
-    /// the key `(tyvar_of_a, TryInto)`. Populated during
-    /// `register_fn_decl` and `register_trait_impl` alongside the
-    /// parallel monomorphic `active_constraints`; consumed during
-    /// descriptor method resolution to substitute trait params.
-    /// Absent for bare `where a: Display` entries.
-    pub(super) trait_arg_bindings: HashMap<(TyVar, TraitKey), Vec<Type>>,
+    /// declaration's scheme), the traits its `where` clauses declare and
+    /// their supertraits, each with its trait arguments (`[Int]` for
+    /// `where a: TryInto(Int)`), as the declaration's scheme writes them.
+    /// A rigid variable has the methods of these.
+    pub(super) bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
     /// Deferred checks for field access on type variables (B4).
@@ -144,19 +138,25 @@ pub struct TypeChecker {
     /// reset it afterward. Defaults to a sentinel zero-span when no
     /// caller has populated it.
     pub(super) current_type_anno_span: Option<Span>,
-    /// The bounds owed for a type variable that was unknown where they
-    /// were owed (see `owe_bound`), until the definitions being checked
-    /// are done.
-    pub(super) pending_where_constraints: Vec<PendingWhereConstraint>,
-    /// The bounds the instantiated variables of the schemes used so far
-    /// owe, in the order they were instantiated: `generalize` puts those
-    /// on a variable it quantifies in the scheme (`let f = constrained_fn`,
-    /// `fn wrap(x) { constrained_fn(x) }`).
-    pub(super) bound_log: Vec<(TyVar, TraitKey)>,
-    /// Where in `bound_log` each open generalisation scope starts
+    /// The predicates the uses checked so far owe (`want`), in the order
+    /// they were owed. One is solved once its subject is known; one whose
+    /// subject `generalize` quantifies is the scheme's
+    /// (`let f = constrained_fn`, `fn wrap(x) { constrained_fn(x) }`).
+    pub(super) wanted: Vec<Wanted>,
+    /// Where in `wanted` each open generalisation scope starts
     /// (`enter_level`), and where the one `exit_level` just left started.
-    pub(super) bound_marks: Vec<usize>,
+    pub(super) wanted_marks: Vec<usize>,
     pub(super) closed_mark: usize,
+    /// The use that names itself for the scheme instantiated next: a
+    /// call (its span, the callee as written), a name used as a value.
+    /// `instantiate` takes it.
+    pub(super) named_use: Option<Origin>,
+    /// The expression being checked.
+    pub(super) at: Span,
+    /// The parameter types the closure literal checked next is expected
+    /// to have: it is an argument of a call whose callee is known. The
+    /// closure takes it.
+    pub(super) expected_closure: Option<Vec<Type>>,
     /// The annotation variables of the declaration whose body is being
     /// checked, by name: an annotation in the body that writes one of the
     /// names means the same variable.
@@ -266,8 +266,7 @@ impl TypeChecker {
         TypeChecker {
             errors: Vec::new(),
             loop_binding_types: None,
-            active_constraints: HashMap::new(),
-            trait_arg_bindings: HashMap::new(),
+            bounds: HashMap::new(),
             current_return_type: None,
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
@@ -277,10 +276,12 @@ impl TypeChecker {
             exhaustiveness_span: std::cell::Cell::new(Span::BUILTIN),
             recovery_stub_names: std::collections::HashSet::new(),
             current_type_anno_span: None,
-            pending_where_constraints: Vec::new(),
-            bound_log: Vec::new(),
-            bound_marks: Vec::new(),
+            wanted: Vec::new(),
+            wanted_marks: Vec::new(),
             closed_mark: 0,
+            named_use: None,
+            at: Span::BUILTIN,
+            expected_closure: None,
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
             unknown_bounds: std::collections::HashSet::new(),
@@ -831,12 +832,19 @@ impl TypeChecker {
         // A definition's type may mention an annotation variable of
         // another function of the group: the bounds are the group's, each
         // on the variable its own stands for.
-        let bounds: Vec<(TyVar, TraitKey)> = component
+        let bounds: Vec<Pred> = component
             .members
             .iter()
             .filter_map(|&i| sigs[i].as_ref())
-            .flat_map(|sig| sig.bounds.iter().copied())
-            .map(|(var, bound)| (self.rigid_rep_var(var), bound))
+            .flat_map(|sig| sig.bounds.iter().cloned())
+            .map(|Pred::Trait { tr, args, subject }| Pred::Trait {
+                tr,
+                args,
+                subject: match subject {
+                    Type::Var(var) => Type::Var(self.rigid_rep_var(var)),
+                    other => other,
+                },
+            })
             .collect();
         for &i in &component.members {
             if let (Decl::Fn(f), Some(sig)) = (&decls[i], &sigs[i])
