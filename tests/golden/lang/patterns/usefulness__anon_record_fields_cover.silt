@@ -1,0 +1,31 @@
+-- The patterns of an anonymous record's fields count towards coverage,
+-- also when the arms name different fields, and when the value is of a
+-- declared record type.
+type Switch { on: Bool, level: Int }
+fn level(r: {on: Bool, n: Int}) -> Int {
+  match r {
+    {on: true} -> 1
+    {on: false, n: n} -> n
+  }
+}
+fn word(r: {on: Bool, loud: Bool}) -> String {
+  match r {
+    {on: false} -> "off"
+    {loud: true} -> "loud"
+    {on: true, loud: false} -> "quiet"
+  }
+}
+fn dim(s: Switch) -> Int {
+  match s {
+    {on: false, ...rest} -> 0
+    Switch { on: true, level } -> level
+  }
+}
+fn main() {
+  println(level({on: false, n: 5}))
+  println(level({on: true, n: 5}))
+  println(word({on: true, loud: false}))
+  println(word({on: true, loud: true}))
+  println(dim(Switch { on: true, level: 3 }))
+  println(dim(Switch { on: false, level: 3 }))
+}

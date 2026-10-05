@@ -1,0 +1,34 @@
+-- The patterns of a list's elements count towards coverage: lists of
+-- lists, of options and of booleans, matched without a `_` arm.
+fn first(xs: List(List(Int))) -> Int {
+  match xs {
+    [] -> 0
+    [[], ..rest] -> 1
+    [[a, ..r], ..rest] -> a
+  }
+}
+fn heads(xs: List(Option(Int))) -> Int {
+  match xs {
+    [] -> -1
+    [None, ..rest] -> -2
+    [Some(n)] -> n
+    [Some(n), _, ..rest] -> n * 10
+  }
+}
+fn both(xs: List(Bool)) -> String {
+  match xs {
+    [true, true] -> "both"
+    [true, false] | [false, _] -> "not both"
+    [] | [_] | [_, _, _, .._] -> "not two"
+  }
+}
+fn main() {
+  println(first([[3]]))
+  println(first([[], [4]]))
+  println(heads([Some(7)]))
+  println(heads([Some(7), None]))
+  println(heads([None]))
+  println(both([true, true]))
+  println(both([false, true]))
+  println(both([true]))
+}

@@ -255,6 +255,35 @@ The compiler checks that your match covers all possible cases. Missing a
 variant produces a compile-time error. This is one of the strongest benefits
 of `match` as the sole branching construct.
 
+The check looks inside patterns: the fields of constructors, tuples and
+records, the elements of list patterns, the alternatives of or-patterns.
+Arms may split a value any way they like, as long as together they leave
+nothing out:
+
+```silt
+fn describe(xs: List(Option(Int))) -> String {
+  match xs {
+    [] -> "empty"
+    [None, ..rest] -> "starts with nothing"
+    [Some(n)] -> "just {n}"
+    [Some(n), _, ..rest] -> "{n} and more"
+  }
+}
+
+fn main() {
+  println(describe([Some(1), None]))
+}
+```
+
+An arm with a guard may not be taken, so it covers nothing. Number and
+string literals, ranges, pins and map patterns never cover their type
+between them: a match on such a value needs an arm that takes every value
+(`_` or a name).
+
+A match with so many interdependent patterns that the check cannot finish
+is an error too ("could not verify that the match is exhaustive"); a `_`
+arm settles it.
+
 **Trade-off: no `if`.** Simple boolean checks are more verbose (`match debug
 { true -> ..., false -> () }`). In practice, guardless match and `when`-`else`
 cover most cases.

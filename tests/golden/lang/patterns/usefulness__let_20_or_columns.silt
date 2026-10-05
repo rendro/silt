@@ -1,0 +1,8 @@
+-- A `let` over a tuple with an or-pattern in each of 20 columns is
+-- irrefutable: every column is covered by its own two alternatives, and
+-- the columns are not multiplied out.
+type T { A, B }
+fn main() {
+  let (A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B) = (A, A, A, A, A, A, A, A, A, A, A, A, A, A, A, A, A, A, A, B)
+  println("bound")
+}
