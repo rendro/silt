@@ -101,27 +101,6 @@ impl TypeChecker {
         self.instantiate_with_constraints(scheme).0
     }
 
-    /// Instantiate a `MethodEntry`'s template type by generating fresh type
-    /// variables for every free type variable in it.
-    ///
-    /// Method entries store a raw `Type` (not a `Scheme`) for historical
-    /// reasons. Without this instantiation, the first call to a polymorphic
-    /// auto-derived method (e.g. `equal`) would permanently bind its
-    /// parameter type variables via unification, breaking subsequent calls
-    /// with different argument types.
-    pub(super) fn instantiate_method_type(&mut self, ty: &Type) -> Type {
-        let ty = self.apply(ty);
-        let fvs = free_vars_in(&ty);
-        if fvs.is_empty() {
-            return ty;
-        }
-        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-        for v in fvs {
-            mapping.insert(v, self.fresh_var());
-        }
-        substitute_vars(&ty, &mapping)
-    }
-
     /// Instantiate a `MethodEntry`'s template type AND its where-clause
     /// constraints through a single shared substitution, so the returned
     /// `(Type, Vec<(TyVar, TraitKey)>)` pair uses consistent fresh TyVars.

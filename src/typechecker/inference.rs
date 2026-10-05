@@ -253,13 +253,17 @@ impl TypeChecker {
     /// annotation variable `r`, each with its trait and its type: `Self`
     /// is `r`, and the trait's parameters are what the bound says
     /// (`where a: TryInto(Int)`).
-    pub(super) fn bound_methods(&mut self, r: RigidId, field: Symbol) -> Vec<(TraitKey, Type)> {
+    pub(super) fn bound_methods(
+        &mut self,
+        r: RigidId,
+        field: Symbol,
+    ) -> Vec<(TraitKey, Type, Vec<MethodBound>)> {
         let trait_names = self
             .active_constraints
             .get(&r.var)
             .cloned()
             .unwrap_or_default();
-        let mut matches: Vec<(TraitKey, Type)> = Vec::new();
+        let mut matches: Vec<(TraitKey, Type, Vec<MethodBound>)> = Vec::new();
         for trait_name in trait_names {
             let Some(info) = self.tables.traits.get(&trait_name) else {
                 continue;
@@ -276,12 +280,54 @@ impl TypeChecker {
                     mapping.insert(tv, substitute_vars(arg, &self.rigid_of));
                 }
             }
-            matches.push((trait_name, substitute_vars(method_ty, &mapping)));
+            // The method's own bounds: each call owes them.
+            let bounds = info
+                .method_bounds
+                .get(&field)
+                .into_iter()
+                .flatten()
+                .map(|(tv, bound, args)| {
+                    let args = args.iter().map(|t| substitute_vars(t, &mapping)).collect();
+                    (*tv, *bound, args)
+                })
+                .collect();
+            matches.push((trait_name, substitute_vars(method_ty, &mapping), bounds));
         }
         if let Some(t) = self.forced_trait {
-            matches.retain(|(n, _)| *n == t);
+            matches.retain(|(n, ..)| *n == t);
         }
         matches
+    }
+
+    /// The type of a call of a method that a bound gives an annotation
+    /// variable (`bound_methods`): what the method leaves general (its
+    /// own type variables) is fresh at each call, and the call owes the
+    /// method's own bounds on them.
+    pub(super) fn instantiate_bound_method(
+        &mut self,
+        method_ty: &Type,
+        bounds: &[MethodBound],
+        method: Symbol,
+        span: Span,
+    ) -> Type {
+        let ty = self.apply(method_ty);
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        for v in free_vars_in(&ty) {
+            mapping.insert(v, self.fresh_var());
+        }
+        for (tv, bound, args) in bounds {
+            let Some(Type::Var(fresh)) = mapping.get(tv).cloned() else {
+                continue;
+            };
+            let args: Vec<Type> = args.iter().map(|t| substitute_vars(t, &mapping)).collect();
+            self.bound_log.push((fresh, *bound));
+            if !args.is_empty() {
+                self.trait_arg_bindings
+                    .insert((fresh, *bound), args.clone());
+            }
+            self.owe_bound(fresh, *bound, args, Some(method), span);
+        }
+        substitute_vars(&ty, &mapping)
     }
 
     /// Report a call of `method`, of the trait `trait_name` another module
@@ -533,7 +579,7 @@ impl TypeChecker {
                 if matches.len() > 1 {
                     let trait_list = matches
                         .iter()
-                        .map(|(name, _)| self.show_trait(*name))
+                        .map(|(name, ..)| self.show_trait(*name))
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.error(
@@ -546,10 +592,9 @@ impl TypeChecker {
                     );
                     return None;
                 }
-                // What the method leaves general (its own type
-                // variables) is fresh at each call.
                 self.method_trait = Some(matches[0].0);
-                let instantiated = self.instantiate_method_type(&matches[0].1);
+                let instantiated =
+                    self.instantiate_bound_method(&matches[0].1, &matches[0].2, field, span);
                 Some(self.apply(&instantiated))
             }
             _ => {
@@ -1682,7 +1727,7 @@ impl TypeChecker {
                         if matches.len() > 1 {
                             let trait_list = matches
                                 .iter()
-                                .map(|(name, _)| self.show_trait(*name))
+                                .map(|(name, ..)| self.show_trait(*name))
                                 .collect::<Vec<_>>()
                                 .join(", ");
                             self.error(
@@ -1693,12 +1738,11 @@ impl TypeChecker {
                                 span,
                             );
                             Type::Error
-                        } else if let Some((trait_name, method_ty)) = matches.first() {
+                        } else if let Some((trait_name, method_ty, bounds)) = matches.first() {
                             self.last_field_access_was_method = true;
                             self.method_trait = Some(*trait_name);
-                            // What the method leaves general (its own
-                            // type variables) is fresh at each call.
-                            let instantiated = self.instantiate_method_type(method_ty);
+                            let instantiated =
+                                self.instantiate_bound_method(method_ty, bounds, field, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
