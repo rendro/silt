@@ -498,3 +498,6 @@ pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     }
     out
 }
+
+#[cfg(test)]
+mod tests;

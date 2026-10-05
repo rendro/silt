@@ -370,48 +370,52 @@ fn build_module(
     specs: Vec<RowSpec>,
 ) -> Module {
     let enabled = call.is_some();
-    let rows = specs
+    let mut rows: Vec<Row> = specs
         .into_iter()
         .map(|spec| {
-            let mut row = Row {
+            let on = enabled && spec.feature.is_none_or(|(_, built)| built);
+            Row {
                 signature: spec.signature,
                 summary: spec.summary,
                 name: "",
                 params: Vec::new(),
                 optional_last: spec.optional_last,
                 feature: spec.feature.map(|(feature, _)| feature),
-                enabled: enabled && spec.feature.is_none_or(|(_, built)| built),
-                body: Body::Off,
-            };
-            let program = parse(&row.header());
-            let [Decl::Fn(f)] = program.decls.as_slice() else {
-                panic!(
-                    "the row `{}` of {name} is not one signature",
-                    spec.signature
-                );
-            };
-            row.name = leak(resolve(f.name));
-            if spec.constant.is_none() {
-                row.params = f
-                    .params
-                    .iter()
-                    .map(|p| match (&p.kind, &p.pattern.kind) {
-                        (ParamKind::Data | ParamKind::Type, PatternKind::Ident(n)) => {
-                            leak(resolve(*n))
-                        }
-                        _ => panic!("a parameter of {name}.{} is not a name", row.name),
-                    })
-                    .collect();
+                enabled: on,
+                body: match (spec.constant, call) {
+                    _ if !on => Body::Off,
+                    (Some(value), _) => Body::Const(value),
+                    (None, Some(call)) => Body::Untyped(call),
+                    (None, None) => Body::Off,
+                },
             }
-            row.body = match (spec.constant, call) {
-                _ if !row.enabled => Body::Off,
-                (Some(value), _) => Body::Const(value),
-                (None, Some(call)) => Body::Untyped(call),
-                (None, None) => Body::Off,
-            };
-            row
         })
         .collect();
+    // The names, from the signatures: every row's header, parsed as one
+    // text.
+    let headers: String = rows.iter().map(|row| row.header() + "\n").collect();
+    let program = parse(&headers);
+    assert_eq!(
+        program.decls.len(),
+        rows.len(),
+        "each row of {name} is one signature"
+    );
+    for (row, decl) in rows.iter_mut().zip(&program.decls) {
+        let Decl::Fn(f) = decl else {
+            panic!("the row `{}` of {name} is not a signature", row.signature);
+        };
+        row.name = leak(resolve(f.name));
+        if !row.is_constant() {
+            row.params = f
+                .params
+                .iter()
+                .map(|p| match (&p.kind, &p.pattern.kind) {
+                    (ParamKind::Data | ParamKind::Type, PatternKind::Ident(n)) => leak(resolve(*n)),
+                    _ => panic!("a parameter of {name}.{} is not a name", row.name),
+                })
+                .collect();
+        }
+    }
     Module {
         name,
         feature,
