@@ -103,3 +103,39 @@ fn a_type_parameter_and_a_where_bound_are_shown_as_written() {
     );
     assert_eq!(parameters(signature), ["m: Map(a, b)", "k: a"]);
 }
+
+/// Completion after `time.` shows each function's type; a builtin record
+/// type is named there as a signature names it, `Duration`, not spelled
+/// out with its fields (`Duration {ns: Int}`).
+#[test]
+fn completion_detail_names_a_builtin_record_by_its_name() {
+    let source = "import time\nfn main() {\n  time.\n}\n";
+    let mut client = LspClient::spawn();
+    let uri = format!(
+        "file:///tmp/silt_builtin_completion_{}.silt",
+        std::process::id()
+    );
+    client.did_open_and_wait(&uri, source);
+    let resp = client.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 7 }
+        }),
+    );
+    client.shutdown();
+    let result = &resp["result"];
+    let items = result
+        .as_array()
+        .or_else(|| result["items"].as_array())
+        .expect("completion items");
+    let detail = |label: &str| {
+        items
+            .iter()
+            .find(|item| item["label"] == label)
+            .unwrap_or_else(|| panic!("`{label}` is offered after `time.`"))["detail"]
+            .clone()
+    };
+    assert_eq!(detail("sleep"), "Fn(Duration) -> ()");
+    assert_eq!(detail("datetime"), "Fn(Date, Time) -> DateTime");
+}
