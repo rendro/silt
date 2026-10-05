@@ -1,0 +1,21 @@
+-- cmd: fmt --next
+-- A line that does not fit breaks where the grammar allows a line break:
+-- in front of each `.` of a chain of two method calls or more, behind
+-- the commas of a closure's parameters, behind each `+` of a list of
+-- bounds, behind `|` between the alternatives of a pattern (in front of
+-- `|` and of `+` the grammar allows none).
+trait Describe(a): FirstSuperTraitWithALongName(a) + SecondSuperTraitWithALongName + ThirdSuperTraitWithALongName {
+  fn describe(self) -> String
+}
+
+fn main() {
+  let short = builder.name("a").size(2).build()
+  let long = builder_with_a_long_name.set_the_name("a rather long name").set_the_size(123456789).set_the_colour("green").build()
+  let module = string.split("the first field of a module is not broken off, even in a line that is too long", " ")
+  let f = { first_parameter_with_a_long_name, second_parameter_with_a_long_name, third_parameter_with_a_long_name -> 1 }
+  match long {
+    FirstVariantWithALongName(_) | SecondVariantWithALongName(_) | ThirdVariantWithALongName(_) | Fourth(_) -> 1
+    _ -> 0
+  }
+  println("{short} {module} {f(1, 2, 3)}")
+}

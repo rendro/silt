@@ -1,0 +1,11 @@
+-- cmd: fmt --next
+-- The comment lines that start a file, up to the first empty line or
+-- the first declaration, are its header: they stay first when the
+-- imports are sorted, and do not go with the import under them.
+import string
+-- about list
+import list
+
+fn main() {
+  println(string.length("{list.length([1])}"))
+}

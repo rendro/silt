@@ -1,0 +1,32 @@
+-- cmd: fmt --next
+-- `where` stands on the line of the header if it fits; if not, on a
+-- line of its own with each clause on its line, one level deeper.
+trait Table(k) where k: Hash + Equal {
+  fn get(self, key: k) -> Int
+}
+
+trait Show for Box(a) where a: Show {
+  fn show(self) -> String {
+    "box"
+  }
+}
+
+fn short(x: a) -> a where a: Display {
+  x
+}
+
+fn a_function_with_a_long_name(first_parameter: a, second_parameter: b) -> Result(a, b)
+  where
+    a: Display + Compare,
+    b: Hash {
+  Ok(first_parameter)
+}
+
+fn a_function_with_many_parameters(
+  first_parameter: a,
+  second_parameter: b,
+  third_parameter: c,
+  fourth: d,
+) -> a where a: Display, b: Hash {
+  first_parameter
+}

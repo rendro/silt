@@ -233,6 +233,33 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
     false
 }
 
+/// Whether `expr`, printed in a `match` or `loop` header without
+/// parentheses around it, would show a `{` that is not in brackets: a
+/// block, a closure that is not an argument, a record without a name, or
+/// a record literal without fields. The parser takes such a `{` for the
+/// block of the header (or the `match` for one without a scrutinee), so
+/// parentheses around `expr` stay. (A closure argument is no danger: in
+/// a header it is written between the call's parentheses.)
+fn opens_brace_in_header(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Lambda { .. } | ExprKind::Block(_) | ExprKind::AnonRecord { .. } => true,
+        ExprKind::RecordCreate { fields, .. } => fields.is_empty(),
+        ExprKind::Binary(left, _, right)
+        | ExprKind::Pipe(left, right)
+        | ExprKind::Range(left, right) => {
+            opens_brace_in_header(left) || opens_brace_in_header(right)
+        }
+        ExprKind::Unary(_, inner)
+        | ExprKind::QuestionMark(inner)
+        | ExprKind::Ascription(inner, _)
+        | ExprKind::FieldAccess(inner, ..)
+        | ExprKind::RecordUpdate { expr: inner, .. }
+        | ExprKind::Call(inner, _)
+        | ExprKind::Return(Some(inner)) => opens_brace_in_header(inner),
+        _ => false,
+    }
+}
+
 /// `takes_from` for an expression that is known to stand without
 /// parentheses of its own.
 fn takes_from_unwrapped(expr: &Expr, ctx: Ctx) -> u8 {
@@ -967,7 +994,7 @@ impl Printer<'_> {
         let wrappers = self.cur.wrappers(expr.span.end);
         // In a `match` or `loop` header, parentheses that hold a `{`
         // keep it from being taken for the block of the header.
-        let shields_brace = ctx.header.is_some() && self.cur.parens_hold(wrappers, &Token::LBrace);
+        let shields_brace = ctx.header.is_some() && opens_brace_in_header(expr);
         if wrappers > 0 && self.cur.comments_inside_parens(wrappers) {
             // A comment at the inside of a parenthesis may stand at a
             // line break that only the parenthesis allows: all stay,
@@ -1011,7 +1038,7 @@ impl Printer<'_> {
         let wrappers = self.cur.wrappers(expr.span.end);
         if wrappers > 0
             && (self.cur.comments_inside_parens(wrappers)
-                || (ctx.header.is_some() && self.cur.parens_hold(wrappers, &Token::LBrace)))
+                || (ctx.header.is_some() && opens_brace_in_header(expr)))
         {
             return None;
         }

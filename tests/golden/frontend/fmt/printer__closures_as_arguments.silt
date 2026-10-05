@@ -1,0 +1,26 @@
+-- cmd: fmt --next
+-- A closure that is the last argument stands behind the parentheses;
+-- one in front of it stands between them, however the source has them.
+-- In a `match` or a `loop` header every closure stands between them,
+-- since a `{` there is the block of the header.
+import list
+
+fn twice(f, g) { { x -> g(f(x)) } }
+
+fn main() {
+  let a = twice { x -> x + 1 } { y -> y * 2 }
+  let b = twice({ x -> x + 1 }) { y -> y * 2 }
+  let c = twice({ x -> x + 1 }, { y -> y * 2 })
+  let d = list.fold([1, 2], 0, { acc, x -> acc + x })
+  let e = loop xs = list.map([1, 2]) { x -> x + 1 }, total = 0 {
+    match xs {
+      [] -> total
+      [h, ..t] -> loop(t, total + h)
+    }
+  }
+  let f = match (list.map([1]) { x -> x + 1 }) {
+    [2] -> "two"
+    _ -> "other"
+  }
+  println("{a(1)} {b(1)} {c(1)} {d} {e} {f}")
+}

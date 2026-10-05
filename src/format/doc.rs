@@ -422,6 +422,13 @@ impl Renderer {
         if !self.suffixes.is_empty() {
             self.settle_suffixes();
         }
+        // A comment that starts a line stands at its own indentation,
+        // also behind a line that was broken at a comment: if nothing
+        // follows it, it is a comment on a line of its own the next
+        // time, and is written there.
+        if self.at_line_start {
+            self.indent = indent;
+        }
         let fresh = self.at_line_start || self.line_is_closed;
         self.open_line(indent);
         // The comment and its spaces are left out of the column: the
@@ -726,7 +733,7 @@ mod tests {
             Doc::Comment("{- two -}".into()),
             t("5"),
         ]);
-        assert_eq!(render(&doc, 80), "x = -- one\n  {- two -} 5\n");
+        assert_eq!(render(&doc, 80), "x = -- one\n{- two -} 5\n");
     }
 
     #[test]

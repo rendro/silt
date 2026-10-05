@@ -37,6 +37,10 @@ fn main() {
 
     "the second item, behind an empty line",
   ]
-  let short = [1, 2]
+  let short = [
+    1,
+
+    2,
+  ]
   println("{a} {b} {c} {long} {short}")
 }
