@@ -227,7 +227,14 @@ impl Output for Lines {
 `write` is called once for each `print`, `println` or report, from the
 thread that runs the program and from the scheduler's threads. An error
 it returns for a `print` or `println` is a runtime error of the program
-(`cannot write to stdout: ...`). With `HostIo::process()`, a program
+(`cannot write to stdout: ...`), and so is a panic inside it; for a
+report on stderr both are dropped.
+
+The report of tasks that failed and that nobody joined is written when
+`run_program` returns, for the tasks that have failed by then. It does
+not change the result: `run_program` still returns `main`'s value. A
+task that fails later is reported when the `Vm` is dropped, if it has
+failed by then. With `HostIo::process()`, a program
 that writes to a closed stdout pipe ends the process quietly with status
 141; give `HostIo::new` your own `Output` if the process must go on.
 
@@ -247,7 +254,7 @@ pub trait Clock: Send + Sync {
 
 | The program | reads |
 |-------------|-------|
-| `time.now`, `time.today`, the timestamp in `uuid.v7` | `now` |
+| `time.now`, `time.today`, the timestamp in `uuid.v7`, the seed of `math.random` (at its first call) | `now` |
 | `time.sleep` outside a task | `sleep` |
 | `time.sleep` in a task, `channel.timeout`, `channel.recv_timeout` | `monotonic`: the wait ends when the reading reaches its deadline |
 | `task.deadline`, `task.spawn_until`, `SILT_IO_TIMEOUT` | `monotonic`: I/O started after the deadline fails at once, and a task parked on I/O is cancelled when the reading passes the deadline |
@@ -343,6 +350,13 @@ its global slots (one per top-level function, `let`, host function and
 trait method), then runs the program's script and returns `main`'s
 value. The program carries its host functions, and the `Vm` its output
 and clock: there is no other set-up.
+
+**Dropping a Vm** ends its program. The threads that served it end (the
+scheduler's workers, the timer thread, the I/O workers; each when what
+it is doing returns), tasks that are still running or waiting never run
+again, and pending timers never fire. The state behind `math.random`
+and `uuid.v7` belongs to the `Vm` too: one `Vm` does not affect
+another's numbers.
 
 **Reusing a Vm.** Run one program per `Vm`: build a fresh `Vm::new(io)`
 for each. (The entries of a REPL session are compiled to follow one
