@@ -141,7 +141,7 @@ fn handle_reflexive_eq_hash_dedup() {
 #[test]
 fn vm_closure_reflexive_eq_hash_dedup() {
     // VmClosure equality is by Arc::ptr_eq — same Arc, same identity.
-    let func = Arc::new(Function::new("test_fn".into(), 0));
+    let func = Arc::new(Function::returning_unit("test_fn".into(), 0));
     let closure = Arc::new(VmClosure {
         function: func,
         upvalues: Vec::new(),
@@ -240,7 +240,7 @@ fn variant_constructor_reflexive_eq_hash_dedup() {
 #[test]
 fn opaque_values_distinct_across_discriminants() {
     let h = Arc::new(TaskHandle::new(1));
-    let func = Arc::new(Function::new("f".into(), 0));
+    let func = Arc::new(Function::returning_unit("f".into(), 0));
     let closure = Arc::new(VmClosure {
         function: func,
         upvalues: Vec::new(),

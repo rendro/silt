@@ -808,114 +808,52 @@ impl Vm {
         self.stack.push(value);
     }
 
-    fn pop(&mut self) -> Result<Value, VmError> {
-        self.stack.pop().ok_or_else(|| {
-            let ip = self.frames.last().map(|f| f.ip).unwrap_or(0);
-            VmError::new(format!("internal VM error: stack underflow at ip={ip}"))
-        })
+    // The code a VM runs has passed the bytecode verifier
+    // (`crate::bytecode::verify`): an instruction finds the values it
+    // takes on the stack, its slots in the frame and its constants in
+    // the pool, of the kinds it needs. The accessors below do not look
+    // for anything else.
+
+    fn pop(&mut self) -> Value {
+        self.stack
+            .pop()
+            .expect("verified code pops a value it pushed")
     }
 
-    fn peek(&self) -> Result<&Value, VmError> {
-        self.stack.last().ok_or_else(|| {
-            let ip = self.frames.last().map(|f| f.ip).unwrap_or(0);
-            VmError::new(format!("internal VM error: stack underflow at ip={ip}"))
-        })
-    }
-
-    // ── Bytecode reading ──────────────────────────────────────────
-
-    fn read_byte(&mut self) -> Result<u8, VmError> {
-        let frame = self.frames.last().ok_or_else(|| {
-            VmError::new("internal VM error: no call frame while reading bytecode".to_string())
-        })?;
-        let ip = frame.ip;
-        let byte = *frame.closure.function.chunk.code.get(ip).ok_or_else(|| {
-            VmError::new(format!(
-                "internal VM error: bytecode out of bounds at ip={ip}"
-            ))
-        })?;
-        self.frames
-            .last_mut()
-            .ok_or_else(|| {
-                VmError::new("internal VM error: no call frame while reading bytecode".to_string())
-            })?
-            .ip = ip + 1;
-        Ok(byte)
-    }
-
-    fn read_u8(&mut self) -> Result<u8, VmError> {
-        self.read_byte()
-    }
-
-    fn read_u16(&mut self) -> Result<u16, VmError> {
-        let lo = self.read_byte()? as u16;
-        let hi = self.read_byte()? as u16;
-        Ok(lo | (hi << 8))
-    }
-
-    fn read_constant(&self, index: usize) -> Result<Value, VmError> {
-        let frame = self.current_frame()?;
-        frame
-            .closure
-            .function
-            .chunk
-            .constants
-            .get(index)
-            .cloned()
-            .ok_or_else(|| {
-                VmError::new(format!(
-                    "internal VM error: constant index {index} out of bounds"
-                ))
-            })
-    }
-
-    fn read_constant_string(&self, index: usize) -> Result<String, VmError> {
-        let val = self.read_constant(index)?;
-        match val {
-            Value::String(s) => Ok(s),
-            other => Err(VmError::new(format!(
-                "expected string constant at index {index}, got {}",
-                self.type_name(&other)
-            ))),
-        }
-    }
-
-    /// The variant of the constructor constant at `index` (a pattern's
-    /// variant test).
-    fn read_constant_tag(&self, index: usize) -> Result<crate::typeinfo::Tag, VmError> {
-        match self.read_constant(index)? {
-            Value::VariantConstructor(tag) => Ok(tag),
-            other => Err(VmError::new(format!(
-                "expected variant constant at index {index}, got {}",
-                self.type_name(&other)
-            ))),
-        }
-    }
-
-    /// The type of the descriptor constant at `index` (a record literal's
-    /// or pattern's type).
-    fn read_constant_type(&self, index: usize) -> Result<Arc<crate::typeinfo::TypeInfo>, VmError> {
-        match self.read_constant(index)? {
-            Value::TypeDescriptor(ty) => Ok(ty),
-            other => Err(VmError::new(format!(
-                "expected type constant at index {index}, got {}",
-                self.type_name(&other)
-            ))),
-        }
+    fn peek(&self) -> &Value {
+        self.stack
+            .last()
+            .expect("verified code looks at a value it pushed")
     }
 
     // ── Frame access ──────────────────────────────────────────────
 
-    fn current_frame(&self) -> Result<&CallFrame, VmError> {
-        self.frames
-            .last()
-            .ok_or_else(|| VmError::new("internal VM error: no call frame".to_string()))
+    /// The frame of the instruction being run.
+    fn frame(&self) -> &CallFrame {
+        self.frames.last().expect("an instruction runs in a frame")
     }
 
-    fn current_frame_mut(&mut self) -> Result<&mut CallFrame, VmError> {
+    fn frame_mut(&mut self) -> &mut CallFrame {
         self.frames
             .last_mut()
-            .ok_or_else(|| VmError::new("internal VM error: no call frame".to_string()))
+            .expect("an instruction runs in a frame")
+    }
+
+    /// The code and constants of the function being run.
+    fn chunk(&self) -> &crate::bytecode::Chunk {
+        self.frame().closure.function.chunk()
+    }
+
+    /// Decode the instruction at the instruction pointer and step past
+    /// it.
+    #[inline(always)]
+    fn fetch(&mut self) -> crate::bytecode::Instr {
+        let frame = self.frame_mut();
+        let (instr, next) =
+            crate::bytecode::decode(frame.closure.function.chunk().code(), frame.ip)
+                .expect("verified code decodes");
+        frame.ip = next;
+        instr
     }
 
     /// Drop `tco_elided` entries whose depth is `>= keep_depth`, i.e.
@@ -944,7 +882,7 @@ impl Vm {
         // Capture span from current frame's IP position.
         if let Some(frame) = self.frames.last() {
             let ip = frame.ip.saturating_sub(1);
-            let span = frame.closure.function.chunk.span_at(ip);
+            let span = frame.closure.function.chunk().span_at(ip);
             if span.is_in_source() {
                 err.span = Some(span);
             }
@@ -957,9 +895,9 @@ impl Vm {
         // reads "callee -> most-recent-tco-caller -> ... -> oldest-caller".
         let mut stack = Vec::new();
         for (depth, frame) in self.frames.iter().enumerate().rev() {
-            let func_name = frame.closure.function.name.clone();
+            let func_name = frame.closure.function.name().to_string();
             let ip = frame.ip.saturating_sub(1);
-            let span = frame.closure.function.chunk.span_at(ip);
+            let span = frame.closure.function.chunk().span_at(ip);
             stack.push((func_name, span));
             // Newer (later-pushed) entries for this depth are more recent
             // callers, so walk in reverse to keep the callee-first order.

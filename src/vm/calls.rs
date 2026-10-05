@@ -1,7 +1,6 @@
 //! Calling a value: closures, builtins held as values, and callbacks
 //! invoked from builtins.
 
-use crate::bytecode::Op;
 use crate::value::Value;
 
 use super::dispatch::invoke_host_fn;
@@ -79,10 +78,12 @@ impl Vm {
     ) -> Result<(), VmError> {
         match func_val {
             Value::VmClosure(closure) => {
-                if argc != closure.function.arity as usize {
-                    return Err(VmError::new(format!(
+                if argc != closure.function.arity() {
+                    return Err(VmError::type_confusion(format!(
                         "function '{}' expects {} arguments, got {}",
-                        closure.function.name, closure.function.arity, argc
+                        closure.function.name(),
+                        closure.function.arity(),
+                        argc
                     )));
                 }
                 if self.frames.len() >= MAX_FRAMES {
@@ -132,7 +133,7 @@ impl Vm {
             Value::VariantConstructor(tag) => {
                 let arity = tag.arity();
                 if argc != arity {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "variant constructor '{tag}' expects {arity} arguments, got {argc}"
                     )));
                 }
@@ -142,7 +143,7 @@ impl Vm {
                 self.push(Value::Variant(tag, fields));
                 Ok(())
             }
-            _ => Err(VmError::new(format!(
+            _ => Err(VmError::type_confusion(format!(
                 "cannot call value of type {}",
                 self.user_facing_type_name(&func_val)
             ))),
@@ -292,11 +293,11 @@ impl Vm {
         let _native_level = enter_native_level()?;
         match func {
             Value::VmClosure(closure) => {
-                if args.len() != closure.function.arity as usize {
+                if args.len() != closure.function.arity() {
                     return Err(VmError::new(format!(
                         "function '{}' expects {} arguments, got {}",
-                        closure.function.name,
-                        closure.function.arity,
+                        closure.function.name(),
+                        closure.function.arity(),
                         args.len()
                     )));
                 }
@@ -318,17 +319,12 @@ impl Vm {
                 });
                 // Run the execution loop until we return to the previous frame count
                 loop {
-                    let saved_ip = self.current_frame()?.ip;
-                    let op_byte = self.read_byte()?;
-                    let op = Op::from_byte(op_byte).ok_or_else(|| {
-                        self.frames.truncate(saved_frame_count);
-                        self.stack.truncate(func_slot);
-                        VmError::new(format!("unknown opcode: {op_byte}"))
-                    })?;
-                    match self.dispatch_one(op) {
+                    let saved_ip = self.frame().ip;
+                    let instr = self.fetch();
+                    match self.dispatch_one(instr) {
                         Ok(DispatchResult::Continue) => {}
                         Ok(DispatchResult::Return(result)) => {
-                            let finished_base = self.current_frame()?.base_slot;
+                            let finished_base = self.frame().base_slot;
                             self.frames.pop();
                             // Prune tail-call elided diagnostic entries for
                             // the just-popped frame so stale data from prior
@@ -371,7 +367,7 @@ impl Vm {
                             // A builtin inside the callback yielded (e.g. IO).
                             // Rewind the current frame's IP so the yielding
                             // opcode will be re-executed on resume.
-                            if let Ok(f) = self.current_frame_mut() {
+                            if let Some(f) = self.frames.last_mut() {
                                 f.ip = saved_ip;
                             }
                             // Save the extra frames and stack so the caller
@@ -464,17 +460,12 @@ impl Vm {
         self.stack.extend(stack);
         // Continue the execution loop (same as invoke_callable's inner loop).
         loop {
-            let saved_ip = self.current_frame()?.ip;
-            let op_byte = self.read_byte()?;
-            let op = Op::from_byte(op_byte).ok_or_else(|| {
-                self.frames.truncate(saved_frame_count);
-                self.stack.truncate(func_slot);
-                VmError::new(format!("unknown opcode: {op_byte}"))
-            })?;
-            match self.dispatch_one(op) {
+            let saved_ip = self.frame().ip;
+            let instr = self.fetch();
+            match self.dispatch_one(instr) {
                 Ok(DispatchResult::Continue) => {}
                 Ok(DispatchResult::Return(result)) => {
-                    let finished_base = self.current_frame()?.base_slot;
+                    let finished_base = self.frame().base_slot;
                     self.frames.pop();
                     // Prune tail-call elided diagnostic entries for the
                     // just-popped frame, mirroring invoke_callable's Return arm.
@@ -509,7 +500,7 @@ impl Vm {
                     self.push(value);
                 }
                 Err(e) if e.is_yield => {
-                    if let Ok(f) = self.current_frame_mut() {
+                    if let Some(f) = self.frames.last_mut() {
                         f.ip = saved_ip;
                     }
                     let extra_frames = self.frames.split_off(saved_frame_count);

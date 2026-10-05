@@ -4,369 +4,194 @@
 
 use std::fmt::Write;
 
-use crate::bytecode::{Chunk, Function, Globals, Op};
-
-// ── Op decoding ───────────────────────────────────────────────────
-
-/// Human-readable name for an opcode.
-fn op_name(op: Op) -> &'static str {
-    match op {
-        Op::Constant => "Constant",
-        Op::Unit => "Unit",
-        Op::True => "True",
-        Op::False => "False",
-        Op::Add => "Add",
-        Op::Sub => "Sub",
-        Op::Mul => "Mul",
-        Op::Div => "Div",
-        Op::Mod => "Mod",
-        Op::Eq => "Eq",
-        Op::Neq => "Neq",
-        Op::Lt => "Lt",
-        Op::Gt => "Gt",
-        Op::Leq => "Leq",
-        Op::Geq => "Geq",
-        Op::Negate => "Negate",
-        Op::Not => "Not",
-        Op::StringConcat => "StringConcat",
-        Op::DisplayValue => "DisplayValue",
-        Op::GetLocal => "GetLocal",
-        Op::SetLocal => "SetLocal",
-        Op::GetGlobal => "GetGlobal",
-        Op::SetGlobal => "SetGlobal",
-        Op::GetUpvalue => "GetUpvalue",
-        Op::Call => "Call",
-        Op::TailCall => "TailCall",
-        Op::Return => "Return",
-        Op::CallBuiltin => "CallBuiltin",
-        Op::MakeClosure => "MakeClosure",
-        Op::MakeTuple => "MakeTuple",
-        Op::MakeList => "MakeList",
-        Op::MakeMap => "MakeMap",
-        Op::MakeSet => "MakeSet",
-        Op::MakeRecord => "MakeRecord",
-        Op::RecordUpdate => "RecordUpdate",
-        Op::MakeRange => "MakeRange",
-        Op::ListConcat => "ListConcat",
-        Op::GetField => "GetField",
-        Op::Jump => "Jump",
-        Op::JumpBack => "JumpBack",
-        Op::JumpIfFalse => "JumpIfFalse",
-        Op::JumpIfTrue => "JumpIfTrue",
-        Op::Pop => "Pop",
-        Op::Dup => "Dup",
-        Op::TestTag => "TestTag",
-        Op::TestEqual => "TestEqual",
-        Op::TestTupleLen => "TestTupleLen",
-        Op::TestListMin => "TestListMin",
-        Op::TestListExact => "TestListExact",
-        Op::TestIntRange => "TestIntRange",
-        Op::TestFloatRange => "TestFloatRange",
-        Op::TestBool => "TestBool",
-        Op::DestructTuple => "DestructTuple",
-        Op::DestructVariant => "DestructVariant",
-        Op::DestructList => "DestructList",
-        Op::DestructListRest => "DestructListRest",
-        Op::DestructRecordField => "DestructRecordField",
-        Op::DestructRecordRest => "DestructRecordRest",
-        Op::TestRecordTag => "TestRecordTag",
-        Op::TestMapHasKey => "TestMapHasKey",
-        Op::DestructMapValue => "DestructMapValue",
-        Op::Recur => "Recur",
-        Op::QuestionMark => "QuestionMark",
-        Op::Panic => "Panic",
-        Op::CallMethod => "CallMethod",
-        Op::Slide => "Slide",
-    }
-}
+use crate::bytecode::{Chunk, Const, Function, Globals, Instr, decode};
+use crate::value::Value;
 
 // ── Helpers ───────────────────────────────────────────────────────
 
-/// Read a little-endian u16 from the code bytes at the given offset.
-fn read_u16(code: &[u8], offset: usize) -> u16 {
-    code[offset] as u16 | ((code[offset + 1] as u16) << 8)
-}
-
 /// Format a constant value for a disassembly comment.
-fn constant_comment(chunk: &Chunk, index: u16) -> String {
-    if (index as usize) < chunk.constants.len() {
-        format!("{:?}", chunk.constants[index as usize])
-    } else {
-        format!("???[{index}]")
-    }
+fn constant_comment(chunk: &Chunk, k: Const) -> String {
+    format!("{:?}", chunk.constant(k))
 }
 
-/// Format an instruction whose operands are a u16 constant-index followed by
-/// a u8 (`CallMethod`, `CallBuiltin`). The u16 is
-/// commented with the resolved constant; the u8 is printed as a bare number.
-///
-/// Returns `(formatted_line, next_offset)`. The next offset is `offset + 4`.
-fn fmt_u16_u8_with_const(chunk: &Chunk, code: &[u8], offset: usize, name: &str) -> (String, usize) {
-    let index = read_u16(code, offset + 1);
-    let byte_operand = code[offset + 3];
-    let comment = constant_comment(chunk, index);
-    (
-        format!("{offset:04}  {name:<20} {index:<5} {byte_operand:<3} ; {comment}"),
-        offset + 4,
-    )
-}
-
-/// Format an instruction whose operands are a u8 count followed by
-/// `count` x u16 name-index entries (e.g. `RecordUpdate`,
-/// `RecordUpdateAnon`, `DestructRecordRest`). Each name-index is rendered on
-/// its own continuation line using `label_literal` as the per-entry prefix
-/// (e.g. `"field"` or `"exclude"`).
-///
-/// Returns `(formatted_line, next_offset)`.
-fn fmt_u8_count_then_u16_names(
-    chunk: &Chunk,
-    code: &[u8],
-    offset: usize,
-    name: &str,
-    label_literal: &str,
-) -> (String, usize) {
-    let field_count = code[offset + 1];
-    let mut line = format!("{offset:04}  {name:<20} {field_count}");
-    let mut next = offset + 2;
-    for _ in 0..field_count {
-        let field_name_index = read_u16(code, next);
-        let field_comment = constant_comment(chunk, field_name_index);
+/// The lines of a list of names: one continuation line per entry, with
+/// `label` as the per-entry prefix (`"field"` or `"exclude"`).
+fn name_lines(chunk: &Chunk, names: impl Iterator<Item = Const>, label: &str) -> String {
+    let mut lines = String::new();
+    for k in names {
         write!(
-            line,
-            "\n      |  {label_literal} {field_name_index:<5} ; {field_comment}"
+            lines,
+            "\n      |  {label} {:<5} ; {}",
+            k.index(),
+            constant_comment(chunk, k)
         )
         .unwrap();
-        next += 2;
     }
-    (line, next)
+    lines
 }
 
 // ── Instruction disassembly ───────────────────────────────────────
 
-/// Disassemble a single instruction at `offset`.
-///
-/// Returns `(formatted_line, next_offset)`.
-fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (String, usize) {
-    let code = &chunk.code;
-    let byte = code[offset];
-
-    let Some(op) = Op::from_byte(byte) else {
-        return (format!("{offset:04}  <unknown {byte:#04x}>"), offset + 1);
+/// Disassemble the instruction `instr`, decoded at `offset`.
+fn disassemble_instruction(
+    chunk: &Chunk,
+    globals: &Globals,
+    offset: usize,
+    instr: Instr,
+) -> String {
+    let code = chunk.code();
+    let name = instr.op().name();
+    // The operand of a jump is its distance from the next instruction.
+    let jump = |target: usize| {
+        let distance = target.abs_diff(offset + 3);
+        format!("{offset:04}  {name:<20} {distance:<5} -> {target:04}")
+    };
+    // An instruction whose one operand is a constant.
+    let with_constant = |k: Const| {
+        let comment = constant_comment(chunk, k);
+        format!("{offset:04}  {name:<20} {:<5} ; {comment}", k.index())
+    };
+    // An instruction whose one operand is a number.
+    let with_number = |n: usize| format!("{offset:04}  {name:<20} {n}");
+    // An instruction whose operands are a constant and a count.
+    let with_constant_and_count = |k: Const, count: usize| {
+        let comment = constant_comment(chunk, k);
+        format!(
+            "{offset:04}  {name:<20} {:<5} {count:<3} ; {comment}",
+            k.index()
+        )
     };
 
-    let name = op_name(op);
-
-    match op {
+    match instr {
         // ── No operands ───────────────────────────────────────
-        Op::Unit
-        | Op::True
-        | Op::False
-        | Op::Add
-        | Op::Sub
-        | Op::Mul
-        | Op::Div
-        | Op::Mod
-        | Op::Eq
-        | Op::Neq
-        | Op::Lt
-        | Op::Gt
-        | Op::Leq
-        | Op::Geq
-        | Op::Negate
-        | Op::Not
-        | Op::DisplayValue
-        | Op::Return
-        | Op::Pop
-        | Op::Dup
-        | Op::MakeRange
-        | Op::ListConcat
-        | Op::QuestionMark
-        | Op::Panic => (format!("{offset:04}  {name}"), offset + 1),
+        Instr::Unit
+        | Instr::True
+        | Instr::False
+        | Instr::Add
+        | Instr::Sub
+        | Instr::Mul
+        | Instr::Div
+        | Instr::Mod
+        | Instr::Eq
+        | Instr::Neq
+        | Instr::Lt
+        | Instr::Gt
+        | Instr::Leq
+        | Instr::Geq
+        | Instr::Negate
+        | Instr::Not
+        | Instr::DisplayValue
+        | Instr::Return
+        | Instr::Pop
+        | Instr::Dup
+        | Instr::MakeRange
+        | Instr::ListConcat
+        | Instr::QuestionMark
+        | Instr::Panic => format!("{offset:04}  {name}"),
 
-        // ── u8 operand ────────────────────────────────────────
-        Op::StringConcat
-        | Op::GetUpvalue
-        | Op::Call
-        | Op::TailCall
-        | Op::MakeTuple
-        | Op::TestTupleLen
-        | Op::TestListMin
-        | Op::TestListExact
-        | Op::DestructTuple
-        | Op::DestructVariant
-        | Op::DestructList
-        | Op::DestructListRest => {
-            let operand = code[offset + 1];
-            (format!("{offset:04}  {name:<20} {operand}"), offset + 2)
+        // ── A count, an index or a slot ───────────────────────
+        Instr::StringConcat { count: n }
+        | Instr::GetUpvalue { index: n }
+        | Instr::Call { argc: n }
+        | Instr::TailCall { argc: n }
+        | Instr::MakeTuple { count: n }
+        | Instr::TestTupleLen { len: n }
+        | Instr::TestListMin { len: n }
+        | Instr::TestListExact { len: n }
+        | Instr::DestructTuple { index: n }
+        | Instr::DestructVariant { index: n }
+        | Instr::DestructList { index: n }
+        | Instr::DestructListRest { start: n }
+        | Instr::GetLocal { slot: n }
+        | Instr::SetLocal { slot: n }
+        | Instr::Slide { slot: n }
+        | Instr::MakeList { count: n }
+        | Instr::MakeMap { pairs: n }
+        | Instr::MakeSet { count: n } => with_number(n),
+
+        Instr::Recur { argc, first } => {
+            format!("{offset:04}  {name:<20} {argc}  slot {first}")
         }
 
-        // Recur: u8 arg_count, u16 first_slot
-        Op::Recur => {
-            let arg_count = code[offset + 1];
-            let first_slot = read_u16(code, offset + 2);
-            (
-                format!("{offset:04}  {name:<20} {arg_count}  slot {first_slot}"),
-                offset + 4,
-            )
+        Instr::TestBool { value } => {
+            let val = if value == 0 { "false" } else { "true" };
+            format!("{offset:04}  {name:<20} {value}    ; {val}")
         }
 
-        // TestBool: u8 (0=false, 1=true)
-        Op::TestBool => {
-            let operand = code[offset + 1];
-            let val = if operand == 0 { "false" } else { "true" };
-            (
-                format!("{offset:04}  {name:<20} {operand}    ; {val}"),
-                offset + 2,
-            )
-        }
-
-        // ── u16 operand with constant comment ─────────────────
+        // ── A constant ────────────────────────────────────────
         // TestTag: the variant the test is for (its operand is the
         // variant's tag, kept as a constructor constant).
-        Op::TestTag => {
-            let index = read_u16(code, offset + 1);
-            let comment = match chunk.constants.get(index as usize) {
-                Some(crate::value::Value::VariantConstructor(tag)) => format!("<variant:{tag}>"),
-                _ => constant_comment(chunk, index),
-            };
-            (
-                format!("{offset:04}  {name:<20} {index:<5} ; {comment}"),
-                offset + 3,
+        Instr::TestTag { tag } => {
+            let comment = format!("<variant:{}>", chunk.tag(tag));
+            format!("{offset:04}  {name:<20} {:<5} ; {comment}", tag.index())
+        }
+
+        Instr::Constant { k }
+        | Instr::TestEqual { k }
+        | Instr::GetField { name: k }
+        | Instr::DestructRecordField { name: k }
+        | Instr::TestRecordTag { ty: k }
+        | Instr::TestMapHasKey { key: k }
+        | Instr::DestructMapValue { key: k } => with_constant(k),
+
+        // ── A global slot, commented with its definition ──────
+        Instr::GetGlobal { slot } | Instr::SetGlobal { slot } => {
+            format!("{offset:04}  {name:<20} {slot:<5} ; {}", globals.name(slot))
+        }
+
+        // ── The two bounds of a range pattern ─────────────────
+        Instr::TestIntRange { lo, hi } | Instr::TestFloatRange { lo, hi } => {
+            let lo_comment = constant_comment(chunk, lo);
+            let hi_comment = constant_comment(chunk, hi);
+            format!(
+                "{offset:04}  {name:<20} {:<5} {:<5} ; {lo_comment}..{hi_comment}",
+                lo.index(),
+                hi.index()
             )
         }
 
-        Op::Constant
-        | Op::TestEqual
-        | Op::GetField
-        | Op::DestructRecordField
-        | Op::TestRecordTag
-        | Op::TestMapHasKey
-        | Op::DestructMapValue => {
-            let index = read_u16(code, offset + 1);
-            let comment = constant_comment(chunk, index);
-            (
-                format!("{offset:04}  {name:<20} {index:<5} ; {comment}"),
-                offset + 3,
-            )
-        }
+        // ── Jumps: the distance and the target offset ─────────
+        Instr::Jump { to }
+        | Instr::JumpBack { to }
+        | Instr::JumpIfFalse { to }
+        | Instr::JumpIfTrue { to } => jump(to),
 
-        // ── u16 global slot, commented with its definition ────
-        Op::GetGlobal | Op::SetGlobal => {
-            let slot = read_u16(code, offset + 1);
-            (
-                format!("{offset:04}  {name:<20} {slot:<5} ; {}", globals.name(slot)),
-                offset + 3,
-            )
-        }
-
-        // ── u16 operand (slot, no constant comment) ───────────
-        Op::GetLocal | Op::SetLocal | Op::Slide => {
-            let slot = read_u16(code, offset + 1);
-            (format!("{offset:04}  {name:<20} {slot}"), offset + 3)
-        }
-
-        // ── u16 operand (count, no constant comment) ──────────
-        Op::MakeList | Op::MakeMap | Op::MakeSet => {
-            let count = read_u16(code, offset + 1);
-            (format!("{offset:04}  {name:<20} {count}"), offset + 3)
-        }
-
-        // ── 2x u16 operand (range patterns via constants) ────────
-        Op::TestIntRange | Op::TestFloatRange => {
-            let lo_index = read_u16(code, offset + 1);
-            let hi_index = read_u16(code, offset + 3);
-            let lo_comment = constant_comment(chunk, lo_index);
-            let hi_comment = constant_comment(chunk, hi_index);
-            (
-                format!(
-                    "{offset:04}  {name:<20} {lo_index:<5} {hi_index:<5} ; {lo_comment}..{hi_comment}"
-                ),
-                offset + 5,
-            )
-        }
-
-        // ── Jump instructions: show target offset ─────────────
-        Op::Jump | Op::JumpIfFalse | Op::JumpIfTrue => {
-            let jump_offset = read_u16(code, offset + 1) as usize;
-            let target = offset + 3 + jump_offset;
-            (
-                format!("{offset:04}  {name:<20} {jump_offset:<5} -> {target:04}"),
-                offset + 3,
-            )
-        }
-
-        Op::JumpBack => {
-            let jump_offset = read_u16(code, offset + 1) as usize;
-            let target = offset + 3 - jump_offset;
-            (
-                format!("{offset:04}  {name:<20} {jump_offset:<5} -> {target:04}"),
-                offset + 3,
-            )
-        }
-
-        // ── u16 + u8 (with constant comment on the u16) ──────
-        //   CallMethod(method_name_index, argc)
-        //   CallBuiltin(name_index, argc)
-        // The two arms shared a byte-identical operand-decode shape
-        // (round 84 audit): consolidated into `fmt_u16_u8_with_const`.
-        Op::CallBuiltin => fmt_u16_u8_with_const(chunk, code, offset, name),
+        Instr::CallBuiltin { name, argc } => with_constant_and_count(name, argc),
         // CallMethod: the method name, argc, and the trait whose method
         // it calls (shown after the name when the call names one).
-        Op::CallMethod => {
-            let (line, next) = fmt_u16_u8_with_const(chunk, code, offset, name);
-            let trait_index = read_u16(code, next);
-            let line = match globals.trait_name(trait_index) {
+        Instr::CallMethod { method, argc, of } => {
+            let line = with_constant_and_count(method, argc);
+            match globals.trait_name(of) {
                 Some(t) => format!("{line} of {t}"),
                 None => line,
-            };
-            (line, next + 2)
-        }
-
-        // ── MakeClosure: u16 func_index, u8 upvalue_count, then descriptors
-        Op::MakeClosure => {
-            let func_index = read_u16(code, offset + 1);
-            let upvalue_count = code[offset + 3];
-            let comment = constant_comment(chunk, func_index);
-            let mut line =
-                format!("{offset:04}  {name:<20} {func_index:<5} {upvalue_count:<3} ; {comment}");
-            let mut next = offset + 4;
-            for _ in 0..upvalue_count {
-                let is_local = code[next];
-                let index = code[next + 1];
-                let locality = if is_local != 0 { "local" } else { "upvalue" };
-                write!(line, "\n      |  {locality} {index}").unwrap();
-                next += 2;
             }
-            (line, next)
         }
 
-        // ── MakeRecord: u16 type_index, u8 field_count, then field names
-        Op::MakeRecord => {
-            let type_name_index = read_u16(code, offset + 1);
-            let field_count = code[offset + 3];
-            let comment = constant_comment(chunk, type_name_index);
-            let mut line = format!(
-                "{offset:04}  {name:<20} {type_name_index:<5} {field_count:<3} ; {comment}"
-            );
-            let mut next = offset + 4;
-            for _ in 0..field_count {
-                let field_name_index = read_u16(code, next);
-                let field_comment = constant_comment(chunk, field_name_index);
-                write!(
-                    line,
-                    "\n      |  field {field_name_index:<5} ; {field_comment}"
-                )
-                .unwrap();
-                next += 2;
+        // ── MakeClosure: the function, then what it captures ──
+        Instr::MakeClosure { f, captures } => {
+            let mut line = with_constant_and_count(f, captures.len());
+            for capture in captures.iter(code) {
+                let locality = if capture.is_local { "local" } else { "upvalue" };
+                write!(line, "\n      |  {locality} {}", capture.index).unwrap();
             }
-            (line, next)
+            line
         }
 
-        // ── u8-count + count x u16 name_index (round 84) ─────
+        // ── MakeRecord: the type, then the field names ────────
+        Instr::MakeRecord { ty, fields } => {
+            with_constant_and_count(ty, fields.len())
+                + &name_lines(chunk, fields.iter(code), "field")
+        }
+
+        // ── A list of names ───────────────────────────────────
         //   RecordUpdate:        label "field".
         //   DestructRecordRest:  label "exclude".
-        Op::RecordUpdate => fmt_u8_count_then_u16_names(chunk, code, offset, name, "field"),
-        Op::DestructRecordRest => fmt_u8_count_then_u16_names(chunk, code, offset, name, "exclude"),
+        Instr::RecordUpdate { fields } => {
+            with_number(fields.len()) + &name_lines(chunk, fields.iter(code), "field")
+        }
+        Instr::DestructRecordRest { excluded } => {
+            with_number(excluded.len()) + &name_lines(chunk, excluded.iter(code), "exclude")
+        }
     }
 }
 
@@ -377,9 +202,8 @@ fn disassemble_instruction(chunk: &Chunk, globals: &Globals, offset: usize) -> (
 fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
     let mut output = format!("== {name} ==\n");
     let mut offset = 0;
-    while offset < chunk.code.len() {
-        let (line, next) = disassemble_instruction(chunk, globals, offset);
-        output.push_str(&line);
+    while let Some((instr, next)) = decode(chunk.code(), offset) {
+        output.push_str(&disassemble_instruction(chunk, globals, offset, instr));
         output.push('\n');
         offset = next;
     }
@@ -393,13 +217,15 @@ fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
 pub fn disassemble_function(func: &Function, globals: &Globals) -> String {
     let header = format!(
         "{} (arity={}, upvalues={})",
-        func.name, func.arity, func.upvalue_count
+        func.name(),
+        func.arity(),
+        func.upvalue_count()
     );
-    let mut output = disassemble_chunk(&func.chunk, globals, &header);
+    let mut output = disassemble_chunk(func.chunk(), globals, &header);
 
     // Recurse into nested functions stored as VmClosure constants.
-    for constant in &func.chunk.constants {
-        if let crate::value::Value::VmClosure(closure) = constant {
+    for constant in func.chunk().constants() {
+        if let Value::VmClosure(closure) = constant {
             output.push('\n');
             output.push_str(&disassemble_function(&closure.function, globals));
         }
@@ -413,308 +239,264 @@ pub fn disassemble_function(func: &Function, globals: &Globals) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::{Chunk, Function, Op};
+    use crate::bytecode::{Asm, Emitter, NO_TRAIT, Op, UpvalueDesc, VmClosure};
     use crate::source::Span;
-    use crate::value::Value;
+    use std::sync::Arc;
 
-    fn dummy_span() -> Span {
+    fn span() -> Span {
         Span::BUILTIN
+    }
+
+    /// The disassembly of the function `build` emits, which takes
+    /// `arity` arguments and has `upvalues` upvalues.
+    fn disassembly(arity: u8, upvalues: u8, build: impl FnOnce(&mut Emitter)) -> String {
+        let mut emitter = Emitter::new("test".into(), arity);
+        build(&mut emitter);
+        let function = emitter.finish(upvalues).unwrap_or_else(|e| panic!("{e:?}"));
+        disassemble_function(&function, &Globals::default())
     }
 
     #[test]
     fn test_simple_ops() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-        chunk.emit_op(Op::True, span);
-        chunk.emit_op(Op::False, span);
-        chunk.emit_op(Op::Add, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "test");
-        assert!(output.contains("== test =="));
+        let output = disassembly(0, 0, |e| {
+            e.emit(Asm::True, span()).unwrap();
+            e.emit(Asm::False, span()).unwrap();
+            e.emit(Asm::Eq, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert!(output.contains("== test (arity=0, upvalues=0) =="));
         assert!(output.contains("0000  True"));
         assert!(output.contains("0001  False"));
-        assert!(output.contains("0002  Add"));
+        assert!(output.contains("0002  Eq"));
         assert!(output.contains("0003  Return"));
     }
 
     #[test]
     fn test_constant_op() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-        let idx = chunk.add_constant(Value::Int(42)).unwrap();
-        chunk.emit_op(Op::Constant, span);
-        chunk.emit_u16(idx, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "constants");
-        assert!(output.contains("Constant"));
-        assert!(output.contains("42"));
-    }
-
-    #[test]
-    fn test_jump_target() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-        // Emit Jump with offset 10 -> target = 0 + 3 + 10 = 13
-        chunk.emit_op(Op::Jump, span);
-        chunk.emit_u16(10, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "jumps");
-        assert!(output.contains("Jump"));
-        assert!(output.contains("-> 0013"));
-    }
-
-    #[test]
-    fn test_jump_back_target() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-        // Pad with some ops so we can jump back
-        chunk.emit_op(Op::Unit, span); // 0000
-        chunk.emit_op(Op::Pop, span); // 0001
-        chunk.emit_op(Op::Unit, span); // 0002
-        chunk.emit_op(Op::Pop, span); // 0003
-        // JumpBack at offset 4, with offset 5 -> target = 4 + 3 - 5 = 2
-        chunk.emit_op(Op::JumpBack, span);
-        chunk.emit_u16(5, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "jumpback");
-        assert!(output.contains("JumpBack"));
-        assert!(output.contains("-> 0002"));
-    }
-
-    #[test]
-    fn test_make_closure() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        // Add a function constant
-        let func = Value::String("<fn>".into());
-        let idx = chunk.add_constant(func).unwrap();
-
-        chunk.emit_op(Op::MakeClosure, span);
-        chunk.emit_u16(idx, span);
-        chunk.emit_u8(2, span); // 2 upvalues
-        // upvalue 0: local slot 3
-        chunk.emit_u8(1, span);
-        chunk.emit_u8(3, span);
-        // upvalue 1: upvalue index 0
-        chunk.emit_u8(0, span);
-        chunk.emit_u8(0, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "closure");
-        assert!(output.contains("MakeClosure"));
-        assert!(output.contains("local 3"));
-        assert!(output.contains("upvalue 0"));
-    }
-
-    #[test]
-    fn test_make_record() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        let type_idx = chunk.add_constant(Value::String("Point".into())).unwrap();
-        let x_idx = chunk.add_constant(Value::String("x".into())).unwrap();
-        let y_idx = chunk.add_constant(Value::String("y".into())).unwrap();
-
-        chunk.emit_op(Op::MakeRecord, span);
-        chunk.emit_u16(type_idx, span);
-        chunk.emit_u8(2, span); // 2 fields
-        chunk.emit_u16(x_idx, span);
-        chunk.emit_u16(y_idx, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "record");
-        assert!(output.contains("MakeRecord"));
-        assert!(output.contains("\"Point\""));
-        assert!(output.contains("\"x\""));
-        assert!(output.contains("\"y\""));
-    }
-
-    #[test]
-    fn test_call_builtin() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        let name_idx = chunk.add_constant(Value::String("print".into())).unwrap();
-        chunk.emit_op(Op::CallBuiltin, span);
-        chunk.emit_u16(name_idx, span);
-        chunk.emit_u8(1, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "builtin");
-        assert!(output.contains("CallBuiltin"));
-        assert!(output.contains("\"print\""));
-    }
-
-    #[test]
-    fn test_disassemble_function() {
-        let mut func = Function::new("add".into(), 2);
-        let span = dummy_span();
-        func.upvalue_count = 1;
-        func.chunk.emit_op(Op::GetLocal, span);
-        func.chunk.emit_u16(0, span);
-        func.chunk.emit_op(Op::GetLocal, span);
-        func.chunk.emit_u16(1, span);
-        func.chunk.emit_op(Op::Add, span);
-        func.chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_function(&func, &Globals::default());
-        assert!(output.contains("== add (arity=2, upvalues=1) =="));
-        assert!(output.contains("GetLocal"));
-        assert!(output.contains("Add"));
-        assert!(output.contains("Return"));
-    }
-
-    #[test]
-    fn test_u8_operand_ops() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-        chunk.emit_op(Op::MakeTuple, span);
-        chunk.emit_u8(3, span);
-        chunk.emit_op(Op::Call, span);
-        chunk.emit_u8(2, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "u8ops");
-        assert!(output.contains("MakeTuple"));
-        assert!(output.contains("Call"));
-    }
-
-    #[test]
-    fn test_slide_operand() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-        chunk.emit_op_u16(Op::Slide, 3, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "slide");
-        assert!(output.contains("0000  Slide"));
-        assert!(output.contains("0003  Return"));
-    }
-
-    #[test]
-    fn test_record_update() {
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        let x_idx = chunk.add_constant(Value::String("x".into())).unwrap();
-
-        chunk.emit_op(Op::RecordUpdate, span);
-        chunk.emit_u8(1, span); // 1 field
-        chunk.emit_u16(x_idx, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "update");
-        assert!(output.contains("RecordUpdate"));
-        assert!(output.contains("\"x\""));
-        // Round 84: the operand decode for RecordUpdate uses
-        // `fmt_u8_count_then_u16_names`. Lock the per-entry label
-        // literal to guard against accidentally swapping it with
-        // "exclude" (the DestructRecordRest label).
-        assert!(output.contains("field "));
-    }
-
-    #[test]
-    fn test_destruct_record_rest_label() {
-        // Round 84: locks the `"exclude"` label used by the shared helper
-        // `fmt_u8_count_then_u16_names` for `Op::DestructRecordRest`.
-        // The other two opcodes routed through that helper use `"field"`
-        // — this test guards against accidentally collapsing the label
-        // argument or swapping the two literals.
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        let name_idx = chunk.add_constant(Value::String("z".into())).unwrap();
-
-        chunk.emit_op(Op::DestructRecordRest, span);
-        chunk.emit_u8(1, span);
-        chunk.emit_u16(name_idx, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "rest");
-        assert!(output.contains("DestructRecordRest"));
-        assert!(output.contains("exclude "));
-        // Must NOT use the sibling label — guards against the helper
-        // being called with the wrong label literal.
+        let output = disassembly(0, 0, |e| {
+            let k = e.constant(Value::Int(42), span()).unwrap();
+            e.emit(Asm::Constant { k }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
         assert!(
-            !output.contains("field "),
-            "DestructRecordRest should render label 'exclude', not 'field'. Output:\n{output}"
+            output.contains("0000  Constant             0     ; 42"),
+            "{output}"
         );
     }
 
     #[test]
+    fn test_jump_targets() {
+        let output = disassembly(0, 0, |e| {
+            let start = e.label();
+            let end = e.label();
+            e.bind(start, span()).unwrap(); // 0000
+            e.emit(Asm::True, span()).unwrap(); // 0000
+            e.emit(Asm::JumpIfTrue { to: end }, span()).unwrap(); // 0001
+            e.emit(Asm::JumpBack { to: start }, span()).unwrap(); // 0004
+            e.bind(end, span()).unwrap(); // 0007
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        // A jump shows its distance from the next instruction, then its
+        // target.
+        assert!(
+            output.contains("0001  JumpIfTrue           3     -> 0007"),
+            "{output}"
+        );
+        assert!(
+            output.contains("0004  JumpBack             7     -> 0000"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn test_make_closure() {
+        let inner = {
+            let mut e = Emitter::new("inner".into(), 0);
+            e.emit(Asm::GetUpvalue { index: 1 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+            e.finish(2).unwrap()
+        };
+        let output = disassembly(4, 1, |e| {
+            let f = e
+                .constant(
+                    Value::VmClosure(Arc::new(VmClosure {
+                        function: Arc::new(inner),
+                        upvalues: vec![],
+                    })),
+                    span(),
+                )
+                .unwrap();
+            let captures = [
+                UpvalueDesc {
+                    is_local: true,
+                    index: 3,
+                },
+                UpvalueDesc {
+                    is_local: false,
+                    index: 0,
+                },
+            ];
+            e.emit(
+                Asm::MakeClosure {
+                    f,
+                    captures: &captures,
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert!(
+            output.contains("MakeClosure          0     2   ; "),
+            "{output}"
+        );
+        assert!(
+            output.contains("\n      |  local 3\n      |  upvalue 0\n"),
+            "{output}"
+        );
+        // The function among the constants is disassembled too.
+        assert!(
+            output.contains("== inner (arity=0, upvalues=2) =="),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn test_make_record() {
+        let output = disassembly(2, 0, |e| {
+            let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
+            let ty = e
+                .constant(Value::TypeDescriptor(anon.clone()), span())
+                .unwrap();
+            let x = e.constant(Value::String("x".into()), span()).unwrap();
+            let y = e.constant(Value::String("y".into()), span()).unwrap();
+            e.emit(
+                Asm::MakeRecord {
+                    ty,
+                    fields: &[x, y],
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert!(
+            output.contains("0000  MakeRecord           0     2   ; "),
+            "{output}"
+        );
+        assert!(
+            output.contains("\n      |  field 1     ; \"x\""),
+            "{output}"
+        );
+        assert!(
+            output.contains("\n      |  field 2     ; \"y\""),
+            "{output}"
+        );
+        // The next instruction is decoded after the field names.
+        assert!(output.contains("0008  Return"), "{output}");
+    }
+
+    #[test]
+    fn test_call_builtin() {
+        let output = disassembly(1, 0, |e| {
+            let name = e.constant(Value::String("print".into()), span()).unwrap();
+            e.emit(Asm::CallBuiltin { name, argc: 1 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert!(
+            output.contains("0000  CallBuiltin          0     1   ; \"print\""),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn test_number_operands() {
+        let output = disassembly(3, 0, |e| {
+            e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+            e.emit(Asm::Call { argc: 1 }, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Slide { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert!(
+            output.contains("0000  MakeTuple            2\n"),
+            "{output}"
+        );
+        assert!(
+            output.contains("0002  Call                 1\n"),
+            "{output}"
+        );
+        assert!(
+            output.contains("0004  GetLocal             0\n"),
+            "{output}"
+        );
+        assert!(
+            output.contains("0007  Slide                0\n"),
+            "{output}"
+        );
+        assert!(output.contains("0010  Return"), "{output}");
+    }
+
+    #[test]
+    fn test_record_update() {
+        let output = disassembly(2, 0, |e| {
+            let x = e.constant(Value::String("x".into()), span()).unwrap();
+            e.emit(Asm::RecordUpdate { fields: &[x] }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert!(
+            output.contains("0000  RecordUpdate         1\n"),
+            "{output}"
+        );
+        // The per-entry label is "field", not "exclude" (the
+        // DestructRecordRest label).
+        assert!(output.contains("      |  field 0     ; \"x\""), "{output}");
+    }
+
+    #[test]
+    fn test_destruct_record_rest_label() {
+        let output = disassembly(1, 0, |e| {
+            let z = e.constant(Value::String("z".into()), span()).unwrap();
+            e.emit(Asm::DestructRecordRest { excluded: &[z] }, span())
+                .unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert!(
+            output.contains("      |  exclude 0     ; \"z\""),
+            "{output}"
+        );
+        // Must NOT use the sibling label.
+        assert!(!output.contains("field "), "{output}");
+    }
+
+    #[test]
     fn test_call_method_format() {
-        // Round 84: locks the formatted output for `Op::CallMethod`,
-        // which now shares the operand-decode helper
-        // `fmt_u16_u8_with_const` with `CallBuiltin`.
-        let mut chunk = Chunk::new();
-        let span = dummy_span();
-
-        let method_idx = chunk.add_constant(Value::String("len".into())).unwrap();
-
-        chunk.emit_op(Op::CallMethod, span);
-        chunk.emit_u16(method_idx, span);
-        chunk.emit_u8(0, span); // argc = 0
-        chunk.emit_u16(crate::bytecode::NO_TRAIT, span);
-        chunk.emit_op(Op::Return, span);
-
-        let output = disassemble_chunk(&chunk, &Globals::default(), "method");
-        assert!(output.contains("CallMethod"));
-        assert!(output.contains("\"len\""));
+        let output = disassembly(1, 0, |e| {
+            let method = e.constant(Value::String("len".into()), span()).unwrap();
+            e.emit(
+                Asm::CallMethod {
+                    method,
+                    argc: 1,
+                    of: NO_TRAIT,
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert!(
+            output.contains("0000  CallMethod           0     1   ; \"len\"\n"),
+            "{output}"
+        );
         // The next instruction is decoded after the trait operand.
         assert!(output.contains("0006  Return"), "{output}");
     }
 
     #[test]
-    fn test_op_from_byte_roundtrip() {
-        // Hand-locked count of Op variants. Bumping the Op enum without
-        // bumping this constant fails the test on purpose: it forces a
-        // conscious update to both `Op::from_byte` and any disassembler
-        // tables. Last verified: 70 variants.
-        const EXPECTED_OP_COUNT: usize = 66;
-
-        // Sweep every possible byte value. For each one that decodes,
-        // verify the round-trip discriminant matches. This catches both
-        // (a) deletion of an arm from `Op::from_byte` (count drops) and
-        // (b) any future opcode whose discriminant doesn't survive
-        // round-tripping (unlikely with `#[repr(u8)]`, but locked in).
-        let mut decoded_count = 0usize;
-        for byte in 0u8..=255 {
-            if let Some(op) = Op::from_byte(byte) {
-                assert_eq!(
-                    op as u8, byte,
-                    "round-trip failed for byte {byte}: decoded to {op:?} but discriminant is {}",
-                    op as u8
-                );
-                decoded_count += 1;
-            }
-        }
-        assert_eq!(
-            decoded_count, EXPECTED_OP_COUNT,
-            "Op::from_byte decoded {decoded_count} bytes; expected {EXPECTED_OP_COUNT}. \
-             If you added/removed an Op variant, update both Op::from_byte and EXPECTED_OP_COUNT."
-        );
-        // Sanity: a byte well past the highest discriminant must not decode.
-        assert_eq!(Op::from_byte(255), None);
-    }
-
-    #[test]
-    fn test_op_name_exhaustive_via_from_byte() {
-        // For every byte that decodes to an Op, `op_name` must produce
-        // a non-empty, non-placeholder label. This guards against
-        // accidentally regressing `op_name` to a fallthrough that
-        // returns "<unknown>" or "???" for some valid opcode.
-        for byte in 0u8..=255 {
-            if let Some(op) = Op::from_byte(byte) {
-                let name = op_name(op);
-                assert!(!name.is_empty(), "op_name({op:?}) returned empty string");
-                assert!(
-                    !name.contains("unknown") && !name.contains("???"),
-                    "op_name({op:?}) returned placeholder: {name:?}"
-                );
-            }
+    fn test_every_opcode_has_a_name() {
+        for op in Op::ALL {
+            assert!(!op.name().is_empty());
         }
     }
 }
