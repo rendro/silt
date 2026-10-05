@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- without-feature: postgres
+-- A builtin module of a cargo feature that is not built is known: its
+-- import is one error that names the feature, and what the program
+-- takes from the module is not reported again name by name.
+import postgres
+
+fn main() {
+  match postgres.connect("postgres://localhost/app") {
+    Ok(_) -> println("connected")
+    Err(e) -> println(e.message())
+  }
+  let e = postgres.PgError.PgConnect("nope")
+  println(e)
+}

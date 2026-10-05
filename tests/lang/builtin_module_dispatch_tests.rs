@@ -3,10 +3,12 @@
 //! fails with `unknown builtin namespace: <module>`. This test calls one
 //! cheap, side-effect-free function of every module through `silt run`.
 //!
-//! It also locks the feature gating of the builtin modules: with the
-//! `postgres` / `tcp` feature off, `silt check` rejects the module's
-//! import with one error that names the feature, and says nothing more
-//! about what the program takes from the module.
+//! It also locks the feature gating of `tcp`, a default feature: with it
+//! off, `silt check` rejects the module's import with one error that
+//! names the feature, and says nothing more about what the program takes
+//! from the module. (For `postgres`, which the default build lacks, that
+//! is the golden case `lang/imports/feature__import_of_a_module_whose_
+//! feature_is_not_built`.)
 
 use std::process::{Command, Output};
 
@@ -127,30 +129,6 @@ fn assert_needs_feature(label: &str, src: &str, module: &str, feature: &str) {
         stderr.matches("error[").count(),
         1,
         "one error, at the import; got:\n{stderr}"
-    );
-}
-
-#[cfg(not(feature = "postgres"))]
-#[test]
-fn importing_postgres_without_its_feature_is_one_error_that_names_it() {
-    assert_needs_feature(
-        "pg_connect",
-        "import postgres\nfn main() {\n  match postgres.connect(\"postgres://localhost/x\") {\n    \
-         Ok(_) -> println(\"ok\")\n    Err(e) -> println(e.message())\n  }\n}\n",
-        "postgres",
-        "postgres",
-    );
-    assert_needs_feature(
-        "pg_variant",
-        "import postgres\nfn main() {\n  let e = postgres.PgError.PgConnect(\"nope\")\n  println(e)\n}\n",
-        "postgres",
-        "postgres",
-    );
-    assert_needs_feature(
-        "pg_items",
-        "import postgres.{ PgTimeout }\nfn main() {\n  println(PgTimeout)\n}\n",
-        "postgres",
-        "postgres",
     );
 }
 

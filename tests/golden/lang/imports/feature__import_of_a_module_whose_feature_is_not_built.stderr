@@ -1,0 +1,6 @@
+error[compile]: the builtin module 'postgres' is not part of this build of silt: it needs the cargo feature `postgres`
+ --> feature__import_of_a_module_whose_feature_is_not_built.silt:7:1
+   |
+ 7 | import postgres
+   | ^^^^^^^^^^^^^^^ the builtin module 'postgres' is not part of this build of silt: it needs the cargo feature `postgres`
+  = help: rebuild silt with `--features postgres`

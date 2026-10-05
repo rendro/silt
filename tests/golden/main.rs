@@ -52,6 +52,7 @@ struct Directives {
     repeat: usize,
     timeout: Duration,
     requires_features: Vec<String>,
+    without_features: Vec<String>,
     verdict: Option<verdict::Mark>,
 }
 
@@ -70,7 +71,7 @@ fn feature_enabled(name: &str) -> Result<bool, String> {
         "postgres-tls" => cfg!(feature = "postgres-tls"),
         other => {
             return Err(format!(
-                "unknown feature {other:?} in `-- requires-feature:`"
+                "unknown feature {other:?} in `-- requires-feature:` / `-- without-feature:`"
             ));
         }
     })
@@ -145,6 +146,7 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
             "stderr-not-contains" => d.stderr_not_contains.push(value),
             "stdin" => d.stdin = value.replace("\\n", "\n"),
             "requires-feature" => d.requires_features.push(value),
+            "without-feature" => d.without_features.push(value),
             "timeout" => {
                 let secs: u64 = value
                     .parse()
@@ -723,6 +725,17 @@ fn run_cases(paths: &[PathBuf], what: &str, check: impl Fn(&Case) -> Vec<String>
                             }
                         }
                     }
+                    // A case about a build that lacks a feature.
+                    for feature in &case.directives.without_features {
+                        match feature_enabled(feature) {
+                            Ok(false) => {}
+                            Ok(true) => missing.push(format!("a build without {feature}")),
+                            Err(e) => {
+                                failures.lock().unwrap().push(format!("{rel}: {e}"));
+                                missing.push(feature.clone());
+                            }
+                        }
+                    }
                     if !missing.is_empty() {
                         skipped
                             .lock()
@@ -745,7 +758,7 @@ fn run_cases(paths: &[PathBuf], what: &str, check: impl Fn(&Case) -> Vec<String>
     let skipped = skipped.into_inner().unwrap();
     if !skipped.is_empty() {
         eprintln!(
-            "{} {what} cases skipped for features this build lacks:\n  {}",
+            "{} {what} cases skipped for the features of this build:\n  {}",
             skipped.len(),
             skipped.join("\n  ")
         );
