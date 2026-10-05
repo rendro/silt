@@ -195,8 +195,9 @@ SILT_GOLDEN_FULL_CORPUS=1 cargo test --all-features --test golden verdict_shard
 typechecker). It has one row for every program of `repros/type_soundness`,
 `repros/typechecker_arch` and `lang/soundness`, saying what `silt check`
 must report for it when stage 6 is done, whatever the binary does today.
-The test `soundness_manifest` (`tests/golden/soundness.rs`) checks every
-row with `silt check --format json`. A row is four tab-separated fields:
+The tests `soundness_manifest_0` to `soundness_manifest_3`
+(`tests/golden/soundness.rs`) check every row with
+`silt check --format json`. A row is four tab-separated fields:
 
 ```
 case <TAB> state <TAB> expect <TAB> note
@@ -215,7 +216,7 @@ repros/type_soundness/g2.silt	pending:1	reject E0301	TS-1: depth two, no annotat
 
 `state` is `holds`, or `pending:<step>` for a row that does not hold on
 the current binary, with the stage 6 step expected to make it hold (`-`
-for a row that is not checked). The test fails when a `holds` row does
+for a row that is not checked). A test fails when a `holds` row does
 not hold, and when a `pending` row does: the step that closes a hole
 changes its rows to `holds` in the same commit, so the manifest never
 goes stale. Stage 6 is done when no row is `pending` or `undetermined`.

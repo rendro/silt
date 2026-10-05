@@ -1,7 +1,7 @@
 //! The stage 6 exit manifest, `repros/SOUNDNESS.tsv`: what `silt check`
 //! must say about every program of the two soundness repro directories
-//! and of `lang/soundness/` when stage 6 is done. `soundness_manifest`
-//! checks each row against `check --format json`. A row marked
+//! and of `lang/soundness/` when stage 6 is done. The `soundness_manifest_*`
+//! tests check each row against `check --format json`. A row marked
 //! `pending:<step>` does not hold yet: the test passes while it fails and
 //! fails once it holds, so the step that fixes it removes the mark. The
 //! format is described in `tests/golden/README.md`.
@@ -230,8 +230,31 @@ fn violation(case: &Case, expect: &Expect) -> Result<Option<String>, String> {
     })
 }
 
+/// The rows run as this many tests, each taking every `SHARDS`-th row, so
+/// a test runner can spread them over its workers.
+const SHARDS: usize = 4;
+
 #[test]
-fn soundness_manifest() {
+fn soundness_manifest_0() {
+    run_shard(0);
+}
+
+#[test]
+fn soundness_manifest_1() {
+    run_shard(1);
+}
+
+#[test]
+fn soundness_manifest_2() {
+    run_shard(2);
+}
+
+#[test]
+fn soundness_manifest_3() {
+    run_shard(3);
+}
+
+fn run_shard(shard: usize) {
     let root = super::golden_root();
     let text = std::fs::read_to_string(root.join(MANIFEST)).expect("read the soundness manifest");
     let (rows, mut problems) = parse_manifest(&text);
@@ -272,7 +295,7 @@ fn soundness_manifest() {
             *pending.entry(step).or_default() += 1;
         }
     }
-    if !pending.is_empty() {
+    if shard == 0 && !pending.is_empty() {
         let steps: Vec<String> = pending
             .iter()
             .map(|(step, n)| format!("{n} for step {step}"))
@@ -293,6 +316,9 @@ fn soundness_manifest() {
                 .as_ref()
                 .is_none_or(|f| path.to_string_lossy().contains(f.as_str()))
         })
+        .enumerate()
+        .filter(|(i, _)| i % SHARDS == shard)
+        .map(|(_, path)| path)
         .collect();
     let by_path: BTreeMap<PathBuf, &Row> = rows
         .iter()
