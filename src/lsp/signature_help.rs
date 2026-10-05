@@ -81,6 +81,25 @@ impl Server {
                 (label, params_info, doc_text)
             };
 
+        // A client that does not read label offsets gets each
+        // parameter as its text, a substring of the label.
+        let params_info = if self.label_offsets {
+            params_info
+        } else {
+            params_info
+                .into_iter()
+                .map(|p| match p.label {
+                    ParameterLabel::LabelOffsets([start, end]) => ParameterInformation {
+                        label: ParameterLabel::Simple(
+                            label[start as usize..end as usize].to_string(),
+                        ),
+                        documentation: p.documentation,
+                    },
+                    ParameterLabel::Simple(_) => p,
+                })
+                .collect()
+        };
+
         let documentation = doc_text.map(|d| {
             Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,

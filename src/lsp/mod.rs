@@ -81,6 +81,10 @@ struct Server {
     documents: HashMap<Uri, Document>,
     /// Cached builtin type signatures: "module.func" → type string.
     builtin_sigs: HashMap<String, String>,
+    /// Whether the client reads a signature's parameters as offsets
+    /// into the label (`labelOffsetSupport`); otherwise each parameter
+    /// is sent as its text.
+    label_offsets: bool,
     /// The markdown docs of the builtin names, from the reference pages
     /// of the builtin registry: what `hover`, `signature_help` and
     /// `completion` show for a stdlib name.
@@ -113,6 +117,7 @@ impl Server {
             connection,
             documents: HashMap::new(),
             builtin_sigs: typechecker::builtin_type_signatures(),
+            label_offsets: false,
             builtin_docs: crate::builtins::registry::docs::builtin_docs(),
             projects: HashMap::new(),
             pending: HashSet::new(),
@@ -627,6 +632,13 @@ pub fn run() {
     };
 
     let mut server = Server::new(connection);
+    server.label_offsets = init_params
+        .pointer(
+            "/capabilities/textDocument/signatureHelp/signatureInformation/parameterInformation\
+             /labelOffsetSupport",
+        )
+        .and_then(|v| v.as_bool())
+        == Some(true);
 
     // Ask the client to report changes on disk of the files a session
     // reads, when it can register for them.
