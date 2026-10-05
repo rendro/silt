@@ -1,0 +1,61 @@
+//! The formatter's property runner (`tests/frontend/fmt_property/mod.rs`)
+//! on everything: the examples, the docs' snippets, the golden cases,
+//! the formatter's fuzz corpus and the directory `SILT_FMT_CORPUS` names,
+//! each as it is; and the comment mutants of the examples, the snippets
+//! and the golden cases.
+//!
+//! By default the mutants are a sample: a comment in every n-th gap of
+//! the doc snippets and of the golden cases outside `repros/` (the
+//! `frontend` suite has the sample of the examples). `SILT_FMT_FULL=1`
+//! puts one in every gap of every example, snippet and golden case, which
+//! takes hours with today's formatter:
+//!
+//! ```text
+//! SILT_FMT_FULL=1 SILT_FMT_REPORT=/tmp/fmt.txt cargo nextest run --all-features --test heavy -E 'test(fmt_property)'
+//! ```
+
+use crate::fmt_property::{
+    Expect, SUITE_WORKERS, conclude, current_formatter, doc_snippets, examples, extra_corpus,
+    fuzz_corpus, golden_files, mutants, plain, run,
+};
+
+/// Without `SILT_FMT_FULL`, every n-th gap of a doc snippet and of a
+/// golden case gets a comment.
+const DOC_GAPS: usize = 3;
+const GOLDEN_GAPS: usize = 41;
+
+/// `silt fmt` refuses some of these inputs today, so the run is marked
+/// as known to fail. Stage 8 step A3 switches `silt fmt` to the printer
+/// that passes all of them and changes the mark to `Expect::Clean`.
+#[test]
+fn every_input_and_its_comment_mutants() {
+    let full = std::env::var_os("SILT_FMT_FULL").is_some_and(|v| v != "0");
+    let examples = examples();
+    let docs = doc_snippets();
+    let (repros, golden): (Vec<_>, Vec<_>) = golden_files()
+        .into_iter()
+        .partition(|input| input.name.starts_with("tests/golden/repros/"));
+    let fuzz = fuzz_corpus();
+    let extra = extra_corpus();
+    let mut jobs = Vec::new();
+    for inputs in [&examples, &docs, &golden, &repros, &fuzz, &extra] {
+        jobs.extend(plain(inputs));
+    }
+    if full {
+        for inputs in [&examples, &docs, &golden, &repros] {
+            jobs.extend(mutants(inputs, 1));
+        }
+    } else {
+        jobs.extend(mutants(&docs, DOC_GAPS));
+        jobs.extend(mutants(&golden, GOLDEN_GAPS));
+    }
+    // The full sweep is run on its own and takes every CPU.
+    let workers = if full {
+        std::thread::available_parallelism().map_or(4, |n| n.get())
+    } else {
+        SUITE_WORKERS
+    };
+    let report = run(&jobs, current_formatter, workers);
+    let what = if full { "full sweep" } else { "sweep" };
+    conclude(what, &report, Expect::KnownFailing);
+}

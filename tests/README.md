@@ -27,6 +27,34 @@ The golden cases and their format are described in `golden/README.md`.
 The full repro corpus runs with
 `SILT_GOLDEN_FULL_CORPUS=1 cargo nextest run --all-features --test golden -E 'test(verdict_shard)'`.
 
+## The formatter's property runner
+
+`tests/frontend/fmt_property/mod.rs` formats each input and checks that
+the formatter did not refuse it, that the result parses and holds the
+input's comments, and that a second pass changes nothing. Its inputs are
+the examples, the docs' `silt` snippets, the golden cases, the fuzz
+corpus `fuzz/corpus/fuzz_formatter`, and comment mutants made in the
+test: an input with one `--` or `{- -}` comment in one gap between two
+tokens.
+
+```
+cargo nextest run --all-features --test frontend -E 'test(fmt_property)'   # the examples and a sample of their mutants
+cargo nextest run --all-features --test heavy -E 'test(fmt_property)'      # every input, a sample of the mutants
+```
+
+| Variable | Meaning |
+|---|---|
+| `SILT_FMT_FULL=1` | (`heavy`) a mutant for every gap of every example, snippet and golden case |
+| `SILT_FMT_CORPUS=<dir>` | (`heavy`) also every `.silt` file under the directory |
+| `SILT_FMT_REPORT=<file>` | append the counts and every failure to the file |
+
+A passing test prints nothing under nextest; add `--success-output
+immediate` to see the counts, or read the report file.
+
+Both runs are marked `Expect::KnownFailing`: today's `silt fmt` refuses
+many of the mutants, so the tests report the count and pass. The step
+that replaces the formatter changes the marks to `Expect::Clean`.
+
 ## A faster local build
 
 These go in `~/.cargo/config.toml`, not in the repository (CI does not

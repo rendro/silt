@@ -1,0 +1,8 @@
+-- cmd: fmt
+-- A directory case: `main.silt` is formatted and compared with
+-- `case.formatted`; the other files are left alone.
+import util
+
+fn main() {
+    println(util.greeting())
+}

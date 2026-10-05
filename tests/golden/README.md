@@ -9,6 +9,7 @@ through the built `silt` binary exactly as a user would run it. No Rust.
 tests/golden/<area>/<case>.silt          single-file case
 tests/golden/<area>/<case>.stdout        expected stdout (optional)
 tests/golden/<area>/<case>.stderr        expected stderr (optional)
+tests/golden/<area>/<case>.formatted     what `silt fmt` makes of the file (`-- cmd: fmt` cases)
 tests/golden/<area>/<case>/main.silt     multi-file case: a directory;
 tests/golden/<area>/<case>/*.silt        the other files beside it;
 tests/golden/<area>/<case>/silt.toml     a package, if the case needs one
@@ -17,6 +18,7 @@ tests/golden/<area>/<case>/src/main.silt a package case: silt.toml plus src/main
                                          file, directives are read from src/main.silt
 tests/golden/<area>/<case>/case.stdout   expected output of a directory case
 tests/golden/<area>/<case>/case.stderr
+tests/golden/<area>/<case>/case.formatted
 ```
 
 `<area>` is a directory of your choosing (e.g. `patterns`, `traits`,
@@ -30,7 +32,7 @@ byte-order mark and before any code, each `-- key: value`:
 
 | Directive | Meaning | Default |
 |---|---|---|
-| `-- cmd: run` / `check` / `test` / `fmt --check` / `disasm` / `repl` / `lsp` | the subcommand; for `repl` the file is not passed, and the session comes from `-- stdin:`; for `lsp` see "LSP cases" below | `run` |
+| `-- cmd: run` / `check` / `test` / `fmt` / `fmt --check` / `disasm` / `repl` / `lsp` | the subcommand; for `repl` the file is not passed, and the session comes from `-- stdin:`; for `fmt` see "Format cases" below; for `lsp` see "LSP cases" below | `run` |
 | `-- exit: N` | expected exit status | `0` |
 | `-- stdout-contains: TEXT` | stdout must contain TEXT (repeatable) | — |
 | `-- stderr-contains: TEXT` | stderr must contain TEXT (repeatable) | — |
@@ -73,6 +75,27 @@ Prefer `stderr-contains` for diagnostics, naming the words that matter
 (the error kind and the key phrase), so that unrelated rewording does not
 break the case; use an exact `.stderr` only when the whole message is the
 point (e.g. a snippet/caret layout test).
+
+## Format cases
+
+With `-- cmd: fmt` (the command alone, without `--check`) the harness
+runs `silt fmt` on the case's copy, which rewrites the copy, and then
+looks at the file as well as at the output:
+
+- A case with exit status 0 has a `<case>.formatted` file
+  (`case.formatted` for a directory case, whose `main.silt` is the file
+  that is formatted). The copy must equal it byte for byte, the
+  directive lines included. Then `silt fmt` runs on the copy a second
+  time and must change nothing: every such case is an idempotence test.
+- A case with another exit status (a syntax error, a refusal) has no
+  `.formatted` file: the copy must be unchanged.
+
+Stdout, stderr and the exit status are compared as for every case. To
+write the expected file, format a copy and CHECK the result by eye:
+
+```
+cp <case>.silt /tmp/c.silt && $SILT fmt /tmp/c.silt && cp /tmp/c.silt <case>.formatted
+```
 
 ## LSP cases
 
@@ -261,7 +284,7 @@ the case.
 ## Bless mode
 
 `SILT_BLESS=1 cargo test --test golden` rewrites every existing `.stdout`
-/ `.stderr` file and every `-- verdict:` mark from the current binary
+/ `.stderr` / `.formatted` file and every `-- verdict:` mark from the current binary
 (with `SILT_GOLDEN_FULL_CORPUS=1` for the marks of the whole repro
 corpus). Only the integrator uses it,
 after reviewing the diff.

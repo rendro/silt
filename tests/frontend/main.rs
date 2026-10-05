@@ -3,6 +3,8 @@
 //! One test binary; each module was a separate test crate before.
 
 mod examples_fmt_check_tests;
+mod fmt_property;
+mod fmt_property_sample_tests;
 mod formatter_examples_roundtrip_tests;
 mod formatter_idempotency_tests;
 mod formatter_line_comment_tests;
