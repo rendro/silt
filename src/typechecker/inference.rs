@@ -1105,17 +1105,15 @@ impl TypeChecker {
                     self.unify(&elem_type, &first_ty, elem_infos[0].1);
 
                     for (idx, (t, espan, is_spread)) in elem_infos.iter().enumerate() {
-                        let err_count = self.errors.len();
-                        if *is_spread {
+                        let unified = if *is_spread {
                             let expected = Type::List(Box::new(elem_type.clone()));
-                            self.unify(&expected, t, *espan);
+                            self.unify_types(&expected, t)
                         } else {
-                            self.unify(&elem_type, t, *espan);
-                        }
-                        if self.errors.len() > err_count {
-                            // Replace the raw unify diagnostic with a
-                            // clearer list-level message.
-                            self.errors.truncate(err_count);
+                            self.unify_types(&elem_type, t)
+                        };
+                        if unified.is_err() {
+                            // A list-level message, clearer than the
+                            // mismatch of the two types.
                             let elem_ty = if *is_spread {
                                 let applied = self.apply(t);
                                 match applied {
@@ -1167,10 +1165,7 @@ impl TypeChecker {
                         let v_span = v.span;
                         let kt = self.infer_expr(k, env);
                         let vt = self.infer_expr(v, env);
-                        let err_count = self.errors.len();
-                        self.unify(&kt, &first_k, k_span);
-                        if self.errors.len() > err_count {
-                            self.errors.truncate(err_count);
+                        if self.unify_types(&kt, &first_k).is_err() {
                             let first_resolved = self.apply(&first_k);
                             let kt_resolved = self.apply(&kt);
                             self.error(Code::TypeMismatch,
@@ -1180,10 +1175,7 @@ impl TypeChecker {
                                 k_span,
                             );
                         }
-                        let err_count = self.errors.len();
-                        self.unify(&vt, &first_v, v_span);
-                        if self.errors.len() > err_count {
-                            self.errors.truncate(err_count);
+                        if self.unify_types(&vt, &first_v).is_err() {
                             let first_resolved = self.apply(&first_v);
                             let vt_resolved = self.apply(&vt);
                             self.error(Code::TypeMismatch,
@@ -1211,10 +1203,7 @@ impl TypeChecker {
                     for (idx, e) in elems.iter_mut().enumerate() {
                         let espan = e.span;
                         let t = self.infer_expr(e, env);
-                        let err_count = self.errors.len();
-                        self.unify(&t, &elem_type, espan);
-                        if self.errors.len() > err_count {
-                            self.errors.truncate(err_count);
+                        if self.unify_types(&t, &elem_type).is_err() {
                             let first_resolved = self.apply(&elem_type);
                             let t_resolved = self.apply(&t);
                             self.error(Code::TypeMismatch,
@@ -3759,8 +3748,7 @@ impl TypeChecker {
     /// Returns `true` if a diagnostic was emitted; callers skip their
     /// follow-up operand-domain check and return `Type::Error` so outer
     /// ascriptions hit the cascade-suppression branch in `unify` (the
-    /// round-60 G2 contract), exactly as with the old error-count
-    /// snapshot.
+    /// round-60 G2 contract).
     fn unify_binop_operands(
         &mut self,
         lt: &Type,
@@ -3770,11 +3758,9 @@ impl TypeChecker {
         in_domain: impl Fn(&Type) -> bool,
         domain_msg: impl Fn(&Type) -> std::string::String,
     ) -> bool {
-        let err_count_before = self.errors.len();
-        self.unify(rt, lt, rhs_span);
-        if self.errors.len() == err_count_before {
+        let Err(mismatch) = self.unify_types(rt, lt) else {
             return false;
-        }
+        };
         // The domain predicates treat `Var` / `AssocProj` / `Error` as
         // "maybe valid", so the replacement below only fires when the
         // offender is a RESOLVED out-of-domain type.
@@ -3794,8 +3780,9 @@ impl TypeChecker {
                 domain_msg(offender),
             );
             d.help.extend(Self::chain_hint(offender, other));
-            self.errors.truncate(err_count_before);
             self.errors.push(d);
+        } else {
+            self.report_mismatch(mismatch, rhs_span);
         }
         true
     }

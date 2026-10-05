@@ -56,6 +56,32 @@ impl TyVarSupply {
     }
 }
 
+/// Why two types do not unify: one fault for each part that does not.
+/// `TypeChecker::unify` reports it; a caller with a better message for
+/// its place (a list element, an operand) writes its own.
+pub(super) struct Mismatch(Vec<Fault>);
+
+/// One part of two types that does not unify.
+pub(super) struct Fault {
+    code: Code,
+    message: String,
+    help: Option<String>,
+    /// The two types (got, expected) when their heads differ: the report
+    /// offers to wrap a value in `Ok(...)` where a `Result` is expected.
+    apart: Option<(Type, Type)>,
+}
+
+impl Fault {
+    fn new(code: Code, message: impl Into<String>) -> Fault {
+        Fault {
+            code,
+            message: message.into(),
+            help: None,
+            apart: None,
+        }
+    }
+}
+
 impl TypeChecker {
     // ── Fresh variables ─────────────────────────────────────────────
 
@@ -236,7 +262,7 @@ impl TypeChecker {
         tail1: RowTail,
         f2: std::collections::BTreeMap<Symbol, Type>,
         tail2: RowTail,
-        span: Span,
+        out: &mut Vec<Fault>,
     ) {
         use std::collections::BTreeMap;
         // Skip work if both tails point to the same row var AND fields
@@ -252,7 +278,7 @@ impl TypeChecker {
         for k in &common_keys {
             let a = f1.get(k).cloned().unwrap();
             let b = f2.get(k).cloned().unwrap();
-            self.unify(&a, &b, span);
+            self.unify_into(&a, &b, out);
         }
         // Determine non-overlapping parts.
         let only_in_1: BTreeMap<Symbol, Type> = f1
@@ -273,30 +299,28 @@ impl TypeChecker {
                         .keys()
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
-                    self.error(
+                    out.push(Fault::new(
                         Code::NoSuchField,
                         format!(
                             "record literal has unexpected field{} not declared in target type: {}",
                             if names.len() == 1 { "" } else { "s" },
                             names.join(", ")
                         ),
-                        span,
-                    );
+                    ));
                 }
                 if !only_in_2.is_empty() {
                     let names: Vec<String> = only_in_2
                         .keys()
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
-                    self.error(
+                    out.push(Fault::new(
                         Code::MissingField,
                         format!(
                             "record literal is missing required field{}: {}",
                             if names.len() == 1 { "" } else { "s" },
                             names.join(", ")
                         ),
-                        span,
-                    );
+                    ));
                 }
             }
             (RowTail::Var(v), RowTail::Closed) => {
@@ -304,24 +328,23 @@ impl TypeChecker {
                 // v to a closed record carrying the leftover closed fields.
                 // Round 75 DEAD-5: shared with the symmetric
                 // Closed×Open arm via `unify_open_closed`.
-                self.unify_open_closed(&only_in_1, only_in_2, v, span);
+                self.unify_open_closed(&only_in_1, only_in_2, v, out);
             }
             (RowTail::Closed, RowTail::Var(v)) => {
                 // Closed × Open: symmetric — open side (only_in_2) must
                 // not have extras; bind v to leftover from the closed
                 // side (only_in_1). Round 75 DEAD-5.
-                self.unify_open_closed(&only_in_2, only_in_1, v, span);
+                self.unify_open_closed(&only_in_2, only_in_1, v, out);
             }
             (RowTail::Var(v1), RowTail::Var(v2)) if v1 == v2 => {
                 // Same row var, but field disagreement: impossible to
                 // satisfy.
                 if !only_in_1.is_empty() || !only_in_2.is_empty() {
-                    self.error(
+                    out.push(Fault::new(
                         Code::TypeMismatch,
                         "row variable shared between two records with mismatched field sets"
                             .to_string(),
-                        span,
-                    );
+                    ));
                 }
             }
             (RowTail::Var(v1), RowTail::Var(v2)) => {
@@ -341,13 +364,13 @@ impl TypeChecker {
                     self.tables.vars.bind(v1, to_v1);
                 } else {
                     let msg = Self::infinite_type_message(&to_v1);
-                    self.error(Code::InfiniteType, msg, span);
+                    out.push(Fault::new(Code::InfiniteType, msg));
                 }
                 if !occurs_in(v2, &to_v2) {
                     self.tables.vars.bind(v2, to_v2);
                 } else {
                     let msg = Self::infinite_type_message(&to_v2);
-                    self.error(Code::InfiniteType, msg, span);
+                    out.push(Fault::new(Code::InfiniteType, msg));
                 }
             }
         }
@@ -372,21 +395,20 @@ impl TypeChecker {
         open_extras: &std::collections::BTreeMap<Symbol, Type>,
         closed_extras: std::collections::BTreeMap<Symbol, Type>,
         v: TyVar,
-        span: Span,
+        out: &mut Vec<Fault>,
     ) {
         if !open_extras.is_empty() {
             let names: Vec<String> = open_extras
                 .keys()
                 .map(|s| crate::intern::resolve(*s))
                 .collect();
-            self.error(
+            out.push(Fault::new(
                 Code::TypeMismatch,
                 format!(
                     "record open side has fields not present in closed target: {}",
                     names.join(", ")
                 ),
-                span,
-            );
+            ));
             return;
         }
         let leftover = Type::AnonRecord {
@@ -396,11 +418,10 @@ impl TypeChecker {
         if !occurs_in(v, &leftover) {
             self.tables.vars.bind(v, leftover);
         } else {
-            self.error(
+            out.push(Fault::new(
                 Code::InfiniteType,
                 Self::infinite_type_message(&leftover),
-                span,
-            );
+            ));
         }
     }
 
@@ -412,7 +433,7 @@ impl TypeChecker {
         anon_fields: std::collections::BTreeMap<Symbol, Type>,
         anon_tail: RowTail,
         nominal_fields: &[(Symbol, Type)],
-        span: Span,
+        out: &mut Vec<Fault>,
     ) {
         use std::collections::BTreeMap;
         let mut nf_map: BTreeMap<Symbol, Type> = BTreeMap::new();
@@ -422,7 +443,7 @@ impl TypeChecker {
         // Unify pairwise on overlapping fields.
         for (k, av) in anon_fields.iter() {
             if let Some(nv) = nf_map.get(k) {
-                self.unify(av, nv, span);
+                self.unify_into(av, nv, out);
             }
         }
         let only_in_anon: BTreeMap<Symbol, Type> = anon_fields
@@ -440,14 +461,13 @@ impl TypeChecker {
                 .keys()
                 .map(|s| crate::intern::resolve(*s))
                 .collect();
-            self.error(
+            out.push(Fault::new(
                 Code::NoSuchField,
                 format!(
                     "anon record has fields not declared on the nominal record: {}",
                     names.join(", ")
                 ),
-                span,
-            );
+            ));
             return;
         }
         match anon_tail {
@@ -457,14 +477,13 @@ impl TypeChecker {
                         .keys()
                         .map(|s| crate::intern::resolve(*s))
                         .collect();
-                    self.error(
+                    out.push(Fault::new(
                         Code::MissingField,
                         format!(
                             "anon record is missing fields the nominal record requires: {}",
                             names.join(", ")
                         ),
-                        span,
-                    );
+                    ));
                 }
             }
             RowTail::Var(v) => {
@@ -475,17 +494,60 @@ impl TypeChecker {
                 if !occurs_in(v, &leftover) {
                     self.tables.vars.bind(v, leftover);
                 } else {
-                    self.error(
+                    out.push(Fault::new(
                         Code::InfiniteType,
                         Self::infinite_type_message(&leftover),
-                        span,
-                    );
+                    ));
                 }
             }
         }
     }
 
+    /// Unify `t1` (the type got) with `t2` (the type expected) and report
+    /// at `span` why they do not unify.
     pub(super) fn unify(&mut self, t1: &Type, t2: &Type, span: Span) {
+        if let Err(mismatch) = self.unify_types(t1, t2) {
+            self.report_mismatch(mismatch, span);
+        }
+    }
+
+    /// Unify `t1` (the type got) with `t2` (the type expected). Every
+    /// part that does unify is unified, whatever part does not; the
+    /// error says why each of those does not, and nothing is reported.
+    pub(super) fn unify_types(&mut self, t1: &Type, t2: &Type) -> Result<(), Mismatch> {
+        let mut faults = Vec::new();
+        self.unify_into(t1, t2, &mut faults);
+        if faults.is_empty() {
+            Ok(())
+        } else {
+            Err(Mismatch(faults))
+        }
+    }
+
+    /// Report a failed unification at `span`.
+    pub(super) fn report_mismatch(&mut self, mismatch: Mismatch, span: Span) {
+        for fault in mismatch.0 {
+            let mut d = Diagnostic::error(fault.code, span, fault.message);
+            d.help.extend(fault.help);
+            if let Some((got, expected)) = &fault.apart {
+                Self::add_ok_wrap_fix(&mut d, got, expected);
+            }
+            self.errors.push(d);
+        }
+    }
+
+    /// The fault of two types whose heads differ.
+    fn type_mismatch(&self, got: &Type, expected: &Type) -> Fault {
+        let (got_shown, expected_shown) = self.show_apart(got, expected);
+        Fault {
+            code: Code::TypeMismatch,
+            message: format!("type mismatch: expected {expected_shown}, got {got_shown}"),
+            help: Self::chain_hint(got, expected),
+            apart: Some((got.clone(), expected.clone())),
+        }
+    }
+
+    fn unify_into(&mut self, t1: &Type, t2: &Type, out: &mut Vec<Fault>) {
         let t1 = self.apply(t1);
         let t2 = self.apply(t2);
 
@@ -529,16 +591,18 @@ impl TypeChecker {
                         && args.len() == 1
                         && matches!(&args[0], Type::Var(inner) if inner == v)
                     {
-                        self.error(
+                        out.push(Fault::new(
                             Code::TypeMismatch,
                             "cannot return a `type a` parameter as a value of type `a` — \
                              the parameter is a type descriptor, not an instance. \
                              Construct an `a` in the body instead."
                                 .to_string(),
-                            span,
-                        );
+                        ));
                     } else {
-                        self.error(Code::InfiniteType, Self::infinite_type_message(t), span);
+                        out.push(Fault::new(
+                            Code::InfiniteType,
+                            Self::infinite_type_message(t),
+                        ));
                     }
                 } else {
                     self.tables.vars.bind(*v, t.clone());
@@ -554,19 +618,18 @@ impl TypeChecker {
                     // rounds formatted `p1.len()` as "expected", which
                     // reversed the diagnostic.
                     let (exp, got) = (p2.len(), p1.len());
-                    self.error(
+                    out.push(Fault::new(
                         Code::ArityMismatch,
                         format!(
                             "function expects {exp} {arg_word}, got {got}",
                             arg_word = if exp == 1 { "argument" } else { "arguments" }
                         ),
-                        span,
-                    );
+                    ));
                 } else {
                     for (a, b) in p1.iter().zip(p2.iter()) {
-                        self.unify(a, b, span);
+                        self.unify_into(a, b, out);
                     }
-                    self.unify(r1, r2, span);
+                    self.unify_into(r1, r2, out);
                 }
             }
 
@@ -601,11 +664,11 @@ impl TypeChecker {
                 if args.is_empty() && name.is_builtin("Tuple") => {}
 
             (Type::List(a), Type::List(b)) => {
-                self.unify(a, b, span);
+                self.unify_into(a, b, out);
             }
 
             (Type::Range(a), Type::Range(b)) => {
-                self.unify(a, b, span);
+                self.unify_into(a, b, out);
             }
 
             // Range(T) is a nominal zero-cost alias for List(T): they
@@ -615,20 +678,20 @@ impl TypeChecker {
             // ranges and `let r: List(Int) = 1..10` still typechecks.
             // Runtime representation is unchanged (Vec<Value>).
             (Type::Range(a), Type::List(b)) | (Type::List(b), Type::Range(a)) => {
-                self.unify(a, b, span);
+                self.unify_into(a, b, out);
             }
 
             (Type::Map(k1, v1), Type::Map(k2, v2)) => {
-                self.unify(k1, k2, span);
-                self.unify(v1, v2, span);
+                self.unify_into(k1, k2, out);
+                self.unify_into(v1, v2, out);
             }
 
             (Type::Set(a), Type::Set(b)) => {
-                self.unify(a, b, span);
+                self.unify_into(a, b, out);
             }
 
             (Type::Channel(a), Type::Channel(b)) => {
-                self.unify(a, b, span);
+                self.unify_into(a, b, out);
             }
 
             (Type::Tuple(a), Type::Tuple(b)) => {
@@ -636,18 +699,17 @@ impl TypeChecker {
                     // Directional convention: t1 (=a) is the "got" side,
                     // t2 (=b) is the "expected" side. Earlier wording
                     // "expected {a.len()}, got {b.len()}" reversed this.
-                    self.error(
+                    out.push(Fault::new(
                         Code::TypeMismatch,
                         format!(
                             "tuple length mismatch: expected {}, got {}",
                             b.len(),
                             a.len()
                         ),
-                        span,
-                    );
+                    ));
                 } else {
                     for (x, y) in a.iter().zip(b.iter()) {
-                        self.unify(x, y, span);
+                        self.unify_into(x, y, out);
                     }
                 }
             }
@@ -655,11 +717,10 @@ impl TypeChecker {
             (Type::Record(n1, f1), Type::Record(n2, f2)) => {
                 if n1 != n2 {
                     let (got, expected) = self.show_apart(&t1, &t2);
-                    self.error(
+                    out.push(Fault::new(
                         Code::TypeMismatch,
                         format!("record type mismatch: expected {expected}, got {got}"),
-                        span,
-                    );
+                    ));
                 } else {
                     // Unify fields by name. Messages are directional:
                     // `t1` is the got side, `t2` is the expected side
@@ -672,25 +733,23 @@ impl TypeChecker {
                     // caret + message unambiguously identifies the fault.
                     for (name, t1_inner) in f1 {
                         if let Some((_, t2_inner)) = f2.iter().find(|(n, _)| n == name) {
-                            self.unify(t1_inner, t2_inner, span);
+                            self.unify_into(t1_inner, t2_inner, out);
                         } else {
-                            self.error(Code::NoSuchField,
+                            out.push(Fault::new(Code::NoSuchField,
                                 format!(
                                     "unexpected field '{name}' in record; type '{n1}' has no such field"
                                 ),
-                                span,
-                            );
+                            ));
                         }
                     }
                     for (name, _t2_inner) in f2 {
                         if !f1.iter().any(|(n, _)| n == name) {
-                            self.error(
+                            out.push(Fault::new(
                                 Code::MissingField,
                                 format!(
                                     "missing field '{name}' in record; type '{n1}' requires it"
                                 ),
-                                span,
-                            );
+                            ));
                         }
                     }
                 }
@@ -706,14 +765,13 @@ impl TypeChecker {
                 if !self.tables.record_param_var_ids.contains_key(n1)
                     && self.tables.records.contains_key(n1)
                 {
-                    self.error(
+                    out.push(Fault::new(
                         Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected 0, got {}",
                             a2.len()
                         ),
-                        span,
-                    );
+                    ));
                     return;
                 }
                 if let (Some(rec_info), Some(param_var_ids)) = (
@@ -725,7 +783,7 @@ impl TypeChecker {
                         let substituted =
                             substitute_enum_params(field_template_ty, &param_var_ids, a2);
                         if let Some((_, concrete_ty)) = f1.iter().find(|(n, _)| n == field_name) {
-                            self.unify(concrete_ty, &substituted, span);
+                            self.unify_into(concrete_ty, &substituted, out);
                         }
                     }
                 }
@@ -743,13 +801,12 @@ impl TypeChecker {
                     .map(|v| v.len())
                     .unwrap_or(0);
                 if expected != 0 {
-                    self.error(
+                    out.push(Fault::new(
                         Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected {expected}, got 0"
                         ),
-                        span,
-                    );
+                    ));
                 }
             }
             (Type::Generic(n1, a1), Type::Record(n2, f2)) if n1 == n2 && !a1.is_empty() => {
@@ -757,14 +814,13 @@ impl TypeChecker {
                 if !self.tables.record_param_var_ids.contains_key(n2)
                     && self.tables.records.contains_key(n2)
                 {
-                    self.error(
+                    out.push(Fault::new(
                         Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n2}: expected 0, got {}",
                             a1.len()
                         ),
-                        span,
-                    );
+                    ));
                     return;
                 }
                 if let (Some(rec_info), Some(param_var_ids)) = (
@@ -776,7 +832,7 @@ impl TypeChecker {
                         let substituted =
                             substitute_enum_params(field_template_ty, &param_var_ids, a1);
                         if let Some((_, concrete_ty)) = f2.iter().find(|(n, _)| n == field_name) {
-                            self.unify(concrete_ty, &substituted, span);
+                            self.unify_into(concrete_ty, &substituted, out);
                         }
                     }
                 }
@@ -790,13 +846,12 @@ impl TypeChecker {
                     .map(|v| v.len())
                     .unwrap_or(0);
                 if expected != 0 {
-                    self.error(
+                    out.push(Fault::new(
                         Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n2}: expected {expected}, got 0"
                         ),
-                        span,
-                    );
+                    ));
                 }
             }
 
@@ -811,7 +866,7 @@ impl TypeChecker {
                     tail: tail2,
                 },
             ) => {
-                self.unify_anon_anon(f1.clone(), tail1.clone(), f2.clone(), tail2.clone(), span);
+                self.unify_anon_anon(f1.clone(), tail1.clone(), f2.clone(), tail2.clone(), out);
             }
 
             // ── Anon record × Nominal record (widening) ───────────────
@@ -822,7 +877,7 @@ impl TypeChecker {
                 },
                 Type::Record(_, nf),
             ) => {
-                self.unify_anon_nominal(af.clone(), at.clone(), nf, span);
+                self.unify_anon_nominal(af.clone(), at.clone(), nf, out);
             }
             (
                 Type::Record(_, nf),
@@ -831,7 +886,7 @@ impl TypeChecker {
                     tail: at,
                 },
             ) => {
-                self.unify_anon_nominal(af.clone(), at.clone(), nf, span);
+                self.unify_anon_nominal(af.clone(), at.clone(), nf, out);
             }
             (
                 Type::AnonRecord {
@@ -841,7 +896,7 @@ impl TypeChecker {
                 Type::Generic(name, args),
             ) if self.tables.records.contains_key(name) => {
                 let nf_inst = self.instantiate_record_fields_with_args(*name, args);
-                self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, span);
+                self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, out);
             }
             (
                 Type::Generic(name, args),
@@ -851,7 +906,7 @@ impl TypeChecker {
                 },
             ) if self.tables.records.contains_key(name) => {
                 let nf_inst = self.instantiate_record_fields_with_args(*name, args);
-                self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, span);
+                self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, out);
             }
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
@@ -863,32 +918,23 @@ impl TypeChecker {
                     // `Type` values so `Type::Display`'s args rendering
                     // and TypeOf special-casing apply (mirrors the
                     // catch-all arm at the bottom of `unify`).
-                    let (got, expected) = self.show_apart(&t1, &t2);
-                    let mut d = Diagnostic::error(
-                        Code::TypeMismatch,
-                        span,
-                        format!("type mismatch: expected {expected}, got {got}"),
-                    );
-                    d.help.extend(Self::chain_hint(&t1, &t2));
-                    Self::add_ok_wrap_fix(&mut d, &t1, &t2);
-                    self.errors.push(d);
+                    out.push(self.type_mismatch(&t1, &t2));
                 } else if a1.len() != a2.len() {
                     // Directional convention: t1 (=a1) is the "got" side,
                     // t2 (=a2) is the "expected" side (see the Record arm
                     // above and the unify() callsite convention). Earlier
                     // wording had a1/a2 reversed.
-                    self.error(
+                    out.push(Fault::new(
                         Code::ArityMismatch,
                         format!(
                             "type argument count mismatch for {n1}: expected {}, got {}",
                             a2.len(),
                             a1.len()
                         ),
-                        span,
-                    );
+                    ));
                 } else {
                     for (x, y) in a1.iter().zip(a2.iter()) {
-                        self.unify(x, y, span);
+                        self.unify_into(x, y, out);
                     }
                 }
             }
@@ -918,16 +964,15 @@ impl TypeChecker {
                 },
             ) => {
                 if tn1 == tn2 && an1 == an2 {
-                    self.unify(r1, r2, span);
+                    self.unify_into(r1, r2, out);
                 } else {
                     // Different trait or different member: genuinely
                     // distinct abstract types. Directional convention:
                     // t1 is the "got" side, t2 the "expected" side.
-                    self.error(
+                    out.push(Fault::new(
                         Code::TypeMismatch,
                         format!("type mismatch: expected {t2}, got {t1}"),
-                        span,
-                    );
+                    ));
                 }
             }
 
@@ -944,26 +989,17 @@ impl TypeChecker {
                 // nudge toward an annotation.
                 match (&t1, &t2) {
                     (Type::Var(_), other) | (other, Type::Var(_)) => {
-                        self.error(
+                        out.push(Fault::new(
                             Code::AmbiguousType,
                             format!(
                                 "cannot determine a consistent type here; \
                                  one side resolved to `{other}` but the other \
                                  is still unspecified — add a type annotation"
                             ),
-                            span,
-                        );
+                        ));
                     }
                     _ => {
-                        let (got, expected) = self.show_apart(&t1, &t2);
-                        let mut d = Diagnostic::error(
-                            Code::TypeMismatch,
-                            span,
-                            format!("type mismatch: expected {expected}, got {got}"),
-                        );
-                        d.help.extend(Self::chain_hint(&t1, &t2));
-                        Self::add_ok_wrap_fix(&mut d, &t1, &t2);
-                        self.errors.push(d);
+                        out.push(self.type_mismatch(&t1, &t2));
                     }
                 }
             }
