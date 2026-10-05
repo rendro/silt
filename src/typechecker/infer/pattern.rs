@@ -841,7 +841,7 @@ impl TypeChecker {
                         }
                     }
                 }
-                // Bind each alternative into a scratch sub-environment so we
+                // Bind each alternative in a frame of its own so we
                 // can collect the per-alternative type for every variable the
                 // or-pattern binds, then unify those types pairwise. This
                 // enforces that the alternatives agree on each binding's
@@ -849,14 +849,13 @@ impl TypeChecker {
                 // and `x: String` on the other must be rejected).
                 let mut per_alt_types: Vec<HashMap<Symbol, Type>> = Vec::with_capacity(alts.len());
                 for alt in alts {
-                    let mut alt_env = env.child();
-                    self.bind_pattern(alt, ty, &mut alt_env, span);
-                    let mut names: HashMap<Symbol, Type> = HashMap::new();
-                    for name in collect_pattern_vars(alt) {
-                        if let Some(scheme) = alt_env.bindings.get(&name) {
-                            names.insert(name, scheme.ty.clone());
-                        }
-                    }
+                    env.push();
+                    self.bind_pattern(alt, ty, env, span);
+                    let names: HashMap<Symbol, Type> = env
+                        .pop()
+                        .into_iter()
+                        .map(|(name, scheme)| (name, scheme.ty))
+                        .collect();
                     per_alt_types.push(names);
                 }
                 // Pairwise-unify the first alt's types with each other alt.
@@ -1265,19 +1264,18 @@ impl TypeChecker {
                         }
                     }
                 }
-                // Check each alternative into a scratch sub-environment so
+                // Check each alternative in a frame of its own so
                 // we can collect the per-alternative type for every variable
                 // the or-pattern binds, then unify those types pairwise.
                 let mut per_alt_types: Vec<HashMap<Symbol, Type>> = Vec::with_capacity(alts.len());
                 for alt in alts {
-                    let mut alt_env = env.child();
-                    self.check_pattern(alt, expected, &mut alt_env, span);
-                    let mut names: HashMap<Symbol, Type> = HashMap::new();
-                    for name in collect_pattern_vars(alt) {
-                        if let Some(scheme) = alt_env.bindings.get(&name) {
-                            names.insert(name, scheme.ty.clone());
-                        }
-                    }
+                    env.push();
+                    self.check_pattern(alt, expected, env, span);
+                    let names: HashMap<Symbol, Type> = env
+                        .pop()
+                        .into_iter()
+                        .map(|(name, scheme)| (name, scheme.ty))
+                        .collect();
                     per_alt_types.push(names);
                 }
                 if per_alt_types.len() >= 2 {

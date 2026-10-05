@@ -1528,6 +1528,7 @@ impl TypeChecker {
             Type::Fun(_, _) => true,
             Type::Channel(_) => true,
             Type::Var(_) => true,
+            Type::Rigid(_) => true,
             Type::Error => true,
             Type::Never => true,
             // An unreduced AssocProj is an abstract type whose

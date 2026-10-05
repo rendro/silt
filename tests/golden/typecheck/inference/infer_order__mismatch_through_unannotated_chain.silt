@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A function's type comes from its body before any caller is checked,
+-- whatever the order they are written in: `a` returns what `c` returns.
+-- stderr-contains: type mismatch: expected String, got Int
+let s: String = a()
+fn a() { b() }
+fn b() { c() }
+fn c() { 1 }
+fn main() { println(s) }

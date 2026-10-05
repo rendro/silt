@@ -1,6 +1,8 @@
--- A body-less signature: `a` is anchored by the `type a` parameter.
+-- `a` in the return type is anchored by the `type a` parameter.
 -- cmd: check
 -- exit: 0
 -- stderr-not-contains: in return type is not introduced
-fn default(type a) -> a
+trait Default { fn default() -> Self }
+trait Default for Int { fn default() -> Self { 0 } }
+fn default(type a) -> a where a: Default { a.default() }
 fn main() {}

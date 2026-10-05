@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A default body is checked where it is written, whether or not an impl
+-- leaves the method out.
+-- stderr-contains: type mismatch: expected Float, got ()
+-- stderr-contains: default_method__body_checked_without_impl_using_it.silt:8:
+trait Area {
+  fn area(self) -> Float { () }
+}
+type Sq { side: Float }
+trait Area for Sq { fn area(self) -> Float { self.side * self.side } }
+fn main() { println(Sq { side: 2.0 }.area()) }

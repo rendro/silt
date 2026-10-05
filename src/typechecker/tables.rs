@@ -68,14 +68,26 @@ pub(super) struct TraitInfo {
     /// the supertrait's `trait_arg_bindings` during where-clause
     /// activation. Arg-less entries keep the bare-name behaviour.
     pub(super) supertrait_args: Vec<Vec<TypeExpr>>,
+    /// The methods, each with its type: a complete signature, in which
+    /// `Self` is `self_var` and the trait's parameters are
+    /// `param_var_ids`. An impl's method has this type, with the impl's
+    /// type for `Self` and its trait arguments for the parameters.
     pub(super) methods: Vec<(Symbol, Type)>,
+    /// The variable `Self` is in the methods' types.
+    pub(super) self_var: TyVar,
+    /// The name of each variable the trait's declaration writes: `Self`,
+    /// the parameters, and the type variables of the methods'
+    /// annotations. Where a body is checked against a method's type (a
+    /// default method's, an impl's), the variables are rigid, by these
+    /// names.
+    pub(super) var_names: Vec<(TyVar, Symbol)>,
     /// Default method bodies declared inside the trait. Maps method name
-    /// to the full FnDecl (with body). Impls that omit a method whose
-    /// name appears here are not "missing method" errors — instead the
-    /// FnDecl is cloned into the impl's `methods` vec by
-    /// `synthesize_default_methods` so the rest of the pipeline (signature
-    /// registration, body checking, dispatch, compilation) treats it
-    /// identically to an explicitly-written method.
+    /// to the full FnDecl (with body), checked once the trait's module
+    /// is. Impls that omit a method whose name appears here are not
+    /// "missing method" errors: the method is registered for the impl's
+    /// type with the trait's signature, and the checked FnDecl is copied
+    /// into the impl's `methods` (`share_default_methods`), where the
+    /// compiler compiles it like a method the impl wrote.
     pub(super) default_method_bodies: HashMap<Symbol, FnDecl>,
     /// The module that declares the trait without `pub`, and its name:
     /// the trait's methods can be called only in that module. `None` for

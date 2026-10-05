@@ -3,6 +3,6 @@
 -- stderr-contains: cannot infer the type
 -- A top-level let whose type cannot be determined and which is never
 -- referenced anywhere should still be reported as an error.
-fn id(x) { x }
+fn never() { never() }
 
-let a = id(5)
+let a = never()

@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A default method is checked once, in its trait: `Self` has what the
+-- trait and its supertraits promise, not the fields of the types that
+-- happen to implement it.
+-- stderr-contains: no method 'label' found in trait constraints (Loud)
+-- stderr-contains: default_method__uses_unpromised_field.silt:10:32
+trait Loud {
+  fn volume(self) -> Int
+  fn shout(self) -> String { "{self.label}!" }
+}
+type Dog { label: String }
+trait Loud for Dog { fn volume(self) -> Int { 2 } }
+fn main() { println(Dog { label: "rex" }.shout()) }

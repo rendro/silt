@@ -1,0 +1,26 @@
+-- A default body calls the trait's own methods and its supertrait's on
+-- `self`; each impl's own method is the one that runs.
+trait Named { fn name(self) -> String }
+trait Loud: Named {
+  fn volume(self) -> Int
+  fn shout(self) -> String { "{self.name()}{self.bangs()}" }
+  fn bangs(self) -> String {
+    match self.volume() > 1 {
+      true -> "!!"
+      false -> "!"
+    }
+  }
+}
+type Dog { n: String }
+type Cat { n: String }
+trait Named for Dog { fn name(self) -> String { self.n } }
+trait Named for Cat { fn name(self) -> String { self.n } }
+trait Loud for Dog { fn volume(self) -> Int { 2 } }
+trait Loud for Cat {
+  fn volume(self) -> Int { 1 }
+  fn bangs(self) -> String { "?" }
+}
+fn main() {
+  println(Dog { n: "rex" }.shout())
+  println(Cat { n: "tom" }.shout())
+}

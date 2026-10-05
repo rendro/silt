@@ -1,3 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- The projections of two different annotation variables are two types:
+-- `a` and `b` are rigid, so `<a as Stream>::Item` is not `<b as Stream>::Item`.
+-- stderr-contains: list elements must have the same type: first element is <a as Stream>::Item, but element 2 is <b as Stream>::Item
 trait Stream {
   type Item
   fn first(self) -> Self::Item

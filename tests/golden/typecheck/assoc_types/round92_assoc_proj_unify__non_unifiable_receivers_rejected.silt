@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type mismatch: expected <_ as Meta>::U, got <_ as Meta>::T
+-- stderr-contains: type mismatch: expected <a as Meta>::U, got <a as Meta>::T
 trait Meta {
   type T
   type U

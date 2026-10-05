@@ -20,6 +20,7 @@ mod exhaustiveness;
 mod infer;
 mod inference;
 pub mod names;
+mod order;
 mod resolve;
 mod scheme;
 mod show;
@@ -42,10 +43,9 @@ pub use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
 pub use builtin_env::*;
-use declare_traits::impl_method_key;
+use declare_fns::FnSig;
 use derive_synth::*;
 use env::TypeEnv;
-pub use scheme::*;
 use solve::PendingWhereConstraint;
 use std::rc::Rc;
 pub use tables::*;
@@ -79,9 +79,10 @@ pub struct TypeChecker {
     /// Tracks the types of bindings in the enclosing `loop` (if any),
     /// so that `recur` arity and types can be validated.
     pub(super) loop_binding_types: Option<Vec<Type>>,
-    /// Active trait constraints for type variables in the current function body.
-    /// Maps type variable → list of trait names it must satisfy.
-    /// Populated during `check_fn_body` to enable method resolution on constrained vars.
+    /// The bounds in scope: for each annotation variable of a declaration
+    /// whose body was or is being checked (by the variable it is in the
+    /// declaration's scheme), the traits its `where` clauses declare, and
+    /// their supertraits. A rigid variable has the methods of these.
     pub(super) active_constraints: HashMap<TyVar, Vec<TraitKey>>,
     /// Side channel holding trait arguments for parameterized-trait
     /// constraints, e.g. `where a: TryInto(Int)` stores `[Int]` under
@@ -93,8 +94,6 @@ pub struct TypeChecker {
     pub(super) trait_arg_bindings: HashMap<(TyVar, TraitKey), Vec<Type>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
-    /// Maps function names to their body-constrained types (populated during check_fn_body).
-    pub(super) fn_body_types: HashMap<Symbol, Type>,
     /// Deferred checks for field access on type variables (B4).
     /// Each entry is `(object_type, field_name, result_type, span)`.
     /// Re-examined after all function bodies are inferred: if the object type
@@ -144,28 +143,40 @@ pub struct TypeChecker {
     /// reset it afterward. Defaults to a sentinel zero-span when no
     /// caller has populated it.
     pub(super) current_type_anno_span: Option<Span>,
-    /// B4: deferred where-clause obligations seen at call sites where
-    /// the type argument stayed an unresolved type variable.
-    /// Finalize re-applies the substitution after all bodies are
-    /// inferred: if the var resolved to a concrete type with a
-    /// matching impl, the obligation is satisfied; if it resolved to
-    /// a type variable still not covered by the enclosing fn's
-    /// active constraints at the time of the call, a clean
-    /// diagnostic is emitted.
+    /// The bounds owed for a type variable that was unknown where they
+    /// were owed (see `owe_bound`), until the definitions being checked
+    /// are done.
     pub(super) pending_where_constraints: Vec<PendingWhereConstraint>,
-    /// B4: the instantiated type-variable IDs of the enclosing function's
-    /// parameters at the time `check_fn_body` is running. Used to decide
-    /// whether a call-site where-constraint is touching the enclosing fn's
-    /// own polymorphism (in which case the enclosing fn must declare the
-    /// constraint) or a top-level unrelated Var (in which case we leave
-    /// the obligation alone — the value will resolve via pass-3 narrowing).
-    pub(super) current_fn_param_tyvars: Vec<TyVar>,
-    /// Audit round 19: tracks trait constraints on type variables created
-    /// by `instantiate_with_constraints`. When a scheme with where-clause
-    /// constraints is instantiated, the fresh type variables inherit the
-    /// constraints here. `generalize` then consults this map to propagate
-    /// constraints into newly created schemes (e.g. `let f = constrained_fn`).
-    pub(super) tyvar_trait_constraints: HashMap<TyVar, Vec<TraitKey>>,
+    /// The bounds the instantiated variables of the schemes used so far
+    /// owe, in the order they were instantiated: `generalize` puts those
+    /// on a variable it quantifies in the scheme (`let f = constrained_fn`,
+    /// `fn wrap(x) { constrained_fn(x) }`).
+    pub(super) bound_log: Vec<(TyVar, TraitKey)>,
+    /// Where in `bound_log` each open generalisation scope starts
+    /// (`enter_level`), and where the one `exit_level` just left started.
+    pub(super) bound_marks: Vec<usize>,
+    pub(super) closed_mark: usize,
+    /// The annotation variables of the declaration whose body is being
+    /// checked, by name: an annotation in the body that writes one of the
+    /// names means the same variable.
+    pub(super) sig_names: HashMap<Symbol, Type>,
+    /// Each annotation variable of a declaration whose body was or is
+    /// being checked, as its body sees it: rigid.
+    pub(super) rigid_of: HashMap<TyVar, Type>,
+    /// The top-level definitions whose types are being inferred together
+    /// (a function alone, or a group that is mutually recursive): inside
+    /// the group each has one type.
+    pub(super) inferred_together: std::collections::HashSet<Symbol>,
+    /// The declaration of each top-level `let` of the module, by the
+    /// names it binds, and the one whose value is being checked: its
+    /// value may not read a `let` declared after it, which has not run
+    /// when it does.
+    pub(super) let_index: HashMap<Symbol, usize>,
+    pub(super) checking_let: Option<usize>,
+    /// The signature of each method written in an impl of the module, as
+    /// its body sees it, by the impl's type, the method and the trait,
+    /// until the body is checked.
+    pub(super) impl_sigs: HashMap<(TypeRef, Symbol, TraitKey), FnSig>,
     /// Set by the FieldAccess arm of infer_expr: `true` when the last
     /// FieldAccess resolved via method dispatch (trait method table),
     /// `false` when it resolved via record-field or module-qualified
@@ -230,41 +241,6 @@ pub struct TypeChecker {
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
-    /// Round 64 item 6B (annotated polymorphic recursion): names of
-    /// `fn` declarations whose signature is fully annotated (every
-    /// parameter has an explicit type AND the return type is
-    /// declared). Populated by `register_fn_decl`.
-    ///
-    /// The narrowing pass in `check_program` (which collapses a
-    /// scheme's quantified vars after body inference observes them
-    /// constrained) is SKIPPED for these fns. Locking the registered
-    /// scheme as authoritative permits `instantiate_with_constraints`
-    /// at the recursive call site to allocate fresh tyvars on every
-    /// invocation — i.e. polymorphic recursion. Without the
-    /// annotation, the same body that recurses with concrete
-    /// non-polymorphic args would be undecidable to infer (Mycroft
-    /// 1984), so silt keeps the existing monomorphic-recursion
-    /// behaviour and emits a diagnostic note suggesting the user add
-    /// annotations.
-    pub(super) fully_annotated_fn_names: std::collections::HashSet<Symbol>,
-    /// Round 64 item 6B: name of the function whose body is currently
-    /// being type-checked. Set by `check_fn_body_with_name` before
-    /// recursing into the body and cleared after. The Call arm
-    /// consults this to detect a recursive call site and, if the fn
-    /// is NOT in `fully_annotated_fn_names`, attach a helpful note
-    /// to any type mismatch diagnostic at that call.
-    pub(super) current_fn_name: Option<Symbol>,
-    /// Round 64 item 6B: names of fns whose body inference observed a
-    /// recursive call (callee == enclosing fn). Populated by the Call
-    /// arm of `infer_expr` whenever `callee_fn_name == current_fn_name`.
-    /// Used by the narrowing pass to decide whether to lock an
-    /// annotated fn's scheme: only fns that actually recurse need
-    /// the lock — every other annotated fn keeps the legacy
-    /// narrowing behaviour so existing test invariants (e.g.
-    /// `fn grab(b: Box) -> Int { b.value }` narrowing the bare `Box`
-    /// param to `Int` and then surfacing a "type mismatch" at the
-    /// caller) keep firing.
-    pub(super) recursive_fn_names: std::collections::HashSet<Symbol>,
     /// What the checks of a session share; see [`Tables`]. Moved in
     /// for one module's check and out again after it.
     pub(super) tables: Tables,
@@ -284,7 +260,6 @@ impl TypeChecker {
             active_constraints: HashMap::new(),
             trait_arg_bindings: HashMap::new(),
             current_return_type: None,
-            fn_body_types: HashMap::new(),
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
             pending_question_marks: Vec::new(),
@@ -294,8 +269,15 @@ impl TypeChecker {
             recovery_stub_names: std::collections::HashSet::new(),
             current_type_anno_span: None,
             pending_where_constraints: Vec::new(),
-            current_fn_param_tyvars: Vec::new(),
-            tyvar_trait_constraints: HashMap::new(),
+            bound_log: Vec::new(),
+            bound_marks: Vec::new(),
+            closed_mark: 0,
+            sig_names: HashMap::new(),
+            rigid_of: HashMap::new(),
+            inferred_together: std::collections::HashSet::new(),
+            let_index: HashMap::new(),
+            checking_let: None,
+            impl_sigs: HashMap::new(),
             last_field_access_was_method: false,
             method_trait: None,
             forced_trait: None,
@@ -313,9 +295,6 @@ impl TypeChecker {
             unresolved_impl_methods: std::collections::HashSet::new(),
             is_cell: false,
             signatures_only: false,
-            fully_annotated_fn_names: std::collections::HashSet::new(),
-            current_fn_name: None,
-            recursive_fn_names: std::collections::HashSet::new(),
             tables: Tables::default(),
         }
     }
@@ -639,27 +618,20 @@ impl TypeChecker {
             }
         }
 
-        // Second pass: register trait declarations FIRST (so default
-        // method bodies are recorded in TraitInfo) before synthesizing
-        // missing defaults into trait impls. We split the original
-        // single-pass loop into three sub-passes so the synthesis step
-        // can mutate `program.decls` after every TraitInfo is known but
-        // before any TraitImpl is registered into method_table.
+        // The declarations and the bodies are checked one level deep:
+        // what a signature leaves out and what a body leaves unknown are
+        // variables of that level, generalised when the definitions that
+        // share them are done.
+        self.enter_level();
+
+        // Second pass: the trait declarations, before any impl of them.
         for decl in &program.decls {
             if let Decl::Trait(t) = decl {
                 self.register_trait_decl_user(t);
             }
         }
 
-        // 2b: Synthesize default-method bodies into impls that omitted
-        // them. Mutates `program.decls`. After this pass, any impl that
-        // "uses the default" looks identical (in the AST) to one that
-        // re-typed the default body inline — so signature registration,
-        // body checking, dispatch, and code generation all flow through
-        // the existing machinery unmodified.
-        self.synthesize_default_methods(&mut program.decls);
-
-        // 2b.5: Auto-derive Display/Compare/Equal/Hash for every user
+        // 2b: Auto-derive Display/Compare/Equal/Hash for every user
         // enum and record that does not already have a manual impl.
         // Mutates `program.decls`. The synthesized TraitImpls flow
         // through `register_trait_impl` (step 2c below) and the
@@ -671,260 +643,244 @@ impl TypeChecker {
         self.reject_sealed_trait_impls(&mut program.decls);
         self.synthesize_auto_derive_impls(&mut program.decls);
 
-        // 2c: Register fn signatures and trait impls (now seeing
-        // synthesized methods alongside explicit ones).
+        // 2c: the signatures of the functions and of the impls' methods.
+        let mut sigs: Vec<Option<FnSig>> = Vec::with_capacity(program.decls.len());
         for decl in &program.decls {
-            match decl {
-                Decl::Fn(f) => {
-                    self.register_fn_decl(f, &mut env);
-                }
+            sigs.push(match decl {
+                Decl::Fn(f) => Some(self.register_fn_decl(f, &mut env)),
                 Decl::TraitImpl(ti) => {
-                    self.register_trait_impl(ti, &mut env);
+                    self.register_trait_impl(ti);
+                    None
                 }
-                _ => {}
-            }
+                _ => None,
+            });
         }
         self.select_visible_methods();
-
-        // Process top-level let bindings (after functions are registered so
-        // the value expression can call functions, and before function body
-        // checking so functions can reference the constants).
-        for i in 0..program.decls.len() {
-            if let Decl::Let {
-                ref mut value,
-                ref pattern,
-                ref ty,
-                span,
-                ..
-            } = program.decls[i]
-            {
-                let is_value = inference::is_syntactic_value(&value.kind);
-                let mut val_ty = self.infer_expr(value, &mut env);
-                if let Some(te) = ty {
-                    // B2: populate the arity-error span hint with the
-                    // annotation's own span so diagnostics from
-                    // `resolve_type_expr` point at the user-written type,
-                    // not a zero-span sentinel. Without this, errors in
-                    // `let x: Box(Int) = ...` where `Box` is parameterized
-                    // emitted a span-less first error followed by a
-                    // duplicate from the subsequent unify.
-                    let prev_type_span = self.current_type_anno_span.replace(te.span);
-                    let declared =
-                        self.resolve_type_expr(te, &mut std::collections::HashMap::new());
-                    self.current_type_anno_span = prev_type_span;
-                    self.unify(&val_ty, &declared, span);
-                    // A value of unknown type (from a module that failed to
-                    // load) takes the declared type.
-                    if matches!(self.apply(&val_ty), Type::Error) {
-                        val_ty = declared;
-                    }
-                }
-                let scheme = if is_value {
-                    self.generalize(&env, &val_ty)
-                } else {
-                    Scheme::mono(self.apply(&val_ty))
-                };
-                if let PatternKind::Ident(name) = &pattern.kind {
-                    env.define(*name, scheme);
-                } else {
-                    // A top-level `let` has no failure branch either:
-                    // the pattern must be irrefutable.
-                    self.bind_irrefutable_pattern(
-                        pattern,
-                        &val_ty,
-                        &mut env,
-                        span,
-                        infer::pattern::BindingSite::Let,
-                    );
-                }
-            }
-        }
 
         // Validate trait implementations against their declarations
         self.validate_trait_impls();
 
-        // Third pass: type check function bodies to discover constraints.
-        // Recovery stubs (Option B) are skipped: their synthetic empty
-        // body is not user code and must not produce "return type
-        // mismatch", "unused binding", "unreachable", etc.
-        let pre_pass3_error_count = self.errors.len();
-        let pre_pass3_field_count = self.pending_field_accesses.len();
-        let pre_pass3_numeric_count = self.pending_numeric_checks.len();
-        let pre_pass3_qmark_count = self.pending_question_marks.len();
-        self.check_decl_bodies(&mut program.decls, &env);
-
-        // Narrow function schemes based on body constraints, then re-check.
-        //
-        // Invariant (audit-round-36 LATENT doc): when `finalize_deferred_checks`
-        // runs below, `pending_field_accesses` / `pending_numeric_checks` /
-        // `pending_question_marks` / `pending_where_constraints` must contain
-        // EXACTLY the pushes from the
-        // most recent body-check pass — not a mix of pass-2 + pass-3 entries.
-        // Two paths preserve that:
-        //   (1) `any_narrowed == false`: no re-check happens, so pass 3's
-        //       pushes ARE the "most recent" pool and finalize consumes them
-        //       as-is.
-        //   (2) `any_narrowed == true`: the truncate/clear inside the branch
-        //       rolls the pools back to their pre-pass-3 baseline before the
-        //       re-check repopulates them, so finalize again sees only the
-        //       most-recent pass's entries.
-        // If a future edit adds a THIRD re-check path it MUST either set
-        // `any_narrowed = true` (to go through the truncate branch) or add its
-        // own equivalent reset/repopulate pairing, or this invariant breaks
-        // and duplicate obligations leak into finalize.
-        let body_types: HashMap<Symbol, Type> = std::mem::take(&mut self.fn_body_types);
-        // Round 64 item 6B: collect annotated-fn signature mismatches
-        // here so they survive the truncate-on-recheck step that runs
-        // when SOME OTHER unannotated fn was narrowed in this batch.
-        // We append them after the recheck so the user always sees
-        // the "polymorphic signature but body pins to concrete type"
-        // diagnostic.
-        let mut annotated_signature_mismatches: Vec<(Symbol, Span)> = Vec::new();
-        if !body_types.is_empty() {
-            let mut any_narrowed = false;
-            for (name, constrained_type) in &body_types {
-                let new_scheme = self.generalize(&env, constrained_type);
-                // Preserve where-clause constraints from the original scheme
-                //
-                // Round 73 B1 (BROKEN, soundness): the gate used to be a
-                // bare `vars.len()` count comparison, which silently
-                // missed row-poly narrowing where one tyvar (e.g. an
-                // unannotated record param) gets pinned by body
-                // inference to `AnonRecord{f: β, ...γ}` — a tyvar is
-                // consumed AND a row-tail tyvar is introduced, leaving
-                // the count equal. Without re-narrowing, deferred
-                // field-access checks resolve against the body-pass
-                // tyvar (open row) rather than the call-site type, and
-                // bogus field accesses leak into runtime as crashes.
-                // Now we also fire when the type tree narrowed
-                // structurally (Var → concrete head at any position).
-                if let Some(original_scheme) = env.lookup(*name).cloned()
-                    && (original_scheme.vars.len() != new_scheme.vars.len()
-                        || scheme_narrowed(&original_scheme.ty, &new_scheme.ty))
-                {
-                    // Round 64 item 6B (annotated polymorphic recursion):
-                    // a fully-annotated fn's signature is authoritative.
-                    // If the body's instantiation would narrow the
-                    // scheme — i.e. an annotated polymorphic var was
-                    // pinned to a concrete type by body usage (e.g.
-                    // `fn f(x: a) -> Int { x + 1 }` pins `a` to Int via
-                    // the `+` operator's unification) — that's a
-                    // signature mismatch the user should fix. Record
-                    // the violation now and emit the diagnostic after
-                    // the recheck phase below (see the
-                    // `annotated_signature_mismatches` drain). Leaving
-                    // the scheme intact (a) surfaces the contradiction
-                    // at the user's annotation site without silently
-                    // monomorphising it, and (b) preserves the
-                    // polymorphic shape so a same-body recursive call
-                    // still instantiates afresh — which is the whole
-                    // point of annotated poly-recursion.
-                    // Lock the scheme only when the fn is BOTH fully
-                    // annotated AND actually recursive. Annotated-but-
-                    // non-recursive fns keep the legacy narrowing
-                    // behaviour so test invariants like "bare-Box
-                    // narrowing of `b: Box` to `Box(Int)` surfaces a
-                    // type-mismatch at the caller" continue to hold.
-                    if self.fully_annotated_fn_names.contains(name)
-                        && self.recursive_fn_names.contains(name)
-                    {
-                        let fn_span = program
-                            .decls
-                            .iter()
-                            .find_map(|d| match d {
-                                Decl::Fn(fd) if fd.name == *name => Some(fd.span),
-                                _ => None,
-                            })
-                            .unwrap_or(Span::BUILTIN);
-                        annotated_signature_mismatches.push((*name, fn_span));
-                        continue;
-                    }
-                    // Scheme was narrowed — some vars got constrained
-                    any_narrowed = true;
-                    let mut final_scheme = new_scheme.clone();
-                    // BROKEN (round 17 F1): `original_scheme.constraints` uses
-                    // the pass-2 tyvars, while `new_scheme.vars` uses fresh
-                    // pass-3 tyvars from `instantiate_with_constraints` that
-                    // flowed through body inference into `fn_body_types`.
-                    // A direct `new_scheme.vars.contains(old_tv)` check never
-                    // matches, so constraints were silently dropped and calls
-                    // like `use_doublable("text")` slipped through typecheck
-                    // and crashed at runtime with "no method doubled for
-                    // String". Walk the two `Type` trees structurally in
-                    // lockstep to build an old→new tyvar remap, then rewrite
-                    // the original constraints through it. Narrowing can only
-                    // tighten the scheme (never introduce new vars), so any
-                    // original constraint whose old var is still free in the
-                    // new scheme maps to a concrete new var.
-                    let remap = align_tyvars(&original_scheme.ty, &new_scheme.ty);
-                    for (old_tv, trait_name) in &original_scheme.constraints {
-                        if let Some(&new_tv) = remap.get(old_tv)
-                            && new_scheme.vars.contains(&new_tv)
-                            && !final_scheme.constraints.contains(&(new_tv, *trait_name))
-                        {
-                            final_scheme.constraints.push((new_tv, *trait_name));
-                        }
-                    }
-                    env.define(*name, final_scheme);
+        for (i, decl) in program.decls.iter().enumerate() {
+            if let Decl::Let { pattern, .. } = decl {
+                for name in collect_pattern_vars(pattern) {
+                    self.let_index.insert(name, i);
                 }
             }
-
-            if any_narrowed {
-                // Discard pass 3 errors — they'll be re-emitted with better accuracy
-                self.errors.truncate(pre_pass3_error_count);
-                self.fn_body_types.clear();
-                // Also truncate deferred checks back to the pre-pass-3
-                // baseline (preserving any obligations recorded by the
-                // top-level let inference earlier). They'll be re-collected
-                // during the re-check with narrowed schemes.
-                self.pending_field_accesses.truncate(pre_pass3_field_count);
-                self.pending_numeric_checks
-                    .truncate(pre_pass3_numeric_count);
-                self.pending_question_marks.truncate(pre_pass3_qmark_count);
-                // B4: discard the pending where-clause obligations so
-                // the re-check with narrowed schemes re-collects them
-                // from scratch. Otherwise stale entries pollute the
-                // finalize pass with obligations that belong to
-                // pre-narrowed instantiations.
-                self.pending_where_constraints.clear();
-
-                // Re-check the bodies with the narrowed schemes.
-                self.check_decl_bodies(&mut program.decls, &env);
-            }
         }
 
-        // Round 64 item 6B: surface annotated-fn signature
-        // mismatches recorded above. These are emitted post-narrowing
-        // and post-recheck so the truncate-on-recheck step does not
-        // erase them; they're the user-facing "your annotation is
-        // inconsistent with the body" diagnostic.
-        for (name, fn_span) in annotated_signature_mismatches {
-            self.error(
-                Code::TypeMismatch,
-                format!(
-                    "function '{}' has a polymorphic signature but its body uses \
-                     a parameter as a concrete type; either add a `where` constraint \
-                     (e.g. `where a: Display`) or replace the type variable with \
-                     the concrete type the body actually requires",
-                    resolve(name)
-                ),
-                fn_span,
-            );
+        // Third pass: the functions and the top-level `let`s, in the
+        // order they refer to each other, callees first. Each group that
+        // refers to itself is inferred together and then generalised.
+        for component in self.definition_order(&program.decls, &sigs) {
+            self.check_component(&mut program.decls, &sigs, &component, &mut env);
         }
 
-        // Resolve any deferred checks (field-access / numeric ops on type
-        // variables) before generating "unresolved type" errors.
-        self.finalize_deferred_checks();
+        // Fourth pass: the bodies of the impls' methods and of the
+        // traits' default methods. Their signatures are complete, so
+        // nothing above waited for them.
+        self.check_decl_bodies(&mut program.decls, &mut env);
+        self.exit_level();
 
-        // Fourth pass: detect unresolved type variables on let-binding values
-        // where the user did not provide a type annotation.
+        // Detect unresolved type variables on let-binding values where
+        // the user did not provide a type annotation.
         self.check_unresolved_let_types(program);
 
         // After all passes, resolve any remaining type variables in annotations
         self.resolve_all_types(program);
 
+        // Each impl that leaves a default method out gets the trait's
+        // checked body, which the compiler compiles with the impl.
+        self.share_default_methods(&mut program.decls);
+
         self.drop_repeated_errors();
         env
+    }
+
+    /// Check one group of top-level definitions that refer to each other
+    /// (or one definition alone): bind each with the type its
+    /// declaration gives it, check the bodies and the values against
+    /// those, and generalise what is left unknown. A function with a
+    /// complete signature is bound with its scheme already.
+    fn check_component(
+        &mut self,
+        decls: &mut [Decl],
+        sigs: &[Option<FnSig>],
+        component: &order::Component,
+        env: &mut TypeEnv,
+    ) {
+        // Inside the group each definition has one type.
+        self.inferred_together.clear();
+        let mut awaited: Vec<(Symbol, Type)> = Vec::new();
+        for &i in &component.members {
+            match (&decls[i], &sigs[i]) {
+                (Decl::Fn(f), Some(sig)) if !sig.complete => {
+                    env.define(f.name, Scheme::mono(sig.ty()));
+                    self.inferred_together.insert(f.name);
+                }
+                // A `let` the group reaches before its value is checked.
+                (Decl::Let { pattern, .. }, _) if component.cyclic => {
+                    for name in collect_pattern_vars(pattern) {
+                        let ty = self.fresh_var();
+                        env.define(name, Scheme::mono(ty.clone()));
+                        awaited.push((name, ty));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // The `let`s of the group, with whether each is generalised.
+        let mut lets: Vec<(Vec<Symbol>, bool, Span)> = Vec::new();
+        for &i in &component.members {
+            match (&mut decls[i], &sigs[i]) {
+                // Parser-recovery stubs are skipped: their empty body is
+                // not user code and must not produce diagnostics. A host
+                // module's functions have no bodies.
+                (Decl::Fn(f), Some(sig)) => {
+                    if !f.is_recovery_stub && !self.signatures_only {
+                        self.check_body(f, sig, env);
+                    }
+                }
+                (
+                    Decl::Let {
+                        value,
+                        pattern,
+                        ty,
+                        span,
+                        ..
+                    },
+                    _,
+                ) => {
+                    let names = collect_pattern_vars(pattern);
+                    self.checking_let = Some(i);
+                    let is_value =
+                        self.check_top_level_let(pattern, ty.as_ref(), value, *span, env);
+                    self.checking_let = None;
+                    for (name, awaited_ty) in &awaited {
+                        if names.contains(name)
+                            && let Some(bound) = env.lookup(*name).cloned()
+                        {
+                            self.unify(&bound.ty, awaited_ty, *span);
+                        }
+                    }
+                    lets.push((names, is_value, *span));
+                }
+                _ => {}
+            }
+        }
+        // What the bodies left for later: a variable they could not
+        // decide may be decided now.
+        self.finalize_deferred_checks();
+
+        // Generalise. What a `let` that is not a value leaves unknown
+        // stays unknown for everything that mentions it.
+        self.exit_level();
+        for (names, is_value, span) in &lets {
+            for name in names {
+                let Some(bound) = env.lookup(*name).cloned() else {
+                    continue;
+                };
+                if !is_value {
+                    self.keep_monomorphic(&bound.ty);
+                }
+                // A function of the group gave it the type of one of
+                // its annotation variables (see `TypeChecker::bind`).
+                if let Some(r) = rigid_in(&self.apply(&bound.ty)) {
+                    self.error(
+                        Code::TypeMismatch,
+                        format!(
+                            "the type variable `{0}` would escape its declaration: \
+                             `{name}` is defined outside it and cannot have a type that \
+                             mentions `{0}`",
+                            r.name
+                        ),
+                        *span,
+                    );
+                    env.define(*name, Scheme::mono(Type::Error));
+                }
+            }
+        }
+        // A function's type may mention an annotation variable of another
+        // function of the group: the bounds are the group's.
+        let bounds: Vec<(TyVar, TraitKey)> = component
+            .members
+            .iter()
+            .filter_map(|&i| sigs[i].as_ref())
+            .flat_map(|sig| sig.bounds.iter().copied())
+            .collect();
+        for &i in &component.members {
+            if let (Decl::Fn(f), Some(sig)) = (&decls[i], &sigs[i])
+                && !sig.complete
+            {
+                let scheme = self.generalize_fn(&sig.ty(), &bounds);
+                env.define(f.name, scheme);
+            }
+        }
+        for (names, is_value, _) in &lets {
+            if *is_value {
+                for name in names {
+                    // (A name the pattern failed to bind may be bound
+                    // by something else, with a scheme of its own.)
+                    if let Some(bound) = env.lookup(*name).cloned()
+                        && bound.vars.is_empty()
+                    {
+                        let scheme = self.generalize(&bound.ty);
+                        env.define(*name, scheme);
+                    }
+                }
+            }
+        }
+        self.settle_bounds();
+        self.inferred_together.clear();
+        self.enter_level();
+    }
+
+    /// Check a top-level `let`: its value against its annotation, and
+    /// bind its pattern's names, each with the type the value gives it.
+    /// Returns whether the value is a syntactic value: the `let` is then
+    /// generalised with the group it is checked in.
+    fn check_top_level_let(
+        &mut self,
+        pattern: &Pattern,
+        ty: Option<&TypeExpr>,
+        value: &mut Expr,
+        span: Span,
+        env: &mut TypeEnv,
+    ) -> bool {
+        let is_value = self.is_syntactic_value(value);
+        let mut val_ty = self.infer_expr(value, env);
+        if let Some(te) = ty {
+            // B2: populate the arity-error span hint with the
+            // annotation's own span so diagnostics from
+            // `resolve_type_expr` point at the user-written type,
+            // not a zero-span sentinel. Without this, errors in
+            // `let x: Box(Int) = ...` where `Box` is parameterized
+            // emitted a span-less first error followed by a
+            // duplicate from the subsequent unify.
+            let prev_type_span = self.current_type_anno_span.replace(te.span);
+            let declared = self.resolve_type_expr(te, &mut std::collections::HashMap::new());
+            self.current_type_anno_span = prev_type_span;
+            self.unify(&val_ty, &declared, span);
+            // A value of unknown type (from a module that failed to
+            // load) takes the declared type.
+            if matches!(self.apply(&val_ty), Type::Error) {
+                val_ty = declared;
+            }
+        }
+        if let PatternKind::Ident(name) = &pattern.kind {
+            env.define(*name, Scheme::mono(self.apply(&val_ty)));
+        } else {
+            // A top-level `let` has no failure branch either:
+            // the pattern must be irrefutable.
+            self.bind_irrefutable_pattern(
+                pattern,
+                &val_ty,
+                env,
+                span,
+                infer::pattern::BindingSite::Let,
+            );
+        }
+        is_value
     }
 
     /// Keep one of each diagnostic: the same message at the same span
@@ -942,77 +898,53 @@ impl TypeChecker {
 
     // ── Check declaration bodies ──────────────────────────────────────
 
-    /// Type check the body of every function and of every trait-impl
-    /// method in `decls` against `env`.
+    /// Type check the body of every method written in an impl of
+    /// `decls`, and of every default method of a trait of `decls`,
+    /// against `env`.
     ///
-    /// This is the only body-checking loop. The first body pass of
-    /// `check_program`, its re-check after scheme narrowing and the REPL
-    /// all call it, so the three cannot disagree on which bodies are
-    /// checked or on the key a method is looked up under.
+    /// An impl's method is checked against the signature its trait
+    /// gives it (`register_trait_impl` keeps it in `impl_sigs`, by the
+    /// canonical head of the impl's target: `List` for `Range` and for a
+    /// user alias of `List(..)`, `Fn` for `Fun`, `Unit` for `()`).
     ///
-    /// Parser-recovery stubs are skipped: their empty body is not user
-    /// code and must not produce diagnostics.
-    ///
-    /// `register_trait_impl` registers a method under the canonical name
-    /// of the impl's target type (`Range` and a user alias of `List(..)`
-    /// collapse to `List`, `Fun` to `Fn`, `()` to `Unit`), both in
-    /// `method_table` and as the `impl_method_key` binding in `env`.
-    /// The lookup key is therefore built from the canonical name too; a
-    /// key built from the name as written would miss the binding for an
-    /// impl written against an alias, and the body would go unchecked.
-    ///
-    /// After a method body is checked, its body-constrained type replaces
-    /// the template in `method_table`, so call sites see the concrete
-    /// return type. The method's where-clause constraints are re-keyed
-    /// from the template's type variables to those of the new type, and
-    /// the same mapping is applied to the constraints' trait arguments,
-    /// which may mention those variables.
-    pub(super) fn check_decl_bodies(&mut self, decls: &mut [Decl], env: &TypeEnv) {
+    /// A default method is checked once, in its trait: `Self` is rigid
+    /// there, bounded by the trait and its supertraits, so the body may
+    /// use what those promise and nothing an impl's type happens to
+    /// have.
+    pub(super) fn check_decl_bodies(&mut self, decls: &mut [Decl], env: &mut TypeEnv) {
+        // One level deep, as every body: its variables are a
+        // declaration's, not an outer value's.
+        self.enter_level();
         for decl in decls.iter_mut() {
-            if let Decl::Fn(f) = decl
-                && !f.is_recovery_stub
-                && !self.signatures_only
-            {
-                self.check_fn_body(f, env);
-            }
-        }
-        for decl in decls.iter_mut() {
-            let Decl::TraitImpl(ti) = decl else {
-                continue;
-            };
-            let Some(target) = self.impl_target(ti) else {
-                continue;
-            };
-            for method in ti.methods.iter_mut() {
-                let method_name = method.name;
-                let key = impl_method_key(target, method_name);
-                let Some(ty) = self.check_fn_body_with_name(method, env, key) else {
-                    continue;
-                };
-                let Some(entry) = self.tables.method_table.get_mut(&(target, method_name)) else {
-                    continue;
-                };
-                if !entry.method_constraints.is_empty() {
-                    let remap = align_tyvars(&entry.method_type, &ty);
-                    let ty_remap: HashMap<TyVar, Type> = remap
-                        .iter()
-                        .map(|(old, new)| (*old, Type::Var(*new)))
-                        .collect();
-                    entry.method_constraints = entry
-                        .method_constraints
-                        .iter()
-                        .filter_map(|(old_tv, trait_name, args)| {
-                            remap.get(old_tv).map(|&new_tv| {
-                                let new_args: Vec<Type> =
-                                    args.iter().map(|t| substitute_vars(t, &ty_remap)).collect();
-                                (new_tv, *trait_name, new_args)
-                            })
-                        })
-                        .collect();
+            match decl {
+                Decl::TraitImpl(ti) => {
+                    let (Some(target), Some(trait_key)) =
+                        (self.impl_target(ti), self.impl_trait(ti))
+                    else {
+                        continue;
+                    };
+                    for method in ti.methods.iter_mut() {
+                        let Some(sig) = self.impl_sigs.remove(&(target, method.name, trait_key))
+                        else {
+                            continue;
+                        };
+                        self.check_body(method, &sig, env);
+                        self.finalize_deferred_checks();
+                    }
                 }
-                entry.method_type = ty;
+                Decl::Trait(t) => {
+                    for method in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
+                        let Some(sig) = self.default_method_sig(t.name, method.name) else {
+                            continue;
+                        };
+                        self.check_body(method, &sig, env);
+                        self.finalize_deferred_checks();
+                    }
+                }
+                _ => {}
             }
         }
+        self.exit_level();
     }
 }
 
@@ -1061,6 +993,7 @@ fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
         | Type::String
         | Type::Unit
         | Type::Var(_)
+        | Type::Rigid(_)
         | Type::Error
         | Type::Never => {}
     }
@@ -1232,7 +1165,6 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         }
     }
     let env = checker.check_program_in(program, env);
-    checker.keep_trait_methods();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_pub_let_types(program, &env);
     checker.enter_schemes(&env);
