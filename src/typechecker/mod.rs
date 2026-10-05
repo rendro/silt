@@ -175,7 +175,8 @@ pub struct TypeChecker {
     pub(super) let_index: HashMap<Symbol, usize>,
     pub(super) checking_let: Option<usize>,
     /// The signature of each method written in an impl of the module, as
-    /// its body sees it, by the impl's type, the method and the trait.
+    /// its body sees it, by the impl's type, the method and the trait,
+    /// until the body is checked.
     pub(super) impl_sigs: HashMap<(TypeRef, Symbol, TraitKey), FnSig>,
     /// Set by the FieldAccess arm of infer_expr: `true` when the last
     /// FieldAccess resolved via method dispatch (trait method table),
@@ -916,10 +917,7 @@ impl TypeChecker {
                         continue;
                     };
                     for method in ti.methods.iter_mut() {
-                        let Some(sig) = self
-                            .impl_sigs
-                            .get(&(target, method.name, trait_key))
-                            .cloned()
+                        let Some(sig) = self.impl_sigs.remove(&(target, method.name, trait_key))
                         else {
                             continue;
                         };
