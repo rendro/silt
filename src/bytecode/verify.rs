@@ -282,3 +282,306 @@ fn check(
         ragged: frame.ragged && effect.cut.is_none(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::bytecode::{Asm, Emitter, NO_TRAIT, Op, VmClosure};
+    use crate::source::Span;
+
+    // Hand-built functions: the bytes are written here, not by the
+    // emitter, which would refuse most of them itself.
+
+    fn op(op: Op) -> u8 {
+        op as u8
+    }
+
+    /// Why the verifier rejects the code `code` of a function with no
+    /// parameters, no upvalues and the constants `constants`.
+    fn rejected(code: Vec<u8>, constants: Vec<Value>) -> String {
+        rejected_fn(Function::unverified(0, 0, code, constants))
+    }
+
+    fn rejected_fn(function: Function) -> String {
+        verify(&function)
+            .expect_err("the verifier must reject this function")
+            .to_string()
+    }
+
+    /// A verified function with one upvalue, as a constant.
+    fn capturing_function() -> Value {
+        let mut e = Emitter::new("inner".into(), 0);
+        e.emit(Asm::GetUpvalue { index: 0 }, Span::BUILTIN).unwrap();
+        e.emit(Asm::Return, Span::BUILTIN).unwrap();
+        Value::VmClosure(Arc::new(VmClosure {
+            function: Arc::new(e.finish(1).unwrap()),
+            upvalues: vec![],
+        }))
+    }
+
+    #[test]
+    fn bad_01_no_code() {
+        assert_eq!(
+            rejected(vec![], vec![]),
+            "at offset 0: the function has no code"
+        );
+    }
+
+    #[test]
+    fn bad_02_unknown_opcode() {
+        let why = rejected(vec![op(Op::Unit), 250, op(Op::Return)], vec![]);
+        assert_eq!(why, "at offset 1: no instruction is encoded here");
+    }
+
+    #[test]
+    fn bad_03_operand_cut_off_by_the_end_of_the_code() {
+        let why = rejected(
+            vec![op(Op::Unit), op(Op::Return), op(Op::Constant), 0],
+            vec![],
+        );
+        assert_eq!(why, "at offset 2: no instruction is encoded here");
+    }
+
+    #[test]
+    fn bad_04_code_runs_off_its_end() {
+        let why = rejected(vec![op(Op::Unit), op(Op::Pop)], vec![]);
+        assert_eq!(why, "at offset 1: the code runs off its end");
+    }
+
+    #[test]
+    fn bad_05_stack_underflow() {
+        let why = rejected(vec![op(Op::Unit), op(Op::Add), op(Op::Return)], vec![]);
+        assert_eq!(why, "at offset 1: `Add` takes 2 values off a frame of 1");
+        // A count operand above the frame is the same defect.
+        let why = rejected(vec![op(Op::MakeTuple), 5, op(Op::Return)], vec![]);
+        assert_eq!(
+            why,
+            "at offset 0: `MakeTuple` takes 5 values off a frame of 0"
+        );
+        let why = rejected(vec![op(Op::MakeMap), 3, 0, op(Op::Return)], vec![]);
+        assert_eq!(
+            why,
+            "at offset 0: `MakeMap` takes 6 values off a frame of 0"
+        );
+        let why = rejected(vec![op(Op::Unit), op(Op::Call), 1, op(Op::Return)], vec![]);
+        assert_eq!(why, "at offset 1: `Call` takes 2 values off a frame of 1");
+    }
+
+    #[test]
+    fn bad_06_slot_out_of_the_frame() {
+        let code = vec![op(Op::Unit), op(Op::SetLocal), 100, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 1: `SetLocal` names slot 100 of a frame of 1"
+        );
+        let code = vec![op(Op::GetLocal), 0, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 0: `GetLocal` names slot 0 of a frame of 0"
+        );
+    }
+
+    #[test]
+    fn bad_07_constant_out_of_the_pool() {
+        let code = vec![op(Op::Constant), 3, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![Value::Int(1)]),
+            "at offset 0: `Constant` names constant 3 of 1"
+        );
+    }
+
+    #[test]
+    fn bad_08_constant_of_the_wrong_kind() {
+        // A field name that is no string.
+        let code = vec![op(Op::Unit), op(Op::GetField), 0, 0, op(Op::Return)];
+        let why = rejected(code, vec![Value::Int(7)]);
+        assert_eq!(
+            why,
+            "at offset 1: `GetField` names constant 0 as Str, and it is 7"
+        );
+        // A closure made of something that is no function.
+        let code = vec![op(Op::MakeClosure), 0, 0, 0, op(Op::Return)];
+        let why = rejected(code, vec![Value::Int(42)]);
+        assert_eq!(
+            why,
+            "at offset 0: `MakeClosure` names constant 0 as Func, and it is 42"
+        );
+        // A variant test against something that is no variant.
+        let code = vec![op(Op::Unit), op(Op::TestTag), 0, 0, op(Op::Return)];
+        let why = rejected(code, vec![Value::String("Some".into())]);
+        assert!(why.contains("`TestTag` names constant 0 as Tag"), "{why}");
+        // A field name in a list that is no string.
+        let code = vec![op(Op::Unit), op(Op::RecordUpdate), 1, 0, 0, op(Op::Return)];
+        let why = rejected(code, vec![Value::Int(7)]);
+        assert!(
+            why.contains("`RecordUpdate` names constant 0 as Str"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn bad_09_jump_into_the_middle_of_an_instruction() {
+        // 0000 Jump -> 0004, which is the operand of the Constant at 0003.
+        let code = vec![op(Op::Jump), 1, 0, op(Op::Constant), 0, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![Value::Int(1)]),
+            "at offset 0: control goes to 4, where no instruction starts"
+        );
+        // And past the end of the code.
+        let code = vec![op(Op::Jump), 9, 0, op(Op::Unit), op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 0: control goes to 12, where no instruction starts"
+        );
+    }
+
+    #[test]
+    fn bad_10_paths_with_different_heights_into_an_ordinary_instruction() {
+        // 0000 True; 0001 JumpIfFalse -> 0006; 0004 Unit; 0005 Unit;
+        // 0006 Unit: reached with 0 values (the jump) and with 2.
+        let code = vec![
+            op(Op::True),
+            op(Op::JumpIfFalse),
+            2,
+            0,
+            op(Op::Unit),
+            op(Op::Unit),
+            op(Op::Unit),
+            op(Op::Return),
+        ];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 6: `Unit` runs where the paths into it leave different heights"
+        );
+    }
+
+    #[test]
+    fn paths_with_different_heights_into_a_slide_are_accepted() {
+        // The same join, followed by what the compiler emits there: a
+        // push and a `Slide` that cuts the frame to one height.
+        // 0000 Unit; 0001 True; 0002 JumpIfFalse -> 0007; 0005 Unit;
+        // 0006 Unit; 0007 GetLocal 0; 0010 Slide 0; 0013 Return.
+        let code = vec![
+            op(Op::Unit),
+            op(Op::True),
+            op(Op::JumpIfFalse),
+            2,
+            0,
+            op(Op::Unit),
+            op(Op::Unit),
+            op(Op::GetLocal),
+            0,
+            0,
+            op(Op::Slide),
+            0,
+            0,
+            op(Op::Return),
+        ];
+        verify(&Function::unverified(0, 0, code, vec![])).unwrap();
+    }
+
+    #[test]
+    fn bad_11_upvalue_the_function_does_not_have() {
+        let code = vec![op(Op::GetUpvalue), 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code.clone(), vec![]),
+            "at offset 0: `GetUpvalue` names upvalue 0 of 0"
+        );
+        verify(&Function::unverified(0, 1, code, vec![])).unwrap();
+    }
+
+    #[test]
+    fn bad_12_closure_made_with_the_wrong_captures() {
+        // No captures for a function with one upvalue.
+        let code = vec![op(Op::MakeClosure), 0, 0, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![capturing_function()]),
+            "at offset 0: `MakeClosure` captures 0 values for a function that has 1 upvalues"
+        );
+        // A capture of a slot the frame does not have.
+        let code = vec![op(Op::MakeClosure), 0, 0, 1, 1, 3, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![capturing_function()]),
+            "at offset 0: `MakeClosure` captures slot 3 of a frame of 0"
+        );
+        // A capture of an upvalue the function does not have.
+        let code = vec![op(Op::MakeClosure), 0, 0, 1, 0, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![capturing_function()]),
+            "at offset 0: `MakeClosure` captures upvalue 0 of 0"
+        );
+        // The function used as a plain constant, with nothing captured.
+        let code = vec![op(Op::Constant), 0, 0, op(Op::Return)];
+        let why = rejected(code, vec![capturing_function()]);
+        assert!(why.contains("`Constant` names constant 0 as Any"), "{why}");
+    }
+
+    #[test]
+    fn bad_13_method_call_without_a_receiver() {
+        let [lo, hi] = NO_TRAIT.to_le_bytes();
+        let code = vec![op(Op::CallMethod), 0, 0, 0, lo, hi, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![Value::String("foo".into())]),
+            "at offset 0: `CallMethod` has no receiver"
+        );
+        // And with more arguments than the frame holds.
+        let code = vec![
+            op(Op::Unit),
+            op(Op::CallMethod),
+            0,
+            0,
+            5,
+            lo,
+            hi,
+            op(Op::Return),
+        ];
+        assert_eq!(
+            rejected(code, vec![Value::String("foo".into())]),
+            "at offset 1: `CallMethod` takes 5 values off a frame of 1"
+        );
+    }
+
+    #[test]
+    fn bad_14_frame_cut_back_to_more_than_it_holds() {
+        let code = vec![op(Op::Unit), op(Op::Slide), 5, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 1: `Slide` cuts a frame of 0 values back to 5"
+        );
+        // `Recur` of one binding into slot 3 of a frame of one value.
+        let code = vec![op(Op::Unit), op(Op::Recur), 1, 3, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 1: `Recur` cuts a frame of 0 values back to 3"
+        );
+    }
+
+    #[test]
+    fn bad_15_jump_back_before_the_start_of_the_code() {
+        let code = vec![op(Op::Unit), op(Op::JumpBack), 9, 0];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 1: no instruction is encoded here"
+        );
+    }
+
+    #[test]
+    fn unreachable_code_is_decoded_and_not_interpreted() {
+        // After the `Return`, an `Add` nobody runs: fine. A byte that is
+        // no instruction: not fine.
+        let code = vec![op(Op::Unit), op(Op::Return), op(Op::Add), op(Op::Return)];
+        verify(&Function::unverified(0, 0, code, vec![])).unwrap();
+    }
+
+    #[test]
+    fn the_arguments_are_the_frame_a_function_starts_with() {
+        let code = vec![op(Op::GetLocal), 1, 0, op(Op::Return)];
+        verify(&Function::unverified(2, 0, code.clone(), vec![])).unwrap();
+        assert_eq!(
+            rejected_fn(Function::unverified(1, 0, code, vec![])),
+            "at offset 0: `GetLocal` names slot 1 of a frame of 1"
+        );
+    }
+}
