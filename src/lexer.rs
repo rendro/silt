@@ -1456,7 +1456,9 @@ mod tests {
         assert_eq!(Token::Int(i64::MIN).to_string(), "9223372036854775808");
         for src in ["9223372036854775809", "0x8000000000000001"] {
             assert!(
-                Lexer::new(crate::source::FileId::default(), src).tokenize().is_err(),
+                Lexer::new(crate::source::FileId::default(), src)
+                    .tokenize()
+                    .is_err(),
                 "{src}"
             );
         }
