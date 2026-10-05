@@ -1,0 +1,5 @@
+error[lex]: unexpected character: 'é'; a name is made of ASCII letters, digits and '_'
+ --> identifier__ascii_only.silt:6:10
+   |
+ 6 |   let café = 1
+   |          ^ unexpected character: 'é'; a name is made of ASCII letters, digits and '_'

@@ -1740,13 +1740,7 @@ impl Printer<'_> {
                 });
                 Doc::concat(vec![name, args])
             }
-            // `(T)` is a tuple of one: no parentheses are redundant in
-            // a type.
-            TypeExprKind::Tuple(elems) => {
-                self.delimited(Token::LParen, Token::RParen, TIGHT, elems, |p, elem| {
-                    p.type_expr(elem)
-                })
-            }
+            TypeExprKind::Tuple(elems) => self.tuple(elems, |p, elem| p.type_expr(elem)),
             TypeExprKind::Function(params, ret) => {
                 // `Fn` is an identifier to the lexer.
                 let name = self.name();

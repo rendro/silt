@@ -2462,17 +2462,39 @@ impl<'src> Parser<'src> {
             ));
         }
         // Tuple type: (A, B, ...)
+        // Parentheses, as in an expression: `()` is the unit type, `(T)`
+        // is `T`, and a comma makes a tuple, `(T,)` the tuple of one.
         if self.at(&Token::LParen) {
             self.advance();
-            let mut first = true;
-            let elems =
-                self.comma_list("tuple type", start, ListEnd::Close(&Token::RParen), |p| {
-                    let elem = p.parse_type_expr()?;
-                    if std::mem::take(&mut first) && p.at(&Token::Arrow) {
-                        return Err(p.arrow_fn_type_error(start, &elem));
-                    }
-                    Ok(elem)
-                })?;
+            self.skip_nl();
+            if self.at(&Token::RParen) {
+                self.advance();
+                return Ok(self.mk_type(TypeExprKind::Tuple(Vec::new()), start));
+            }
+            let close = Token::RParen;
+            if self.at(&Token::Eof) || self.at_foreign_closer(&close) || self.at_fn_decl() {
+                return Err(self.unclosed_list_err("tuple type", start, &close));
+            }
+            let first = self.parse_type_expr()?;
+            if self.at(&Token::Arrow) {
+                return Err(self.arrow_fn_type_error(start, &first));
+            }
+            self.skip_nl();
+            if self.at(&Token::RParen) {
+                self.advance();
+                return Ok(first);
+            }
+            if !self.at(&Token::Comma) {
+                return Err(self.unclosed_list_err("tuple type", start, &close));
+            }
+            self.advance();
+            let mut elems = vec![first];
+            elems.extend(self.comma_list(
+                "tuple type",
+                start,
+                ListEnd::Close(&close),
+                Self::parse_type_expr,
+            )?);
             return Ok(self.mk_type(TypeExprKind::Tuple(elems), start));
         }
         // Anonymous record type: `{name: Type, age: Type}` or open
@@ -3057,16 +3079,18 @@ impl<'src> Parser<'src> {
                             },
                             span,
                         );
-                    } else if let Token::Int(n) = self.peek() {
-                        // `t.0`: parsed so that the checker can say tuple
-                        // indexing is not supported.
-                        let field = intern::intern(&n.to_string());
-                        let field_span = self.advance().span;
-                        let span = left.span;
-                        left = self.mk_expr(
-                            ExprKind::FieldAccess(Box::new(left), field, field_span),
-                            span,
-                        );
+                    } else if matches!(self.peek(), Token::Int(_) | Token::Float(_)) {
+                        // `t.0`, and `t.0.1`, whose `0.1` is one token.
+                        let index = self.span();
+                        let index = &self.source[index.start_offset()..index.end_offset()];
+                        return Err(Diagnostic::error(
+                            Code::UnsupportedSyntax,
+                            self.span(),
+                            format!(
+                                "tuple indexing ('t.{index}') is not supported; \
+                                 destructure instead: 'let (a, b) = t'"
+                            ),
+                        ));
                     } else {
                         let (field, field_span) = self.expect_ident()?;
                         // Round 94: qualified record construction —

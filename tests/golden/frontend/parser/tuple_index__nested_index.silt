@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- `t.1.0`: the lexer reads `1.0` as one number, the message shows it.
+fn main() {
+  let t = (1, (2, 3))
+  println(t.1.0)
+}

@@ -7055,7 +7055,11 @@ pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
         }
         TypeExprKind::Tuple(elems) => {
             let items: Vec<String> = elems.iter().map(format_type_expr).collect();
-            format!("({})", items.join(", "))
+            // `(T)` is `T`; the tuple of one keeps its comma.
+            match items.as_slice() {
+                [one] => format!("({one},)"),
+                _ => format!("({})", items.join(", ")),
+            }
         }
         TypeExprKind::Function(params, ret) => {
             let param_strs: Vec<String> = params.iter().map(format_type_expr).collect();

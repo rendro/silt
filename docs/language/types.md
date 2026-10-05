@@ -294,6 +294,10 @@ let pair = (1, "hello")
 let (x, y) = pair
 ```
 
+Parentheses around one type or one expression only group: `(Int)` is `Int`
+and `(1)` is `1`. A tuple of one element is written with a comma, `(Int,)`
+and `(1,)`; `()` is the unit type and its value.
+
 ## Recursive Types
 
 Types can reference themselves:

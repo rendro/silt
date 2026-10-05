@@ -772,7 +772,7 @@ impl Lexer {
         name.push(first);
 
         while let Some(ch) = self.peek() {
-            if ch.is_alphanumeric() || ch == '_' {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
                 self.advance_char();
                 name.push(ch);
             } else {
@@ -1036,6 +1036,15 @@ impl Lexer {
                 Code::UnexpectedChar,
                 self.since(start),
                 format!("unexpected character: '{}'", ch.escape_default()),
+            )),
+            // A letter or digit outside ASCII, at the start of a name or
+            // inside one (`café` ends at the `f`).
+            _ if ch.is_alphanumeric() => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                format!(
+                    "unexpected character: '{ch}'; a name is made of ASCII letters, digits and '_'"
+                ),
             )),
             _ => Err(Diagnostic::error(
                 Code::UnexpectedChar,
