@@ -1,0 +1,550 @@
+use super::*;
+
+/// A deferred where-clause obligation captured at a call site whose
+/// type argument was still an unresolved type variable. Resolved at
+/// the end of inference in `finalize_deferred_checks`.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingWhereConstraint {
+    /// The tyvar at the call site that carries the obligation.
+    pub(super) tyvar: TyVar,
+    /// The trait name the obligation requires.
+    pub(super) trait_name: TraitKey,
+    /// Name of the callee function (for nicer diagnostics).
+    pub(super) callee_fn_name: Option<Symbol>,
+    /// Span of the call site.
+    pub(super) span: Span,
+    /// Snapshot of the enclosing fn's active constraints at the
+    /// time of the call (used to decide whether the obligation is
+    /// already covered).
+    pub(super) active_snapshot: HashMap<TyVar, Vec<TraitKey>>,
+    /// Snapshot of the enclosing fn's param tyvars at the time of
+    /// the call (used to decide whether the obligation touches the
+    /// enclosing fn's own polymorphism).
+    pub(super) param_tyvars: Vec<TyVar>,
+    /// Snapshot of the enclosing fn's trait arg bindings for this
+    /// `(tyvar, trait_name)` pair at the time of the call, e.g.
+    /// `[Int]` for `where a: TryInto(Int)`. Empty for parameterless
+    /// traits. Used during finalize so parameterized-trait verification
+    /// can compare bound args against the matched impl's args.
+    pub(super) bound_trait_args: Vec<Type>,
+}
+
+impl TypeChecker {
+    // ── Type name for trait impl matching ────────────────────────────
+
+    /// The type a resolved Type's impls are keyed by. Returns `None` if
+    /// the type is unresolved (still a type variable) or has no head.
+    ///
+    /// Phase B: routes through `crate::types::canonical::canonicalize` so
+    /// that `Range(T)` collapses to `List(T)` before name lookup. The
+    /// dedicated Range arm is therefore no longer needed (it became
+    /// unreachable once the input was canonicalised). This is the single
+    /// source of truth for the dispatch-name oracle on the typechecker
+    /// side; the VM and compiler will reach the same conclusion via
+    /// `canonical_name` in phase C.
+    pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<TypeRef> {
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
+        match &ty {
+            // Anonymous (structural) records are CONCRETE types — they
+            // carry a definite shape — but no user impl can ever target
+            // them (impls bind to nominal heads only). Round 73 B2:
+            // returning `None` here let `verify_trait_obligation` and
+            // its callers in inference.rs treat AnonRecord receivers as
+            // "still polymorphic, defer", which silently bypassed
+            // user-trait `where` constraints — a soundness hole.
+            // Returning the builtin `<anon>` type makes the existing
+            // `trait_impl_set.contains(...)` check fire the correct
+            // "type '<anon>' does not implement trait 'X'" diagnostic;
+            // no program can name that type, so no impl targets it.
+            Type::AnonRecord { .. } => Some(TypeRef::builtin(crate::defs::ANON_RECORD)),
+            // Function values resolve to `Fn`, and `Unit` is `Unit`, so
+            // `where a: Trait` constraints route into the same impl
+            // table the compiler keys impl methods by and
+            // `dispatch_type_for_value` returns at runtime.
+            _ => head_of(&ty),
+        }
+    }
+
+    /// Return the positional type arguments of a (concrete) type. Mirrors
+    /// the inverse of `register_trait_impl`'s self_type construction:
+    /// `Type::Generic(_, args)` yields `args`; the parameterized builtin
+    /// containers (List, Set, Channel, Map) yield their element types in
+    /// declaration order; tuples yield their elements and functions their
+    /// params-then-return. Anything else (Int, String, Record without type
+    /// params, etc.) has no positional args. Used by `verify_trait_obligation`
+    /// to walk into an impl's where-clause obligations.
+    ///
+    /// Phase B: canonicalise the input first so a Range receiver supplies
+    /// its element type via the List arm rather than a dedicated Range arm.
+    pub(super) fn type_args_of(&self, ty: &Type) -> Vec<Type> {
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
+        match &ty {
+            Type::Generic(_, args) => args.clone(),
+            Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
+                vec![(**inner).clone()]
+            }
+            Type::Map(k, v) => vec![(**k).clone(), (**v).clone()],
+            // Tuple-/Fn-shaped alias impls (`type P2 = (Int, Int)`;
+            // `type IntOp = Fn(Int) -> Int`) register under the synthetic
+            // heads `"Tuple"`/`"Fn"` with the expanded structural self
+            // type. Their positional args are the element types (params
+            // plus return for `Fn`) so `verify_trait_obligation`'s
+            // self-type-args comparison sees them. Pre-fix both shapes
+            // fell through to `Vec::new()`: obligated-vs-impl args
+            // compared as empty-vs-empty and ANY tuple/function satisfied
+            // a bound whose only impl targeted a concrete alias shape
+            // (round-102 hole, same class as the head-key-only bug it
+            // fixed). Differing arities land on the caller's equal-length
+            // conservative-skip guard, so the bare `trait T for Tuple`
+            // wildcard (`Generic("Tuple", [])`, zero args) keeps matching
+            // every tuple, and mismatched-arity functions defer to the
+            // direct-dispatch unify.
+            Type::Tuple(elems) => elems.clone(),
+            Type::Fun(params, ret) => {
+                let mut args = params.clone();
+                args.push((**ret).clone());
+                args
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Recursively verify that `ty` implements `trait_name`, walking the
+    /// matched impl's own where clauses against `ty`'s positional type
+    /// arguments. Emits `"type 'X' does not implement trait 'Y'"` once for
+    /// each unsatisfied obligation in the chain.
+    ///
+    /// This is the fix for the nested-where-clause propagation bug:
+    /// `Box(Box(String)): Greet` with `trait Greet for Box(a) where a: Greet`
+    /// previously typechecked because `(Greet, Box)` was in `trait_impl_set`.
+    /// Now we additionally consult `impl_constraints` and recurse into the
+    /// impl's `(target_arg_index, required_trait)` obligations against the
+    /// matched `ty`'s type arguments.
+    ///
+    /// Recursion terminates because each step strips one layer of type
+    /// wrapping; finite types finish in O(depth).
+    pub(super) fn verify_trait_obligation(
+        &mut self,
+        trait_name: TraitKey,
+        bound_trait_args: &[Type],
+        ty: &Type,
+        span: Span,
+    ) {
+        let resolved = self.apply(ty);
+        if matches!(resolved, Type::Error | Type::Never) {
+            return;
+        }
+        let Some(type_name) = self.type_name_for_impl(&resolved) else {
+            // Unresolved tyvar — caller is responsible for deferring or
+            // reporting (e.g. via active_constraints or pending_where).
+            return;
+        };
+        if !self
+            .tables
+            .trait_impl_set
+            .contains(&(trait_name, type_name))
+        {
+            self.error(
+                Code::MissingTraitImpl,
+                format!(
+                    "type '{}' does not implement trait '{}'",
+                    self.show_type(&Type::Generic(type_name, vec![])),
+                    self.show_trait(trait_name)
+                ),
+                span,
+            );
+            return;
+        }
+        // Head-key membership alone is not enough: an alias-expanded impl
+        // can carry CONCRETE self-type args (`type Bytes2 = List(Int)`;
+        // `trait Total for Bytes2` registers under head "List" with
+        // self_type `List(Int)`), yet the membership check above matches
+        // any `List(T)`. Compare the obligated type's positional args
+        // against the stored impl self type's, with defer-on-Var logic —
+        // generic impls (`for List(a)`) store `Var` args and keep matching
+        // everything; only concrete-vs-concrete mismatches reject. A
+        // length mismatch means the two sides describe differently shaped
+        // representations of the same head (e.g. a `Record` receiver
+        // against a `Generic` impl form); skip conservatively — the
+        // method-entry unify at direct dispatch sites still guards those.
+        // Impls without a stored self type (builtin pre-stamps,
+        // auto-derive synthesis) skip the check, preserving prior
+        // behavior.
+        //
+        // Round 104 BROKEN: the per-slot walk must be consistency-
+        // tracking, not stateless. A NON-LINEAR impl self type repeats
+        // the same binder across slots — `type Pair(a) = (a, a)` expands
+        // to `(Var a', Var a')`, ditto `Square(a) = Map(a, a)` — and the
+        // old independent `zip(..).any(|(ob, im)| !trait_arg_compatible)`
+        // deferred `(Int, Fn)` against `Var a'` slot by slot, losing the
+        // constraint that BOTH slots are the SAME `a'`. The bound
+        // verified, and the Fn in slot 1 died at the runtime Display
+        // gate. `impl_self_args_consistent` threads a binding map across
+        // the slots so a repeated binder must see equal types.
+        if let Some(impl_self) = self
+            .tables
+            .impl_self_types
+            .get(&(trait_name, type_name))
+            .cloned()
+        {
+            let obligated_args = self.type_args_of(&resolved);
+            let impl_args = self.type_args_of(&impl_self);
+            if obligated_args.len() == impl_args.len()
+                && !self.impl_self_args_consistent(&obligated_args, &impl_args)
+            {
+                let (obligated, only) = self.show_apart(&resolved, &impl_self);
+                self.error(
+                    Code::MissingTraitImpl,
+                    format!(
+                        "type '{}' does not implement trait '{}': the only impl is for '{}'",
+                        obligated,
+                        self.show_trait(trait_name),
+                        only
+                    ),
+                    span,
+                );
+                return;
+            }
+        }
+        // Parameterized-trait verification: if the bound carries trait
+        // args (e.g. `where a: TryInto(Int)`) and the matched impl also
+        // registered its own args (`trait TryInto(Float) for String`),
+        // the two arg lists must be positionally compatible. Concrete
+        // mismatches reject — this is the soundness hole closed in
+        // round 58. Bare `verify_trait_obligation(trait, &[], ty, ..)`
+        // (supertrait chains, old call sites) keeps the fast path.
+        if !bound_trait_args.is_empty()
+            && let Some(impl_args) = self
+                .tables
+                .impl_trait_args
+                .get(&(trait_name, type_name))
+                .cloned()
+            && impl_args.len() == bound_trait_args.len()
+        {
+            for (bound_arg, impl_arg) in bound_trait_args.iter().zip(impl_args.iter()) {
+                let b = self.apply(bound_arg);
+                let i = self.apply(impl_arg);
+                if !self.trait_arg_compatible(&b, &i) {
+                    self.error(
+                        Code::MissingTraitImpl,
+                        format!(
+                            "type '{}' does not implement trait '{}({})': \
+                             the matched impl is '{}({})'",
+                            self.show_type(&Type::Generic(type_name, vec![])),
+                            self.show_trait(trait_name),
+                            bound_trait_args
+                                .iter()
+                                .map(|t| format!("{t}"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            resolve(trait_name.name),
+                            impl_args
+                                .iter()
+                                .map(|t| format!("{t}"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        ),
+                        span,
+                    );
+                    return;
+                }
+            }
+        }
+        // Walk the matched impl's own where clauses against the actual
+        // type arguments. Clone the obligation list so the recursive
+        // `self.error` call doesn't conflict with the borrow.
+        let Some(obligations) = self
+            .tables
+            .impl_constraints
+            .get(&(trait_name, type_name))
+            .cloned()
+        else {
+            return;
+        };
+        let args = self.type_args_of(&resolved);
+        for (idx, sub_trait, sub_trait_args) in obligations {
+            if let Some(arg_ty) = args.get(idx).cloned() {
+                // Thread the bound's own trait args so parameterized
+                // sub-bounds (`where a: Conv(Int)`) reject impls whose
+                // trait args don't match. Resolve any tyvars first so
+                // recursion sees concrete forms when available.
+                let resolved_sub_args: Vec<Type> =
+                    sub_trait_args.iter().map(|t| self.apply(t)).collect();
+                self.verify_trait_obligation(sub_trait, &resolved_sub_args, &arg_ty, span);
+            }
+        }
+    }
+
+    /// Consistency-tracking variant of the per-slot compatibility walk
+    /// for `verify_trait_obligation`'s self-type-args check.
+    /// Round 104: the stateless per-pair `trait_arg_compatible` lost the
+    /// cross-slot linkage of NON-LINEAR impl self types — a repeated
+    /// binder, reachable only via alias expansion (the parser rejects
+    /// duplicate binders in direct impl targets): `Pair(a) = (a, a)` →
+    /// `(Var a', Var a')`, ditto `Square(a) = Map(a, a)`. An obligated
+    /// `(Int, Fn)` deferred each slot against `Var a'` alone, satisfied
+    /// the bound, and died at runtime. Here a binding map is
+    /// threaded across ALL slots: the first obligated type an impl-side
+    /// `Var` meets binds it; every re-encounter must be compatible with
+    /// that binding. Obligated-side `Var`s still defer (inference may
+    /// resolve them later), and concrete/concrete pairs walk structurally
+    /// exactly as before.
+    ///
+    /// Enforcing the linkage here also keeps the first-occurrence-only
+    /// where-clause obligation index (the `.position(..)` over
+    /// `expanded_self_args` in `register_trait_impl`) sound: once every
+    /// slot sharing a binder is forced equal, checking the bound at the
+    /// binder's first slot covers all of them.
+    fn impl_self_args_consistent(&self, obligated: &[Type], impl_args: &[Type]) -> bool {
+        let mut bindings: HashMap<TyVar, Type> = HashMap::new();
+        obligated.iter().zip(impl_args.iter()).all(|(ob, im)| {
+            let ob = crate::types::canonical::canonicalize(&self.tables.resolver, ob);
+            let im = crate::types::canonical::canonicalize(&self.tables.resolver, im);
+            Self::impl_arg_matches_canon(&ob, &im, &mut bindings)
+        })
+    }
+
+    /// One-sided structural matcher threading `bindings` for
+    /// `impl_self_args_consistent`. Mirrors `trait_arg_compatible_canon`'s
+    /// recursive arms; both inputs are pre-canonicalised (deep), so the
+    /// recursion never re-canonicalises. Leaf pairs with no impl-side
+    /// binder to thread (scalars, nominal `Record`/`Generic` head-name
+    /// comparisons without args, `Never`, mismatches) delegate to the
+    /// existing stateless walk via the catch-all.
+    fn impl_arg_matches_canon(ob: &Type, im: &Type, bindings: &mut HashMap<TyVar, Type>) -> bool {
+        match (ob, im) {
+            (Type::Error, _) | (_, Type::Error) => true,
+            // Obligated side unresolved: defer, as before. (Deliberately
+            // no binding — a caller-side tyvar may resolve after this
+            // check; rejecting on it would be a false negative.)
+            (Type::Var(_), _) => true,
+            // Impl-side binder: bind on first encounter, require
+            // compatibility with the binding on re-encounter.
+            // `trait_arg_compatible_canon` is the right comparator —
+            // a nested `Var` on either side keeps deferring
+            // conservatively, while concrete mismatches reject.
+            (_, Type::Var(tv)) => match bindings.get(tv) {
+                Some(bound) => Self::trait_arg_compatible_canon(bound, ob),
+                None => {
+                    bindings.insert(*tv, ob.clone());
+                    true
+                }
+            },
+            (Type::List(x), Type::List(y))
+            | (Type::Set(x), Type::Set(y))
+            | (Type::Channel(x), Type::Channel(y)) => Self::impl_arg_matches_canon(x, y, bindings),
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                Self::impl_arg_matches_canon(k1, k2, bindings)
+                    && Self::impl_arg_matches_canon(v1, v2, bindings)
+            }
+            (Type::Tuple(xs), Type::Tuple(ys)) => {
+                xs.len() == ys.len()
+                    && xs
+                        .iter()
+                        .zip(ys.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+            }
+            (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
+                p1.len() == p2.len()
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+                    && Self::impl_arg_matches_canon(r1, r2, bindings)
+            }
+            (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
+                n1 == n2
+                    && a1.len() == a2.len()
+                    && a1
+                        .iter()
+                        .zip(a2.iter())
+                        .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
+            }
+            (
+                Type::AnonRecord {
+                    fields: f1,
+                    tail: t1,
+                },
+                Type::AnonRecord {
+                    fields: f2,
+                    tail: t2,
+                },
+            ) => {
+                t1 == t2
+                    && f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
+                        k1 == k2 && Self::impl_arg_matches_canon(v1, v2, bindings)
+                    })
+            }
+            _ => Self::trait_arg_compatible_canon(ob, im),
+        }
+    }
+
+    /// Side-effect-free compatibility check between a bound's trait-arg
+    /// and an impl's trait-arg. Returns true when the pair could unify:
+    /// either side is a type variable (defer), or both are concrete and
+    /// structurally equal. Used by `verify_trait_obligation` to reject
+    /// `where a: TryInto(Int)` when only `TryInto(Float) for ...` exists.
+    ///
+    /// Phase B: canonicalise both sides at entry. The recursive walk
+    /// then never sees `Type::Range`; the dedicated `(Range, Range)`
+    /// pair-arm is unreachable and removed.
+    pub(super) fn trait_arg_compatible(&self, a: &Type, b: &Type) -> bool {
+        let a = crate::types::canonical::canonicalize(&self.tables.resolver, a);
+        let b = crate::types::canonical::canonicalize(&self.tables.resolver, b);
+        Self::trait_arg_compatible_canon(&a, &b)
+    }
+
+    fn trait_arg_compatible_canon(a: &Type, b: &Type) -> bool {
+        match (a, b) {
+            (Type::Error, _) | (_, Type::Error) => true,
+            (Type::Var(_), _) | (_, Type::Var(_)) => true,
+            (Type::Int, Type::Int)
+            | (Type::Float, Type::Float)
+            | (Type::Bool, Type::Bool)
+            | (Type::String, Type::String)
+            | (Type::Unit, Type::Unit) => true,
+            (Type::List(x), Type::List(y))
+            | (Type::Set(x), Type::Set(y))
+            | (Type::Channel(x), Type::Channel(y)) => Self::trait_arg_compatible_canon(x, y),
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                Self::trait_arg_compatible_canon(k1, k2) && Self::trait_arg_compatible_canon(v1, v2)
+            }
+            (Type::Tuple(xs), Type::Tuple(ys)) => {
+                xs.len() == ys.len()
+                    && xs
+                        .iter()
+                        .zip(ys.iter())
+                        .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
+            }
+            (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
+                p1.len() == p2.len()
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
+                    && Self::trait_arg_compatible_canon(r1, r2)
+            }
+            (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
+                n1 == n2
+                    && a1.len() == a2.len()
+                    && a1
+                        .iter()
+                        .zip(a2.iter())
+                        .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
+            }
+            (Type::Record(n1, _), Type::Record(n2, _)) => n1 == n2,
+            (Type::Record(n1, _), Type::Generic(n2, _))
+            | (Type::Generic(n1, _), Type::Record(n2, _)) => n1 == n2,
+            // Round 79 TS-B1: structurally compare anonymous records so
+            // bounds like `where a: Convert({a: Int, b: String})` accept
+            // an impl whose trait-arg is the byte-equal record. Without
+            // this arm two equal `AnonRecord` values fell through to the
+            // `_ => false` catch-all and the obligation was rejected.
+            (
+                Type::AnonRecord {
+                    fields: f1,
+                    tail: t1,
+                },
+                Type::AnonRecord {
+                    fields: f2,
+                    tail: t2,
+                },
+            ) => {
+                t1 == t2
+                    && f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
+                        k1 == k2 && Self::trait_arg_compatible_canon(v1, v2)
+                    })
+            }
+            // `Never` is uninhabited; only equal to itself. Symmetry arm
+            // for completeness — entry-point `canonicalize` doesn't
+            // collapse `Never` to anything else.
+            (Type::Never, Type::Never) => true,
+            // No `(AssocProj, _)` arm is needed: the entry-point
+            // `canonicalize` resolves projections before this walk runs,
+            // so the recursive comparator never sees `AssocProj`.
+            _ => false,
+        }
+    }
+
+    /// The trait the definition `id` is, if it is one.
+    pub(super) fn trait_key(&self, id: crate::defs::DefId) -> Option<TraitKey> {
+        let first = crate::defs::builtin_types().len();
+        if let Some(k) = (id.0 as usize).checked_sub(first)
+            && let Some(name) = crate::defs::BUILTIN_TRAITS.get(k)
+        {
+            return Some(TraitKey::builtin(name));
+        }
+        let def = self.defs.as_ref()?.get(id);
+        match def.kind {
+            crate::defs::DefKind::Trait(t) => Some(TraitKey {
+                id: t,
+                name: def.name,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The trait a method entry is of: its own, or for a builtin trait's
+    /// method of a builtin type, which the table keeps without one, that
+    /// builtin trait.
+    pub(super) fn entry_trait(&self, entry: &MethodEntry, method: Symbol) -> Option<TraitKey> {
+        entry.trait_name.or_else(|| {
+            crate::defs::builtin_trait_of_method(&resolve(method)).and_then(|t| self.trait_key(t.0))
+        })
+    }
+
+    /// The entry of the method `method` of the trait `t` for the type
+    /// `ty`, when the impls of two or more traits provide the method.
+    pub(super) fn trait_method_entry(
+        &self,
+        ty: TypeRef,
+        method: Symbol,
+        t: TraitKey,
+    ) -> Option<MethodEntry> {
+        self.tables.trait_methods.get(&(ty, method, t)).cloned()
+    }
+
+    /// Whether the module checked sees the trait `t`: a builtin trait, a
+    /// trait it declares, names by an import or reaches through a module
+    /// it imports. Another module's private trait it never sees.
+    pub(super) fn sees_trait(&self, t: TraitKey) -> bool {
+        let Some(defs) = &self.defs else {
+            return true;
+        };
+        let def = defs.get(t.id.0);
+        if def.module == self.module || def.module.is_builtin() {
+            return true;
+        }
+        let private = self.tables.traits.get(&t).is_some_and(|info| {
+            info.private_to
+                .is_some_and(|(owner, _)| owner != self.module)
+        });
+        !private && (self.seen_traits.contains(&t.id.0) || self.seen_modules.contains(&def.module))
+    }
+
+    /// Whether a call of `method` of `ty` is ambiguous here; if so, it is
+    /// reported at `span`.
+    pub(super) fn ambiguous_method_call(
+        &mut self,
+        ty: TypeRef,
+        method: Symbol,
+        span: Span,
+    ) -> bool {
+        let Some(traits) = self.ambiguous_methods.get(&(ty, method)).cloned() else {
+            return false;
+        };
+        let shown: Vec<String> = traits.iter().map(|t| self.show_trait(*t)).collect();
+        self.error(
+            Code::AmbiguousMethod,
+            format!(
+                "ambiguous method '{method}' on type '{}': provided by traits {}",
+                self.show_type(&Type::Generic(ty, vec![])),
+                shown.join(", ")
+            ),
+            span,
+        );
+        true
+    }
+}
