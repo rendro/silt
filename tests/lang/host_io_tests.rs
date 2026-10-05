@@ -71,75 +71,112 @@ fn main() {
     assert_eq!(lines, ["task 1", "task 2", "task 3", "task 4"], "{text:?}");
 }
 
+/// How long a test waits, in turn, for a task to fail after the task
+/// has said it is about to: nothing shows the test that the scheduler
+/// has recorded the failure, so an attempt that was too short on a busy
+/// machine is repeated with the next, longer wait.
+const WAITS_FOR_A_FAILURE_MS: [u64; 4] = [50, 500, 3_000, 10_000];
+
 /// The report of a task that failed and that nobody joined is the
 /// runtime's, not the program's: it goes to stderr. It is there when
-/// `run_program` returns, whose result it does not change.
+/// `run_program` returns, whose result it does not change, if the task
+/// has failed by then.
 #[test]
 fn unjoined_task_failure_is_reported_on_the_stderr_buffer() {
-    let out = Buffer::new();
-    let err = Buffer::new();
-    let source = r#"
+    for wait_ms in WAITS_FOR_A_FAILURE_MS {
+        let out = Buffer::new();
+        let err = Buffer::new();
+        let source = format!(
+            r#"
 import channel
 import task
 import time
-fn main() {
+fn main() {{
   let about_to_fail = channel.new(1)
-  let _ = task.spawn({ ->
+  let _ = task.spawn({{ ->
     channel.send(about_to_fail, 1)
     panic("boom")
-  })
+  }})
   let _ = channel.receive(about_to_fail)
-  time.sleep(time.ms(300))
+  time.sleep(time.ms({wait_ms}))
   println("main done")
-}
-"#;
-    let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
-    let mut vm = Vm::new(HostIo::new(out.clone(), err.clone()));
-    assert_eq!(
-        vm.run_program(&program).map_err(|e| e.message),
-        Ok(Value::Unit)
-    );
-    assert_eq!(out.contents(), "main done\n");
-    let report = err.take();
-    assert!(
-        report.contains("task <handle:0> failed and was never joined: panic: boom"),
-        "{report:?}"
-    );
-    assert!(report.contains("task.join"), "{report:?}");
-    // Each failure is reported once.
-    drop(vm);
-    assert_eq!(err.contents(), "");
+}}
+"#
+        );
+        let program = compile_str(&source).unwrap_or_else(|errors| panic!("{errors:?}"));
+        let mut vm = Vm::new(HostIo::new(out.clone(), err.clone()));
+        assert_eq!(
+            vm.run_program(&program).map_err(|e| e.message),
+            Ok(Value::Unit)
+        );
+        assert_eq!(out.contents(), "main done\n");
+        let at_return = err.take();
+        drop(vm);
+        let at_drop = err.take();
+        // Each failure is reported once: when the program returns, or,
+        // if the task had not failed by then, when the VM is dropped.
+        let report = format!("{at_return}{at_drop}");
+        assert_eq!(report.matches("never joined").count(), 1, "{report:?}");
+        assert!(
+            report.contains("task <handle:0> failed and was never joined: panic: boom"),
+            "{report:?}"
+        );
+        assert!(report.contains("task.join"), "{report:?}");
+        if !at_return.is_empty() {
+            return;
+        }
+    }
+    panic!("the task's failure was never there when run_program returned");
 }
 
 /// A task that fails after `run_program` has returned is reported when
 /// the VM is dropped, if it has failed by then.
 #[test]
 fn a_later_task_failure_is_reported_when_the_vm_is_dropped() {
-    let err = Buffer::new();
+    // The task sleeps on a clock that stands still: it cannot fail
+    // before the test moves the clock.
     let source = r#"
 import task
 import time
 fn main() {
   let _ = task.spawn({ ->
-    time.sleep(time.ms(100))
+    time.sleep(time.hours(1))
+    println("about to fail")
     panic("late")
   })
 }
 "#;
     let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
-    let mut vm = Vm::new(HostIo::new(Buffer::new(), err.clone()));
-    assert_eq!(
-        vm.run_program(&program).map_err(|e| e.message),
-        Ok(Value::Unit)
-    );
-    assert_eq!(err.contents(), "");
-    thread::sleep(Duration::from_millis(500));
-    drop(vm);
-    let report = err.contents();
-    assert!(
-        report.contains("failed and was never joined: panic: late"),
-        "{report:?}"
-    );
+    for wait_ms in WAITS_FOR_A_FAILURE_MS {
+        let out = Buffer::new();
+        let err = Buffer::new();
+        let clock = FakeClock::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), err.clone()).clock(clock.clone()));
+        assert_eq!(
+            vm.run_program(&program).map_err(|e| e.message),
+            Ok(Value::Unit)
+        );
+        assert_eq!(err.contents(), "");
+
+        // The task may not have started its sleep yet: the clock is
+        // moved on until it has slept.
+        let ticking = keep_advancing(&clock);
+        wait_until("the task wakes", || out.contents() == "about to fail\n");
+        drop(ticking);
+        thread::sleep(Duration::from_millis(wait_ms));
+        drop(vm);
+        let report = err.contents();
+        if report.is_empty() {
+            // The VM was dropped before the task had failed.
+            continue;
+        }
+        assert!(
+            report.contains("failed and was never joined: panic: late"),
+            "{report:?}"
+        );
+        return;
+    }
+    panic!("the task's failure was never reported when the VM was dropped");
 }
 
 /// An output that refuses every write.
@@ -499,6 +536,122 @@ fn main() {
     assert_eq!(run(source, io), Ok(Value::Unit));
     assert_eq!(out.contents(), "tcp operation timed out\n");
     assert!(clock.passed() >= Duration::from_secs(3600));
+}
+
+// ── A clock that panics ─────────────────────────────────────────────
+
+/// A clock that panics on every call once `broken` is set, and counts
+/// its monotonic readings.
+#[derive(Clone, Default)]
+struct BreakingClock {
+    broken: Arc<AtomicBool>,
+    readings: Arc<AtomicU64>,
+}
+
+impl BreakingClock {
+    fn check(&self) {
+        if self.broken.load(Ordering::SeqCst) {
+            panic!("the clock broke");
+        }
+    }
+}
+
+impl Clock for BreakingClock {
+    fn now(&self) -> Duration {
+        self.check();
+        Duration::from_millis(NOON_MS)
+    }
+
+    fn monotonic(&self) -> Duration {
+        self.check();
+        self.readings.fetch_add(1, Ordering::SeqCst);
+        Duration::ZERO
+    }
+
+    fn sleep(&self, _duration: Duration) {
+        self.check();
+    }
+}
+
+/// [`run`] on a thread of its own, with ten seconds to end: a program
+/// that hangs fails the test instead of hanging it.
+fn run_bounded(source: &'static str, io: HostIo) -> Result<Value, String> {
+    let ran = run_on_thread(source, io);
+    wait_until("the program ends", || ran.is_finished());
+    ran.join().unwrap()
+}
+
+/// A clock that panics when a builtin reads it is a runtime error that
+/// says so, whichever of its methods the builtin called.
+#[test]
+fn a_clock_that_panics_in_a_builtin_is_a_runtime_error() {
+    let broken = || {
+        let clock = BreakingClock::default();
+        clock.broken.store(true, Ordering::SeqCst);
+        HostIo::buffer(&Buffer::new()).clock(clock)
+    };
+    let failure = Err("the clock panicked: the clock broke".to_string());
+    let now = "import time\nfn main() { time.now() }";
+    assert_eq!(run_bounded(now, broken()), failure);
+    let sleep = "import time\nfn main() { time.sleep(time.ms(5)) }";
+    assert_eq!(run_bounded(sleep, broken()), failure);
+    let timeout = "import channel\nfn main() { channel.receive(channel.timeout(5)) }";
+    assert_eq!(run_bounded(timeout, broken()), failure);
+}
+
+/// A clock that starts to panic while the timer thread is reading it:
+/// the task asleep on it is woken and fails with the clock's failure,
+/// and the join of it returns.
+#[test]
+fn a_clock_that_panics_on_the_timer_thread_ends_the_waits() {
+    let clock = BreakingClock::default();
+    let source = r#"
+import task
+import time
+fn main() {
+  let h = task.spawn({ -> time.sleep(time.hours(1)) })
+  task.join(h)
+}
+"#;
+    let ran = run_on_thread(source, HostIo::buffer(&Buffer::new()).clock(clock.clone()));
+    // The task reads the clock once for its deadline; every reading
+    // after that is the timer thread's.
+    wait_until("the timer thread reads the clock", || {
+        clock.readings.load(Ordering::SeqCst) >= 5
+    });
+    clock.broken.store(true, Ordering::SeqCst);
+    wait_until("the program ends", || ran.is_finished());
+    assert_eq!(
+        ran.join().unwrap(),
+        Err("joined task failed: the clock panicked: the clock broke".to_string())
+    );
+}
+
+/// The same on the main thread: a `channel.recv_timeout` that the
+/// timer thread would have ended.
+#[test]
+fn a_clock_that_panics_on_the_timer_thread_ends_a_wait_of_main() {
+    let clock = BreakingClock::default();
+    let source = r#"
+import channel
+import time
+fn main() {
+  let quiet = channel.new(1)
+  channel.send(quiet, 0)
+  let _ = channel.receive(quiet)
+  channel.recv_timeout(quiet, time.hours(1))
+}
+"#;
+    let ran = run_on_thread(source, HostIo::buffer(&Buffer::new()).clock(clock.clone()));
+    wait_until("the timer thread reads the clock", || {
+        clock.readings.load(Ordering::SeqCst) >= 5
+    });
+    clock.broken.store(true, Ordering::SeqCst);
+    wait_until("the program ends", || ran.is_finished());
+    assert_eq!(
+        ran.join().unwrap(),
+        Err("the clock panicked: the clock broke".to_string())
+    );
 }
 
 // ── One VM does not reach into another ──────────────────────────────
