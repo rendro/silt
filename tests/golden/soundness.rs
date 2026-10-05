@@ -34,8 +34,6 @@ enum Expect {
     /// The program says nothing of the checker any more (a removed
     /// feature, or syntax the parser refuses). Not run.
     Obsolete,
-    /// What the program should do is not settled. Not run.
-    Undetermined,
 }
 
 struct Row {
@@ -77,15 +75,14 @@ fn parse_manifest(text: &str) -> (BTreeMap<String, Row>, Vec<String>) {
             ["accept"] => Expect::Accept,
             ["output"] => Expect::Output,
             ["obsolete"] => Expect::Obsolete,
-            ["undetermined"] => Expect::Undetermined,
             _ => {
                 problems.push(format!(
-                    "line {line_no}: expect is {expect:?}, not `reject <code>`, `accept`, `output`, `obsolete` or `undetermined`"
+                    "line {line_no}: expect is {expect:?}, not `reject <code>`, `accept`, `output` or `obsolete`"
                 ));
                 continue;
             }
         };
-        let checked = !matches!(expect, Expect::Obsolete | Expect::Undetermined);
+        let checked = !matches!(expect, Expect::Obsolete);
         let pending = match (state, state.strip_prefix("pending:")) {
             ("holds", _) if checked => None,
             (_, Some(step)) if checked && !step.is_empty() => Some(step.to_string()),
@@ -226,7 +223,7 @@ fn violation(case: &Case, expect: &Expect) -> Result<Option<String>, String> {
                 None
             }
         }
-        Expect::Obsolete | Expect::Undetermined => None,
+        Expect::Obsolete => None,
     })
 }
 
@@ -309,7 +306,7 @@ fn run_shard(shard: usize) {
     let filter = std::env::var("SILT_GOLDEN_FILTER").ok();
     let checked: Vec<PathBuf> = rows
         .iter()
-        .filter(|(_, row)| !matches!(row.expect, Expect::Obsolete | Expect::Undetermined))
+        .filter(|(_, row)| !matches!(row.expect, Expect::Obsolete))
         .map(|(case, _)| root.join(case))
         .filter(|path| {
             filter

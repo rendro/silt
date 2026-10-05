@@ -156,7 +156,7 @@ repros/type_soundness/k6.silt	-	obsolete	two statements on a line; ported: lang/
 repros/type_soundness/k7.silt	pending:2	accept	TS-10: five exhaustive matches; the list-head one is rejected (as ex8)
 repros/type_soundness/k8.silt	pending:2	accept	TS-10: anonymous-record patterns add no coverage (false rejection)
 repros/type_soundness/k9.silt	holds	reject E0322	refutable list and literal patterns in `let`
-repros/type_soundness/m1_main	pending:1	reject E0301	TS-1 across a module: `let s: String = util.mid()` (today only util's private type is reported)
+repros/type_soundness/m1_main	pending:1	reject E0301	TS-1 across a module: `let s: String = util.mid()`
 repros/type_soundness/m1_main10	holds	reject E0317	TS-8: a module-qualified call with a missing argument
 repros/type_soundness/m1_main11.silt	holds	reject E0317	TS-8: builtin module calls with a missing argument
 repros/type_soundness/m1_main12.silt	holds	reject E0317	a pipe into a two-argument function
@@ -164,11 +164,11 @@ repros/type_soundness/m1_main13.silt	holds	reject E0401	an import of a module th
 repros/type_soundness/m1_main14	holds	reject E0203	an import of an item the module lacks
 repros/type_soundness/m1_main2	holds	reject E0204	a private function of another module
 repros/type_soundness/m1_main3	holds	reject E0301	TS-3.1: same-named types of two modules are two types
-repros/type_soundness/m1_main4	holds	reject E0201	a private type's constructor
+repros/type_soundness/m1_main4	holds	reject E0201	a bare constructor of a module imported whole
 repros/type_soundness/m1_main5	holds	reject E0301	TS-3.5: `util.Pt` and `other.Pt` in type position
 repros/type_soundness/m1_main6	holds	reject E0301	TS-3.4: `import other.{ Pt }` beside `import util`
-repros/type_soundness/m1_main7	holds	reject E0204	util's `pub fn mkpriv` exposes a private type (the importer itself is sound)
-repros/type_soundness/m1_main8	holds	reject E0204	as m1_main7
+repros/type_soundness/m1_main7	holds	accept	TS-3.4: `import other.{ Pt }` before `import util`: bare `Pt` is other's
+repros/type_soundness/m1_main8	holds	accept	TS-3.4: `import util` alone: its types are reached as `util.Pt`, `util.Hidden`
 repros/type_soundness/m1_main9	holds	reject E0301	TS-3.1: comparing and listing two modules' `Pt`
 repros/type_soundness/n1.silt	holds	accept	control: `add` at Float
 repros/type_soundness/n10.silt	holds	accept	float division by zero traps at run time (decided)
@@ -225,8 +225,8 @@ repros/type_soundness/triv.silt	holds	accept	control
 repros/type_soundness/u1.silt	holds	accept	control: unresolved element types of empty values
 repros/type_soundness/u2.silt	holds	accept	control: a channel nothing is sent on
 repros/type_soundness/u3.silt	-	obsolete	a string literal with an unescaped `{`: the lexer's
-repros/type_soundness/u4.silt	-	undetermined	TS-12 asks to accept `let e = Err("x")` at two types (value restriction); no stage 6 step covers it; rejected today with E0301
-repros/type_soundness/u5.silt	-	undetermined	fn lambda; in brace syntax `let (f, g) = (idf, idf)` then `f(1)`, `f("s")` is rejected today (E0301): whether a destructured identity closure generalises is in neither the audit nor the design note
+repros/type_soundness/u4.silt	pending:1	accept	TS-12: `let e = Err("x")` generalises: a constructor applied to values is a value
+repros/type_soundness/u5.silt	-	obsolete	fn lambda; ported: lang/soundness/u5.silt
 repros/type_soundness/v1.silt	holds	reject E0308	a method on a `type a` descriptor that has no bound
 repros/type_soundness/v2.silt	holds	reject E0308	a method the `where` clause does not give
 repros/type_soundness/w1.silt	pending:3a	reject E0314	TS-4: a `where` bound lost through a user higher-order function
@@ -407,6 +407,7 @@ lang/soundness/q3.silt	holds	reject E0301	`loop(...)` arguments have the binding
 lang/soundness/r3.silt	holds	accept	a nominal record through an open row keeps its type
 lang/soundness/se2.silt	holds	reject E0201	TS-7.3: `self` in a closure outside a method
 lang/soundness/t_poly_method.silt	pending:3b	reject E0314	TCA-4: `show(f) + 1` over `fn show(x) { x.display() }`
+lang/soundness/u5.silt	pending:1	accept	destructuring a tuple of values generalises each binding: `f(1)` and `f("s")` (false rejection)
 lang/soundness/w10.silt	holds	reject E0314	control for w2: the eta-expanded form
 lang/soundness/w12.silt	pending:3a	reject E0314	TS-4: a Hash bound lost through list.map
 lang/soundness/w3d.silt	pending:3a	reject E0314	TS-4: a Compare bound lost through a user higher-order function

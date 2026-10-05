@@ -212,14 +212,13 @@ repros/type_soundness/g2.silt	pending:1	reject E0301	TS-1: depth two, no annotat
 | `accept` | `check` exits 0 and reports no error |
 | `output` | as `accept`, and `silt run` exits 0 and prints exactly the case's `.stdout` (`case.stdout` of a directory case): for programs that ran and printed the wrong thing |
 | `obsolete` | not checked: the program's subject is gone (effects, `ExtFloat`), or the lexer or parser refuses it. The note names the port under `lang/soundness/` when the program was rewritten in today's syntax |
-| `undetermined` | not checked: neither the audit nor the stage 6 design note settles what the program should do. The note says what is open |
 
 `state` is `holds`, or `pending:<step>` for a row that does not hold on
 the current binary, with the stage 6 step expected to make it hold (`-`
 for a row that is not checked). A test fails when a `holds` row does
 not hold, and when a `pending` row does: the step that closes a hole
 changes its rows to `holds` in the same commit, so the manifest never
-goes stale. Stage 6 is done when no row is `pending` or `undetermined`.
+goes stale. Stage 6 is done when no row is `pending`.
 
 The code of a `pending` `reject` row is the one today's checker reports
 for the same mistake written directly, or the nearest one the design note
