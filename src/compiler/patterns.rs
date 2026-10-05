@@ -98,13 +98,6 @@ impl Compiler {
             }
 
             PatternKind::Tuple(pats) => {
-                if pats.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "tuple pattern cannot have more than 255 elements",
-                    ));
-                }
                 // Test shape
                 let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
                 let mut all_jumps = vec![len_jump];
@@ -340,13 +333,8 @@ impl Compiler {
                 // Push the pin value
                 if let Some(slot) = self.resolve_local(*name) {
                     self.emit(Asm::GetLocal { slot }, span)?;
-                } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
-                    self.emit(
-                        Asm::GetUpvalue {
-                            index: usize::from(idx),
-                        },
-                        span,
-                    )?;
+                } else if let Some(idx) = self.resolve_upvalue(*name) {
+                    self.emit(Asm::GetUpvalue { index: idx }, span)?;
                 } else if let Some(def) = self.value_def(pattern.res) {
                     self.emit_global_value(def, span)?;
                 } else {
@@ -467,13 +455,8 @@ impl Compiler {
                 self.emit(Asm::Dup, span)?;
                 if let Some(slot) = self.resolve_local(*name) {
                     self.emit(Asm::GetLocal { slot }, span)?;
-                } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
-                    self.emit(
-                        Asm::GetUpvalue {
-                            index: usize::from(idx),
-                        },
-                        span,
-                    )?;
+                } else if let Some(idx) = self.resolve_upvalue(*name) {
+                    self.emit(Asm::GetUpvalue { index: idx }, span)?;
                 } else if let Some(def) = self.value_def(pattern.res) {
                     self.emit_global_value(def, span)?;
                 } else {
@@ -509,13 +492,6 @@ impl Compiler {
             }
 
             PatternKind::Tuple(pats) => {
-                if pats.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "tuple pattern cannot have more than 255 elements",
-                    ));
-                }
                 let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
                 let mut all_jumps = vec![(len_jump, base_depth)];
 
@@ -846,13 +822,6 @@ impl Compiler {
             }
 
             PatternKind::Tuple(pats) => {
-                if pats.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "tuple pattern cannot have more than 255 elements",
-                    ));
-                }
                 self.compile_compound_bind(
                     pats.iter()
                         .enumerate()
@@ -944,13 +913,6 @@ impl Compiler {
                     // actual parent on every iteration regardless of which
                     // sub-value happens to be on TOS.
                     let names: Vec<Symbol> = fields.iter().map(|(n, _, _)| *n).collect();
-                    if names.len() > u8::MAX as usize {
-                        return Err(Diagnostic::error(
-                            Code::CompileLimit,
-                            span,
-                            "anon record pattern cannot exclude more than 255 fields",
-                        ));
-                    }
                     items.push((
                         BindDestructKind::RecordRest(names),
                         Pattern::new(PatternKind::Ident(*rest_name), pattern.span),

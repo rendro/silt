@@ -1,8 +1,9 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[compile]
--- stderr-contains: values on its stack at once
--- stderr-contains: move some of its statements into separate functions
+-- stderr-contains: too many values in the frame of a function
+-- stderr-contains: (the limit is 65536)
+-- stderr-contains: move some of the function's statements into separate functions
 -- One function whose statements together keep more values on the stack
 -- than a frame can address (95 destructures of a 250-tuple); no single
 -- expression is large.

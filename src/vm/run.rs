@@ -486,7 +486,7 @@ impl Vm {
                 let upvalues = captures
                     .iter(chunk.code())
                     .map(|capture| {
-                        let index = usize::from(capture.index);
+                        let index = capture.index;
                         match capture.is_local {
                             true => self.stack[frame.base_slot + index].clone(),
                             false => frame.closure.upvalues[index].clone(),
