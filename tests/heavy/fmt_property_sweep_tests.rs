@@ -90,3 +90,23 @@ fn random_comments() {
     let report = run(&jobs, workers);
     conclude("random comments", &report);
 }
+
+/// The formatter's work grows with the file, not with its square: 16,000
+/// lines of statements took the formatter before this one 49 seconds,
+/// and take this one under a second in a release build (two in a debug
+/// build). No time is asserted; a formatter that is quadratic again
+/// shows as a test that runs for a minute.
+#[test]
+fn sixteen_thousand_lines_are_formatted() {
+    let mut source = String::from("import list\n\nfn add(a, b) {\n  a + b\n}\n\nfn main() {\n");
+    for i in 0..8_000 {
+        source.push_str(&format!("  let x{i} = add( {i} ,{i} )  -- c{i}\n"));
+        source.push_str(&format!("  println(add({i}, list.length([{i}, {i}])))\n"));
+    }
+    source.push_str("}\n");
+    let file = silt::source::FileId::default();
+    let once = silt::format::format(file, &source).expect("formatted");
+    assert_eq!(once.lines().count(), source.lines().count());
+    assert!(once.contains("  let x7999 = add(7999, 7999) -- c7999\n"));
+    assert_eq!(silt::format::format(file, &once).expect("formatted"), once);
+}
