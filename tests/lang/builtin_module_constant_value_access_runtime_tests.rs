@@ -1,55 +1,10 @@
-//! Round-95 follow-up RUNTIME parity lock — every constant in the
-//! `module::builtin_module_constants` registry must be seeded as a
-//! first-class VALUE global by `Vm::register_builtins`
-//! (`src/vm/dispatch.rs`), reachable at runtime without crashing with
-//! `error[runtime]: undefined global: <module>.<const>`.
+//! Every constant of a builtin module (`math.pi`, `float.epsilon`, the
+//! constant rows of the builtin registry) is a value at run time: a
+//! program that names one as a bare value runs, and does not fail with
+//! `undefined global: <module>.<const>`.
 //!
-//! ## Background
-//!
-//! Module constants (`math.pi`, `math.e`, `float.epsilon`,
-//! `float.max_value`, …) live hand-encoded across FOUR parallel surfaces:
-//!
-//! 1. typechecker schemes   — `src/typechecker/builtins/float.rs`,
-//!    `.../math.rs` (`intern("math.pi")`, …);
-//! 2. VM globals            — `src/vm/dispatch.rs::register_builtins`
-//!    (nine hand-written `self.globals.insert("math.pi", Value::Float(…))`
-//!    lines);
-//! 3. registry              — `module::builtin_module_constants`
-//!    (`src/module.rs`);
-//! 4. docs table            — `src/typechecker/builtins/docs.rs`.
-//!
-//! The *function* path is registry-driven: `register_builtins` loops
-//! `module::builtin_module_functions(m)` for every `BUILTIN_MODULES`
-//! entry, so a typechecker function name with no matching VM global is
-//! impossible to introduce without tripping
-//! `builtin_module_function_value_access_runtime_tests` /
-//! `comprehensive_module_function_parity_tests`.
-//!
-//! The *constant* path is NOT registry-driven — the inserts at
-//! `dispatch.rs:248-295` are nine literal lines decoupled from
-//! `builtin_module_constants`. The comprehensive function-parity test
-//! only closes the typechecker→registry direction (it asserts every
-//! typechecker name appears in `functions ∪ constants`). NOTHING closed
-//! the registry→runtime direction for constants: a 10th constant added
-//! to `builtin_module_constants("math")` plus a typechecker scheme but
-//! NOT to `register_builtins` would pass `silt check`, offer in
-//! LSP/REPL completion, keep the comprehensive parity test GREEN — yet
-//! `fn main() { math.tau }` would crash at runtime with
-//! `undefined global: math.tau`, the exact round-72 value-access class.
-//!
-//! ## Lock
-//!
-//! `every_registry_constant_is_value_accessible` enumerates
-//! `module::builtin_module_constants(m)` for EVERY `m` in
-//! `module::BUILTIN_MODULES` and runs a real `silt run` program that
-//! references `<module>.<const>` as a bare value. The assertion is that
-//! the program neither fails nor surfaces the canonical
-//! `undefined global: <module>.<const>` wording. Because the source of
-//! truth for the enumeration is the registry itself, adding a constant
-//! to `builtin_module_constants` without seeding it as a VM global makes
-//! THIS test fail (`undefined global`) — closing the
-//! registry→runtime direction that the function-parity tests close for
-//! functions.
+//! `every_registry_constant_is_value_accessible` runs a real `silt run`
+//! program for each constant `module::builtin_module_constants` lists.
 
 use std::process::Command;
 
@@ -81,7 +36,7 @@ fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
 #[test]
 fn every_registry_constant_is_value_accessible() {
     let mut checked = 0usize;
-    for &module in silt::module::BUILTIN_MODULES {
+    for &module in silt::module::builtin_modules() {
         for konst in silt::module::builtin_module_constants(module) {
             checked += 1;
             let label = format!("{module}_{konst}");
@@ -105,11 +60,8 @@ fn main() {{
             let undef = format!("undefined global: {module}.{konst}");
             assert!(
                 !stderr.contains(&undef),
-                "registry constant `{module}.{konst}` is NOT seeded as a VM \
-                 value global — `Vm::register_builtins` in src/vm/dispatch.rs \
-                 must `self.globals.insert(\"{module}.{konst}\", …)`. This is \
-                 the round-72 undefined-global class re-opening through the \
-                 hand-coded constant path.\nstderr={stderr:?}"
+                "the constant `{module}.{konst}` of the builtin registry is \
+                 not a value at run time.\nstderr={stderr:?}"
             );
             assert!(
                 ok,

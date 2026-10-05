@@ -35,9 +35,8 @@ fn every_registry_enum_message_routes_through_table() {
         path
     }
 
-    // Mirror of the per-variant constructor table used in
-    // tests/meta/round73_error_enum_runtime_dedup_tests.rs — one known-good
-    // variant per enum is enough to exercise the dispatch table.
+    // One known-good variant per enum is enough to exercise the
+    // dispatch table.
     fn ctor_call_for(_enum_name: &str, variant: &str, _arity: usize) -> Option<String> {
         match variant {
             "ParseEmpty" | "ChannelTimeout" => Some(variant.to_string()),

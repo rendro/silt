@@ -6,16 +6,6 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(crate) struct TypeEnv {
     pub(super) bindings: HashMap<Symbol, Scheme>,
-    /// Documentation strings for built-in names (stdlib functions,
-    /// constants, type/trait declarations, error variants).
-    /// Populated alongside `bindings` via `define_with_doc` /
-    /// `attach_doc` from the per-module registration sites under
-    /// `src/typechecker/builtins/`. Only the root env carries entries
-    /// — child scopes inherit the parent's view via `lookup_doc` so we
-    /// don't have to walk the parent chain in every editor request.
-    /// Surfaced through LSP hover / completion / signature-help via
-    /// `pub fn builtin_docs()`.
-    pub(super) builtin_docs: HashMap<Symbol, String>,
     /// The enclosing scope. Shared, not copied: a child scope is made for
     /// every block and lambda, and the outermost scope holds every
     /// builtin name.
@@ -30,7 +20,6 @@ impl TypeEnv {
     pub(super) fn new() -> Self {
         TypeEnv {
             bindings: HashMap::new(),
-            builtin_docs: HashMap::new(),
             parent: None,
             closed: false,
         }
@@ -44,7 +33,6 @@ impl TypeEnv {
     pub(super) fn child_of(parent: Rc<TypeEnv>) -> Self {
         TypeEnv {
             bindings: HashMap::new(),
-            builtin_docs: HashMap::new(),
             parent: Some(parent),
             closed: false,
         }
@@ -52,22 +40,6 @@ impl TypeEnv {
 
     pub(super) fn define(&mut self, name: Symbol, scheme: Scheme) {
         self.bindings.insert(name, scheme);
-    }
-
-    /// Attach a markdown doc string to an already-defined name. Used
-    /// by per-module registration sites under
-    /// `src/typechecker/builtins/` (via `attach_module_docs`) so LSP
-    /// hover / completion / signature-help can render the same prose
-    /// that round 62 phase-2 inlined from the former
-    /// `docs/stdlib/*.md` files. No-op if the name
-    /// has not been `define`d (the doc would never be reachable);
-    /// keeps the parity walker robust against renames in the markdown
-    /// without requiring the registration site to also be updated in
-    /// lockstep.
-    pub(super) fn attach_doc(&mut self, name: Symbol, doc: &str) {
-        if self.bindings.contains_key(&name) {
-            self.builtin_docs.insert(name, doc.to_string());
-        }
     }
 
     pub(super) fn lookup(&self, name: Symbol) -> Option<&Scheme> {

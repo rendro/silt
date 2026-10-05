@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::git::escape_for_display;
 use crate::intern::{self, Symbol};
-use crate::module::{BUILTIN_MODULES, is_builtin_module};
+use crate::module::{builtin_modules, is_builtin_module};
 use crate::source::{FileId, SourceMap, SourceName, Span};
 
 // Re-exported for callers that want to construct or pattern-match
@@ -431,7 +431,7 @@ fn validate_package_name_rules(name: &str) -> Result<(), String> {
 /// module, not a keyword.
 fn validate_dependency_name(name: &str) -> Result<(), String> {
     validate_identifier(name, "dependency name")?;
-    if BUILTIN_MODULES.contains(&name) {
+    if builtin_modules().contains(&name) {
         return Err(format!(
             "dependency name `{name}` collides with builtin module `{name}`; \
                  pick a different name"

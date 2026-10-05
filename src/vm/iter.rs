@@ -273,7 +273,7 @@ fn apply_callback_result(
             // becomes a `BTreeMap` key, so a Fn-containing key would be
             // ordered by Arc pointer address — ASLR-nondeterministic
             // group order across runs. `list.group_by`'s signature is
-            // unbounded (src/typechecker/builtins/list.rs), so the
+            // unbounded (its row in the builtin registry), so the
             // typechecker never rejects Fn keys; the trait name matches
             // the static map-key contract (`k: Hash` on `map.get`/`set`).
             // Locked by tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.

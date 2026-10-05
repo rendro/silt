@@ -12,7 +12,7 @@ pub(super) struct EnumInfo {
     /// Package symbol where this enum was originally declared. Used by
     /// the trait-orphan check in `register_trait_impl` to determine
     /// whether the impl's target type is local to the current package.
-    /// Built-in enums registered by `register_builtins` carry the
+    /// The builtin enums (the builtin environment's) carry the
     /// sentinel `intern("__builtin__")`; user enums carry the
     /// `current_package` value at the time their decl was processed,
     /// or `intern("__builtin__")` when there is no enclosing package

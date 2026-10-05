@@ -92,7 +92,7 @@ pub enum Res {
 
 /// The first id of the builtin pseudo-modules: the prelude is
 /// `ModuleId(BUILTIN_MODULE_BASE)`, the `k`th builtin module of
-/// [`crate::module::BUILTIN_MODULES`] is `ModuleId(BUILTIN_MODULE_BASE +
+/// [`crate::module::builtin_modules`] is `ModuleId(BUILTIN_MODULE_BASE +
 /// 1 + k)`. A module graph never has that many modules.
 const BUILTIN_MODULE_BASE: u32 = 0xFFFF_0000;
 
@@ -102,7 +102,7 @@ impl ModuleId {
 
     /// The pseudo-module of the builtin module `name` (`list`, ...).
     pub fn builtin(name: &str) -> Option<ModuleId> {
-        crate::module::BUILTIN_MODULES
+        crate::module::builtin_modules()
             .iter()
             .position(|m| *m == name)
             .map(|k| ModuleId(BUILTIN_MODULE_BASE + 1 + k as u32))
@@ -117,7 +117,7 @@ impl ModuleId {
     /// for a module of the graph.
     pub fn builtin_name(self) -> Option<&'static str> {
         let k = self.0.checked_sub(BUILTIN_MODULE_BASE + 1)?;
-        crate::module::BUILTIN_MODULES.get(k as usize).copied()
+        crate::module::builtin_modules().get(k as usize).copied()
     }
 }
 
@@ -153,9 +153,6 @@ pub const OPAQUE_TYPE_ARITY: &[(&str, usize)] = &[
     ("Value", 0),
 ];
 
-/// The enums of the prelude.
-pub const PRELUDE_ENUMS: &[&str] = &["Option", "Result"];
-
 /// The type of a type written as a value (`json.parse(s, Pt)`, a `type a`
 /// parameter): `TypeOf(Pt)`, a prelude type.
 pub const TYPE_OF: &str = "TypeOf";
@@ -170,12 +167,25 @@ pub const ANON_RECORD: &str = "<anon>";
 /// `TypeId(DefId(k))`. The builtin definitions begin with them, so their
 /// ids are known before anything else of the builtins is built. The
 /// first are [`crate::typeinfo::RUNTIME_BUILTIN_TYPES`], whose ids are
-/// the constants of [`crate::typeinfo::ty`].
+/// the constants of [`crate::typeinfo::ty`]; then the prelude's, then
+/// each module's: the records and enums the builtin registry declares
+/// for it and its opaque handles.
 pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
     static TYPES: OnceLock<Vec<(&'static str, Option<&'static str>)>> = OnceLock::new();
     TYPES.get_or_init(|| {
+        let module_of = |name: &str| {
+            crate::module::builtin_type_module(name).or_else(|| {
+                OPAQUE_MODULE_TYPES
+                    .iter()
+                    .find(|(ty, _)| *ty == name)
+                    .map(|(_, module)| *module)
+            })
+        };
         let mut types: Vec<(&'static str, Option<&'static str>)> =
-            crate::typeinfo::RUNTIME_BUILTIN_TYPES.to_vec();
+            crate::typeinfo::RUNTIME_BUILTIN_TYPES
+                .iter()
+                .map(|name| (*name, module_of(name)))
+                .collect();
         let mut add = |name: &'static str, module: Option<&'static str>| {
             if !types.iter().any(|(known, _)| *known == name) {
                 types.push((name, module));
@@ -187,12 +197,12 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
             }
             add(ty.name, None);
         }
-        for name in PRELUDE_ENUMS {
-            add(name, None);
+        for ty in &crate::builtins::registry::registry().prelude_types {
+            add(ty.name, None);
         }
         add(TYPE_OF, None);
         add(ANON_RECORD, None);
-        for module in crate::module::BUILTIN_MODULES {
+        for module in crate::module::builtin_modules() {
             let declared = crate::module::builtin_module_type_names(module).chain(
                 OPAQUE_MODULE_TYPES
                     .iter()

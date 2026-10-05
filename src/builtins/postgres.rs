@@ -328,7 +328,7 @@ pub fn redact_pg_message(s: &str) -> String {
 // ── PgError helpers (Phase 2 of stdlib error redesign) ─────────────
 //
 // Every fallible postgres.* call now surfaces a typed `PgError` variant
-// wrapped in `Err(...)`. Variants (see `src/typechecker/builtins/errors.rs`):
+// wrapped in `Err(...)`. Variants (declared by the module's `types` in the builtin registry):
 //   PgConnect(msg)         — pool checkout / URL parse / transport setup
 //   PgTls(msg)             — TLS handshake / setup / cert read
 //   PgAuthFailed(msg)      — SQLSTATE class 28 (invalid auth)

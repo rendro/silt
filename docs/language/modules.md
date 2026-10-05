@@ -227,10 +227,10 @@ import list
 import channel
 ```
 
-Stdlib documentation is delivered through the LSP — hover any
-qualified built-in name (`list.map`, `math.cos`, `Result`, …) in your
-editor to see the reference for that name. The list of built-in
-modules is enumerated by `silt::module::BUILTIN_MODULES`:
+Each built-in module has a reference page under
+[`docs/stdlib/`](../stdlib/), and the LSP shows the same text: hover
+any qualified built-in name (`list.map`, `math.cos`, `Result`, …) in
+your editor. The built-in modules:
 
 | Module | Purpose |
 | --- | --- |
@@ -280,9 +280,6 @@ The **prelude** needs no import: the primitive and container types (`Int`,
 shadows the prelude: after `type Maybe { Some(a), None }`, a bare `None`
 is `Maybe.None`, and the prelude's is still `Option.None`.
 
-The order of rows matches the order of entries in `BUILTIN_MODULES`; a
-parity-lock test in `tests/meta/round74_modules_doc_lists_all_builtins_tests.rs`
-asserts that every entry appears in this listing.
 
 ## Circular imports
 

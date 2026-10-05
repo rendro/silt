@@ -7,7 +7,7 @@
 //! - G8: `docs/stdlib/index.md` and `docs/stdlib-reference.md` must
 //!   reference every stdlib module that has a per-module page
 //!   (specifically `bytes`, `tcp`, `stream`, `postgres`). A coverage
-//!   walker cross-checks every `BUILTIN_MODULES` entry against the
+//!   walker cross-checks every `builtin_modules()` entry against the
 //!   registered builtin docs so a future module can't ship without docs.
 
 use std::path::Path;
@@ -128,7 +128,7 @@ fn readme_tooling_block_matches_main_help() {
 
 #[test]
 fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let body = docs
         .keys()
         .filter(|k| k.starts_with("postgres."))
@@ -173,37 +173,37 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
     }
     assert!(
         missing.is_empty(),
-        "the inlined postgres doc (super::docs::POSTGRES_MD) is \
-         missing documentation for builtin(s): {missing:?}"
+        "docs/stdlib/postgres.md is missing documentation for builtin(s): \
+         {missing:?}"
     );
 }
 
-/// Coverage walker: every builtin module (`silt::module::BUILTIN_MODULES`)
-/// must have at least one `<module>.*` binding with a registered doc
-/// string, and the bare-name error-variant constructors registered by
-/// the typechecker's errors pass must be documented too. A new module
-/// then cannot ship without docs.
+/// Coverage walker: every builtin module that is built
+/// (`silt::module::builtin_modules()`) has at least one `<module>.*`
+/// name with a doc, and the variants of the error enums are documented
+/// too. A new module then cannot ship without docs.
 #[test]
 fn every_builtin_module_has_a_per_module_doc() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
 
     let mut missing: Vec<String> = Vec::new();
-    for name in silt::module::BUILTIN_MODULES {
+    for name in silt::module::builtin_modules() {
+        if silt::module::missing_feature(name).is_some() {
+            continue;
+        }
         let dot = format!("{name}.");
         let has_any_doc = docs
             .iter()
             .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty());
         if !has_any_doc {
             missing.push(format!(
-                "module `{name}` has no inlined docs — no `{name}.*` binding \
-                 has a non-empty `super::docs::*_MD` section attached. Add one \
-                 and call `attach_module_docs` (or `attach_module_overview` \
-                 for module-level prose) from its register function."
+                "module `{name}` has no docs: no `{name}.*` name has a doc \
+                 cut from its page under docs/stdlib/."
             ));
         }
     }
-    // The errors pass registers bare-name variant constructors, each
-    // attached the same body via `attach_enum_variant_docs`.
+    // A variant of an error enum shows its enum's section of
+    // docs/stdlib/errors.md.
     for variant in ["IoNotFound", "JsonSyntax", "TomlSyntax", "ParseEmpty"] {
         if !docs.get(variant).is_some_and(|d| !d.trim().is_empty()) {
             missing.push(format!("error variant `{variant}` has no registered doc"));

@@ -476,7 +476,22 @@ impl ModuleGraph {
         let mut imports = Vec::with_capacity(decls.len());
         for (name, span) in decls {
             let mut problem = None;
-            let resolution = if module::is_builtin_module(&resolve(name)) {
+            let resolution = if let Some(feature) = module::missing_feature(&resolve(name)) {
+                // The module is known, so no file or dependency is looked
+                // for, and what the program takes from it is not reported
+                // again name by name.
+                ImportResolution::Unresolved(
+                    Diagnostic::error(
+                        Code::ModuleNotFound,
+                        span,
+                        format!(
+                            "the builtin module '{name}' is not part of this build of silt: it \
+                             needs the cargo feature `{feature}`"
+                        ),
+                    )
+                    .with_help(format!("rebuild silt with `--features {feature}`")),
+                )
+            } else if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
             } else if let Some(cell) = self.cell_module(name) {
                 ImportResolution::Cell(cell)
@@ -924,4 +939,33 @@ fn module_path_for_display(p: &Path) -> String {
     crate::source::without_verbatim_prefix(p)
         .display()
         .to_string()
+}
+
+#[cfg(all(test, not(feature = "postgres")))]
+mod tests {
+    use crate::diagnostic::Code;
+    use crate::session::testing::check_files;
+
+    /// A builtin module of a cargo feature that is not built is known:
+    /// its import is one error that names the feature, and what the
+    /// program takes from the module is not reported name by name.
+    #[test]
+    fn import_of_a_module_whose_feature_is_not_built_names_the_feature() {
+        let diagnostics = check_files(&[(
+            "main.silt",
+            "import postgres\n\
+             fn main() {\n  match postgres.connect(\"postgres://localhost/x\") {\n    \
+             Ok(_) -> println(\"ok\")\n    Err(e) -> println(e.message())\n  }\n}\n",
+        )]);
+        let [d] = diagnostics.as_slice() else {
+            panic!("one diagnostic, at the import: {diagnostics:?}");
+        };
+        assert_eq!(d.code, Code::ModuleNotFound);
+        assert_eq!(
+            d.message,
+            "the builtin module 'postgres' is not part of this build of silt: it needs the \
+             cargo feature `postgres`"
+        );
+        assert_eq!(d.help, ["rebuild silt with `--features postgres`"]);
+    }
 }

@@ -15,9 +15,7 @@
 //! Round-61 extension: the set was widened to include the builtin
 //! container / callable / resource types (Range, Channel, Tuple, Fn,
 //! Fun, Handle). These are legal in type-annotation position (see
-//! docs/language/operators.md; the former per-module stdlib pages were
-//! inlined verbatim into the doc constants in
-//! `src/typechecker/builtins/docs.rs` in round 62 phase-2) and must
+//! docs/language/operators.md and the pages of docs/stdlib/) and must
 //! highlight as types. Authoritative source of the widened list: the
 //! `BUILTIN_TYPES` table in `src/types/builtins.rs` (container-kind
 //! entries, queried via `src/types/builtins.rs::is_container`), which
@@ -214,13 +212,13 @@ fn vscode_primitive_tokens(block: &str) -> BTreeSet<String> {
 /// `silt::types::builtins::BUILTIN_TYPES`, with the `()` surface alias
 /// filtered out (matches `primitives()` above).
 ///
-/// Round 82 DX-GAP-1: also includes `silt::module::BUILTIN_STDLIB_TYPE_NAMES`
+/// Round 82 DX-GAP-1: also includes `silt::module::builtin_module_types()`
 /// (the per-module record/enum types like `FileStat`, `Date`, `Response`).
 /// Both sets share the vim `siltType` keyword scope and the vscode
 /// `"primitives"` regex so the bidirectional parity check accepts both.
 fn authoritative_primitive_names() -> BTreeSet<String> {
     let mut set: BTreeSet<String> = primitives().into_iter().map(|s| s.to_string()).collect();
-    for n in silt::module::BUILTIN_STDLIB_TYPE_NAMES {
+    for n in silt::module::builtin_module_types() {
         set.insert((*n).to_string());
     }
     set

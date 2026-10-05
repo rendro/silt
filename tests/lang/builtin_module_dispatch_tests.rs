@@ -1,14 +1,12 @@
-//! Every builtin module must reach its runtime dispatch arm. The VM routes
-//! `module.func(...)` calls by namespace in `src/vm/dispatch.rs`; a module
-//! listed in `module::BUILTIN_MODULES` whose arm is missing (or gated off
-//! while the typechecker still accepts the call) fails at runtime with
-//! `unknown builtin namespace: <module>`. This test calls one cheap,
-//! side-effect-free function of every module through `silt run`.
+//! Every builtin module that is built runs its functions: a call
+//! `module.func(...)` finds its row in the builtin registry and never
+//! fails with `unknown builtin namespace: <module>`. This test calls one
+//! cheap, side-effect-free function of every module through `silt run`.
 //!
-//! It also locks the feature gating of the builtin error enums: with the
-//! `postgres` / `tcp` feature off, `silt check` must reject `PgError` /
-//! `TcpError` uses as undefined instead of letting them reach the runtime,
-//! where they would fail with `unknown builtin namespace`.
+//! It also locks the feature gating of the builtin modules: with the
+//! `postgres` / `tcp` feature off, `silt check` rejects the module's
+//! import with one error that names the feature, and says nothing more
+//! about what the program takes from the module.
 
 use std::process::{Command, Output};
 
@@ -75,7 +73,7 @@ fn silt(sub: &str, label: &str, src: &str) -> Output {
 #[test]
 fn every_builtin_module_reaches_its_dispatch_arm() {
     let mut missing = Vec::new();
-    for &module in silt::module::BUILTIN_MODULES {
+    for &module in silt::module::builtin_modules() {
         let Some(call) = module_call(module) else {
             missing.push(module);
             continue;
@@ -102,51 +100,67 @@ fn every_builtin_module_reaches_its_dispatch_arm() {
     );
 }
 
-/// `silt check` on `src` must fail and name `name` as undefined.
+/// `silt check` on `src`, which imports the builtin module `module` of
+/// the cargo feature `feature` that is not built, fails with one error,
+/// at the import, that names the feature.
 #[allow(dead_code)]
-fn assert_undefined(label: &str, src: &str, name: &str) {
+fn assert_needs_feature(label: &str, src: &str, module: &str, feature: &str) {
     let out = silt("check", label, src);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success(),
-        "`silt check` accepted `{name}` in a build without its feature:\n{src}"
+        "`silt check` accepted `import {module}` in a build without `{feature}`:\n{src}"
+    );
+    let wanted = format!(
+        "the builtin module '{module}' is not part of this build of silt: it needs the cargo \
+         feature `{feature}`"
     );
     assert!(
-        stderr.contains("undefined") && stderr.contains(name),
-        "`silt check` must report `{name}` as undefined; got:\n{stderr}"
+        stderr.contains(&format!("error[compile]: {wanted}")),
+        "`silt check` must name the feature at the import; got:\n{stderr}"
     );
     assert!(
-        !stderr.contains("unknown builtin namespace"),
-        "`{name}` reached the runtime:\n{stderr}"
+        stderr.contains(&format!("rebuild silt with `--features {feature}`")),
+        "the error says how to get the module; got:\n{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("error[").count(),
+        1,
+        "one error, at the import; got:\n{stderr}"
     );
 }
 
 #[cfg(not(feature = "postgres"))]
 #[test]
-fn pg_error_is_undefined_without_postgres_feature() {
-    assert_undefined(
-        "pg_timeout",
-        "import postgres\nfn main() {\n  let e = postgres.PgTimeout\n  println(e)\n}\n",
-        "PgTimeout",
-    );
-    assert_undefined(
+fn importing_postgres_without_its_feature_is_one_error_that_names_it() {
+    assert_needs_feature(
         "pg_connect",
+        "import postgres\nfn main() {\n  match postgres.connect(\"postgres://localhost/x\") {\n    \
+         Ok(_) -> println(\"ok\")\n    Err(e) -> println(e.message())\n  }\n}\n",
+        "postgres",
+        "postgres",
+    );
+    assert_needs_feature(
+        "pg_variant",
         "import postgres\nfn main() {\n  let e = postgres.PgError.PgConnect(\"nope\")\n  println(e)\n}\n",
-        "PgError",
+        "postgres",
+        "postgres",
+    );
+    assert_needs_feature(
+        "pg_items",
+        "import postgres.{ PgTimeout }\nfn main() {\n  println(PgTimeout)\n}\n",
+        "postgres",
+        "postgres",
     );
 }
 
 #[cfg(not(feature = "tcp"))]
 #[test]
-fn tcp_error_is_undefined_without_tcp_feature() {
-    assert_undefined(
-        "tcp_timeout",
-        "import tcp\nfn main() {\n  let e = tcp.TcpTimeout\n  println(e)\n}\n",
-        "TcpTimeout",
-    );
-    assert_undefined(
+fn importing_tcp_without_its_feature_is_one_error_that_names_it() {
+    assert_needs_feature(
         "tcp_connect",
         "import tcp\nfn main() {\n  let e = tcp.TcpError.TcpConnect(\"nope\")\n  println(e)\n}\n",
-        "TcpError",
+        "tcp",
+        "tcp",
     );
 }

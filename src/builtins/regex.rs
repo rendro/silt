@@ -27,10 +27,6 @@ pub fn call_regex_error_trait(name: &str, args: &[Value]) -> Result<Value, VmErr
 
 /// Arity-check + typed-destructure for the common
 /// `regex.<op>(pattern: String, text: String)` shape.
-///
-/// Error messages are verbatim those emitted by the pre-dedupe arms; a
-/// round-36 parity test suite (`tests/meta/regex_dispatch_parity_round36_tests.rs`)
-/// locks them so any accidental phrasing drift breaks loudly.
 fn parse_regex_string_pair<'a>(
     op_name: &str,
     args: &'a [Value],
