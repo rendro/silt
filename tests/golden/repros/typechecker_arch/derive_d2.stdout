@@ -1,0 +1,14 @@
+P {x: 1, y: s}
+P {x: 1, y: s}
+P {x: 1, y: s}
+B {v: 1, w: 2}
+B {v: 1, w: 2}
+B {v: 1, w: 2}
+Wrap(1, q)
+Wrap(1, q)
+Wrap(1, q)
+custom-E
+custom-E
+custom-E
+[custom-E]
+[P {x: 1, y: s}]
