@@ -2516,17 +2516,6 @@ impl TypeChecker {
                 let arg_types: Vec<Type> =
                     args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
 
-                // A call of a definition whose type is being inferred with
-                // the caller's (itself, or one it is mutually recursive
-                // with): inside the group the callee has one type, so a
-                // mismatch here may be a use at a second type.
-                let recursive_callee = callee_fn_name.filter(|name| {
-                    matches!(callee.res, Some(crate::defs::Res::Def(_)))
-                        && self.inferred_together.contains(name)
-                });
-                let recursion_hint_span = span;
-                let pre_call_error_count = self.errors.len();
-
                 let result_ty = match &callee_ty {
                     Type::Fun(params, ret) => {
                         // Unify argument types with parameter types. For a
@@ -2607,23 +2596,6 @@ impl TypeChecker {
                         .cloned()
                         .unwrap_or_default();
                     self.owe_bound(*tyvar, *trait_name, bound_args, callee_label, span);
-                }
-
-                if let Some(callee_name) = recursive_callee
-                    && self.errors.len() > pre_call_error_count
-                {
-                    self.errors.push(
-                        Diagnostic::warning(
-                            Code::PolymorphicRecursion,
-                            recursion_hint_span,
-                            format!(
-                                "'{}' is recursing with arguments of a different type \
-                                 than its inferred signature",
-                                resolve(callee_name)
-                            ),
-                        )
-                        .with_help("add explicit type annotations to enable polymorphic recursion"),
-                    );
                 }
 
                 result_ty

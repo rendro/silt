@@ -1,10 +1,10 @@
--- Polymorphic `.display()` on a channel fails at run time, prints nothing, and has no interpolation suffix.
+-- Polymorphic `.display()` on a channel is rejected where the function with the declared `Display` bound is called, with no interpolation suffix.
 -- exit: 1
--- stderr-contains: does not implement Display
+-- stderr-contains: does not implement trait 'Display'
 -- stderr-contains: 'Channel'
 -- stderr-not-contains: required for string interpolation
 import channel
-fn show(x) { x.display() }
+fn show(x: a) -> String where a: Display { x.display() }
 fn main() {
   let c = channel.new(1)
   println(show(c))

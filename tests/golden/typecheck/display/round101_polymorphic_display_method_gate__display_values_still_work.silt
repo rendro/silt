@@ -5,7 +5,7 @@
 -- stdout-contains: P {
 import int
 type P { name: String, age: Int }
-fn show(x) { x.display() }
+fn show(x: a) -> String where a: Display { x.display() }
 fn main() {
   println(show(42))
   println(show("hi"))

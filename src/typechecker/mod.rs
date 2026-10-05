@@ -1,11 +1,12 @@
 //! Hindley-Milner type inference and checking for Silt.
 //!
-//! This module implements Algorithm W-style type inference with:
-//! - Type variables and unification
-//! - Let-polymorphism (generalization at let bindings)
+//! Inference is by unification, in the order the definitions refer to
+//! each other:
+//! - Type variables with levels; generalisation of a `let` that binds a
+//!   value and of each group of top-level definitions
+//! - Annotation variables that are rigid inside their declaration
 //! - Exhaustiveness checking for match expressions
-//! - Type narrowing after `when` guard statements
-//! - Trait constraint checking
+//! - Trait bounds: declared, inferred and owed at each use
 
 mod auto_derive;
 mod builtin_env;
@@ -163,10 +164,6 @@ pub struct TypeChecker {
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
-    /// The top-level definitions whose types are being inferred together
-    /// (a function alone, or a group that is mutually recursive): inside
-    /// the group each has one type.
-    pub(super) inferred_together: std::collections::HashSet<Symbol>,
     /// The annotation variables of the functions of the group being
     /// inferred together, when it has several: each with the functions
     /// (by declaration) it is a variable of. Two of different functions
@@ -282,7 +279,6 @@ impl TypeChecker {
             closed_mark: 0,
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
-            inferred_together: std::collections::HashSet::new(),
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),
             let_index: HashMap::new(),
@@ -729,7 +725,6 @@ impl TypeChecker {
         env: &mut TypeEnv,
     ) {
         // Inside the group each definition has one type.
-        self.inferred_together.clear();
         self.group_rigid.clear();
         if component.members.len() > 1 {
             for &i in &component.members {
@@ -743,7 +738,6 @@ impl TypeChecker {
             match (&decls[i], &sigs[i]) {
                 (Decl::Fn(f), Some(sig)) if !sig.complete => {
                     env.define(f.name, Scheme::mono(sig.ty()));
-                    self.inferred_together.insert(f.name);
                 }
                 // A `let` the group reaches before its value is checked.
                 (Decl::Let { pattern, .. }, _) if component.cyclic => {
@@ -863,7 +857,6 @@ impl TypeChecker {
         }
         self.group_rigid.clear();
         self.settle_bounds();
-        self.inferred_together.clear();
         self.enter_level();
     }
 
