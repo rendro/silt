@@ -5,8 +5,8 @@
 //! The `golden_shard_*` tests walk every case, run them in parallel and
 //! report every failure at once. `SILT_GOLDEN_FILTER=<text>` runs only the
 //! cases whose path contains the text; `SILT_BLESS=1` rewrites the
-//! existing `.stdout` and `.stderr` files and `-- verdict:` marks from the
-//! current binary.
+//! existing `.stdout`, `.stderr` and `.formatted` files and `-- verdict:`
+//! marks from the current binary.
 //!
 //! The `verdict_shard_*` tests run the cases that carry a `-- verdict:`
 //! mark through `check`, `run`, `test` and the LSP and compare the static
@@ -14,6 +14,7 @@
 //! under `repros/` is verdict-only; a fixed sample of it runs by default,
 //! all of it with `SILT_GOLDEN_FULL_CORPUS=1`.
 
+mod fmt;
 mod lsp;
 mod verdict;
 
@@ -336,7 +337,10 @@ fn copy_dir(from: &Path, to: &Path) {
 
 fn run_case(case: &Case) -> Output {
     let scratch = scratch_copy(case);
-    let out = run_in(case, &scratch);
+    let mut out = run_in(case, &scratch);
+    if fmt::is_fmt_case(case) {
+        out.harness_error = fmt::check(case, &scratch, &out, &|| run_in(case, &scratch));
+    }
     let _ = std::fs::remove_dir_all(&scratch);
     out
 }
