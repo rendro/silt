@@ -121,37 +121,13 @@ impl ModuleId {
     }
 }
 
-/// The builtin types that are reached through a builtin module but have
-/// no record or enum declaration (opaque handles).
-pub const OPAQUE_MODULE_TYPES: &[(&str, &str)] = &[
-    ("TcpListener", "tcp"),
-    ("TcpStream", "tcp"),
-    ("Handle", "task"),
-    ("PgPool", "postgres"),
-    ("PgTx", "postgres"),
-    ("PgCursor", "postgres"),
-    ("QueryResult", "postgres"),
-    ("ExecResult", "postgres"),
-    ("Value", "postgres"),
-];
-
-/// The builtin types with no declaration of their own, each with the
-/// number of its type arguments: the opaque handles of the builtin
-/// modules, `Bytes`, and the prelude's `TypeOf`, the type of a type used
-/// as a value (`Int`, a `type a` parameter).
-pub const OPAQUE_TYPE_ARITY: &[(&str, usize)] = &[
-    ("Bytes", 0),
-    ("TcpListener", 0),
-    ("TcpStream", 0),
-    ("Handle", 1),
-    (TYPE_OF, 1),
-    ("PgPool", 0),
-    ("PgTx", 0),
-    ("PgCursor", 0),
-    ("QueryResult", 0),
-    ("ExecResult", 0),
-    ("Value", 0),
-];
+/// The number of type arguments of the builtin type `name` when it is
+/// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
+/// has no variants and no fields, and the builtin registry lists it with
+/// its module. `None` for any other name.
+pub fn opaque_type_arity(name: &str) -> Option<usize> {
+    crate::builtins::registry::registry().opaque_arity(name)
+}
 
 /// The type of a type written as a value (`json.parse(s, Pt)`, a `type a`
 /// parameter): `TypeOf(Pt)`, a prelude type.
@@ -173,13 +149,20 @@ pub const ANON_RECORD: &str = "<anon>";
 pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
     static TYPES: OnceLock<Vec<(&'static str, Option<&'static str>)>> = OnceLock::new();
     TYPES.get_or_init(|| {
+        let registry = crate::builtins::registry::registry();
+        // A module's types: the declared ones, then the opaque ones.
+        let of_module = |m: &'static crate::builtins::registry::Module| {
+            m.type_decls
+                .iter()
+                .map(|ty| ty.name)
+                .chain(m.opaque.iter().map(|(name, _)| *name))
+        };
         let module_of = |name: &str| {
-            crate::module::builtin_type_module(name).or_else(|| {
-                OPAQUE_MODULE_TYPES
-                    .iter()
-                    .find(|(ty, _)| *ty == name)
-                    .map(|(_, module)| *module)
-            })
+            registry
+                .modules
+                .iter()
+                .find(|m| of_module(m).any(|ty| ty == name))
+                .map(|m| m.name)
         };
         let mut types: Vec<(&'static str, Option<&'static str>)> =
             crate::typeinfo::RUNTIME_BUILTIN_TYPES
@@ -192,25 +175,21 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
             }
         };
         for ty in crate::types::builtins::BUILTIN_TYPES {
-            if ty.name == "()" || OPAQUE_MODULE_TYPES.iter().any(|(name, _)| *name == ty.name) {
+            if ty.name == "()" || module_of(ty.name).is_some() {
                 continue;
             }
             add(ty.name, None);
         }
-        for ty in &crate::builtins::registry::registry().prelude_types {
+        for ty in &registry.prelude_types {
             add(ty.name, None);
         }
-        add(TYPE_OF, None);
+        for (name, _) in crate::builtins::registry::PRELUDE_OPAQUE {
+            add(name, None);
+        }
         add(ANON_RECORD, None);
-        for module in crate::module::builtin_modules() {
-            let declared = crate::module::builtin_module_type_names(module).chain(
-                OPAQUE_MODULE_TYPES
-                    .iter()
-                    .filter(|(_, m)| m == module)
-                    .map(|(name, _)| *name),
-            );
-            for name in declared {
-                add(name, Some(*module));
+        for module in &registry.modules {
+            for name in of_module(module) {
+                add(name, Some(module.name));
             }
         }
         types

@@ -32,7 +32,6 @@ impl BuiltinEnv {
         register_prelude(&mut checker, &mut env);
         enter_registry(&mut checker, &mut env);
         register_builtin_trait_impls(&mut checker);
-        derive_for_unlisted_records(&mut checker);
         // Each builtin variant is bound as `Enum.Variant` too, which is
         // what a resolved use of it reads.
         let mut variants: Vec<(Symbol, Scheme)> = Vec::new();
@@ -382,21 +381,6 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.trait_arg_bindings.clear();
 }
 
-/// A builtin record the derive policy of `register_builtin_trait_impls`
-/// does not name derives the four builtin traits (`time.Date`,
-/// `fs.FileStat`).
-fn derive_for_unlisted_records(checker: &mut TypeChecker) {
-    let unlisted: Vec<String> = checker
-        .tables
-        .records
-        .keys()
-        .filter(|ty| !checker.tables.trait_impl_set.iter().any(|(_, t)| t == *ty))
-        .map(|ty| resolve(ty.name))
-        .collect();
-    let unlisted: Vec<&str> = unlisted.iter().map(String::as_str).collect();
-    register_auto_derived_impls_for(checker, &unlisted, BUILTIN_AUTO_DERIVED_TRAIT_NAMES);
-}
-
 /// Test-only introspection: collect the auto-derived trait-impl and
 /// method registrations of the builtin init, for the derive-policy locks
 /// in `tests/cli/trait_init_parity_tests.rs`.
@@ -420,7 +404,6 @@ pub fn __trait_init_fingerprint_check_program() -> (
     register_prelude(&mut checker, &mut env);
     enter_registry(&mut checker, &mut env);
     register_builtin_trait_impls(&mut checker);
-    derive_for_unlisted_records(&mut checker);
     let trait_impls: BTreeSet<String> = checker
         .tables
         .trait_impl_set

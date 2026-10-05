@@ -117,34 +117,27 @@ fn readme_tooling_block_matches_main_help() {
 
 // ─── G8: Stdlib indexes + per-module docs ────────────────────────────
 //
-// Round 62 phase-2 deleted `docs/stdlib/index.md` and
-// `docs/stdlib-reference.md` (along with every per-module page) and
-// moved the per-module markdown into `super::docs::*_MD` constants.
-// The tests below now check that each formerly-listed module has at
-// least one binding with a non-empty registered doc, and that
-// postgres-specific contracts (opt-in feature, --features postgres
-// hint, every documented builtin) are preserved in the inlined
-// markdown.
+// The tests below check that each module has at least one name with a
+// doc, and that the postgres page keeps its contracts (opt-in feature,
+// the `--features postgres` hint, every builtin documented).
 
 #[test]
 fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
-    let docs = silt::builtins::registry::docs::builtin_docs();
-    let body = docs
-        .keys()
-        .filter(|k| k.starts_with("postgres."))
-        .find_map(|k| docs.get(k))
-        .cloned()
-        .expect("at least one postgres.* binding must have a registered doc");
+    // The module's page, whether or not this build has the feature.
+    let body = silt::builtins::registry::registry()
+        .module("postgres")
+        .expect("the postgres module")
+        .page;
 
     // Opt-in feature header — mirror the precedent at tcp's
     // "TLS (opt-in feature)" section.
     assert!(
         body.contains("opt-in feature") || body.contains("opt-in"),
-        "the inlined postgres doc must flag the module as opt-in"
+        "docs/stdlib/postgres.md must flag the module as opt-in"
     );
     assert!(
         body.contains("--features postgres"),
-        "the inlined postgres doc must show how to enable the feature \
+        "docs/stdlib/postgres.md must show how to enable the feature \
          (e.g. `--features postgres`)"
     );
 
