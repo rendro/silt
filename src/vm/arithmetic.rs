@@ -9,8 +9,8 @@ impl Vm {
     // ── Arithmetic helpers ────────────────────────────────────────
 
     pub(super) fn binary_arithmetic(&mut self, op: Op) -> Result<(), VmError> {
-        let b = self.pop()?;
-        let a = self.pop()?;
+        let b = self.pop();
+        let a = self.pop();
         let result = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => match op {
                 Op::Add => match a.checked_add(*b) {
@@ -77,8 +77,8 @@ impl Vm {
                 // Special error for Int/Float mixing
                 if (a_type == "Int" && b_type == "Float") || (a_type == "Float" && b_type == "Int")
                 {
-                    return Err(VmError::new(
-                        "cannot mix Int and Float — use int.to_float or float.to_int for explicit conversion".to_string()
+                    return Err(VmError::type_confusion(
+                        "cannot mix Int and Float — use int.to_float or float.to_int for explicit conversion",
                     ));
                 }
                 // Mirror the typechecker's operand-domain message: a
@@ -89,7 +89,7 @@ impl Vm {
                 } else {
                     ""
                 };
-                return Err(VmError::new(format!(
+                return Err(VmError::type_confusion(format!(
                     "cannot apply '{op_name}' to {a_type} and {b_type}{hint}",
                 )));
             }
@@ -99,8 +99,8 @@ impl Vm {
     }
 
     pub(super) fn compare(&mut self, pred: fn(std::cmp::Ordering) -> bool) -> Result<(), VmError> {
-        let b = self.pop()?;
-        let a = self.pop()?;
+        let b = self.pop();
+        let a = self.pop();
         let ordering = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
             // A Float is always finite, so `partial_cmp` always answers;
@@ -133,7 +133,7 @@ impl Vm {
             }
             (Value::Variant(..), Value::Variant(..)) => Self::ordering_with_fn_gate(&a, &b)?,
             _ => {
-                return Err(VmError::new(format!(
+                return Err(VmError::type_confusion(format!(
                     "unsupported operation: cannot compare {} and {}",
                     self.type_name(&a),
                     self.type_name(&b)
@@ -163,8 +163,8 @@ impl Vm {
     /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
     fn ordering_with_fn_gate(a: &Value, b: &Value) -> Result<std::cmp::Ordering, VmError> {
         if Self::value_contains_fn(a) || Self::value_contains_fn(b) {
-            return Err(VmError::new(
-                "type 'Fn' does not implement Compare".to_string(),
+            return Err(VmError::type_confusion(
+                "type 'Fn' does not implement Compare",
             ));
         }
         Ok(a.cmp(b))
@@ -211,7 +211,7 @@ impl Vm {
     /// Check that two values have compatible types for equality/comparison.
     pub(super) fn check_same_type(&self, a: &Value, b: &Value) -> Result<(), VmError> {
         if Self::value_disc(a) != Self::value_disc(b) {
-            return Err(VmError::new(format!(
+            return Err(VmError::type_confusion(format!(
                 "unsupported operation: cannot compare {} and {}",
                 self.type_name(a),
                 self.type_name(b)

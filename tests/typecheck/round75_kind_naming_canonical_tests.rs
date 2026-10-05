@@ -151,7 +151,7 @@ fn build_all_variants() -> AllVariants {
         // A variant names its enum type.
         variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
         vm_closure: Value::VmClosure(Arc::new(VmClosure {
-            function: Arc::new(Function::new("f".to_string(), 0)),
+            function: Arc::new(Function::returning_unit("f".to_string(), 0)),
             upvalues: Vec::new(),
         })),
         builtin_fn: Value::BuiltinFn("println".to_string()),

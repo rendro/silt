@@ -5,6 +5,11 @@
 //! including nested/recursive patterns, or-patterns, guards, ranges,
 //! list/tuple/record/map destructuring, pin patterns, when/else,
 //! plus all previous features (closures, upvalues, pipes, lambdas).
+//!
+//! Code is written through the [`Emitter`] only, which narrows operands
+//! and keeps the frame's height: a bare narrowing cast is denied here.
+
+#![deny(clippy::cast_possible_truncation)]
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -14,7 +19,7 @@ use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
     Stmt, StringPart, TypeBody, UnaryOp,
 };
-use crate::bytecode::{Chunk, Function, Globals, Op, UpvalueDesc, VmClosure};
+use crate::bytecode::{Asm, Const, Emitter, Function, Globals, Label, UpvalueDesc, VmClosure};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::module;
@@ -85,10 +90,10 @@ struct UndecodableField {
 
 /// Describes how to destructure a sub-value from a compound pattern.
 enum BindDestructKind {
-    Variant(u8),
-    Tuple(u8),
-    List(u8),
-    ListRest(u8),
+    Variant(usize),
+    Tuple(usize),
+    List(usize),
+    ListRest(usize),
     RecordField(Symbol),
     /// Anonymous record `...rest` capture: produces a new record containing
     /// every field of the parent record except those listed here.
@@ -100,80 +105,59 @@ enum BindDestructKind {
 
 /// Per-function compilation state.
 ///
-/// `height` is the compiler's model of the run-time stack: the number of
+/// The emitter keeps the height of the run-time frame: the number of
 /// values the function's frame holds at the current point of the emitted
 /// code. It counts parameters, locals (named and hidden), and operands
 /// that a construct has evaluated and keeps on the stack while it
 /// evaluates the next one (the left side of `+`, a callee, earlier
-/// arguments or elements). The rules:
+/// arguments or elements). The rules the compiler follows:
 ///
 /// - Code compiled for an expression at height `h` leaves exactly one
-///   more value in the frame, the expression's value in slot `h`.
-///   `height` is `h` again afterwards; the value is counted only once
-///   its consumer keeps it, as a local (`add_local`) or as a pending
-///   operand (`compile_operands`).
-/// - A local's slot is the height at which it is added, so it is the
-///   local's real position in the frame.
-/// - Where a scope ends or a failed pattern test lands, values the model
-///   no longer counts may be left in the frame. `Op::Slide` removes them
+///   more value in the frame, the expression's value in slot `h`
+///   (`Compiler::compile_expr` checks it).
+/// - A local's slot is where its value is when it is added: the top of
+///   the frame (`add_local`), so it is the local's real position.
+/// - Where a scope ends or a failed pattern test lands, values nothing
+///   names any more may be left in the frame. `Slide` removes them
 ///   there. The one exception is an expression in tail position: its
 ///   value is returned at once and the frame is discarded with it.
 struct CompileContext {
-    function: Function,
+    emitter: Emitter,
     locals: Vec<Local>,
     scope_depth: usize,
     /// Frame height at the start of every open scope, innermost last.
     scope_starts: Vec<usize>,
-    /// Number of values in the frame. See the type's documentation.
-    height: usize,
     /// Upvalue descriptors for this function/closure.
     upvalues: Vec<UpvalueDesc>,
-    /// Loop context stack: (first_loop_slot, loop_start_offset, binding_count)
+    /// The loops the code being compiled is in, innermost last.
     loop_stack: Vec<LoopInfo>,
 }
 
 struct LoopInfo {
-    first_slot: u16,
-    loop_start: usize,
-    binding_count: u8,
+    /// The slot of the loop's first binding.
+    first_slot: usize,
+    /// Where a `loop(...)` jumps back to.
+    start: Label,
+    binding_count: usize,
 }
 
 impl CompileContext {
     fn new(name: String, arity: u8) -> Self {
         Self {
-            function: Function::new(name, arity),
+            emitter: Emitter::new(name, arity),
             locals: Vec::new(),
             scope_depth: 0,
             scope_starts: Vec::new(),
-            height: 0,
             upvalues: Vec::new(),
             loop_stack: Vec::new(),
         }
     }
 }
 
-/// Convert a frame height to the `u16` slot operand of `GetLocal`,
-/// `SetLocal`, `Recur` and `Slide`.
-fn frame_slot(height: usize, span: Span) -> Result<u16, Diagnostic> {
-    u16::try_from(height).map_err(|_| {
-        Diagnostic::error(
-            Code::CompileLimit,
-            span,
-            format!(
-                "this function keeps more than {} values on its stack at once \
-             (its local bindings plus the values of the expression being evaluated); \
-             move some of its statements into separate functions, or split a large \
-             expression into smaller parts",
-                u16::MAX
-            ),
-        )
-    })
-}
-
 struct Local {
     name: Symbol,
     depth: usize,
-    slot: u16,
+    slot: usize,
 }
 
 // ── Compiler errors ─────────────────────────────────────────────────
@@ -200,23 +184,6 @@ fn name_without_binding(span: Span, name: Symbol) -> Diagnostic {
         span,
         format!("compiler bug: the name '{name}' has no binding in the compiled code"),
     )
-}
-
-/// Validate that a computed `JumpBack` distance fits in the instruction's
-/// `u16` operand. Mirrors the check in [`Chunk::patch_jump`] for forward
-/// jumps — a loop body larger than 65_535 bytes of bytecode would wrap
-/// around and branch to garbage. Extracted into a free function so the
-/// bounds check can be unit-tested without wiring up an entire compile
-/// context.
-fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), Diagnostic> {
-    if jump_back_dist > u16::MAX as usize {
-        return Err(Diagnostic::error(
-            Code::CompileLimit,
-            span,
-            "loop body too large (exceeds 65535 bytes of bytecode)",
-        ));
-    }
-    Ok(())
 }
 
 // ── Compiler ──────────────────────────────────────────────────────────
@@ -475,8 +442,7 @@ impl Compiler {
         entry: Option<crate::defs::DefId>,
     ) -> Result<Vec<Function>, Diagnostic> {
         // Push a top-level script context.
-        self.contexts
-            .push(CompileContext::new("<script>".into(), 0));
+        self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
 
         self.compile_builtin_derived_impls()?;
         for decl in Self::decls_in_init_order(&program.decls) {
@@ -498,25 +464,16 @@ impl Compiler {
             .unwrap_or(Span::BUILTIN);
         match entry.and_then(|def| self.globals.def(def)) {
             Some(slot) => {
-                self.current_chunk().emit_op_u16(Op::GetGlobal, slot, span);
-                self.current_chunk().emit_op(Op::Call, span);
-                self.current_chunk().emit_u8(0, span);
+                self.emit(Asm::GetGlobal { slot }, span)?;
+                self.emit(Asm::Call { argc: 0 }, span)?;
             }
             None => {
-                self.current_chunk().emit_op(Op::Unit, span);
+                self.emit(Asm::Unit, span)?;
             }
         }
-        self.current_chunk().emit_op(Op::Return, span);
+        self.emit(Asm::Return, span)?;
 
-        let script = self
-            .contexts
-            .pop()
-            .ok_or(Diagnostic::error(
-                Code::CompilerBug,
-                Span::BUILTIN,
-                "compiler bug: missing script context",
-            ))?
-            .function;
+        let (script, _) = self.end_function(Span::BUILTIN)?;
 
         // Build the result: script first, then all compiled functions.
         let mut result = vec![script];
@@ -530,8 +487,7 @@ impl Compiler {
     /// installs the globals and returns Unit.  Useful for test runners and
     /// the REPL where `main()` is not the entry-point.
     pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, Diagnostic> {
-        self.contexts
-            .push(CompileContext::new("<script>".into(), 0));
+        self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
 
         self.compile_builtin_derived_impls()?;
         for decl in Self::decls_in_init_order(&program.decls) {
@@ -540,18 +496,10 @@ impl Compiler {
 
         // Return Unit instead of calling main: code silt adds itself.
         let span = Span::BUILTIN;
-        self.current_chunk().emit_op(Op::Unit, span);
-        self.current_chunk().emit_op(Op::Return, span);
+        self.emit(Asm::Unit, span)?;
+        self.emit(Asm::Return, span)?;
 
-        let script = self
-            .contexts
-            .pop()
-            .ok_or(Diagnostic::error(
-                Code::CompilerBug,
-                Span::BUILTIN,
-                "compiler bug: missing script context",
-            ))?
-            .function;
+        let (script, _) = self.end_function(Span::BUILTIN)?;
         let mut result = vec![script];
         result.append(&mut self.functions);
         Ok(result)
@@ -625,11 +573,8 @@ impl Compiler {
                         ),
                     ));
                 }
-                let arity = fn_decl.params.len() as u8;
-
                 // Push a new context for the function body.
-                self.contexts
-                    .push(CompileContext::new(resolve(fn_decl.name), arity));
+                self.begin_function(resolve(fn_decl.name), fn_decl.params.len(), span)?;
 
                 self.compile_params(&fn_decl.params, span)?;
 
@@ -639,15 +584,10 @@ impl Compiler {
                 self.in_tail_position = false;
 
                 // Emit Return (may be dead code if body ends with a tail call).
-                self.current_chunk().emit_op(Op::Return, span);
+                self.emit(Asm::Return, span)?;
 
                 // Pop the context, recovering the compiled function.
-                let ctx = self.contexts.pop().ok_or(Diagnostic::error(
-                    Code::CompilerBug,
-                    span,
-                    "compiler bug: missing function context",
-                ))?;
-                let func = ctx.function;
+                let (func, _) = self.end_function(span)?;
 
                 // Store the function as a VmClosure constant in the enclosing chunk.
                 let vm_closure = Arc::new(VmClosure {
@@ -656,11 +596,11 @@ impl Compiler {
                 });
                 let closure_val = Value::VmClosure(vm_closure);
                 let fi = self.add_constant(closure_val, span)?;
-                self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+                self.emit(Asm::Constant { k: fi }, span)?;
 
                 let slot = self.own_slot(fn_decl.name, span)?;
-                self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
-                self.current_chunk().emit_op(Op::Pop, span);
+                self.emit(Asm::SetGlobal { slot }, span)?;
+                self.emit(Asm::Pop, span)?;
 
                 Ok(())
             }
@@ -676,8 +616,8 @@ impl Compiler {
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
                         let slot = self.own_slot(*name, span)?;
-                        self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::SetGlobal { slot }, span)?;
+                        self.emit(Asm::Pop, span)?;
                     }
                     _ => {
                         let mut slots = Vec::new();
@@ -736,37 +676,30 @@ impl Compiler {
                             ),
                         ));
                     }
-                    let arity = method.params.len() as u8;
                     let qualified_name = format!("{type_name}.{}", method.name);
 
-                    self.contexts
-                        .push(CompileContext::new(qualified_name, arity));
+                    self.begin_function(qualified_name, method.params.len(), span)?;
 
                     self.compile_params(&method.params, span)?;
 
                     self.compile_expr(&method.body)?;
-                    self.current_chunk().emit_op(Op::Return, span);
+                    self.emit(Asm::Return, span)?;
 
-                    let ctx = self.contexts.pop().ok_or(Diagnostic::error(
-                        Code::CompilerBug,
-                        span,
-                        "compiler bug: missing trait method context",
-                    ))?;
-                    let func = ctx.function;
+                    let (func, _) = self.end_function(span)?;
                     let vm_closure = Arc::new(VmClosure {
                         function: Arc::new(func),
                         upvalues: vec![],
                     });
                     let closure_val = Value::VmClosure(vm_closure);
                     let fi = self.add_constant(closure_val, span)?;
-                    self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+                    self.emit(Asm::Constant { k: fi }, span)?;
 
                     let slot = self
                         .globals
                         .method(Some(t), ty, &resolve(method.name))
                         .ok_or_else(|| checker_missed(span, "an impl method with no slot"))?;
-                    self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
-                    self.current_chunk().emit_op(Op::Pop, span);
+                    self.emit(Asm::SetGlobal { slot }, span)?;
+                    self.emit(Asm::Pop, span)?;
                 }
                 Ok(())
             }
@@ -790,23 +723,21 @@ impl Compiler {
         slots: &[(Symbol, u16)],
         span: Span,
     ) -> Result<(), Diagnostic> {
-        self.begin_scope();
+        self.begin_scope_with_top();
         let val_slot = self.add_local(intern("__let_val__"), span)?;
-        self.current_chunk()
-            .emit_op_u16(Op::SetLocal, val_slot, span);
+        self.emit(Asm::SetLocal { slot: val_slot }, span)?;
         self.compile_pattern_bind_checked(pattern, span)?;
         for (name, global) in slots {
             let slot = self.resolve_local(*name).ok_or_else(|| {
                 checker_missed(span, &format!("the binder '{name}' of a top-level let"))
             })?;
-            self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
-            self.current_chunk()
-                .emit_op_u16(Op::SetGlobal, *global, span);
-            self.current_chunk().emit_op(Op::Pop, span);
+            self.emit(Asm::GetLocal { slot }, span)?;
+            self.emit(Asm::SetGlobal { slot: *global }, span)?;
+            self.emit(Asm::Pop, span)?;
         }
-        self.current_chunk().emit_op(Op::Unit, span);
+        self.emit(Asm::Unit, span)?;
         self.end_scope_with_result(false, span)?;
-        self.current_chunk().emit_op(Op::Pop, span);
+        self.emit(Asm::Pop, span)?;
         Ok(())
     }
 
@@ -873,10 +804,10 @@ impl Compiler {
                 ));
             };
             let fi = self.add_constant(Value::HostFn(function), span)?;
-            self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+            self.emit(Asm::Constant { k: fi }, span)?;
             let slot = self.own_slot(f.name, span)?;
-            self.current_chunk().emit_op_u16(Op::SetGlobal, slot, span);
-            self.current_chunk().emit_op(Op::Pop, span);
+            self.emit(Asm::SetGlobal { slot }, span)?;
+            self.emit(Asm::Pop, span)?;
         }
         Ok(())
     }
@@ -890,7 +821,7 @@ impl Compiler {
         span: Span,
     ) -> Result<(), Diagnostic> {
         let init_name = format!("<module:{written}>");
-        self.contexts.push(CompileContext::new(init_name, 0));
+        self.begin_function(init_name, 0, span)?;
 
         for decl in Self::decls_in_init_order(&program.decls) {
             self.compile_decl(decl)?;
@@ -899,22 +830,17 @@ impl Compiler {
         // Close the module init function and call it inline. Code silt
         // adds itself carries the import statement's span, so anything
         // that blames it points back to the import site.
-        self.current_chunk().emit_op(Op::Unit, span);
-        self.current_chunk().emit_op(Op::Return, span);
-        let init_ctx = self.contexts.pop().ok_or(Diagnostic::error(
-            Code::CompilerBug,
-            span,
-            "compiler bug: missing module init context",
-        ))?;
+        self.emit(Asm::Unit, span)?;
+        self.emit(Asm::Return, span)?;
+        let (init, _) = self.end_function(span)?;
         let init_closure = Arc::new(VmClosure {
-            function: Arc::new(init_ctx.function),
+            function: Arc::new(init),
             upvalues: vec![],
         });
         let ci = self.add_constant(Value::VmClosure(init_closure), span)?;
-        self.current_chunk().emit_op_u16(Op::Constant, ci, span);
-        self.current_chunk().emit_op(Op::Call, span);
-        self.current_chunk().emit_u8(0, span);
-        self.current_chunk().emit_op(Op::Pop, span);
+        self.emit(Asm::Constant { k: ci }, span)?;
+        self.emit(Asm::Call { argc: 0 }, span)?;
+        self.emit(Asm::Pop, span)?;
         Ok(())
     }
 
@@ -937,9 +863,9 @@ impl Compiler {
                     PatternKind::Ident(name) => {
                         // The value just pushed becomes the local.
                         let slot = self.add_local(*name, span)?;
-                        self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
+                        self.emit(Asm::SetLocal { slot }, span)?;
                         if is_last {
-                            self.current_chunk().emit_op(Op::Unit, span);
+                            self.emit(Asm::Unit, span)?;
                         }
                     }
                     _ => {
@@ -947,12 +873,11 @@ impl Compiler {
                         // The value stays in the frame as a hidden local and
                         // the pattern's names are bound from it.
                         let val_slot = self.add_local(intern("__let_val__"), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetLocal, val_slot, span);
+                        self.emit(Asm::SetLocal { slot: val_slot }, span)?;
                         self.compile_pattern_bind_checked(pattern, span)?;
 
                         if is_last {
-                            self.current_chunk().emit_op(Op::Unit, span);
+                            self.emit(Asm::Unit, span)?;
                         }
                     }
                 }
@@ -963,7 +888,7 @@ impl Compiler {
             Stmt::Expr(expr) => {
                 self.compile_expr(expr)?;
                 if !is_last {
-                    self.current_chunk().emit_op(Op::Pop, expr.span);
+                    self.emit(Asm::Pop, expr.span)?;
                 }
                 // If last, leave the value on the stack as the block's result.
                 Ok(())
@@ -980,24 +905,22 @@ impl Compiler {
                 // JumpIfFalse and silently skip the else/panic arm).
                 self.in_tail_position = false;
                 self.compile_expr(condition)?;
-                let else_jump = self
-                    .current_chunk()
-                    .emit_jump(Op::JumpIfFalse, condition.span);
+                let else_jump = self.jump_if_false(condition.span)?;
 
                 // Condition was true — skip else block
-                let end_jump = self.current_chunk().emit_jump(Op::Jump, condition.span);
+                let end_jump = self.jump(condition.span)?;
 
                 // Else block: condition was false
-                self.patch_jump(else_jump, condition.span)?;
+                self.bind(else_jump, condition.span)?;
                 self.compile_expr(else_body)?;
                 // The else body must diverge (return, panic or loop(...)).
                 // If it doesn't, we just pop its value and continue.
-                self.current_chunk().emit_op(Op::Pop, condition.span);
+                self.emit(Asm::Pop, condition.span)?;
 
-                self.patch_jump(end_jump, condition.span)?;
+                self.bind(end_jump, condition.span)?;
 
                 if is_last {
-                    self.current_chunk().emit_op(Op::Unit, condition.span);
+                    self.emit(Asm::Unit, condition.span)?;
                 }
                 Ok(())
             }
@@ -1019,11 +942,10 @@ impl Compiler {
                 // The value stays in the frame as a hidden local: the test
                 // peeks it and the pattern's names are bound from it.
                 let val_slot = self.add_local(intern("__when_val__"), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::SetLocal, val_slot, span);
+                self.emit(Asm::SetLocal { slot: val_slot }, span)?;
 
                 let fail_jumps = self.compile_pattern_test(pattern, span)?;
-                let matched_jump = self.current_chunk().emit_jump(Op::Jump, span);
+                let matched_jump = self.jump(span)?;
 
                 // Pattern didn't match. A failed test of a nested pattern
                 // leaves the sub-values it was looking at above the value;
@@ -1032,20 +954,19 @@ impl Compiler {
                 // scope. The else body diverges (the typechecker requires
                 // it), so control never reaches the bindings from here.
                 for fj in fail_jumps {
-                    self.patch_jump(fj, span)?;
+                    self.bind(fj, span)?;
                 }
-                self.current_chunk()
-                    .emit_op_u16(Op::GetLocal, val_slot, span);
-                self.current_chunk().emit_op_u16(Op::Slide, val_slot, span);
+                self.emit(Asm::GetLocal { slot: val_slot }, span)?;
+                self.emit(Asm::Slide { slot: val_slot }, span)?;
                 self.compile_expr(else_body)?;
-                self.current_chunk().emit_op(Op::Pop, span); // pop else result
+                self.emit(Asm::Pop, span)?; // pop else result
 
                 // Pattern matched — bind variables
-                self.patch_jump(matched_jump, span)?;
+                self.bind(matched_jump, span)?;
                 self.compile_pattern_bind(pattern, span)?;
 
                 if is_last {
-                    self.current_chunk().emit_op(Op::Unit, span);
+                    self.emit(Asm::Unit, span)?;
                 }
                 Ok(())
             }
@@ -1060,18 +981,47 @@ impl Compiler {
     /// Single home for the tail/non-tail emission shape — every plain
     /// `Op::Call`-capable site (normal calls, qualified-variant calls,
     /// module-qualified calls, both pipe shapes) must route through here.
-    fn emit_call(&mut self, argc: u8, tail: bool, span: Span) {
+    fn emit_call(&mut self, argc: usize, tail: bool, span: Span) -> Result<(), Diagnostic> {
         if tail {
-            self.current_chunk().emit_op(Op::TailCall, span);
-            self.current_chunk().emit_u8(argc, span);
-            self.current_chunk().emit_op(Op::Return, span);
+            self.emit(Asm::TailCall { argc }, span)?;
+            self.emit(Asm::Return, span)
         } else {
-            self.current_chunk().emit_op(Op::Call, span);
-            self.current_chunk().emit_u8(argc, span);
+            self.emit(Asm::Call { argc }, span)
         }
     }
 
+    /// Compile `expr`: at height `h`, code that leaves the expression's
+    /// value in slot `h` and the frame one value higher. In tail
+    /// position the locals of the expression's scopes may still be under
+    /// the value, since the frame goes when the value is returned.
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), Diagnostic> {
+        let tail = self.in_tail_position;
+        let before = self.emitter().height();
+        self.compile_expr_kind(expr)?;
+        let emitter = self.emitter();
+        if !emitter.reachable() {
+            // The expression does not return (`return`, `panic`, a
+            // `loop(...)`): code after it is dead, and compiled as if
+            // the value were there.
+            emitter.assume_height(before + 1);
+            return Ok(());
+        }
+        let after = emitter.height();
+        if after == before + 1 || (tail && after > before) {
+            return Ok(());
+        }
+        Err(Diagnostic::error(
+            Code::CompilerBug,
+            expr.span,
+            format!(
+                "compiler bug: the code of this expression takes the frame of '{}' \
+                 from {before} values to {after}",
+                emitter.name()
+            ),
+        ))
+    }
+
+    fn compile_expr_kind(&mut self, expr: &Expr) -> Result<(), Diagnostic> {
         let span = expr.span;
         let tail = self.in_tail_position;
         self.in_tail_position = false;
@@ -1079,29 +1029,29 @@ impl Compiler {
         match &expr.kind {
             ExprKind::Int(n) => {
                 let idx = self.add_constant(Value::Int(*n), span)?;
-                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                self.emit(Asm::Constant { k: idx }, span)?;
             }
 
             ExprKind::Float(n) => {
                 let idx = self.add_constant(Value::Float(*n), span)?;
-                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                self.emit(Asm::Constant { k: idx }, span)?;
             }
 
             ExprKind::Bool(b) => {
                 if *b {
-                    self.current_chunk().emit_op(Op::True, span);
+                    self.emit(Asm::True, span)?;
                 } else {
-                    self.current_chunk().emit_op(Op::False, span);
+                    self.emit(Asm::False, span)?;
                 }
             }
 
             ExprKind::StringLit(s, _) => {
                 let idx = self.add_constant(Value::String(s.clone()), span)?;
-                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                self.emit(Asm::Constant { k: idx }, span)?;
             }
 
             ExprKind::Unit => {
-                self.current_chunk().emit_op(Op::Unit, span);
+                self.emit(Asm::Unit, span)?;
             }
 
             ExprKind::Binary(left, op, right) => {
@@ -1110,52 +1060,52 @@ impl Compiler {
                         // Short-circuit: if left is false, skip right
                         self.compile_expr(left)?;
                         // Duplicate TOS so we can test and still have the value
-                        self.current_chunk().emit_op(Op::Dup, span);
-                        let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                        self.emit(Asm::Dup, span)?;
+                        let jump = self.jump_if_false(span)?;
                         // Left was truthy, discard it and evaluate right
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         self.compile_expr(right)?;
-                        self.patch_jump(jump, span)?;
+                        self.bind(jump, span)?;
                     }
                     BinOp::Or => {
                         // Short-circuit: if left is true, skip right
                         self.compile_expr(left)?;
                         // Duplicate TOS so we can test and still have the value
-                        self.current_chunk().emit_op(Op::Dup, span);
-                        let jump = self.current_chunk().emit_jump(Op::JumpIfTrue, span);
+                        self.emit(Asm::Dup, span)?;
+                        let jump = self.jump_if_true(span)?;
                         // Left was falsy, discard it and evaluate right
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         self.compile_expr(right)?;
-                        self.patch_jump(jump, span)?;
+                        self.bind(jump, span)?;
                     }
                     _ => {
                         self.compile_operands([&**left, &**right])?;
-                        let opcode = match op {
-                            BinOp::Add => Op::Add,
-                            BinOp::Sub => Op::Sub,
-                            BinOp::Mul => Op::Mul,
-                            BinOp::Div => Op::Div,
-                            BinOp::Mod => Op::Mod,
-                            BinOp::Eq => Op::Eq,
-                            BinOp::Neq => Op::Neq,
-                            BinOp::Lt => Op::Lt,
-                            BinOp::Gt => Op::Gt,
-                            BinOp::Leq => Op::Leq,
-                            BinOp::Geq => Op::Geq,
+                        let instruction = match op {
+                            BinOp::Add => Asm::Add,
+                            BinOp::Sub => Asm::Sub,
+                            BinOp::Mul => Asm::Mul,
+                            BinOp::Div => Asm::Div,
+                            BinOp::Mod => Asm::Mod,
+                            BinOp::Eq => Asm::Eq,
+                            BinOp::Neq => Asm::Neq,
+                            BinOp::Lt => Asm::Lt,
+                            BinOp::Gt => Asm::Gt,
+                            BinOp::Leq => Asm::Leq,
+                            BinOp::Geq => Asm::Geq,
                             BinOp::And | BinOp::Or => unreachable!(),
                         };
-                        self.current_chunk().emit_op(opcode, span);
+                        self.emit(instruction, span)?;
                     }
                 }
             }
 
             ExprKind::Unary(op, operand) => {
                 self.compile_expr(operand)?;
-                let opcode = match op {
-                    UnaryOp::Neg => Op::Negate,
-                    UnaryOp::Not => Op::Not,
+                let instruction = match op {
+                    UnaryOp::Neg => Asm::Negate,
+                    UnaryOp::Not => Asm::Not,
                 };
-                self.current_chunk().emit_op(opcode, span);
+                self.emit(instruction, span)?;
             }
 
             ExprKind::Block(stmts) => {
@@ -1163,7 +1113,7 @@ impl Compiler {
 
                 if stmts.is_empty() {
                     // Empty block evaluates to Unit.
-                    self.current_chunk().emit_op(Op::Unit, span);
+                    self.emit(Asm::Unit, span)?;
                 } else {
                     let last_idx = stmts.len() - 1;
                     for (i, stmt) in stmts.iter().enumerate() {
@@ -1179,13 +1129,13 @@ impl Compiler {
 
             ExprKind::Ident(_) if let Some(variant) = self.variant_value(expr) => {
                 let idx = self.add_constant(variant, span)?;
-                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                self.emit(Asm::Constant { k: idx }, span)?;
             }
 
             // A type used as a value is its descriptor.
             ExprKind::Ident(_) if let Some(descriptor) = self.type_value(expr.res) => {
                 let idx = self.add_constant(descriptor, span)?;
-                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                self.emit(Asm::Constant { k: idx }, span)?;
             }
 
             ExprKind::Ident(_) if let Some(def) = self.value_def(expr.res) => {
@@ -1194,10 +1144,14 @@ impl Compiler {
 
             ExprKind::Ident(name) => {
                 if let Some(slot) = self.resolve_local(*name) {
-                    self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
+                    self.emit(Asm::GetLocal { slot }, span)?;
                 } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
-                    self.current_chunk().emit_op(Op::GetUpvalue, span);
-                    self.current_chunk().emit_u8(idx, span);
+                    self.emit(
+                        Asm::GetUpvalue {
+                            index: usize::from(idx),
+                        },
+                        span,
+                    )?;
                 } else {
                     return Err(name_without_binding(span, *name));
                 }
@@ -1228,39 +1182,43 @@ impl Compiler {
                     // `Shape.Circle(r)`, `channel.Message(v)`,
                     // `m.Shape.Circle(r)`.
                     let idx = self.add_constant(variant, span)?;
-                    self.current_chunk().emit_op_u16(Op::Constant, idx, span);
-                    self.compile_operands_above(1, args)?;
-                    let argc = args.len() as u8;
-                    self.emit_call(argc, tail, span);
+                    self.emit(Asm::Constant { k: idx }, span)?;
+                    self.compile_operands(args)?;
+                    let argc = args.len();
+                    self.emit_call(argc, tail, span)?;
                 } else if let Some(builtin_name) = self.builtin_module_function(callee) {
                     // A builtin module's function: `list.map(...)`.
                     self.check_decode_target(&builtin_name, args.last(), span)?;
                     self.compile_operands(args)?;
-                    let argc = args.len() as u8;
+                    let argc = args.len();
                     let name_idx = self.add_constant(Value::String(builtin_name), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::CallBuiltin, name_idx, span);
-                    self.current_chunk().emit_u8(argc, span);
+                    self.emit(
+                        Asm::CallBuiltin {
+                            name: name_idx,
+                            argc,
+                        },
+                        span,
+                    )?;
                 } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
                     if self.builtin_trait_method_of_builtin_type(callee) && !args.is_empty() {
                         // `Int.display(1)`: a builtin trait's method of a
                         // builtin type, which is native, not a global; the
                         // first argument is the receiver.
                         self.compile_operands(args)?;
-                        self.emit_call_method(*method, args.len() as u8, callee.res, span)?;
+                        self.emit_call_method(*method, args.len(), callee.res, span)?;
                     } else if let Some(slot) = self.qualified_type_member(callee)? {
                         // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                         // through its type.
-                        self.current_chunk().emit_op_u16(Op::GetGlobal, slot, span);
-                        self.compile_operands_above(1, args)?;
-                        let argc = args.len() as u8;
-                        self.emit_call(argc, tail, span);
+                        self.emit(Asm::GetGlobal { slot }, span)?;
+                        self.compile_operands(args)?;
+                        let argc = args.len();
+                        self.emit_call(argc, tail, span)?;
                     } else if let Some(def) = self.value_def(callee.res) {
                         // A module's function: `m.f(1)`.
                         self.emit_global_value(def, span)?;
-                        self.compile_operands_above(1, args)?;
-                        let argc = args.len() as u8;
-                        self.emit_call(argc, tail, span);
+                        self.compile_operands(args)?;
+                        let argc = args.len();
+                        self.emit_call(argc, tail, span)?;
                     } else {
                         // Method call on a value: expr.method(args)
                         // Compile receiver as first argument. The
@@ -1277,7 +1235,7 @@ impl Compiler {
                             ));
                         }
                         self.compile_operands(std::iter::once(&**receiver).chain(args))?;
-                        let argc = (args.len() + 1) as u8; // receiver + args
+                        let argc = args.len() + 1; // receiver + args
                         self.emit_call_method(*method, argc, callee.res, span)?;
                     }
                 } else {
@@ -1288,21 +1246,21 @@ impl Compiler {
                         self.check_decode_target(&builtin_name, args.last(), span)?;
                     }
                     self.compile_operands(std::iter::once(&**callee).chain(args))?;
-                    let argc = args.len() as u8;
-                    self.emit_call(argc, tail, span);
+                    let argc = args.len();
+                    self.emit_call(argc, tail, span)?;
                 }
             }
 
             // A variant: `EnumName.Variant`, `time.Monday`, `m.Color.Red`.
             ExprKind::FieldAccess(..) if let Some(variant) = self.variant_value(expr) => {
                 let idx = self.add_constant(variant, span)?;
-                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                self.emit(Asm::Constant { k: idx }, span)?;
             }
 
             // `m.Pt` used as a value: the type's descriptor.
             ExprKind::FieldAccess(..) if let Some(descriptor) = self.type_value(expr.res) => {
                 let idx = self.add_constant(descriptor, span)?;
-                self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                self.emit(Asm::Constant { k: idx }, span)?;
             }
 
             // `Int.display` as a value: the function `{ a -> a.display() }`
@@ -1346,7 +1304,7 @@ impl Compiler {
             }
 
             ExprKind::FieldAccess(..) if let Some(slot) = self.qualified_type_member(expr)? => {
-                self.current_chunk().emit_op_u16(Op::GetGlobal, slot, span);
+                self.emit(Asm::GetGlobal { slot }, span)?;
             }
 
             // `m.f`, `m.limit`, `list.map` used as a value.
@@ -1359,8 +1317,7 @@ impl Compiler {
             ExprKind::FieldAccess(expr, field, _) => {
                 self.compile_expr(expr)?;
                 let name_idx = self.add_constant(Value::String(resolve(*field)), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::GetField, name_idx, span);
+                self.emit(Asm::GetField { name: name_idx }, span)?;
             }
 
             ExprKind::StringInterp(parts) => {
@@ -1382,25 +1339,19 @@ impl Compiler {
                     ));
                 }
                 // Every part stays on the stack until `StringConcat`.
-                let base = self.ctx().height;
-                let mut count: u8 = 0;
                 for part in parts {
                     match part {
                         StringPart::Literal(s) => {
                             let idx = self.add_constant(Value::String(s.clone()), span)?;
-                            self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+                            self.emit(Asm::Constant { k: idx }, span)?;
                         }
                         StringPart::Expr(e) => {
                             self.compile_expr(e)?;
-                            self.current_chunk().emit_op(Op::DisplayValue, span);
+                            self.emit(Asm::DisplayValue, span)?;
                         }
                     }
-                    self.ctx_mut().height += 1;
-                    count += 1;
                 }
-                self.ctx_mut().height = base;
-                self.current_chunk().emit_op(Op::StringConcat, span);
-                self.current_chunk().emit_u8(count, span);
+                self.emit(Asm::StringConcat { count: parts.len() }, span)?;
             }
 
             ExprKind::Return(maybe_expr) => {
@@ -1409,9 +1360,9 @@ impl Compiler {
                     self.in_tail_position = true;
                     self.compile_expr(e)?;
                 } else {
-                    self.current_chunk().emit_op(Op::Unit, span);
+                    self.emit(Asm::Unit, span)?;
                 }
-                self.current_chunk().emit_op(Op::Return, span);
+                self.emit(Asm::Return, span)?;
             }
 
             ExprKind::Match { expr, arms } => {
@@ -1429,11 +1380,8 @@ impl Compiler {
                         ),
                     ));
                 }
-                let arity = params.len() as u8;
-
                 // Push a new context for the lambda body.
-                self.contexts
-                    .push(CompileContext::new("<lambda>".into(), arity));
+                self.begin_function("<lambda>".into(), params.len(), span)?;
 
                 self.compile_params(params, span)?;
 
@@ -1441,15 +1389,9 @@ impl Compiler {
                 self.in_tail_position = true;
                 self.compile_expr(body)?;
                 self.in_tail_position = false;
-                self.current_chunk().emit_op(Op::Return, span);
+                self.emit(Asm::Return, span)?;
 
-                let ctx = self.contexts.pop().ok_or(Diagnostic::error(
-                    Code::CompilerBug,
-                    span,
-                    "compiler bug: missing lambda context",
-                ))?;
-                let upvalue_descs = ctx.upvalues.clone();
-                let func = ctx.function;
+                let (func, upvalue_descs) = self.end_function(span)?;
 
                 let vm_closure = Arc::new(VmClosure {
                     function: Arc::new(func),
@@ -1460,17 +1402,16 @@ impl Compiler {
 
                 if upvalue_descs.is_empty() {
                     // No upvalues: just push the constant directly.
-                    self.current_chunk().emit_op_u16(Op::Constant, fi, span);
+                    self.emit(Asm::Constant { k: fi }, span)?;
                 } else {
                     // Has upvalues: emit MakeClosure with descriptors.
-                    self.current_chunk().emit_op_u16(Op::MakeClosure, fi, span);
-                    self.current_chunk()
-                        .emit_u8(upvalue_descs.len() as u8, span);
-                    for desc in &upvalue_descs {
-                        self.current_chunk()
-                            .emit_u8(if desc.is_local { 1 } else { 0 }, span);
-                        self.current_chunk().emit_u8(desc.index, span);
-                    }
+                    self.emit(
+                        Asm::MakeClosure {
+                            f: fi,
+                            captures: &upvalue_descs,
+                        },
+                        span,
+                    )?;
                 }
             }
 
@@ -1483,8 +1424,7 @@ impl Compiler {
                     ));
                 }
                 self.compile_operands(elems)?;
-                self.current_chunk().emit_op(Op::MakeTuple, span);
-                self.current_chunk().emit_u8(elems.len() as u8, span);
+                self.emit(Asm::MakeTuple { count: elems.len() }, span)?;
             }
 
             ExprKind::List(elems) => {
@@ -1513,8 +1453,7 @@ impl Compiler {
                         ListElem::Single(e) => Some(e),
                         ListElem::Spread(_) => None,
                     }))?;
-                    let count = elems.len() as u16;
-                    self.current_chunk().emit_op_u16(Op::MakeList, count, span);
+                    self.emit(Asm::MakeList { count: elems.len() }, span)?;
                 } else {
                     // Spread path: group consecutive singles into segments,
                     // compile each spread, and ListConcat them together.
@@ -1526,13 +1465,11 @@ impl Compiler {
                     //
                     // While an element is compiled the stack holds the list
                     // accumulated so far (if any) and the singles not yet
-                    // collected; the frame height counts them.
-                    let base = self.ctx().height;
+                    // collected.
                     let mut have_accumulated = false;
                     let mut single_count: usize = 0;
 
                     for elem in elems {
-                        self.ctx_mut().height = base + usize::from(have_accumulated) + single_count;
                         match elem {
                             ListElem::Single(e) => {
                                 self.compile_expr(e)?;
@@ -1552,39 +1489,42 @@ impl Compiler {
                             ListElem::Spread(e) => {
                                 // Flush any pending singles as a MakeList
                                 if single_count > 0 {
-                                    self.current_chunk().emit_op_u16(
-                                        Op::MakeList,
-                                        single_count as u16,
+                                    self.emit(
+                                        Asm::MakeList {
+                                            count: single_count,
+                                        },
                                         span,
-                                    );
+                                    )?;
                                     if have_accumulated {
-                                        self.current_chunk().emit_op(Op::ListConcat, span);
+                                        self.emit(Asm::ListConcat, span)?;
                                     }
                                     have_accumulated = true;
                                     single_count = 0;
-                                    self.ctx_mut().height = base + 1;
                                 }
                                 // Compile the spread expression (should be a list or range)
                                 self.compile_expr(e)?;
                                 if have_accumulated {
-                                    self.current_chunk().emit_op(Op::ListConcat, span);
+                                    self.emit(Asm::ListConcat, span)?;
                                 } else {
                                     have_accumulated = true;
                                 }
                             }
                         }
                     }
-                    self.ctx_mut().height = base;
                     // Flush any trailing singles
                     if single_count > 0 {
-                        self.current_chunk()
-                            .emit_op_u16(Op::MakeList, single_count as u16, span);
+                        self.emit(
+                            Asm::MakeList {
+                                count: single_count,
+                            },
+                            span,
+                        )?;
                         if have_accumulated {
-                            self.current_chunk().emit_op(Op::ListConcat, span);
+                            self.emit(Asm::ListConcat, span)?;
                         }
                     } else if !have_accumulated {
                         // Edge case: empty list with spreads (shouldn't happen, but be safe)
-                        self.current_chunk().emit_op_u16(Op::MakeList, 0, span);
+                        self.emit(Asm::MakeList { count: 0 }, span)?;
                     }
                 }
             }
@@ -1605,9 +1545,7 @@ impl Compiler {
                     ));
                 }
                 self.compile_operands(pairs.iter().flat_map(|(k, v)| [k, v]))?;
-                let pair_count = pairs.len() as u16;
-                self.current_chunk()
-                    .emit_op_u16(Op::MakeMap, pair_count, span);
+                self.emit(Asm::MakeMap { pairs: pairs.len() }, span)?;
             }
 
             ExprKind::SetLit(elems) => {
@@ -1625,13 +1563,12 @@ impl Compiler {
                     ));
                 }
                 self.compile_operands(elems)?;
-                let count = elems.len() as u16;
-                self.current_chunk().emit_op_u16(Op::MakeSet, count, span);
+                self.emit(Asm::MakeSet { count: elems.len() }, span)?;
             }
 
             ExprKind::Range(start, end) => {
                 self.compile_operands([&**start, &**end])?;
-                self.current_chunk().emit_op(Op::MakeRange, span);
+                self.emit(Asm::MakeRange, span)?;
             }
 
             ExprKind::Pipe(left, right) => {
@@ -1642,7 +1579,7 @@ impl Compiler {
 
             ExprKind::QuestionMark(inner) => {
                 self.compile_expr(inner)?;
-                self.current_chunk().emit_op(Op::QuestionMark, span);
+                self.emit(Asm::QuestionMark, span)?;
             }
 
             ExprKind::Ascription(inner, _) => {
@@ -1668,14 +1605,15 @@ impl Compiler {
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(fields.iter().map(|(_, val)| val))?;
                 let ty = self.record_type(expr.res, *name, span)?;
-                let type_name_idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::MakeRecord, type_name_idx, span);
-                self.current_chunk().emit_u8(field_names.len() as u8, span);
-                for fname in &field_names {
-                    let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;
-                    self.current_chunk().emit_u16(field_idx, span);
-                }
+                let ty = self.add_constant(Value::TypeDescriptor(ty), span)?;
+                let fields = self.name_constants(&field_names, span)?;
+                self.emit(
+                    Asm::MakeRecord {
+                        ty,
+                        fields: &fields,
+                    },
+                    span,
+                )?;
             }
 
             ExprKind::RecordUpdate { expr, fields } => {
@@ -1690,12 +1628,8 @@ impl Compiler {
                 self.compile_operands(
                     std::iter::once(&**expr).chain(fields.iter().map(|(_, val)| val)),
                 )?;
-                self.current_chunk().emit_op(Op::RecordUpdate, span);
-                self.current_chunk().emit_u8(field_names.len() as u8, span);
-                for fname in &field_names {
-                    let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;
-                    self.current_chunk().emit_u16(field_idx, span);
-                }
+                let fields = self.name_constants(&field_names, span)?;
+                self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
             }
 
             ExprKind::AnonRecord { spread, fields } => {
@@ -1726,12 +1660,8 @@ impl Compiler {
                     self.compile_operands(
                         std::iter::once(&**base).chain(fields.iter().map(|(_, val)| val)),
                     )?;
-                    self.current_chunk().emit_op(Op::RecordUpdate, span);
-                    self.current_chunk().emit_u8(field_names.len() as u8, span);
-                    for fname in &field_names {
-                        let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;
-                        self.current_chunk().emit_u16(field_idx, span);
-                    }
+                    let fields = self.name_constants(&field_names, span)?;
+                    self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
                 } else {
                     // Closed anon record literal: same encoding as nominal
                     // RecordCreate but with the anonymous record type,
@@ -1740,15 +1670,15 @@ impl Compiler {
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.compile_operands(fields.iter().map(|(_, val)| val))?;
                     let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
-                    let type_name_idx =
-                        self.add_constant(Value::TypeDescriptor(anon.clone()), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::MakeRecord, type_name_idx, span);
-                    self.current_chunk().emit_u8(field_names.len() as u8, span);
-                    for fname in &field_names {
-                        let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;
-                        self.current_chunk().emit_u16(field_idx, span);
-                    }
+                    let ty = self.add_constant(Value::TypeDescriptor(anon.clone()), span)?;
+                    let fields = self.name_constants(&field_names, span)?;
+                    self.emit(
+                        Asm::MakeRecord {
+                            ty,
+                            fields: &fields,
+                        },
+                        span,
+                    )?;
                 }
             }
 
@@ -1762,45 +1692,23 @@ impl Compiler {
                     .loop_stack
                     .last()
                     .ok_or_else(|| checker_missed(span, "a `loop(...)` outside a loop"))?;
-                let first_slot = loop_info.first_slot;
-                let loop_start = loop_info.loop_start;
-                let expected = loop_info.binding_count as usize;
-                if args.len() != expected {
+                let first = loop_info.first_slot;
+                let start = loop_info.start;
+                if args.len() != loop_info.binding_count {
                     return Err(checker_missed(
                         span,
                         "a `loop(...)` with the wrong number of arguments",
                     ));
                 }
-                // Defence in depth: `binding_count` is already a u8 so
-                // `expected <= 255` — but keep the limit explicit so a
-                // future refactor that widens `binding_count` doesn't
-                // silently reintroduce a wrap.
-                if args.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "`loop(...)` has {} arguments; silt loops are limited to 255 bindings",
-                            args.len()
-                        ),
-                    ));
-                }
-
                 self.compile_operands(args)?;
-                self.current_chunk().emit_op(Op::Recur, span);
-                self.current_chunk().emit_u8(args.len() as u8, span);
-                self.current_chunk().emit_u16(first_slot, span);
-
-                // Emit JumpBack to loop start.
-                let current_offset = self.current_chunk().len();
-                // JumpBack operand is how far back to jump from after the operand.
-                let jump_back_dist = current_offset + 3 - loop_start; // +3 for opcode + u16
-                // Mirror `Chunk::patch_jump`: the operand is a `u16`, so a
-                // loop body larger than 65_535 bytes of bytecode would wrap
-                // and jump to a garbage offset. Reject it cleanly.
-                jumpback_fits_u16(jump_back_dist, span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::JumpBack, jump_back_dist as u16, span);
+                self.emit(
+                    Asm::Recur {
+                        argc: args.len(),
+                        first,
+                    },
+                    span,
+                )?;
+                self.emit(Asm::Jump { to: start }, span)?;
             } // All expression kinds are handled above. If new ones are added,
               // the match will become non-exhaustive and the compiler will error.
         }
@@ -1825,13 +1733,17 @@ impl Compiler {
         // Compile the scrutinee and keep it in the frame as a hidden local.
         // This lets us GetLocal it for each arm's test and binding.
         self.compile_expr(scrutinee)?;
-        self.begin_scope();
+        self.begin_scope_with_top();
         let scrutinee_slot = self.add_local(intern("__scrutinee__"), span)?;
-        self.current_chunk()
-            .emit_op_u16(Op::SetLocal, scrutinee_slot, span);
+        self.emit(
+            Asm::SetLocal {
+                slot: scrutinee_slot,
+            },
+            span,
+        )?;
         // Frame height at the start of every arm: everything up to and
         // including the scrutinee.
-        let arm_height = self.ctx().height;
+        let arm_height = self.emitter().height();
 
         let mut end_jumps = Vec::new();
 
@@ -1841,8 +1753,12 @@ impl Compiler {
             //    copy its test looked at, sub-values of a nested pattern,
             //    or the names it bound before its guard failed. The slide
             //    drops them and keeps the fresh copy.
-            self.current_chunk()
-                .emit_op_u16(Op::GetLocal, scrutinee_slot, span);
+            self.emit(
+                Asm::GetLocal {
+                    slot: scrutinee_slot,
+                },
+                span,
+            )?;
             if i > 0 {
                 self.emit_slide(arm_height, span)?;
             }
@@ -1851,24 +1767,27 @@ impl Compiler {
             let fail_jumps = self.compile_pattern_test(&arm.pattern, span)?;
 
             // 3. Pop the test copy
-            self.current_chunk().emit_op(Op::Pop, span);
+            self.emit(Asm::Pop, span)?;
 
             // 4. Begin a scope for this arm's bindings
             self.begin_scope();
 
             // 5. Push scrutinee again and bind pattern variables
-            self.current_chunk()
-                .emit_op_u16(Op::GetLocal, scrutinee_slot, span);
+            self.emit(
+                Asm::GetLocal {
+                    slot: scrutinee_slot,
+                },
+                span,
+            )?;
             // Register this GetLocal'd copy as a hidden local
             let bind_copy = self.add_local(intern("__bind_src__"), span)?;
-            self.current_chunk()
-                .emit_op_u16(Op::SetLocal, bind_copy, span);
+            self.emit(Asm::SetLocal { slot: bind_copy }, span)?;
             self.compile_pattern_bind(&arm.pattern, span)?;
 
             // 6. Guard (if present)
             let guard_jump = if let Some(guard) = &arm.guard {
                 self.compile_expr(guard)?;
-                let j = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let j = self.jump_if_false(span)?;
                 Some(j)
             } else {
                 None
@@ -1883,15 +1802,15 @@ impl Compiler {
             self.end_scope();
 
             // 8. Jump to end of match
-            let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
+            let end_jump = self.jump(span)?;
             end_jumps.push(end_jump);
 
             // 9. Patch failure / guard jumps to here (next arm)
             if let Some(gj) = guard_jump {
-                self.patch_jump(gj, span)?;
+                self.bind(gj, span)?;
             }
             for fj in fail_jumps {
-                self.patch_jump(fj, span)?;
+                self.bind(fj, span)?;
             }
         }
 
@@ -1900,15 +1819,14 @@ impl Compiler {
             Value::String("non-exhaustive match: no arm matched".into()),
             span,
         )?;
-        self.current_chunk()
-            .emit_op_u16(Op::Constant, msg_idx, span);
-        self.current_chunk().emit_op(Op::Panic, span);
+        self.emit(Asm::Constant { k: msg_idx }, span)?;
+        self.emit(Asm::Panic, span)?;
 
         let result_height = self.end_scope();
 
         // Patch all end jumps to here
         for ej in end_jumps {
-            self.patch_jump(ej, span)?;
+            self.bind(ej, span)?;
         }
 
         // Every arm arrives with its result on top of the scrutinee and of
@@ -1934,19 +1852,19 @@ impl Compiler {
             if let Some(guard) = &arm.guard {
                 // The guard IS the condition in a guardless match
                 self.compile_expr(guard)?;
-                let fail_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let fail_jump = self.jump_if_false(span)?;
 
                 self.in_tail_position = tail;
                 self.compile_expr(&arm.body)?;
-                let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
+                let end_jump = self.jump(span)?;
                 end_jumps.push(end_jump);
 
-                self.patch_jump(fail_jump, span)?;
+                self.bind(fail_jump, span)?;
             } else {
                 // Wildcard / default arm — always matches
                 self.in_tail_position = tail;
                 self.compile_expr(&arm.body)?;
-                let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
+                let end_jump = self.jump(span)?;
                 end_jumps.push(end_jump);
             }
         }
@@ -1958,12 +1876,11 @@ impl Compiler {
             Value::String("non-exhaustive match: no condition was true".into()),
             span,
         )?;
-        self.current_chunk()
-            .emit_op_u16(Op::Constant, msg_idx, span);
-        self.current_chunk().emit_op(Op::Panic, span);
+        self.emit(Asm::Constant { k: msg_idx }, span)?;
+        self.emit(Asm::Panic, span)?;
 
         for ej in end_jumps {
-            self.patch_jump(ej, span)?;
+            self.bind(ej, span)?;
         }
 
         Ok(())
@@ -2008,25 +1925,29 @@ impl Compiler {
                     self.check_decode_target(&builtin_name, args.last(), span)?;
                     // Builtins: val on stack first, then args
                     self.compile_operands(std::iter::once(left).chain(args))?;
-                    let argc = (args.len() + 1) as u8;
+                    let argc = args.len() + 1;
                     let name_idx = self.add_constant(Value::String(builtin_name), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::CallBuiltin, name_idx, span);
-                    self.current_chunk().emit_u8(argc, span);
+                    self.emit(
+                        Asm::CallBuiltin {
+                            name: name_idx,
+                            argc,
+                        },
+                        span,
+                    )?;
                 } else {
                     if let Some(builtin_name) = self.builtin_function(callee.res) {
                         self.check_decode_target(&builtin_name, args.last(), span)?;
                     }
                     // Non-builtin: callee first, then val, then args
                     self.compile_operands([&**callee, left].into_iter().chain(args))?;
-                    let argc = (args.len() + 1) as u8;
-                    self.emit_call(argc, tail, span);
+                    let argc = args.len() + 1;
+                    self.emit_call(argc, tail, span)?;
                 }
             }
             _ => {
                 // val |> f: callee first, then val
                 self.compile_operands([right, left])?;
-                self.emit_call(1, tail, span);
+                self.emit_call(1, tail, span)?;
             }
         }
         Ok(())
@@ -2060,23 +1981,24 @@ impl Compiler {
         // `Recur` writes the new values there and cuts the frame back to
         // just above them. With no bindings that is the frame as it is
         // now, with every enclosing local still in place.
-        let first_slot = frame_slot(self.ctx().height, span)?;
+        let first_slot = self.emitter().height();
 
         // Compile initial values; each stays on the stack as its binding.
         for (name, _, init) in bindings {
             self.compile_expr(init)?;
             let slot = self.add_local(*name, span)?;
-            self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
+            self.emit(Asm::SetLocal { slot }, span)?;
         }
 
-        // Record the loop start for JumpBack.
-        let loop_start = self.current_chunk().len();
+        // Record the loop start, where `loop(...)` jumps back to.
+        let start = self.label();
+        self.bind(start, span)?;
 
         // Push loop info so Recur knows what to do.
         self.ctx_mut().loop_stack.push(LoopInfo {
             first_slot,
-            loop_start,
-            binding_count: bindings.len() as u8,
+            start,
+            binding_count: bindings.len(),
         });
 
         // Compile body.
@@ -2311,7 +2233,7 @@ impl Compiler {
         if let Some(name) = self.builtin_function(Some(crate::defs::Res::Def(def))) {
             let value = module::builtin_constant_value(&name).unwrap_or(Value::BuiltinFn(name));
             let idx = self.add_constant(value, span)?;
-            self.current_chunk().emit_op_u16(Op::Constant, idx, span);
+            self.emit(Asm::Constant { k: idx }, span)?;
             return Ok(());
         }
         let slot = self.globals.def(def).ok_or_else(|| {
@@ -2323,7 +2245,7 @@ impl Compiler {
                 ),
             )
         })?;
-        self.current_chunk().emit_op_u16(Op::GetGlobal, slot, span);
+        self.emit(Asm::GetGlobal { slot }, span)?;
         Ok(())
     }
 
@@ -2393,7 +2315,7 @@ impl Compiler {
     fn emit_call_method(
         &mut self,
         method: Symbol,
-        argc: u8,
+        argc: usize,
         res: Option<crate::defs::Res>,
         span: Span,
     ) -> Result<(), Diagnostic> {
@@ -2407,11 +2329,14 @@ impl Compiler {
             }
             None => crate::bytecode::NO_TRAIT,
         };
-        self.current_chunk()
-            .emit_op_u16(Op::CallMethod, method_idx, span);
-        self.current_chunk().emit_u8(argc, span);
-        self.current_chunk().emit_u16(trait_operand, span);
-        Ok(())
+        self.emit(
+            Asm::CallMethod {
+                method: method_idx,
+                argc,
+                of: trait_operand,
+            },
+            span,
+        )
     }
 
     /// Whether `callee` is `T.method` for a builtin type (`Int`, `List`,
@@ -2759,35 +2684,109 @@ impl Compiler {
         })
     }
 
-    fn current_chunk(&mut self) -> &mut Chunk {
-        &mut self.ctx_mut().function.chunk
+    /// The emitter of the function being compiled.
+    fn emitter(&mut self) -> &mut Emitter {
+        &mut self.ctx_mut().emitter
     }
 
-    /// Add a constant to the current chunk, converting overflow to `Diagnostic`.
-    fn add_constant(&mut self, value: Value, span: Span) -> Result<u16, Diagnostic> {
-        self.current_chunk()
-            .add_constant(value)
-            .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))
+    /// Start compiling a function named `name` with `params` parameters:
+    /// until [`Compiler::end_function`], code is emitted into it.
+    fn begin_function(
+        &mut self,
+        name: String,
+        params: usize,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let arity = u8::try_from(params)
+            .map_err(|_| checker_missed(span, "a function with more than 255 parameters"))?;
+        self.contexts.push(CompileContext::new(name, arity));
+        Ok(())
     }
 
-    /// Patch a jump in the current chunk, converting overflow to `Diagnostic`.
-    fn patch_jump(&mut self, patch_offset: usize, span: Span) -> Result<(), Diagnostic> {
-        self.current_chunk()
-            .patch_jump(patch_offset)
-            .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))
+    /// Finish the function being compiled: its verified code, and the
+    /// values it captures from the function around it.
+    fn end_function(&mut self, span: Span) -> Result<(Function, Vec<UpvalueDesc>), Diagnostic> {
+        let ctx = self.contexts.pop().ok_or(Diagnostic::error(
+            Code::CompilerBug,
+            span,
+            "compiler bug: missing function context",
+        ))?;
+        let upvalue_count = u8::try_from(ctx.upvalues.len())
+            .map_err(|_| checker_missed(span, "a closure with more than 255 upvalues"))?;
+        let function = ctx.emitter.finish(upvalue_count)?;
+        Ok((function, ctx.upvalues))
     }
 
+    /// Emit the instruction `asm` into the function being compiled.
+    fn emit(&mut self, asm: Asm<'_>, span: Span) -> Result<(), Diagnostic> {
+        self.emitter().emit(asm, span)
+    }
+
+    /// A new label of the function being compiled.
+    fn label(&mut self) -> Label {
+        self.emitter().label()
+    }
+
+    /// Place `label` at the next instruction.
+    fn bind(&mut self, label: Label, span: Span) -> Result<(), Diagnostic> {
+        self.emitter().bind(label, span)
+    }
+
+    /// Emit a jump to a new label, which the caller binds.
+    fn jump(&mut self, span: Span) -> Result<Label, Diagnostic> {
+        let to = self.label();
+        self.emit(Asm::Jump { to }, span)?;
+        Ok(to)
+    }
+
+    /// Emit a jump taken when the top value, which it pops, is false,
+    /// to a new label, which the caller binds.
+    fn jump_if_false(&mut self, span: Span) -> Result<Label, Diagnostic> {
+        let to = self.label();
+        self.emit(Asm::JumpIfFalse { to }, span)?;
+        Ok(to)
+    }
+
+    /// [`Compiler::jump_if_false`] for a top value that is true.
+    fn jump_if_true(&mut self, span: Span) -> Result<Label, Diagnostic> {
+        let to = self.label();
+        self.emit(Asm::JumpIfTrue { to }, span)?;
+        Ok(to)
+    }
+
+    /// Add a constant to the function being compiled.
+    fn add_constant(&mut self, value: Value, span: Span) -> Result<Const, Diagnostic> {
+        self.emitter().constant(value, span)
+    }
+
+    /// The string constants of `names`, in order.
+    fn name_constants(&mut self, names: &[Symbol], span: Span) -> Result<Vec<Const>, Diagnostic> {
+        names
+            .iter()
+            .map(|name| self.add_constant(Value::String(resolve(*name)), span))
+            .collect()
+    }
+
+    /// Open a scope: the locals added from here on are its locals.
     fn begin_scope(&mut self) {
         let ctx = self.ctx_mut();
         ctx.scope_depth += 1;
-        ctx.scope_starts.push(ctx.height);
+        ctx.scope_starts.push(ctx.emitter.height());
     }
 
-    /// Leave the innermost scope: forget its locals and set the frame
-    /// height back to what it was when the scope began. Returns that
-    /// height. Emits nothing; the values of the scope's locals are still
-    /// in the frame, and the caller decides where they are dropped (see
-    /// `end_scope_with_result` and `emit_slide`).
+    /// Open a scope whose first local is the value on top of the frame.
+    fn begin_scope_with_top(&mut self) {
+        let ctx = self.ctx_mut();
+        ctx.scope_depth += 1;
+        ctx.scope_starts
+            .push(ctx.emitter.height().saturating_sub(1));
+    }
+
+    /// Leave the innermost scope: forget its locals. Returns the frame
+    /// height at which the scope began. Emits nothing; the values of the
+    /// scope's locals are still in the frame, and the caller decides
+    /// where they are dropped (see `end_scope_with_result` and
+    /// `emit_slide`).
     fn end_scope(&mut self) -> usize {
         let ctx = self.ctx_mut();
         let depth = ctx.scope_depth;
@@ -2796,12 +2795,9 @@ impl Compiler {
             ctx.locals.pop();
         }
         ctx.scope_depth -= 1;
-        let start = ctx
-            .scope_starts
+        ctx.scope_starts
             .pop()
-            .expect("internal compiler error: end_scope without begin_scope");
-        ctx.height = start;
-        start
+            .expect("internal compiler error: end_scope without begin_scope")
     }
 
     /// Leave the innermost scope when its result is on top of the stack,
@@ -2809,9 +2805,9 @@ impl Compiler {
     /// tail position (`tail`) the result is returned at once and the
     /// frame goes with it, so nothing is emitted.
     fn end_scope_with_result(&mut self, tail: bool, span: Span) -> Result<(), Diagnostic> {
-        let end = self.ctx().height;
+        let end = self.emitter().height();
         let start = self.end_scope();
-        if end > start && !tail {
+        if end > start + 1 && !tail {
             self.emit_slide(start, span)?;
         }
         Ok(())
@@ -2821,50 +2817,34 @@ impl Compiler {
     /// slot `height`, and everything that was above that slot is dropped.
     /// Afterwards the frame holds `height` values plus that one.
     fn emit_slide(&mut self, height: usize, span: Span) -> Result<(), Diagnostic> {
-        let slot = frame_slot(height, span)?;
-        self.current_chunk().emit_op_u16(Op::Slide, slot, span);
-        Ok(())
+        self.emit(Asm::Slide { slot: height }, span)
     }
 
     /// Make the value on top of the stack a local named `name`. Its slot
-    /// is the current frame height, which is where that value is.
-    /// (For a parameter the value is the argument the caller pushed.)
-    fn add_local(&mut self, name: Symbol, span: Span) -> Result<u16, Diagnostic> {
-        let slot = frame_slot(self.ctx().height, span)?;
+    /// is where that value is: the top of the frame.
+    fn add_local(&mut self, name: Symbol, span: Span) -> Result<usize, Diagnostic> {
         let ctx = self.ctx_mut();
+        let slot = ctx.emitter.height().checked_sub(1).ok_or_else(|| {
+            Diagnostic::error(
+                Code::CompilerBug,
+                span,
+                format!("compiler bug: the local '{name}' has no value in the frame"),
+            )
+        })?;
         let depth = ctx.scope_depth;
         ctx.locals.push(Local { name, depth, slot });
-        ctx.height += 1;
         Ok(slot)
     }
 
     /// Compile `operands` left to right so that their values are on the
-    /// stack, in order, for the instruction the caller emits next. While
-    /// an operand is compiled, the ones before it are counted in the
-    /// frame height, so a local introduced by the operand (by a `match`,
-    /// a block with `let`, a `loop`) gets a slot above them.
+    /// stack, in order, for the instruction the caller emits next.
     fn compile_operands<'a>(
         &mut self,
         operands: impl IntoIterator<Item = &'a Expr>,
     ) -> Result<(), Diagnostic> {
-        self.compile_operands_above(0, operands)
-    }
-
-    /// `compile_operands` for a construct that has just pushed `pending`
-    /// values of its own, which stay on the stack below the operands (a
-    /// callee or a receiver loaded from a global).
-    fn compile_operands_above<'a>(
-        &mut self,
-        pending: usize,
-        operands: impl IntoIterator<Item = &'a Expr>,
-    ) -> Result<(), Diagnostic> {
-        let base = self.ctx().height;
-        self.ctx_mut().height = base + pending;
         for operand in operands {
             self.compile_expr(operand)?;
-            self.ctx_mut().height += 1;
         }
-        self.ctx_mut().height = base;
         Ok(())
     }
 
@@ -2873,29 +2853,30 @@ impl Compiler {
     /// slots `0..params.len()`.
     fn compile_params(&mut self, params: &[Param], span: Span) -> Result<(), Diagnostic> {
         let mut destructured = Vec::new();
-        for (i, param) in params.iter().enumerate() {
-            match &param.pattern.kind {
-                PatternKind::Ident(name) => {
-                    self.add_local(*name, span)?;
-                }
+        for (slot, param) in params.iter().enumerate() {
+            let name = match &param.pattern.kind {
+                PatternKind::Ident(name) => *name,
                 _ => {
-                    let slot = self.add_local(intern(&format!("__param_{i}__")), span)?;
                     destructured.push((slot, &param.pattern));
+                    intern(&format!("__param_{slot}__"))
                 }
-            }
+            };
+            let ctx = self.ctx_mut();
+            let depth = ctx.scope_depth;
+            ctx.locals.push(Local { name, depth, slot });
         }
         for (slot, pattern) in destructured {
             // Bind the pattern's names from a copy of the argument above
             // the parameters.
-            self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
+            self.emit(Asm::GetLocal { slot }, span)?;
             let copy = self.add_local(intern("__param_copy__"), span)?;
-            self.current_chunk().emit_op_u16(Op::SetLocal, copy, span);
+            self.emit(Asm::SetLocal { slot: copy }, span)?;
             self.compile_pattern_bind_checked(pattern, span)?;
         }
         Ok(())
     }
 
-    fn resolve_local(&self, name: Symbol) -> Option<u16> {
+    fn resolve_local(&self, name: Symbol) -> Option<usize> {
         let ctx = self.ctx();
         // Search from the innermost local outward.
         for local in ctx.locals.iter().rev() {
@@ -2944,15 +2925,13 @@ impl Compiler {
             // Upvalues are captured by value (Silt is immutable); the
             // local itself needs no open/closed tracking — see
             // VmClosure doc in src/bytecode.rs.
-            let index = if slot > u8::MAX as u16 {
-                return Err(Diagnostic::error(
+            let index = u8::try_from(slot).map_err(|_| {
+                Diagnostic::error(
                     Code::CompileLimit,
                     span,
                     format!("cannot capture local in slot {slot} as upvalue (max slot 255)"),
-                ));
-            } else {
-                slot as u8
-            };
+                )
+            })?;
             // Add an upvalue descriptor to the current context.
             return Ok(Some(self.add_upvalue(
                 context_index,
@@ -3000,25 +2979,28 @@ impl Compiler {
     ) -> Result<u8, Diagnostic> {
         let ctx = &mut self.contexts[context_index];
         // Check if we already have this exact upvalue.
-        for (i, existing) in ctx.upvalues.iter().enumerate() {
-            if existing.is_local == desc.is_local && existing.index == desc.index {
-                return Ok(i as u8);
-            }
+        let index = match ctx.upvalues.iter().position(|existing| *existing == desc) {
+            Some(index) => index,
+            None => ctx.upvalues.len(),
+        };
+        // The last legal index is 254: the count is a `u8` too.
+        let narrowed = u8::try_from(index)
+            .ok()
+            .filter(|index| *index < u8::MAX)
+            .ok_or_else(|| {
+                Diagnostic::error(
+                    Code::CompileLimit,
+                    span,
+                    format!(
+                        "too many upvalues: closure captures more than {} values (max)",
+                        u8::MAX
+                    ),
+                )
+            })?;
+        if index == ctx.upvalues.len() {
+            ctx.upvalues.push(desc);
         }
-        let index = ctx.upvalues.len();
-        if index >= u8::MAX as usize {
-            return Err(Diagnostic::error(
-                Code::CompileLimit,
-                span,
-                format!(
-                    "too many upvalues: closure captures more than {} values (max)",
-                    u8::MAX as usize
-                ),
-            ));
-        }
-        ctx.upvalues.push(desc);
-        ctx.function.upvalue_count = ctx.upvalues.len() as u8;
-        Ok(index as u8)
+        Ok(narrowed)
     }
 }
 
@@ -3027,7 +3009,7 @@ impl Compiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::Op;
+    use crate::bytecode::{Chunk, Op};
 
     /// The units of a program with no modules, for a compiler that
     /// compiles nothing.
@@ -3061,19 +3043,24 @@ mod tests {
     /// The names of a program's global slots, in slot order.
     fn global_names(program: &crate::session::Program) -> Vec<String> {
         (0..program.globals.len())
-            .map(|slot| program.globals.name(slot as u16).to_string())
+            .map(|slot| {
+                program
+                    .globals
+                    .name(u16::try_from(slot).unwrap())
+                    .to_string()
+            })
             .collect()
     }
 
-    /// Check if a specific opcode byte appears in the chunk's bytecode.
+    /// Check if the chunk's code has an instruction of the opcode.
     fn has_op(chunk: &Chunk, op: Op) -> bool {
-        chunk.code.contains(&(op as u8))
+        chunk.instrs().any(|(_, instr)| instr.op() == op)
     }
 
     /// Check if a string constant exists in the chunk.
     fn has_string_constant(chunk: &Chunk, s: &str) -> bool {
         chunk
-            .constants
+            .constants()
             .iter()
             .any(|c| matches!(c, Value::String(v) if v == s))
     }
@@ -3081,7 +3068,7 @@ mod tests {
     /// Check if an int constant exists in the chunk.
     fn has_int_constant(chunk: &Chunk, n: i64) -> bool {
         chunk
-            .constants
+            .constants()
             .iter()
             .any(|c| matches!(c, Value::Int(v) if *v == n))
     }
@@ -3092,13 +3079,13 @@ mod tests {
     fn find_fn<'a>(fns: &'a [Function], name: &str) -> &'a Function {
         // First check top-level functions
         for f in fns {
-            if f.name == name {
+            if f.name() == name {
                 return f;
             }
         }
         // Search VmClosure constants in each function's chunk
         for f in fns {
-            if let Some(found) = find_fn_in_constants(&f.chunk, name) {
+            if let Some(found) = find_fn_in_constants(f.chunk(), name) {
                 return found;
             }
         }
@@ -3106,13 +3093,13 @@ mod tests {
     }
 
     fn find_fn_in_constants<'a>(chunk: &'a Chunk, name: &str) -> Option<&'a Function> {
-        for constant in &chunk.constants {
+        for constant in chunk.constants() {
             if let Value::VmClosure(closure) = constant {
-                if closure.function.name == name {
+                if closure.function.name() == name {
                     return Some(&closure.function);
                 }
                 // Recurse into nested closures
-                if let Some(found) = find_fn_in_constants(&closure.function.chunk, name) {
+                if let Some(found) = find_fn_in_constants(closure.function.chunk(), name) {
                     return Some(found);
                 }
             }
@@ -3126,9 +3113,9 @@ mod tests {
     fn test_compile_int_literal() {
         let fns = compile("fn main() { 42 }");
         let main = find_fn(&fns, "main");
-        assert!(has_int_constant(&main.chunk, 42));
-        assert!(has_op(&main.chunk, Op::Constant));
-        assert!(has_op(&main.chunk, Op::Return));
+        assert!(has_int_constant(main.chunk(), 42));
+        assert!(has_op(main.chunk(), Op::Constant));
+        assert!(has_op(main.chunk(), Op::Return));
     }
 
     #[test]
@@ -3136,8 +3123,8 @@ mod tests {
         let fns = compile("fn main() { 4.25 }");
         let main = find_fn(&fns, "main");
         assert!(
-            main.chunk
-                .constants
+            main.chunk()
+                .constants()
                 .iter()
                 .any(|c| matches!(c, Value::Float(f) if (*f - 4.25).abs() < f64::EPSILON))
         );
@@ -3147,25 +3134,25 @@ mod tests {
     fn test_compile_bool_literals() {
         let fns = compile("fn main() { true }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::True));
+        assert!(has_op(main.chunk(), Op::True));
 
         let fns = compile("fn main() { false }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::False));
+        assert!(has_op(main.chunk(), Op::False));
     }
 
     #[test]
     fn test_compile_string_literal() {
         let fns = compile(r#"fn main() { "hello" }"#);
         let main = find_fn(&fns, "main");
-        assert!(has_string_constant(&main.chunk, "hello"));
+        assert!(has_string_constant(main.chunk(), "hello"));
     }
 
     #[test]
     fn test_compile_unit() {
         let fns = compile("fn main() { () }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::Unit));
+        assert!(has_op(main.chunk(), Op::Unit));
     }
 
     // ── Arithmetic & binary operations ─────────────────────────────
@@ -3174,20 +3161,20 @@ mod tests {
     fn test_compile_arithmetic() {
         let fns = compile("fn add(a, b) { a + b }");
         let f = find_fn(&fns, "add");
-        assert_eq!(f.arity, 2);
-        assert!(has_op(&f.chunk, Op::Add));
+        assert_eq!(f.arity(), 2);
+        assert!(has_op(f.chunk(), Op::Add));
 
         let fns = compile("fn sub(a, b) { a - b }");
-        assert!(has_op(&find_fn(&fns, "sub").chunk, Op::Sub));
+        assert!(has_op(find_fn(&fns, "sub").chunk(), Op::Sub));
 
         let fns = compile("fn mul(a, b) { a * b }");
-        assert!(has_op(&find_fn(&fns, "mul").chunk, Op::Mul));
+        assert!(has_op(find_fn(&fns, "mul").chunk(), Op::Mul));
 
         let fns = compile("fn div(a, b) { a / b }");
-        assert!(has_op(&find_fn(&fns, "div").chunk, Op::Div));
+        assert!(has_op(find_fn(&fns, "div").chunk(), Op::Div));
 
         let fns = compile("fn modulo(a, b) { a % b }");
-        assert!(has_op(&find_fn(&fns, "modulo").chunk, Op::Mod));
+        assert!(has_op(find_fn(&fns, "modulo").chunk(), Op::Mod));
     }
 
     #[test]
@@ -3205,7 +3192,7 @@ mod tests {
             let fns = compile(&src);
             let f = find_fn(&fns, "cmp");
             assert!(
-                has_op(&f.chunk, expected_op),
+                has_op(f.chunk(), expected_op),
                 "missing {expected_op:?} for {expr}"
             );
         }
@@ -3216,16 +3203,16 @@ mod tests {
         let fns = compile("fn f(a, b) { a && b }");
         let f = find_fn(&fns, "f");
         // Short-circuit and uses Dup + JumpIfFalse + Pop
-        assert!(has_op(&f.chunk, Op::Dup));
-        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+        assert!(has_op(f.chunk(), Op::Dup));
+        assert!(has_op(f.chunk(), Op::JumpIfFalse));
     }
 
     #[test]
     fn test_compile_short_circuit_or() {
         let fns = compile("fn f(a, b) { a || b }");
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::Dup));
-        assert!(has_op(&f.chunk, Op::JumpIfTrue));
+        assert!(has_op(f.chunk(), Op::Dup));
+        assert!(has_op(f.chunk(), Op::JumpIfTrue));
     }
 
     // ── Unary operations ───────────────────────────────────────────
@@ -3233,13 +3220,13 @@ mod tests {
     #[test]
     fn test_compile_negate() {
         let fns = compile("fn f(x) { -x }");
-        assert!(has_op(&find_fn(&fns, "f").chunk, Op::Negate));
+        assert!(has_op(find_fn(&fns, "f").chunk(), Op::Negate));
     }
 
     #[test]
     fn test_compile_not() {
         let fns = compile("fn f(x) { !x }");
-        assert!(has_op(&find_fn(&fns, "f").chunk, Op::Not));
+        assert!(has_op(find_fn(&fns, "f").chunk(), Op::Not));
     }
 
     // ── Variable binding ───────────────────────────────────────────
@@ -3248,16 +3235,16 @@ mod tests {
     fn test_compile_local_variable() {
         let fns = compile("fn f() { let x = 42\n x }");
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::SetLocal));
-        assert!(has_op(&f.chunk, Op::GetLocal));
+        assert!(has_op(f.chunk(), Op::SetLocal));
+        assert!(has_op(f.chunk(), Op::GetLocal));
     }
 
     #[test]
     fn test_compile_global_let() {
         let fns = compile("let x = 10\nfn main() { x }");
         let script = &fns[0]; // script is first
-        assert_eq!(script.name, "<script>");
-        assert!(has_op(&script.chunk, Op::SetGlobal));
+        assert_eq!(script.name(), "<script>");
+        assert!(has_op(script.chunk(), Op::SetGlobal));
     }
 
     // ── Function compilation ───────────────────────────────────────
@@ -3266,14 +3253,14 @@ mod tests {
     fn test_compile_function_arity() {
         let fns = compile("fn f(a, b, c) { a }");
         let f = find_fn(&fns, "f");
-        assert_eq!(f.arity, 3);
+        assert_eq!(f.arity(), 3);
     }
 
     #[test]
     fn test_compile_function_zero_arity() {
         let fns = compile("fn f() { 42 }");
         let f = find_fn(&fns, "f");
-        assert_eq!(f.arity, 0);
+        assert_eq!(f.arity(), 0);
     }
 
     #[test]
@@ -3281,7 +3268,7 @@ mod tests {
         let fns =
             compile("fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { add(1, 2) }");
         // Script + 3 functions (as closures in the script's constant pool)
-        assert_eq!(fns[0].name, "<script>");
+        assert_eq!(fns[0].name(), "<script>");
         for name in ["add", "sub", "main"] {
             find_fn(&fns, name);
         }
@@ -3300,7 +3287,7 @@ mod tests {
     fn test_compile_function_call() {
         let fns = compile("fn id(x) { x }\nfn main() { let r = id(42)\n r }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::Call));
+        assert!(has_op(main.chunk(), Op::Call));
     }
 
     #[test]
@@ -3308,7 +3295,7 @@ mod tests {
         // The body of a function in tail position should emit TailCall
         let fns = compile("fn f(n) { f(n - 1) }");
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TailCall));
+        assert!(has_op(f.chunk(), Op::TailCall));
     }
 
     // ── Lambda / closure compilation ───────────────────────────────
@@ -3319,8 +3306,8 @@ mod tests {
         let main = find_fn(&fns, "main");
         // Lambda is compiled as a VmClosure constant
         assert!(
-            main.chunk
-                .constants
+            main.chunk()
+                .constants()
                 .iter()
                 .any(|c| matches!(c, Value::VmClosure(_)))
         );
@@ -3337,7 +3324,7 @@ fn make_adder(n) {
         );
         let f = find_fn(&fns, "make_adder");
         // The inner lambda captures `n` as an upvalue — should have MakeClosure
-        assert!(has_op(&f.chunk, Op::MakeClosure));
+        assert!(has_op(f.chunk(), Op::MakeClosure));
     }
 
     // ── Collection compilation ─────────────────────────────────────
@@ -3346,42 +3333,42 @@ fn make_adder(n) {
     fn test_compile_list() {
         let fns = compile("fn main() { [1, 2, 3] }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::MakeList));
+        assert!(has_op(main.chunk(), Op::MakeList));
     }
 
     #[test]
     fn test_compile_tuple() {
         let fns = compile("fn main() { (1, 2) }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::MakeTuple));
+        assert!(has_op(main.chunk(), Op::MakeTuple));
     }
 
     #[test]
     fn test_compile_map() {
         let fns = compile(r#"fn main() { #{ "a": 1, "b": 2 } }"#);
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::MakeMap));
+        assert!(has_op(main.chunk(), Op::MakeMap));
     }
 
     #[test]
     fn test_compile_set() {
         let fns = compile(r#"fn main() { #[1, 2, 3] }"#);
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::MakeSet));
+        assert!(has_op(main.chunk(), Op::MakeSet));
     }
 
     #[test]
     fn test_compile_range() {
         let fns = compile("fn main() { 1..10 }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::MakeRange));
+        assert!(has_op(main.chunk(), Op::MakeRange));
     }
 
     #[test]
     fn test_compile_list_spread() {
         let fns = compile("fn main() { let a = [1, 2]\n [..a, 3] }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::ListConcat));
+        assert!(has_op(main.chunk(), Op::ListConcat));
     }
 
     // ── String interpolation ───────────────────────────────────────
@@ -3390,8 +3377,8 @@ fn make_adder(n) {
     fn test_compile_string_interp() {
         let fns = compile(r#"fn greet(name) { "hello {name}" }"#);
         let f = find_fn(&fns, "greet");
-        assert!(has_op(&f.chunk, Op::StringConcat));
-        assert!(has_op(&f.chunk, Op::DisplayValue));
+        assert!(has_op(f.chunk(), Op::StringConcat));
+        assert!(has_op(f.chunk(), Op::DisplayValue));
     }
 
     // ── Record compilation ─────────────────────────────────────────
@@ -3405,7 +3392,7 @@ fn main() { User { name: "Alice", age: 30 } }
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::MakeRecord));
+        assert!(has_op(main.chunk(), Op::MakeRecord));
     }
 
     #[test]
@@ -3420,7 +3407,7 @@ fn main() {
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::RecordUpdate));
+        assert!(has_op(main.chunk(), Op::RecordUpdate));
     }
 
     #[test]
@@ -3435,7 +3422,7 @@ fn main() {
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::GetField));
+        assert!(has_op(main.chunk(), Op::GetField));
     }
 
     // ── Enum type declarations ─────────────────────────────────────
@@ -3451,10 +3438,10 @@ fn main() { Red }
         let main = find_fn(&fns, "main");
         // A nullary variant is a Variant value, a constant where it is
         // used; the enum's description lists every variant.
-        assert!(main.chunk.constants.iter().any(
+        assert!(main.chunk().constants().iter().any(
             |c| matches!(c, Value::Variant(tag, fields) if tag.name() == "Red" && fields.is_empty())
         ));
-        let Some(Value::Variant(tag, _)) = main.chunk.constants.first() else {
+        let Some(Value::Variant(tag, _)) = main.chunk().constants().first() else {
             panic!("main's first constant is the variant");
         };
         let names: Vec<&str> = tag
@@ -3477,7 +3464,7 @@ fn main() { Circle(1.0) }
         let main = find_fn(&fns, "main");
         // A variant with fields is its constructor, a constant where it
         // is used; the enum's description has each variant's arity.
-        let Some(Value::VariantConstructor(tag)) = main.chunk.constants.first() else {
+        let Some(Value::VariantConstructor(tag)) = main.chunk().constants().first() else {
             panic!("main's first constant is the constructor");
         };
         assert_eq!((tag.name(), tag.arity()), ("Circle", 1));
@@ -3501,8 +3488,8 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestEqual));
-        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+        assert!(has_op(f.chunk(), Op::TestEqual));
+        assert!(has_op(f.chunk(), Op::JumpIfFalse));
     }
 
     #[test]
@@ -3518,7 +3505,7 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestBool));
+        assert!(has_op(f.chunk(), Op::TestEqual));
     }
 
     #[test]
@@ -3535,8 +3522,8 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestTag));
-        assert!(has_op(&f.chunk, Op::DestructVariant));
+        assert!(has_op(f.chunk(), Op::TestTag));
+        assert!(has_op(f.chunk(), Op::DestructVariant));
     }
 
     #[test]
@@ -3552,7 +3539,7 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestTupleLen));
+        assert!(has_op(f.chunk(), Op::TestTupleLen));
     }
 
     #[test]
@@ -3568,8 +3555,8 @@ fn f(xs) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestListMin));
-        assert!(has_op(&f.chunk, Op::TestListExact));
+        assert!(has_op(f.chunk(), Op::TestListMin));
+        assert!(has_op(f.chunk(), Op::TestListExact));
     }
 
     #[test]
@@ -3585,7 +3572,7 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestIntRange));
+        assert!(has_op(f.chunk(), Op::TestIntRange));
     }
 
     #[test]
@@ -3601,8 +3588,8 @@ fn f(p) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestRecordTag));
-        assert!(has_op(&f.chunk, Op::DestructRecordField));
+        assert!(has_op(f.chunk(), Op::TestRecordTag));
+        assert!(has_op(f.chunk(), Op::DestructRecordField));
     }
 
     #[test]
@@ -3618,7 +3605,7 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+        assert!(has_op(f.chunk(), Op::JumpIfFalse));
     }
 
     #[test]
@@ -3635,8 +3622,8 @@ fn f(x) {
         );
         let f = find_fn(&fns, "f");
         // Guard compiles to a condition + JumpIfFalse
-        assert!(has_op(&f.chunk, Op::Gt));
-        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+        assert!(has_op(f.chunk(), Op::Gt));
+        assert!(has_op(f.chunk(), Op::JumpIfFalse));
     }
 
     // ── Pipe compilation ───────────────────────────────────────────
@@ -3646,7 +3633,7 @@ fn f(x) {
         let fns = compile("fn double(x) { x * 2 }\nfn main() { 5 |> double }");
         let main = find_fn(&fns, "main");
         // Pipe in tail position emits TailCall
-        assert!(has_op(&main.chunk, Op::TailCall));
+        assert!(has_op(main.chunk(), Op::TailCall));
     }
 
     #[test]
@@ -3658,7 +3645,7 @@ fn main() { [3, 1, 2] |> list.length() }
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::CallBuiltin));
+        assert!(has_op(main.chunk(), Op::CallBuiltin));
     }
 
     // ── Loop/Recur compilation ─────────────────────────────────────
@@ -3678,8 +3665,9 @@ fn main() {
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::Recur));
-        assert!(has_op(&main.chunk, Op::JumpBack));
+        assert!(has_op(main.chunk(), Op::Recur));
+        // The jump back to the start of the loop.
+        assert!(has_op(main.chunk(), Op::Jump));
     }
 
     // ── Question mark ──────────────────────────────────────────────
@@ -3688,7 +3676,7 @@ fn main() {
     fn test_compile_question_mark() {
         let fns = compile("fn f(x) { x? }");
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::QuestionMark));
+        assert!(has_op(f.chunk(), Op::QuestionMark));
     }
 
     // ── Return statement ───────────────────────────────────────────
@@ -3697,16 +3685,16 @@ fn main() {
     fn test_compile_explicit_return() {
         let fns = compile("fn f(x) { return 42 }");
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::Return));
-        assert!(has_int_constant(&f.chunk, 42));
+        assert!(has_op(f.chunk(), Op::Return));
+        assert!(has_int_constant(f.chunk(), 42));
     }
 
     #[test]
     fn test_compile_return_unit() {
         let fns = compile("fn f() { return }");
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::Unit));
-        assert!(has_op(&f.chunk, Op::Return));
+        assert!(has_op(f.chunk(), Op::Unit));
+        assert!(has_op(f.chunk(), Op::Return));
     }
 
     // ── Blocks ─────────────────────────────────────────────────────
@@ -3716,7 +3704,7 @@ fn main() {
         let fns = compile("fn f() { { } }");
         let f = find_fn(&fns, "f");
         // Empty block evaluates to Unit
-        assert!(has_op(&f.chunk, Op::Unit));
+        assert!(has_op(f.chunk(), Op::Unit));
     }
 
     #[test]
@@ -3731,9 +3719,9 @@ fn f() {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::SetLocal));
-        assert!(has_op(&f.chunk, Op::GetLocal));
-        assert!(has_op(&f.chunk, Op::Add));
+        assert!(has_op(f.chunk(), Op::SetLocal));
+        assert!(has_op(f.chunk(), Op::GetLocal));
+        assert!(has_op(f.chunk(), Op::Add));
     }
 
     // ── Type ascription ────────────────────────────────────────────
@@ -3743,8 +3731,8 @@ fn f() {
         // Ascription compiles to just the inner expression
         let fns = compile("fn f() { 42 as Int }");
         let f = find_fn(&fns, "f");
-        assert!(has_int_constant(&f.chunk, 42));
-        assert!(has_op(&f.chunk, Op::Constant));
+        assert!(has_int_constant(f.chunk(), 42));
+        assert!(has_op(f.chunk(), Op::Constant));
     }
 
     // ── Trait impl compilation ─────────────────────────────────────
@@ -3796,8 +3784,8 @@ fn main() { list.length([1, 2, 3]) }
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::CallBuiltin));
-        assert!(has_string_constant(&main.chunk, "list.length"));
+        assert!(has_op(main.chunk(), Op::CallBuiltin));
+        assert!(has_string_constant(main.chunk(), "list.length"));
     }
 
     // ── Method call compilation ────────────────────────────────────
@@ -3817,7 +3805,7 @@ fn main() {
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::CallMethod));
+        assert!(has_op(main.chunk(), Op::CallMethod));
     }
 
     // ── compile_program vs compile_declarations ────────────────────
@@ -3829,8 +3817,8 @@ fn main() {
             .functions;
         let script = &fns[0];
         // compile_program emits GetGlobal main, Call 0, Return
-        assert!(has_op(&script.chunk, Op::GetGlobal));
-        assert!(has_op(&script.chunk, Op::Call));
+        assert!(has_op(script.chunk(), Op::GetGlobal));
+        assert!(has_op(script.chunk(), Op::Call));
     }
 
     #[test]
@@ -3838,8 +3826,8 @@ fn main() {
         let fns = compile("fn main() { 42 }");
         let script = &fns[0];
         // compile_declarations emits Unit, Return (no main call)
-        assert!(has_op(&script.chunk, Op::Unit));
-        assert!(has_op(&script.chunk, Op::Return));
+        assert!(has_op(script.chunk(), Op::Unit));
+        assert!(has_op(script.chunk(), Op::Return));
     }
 
     // ── Selective import compilation ────────────────────────────────
@@ -3852,7 +3840,7 @@ import list.{ length, map }
 fn main() { length([1, 2]) }
 "#,
         );
-        assert!(!find_fn(&fns, "main").chunk.code.is_empty());
+        assert!(!find_fn(&fns, "main").chunk().code().is_empty());
     }
 
     #[test]
@@ -3864,7 +3852,7 @@ fn main() { l.length([1]) }
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_string_constant(&main.chunk, "list.length"));
+        assert!(has_string_constant(main.chunk(), "list.length"));
     }
 
     // ── Pattern destructuring in function params ───────────────────
@@ -3882,9 +3870,9 @@ fn main() {
         );
         let main = find_fn(&fns, "main");
         // Lambda with destructured param is a VmClosure constant
-        let lambda = main.chunk.constants.iter().find_map(|c| {
+        let lambda = main.chunk().constants().iter().find_map(|c| {
             if let Value::VmClosure(cl) = c
-                && cl.function.name == "<lambda>"
+                && cl.function.name() == "<lambda>"
             {
                 return Some(&cl.function);
             }
@@ -3892,7 +3880,7 @@ fn main() {
         });
         assert!(lambda.is_some(), "expected lambda in main's constants");
         let lambda = lambda.unwrap();
-        assert!(has_op(&lambda.chunk, Op::DestructTuple));
+        assert!(has_op(lambda.chunk(), Op::DestructTuple));
     }
 
     // ── Map pattern in match ───────────────────────────────────────
@@ -3910,7 +3898,7 @@ fn f(m) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestMapHasKey));
+        assert!(has_op(f.chunk(), Op::TestMapHasKey));
     }
 
     // ── When statement compilation ─────────────────────────────────
@@ -3926,7 +3914,7 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::TestTag));
+        assert!(has_op(f.chunk(), Op::TestTag));
     }
 
     #[test]
@@ -3940,7 +3928,7 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+        assert!(has_op(f.chunk(), Op::JumpIfFalse));
     }
 
     // ── `loop(...)` outside a loop is an error ─────────────────────
@@ -4041,8 +4029,8 @@ fn f(x) {
         let f = find_fn(&fns, "f");
         // Or-pattern has multiple TestEqual ops
         let test_count = f
-            .chunk
-            .code
+            .chunk()
+            .code()
             .iter()
             .filter(|&&b| b == Op::TestEqual as u8)
             .count();
@@ -4068,20 +4056,10 @@ fn f(expected, actual) {
         );
         let f = find_fn(&fns, "f");
         // Pin pattern uses Dup + GetLocal + Eq
-        assert!(has_op(&f.chunk, Op::Dup));
-        assert!(has_op(&f.chunk, Op::Eq));
+        assert!(has_op(f.chunk(), Op::Dup));
+        assert!(has_op(f.chunk(), Op::Eq));
     }
 
-    // ── Audit regression: JumpBack operand bounds check (V4) ───────
-    //
-    // The `JumpBack` operand is a `u16`, so a loop body larger than
-    // 65_535 bytes of bytecode would wrap and branch to a garbage
-    // offset. `Chunk::patch_jump` already checks this for forward
-    // jumps; the matching `Recur` emitter used to cast blindly with
-    // `as u16`. The fix threads the distance through
-    // `jumpback_fits_u16`; this test exercises that helper directly so
-    // the bounds-check is locked without having to synthesize a
-    // >64KB loop body.
     /// A program with more top-level definitions than a `u16` slot can
     /// name is a compile error at the first definition that does not
     /// fit. Checking 65,537 definitions takes minutes, so the program
@@ -4116,31 +4094,10 @@ fn f(expected, actual) {
         );
     }
 
-    #[test]
-    fn test_jumpback_overflow_rejected() {
-        use crate::source::Span;
-
-        // A distance that exactly fits must pass.
-        assert!(super::jumpback_fits_u16(u16::MAX as usize, Span::BUILTIN).is_ok());
-
-        // One beyond the limit must produce a Diagnostic and not a
-        // panic/wrap.
-        let err = super::jumpback_fits_u16(u16::MAX as usize + 1, Span::BUILTIN)
-            .expect_err("expected u16 overflow to be rejected");
-        assert!(
-            err.message.contains("loop body too large"),
-            "expected loop-body-too-large error, got: {}",
-            err.message
-        );
-
-        // Way beyond the limit also.
-        assert!(super::jumpback_fits_u16(usize::MAX, Span::BUILTIN).is_err());
-    }
-
     // ── Audit regression: add_upvalue >255 upvalues (B5) ────────────
     //
     // The bytecode addresses upvalues with a single byte AND stores
-    // `function.upvalue_count` as `u8`, AND the `MakeClosure` opcode
+    // `function.upvalue_count()` as `u8`, AND the `MakeClosure` opcode
     // emits a single-byte count followed by 2N descriptor operand
     // bytes. Together these mean the hard limit is 255 (not 256):
     // pushing a 256th upvalue would leave `ctx.upvalues.len() == 256`,
@@ -4209,19 +4166,15 @@ fn f(expected, actual) {
             255,
             "rejected upvalue must not be pushed into ctx.upvalues"
         );
-        assert_eq!(
-            ctx.function.upvalue_count, 255u8,
-            "function.upvalue_count must reflect 255 (not wrapped to 0)"
-        );
     }
 
     // ── Audit regression: add_upvalue accepts exactly 255 (B5) ──────
     //
     // The complementary positive-direction lock for
     // test_add_upvalue_rejects_over_255: fill a context with exactly
-    // 255 upvalues and verify `ctx.upvalues.len() == 255` AND
-    // `ctx.function.upvalue_count == 255u8`. This pins the upper
-    // bound so a future refactor can't silently drop it below 255.
+    // 255 upvalues and verify `ctx.upvalues.len() == 255`. This pins
+    // the upper bound so a future refactor can't silently drop it below
+    // 255.
     #[test]
     fn test_add_upvalue_accepts_exactly_255_upvalues() {
         use crate::bytecode::UpvalueDesc;
@@ -4257,10 +4210,6 @@ fn f(expected, actual) {
             ctx.upvalues.len(),
             255,
             "context must hold exactly 255 upvalues"
-        );
-        assert_eq!(
-            ctx.function.upvalue_count, 255u8,
-            "function.upvalue_count must be 255 (not wrapped to 0)"
         );
     }
 }

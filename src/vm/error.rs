@@ -10,6 +10,9 @@ pub struct VmError {
     pub help: Vec<String>,
     /// If true, this error signals a cooperative yield, not a real error.
     pub is_yield: bool,
+    /// If true, an instruction met a value of a kind it cannot work on
+    /// (see [`VmError::type_confusion`]).
+    pub type_confusion: bool,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
@@ -22,8 +25,23 @@ impl VmError {
             message,
             help: Vec::new(),
             is_yield: false,
+            type_confusion: false,
             span: None,
             call_stack: Vec::new(),
+        }
+    }
+
+    /// An instruction met a value of a kind it cannot work on (`+` a
+    /// String, a call of an Int, a field of a record that has none of
+    /// the name). The code a VM runs is verified, so the instruction is
+    /// well-formed; the value is one the typechecker said could not be
+    /// there. Every such error of the instruction loop is made here and
+    /// has its own diagnostic code ([`Code::TypeConfusion`]): it is
+    /// reachable exactly when the typechecker is unsound.
+    pub fn type_confusion(message: impl Into<String>) -> Self {
+        VmError {
+            type_confusion: true,
+            ..VmError::new(message.into())
         }
     }
 
@@ -32,6 +50,7 @@ impl VmError {
             message: String::new(),
             help: Vec::new(),
             is_yield: true,
+            type_confusion: false,
             span: None,
             call_stack: Vec::new(),
         }
@@ -54,7 +73,11 @@ impl VmError {
             Some((head, rest)) => (head, Some(rest)),
             None => (self.message.as_str(), None),
         };
-        let mut d = Diagnostic::error(Code::RuntimeError, self.span.unwrap_or(Span::BUILTIN), head);
+        let code = match self.type_confusion {
+            true => Code::TypeConfusion,
+            false => Code::RuntimeError,
+        };
+        let mut d = Diagnostic::error(code, self.span.unwrap_or(Span::BUILTIN), head);
         d.notes.extend(rest.map(str::to_string));
         d.help = self.help.clone();
         d.labels = self

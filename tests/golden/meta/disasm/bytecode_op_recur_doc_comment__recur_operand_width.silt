@@ -1,9 +1,10 @@
 -- cmd: disasm
 -- stdout-contains: Recur                2  slot 2
--- stdout-contains: 0087  Recur
--- stdout-contains: 0091  JumpBack
--- Op::Recur carries a u8 arg_count and a u16 first_slot (3 operand
--- bytes): the next instruction starts 4 bytes after Recur.
+-- stdout-contains: 0091  Recur
+-- stdout-contains: 0095  Jump                 -76   -> 0024
+-- Recur carries a u8 arg_count and a u16 first_slot (3 operand bytes):
+-- the next instruction starts 4 bytes after Recur. It is the jump back
+-- to the start of the loop, whose distance is negative.
 fn main() {
   let a = 1
   let b = 2

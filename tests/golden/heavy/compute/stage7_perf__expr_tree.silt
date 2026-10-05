@@ -1,0 +1,100 @@
+-- timeout: 60
+-- A compute program of the stage 7 performance guard: an interpreter
+-- for a small expression tree. Variant and tuple patterns, records,
+-- field access, a trait method and string building.
+import list
+import string
+
+type Expr {
+  Num(Int),
+  Var(String),
+  Add(Expr, Expr),
+  Mul(Expr, Expr),
+  Neg(Expr),
+}
+
+type Env {
+  x: Int,
+  y: Int,
+}
+
+trait Size {
+  fn size(self) -> Int
+}
+
+trait Size for Expr {
+  fn size(self) -> Int {
+    match self {
+      Num(_) -> 1
+      Var(_) -> 1
+      Add(l, r) -> 1 + l.size() + r.size()
+      Mul(l, r) -> 1 + l.size() + r.size()
+      Neg(e) -> 1 + e.size()
+    }
+  }
+}
+
+fn eval(expr, env: Env) {
+  match expr {
+    Num(n) -> n
+    Var("x") -> env.x
+    Var(_) -> env.y
+    Add(l, r) -> (eval(l, env) + eval(r, env)) % 1000003
+    Mul(l, r) -> eval(l, env) * eval(r, env) % 1000003
+    Neg(e) -> 0 - eval(e, env)
+  }
+}
+
+fn simplify(expr) {
+  match expr {
+    Add(l, r) -> match (simplify(l), simplify(r)) {
+      (Num(a), Num(b)) -> Num(a + b)
+      (Num(0), e) | (e, Num(0)) -> e
+      (a, b) -> Add(a, b)
+    }
+    Mul(l, r) -> match (simplify(l), simplify(r)) {
+      (Num(1), e) | (e, Num(1)) -> e
+      (a, b) -> Mul(a, b)
+    }
+    Neg(Neg(e)) -> simplify(e)
+    other -> other
+  }
+}
+
+fn next(seed, k) {
+  (seed * k + k + 1) % 10007
+}
+
+fn build(depth, seed) {
+  match depth {
+    0 -> match seed % 3 {
+      0 -> Num(seed % 5 + 1)
+      1 -> Var("x")
+      _ -> Var("y")
+    }
+    _ -> match seed % 4 {
+      0 -> Add(build(depth - 1, next(seed, 7)), build(depth - 1, next(seed, 3)))
+      1 -> Mul(build(depth - 1, next(seed, 5)), build(depth - 1, next(seed, 1)))
+      2 -> Neg(Neg(build(depth - 1, next(seed, 11))))
+      _ -> Add(Num(0), build(depth - 1, next(seed, 13)))
+    }
+  }
+}
+
+fn main() {
+  let tree = build(16, 1)
+  let small = simplify(tree)
+  println("{tree.size()} {small.size()}")
+  let total = loop i = 0, acc = 0 {
+    match i >= 60 {
+      true -> acc
+      false -> {
+        let env = Env { x: i, y: i * 2 + 1 }
+        loop(i + 1, (acc + eval(small, env)) % 1000003)
+      }
+    }
+  }
+  println(total)
+  let label = list.map(1..2000) { i -> "{i}:{i % 7}" } |> string.join(",")
+  println(string.length(label))
+}

@@ -54,7 +54,7 @@ impl fmt::Debug for Value {
                     write!(f, ")")
                 }
             }
-            Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
+            Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name()),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::HostFn(h) => write!(f, "<host:{}>", h.name),
             Value::VariantConstructor(tag) => write!(f, "<constructor:{tag}>"),
@@ -314,7 +314,7 @@ impl fmt::Display for Value {
                     write!(f, ")")
                 }
             }
-            Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
+            Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name()),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::HostFn(h) => write!(f, "<host:{}>", h.name),
             Value::VariantConstructor(tag) => write!(f, "<constructor:{tag}>"),

@@ -235,6 +235,9 @@ codes! {
     MainReturnedErr = "E0702", Runtime;
     /// Tasks failed and nobody joined them.
     UnjoinedTaskFailure = "E0703", Runtime;
+    /// An instruction met a value of a kind it cannot work on: the
+    /// typechecker let through a program it should have rejected.
+    TypeConfusion = "E0704", Runtime;
 }
 
 // ── The diagnostic ──────────────────────────────────────────────────
