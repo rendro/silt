@@ -189,6 +189,54 @@ sorted list) by default. `SILT_GOLDEN_FULL_CORPUS=1` runs all of them:
 SILT_GOLDEN_FULL_CORPUS=1 cargo test --all-features --test golden verdict_shard
 ```
 
+### The soundness manifest
+
+`repros/SOUNDNESS.tsv` is the exit test of fix-plan stage 6 (the
+typechecker). It has one row for every program of `repros/type_soundness`,
+`repros/typechecker_arch` and `lang/soundness`, saying what `silt check`
+must report for it when stage 6 is done, whatever the binary does today.
+The tests `soundness_manifest_0` to `soundness_manifest_3`
+(`tests/golden/soundness.rs`) check every row with
+`silt check --format json`. A row is four tab-separated fields:
+
+```
+case <TAB> state <TAB> expect <TAB> note
+repros/type_soundness/g2.silt	pending:1	reject E0301	TS-1: depth two, no annotations
+```
+
+`case` is the path under `tests/golden/`. `expect` is one of:
+
+| `expect` | The row holds when |
+|---|---|
+| `reject <code>` | `check` exits 1 and reports an error with this diagnostic code. Unless the code is itself a lexer or parser code, no lexer or parser error may be reported with it: a program that does not parse was not checked |
+| `accept` | `check` exits 0 and reports no error |
+| `output` | as `accept`, and `silt run` exits 0 and prints exactly the case's `.stdout` (`case.stdout` of a directory case): for programs that ran and printed the wrong thing |
+| `obsolete` | not checked: the program's subject is gone (effects, `ExtFloat`), or the lexer or parser refuses it. The note names the port under `lang/soundness/` when the program was rewritten in today's syntax |
+
+`state` is `holds`, or `pending:<step>` for a row that does not hold on
+the current binary, with the stage 6 step expected to make it hold (`-`
+for a row that is not checked). A test fails when a `holds` row does
+not hold, and when a `pending` row does: the step that closes a hole
+changes its rows to `holds` in the same commit, so the manifest never
+goes stale. Stage 6 is done when no row is `pending`.
+
+The code of a `pending` `reject` row is the one today's checker reports
+for the same mistake written directly, or the nearest one the design note
+suggests. A step whose error carries another code changes the row and
+says so in its report; so does a step that moves the error of a `holds`
+row to another code.
+
+The cases under `lang/soundness/` are the repro programs that only the
+parser refuses today, rewritten in current syntax (brace closures, one
+statement per line). They are ordinary golden cases as well: their
+directives record what the binary does now, the manifest what it must do.
+Where the two differ the row is `pending` and the case says so in its
+leading comment; the step that closes the hole changes both.
+
+Like the verdict cases, the rows are checked only in a build with every
+cargo feature, and not where `SILT_GOLDEN_SKIP_VERDICT=1` is set.
+`SILT_GOLDEN_FILTER` narrows the rows that are run.
+
 ## Generating expected output
 
 Run the binary on the case exactly as the harness does, and save what it

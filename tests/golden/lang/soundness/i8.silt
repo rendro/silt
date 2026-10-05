@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Tree(Fn(_) -> _)' cannot derive 'Equal'
+-- Port of repros/type_soundness/i8.silt, in brace closures.
+type Tree(a) { Leaf, Node(Tree(a), a, Tree(a)) }
+fn main() {
+  let t = Node(Node(Leaf, 1, Leaf), 2, Leaf)
+  let u = Node(Node(Leaf, 1, Leaf), 2, Leaf)
+  println(t == u)
+  println(t < u)
+  println(t.hash() == u.hash())
+  println(t)
+  let ft = Node(Leaf, { x -> x }, Leaf)
+  println(ft == ft)
+}

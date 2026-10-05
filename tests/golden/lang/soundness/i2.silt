@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'Hash'
+-- Port of repros/type_soundness/i2.silt, in brace closures.
+import map
+import set
+type W(a) { W(a) }
+fn main() {
+  let w1 = W({ x -> x + 1 })
+  let m = #{ w1: 1 }
+  println(map.length(m))
+  let s = #[w1]
+  println(set.length(s))
+}

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'Hash'
+-- Port of repros/type_soundness/i12.silt, in brace closures.
+import map
+fn put(m, k, v) { map.set(m, k, v) }
+fn mk(k) { #{ k: 1 } }
+fn main() {
+  let f = { x -> x + 1 }
+  let m = mk(f)
+  println(map.length(m))
+}

@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '+' requires Int or Float, got 'String'
+-- Port of repros/type_soundness/gen1.silt, in brace closures.
+fn f(x) {
+  let g = { -> x }
+  let a = g() + 1
+  let b = g() + "s"
+  (a, b)
+}
+fn main() { println(f(1)) }

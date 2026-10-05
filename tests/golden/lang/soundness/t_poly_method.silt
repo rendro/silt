@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 0
+-- Port of repros/typechecker_arch/t_poly_method.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: type 'Fn' does not implement Display
+fn show(x) { x.display() }
+fn main() {
+  let f = { y -> y }
+  println(show(f) + 1)
+}

@@ -1,0 +1,16 @@
+-- Port of repros/type_soundness/p2.silt, in brace closures.
+import channel
+
+fn mk() { channel.new(10) }
+
+fn main() {
+  let id = { x -> x }
+  println(id(1))
+  println(id("s"))
+  let ch = mk()
+  channel.send(ch, 1)
+  match channel.receive(ch) {
+    channel.Message(a) -> println(a + 1)
+    _ -> ()
+  }
+}

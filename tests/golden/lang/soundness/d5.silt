@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method 'display' on type Fn
+-- Port of repros/type_soundness/d5.silt, in brace closures.
+fn f(x) { x.display() }
+fn main() {
+  let g = { x -> x }
+  println(g.display())
+}

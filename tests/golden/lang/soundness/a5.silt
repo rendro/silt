@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected String, got Int
+-- Port of repros/type_soundness/a5.silt, in brace closures.
+fn main() {
+  let f = { x: String -> x }
+  println(f(1))
+}
