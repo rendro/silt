@@ -357,12 +357,12 @@ fn test_record_patterns_align_by_field_name() {
     assert_eq!(tc.irrefutable(&leaking), Ok(false));
 }
 
-/// A search that would look at more patterns than its bound gives up, and
-/// says so: it does not answer. Sixteen pairs of columns, each pair
-/// covered by four rows that leave every other column alone, so that no
-/// row is decided before the second half of the columns.
+/// Rows that are read together are decided together: sixteen pairs of
+/// columns, each pair covered by four rows that leave every other column
+/// alone. Going through the columns from left to right would look at
+/// every combination of the first sixteen.
 #[test]
-fn test_a_search_past_its_bound_is_unverified() {
+fn test_pairs_of_columns_are_decided_by_the_first_row() {
     let tc = TypeChecker::new();
     let pairs = 16;
     let mut rows = Vec::new();
@@ -373,6 +373,40 @@ fn test_a_search_past_its_bound_is_unverified() {
             row[i + pairs] = bool_pat(second);
             rows.push(tuple(row));
         }
+    }
+    let mut cells = 0;
+    let rows: Vec<&Pat> = rows.iter().collect();
+    assert_eq!(tc.cover_together(&rows, &mut cells), Ok(true));
+    assert!(cells < 100_000, "{cells} patterns looked at");
+}
+
+/// A search that would look at more patterns than its bound gives up, and
+/// says so: it does not answer. The rows are a formula no order of the
+/// columns decides quickly: 300 rows, each testing 3 of 60 columns drawn
+/// by a fixed pseudo-random sequence.
+#[test]
+fn test_a_search_past_its_bound_is_unverified() {
+    let tc = TypeChecker::new();
+    let (columns, clauses) = (60, 300);
+    let mut state: u64 = 1;
+    let mut next = |below: u64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((state >> 33) % below) as usize
+    };
+    let mut rows = Vec::new();
+    for _ in 0..clauses {
+        let mut row = vec![Pat::Wild; columns];
+        let mut tested = 0;
+        while tested < 3 {
+            let column = next(columns as u64);
+            if matches!(row[column], Pat::Wild) {
+                row[column] = bool_pat(next(2) == 1);
+                tested += 1;
+            }
+        }
+        rows.push(tuple(row));
     }
     assert_eq!(tc.irrefutable(&Pat::Or(rows)), Err(Unverified));
 }

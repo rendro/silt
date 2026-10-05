@@ -218,6 +218,10 @@ match input {
 }
 ```
 
+The variable is one from outside the pattern. A name the pattern binds
+itself is not it: `(x, ^x)` compares the second element with an `x` bound
+before the `match`, and is an error when there is none.
+
 Works in any pattern position. Common with `channel.select`:
 
 ```silt

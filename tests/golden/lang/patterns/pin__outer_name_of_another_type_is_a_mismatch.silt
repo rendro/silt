@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected String, got Int
+-- The pinned `x` is the parameter, a String, whatever the `x` the pattern
+-- binds is.
+fn f(p: (Int, Int), x: String) -> String {
+  match p {
+    (x, ^x) -> "matched {x}"
+    _ -> "diff"
+  }
+}
+fn main() {
+  println(f((1, 1), "s"))
+}

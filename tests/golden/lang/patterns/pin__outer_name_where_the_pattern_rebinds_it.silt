@@ -1,0 +1,29 @@
+-- A pin is the outer name also when the pattern binds the name anew, of
+-- another type, and where an or-pattern is tested again to bind its names.
+fn f(p: (Int, Int), x: Int) -> String {
+  match p {
+    (x, ^x) -> "pin-outer {x}"
+    _ -> "diff"
+  }
+}
+fn g(p: (Int, String), x: String) -> String {
+  match p {
+    (x, ^x) -> "typed?"
+    _ -> "diff"
+  }
+}
+type Two { L(Int, Int), R(Int, Int) }
+fn h(p: (Int, Two), x: Int) -> String {
+  match p {
+    (x, L(y, ^x) | R(^x, y)) -> "{x} {y}"
+    _ -> "no"
+  }
+}
+fn main() {
+  println(f((1, 7), 7))
+  println(f((7, 1), 7))
+  println(g((1, "a"), "a"))
+  println(h((1, L(5, 7)), 7))
+  println(h((1, R(7, 6)), 7))
+  println(h((7, L(5, 1)), 7))
+}

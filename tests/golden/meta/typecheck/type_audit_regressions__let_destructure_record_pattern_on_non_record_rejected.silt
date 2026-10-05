@@ -2,9 +2,7 @@
 -- exit: 1
 -- stderr-contains: error[type]
 -- stderr-contains: undefined record type 'NotDeclared' in pattern
--- stderr-not-contains: error[type]: type mismatch
--- An undeclared record type in a pattern is one error: nothing is said about
--- the value, whose type the pattern does not constrain.
+-- stderr-contains: record pattern requires a record value, but 'Int' is not a record type
 fn main() {
   let NotDeclared { x } = 42
   println(x)

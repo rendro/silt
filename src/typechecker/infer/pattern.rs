@@ -71,6 +71,30 @@ pub(in crate::typechecker) fn names_unresolved(pattern: &Pattern) -> bool {
     }
 }
 
+/// What the check of one pattern, with the patterns inside it, shares.
+struct PatternCx {
+    /// The span of the value the pattern is matched against.
+    span: Span,
+    mode: PatternMode,
+    /// The type of every name the pattern pins, looked up before the
+    /// pattern bound a name; `None` for a name that is not in scope.
+    pins: HashMap<Symbol, Option<Type>>,
+    /// The patterns the usefulness searches of this pattern looked at.
+    cells: usize,
+    /// Whether one of those searches gave up.
+    unverified: bool,
+}
+
+/// The names `pattern` pins.
+fn pinned_names(pattern: &Pattern, out: &mut Vec<Symbol>) {
+    if let PatternKind::Pin(name) = &pattern.kind {
+        out.push(*name);
+    }
+    for sub in sub_patterns(pattern) {
+        pinned_names(sub, out);
+    }
+}
+
 /// The variant a constructor pattern names, for the checker. See
 /// `TypeChecker::ctor_target`.
 enum CtorTarget {
@@ -105,7 +129,25 @@ impl TypeChecker {
         mode: PatternMode,
     ) -> Pat {
         let errors_before = self.errors.len();
-        let pat = self.type_pattern(pattern, expected, env, span);
+        // A pin is the value of a name from outside the pattern: the
+        // pinned names are looked up before the pattern binds any.
+        let mut pinned = Vec::new();
+        pinned_names(pattern, &mut pinned);
+        let pins = pinned
+            .into_iter()
+            .map(|name| {
+                let ty = env.lookup(name).cloned().map(|s| self.instantiate(&s));
+                (name, ty)
+            })
+            .collect();
+        let mut cx = PatternCx {
+            span,
+            mode,
+            pins,
+            cells: 0,
+            unverified: false,
+        };
+        let pat = self.type_pattern(pattern, expected, env, &mut cx);
         if let PatternMode::Binding(site) = mode {
             // Irrefutability is judged for a pattern that type checked:
             // one that did not has its diagnostic. So has a name in the
@@ -114,44 +156,42 @@ impl TypeChecker {
             let failed = self.errors[errors_before..]
                 .iter()
                 .any(|e| matches!(e.severity, Severity::Error));
-            if !failed && !names_unresolved(pattern) {
-                self.require_irrefutable(pattern, &pat, expected, span, site);
+            if !failed && !pattern.irrefutable && !names_unresolved(pattern) {
+                self.report_refutable(pattern, expected, span, site, cx.unverified);
             }
         }
         pat
     }
 
-    /// Report `pattern`, lowered to `pat`, unless it is irrefutable. The
-    /// verdict is the usefulness search's; this function only words the
+    /// Report `pattern`, which is not irrefutable, at a site that has no
+    /// branch for a failed match. The verdict is the usefulness search's
+    /// (`unverified`: it gave up); this function only words the
     /// diagnostic, naming the part of the pattern that can fail.
     ///
     /// `span` is the span of the value being bound. A `let` reports a
     /// refutable constructor there and any other refutable part at the
     /// part itself; a parameter always reports at the part.
-    fn require_irrefutable(
+    fn report_refutable(
         &mut self,
         pattern: &Pattern,
-        pat: &Pat,
         ty: &Type,
         span: Span,
         site: BindingSite,
+        unverified: bool,
     ) {
-        let (reason, reason_span) = match self.irrefutable(pat) {
-            Ok(true) => return,
-            Ok(false) => match self.refutable_part(pattern) {
-                Some(part) => {
-                    let reason_span = match (site, &part.kind) {
-                        (BindingSite::Let, PatternKind::Constructor { .. }) => span,
-                        _ => part.span,
-                    };
-                    (self.refutable_part_reason(part, ty), reason_span)
-                }
-                None => (self.refutable_type_reason(ty), pattern.span),
-            },
-            Err(Unverified) => (
+        let (reason, reason_span) = match self.refutable_part(pattern) {
+            _ if unverified => (
                 "the pattern is too large to verify that it matches every value".to_string(),
                 pattern.span,
             ),
+            Some(part) => {
+                let reason_span = match (site, &part.kind) {
+                    (BindingSite::Let, PatternKind::Constructor { .. }) => span,
+                    _ => part.span,
+                };
+                (self.refutable_part_reason(part, ty), reason_span)
+            }
+            None => (self.refutable_type_reason(ty), pattern.span),
         };
         self.error(
             Code::InvalidPatternUse,
@@ -206,11 +246,11 @@ impl TypeChecker {
     fn refutable_part_reason(&self, part: &Pattern, ty: &Type) -> String {
         match &part.kind {
             PatternKind::Constructor { name, .. } => match self.pattern_constructor_enum(part) {
-                Some((enum_name, info)) => format!(
+                Some((enum_ref, info)) => format!(
                     "constructor '{}' is only one of {} variants of enum '{}'",
                     name,
                     info.variants.len(),
-                    enum_name
+                    self.show_type(&Type::Generic(enum_ref, Vec::new()))
                 ),
                 None => self.refutable_type_reason(ty),
             },
@@ -489,18 +529,59 @@ impl TypeChecker {
     }
 
     /// `check_pattern` for a pattern and, through itself, the patterns
-    /// inside it.
+    /// inside it. What it returns for a pattern that matches every value
+    /// is `Pat::Wild`, whatever the pattern's form: that is its mark.
     fn type_pattern(
         &mut self,
         pattern: &mut Pattern,
         expected: &Type,
         env: &mut TypeEnv,
-        span: Span,
+        cx: &mut PatternCx,
     ) -> Pat {
-        let pat = self.type_pattern_form(pattern, expected, env, span);
-        // A search that gave up shows nothing: the pattern keeps its test.
-        pattern.irrefutable = self.irrefutable(&pat).unwrap_or(false);
+        let pat = self.type_pattern_form(pattern, expected, env, cx);
+        pattern.irrefutable = matches!(pat, Pat::Wild);
         pat
+    }
+
+    /// The pattern of the constructor `id` with the patterns `args` of
+    /// its fields.
+    fn ctor_pat(&self, id: CtorId, args: Vec<Pat>) -> Pat {
+        if args.iter().all(|arg| matches!(arg, Pat::Wild)) && self.stands_alone(&id) {
+            Pat::Wild
+        } else {
+            Pat::Ctor(id, args)
+        }
+    }
+
+    /// The or-pattern of the alternatives `alts`. Whether they cover the
+    /// type between them is the one question of a pattern that needs a
+    /// search; the searches of one pattern share a bound (`cx.cells`).
+    fn or_pat(&self, alts: Vec<Pat>, cx: &mut PatternCx) -> Pat {
+        if alts.iter().any(|alt| matches!(alt, Pat::Wild)) {
+            return Pat::Wild;
+        }
+        let rows: Vec<&Pat> = alts.iter().collect();
+        match self.cover_together(&rows, &mut cx.cells) {
+            Ok(true) => Pat::Wild,
+            Ok(false) => Pat::Or(alts),
+            // A search that gave up shows nothing: the pattern keeps its
+            // test.
+            Err(Unverified) => {
+                cx.unverified = true;
+                Pat::Or(alts)
+            }
+        }
+    }
+
+    /// `ty` with the variables at its head replaced by what they stand
+    /// for; its parts are left as they are.
+    fn head<'t>(&'t self, mut ty: &'t Type) -> &'t Type {
+        while let Type::Var(v) = ty
+            && let Some(Some(bound)) = self.tables.vars.subst.get(*v)
+        {
+            ty = bound;
+        }
+        ty
     }
 
     /// `type_pattern` without the mark.
@@ -509,8 +590,9 @@ impl TypeChecker {
         pattern: &mut Pattern,
         expected: &Type,
         env: &mut TypeEnv,
-        span: Span,
+        cx: &mut PatternCx,
     ) -> Pat {
+        let span = cx.span;
         let pattern_span = pattern.span;
         let res = pattern.res;
         match &mut pattern.kind {
@@ -537,7 +619,11 @@ impl TypeChecker {
             }
             PatternKind::Range(lo, hi) => {
                 self.unify(expected, &Type::Int, span);
-                Pat::IntRange(*lo, *hi)
+                if (*lo, *hi) == (i64::MIN, i64::MAX) {
+                    Pat::Wild
+                } else {
+                    Pat::IntRange(*lo, *hi)
+                }
             }
             PatternKind::FloatRange(_, _) => {
                 self.unify(expected, &Type::Float, span);
@@ -548,28 +634,43 @@ impl TypeChecker {
                 // is `Type::Unit`.
                 if pats.is_empty() {
                     self.unify(expected, &Type::Unit, span);
-                    return Pat::Ctor(CtorId::Tuple, Vec::new());
+                    return Pat::Wild;
                 }
-                let elem_types: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
-                self.unify(expected, &Type::Tuple(elem_types.clone()), span);
+                // A value known to be a tuple of that many elements gives
+                // their types as they are (no variable for each, and no
+                // walk through the whole type for each level of a deep
+                // pattern).
+                let elem_types: Vec<Type> = match self.head(expected) {
+                    Type::Tuple(elems) if elems.len() == pats.len() => elems.clone(),
+                    _ => {
+                        let fresh: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
+                        self.unify(expected, &Type::Tuple(fresh.clone()), span);
+                        fresh
+                    }
+                };
                 let subs = pats
                     .iter_mut()
                     .zip(&elem_types)
-                    .map(|(p, t)| self.type_pattern(p, t, env, span))
+                    .map(|(p, t)| self.type_pattern(p, t, env, cx))
                     .collect();
-                Pat::Ctor(CtorId::Tuple, subs)
+                self.ctor_pat(CtorId::Tuple, subs)
             }
             PatternKind::Constructor { .. } => {
-                self.type_constructor_pattern(pattern, expected, env, span)
+                self.type_constructor_pattern(pattern, expected, env, cx)
             }
             PatternKind::List(pats, rest) => {
-                let elem_ty = self.fresh_var();
-                let list_ty = Type::List(Box::new(elem_ty.clone()));
-                self.unify(expected, &list_ty, span);
-                let elem_ty = self.apply(&elem_ty);
+                let elem_ty = match self.head(expected) {
+                    Type::List(elem) => (**elem).clone(),
+                    _ => {
+                        let elem_ty = self.fresh_var();
+                        let list_ty = Type::List(Box::new(elem_ty.clone()));
+                        self.unify(expected, &list_ty, span);
+                        elem_ty
+                    }
+                };
                 let elems: Vec<Pat> = pats
                     .iter_mut()
-                    .map(|p| self.type_pattern(p, &elem_ty, env, span))
+                    .map(|p| self.type_pattern(p, &elem_ty, env, cx))
                     .collect();
                 // A list is `nil` or `cons`: `[a, b]` is
                 // `cons(a, cons(b, nil))`, and `[a, ..rest]` is
@@ -577,7 +678,7 @@ impl TypeChecker {
                 let tail = match rest {
                     Some(rest_pat) => {
                         let rest_ty = Type::List(Box::new(elem_ty));
-                        self.type_pattern(rest_pat, &rest_ty, env, span)
+                        self.type_pattern(rest_pat, &rest_ty, env, cx)
                     }
                     None => Pat::nil(),
                 };
@@ -624,7 +725,7 @@ impl TypeChecker {
                         None => self.fresh_var(),
                     };
                     let sub = match sub_pat {
-                        Some(sp) => self.type_pattern(sp, &field_ty, env, span),
+                        Some(sp) => self.type_pattern(sp, &field_ty, env, cx),
                         None => {
                             // Shorthand `{ x }` binds `x`.
                             env.define(*field_name, Scheme::mono(field_ty));
@@ -633,8 +734,36 @@ impl TypeChecker {
                     };
                     subs.push((*field_name, sub));
                 }
+                // The pattern names a record type. Until a nominal record
+                // and an anonymous one are two types (stage 6 step 3c), a
+                // value typed as an anonymous record may be of any
+                // nominal type with those fields, or of none: against
+                // such a value the pattern is a test of the type's tag,
+                // which covers nothing, and has no place where a pattern
+                // must not fail.
+                let fits = match self.head(expected) {
+                    Type::Record(n, _) | Type::Generic(n, _) => match &declared {
+                        Some((rec_ref, _)) => n == rec_ref,
+                        None => self.tables.records.contains_key(n),
+                    },
+                    Type::Error | Type::Var(_) | Type::Never => true,
+                    _ => false,
+                };
+                if !fits {
+                    if matches!(cx.mode, PatternMode::Binding(_)) {
+                        self.error(
+                            Code::TypeMismatch,
+                            format!(
+                                "record pattern requires a record value, but '{}' is not a record type",
+                                self.apply(expected)
+                            ),
+                            span,
+                        );
+                    }
+                    return Pat::Lit;
+                }
                 let (names, subs) = subs.into_iter().unzip();
-                Pat::Ctor(CtorId::Record(names), subs)
+                self.ctor_pat(CtorId::Record(names), subs)
             }
             PatternKind::Or(alts) => {
                 // All alternatives bind the same names.
@@ -668,7 +797,7 @@ impl TypeChecker {
                 let mut bound: Option<Vec<(Symbol, Scheme)>> = None;
                 for alt in alts.iter_mut() {
                     env.push();
-                    subs.push(self.type_pattern(alt, expected, env, span));
+                    subs.push(self.type_pattern(alt, expected, env, cx));
                     let names = env.pop();
                     let Some(first) = &bound else {
                         bound = Some(names);
@@ -695,7 +824,7 @@ impl TypeChecker {
                 for (name, scheme) in bound.unwrap_or_default() {
                     env.define(name, scheme);
                 }
-                Pat::Or(subs)
+                self.or_pat(subs, cx)
             }
             PatternKind::Map(entries) => {
                 // A map pattern's keys are string literals. A scrutinee
@@ -716,16 +845,16 @@ impl TypeChecker {
                 self.unify(expected, &map_ty, span);
                 let val_ty = self.apply(&val_ty);
                 for (_key, pat) in entries.iter_mut() {
-                    self.type_pattern(pat, &val_ty, env, span);
+                    self.type_pattern(pat, &val_ty, env, cx);
                 }
                 // A key may be missing whatever the value patterns are.
                 Pat::Lit
             }
             PatternKind::Pin(name) => {
-                // A pin binds nothing: it compares with the value of a
-                // name in scope.
-                if let Some(scheme) = env.lookup(*name).cloned() {
-                    let pinned_ty = self.instantiate(&scheme);
+                // A pin binds nothing: it compares with the value a name
+                // has outside the pattern. A name the pattern binds
+                // itself (`(x, ^x)`) is not that name.
+                if let Some(pinned_ty) = cx.pins.get(name).cloned().flatten() {
                     self.unify(expected, &pinned_ty, span);
                 } else {
                     let msg = format_undefined_variable_message(*name, env, "in pin pattern");
@@ -755,7 +884,7 @@ impl TypeChecker {
                 for (fname, _, sub) in fields.iter_mut() {
                     let ft = self.apply(&field_tys[fname]);
                     let sub = match sub {
-                        Some(p) => self.type_pattern(p, &ft, env, span),
+                        Some(p) => self.type_pattern(p, &ft, env, cx),
                         None => {
                             // Shorthand `{name}` binds `name`.
                             env.define(*fname, Scheme::mono(ft));
@@ -774,7 +903,7 @@ impl TypeChecker {
                     env.define(*rest_name, Scheme::mono(rest_ty));
                 }
                 let (names, subs) = subs.into_iter().unzip();
-                Pat::Ctor(CtorId::Record(names), subs)
+                self.ctor_pat(CtorId::Record(names), subs)
             }
         }
     }
@@ -785,8 +914,9 @@ impl TypeChecker {
         pattern: &mut Pattern,
         expected: &Type,
         env: &mut TypeEnv,
-        span: Span,
+        cx: &mut PatternCx,
     ) -> Pat {
+        let span = cx.span;
         let target = self.ctor_target(pattern);
         if matches!(target, CtorTarget::Silent) {
             self.bind_unresolved(pattern, env);
@@ -817,7 +947,7 @@ impl TypeChecker {
             }
             for arg in args.iter_mut() {
                 let tv = self.fresh_var();
-                self.type_pattern(arg, &tv, env, span);
+                self.type_pattern(arg, &tv, env, cx);
             }
             return Pat::Wild;
         };
@@ -842,11 +972,16 @@ impl TypeChecker {
         // The value is of the enum, with the type arguments it already
         // has when it is known to be of it: `let Ok(x) = 42` is a type
         // error.
-        let type_args: Vec<Type> = match self.apply(expected) {
-            Type::Generic(n, args) if n == enum_ref => args,
-            _ => enum_info.params.iter().map(|_| self.fresh_var()).collect(),
+        let type_args: Vec<Type> = match self.head(expected) {
+            Type::Generic(n, args) if *n == enum_ref && args.len() == enum_info.params.len() => {
+                args.clone()
+            }
+            _ => {
+                let fresh: Vec<Type> = enum_info.params.iter().map(|_| self.fresh_var()).collect();
+                self.unify(expected, &Type::Generic(enum_ref, fresh.clone()), span);
+                fresh
+            }
         };
-        self.unify(expected, &Type::Generic(enum_ref, type_args.clone()), span);
         let subs = args
             .iter_mut()
             .enumerate()
@@ -855,10 +990,10 @@ impl TypeChecker {
                     Some(ft) => substitute_enum_params(ft, &enum_info.param_var_ids, &type_args),
                     None => self.fresh_var(),
                 };
-                self.type_pattern(arg, &field_ty, env, span)
+                self.type_pattern(arg, &field_ty, env, cx)
             })
             .collect();
-        Pat::Ctor(CtorId::Variant(enum_ref, index), subs)
+        self.ctor_pat(CtorId::Variant(enum_ref, index), subs)
     }
 }
 
