@@ -104,6 +104,9 @@ struct Ctx {
     /// The expression is in a `match` or `loop` header, outside any
     /// brackets.
     header: Option<Header>,
+    /// The expression is a pipeline with a `?` behind it: its last
+    /// stage stands in front of the `?`.
+    question_follows: bool,
 }
 
 impl Ctx {
@@ -114,6 +117,7 @@ impl Ctx {
             left_of: None,
             stage: false,
             header: None,
+            question_follows: false,
         }
     }
 
@@ -132,6 +136,7 @@ impl Ctx {
             left_of: Some(bp),
             stage: self.stage,
             header: self.header,
+            question_follows: false,
         }
     }
 
@@ -142,6 +147,7 @@ impl Ctx {
             left_of: None,
             stage: false,
             header: self.header,
+            question_follows: false,
         }
     }
 
@@ -161,16 +167,10 @@ fn top_bp(expr: &Expr) -> u8 {
         ExprKind::Pipe(..) => PIPE_L,
         ExprKind::Range(..) => RANGE_L,
         ExprKind::Ascription(..) => ASCRIPTION,
-        ExprKind::QuestionMark(inner) if question_ends_pipeline(inner) => PIPE_L,
+        // `a |> f?`: the `?` applies to the pipeline.
+        ExprKind::QuestionMark(inner) if matches!(inner.kind, ExprKind::Pipe(..)) => PIPE_L,
         _ => CLOSED,
     }
-}
-
-/// Whether `inner?` is printed as `a |> f?`: a `?` behind the last stage
-/// of a pipeline applies to the pipeline, unless the stage's right end
-/// takes it.
-fn question_ends_pipeline(inner: &Expr) -> bool {
-    matches!(&inner.kind, ExprKind::Pipe(_, stage) if takes_from(stage, Ctx::top().stage()) == CLOSED)
 }
 
 /// The lowest binding power of an operator that, written behind `expr`,
@@ -221,6 +221,7 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
             min_bp: 0,
             stage: false,
             header: None,
+            question_follows: false,
         };
         if top < follows || takes_from_unwrapped(expr, open_ctx) <= follows {
             return true;
@@ -229,17 +230,7 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
     if ctx.stage && question_on_left_spine(expr, ctx) {
         return true;
     }
-    match (ctx.header, &expr.kind) {
-        // `match { ...` is a match without a scrutinee, and a `{` in a
-        // header is the header's block.
-        (
-            Some(Header::Match),
-            ExprKind::Lambda { .. } | ExprKind::Block(_) | ExprKind::AnonRecord { .. },
-        ) => true,
-        // `Name {}` in a header is `Name` and the header's block.
-        (Some(_), ExprKind::RecordCreate { fields, .. }) => fields.is_empty(),
-        _ => false,
-    }
+    false
 }
 
 /// `takes_from` for an expression that is known to stand without
@@ -313,8 +304,9 @@ fn list_layout(open: Doc, items: Vec<Item>, tail: Doc, close: Doc, style: ListSt
             } else {
                 Doc::Line
             });
+            // An empty line between two items keeps the list broken.
             if item.blank_before {
-                inner.push(Doc::if_break(Doc::BlankLine, Doc::Nil));
+                inner.push(Doc::BlankLine);
             }
         }
         inner.push(item.doc);
@@ -473,10 +465,10 @@ impl Printer<'_> {
     // ── Program ──────────────────────────────────────────────────────
 
     fn program(&mut self, program: &Program) -> Doc {
-        let header = self.cur.header();
-        let mut imports: Vec<(String, Doc)> = Vec::new();
-        let mut others: Vec<Doc> = Vec::new();
-        for decl in &program.decls {
+        let (header, blank_after_header) = self.cur.header();
+        let mut imports: Vec<(String, usize, Doc)> = Vec::new();
+        let mut others: Vec<(usize, Doc)> = Vec::new();
+        for (index, decl) in program.decls.iter().enumerate() {
             if self.cur.offset() != decl_start(decl) {
                 self.cur
                     .fail("a declaration does not start where the previous one ends");
@@ -484,34 +476,43 @@ impl Printer<'_> {
             }
             let doc = self.decl(decl);
             match decl {
-                Decl::Import(target, _) => imports.push((import_key(target), doc)),
-                _ => others.push(doc),
+                Decl::Import(target, _) => imports.push((import_key(target), index, doc)),
+                _ => others.push((index, doc)),
             }
         }
         imports.sort_by(|a, b| a.0.cmp(&b.0));
 
+        // The header, the imports without empty lines, the other
+        // declarations with one between two.
         let mut out = Vec::new();
-        let section = |out: &mut Vec<Doc>, doc: Doc| {
-            if !out.is_empty() {
+        let first = imports
+            .first()
+            .map(|(_, index, _)| *index)
+            .or(others.first().map(|(index, _)| *index));
+        if !header.is_nil() {
+            out.push(header);
+            // The header is not about a declaration that was moved under
+            // it: an empty line says so.
+            if first.is_some() {
+                out.push(if blank_after_header || first != Some(0) {
+                    Doc::BlankLine
+                } else {
+                    Doc::HardLine
+                });
+            }
+        }
+        let has_imports = !imports.is_empty();
+        for (i, (_, _, doc)) in imports.into_iter().enumerate() {
+            if i > 0 {
+                out.push(Doc::HardLine);
+            }
+            out.push(doc);
+        }
+        for (i, (_, doc)) in others.into_iter().enumerate() {
+            if i > 0 || has_imports {
                 out.push(Doc::BlankLine);
             }
             out.push(doc);
-        };
-        if !header.is_nil() {
-            section(&mut out, header);
-        }
-        if !imports.is_empty() {
-            let mut lines = Vec::new();
-            for (i, (_, doc)) in imports.into_iter().enumerate() {
-                if i > 0 {
-                    lines.push(Doc::HardLine);
-                }
-                lines.push(doc);
-            }
-            section(&mut out, Doc::concat(lines));
-        }
-        for doc in others {
-            section(&mut out, doc);
         }
         // The comments behind the last declaration.
         if !self.cur.at_end() {
@@ -582,7 +583,7 @@ impl Printer<'_> {
             Token::RParen,
             TIGHT,
             &f.params,
-            |p, param| p.param(param),
+            |p, param| p.param(param, false),
         ));
         if let Some(ty) = &f.return_type {
             docs.push(space());
@@ -598,13 +599,28 @@ impl Printer<'_> {
         Doc::concat(docs)
     }
 
-    fn param(&mut self, param: &Param) -> Doc {
+    /// A parameter. `in_closure`: a closure is recognised by the tokens
+    /// in front of its `->`, which may only be names, brackets and their
+    /// punctuation; any other pattern stands in parentheses there.
+    fn param(&mut self, param: &Param, in_closure: bool) -> Doc {
         let mut docs = Vec::new();
         if param.kind == ParamKind::Type {
             docs.push(self.tok(Token::Type));
             docs.push(space());
         }
-        docs.push(self.pattern(&param.pattern));
+        let needs_parens = in_closure
+            && matches!(
+                param.pattern.kind,
+                PatternKind::Int(_)
+                    | PatternKind::Float(_)
+                    | PatternKind::Bool(_)
+                    | PatternKind::StringLit(..)
+                    | PatternKind::Range(..)
+                    | PatternKind::FloatRange(..)
+                    | PatternKind::Pin(_)
+                    | PatternKind::Or(_)
+            );
+        docs.push(self.pattern_in(&param.pattern, needs_parens));
         if let Some(ty) = &param.ty {
             docs.push(self.tok(Token::Colon));
             docs.push(space());
@@ -613,37 +629,50 @@ impl Printer<'_> {
         Doc::concat(docs)
     }
 
-    /// ` where a: T + U, b: V`, on the line of the header if it fits.
-    /// The tree holds one clause per bound; the tokens say which bounds
-    /// are joined by `+`.
+    /// ` where a: T + U, b: V` on the line of the header if it fits;
+    /// if not, `where` on a line of its own and each clause on its line,
+    /// one level deeper. The tree holds one clause per bound; the tokens
+    /// say which bounds are joined by `+`.
     fn where_clauses(&mut self, clauses: &[WhereClause]) -> Doc {
         if clauses.is_empty() {
             return Doc::Nil;
         }
-        let mut docs = vec![Doc::Line, self.tok(Token::Where), space()];
+        let keyword = self.tok(Token::Where);
+        let mut list = Vec::new();
         let mut i = 0;
         while i < clauses.len() {
-            docs.push(self.name());
-            docs.push(self.tok(Token::Colon));
-            docs.push(space());
+            list.push(Doc::Line);
+            let mut clause = vec![self.name(), self.tok(Token::Colon), space()];
+            let mut more = Vec::new();
             loop {
-                let clause = &clauses[i];
-                docs.push(self.trait_ref(clause.trait_module.is_some(), &clause.trait_args));
+                let bound = &clauses[i];
+                let doc = self.trait_ref(bound.trait_module.is_some(), &bound.trait_args);
+                if more.is_empty() && clause.len() == 3 {
+                    clause.push(doc);
+                } else {
+                    more.push(doc);
+                }
                 i += 1;
                 if i < clauses.len() && self.cur.at(&Token::Plus) {
-                    docs.push(space());
-                    docs.push(self.tok(Token::Plus));
-                    docs.push(space());
+                    // A line may break behind `+`, not in front.
+                    more.push(space());
+                    more.push(self.tok(Token::Plus));
+                    more.push(Doc::Line);
                 } else {
                     break;
                 }
             }
+            clause.push(Doc::nest(Doc::concat(more)));
+            list.push(Doc::group(Doc::concat(clause)));
             if i < clauses.len() {
-                docs.push(self.tok(Token::Comma));
-                docs.push(Doc::Line);
+                list.push(self.tok(Token::Comma));
             }
         }
-        Doc::group(Doc::nest(Doc::concat(docs)))
+        Doc::group(Doc::nest(Doc::concat(vec![
+            Doc::Line,
+            keyword,
+            Doc::nest(Doc::concat(list)),
+        ])))
     }
 
     /// `Trait`, `m.Trait`, `Trait(Int)`.
@@ -662,15 +691,23 @@ impl Printer<'_> {
     /// `A + B` behind a `:`.
     fn bounds(&mut self, bounds: &[TraitRef]) -> Doc {
         let mut docs = Vec::new();
+        let mut more = Vec::new();
         for (i, bound) in bounds.iter().enumerate() {
             if i > 0 {
-                docs.push(space());
-                docs.push(self.tok(Token::Plus));
-                docs.push(space());
+                // A line may break behind `+`, not in front.
+                more.push(space());
+                more.push(self.tok(Token::Plus));
+                more.push(Doc::Line);
             }
-            docs.push(self.trait_ref(bound.module.is_some(), &bound.args));
+            let doc = self.trait_ref(bound.module.is_some(), &bound.args);
+            if i == 0 {
+                docs.push(doc);
+            } else {
+                more.push(doc);
+            }
         }
-        Doc::concat(docs)
+        docs.push(Doc::nest(Doc::concat(more)));
+        Doc::group(Doc::concat(docs))
     }
 
     /// `(a, b)` behind a declared name, or nothing.
@@ -928,7 +965,10 @@ impl Printer<'_> {
         // The source's parentheses around this expression: one pair is
         // kept if the expression needs it here, the rest is dropped.
         let wrappers = self.cur.wrappers(expr.span.end);
-        if wrappers > 0 && self.cur.comments_inside_wrappers(wrappers, expr.span.end) {
+        // In a `match` or `loop` header, parentheses that hold a `{`
+        // keep it from being taken for the block of the header.
+        let shields_brace = ctx.header.is_some() && self.cur.parens_hold(wrappers, &Token::LBrace);
+        if wrappers > 0 && self.cur.comments_inside_parens(wrappers) {
             // A comment at the inside of a parenthesis may stand at a
             // line break that only the parenthesis allows: all stay,
             // and each can break at its inside, so that the comment
@@ -944,7 +984,7 @@ impl Printer<'_> {
                 doc = parenthesized(open, Doc::concat(vec![doc, tail]), close);
             }
             doc
-        } else if wrappers > 0 && needs_parens(expr, ctx) {
+        } else if wrappers > 0 && (shields_brace || needs_parens(expr, ctx)) {
             let open = self.tok(Token::LParen);
             self.cur.skip_n(&Token::LParen, wrappers - 1);
             let inner = self.bare_expr(expr, Ctx::top());
@@ -959,6 +999,24 @@ impl Printer<'_> {
         } else {
             self.bare_expr(expr, ctx)
         }
+    }
+
+    /// Skip the opening parentheses around `expr`, which stands at `ctx`,
+    /// if they are redundant, and say how many they were; `None` if the
+    /// expression keeps parentheses (`expr` writes them then).
+    fn drop_wrappers(&mut self, expr: &Expr, ctx: Ctx) -> Option<usize> {
+        if needs_parens(expr, ctx) {
+            return None;
+        }
+        let wrappers = self.cur.wrappers(expr.span.end);
+        if wrappers > 0
+            && (self.cur.comments_inside_parens(wrappers)
+                || (ctx.header.is_some() && self.cur.parens_hold(wrappers, &Token::LBrace)))
+        {
+            return None;
+        }
+        self.cur.skip_n(&Token::LParen, wrappers);
+        Some(wrappers)
     }
 
     fn bare_expr(&mut self, expr: &Expr, ctx: Ctx) -> Doc {
@@ -1002,39 +1060,8 @@ impl Printer<'_> {
             ExprKind::Tuple(elems) => self.tuple(elems, |p, e| p.expr(e, Ctx::top())),
             ExprKind::Unit => Doc::concat(vec![self.tok(Token::LParen), self.tok(Token::RParen)]),
             ExprKind::Ident(_) => self.name(),
-            ExprKind::FieldAccess(base, field, _) => {
-                // `(t.0).1`: without the parentheses, `0.1` is a number.
-                let numbered = |name: intern::Symbol| {
-                    intern::resolve(name).starts_with(|c: char| c.is_ascii_digit())
-                };
-                let base_kind = &base.kind;
-                let base_wrapped = self.cur.wrappers(base.span.end) > 0;
-                let after_number = numbered(*field)
-                    && matches!(&base.kind, ExprKind::FieldAccess(_, inner, _) if numbered(*inner));
-                let base = if after_number && self.cur.wrappers(base.span.end) > 0 {
-                    let open = self.tok(Token::LParen);
-                    let inner = self.expr(base, Ctx::top());
-                    let close = self.tok(Token::RParen);
-                    Doc::concat(vec![open, inner, close])
-                } else {
-                    self.expr(base, ctx.left(FIELD))
-                };
-                // `1 .0` is a field of `1`; `1.0` is a number. And behind
-                // `x as T` without parentheses, only a line break keeps
-                // the `.` from being part of the type.
-                let gap = match base_kind {
-                    ExprKind::Int(_) => space(),
-                    ExprKind::Ascription(..) if !base_wrapped => Doc::nest(Doc::HardLine),
-                    _ => Doc::Nil,
-                };
-                let dot = self.tok(Token::Dot);
-                // `t.0`: the parser takes a number for a field name.
-                let field = if self.cur.at(&Token::Int(0)) {
-                    self.tok(Token::Int(0))
-                } else {
-                    self.name()
-                };
-                Doc::concat(vec![base, gap, dot, field])
+            ExprKind::FieldAccess(..) | ExprKind::Call(..) | ExprKind::RecordUpdate { .. } => {
+                self.postfix(expr, ctx)
             }
             ExprKind::Binary(_, op, _) => self.binary(expr, binop_bp(*op), ctx),
             ExprKind::Unary(op, operand) => {
@@ -1064,10 +1091,24 @@ impl Printer<'_> {
                 self.expr(end, ctx.right(RANGE_R)),
             ]),
             ExprKind::QuestionMark(inner) => {
-                let inner = if question_ends_pipeline(inner) {
-                    self.expr(inner, ctx)
-                } else {
+                let ExprKind::Pipe(_, stage) = &inner.kind else {
+                    return self.postfix(expr, ctx);
+                };
+                // A `?` behind the last stage of a pipeline applies to
+                // the pipeline. `(a |> -b)?` keeps its parentheses,
+                // because `-b?` is something else; `a |> (-b)?` keeps
+                // those of its stage.
+                let open_stage = takes_from(stage, Ctx::top().stage()) != CLOSED;
+                let inner = if open_stage && self.cur.wrappers(inner.span.end) > 0 {
                     self.expr(inner, ctx.left(CALL))
+                } else {
+                    self.expr(
+                        inner,
+                        Ctx {
+                            question_follows: true,
+                            ..ctx
+                        },
+                    )
                 };
                 Doc::concat(vec![inner, self.tok(Token::Question)])
             }
@@ -1078,26 +1119,11 @@ impl Printer<'_> {
                 space(),
                 self.type_expr(ty),
             ]),
-            ExprKind::Call(callee, args) => self.call(expr, callee, args, ctx),
             ExprKind::Lambda { params, body } => self.lambda(expr, params, body),
             ExprKind::RecordCreate { module, fields, .. } => {
                 let name = self.qualified(module.is_some());
                 let fields = self.fields(fields);
                 Doc::concat(vec![name, space(), fields])
-            }
-            ExprKind::RecordUpdate { expr: base, fields } => {
-                // As for a field: `x as T` and a line break.
-                let gap = match &base.kind {
-                    ExprKind::Ascription(..) if self.cur.wrappers(base.span.end) == 0 => {
-                        Doc::nest(Doc::HardLine)
-                    }
-                    _ => Doc::Nil,
-                };
-                let base = self.expr(base, ctx.left(FIELD));
-                let base = Doc::concat(vec![base, gap]);
-                let dot = self.tok(Token::Dot);
-                let fields = self.fields(fields);
-                Doc::concat(vec![base, dot, fields])
             }
             ExprKind::AnonRecord { spread, fields } => {
                 // The spread is the first item of the list.
@@ -1215,24 +1241,37 @@ impl Printer<'_> {
     /// `+` and `-`, which at the start of a line would start a new
     /// statement.
     fn binary(&mut self, expr: &Expr, bp: u8, ctx: Ctx) -> Doc {
-        let mut chain: Vec<(BinOp, &Expr)> = Vec::new();
+        // Each link with the parentheses that end behind its right
+        // operand: redundant ones around a left operand of the chain,
+        // which are dropped so that `(a + b) + c` is the chain
+        // `a + b + c` at once and not only the next time.
+        let mut chain: Vec<(BinOp, &Expr, usize)> = Vec::new();
         let mut first = expr;
-        while let ExprKind::Binary(left, op, right) = &first.kind
-            && binop_bp(*op) == bp
-            && (chain.is_empty() || !needs_parens(first, ctx.left(bp)))
-        {
-            chain.push((*op, right));
+        let mut closes = 0;
+        while let ExprKind::Binary(left, op, right) = &first.kind {
+            chain.push((*op, right, closes));
             first = left;
+            if !matches!(&first.kind, ExprKind::Binary(_, op, _) if binop_bp(*op) == bp) {
+                break;
+            }
+            match self.drop_wrappers(first, ctx.left(bp)) {
+                Some(dropped) => closes = dropped,
+                None => break,
+            }
         }
         let first = self.expr(first, ctx.left(bp));
         let mut rest = Vec::new();
-        for (op, right) in chain.into_iter().rev() {
+        for (op, right, closes) in chain.into_iter().rev() {
             let op_doc = self.tok(binop_token(op));
             let right = self.expr(right, ctx.right(bp + 1));
             if matches!(op, BinOp::Add | BinOp::Sub) {
                 rest.extend([space(), op_doc, Doc::Line, right]);
             } else {
                 rest.extend([Doc::Line, op_doc, space(), right]);
+            }
+            if closes > 0 {
+                self.cur.skip_n(&Token::RParen, closes);
+                rest.push(self.cur.carried());
             }
         }
         // The first operand is not part of the group: if it spans lines
@@ -1243,21 +1282,43 @@ impl Printer<'_> {
 
     /// `a |> f |> g`: on one line, or one stage per line.
     fn pipeline(&mut self, expr: &Expr, ctx: Ctx) -> Doc {
-        let mut stages: Vec<&Expr> = Vec::new();
+        // As for a chain of operators: each stage with the redundant
+        // parentheses that end behind it.
+        let mut stages: Vec<(&Expr, usize)> = Vec::new();
         let mut first = expr;
-        while let ExprKind::Pipe(left, stage) = &first.kind
-            && (stages.is_empty() || !needs_parens(first, ctx.left(PIPE_L)))
-        {
-            stages.push(stage);
+        let mut closes = 0;
+        while let ExprKind::Pipe(left, stage) = &first.kind {
+            stages.push((stage, closes));
             first = left;
+            if !matches!(first.kind, ExprKind::Pipe(..)) {
+                break;
+            }
+            match self.drop_wrappers(first, ctx.left(PIPE_L)) {
+                Some(dropped) => closes = dropped,
+                None => break,
+            }
         }
         let first = self.expr(first, ctx.left(PIPE_L));
         let mut rest = Vec::new();
-        for stage in stages.into_iter().rev() {
+        let count = stages.len();
+        for (i, (stage, closes)) in stages.into_iter().rev().enumerate() {
             rest.push(Doc::Line);
             rest.push(self.tok(Token::Pipe));
             rest.push(space());
-            rest.push(self.expr(stage, ctx.stage()));
+            // A `?` behind the pipeline stands behind its last stage.
+            let stage_ctx = if ctx.question_follows && i + 1 == count {
+                Ctx {
+                    left_of: Some(CALL),
+                    ..ctx.stage()
+                }
+            } else {
+                ctx.stage()
+            };
+            rest.push(self.expr(stage, stage_ctx));
+            if closes > 0 {
+                self.cur.skip_n(&Token::RParen, closes);
+                rest.push(self.cur.carried());
+            }
         }
         // The first operand is not part of the group: if it spans lines
         // (a call with broken arguments, a `match`), what follows its
@@ -1311,49 +1372,137 @@ impl Printer<'_> {
         Doc::concat(vec![leading, body, trailing])
     }
 
-    /// A call. A closure that is the last argument stands behind the
-    /// parentheses, `f(a) { x -> x }`, except in a `match` header, where
-    /// a `{` is the header's block, and where the callee is itself a
-    /// call, which the closure would join.
-    fn call(&mut self, call: &Expr, callee: &Expr, args: &[Expr], ctx: Ctx) -> Doc {
-        let closure = matches!(
-            args.last(),
-            Some(Expr {
-                kind: ExprKind::Lambda { .. },
-                ..
-            })
-        );
-        let in_match_header = ctx.header == Some(Header::Match);
-        let callee_is_call = matches!(callee.kind, ExprKind::Call(..));
-        let callee_bp = if closure { CLOSURE } else { CALL };
-        let callee_doc = self.expr(callee, ctx.left(callee_bp));
-
-        // `f { x -> x }`: the closure is the only argument.
-        if !self.cur.at(&Token::LParen) {
-            let [arg] = args else {
-                self.cur.fail("a call without parentheses or a closure");
-                return callee_doc;
+    /// A chain of field accesses, calls, `?` and record updates on one
+    /// operand. If it holds two method calls or more, it may break in
+    /// front of each `.`, all or none.
+    fn postfix(&mut self, expr: &Expr, ctx: Ctx) -> Doc {
+        // The links, the last one first, and the operand.
+        let mut links: Vec<&Expr> = Vec::new();
+        let mut head = expr;
+        loop {
+            let base = match &head.kind {
+                ExprKind::FieldAccess(base, ..) | ExprKind::RecordUpdate { expr: base, .. } => base,
+                ExprKind::Call(callee, _) => callee,
+                ExprKind::QuestionMark(inner) if !matches!(inner.kind, ExprKind::Pipe(..)) => inner,
+                _ => break,
             };
-            let closure = self.expr(arg, Ctx::top());
-            return if in_match_header {
-                // A closure that is the only argument hugs the
-                // parentheses.
-                Doc::concat(vec![callee_doc, Doc::text("("), closure, Doc::text(")")])
-            } else {
-                Doc::concat(vec![callee_doc, space(), closure])
-            };
+            links.push(head);
+            head = base;
+            // An operand in parentheses is an operand, whatever it is.
+            if self.cur.wrappers(head.span.end) > 0 {
+                break;
+            }
         }
+        links.reverse();
+        let numbered = |link: &Expr| {
+            matches!(&link.kind, ExprKind::FieldAccess(_, field, _)
+                if intern::resolve(*field).starts_with(|c: char| c.is_ascii_digit()))
+        };
+        let is_call = |link: &&Expr| matches!(link.kind, ExprKind::Call(..));
+        let is_dot = |link: &Expr| {
+            matches!(
+                link.kind,
+                ExprKind::FieldAccess(..) | ExprKind::RecordUpdate { .. }
+            )
+        };
+        let method_calls = links
+            .windows(2)
+            .filter(|pair| is_dot(pair[0]) && is_call(&pair[1]))
+            .count();
+        let breakable = method_calls >= 2;
 
-        let plain = if closure { args.len() - 1 } else { args.len() };
-        // Moving the closure out of the parentheses moves the comments
-        // around it to where a line break may not be allowed: with a
-        // comment in the way, the closure stays where it is.
+        let Some(first) = links.first() else {
+            return self.bare_expr(expr, ctx);
+        };
+        let first_bp = match &first.kind {
+            ExprKind::Call(_, args) => match args.last() {
+                Some(Expr {
+                    kind: ExprKind::Lambda { .. },
+                    ..
+                }) => CLOSURE,
+                _ => CALL,
+            },
+            ExprKind::QuestionMark(_) => CALL,
+            _ => FIELD,
+        };
+        // `(t.0).1`: without the parentheses, `0.1` is a number.
+        let head_doc = if numbered(first) && numbered(head) && self.cur.wrappers(head.span.end) > 0
+        {
+            let open = self.tok(Token::LParen);
+            let inner = self.expr(head, Ctx::top());
+            let close = self.tok(Token::RParen);
+            Doc::concat(vec![open, inner, close])
+        } else {
+            let wrapped = self.cur.wrappers(head.span.end) > 0;
+            let doc = self.expr(head, ctx.left(first_bp));
+            match &head.kind {
+                // `1 .f` is a field of `1`; `1.f` may be a number.
+                ExprKind::Int(_) if is_dot(first) => Doc::concat(vec![doc, space()]),
+                // Behind `x as T` without parentheses, only a line break
+                // keeps a `.` from being part of the type.
+                ExprKind::Ascription(..) if is_dot(first) && !wrapped => {
+                    Doc::concat(vec![doc, Doc::nest(Doc::HardLine)])
+                }
+                _ => doc,
+            }
+        };
+        // A name and its first field stay together: `list.map`, `self.x`.
+        let simple_head = matches!(head.kind, ExprKind::Ident(_));
+        let mut docs = Vec::new();
+        for (i, link) in links.iter().enumerate() {
+            match &link.kind {
+                ExprKind::FieldAccess(..) | ExprKind::RecordUpdate { .. } => {
+                    if breakable && !(i == 0 && simple_head) {
+                        docs.push(Doc::SoftLine);
+                    }
+                    // `t.0 .1`, not `t.0.1`.
+                    if i > 0 && numbered(link) && numbered(links[i - 1]) {
+                        docs.push(space());
+                    }
+                    docs.push(self.tok(Token::Dot));
+                    match &link.kind {
+                        ExprKind::RecordUpdate { fields, .. } => docs.push(self.fields(fields)),
+                        // `t.0`: the parser takes a number for a field
+                        // name.
+                        _ if self.cur.at(&Token::Int(0)) => docs.push(self.tok(Token::Int(0))),
+                        _ => docs.push(self.name()),
+                    }
+                }
+                ExprKind::Call(callee, args) => {
+                    docs.push(self.call_args(link, callee, args, ctx));
+                }
+                _ => docs.push(self.tok(Token::Question)),
+            }
+        }
+        if breakable {
+            Doc::concat(vec![head_doc, Doc::group(Doc::nest(Doc::concat(docs)))])
+        } else {
+            docs.insert(0, head_doc);
+            Doc::concat(docs)
+        }
+    }
+
+    /// The arguments of a call. A closure that is the last argument
+    /// stands behind the parentheses, `f(a) { x -> x }`; one in front of
+    /// it stands between them, `f({ x -> x }) { y -> y }`. In a `match`
+    /// or `loop` header every closure stands between them, since a `{`
+    /// there is the header's block; so does a closure that is the only
+    /// argument of a call whose callee is a call, which it would join.
+    fn call_args(&mut self, call: &Expr, callee: &Expr, args: &[Expr], ctx: Ctx) -> Doc {
+        let is_closure = |arg: &Expr| matches!(arg.kind, ExprKind::Lambda { .. });
+        let count = args.len();
+        let closure_last = args.last().is_some_and(is_closure);
+        let callee_is_call = matches!(callee.kind, ExprKind::Call(..));
+        let has_open = self.cur.at(&Token::LParen);
         let open_at = self.cur.offset();
+        // Moving the last closure out of the source's parentheses moves
+        // the comments around it to where a line break may not be
+        // allowed: with a comment in the way, it stays where it is.
         let (in_the_way, at_open) = match args.last() {
-            Some(last) if closure => {
-                let before = match plain {
-                    0 => open_at,
-                    _ => args[plain - 1].span.end,
+            Some(last) if closure_last && has_open => {
+                let before = match count {
+                    1 => open_at,
+                    _ => args[count - 2].span.end,
                 };
                 let moves = last.span.end != call.span.end;
                 (
@@ -1366,133 +1515,129 @@ impl Printer<'_> {
             _ => (false, false),
         };
         let trailing =
-            closure && !in_match_header && !(args.len() == 1 && callee_is_call) && !in_the_way;
+            closure_last && ctx.header.is_none() && !(count == 1 && callee_is_call) && !in_the_way;
         // How many arguments stand between the parentheses of the result.
-        let inside = if trailing { plain } else { args.len() };
-
+        let inside = if trailing { count - 1 } else { count };
         // `f({ x -> x })` becomes `f { x -> x }`: no parentheses.
-        let bare = trailing && plain == 0 && !at_open;
-        let open = if bare {
-            self.cur.skip(&Token::LParen)
-        } else {
-            self.tok(Token::LParen)
+        let bare = inside == 0 && trailing && !at_open;
+        // Whether the source's `)` is behind the cursor (or there is
+        // none).
+        let mut closed = !has_open;
+        let open = match (has_open, bare) {
+            (true, true) => self.cur.skip(&Token::LParen),
+            (true, false) => self.tok(Token::LParen),
+            (false, _) if inside > 0 => Doc::text("("),
+            (false, _) => Doc::Nil,
         };
+        // A closure that is the only argument between the parentheses
+        // hugs them.
+        let hug = inside == 1 && is_closure(&args[0]) && !in_the_way;
         let mut items = Vec::new();
-        // Whether the source closes its parentheses in front of the
-        // closure.
-        let mut source_trailing = false;
-        for (i, arg) in args[..plain].iter().enumerate() {
+        for (i, arg) in args[..inside].iter().enumerate() {
+            // The source closes its parentheses in front of a closure
+            // that the result has between them.
+            // (Its comments stay as they are, in front of the closure:
+            // that place is between the parentheses now.)
+            if !closed && self.cur.at(&Token::RParen) {
+                self.cur.pass(&Token::RParen);
+                closed = true;
+            }
             let blank_before = i > 0 && self.cur.blank_before();
             let doc = self.expr(arg, Ctx::top());
-            let comma = if i + 1 == inside {
-                self.last_comma(TIGHT, false)
-            } else if i + 1 == plain && !self.cur.at(&Token::Comma) {
-                // The closure follows in the result, behind `)` in the
-                // source.
-                source_trailing = true;
-                Doc::concat(vec![self.cur.skip(&Token::RParen), Doc::text(",")])
+            let comma = if i + 1 < inside {
+                if !closed && self.cur.at(&Token::Comma) {
+                    self.tok(Token::Comma)
+                } else {
+                    Doc::text(",")
+                }
             } else {
-                self.tok(Token::Comma)
+                let comma = if hug {
+                    Doc::Nil
+                } else {
+                    Doc::if_break(Doc::text(","), Doc::Nil)
+                };
+                if closed {
+                    comma
+                } else {
+                    Doc::concat(vec![comma, self.cur.skip(&Token::Comma)])
+                }
             };
             items.push(Item {
                 blank_before,
                 doc: Doc::concat(vec![doc, comma]),
             });
         }
-        if !closure {
+        let closes_here = !closed && self.cur.at(&Token::RParen);
+        let list = if bare || (!has_open && inside == 0) {
+            // No parentheses in the result.
+            let close = if closes_here {
+                closed = true;
+                self.cur.skip(&Token::RParen)
+            } else {
+                Doc::Nil
+            };
+            Doc::concat(vec![open, close])
+        } else if items.is_empty() && closes_here && self.cur.line_ended() {
+            // `f( -- note` and `) { x -> x }`: the comment stays between
+            // the parentheses.
+            closed = true;
             let tail = self.dangling();
             let close = self.tok(Token::RParen);
-            let list = list_layout(open, items, tail, close, TIGHT);
-            return Doc::concat(vec![callee_doc, list]);
-        }
-        let closure = &args[plain];
-        if trailing {
-            let closes_here = self.cur.at(&Token::RParen);
-            let list = if bare {
-                let close = if closes_here {
-                    self.cur.skip(&Token::RParen)
-                } else {
-                    Doc::Nil
-                };
-                Doc::concat(vec![open, close])
-            } else if items.is_empty() && closes_here && self.cur.line_ended() {
-                // `f( -- note` and `) { x -> x }`: the comment stays
-                // between the parentheses.
-                let close = self.tok(Token::RParen);
-                Doc::group(Doc::concat(vec![open, Doc::SoftLine, close]))
-            } else {
-                let close = if closes_here {
-                    self.tok(Token::RParen)
-                } else {
-                    Doc::text(")")
-                };
-                list_layout(open, items, Doc::Nil, close, TIGHT)
-            };
-            let closure = self.expr(closure, Ctx::top());
-            let behind = if closes_here {
-                Doc::Nil
-            } else {
-                Doc::concat(vec![
-                    self.cur.skip(&Token::Comma),
-                    self.cur.skip(&Token::RParen),
-                ])
-            };
-            return Doc::concat(vec![callee_doc, list, space(), closure, behind]);
-        }
-        // The closure stays between the parentheses.
-        let mut before = Doc::Nil;
-        if plain == 0 && self.cur.at(&Token::RParen) {
-            source_trailing = true;
-            before = self.cur.skip(&Token::RParen);
-        }
-        let blank_before = plain > 0 && self.cur.blank_before();
-        let doc = self.expr(closure, Ctx::top());
-        let mut self_skip_comma = Doc::Nil;
-        let (comma, tail, close) = if source_trailing {
-            (
-                Doc::if_break(Doc::text(","), Doc::Nil),
-                Doc::Nil,
-                Doc::text(")"),
-            )
-        } else if plain == 0 && !in_the_way {
-            self_skip_comma = self.cur.skip(&Token::Comma);
-            let tail = self.dangling();
-            (Doc::Nil, tail, self.tok(Token::RParen))
+            Doc::group(Doc::concat(vec![
+                open,
+                Doc::nest(tail),
+                Doc::SoftLine,
+                close,
+            ]))
         } else {
-            let comma = self.last_comma(TIGHT, false);
-            let tail = self.dangling();
-            (comma, tail, self.tok(Token::RParen))
-        };
-        if plain == 0 && !in_the_way {
-            // A closure that is the only argument hugs the parentheses.
-            let comma = if source_trailing {
-                Doc::Nil
+            let (tail, close) = if closes_here {
+                closed = true;
+                (self.dangling(), self.tok(Token::RParen))
             } else {
-                self_skip_comma
+                (Doc::Nil, Doc::text(")"))
             };
-            return Doc::concat(vec![callee_doc, open, before, doc, comma, tail, close]);
+            if hug {
+                let item = items.pop().map_or(Doc::Nil, |item| item.doc);
+                Doc::concat(vec![open, item, tail, close])
+            } else {
+                list_layout(open, items, tail, close, TIGHT)
+            }
+        };
+        if !trailing {
+            return list;
         }
-        items.push(Item {
-            blank_before,
-            doc: Doc::concat(vec![before, doc, comma]),
-        });
-        let list = list_layout(open, items, tail, close, TIGHT);
-        Doc::concat(vec![callee_doc, list])
+        let closure = self.expr(&args[count - 1], Ctx::top());
+        // The source's `)` behind a closure that the result has behind
+        // its own.
+        let behind = if closed {
+            Doc::Nil
+        } else {
+            Doc::concat(vec![
+                self.cur.skip(&Token::Comma),
+                self.cur.skip(&Token::RParen),
+            ])
+        };
+        Doc::concat(vec![list, space(), closure, behind])
     }
 
     /// `{ a, b -> body }`. Statements written directly behind the arrow
     /// stand on lines of their own.
     fn lambda(&mut self, expr: &Expr, params: &[Param], body: &Expr) -> Doc {
+        // The parameters may break behind their commas; they stand
+        // under the first one then.
         let mut head = vec![self.tok(Token::LBrace), space()];
+        let mut list = Vec::new();
         for (i, param) in params.iter().enumerate() {
-            head.push(self.param(param));
+            list.push(self.param(param, true));
             if i + 1 < params.len() {
-                head.push(self.tok(Token::Comma));
+                list.push(self.tok(Token::Comma));
+                list.push(Doc::Line);
             } else {
-                head.push(self.cur.skip(&Token::Comma));
+                list.push(self.cur.skip(&Token::Comma));
+                list.push(space());
             }
-            head.push(space());
         }
+        head.push(Doc::group(Doc::nest(Doc::concat(list))));
         head.push(self.tok(Token::Arrow));
         // The parser gives the statements behind the arrow the span of
         // the closure; a block written there has its own.
@@ -1529,6 +1674,17 @@ impl Printer<'_> {
         if guardless {
             // `match { condition -> ..., _ -> ... }`.
             docs.push(match &arm.guard {
+                // `_` as a condition is the name `_` in parentheses;
+                // without them it is the arm that takes the rest.
+                Some(condition)
+                    if matches!(condition.kind, ExprKind::Ident(name) if intern::resolve(name) == "_")
+                        && self.cur.wrappers(condition.span.end) > 0 =>
+                {
+                    let open = self.tok(Token::LParen);
+                    let inner = self.expr(condition, Ctx::top());
+                    let close = self.tok(Token::RParen);
+                    Doc::concat(vec![open, inner, close])
+                }
                 Some(condition) => self.expr(condition, Ctx::top()),
                 None => self.name(),
             });
@@ -1552,25 +1708,49 @@ impl Printer<'_> {
     // ── Patterns ─────────────────────────────────────────────────────
 
     fn pattern(&mut self, pattern: &Pattern) -> Doc {
-        // Parentheses around a pattern group nothing but the
-        // alternatives of an or-pattern, which are one flat list.
-        if !matches!(pattern.kind, PatternKind::Tuple(_) | PatternKind::Or(_)) {
-            // As for an expression: parentheses with a comment at their
-            // inside stay.
-            // (Parentheses that hold a `|` are around the alternatives
-            // of an or-pattern this pattern is one of.)
-            if self.cur.comments_inside_paren() && !self.cur.paren_holds(&Token::Bar) {
-                let open = self.tok(Token::LParen);
-                let inner = self.pattern(pattern);
+        self.pattern_in(pattern, false)
+    }
+
+    /// A pattern. Parentheses around it are dropped (they group nothing
+    /// but the alternatives of an or-pattern, which are one flat list),
+    /// unless `needed` says that it stands where it needs them, or a
+    /// comment stands at their inside.
+    fn pattern_in(&mut self, pattern: &Pattern, needed: bool) -> Doc {
+        // The parentheses in front of an or-pattern are around it or
+        // around its first alternative.
+        let first_end = match &pattern.kind {
+            PatternKind::Or(alts) => alts.first().map(|alt| alt.span.end),
+            _ => None,
+        };
+        let wrappers = self.cur.pattern_wrappers(pattern.span.start, first_end);
+        if wrappers == 0 {
+            return self.bare_pattern(pattern);
+        }
+        if self.cur.comments_inside_parens(wrappers) {
+            let mut opens = Vec::new();
+            for _ in 0..wrappers {
+                opens.push(self.tok(Token::LParen));
+            }
+            let mut doc = self.bare_pattern(pattern);
+            for open in opens.into_iter().rev() {
                 let tail = self.dangling();
                 let close = self.tok(Token::RParen);
-                return parenthesized(open, Doc::concat(vec![inner, tail]), close);
+                doc = parenthesized(open, Doc::concat(vec![doc, tail]), close);
             }
-            self.cur.skip_open_parens();
+            doc
+        } else if needed {
+            let open = self.tok(Token::LParen);
+            self.cur.skip_n(&Token::LParen, wrappers - 1);
+            let inner = self.bare_pattern(pattern);
+            let close = self.tok(Token::RParen);
+            self.cur.skip_n(&Token::RParen, wrappers - 1);
+            Doc::concat(vec![open, inner, close, self.cur.carried()])
+        } else {
+            self.cur.skip_n(&Token::LParen, wrappers);
+            let doc = self.bare_pattern(pattern);
+            self.cur.skip_n(&Token::RParen, wrappers);
+            Doc::concat(vec![doc, self.cur.carried()])
         }
-        let doc = self.bare_pattern(pattern);
-        self.cur.close_skipped_parens();
-        doc
     }
 
     /// `-1`, `1..5`, `-1.5..-0.5`: the numbers as the source spells
@@ -1708,20 +1888,11 @@ impl Printer<'_> {
                 )
             }
             PatternKind::Or(alts) => {
-                // Alternatives in parentheses are the same flat list.
-                fn flat<'p>(alts: &'p [Pattern], out: &mut Vec<&'p Pattern>) {
-                    for alt in alts {
-                        match &alt.kind {
-                            PatternKind::Or(inner) => flat(inner, out),
-                            _ => out.push(alt),
-                        }
-                    }
-                }
-                let mut all = Vec::new();
-                flat(alts, &mut all);
+                // An alternative that is an or-pattern itself stood in
+                // parentheses, which `pattern` drops: one flat list.
                 let mut docs = Vec::new();
                 let mut rest = Vec::new();
-                for (i, alt) in all.into_iter().enumerate() {
+                for (i, alt) in alts.iter().enumerate() {
                     if i == 0 {
                         docs.push(self.pattern(alt));
                     } else {
@@ -1765,11 +1936,7 @@ impl Printer<'_> {
             }
             // `(T)` is a tuple of one: no parentheses are redundant in
             // a type.
-            TypeExprKind::Tuple(elems) => {
-                self.delimited(Token::LParen, Token::RParen, TIGHT, elems, |p, elem| {
-                    p.type_expr(elem)
-                })
-            }
+            TypeExprKind::Tuple(elems) => self.tuple(elems, |p, elem| p.type_expr(elem)),
             TypeExprKind::Function(params, ret) => {
                 // `Fn` is an identifier to the lexer.
                 let name = self.name();

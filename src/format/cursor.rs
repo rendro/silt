@@ -51,8 +51,6 @@ pub struct Cursor<'a> {
     next_comment: u32,
     /// Comments of skipped tokens, for the next token that is written.
     carried: Vec<Doc>,
-    /// For each `(` that is open at the cursor, whether it was skipped.
-    parens: Vec<bool>,
     /// For each token that is a `(`, the index of its `)`.
     closers: Vec<usize>,
     /// The opening parentheses skipped since the last written token:
@@ -117,7 +115,6 @@ impl<'a> Cursor<'a> {
             pos: 0,
             next_comment: 0,
             carried: Vec::new(),
-            parens: Vec::new(),
             error: None,
         }
     }
@@ -210,11 +207,13 @@ impl<'a> Cursor<'a> {
             && (index + 1..end).all(|later| self.newlines_before_comment(later) == 0)
     }
 
+    /// The comment as it is written: without the white space behind
+    /// it, and with line feeds for the line ends inside it.
     fn comment_text(&self, index: u32) -> String {
         self.comments[index as usize]
             .text(self.source)
             .trim_end()
-            .to_string()
+            .replace("\r\n", "\n")
     }
 
     /// The comments in front of the next token that are not written
@@ -374,38 +373,35 @@ impl<'a> Cursor<'a> {
         Doc::concat(docs)
     }
 
-    /// The comments of the file's first lines that are not about the
-    /// first declaration: those above the last empty line in front of
-    /// it. They stay at the top when the declarations are put in order.
-    pub fn header(&mut self) -> Doc {
+    /// The file's header: the comment lines that start the file, up
+    /// to the first empty line or the first declaration. They stay on
+    /// top whatever order the declarations are put in. With whether an
+    /// empty line follows them.
+    pub fn header(&mut self) -> (Doc, bool) {
         if self.pos != 0 {
-            return Doc::Nil;
+            return (Doc::Nil, false);
         }
         let tok = self.tok();
         let gap = self.gap();
-        let mut end = gap.start;
-        for index in gap.clone().skip(1) {
-            if self.newlines_before_comment(index) >= 2 {
-                end = index;
-            }
-        }
-        if tok.newlines_before >= 2 {
-            end = gap.end;
-        }
         let mut docs = Vec::new();
-        for index in gap.start..end {
+        let mut end = gap.start;
+        for index in gap.clone() {
             if index > gap.start && self.newlines_before_comment(index) >= 2 {
-                docs.push(Doc::BlankLine);
+                break;
             }
-            let text = self.comment_text(index);
-            // A header comment has a comment or an empty line behind it.
-            match self.class(index, tok, gap.end) {
-                Class::Inline => docs.push(Doc::Comment(text)),
-                Class::EndOfLine(_) => docs.push(Doc::OwnLine(text)),
+            if matches!(self.class(index, tok, gap.end), Class::Inline) {
+                break;
             }
+            docs.push(Doc::OwnLine(self.comment_text(index)));
+            end = index + 1;
         }
         self.next_comment = end;
-        Doc::concat(docs)
+        let blank = match end {
+            _ if end == gap.start => false,
+            _ if end == gap.end => self.newlines_before_token() >= 2,
+            _ => self.newlines_before_comment(end) >= 2,
+        };
+        (Doc::concat(docs), blank)
     }
 
     /// The next source token as text, without its comments, and move on.
@@ -414,7 +410,7 @@ impl<'a> Cursor<'a> {
         let text = self.text_of(tok);
         self.skipped_open.clear();
         self.line_ended = false;
-        self.step(false);
+        self.step();
         match tok.kind {
             // The span of the rest of a string starts behind the brace
             // that closes the interpolation.
@@ -424,25 +420,9 @@ impl<'a> Cursor<'a> {
     }
 
     /// Move past the next source token, which is written or skipped.
-    fn step(&mut self, skipped: bool) {
-        match self.tok().kind {
-            Token::Eof => return,
-            Token::LParen => self.parens.push(skipped),
-            Token::RParen => {
-                self.parens.pop();
-            }
-            _ => {}
-        }
-        self.pos += 1;
-    }
-
-    /// Skip the closing parentheses whose opening ones were skipped: the
-    /// printer has written what stood between them. Called after an
-    /// expression or a pattern, so that the printer can look at what
-    /// follows it.
-    pub fn close_skipped_parens(&mut self) {
-        while self.at(&Token::RParen) && self.parens.last() == Some(&true) {
-            self.skip_one();
+    fn step(&mut self) {
+        if self.tok().kind != Token::Eof {
+            self.pos += 1;
         }
     }
 
@@ -486,14 +466,6 @@ impl<'a> Cursor<'a> {
         Doc::concat(std::mem::take(&mut self.carried))
     }
 
-    /// Skip the opening parentheses at the cursor: the printer knows
-    /// that what it is about to write does not start with one.
-    pub fn skip_open_parens(&mut self) {
-        while self.at(&Token::LParen) {
-            self.skip_one();
-        }
-    }
-
     /// Skip `()` at the cursor: an empty list the tree does not record.
     pub fn skip_empty_parens(&mut self) {
         if self.at(&Token::LParen) && matches!(self.peek_at(1), Token::RParen) {
@@ -509,8 +481,8 @@ impl<'a> Cursor<'a> {
         if tok.kind == Token::LParen {
             // The comments in front of an opening parenthesis stay
             // where they are, in front of what it opened.
-            let newlines = self.newlines_before_token();
-            self.skipped_open.push((tok.comments.end, newlines));
+            self.pass(&Token::LParen);
+            return self.carry_trailing();
         } else {
             // The line break at a comment in front of a closing
             // parenthesis or a comma was inside brackets that may be
@@ -523,8 +495,26 @@ impl<'a> Cursor<'a> {
             }
             self.next_comment = gap.end;
         }
-        self.step(true);
-        // The comments behind the skipped token, on its line.
+        self.step();
+        self.carry_trailing();
+    }
+
+    /// Move past the next source token, which is of the kind of `kind`
+    /// and is not written, and leave the comments around it where they
+    /// are: they stand in front of the next token then. For a place
+    /// where they may stand as they are.
+    pub fn pass(&mut self, kind: &Token) {
+        if !self.at(kind) {
+            return;
+        }
+        let tok = self.tok();
+        let newlines = self.newlines_before_token();
+        self.skipped_open.push((tok.comments.end, newlines));
+        self.step();
+    }
+
+    /// Carry the comments behind a skipped token, on its line.
+    fn carry_trailing(&mut self) {
         let tok = self.tok();
         let gap = self.gap();
         for index in gap.clone() {
@@ -562,43 +552,60 @@ impl<'a> Cursor<'a> {
         self.comments.get(first).is_some_and(|c| c.span.start < end)
     }
 
+    /// How many of the `(` at the cursor are parentheses around the
+    /// pattern whose own first token starts at byte `start`: those in
+    /// front of that token. With `inner_end`, the end of the first
+    /// alternative of an or-pattern, only those that close behind it:
+    /// the others are around that alternative. (A pattern's span ends
+    /// behind its parentheses, so their closing ones cannot be counted
+    /// as for an expression.)
+    pub fn pattern_wrappers(&self, start: u32, inner_end: Option<u32>) -> usize {
+        self.tokens[self.pos.min(self.tokens.len())..]
+            .iter()
+            .enumerate()
+            .take_while(|(i, tok)| {
+                tok.kind == Token::LParen
+                    && tok.span.start < start
+                    && inner_end
+                        .is_none_or(|end| self.tokens[self.closers[self.pos + i]].span.end > end)
+            })
+            .count()
+    }
+
     /// Whether a comment stands directly inside one of the `count`
-    /// pairs of parentheses at the cursor, which are around an
-    /// expression that ends at byte `end`: behind an opening one or in
-    /// front of a closing one. There a line break is allowed that is not
-    /// allowed without the parentheses.
-    pub fn comments_inside_wrappers(&self, count: usize, end: u32) -> bool {
-        let Some(inner) = self.tokens.get(self.pos + count) else {
-            return false;
-        };
-        let last = self.tokens.partition_point(|tok| tok.span.end < end);
-        let Some(closer) = self.tokens.get(last + count) else {
-            return false;
-        };
-        self.comments_between(self.tok().span.end, inner.span.start)
-            || self.comments_between(end, closer.span.start)
-    }
-
-    /// Whether the next source token is a `(` with a comment directly
-    /// behind it or in front of its `)`.
-    pub fn comments_inside_paren(&self) -> bool {
-        if !self.at(&Token::LParen) {
+    /// nested pairs of parentheses at the cursor: behind an opening one
+    /// or in front of a closing one. There a line break is allowed that
+    /// is not allowed without the parentheses.
+    pub fn comments_inside_parens(&self, count: usize) -> bool {
+        if count == 0 || self.pos + count >= self.tokens.len() {
             return false;
         }
-        let closer = self.tokens[self.closers[self.pos]];
-        let behind = self.tokens[(self.pos + 1).min(self.tokens.len() - 1)];
-        !behind.comments.is_empty() || !closer.comments.is_empty()
-    }
-
-    /// Whether the `(` at the cursor holds a token of the kind of
-    /// `kind` that is in no other bracket.
-    pub fn paren_holds(&self, kind: &Token) -> bool {
-        if !self.at(&Token::LParen) {
+        let inner_closer = self.closers[self.pos + count - 1];
+        let outer_closer = self.closers[self.pos];
+        if inner_closer == 0 || outer_closer < inner_closer {
             return false;
         }
+        (self.pos + 1..=self.pos + count)
+            .chain(inner_closer..=outer_closer)
+            .any(|i| !self.tokens[i].comments.is_empty())
+    }
+
+    /// Whether the innermost of the `count` nested pairs of parentheses
+    /// at the cursor holds a token of the kind of `kind` that is in no
+    /// other bracket.
+    pub fn parens_hold(&self, count: usize, kind: &Token) -> bool {
+        if count == 0 || self.pos + count > self.tokens.len() {
+            return false;
+        }
+        let open = self.pos + count - 1;
         let mut depth = 0;
-        for tok in &self.tokens[self.pos + 1..self.closers[self.pos].max(self.pos + 1)] {
+        for tok in &self.tokens[open + 1..self.closers[open].max(open + 1)] {
             match tok.kind {
+                _ if depth == 0
+                    && std::mem::discriminant(&tok.kind) == std::mem::discriminant(kind) =>
+                {
+                    return true;
+                }
                 Token::LParen
                 | Token::LBracket
                 | Token::LBrace
@@ -606,11 +613,6 @@ impl<'a> Cursor<'a> {
                 | Token::HashBracket
                 | Token::StringStart(_) => depth += 1,
                 Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => depth -= 1,
-                _ if depth == 0
-                    && std::mem::discriminant(&tok.kind) == std::mem::discriminant(kind) =>
-                {
-                    return true;
-                }
                 _ => {}
             }
         }
@@ -690,7 +692,7 @@ mod tests {
     fn respace(input: &str, skip: &[Token]) -> String {
         let lexed = Lexer::new(FileId::default(), input).tokenize().unwrap();
         let mut cursor = Cursor::new(input, &lexed);
-        let mut docs = vec![cursor.header()];
+        let mut docs = vec![cursor.header().0];
         let mut first = true;
         while !cursor.at_end() {
             let kind = cursor.peek().clone();
@@ -755,23 +757,27 @@ mod tests {
     }
 
     #[test]
-    fn the_header_ends_at_the_last_empty_line_before_the_first_token() {
+    fn the_header_ends_at_the_first_empty_line_or_the_first_token() {
         let header = |input: &str| {
             let lexed = Lexer::new(FileId::default(), input).tokenize().unwrap();
             let mut cursor = Cursor::new(input, &lexed);
-            let header = cursor.header();
+            let (header, blank) = cursor.header();
             let rest = cursor.leading();
-            (render(&header, 100), render(&rest, 100))
+            (render(&header, 100), blank, render(&rest, 100))
         };
         assert_eq!(
-            header("-- h\n\n-- i\n\n-- about a\na"),
-            ("-- h\n\n-- i\n".to_string(), "-- about a\n".to_string())
+            header("-- h\n-- i\n\n-- j\n\n-- about a\na"),
+            (
+                "-- h\n-- i\n".to_string(),
+                true,
+                "-- j\n\n-- about a\n".to_string()
+            )
         );
         assert_eq!(
-            header("-- about a\na"),
-            (String::new(), "-- about a\n".to_string())
+            header("-- h\n-- i\na"),
+            ("-- h\n-- i\n".to_string(), false, String::new())
         );
-        assert_eq!(header("-- h\n\na"), ("-- h\n".to_string(), String::new()));
+        assert_eq!(header("\n\na"), (String::new(), false, String::new()));
     }
 
     #[test]

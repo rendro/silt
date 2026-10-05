@@ -307,8 +307,16 @@ impl Renderer {
             match doc {
                 Doc::Nil | Doc::Settle => {}
                 Doc::Text(text) => match text.split_once('\n') {
-                    // The line ends inside the text.
-                    Some((first, _)) => return left >= first.chars().count() as isize,
+                    // Text that spans lines: its first line has to fit
+                    // here, and what follows it stands behind its last
+                    // line.
+                    Some((first, rest)) => {
+                        if left < first.chars().count() as isize {
+                            return false;
+                        }
+                        let last = rest.rsplit('\n').next().unwrap_or(rest);
+                        left = self.width as isize - last.chars().count() as isize;
+                    }
                     None => left -= text.chars().count() as isize,
                 },
                 // A comment does not count, whichever kind it is: one
@@ -806,7 +814,8 @@ mod tests {
     }
 
     #[test]
-    fn text_with_a_line_break_is_measured_to_its_first_line() {
+    fn text_with_a_line_break_is_measured_line_by_line() {
+        // Its first line fits behind `f(`, and `)` fits behind its last.
         let string = t("\"\"\"\n    raw\n  \"\"\"");
         let doc = list("f(", vec![string], ")");
         assert_eq!(render(&doc, 10), "f(\"\"\"\n    raw\n  \"\"\")\n");

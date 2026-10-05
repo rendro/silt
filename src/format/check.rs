@@ -29,7 +29,7 @@ use std::fmt::Write as _;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::{Lexed, Lexer, Token};
+use crate::lexer::{CommentKind, Lexed, Lexer, Token};
 use crate::parser::Parser;
 use crate::source::{FileId, SourceFile, SourceName, Span};
 
@@ -48,7 +48,8 @@ pub fn verify(source: &str, lexed: &Lexed, program: &Program, output: &str) -> R
     let before = decl_shapes(source, lexed, program);
     let after = decl_shapes(output, &output_lexed, &output_program);
     compare_programs(&before.decls, &after.decls)?;
-    compare_comments(&before, &after)
+    compare_comments(&before, &after)?;
+    compare_tokens(&before.decls, &after.decls)
 }
 
 fn unparseable(message: &str, span: Span, output: &str) -> Refusal {
@@ -87,6 +88,21 @@ struct DeclShape {
     /// Its comments: those in front of it (but for the file's header),
     /// those inside it, and those behind it on its last line.
     comments: Vec<Note>,
+    /// Its number and string tokens as they are spelled: the tree holds
+    /// their values, and `0xFF` and `255` are one value.
+    literals: Vec<Note>,
+    /// For each `fn`, `pub`, `type`, `trait` and `let` in it, how the
+    /// comment lines above it stand to it: a comment directly above a
+    /// declaration is its documentation, one with an empty line between
+    /// is not.
+    docs: Vec<Above>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Above {
+    Nothing,
+    Adjacent,
+    Detached,
 }
 
 /// A comment: its text with every run of white space as one space, and
@@ -102,6 +118,10 @@ struct Shapes {
     /// The comments above the last empty line in front of the first
     /// declaration.
     header: Vec<Note>,
+    /// Whether the header stands directly above the first declaration,
+    /// without an empty line: it is that declaration's documentation
+    /// then.
+    header_adjacent: bool,
     decls: Vec<DeclShape>,
     /// The comments on lines of their own behind the last declaration.
     tail: Vec<Note>,
@@ -121,6 +141,8 @@ fn decl_shapes(source: &str, lexed: &Lexed, program: &Program) -> Shapes {
                 span,
                 shape: writer.out,
                 comments: Vec::new(),
+                literals: Vec::new(),
+                docs: Vec::new(),
             }
         })
         .collect();
@@ -143,21 +165,24 @@ fn decl_shapes(source: &str, lexed: &Lexed, program: &Program) -> Shapes {
         .collect();
     for (i, tok) in tokens.iter().enumerate() {
         let comments = lexed.comments_before(tok);
-        // The header ends at the last empty line in front of the first
-        // token.
-        // (A file without declarations has no header: its comments are
-        // all behind the last declaration.)
-        let header_len = if i == 0 && !decls.is_empty() {
-            let mut len = 0;
-            for (n, comment) in comments.iter().enumerate().skip(1) {
-                if comment.newlines_before >= 2 {
-                    len = n;
-                }
-            }
-            if tok.newlines_before >= 2 {
-                len = comments.len();
-            }
-            len
+        // Whether the token stands on the line of comment `n`, with
+        // nothing but comments between them.
+        let token_on_line = |n: usize| {
+            tok.newlines_before == 0
+                && tok.kind != Token::Eof
+                && comments[n + 1..].iter().all(|c| c.newlines_before == 0)
+        };
+        // The header: the comment lines that start the file, up to the
+        // first empty line or the first token.
+        let header_len = if i == 0 {
+            comments
+                .iter()
+                .enumerate()
+                .position(|(n, comment)| {
+                    (n > 0 && comment.newlines_before >= 2)
+                        || (comment.kind == CommentKind::Block && token_on_line(n))
+                })
+                .unwrap_or(comments.len())
         } else {
             0
         };
@@ -186,9 +211,45 @@ fn decl_shapes(source: &str, lexed: &Lexed, program: &Program) -> Shapes {
                 }
             }
         }
+        let Some(decl) = owner(tok.span.start).filter(|_| tok.kind != Token::Eof) else {
+            continue;
+        };
+        match tok.kind {
+            Token::Int(_)
+            | Token::Float(_)
+            | Token::StringLit(..)
+            | Token::StringStart(_)
+            | Token::StringMiddle(_)
+            | Token::StringEnd(_) => decls[decl].literals.push(Note {
+                text: source[tok.span.start as usize..tok.span.end as usize].to_string(),
+                span: tok.span,
+            }),
+            Token::Fn | Token::Pub | Token::Type | Token::Trait | Token::Let => {
+                // The comments above the token that are not the header:
+                // the last one stands on a line of its own if a line
+                // break stands in front of it or it starts the file.
+                let above = &comments[header_len..];
+                let own_line = !above.is_empty()
+                    && tok.newlines_before > 0
+                    && (i == 0 || comments.iter().any(|c| c.newlines_before > 0));
+                decls[decl]
+                    .docs
+                    .push(match (own_line, tok.newlines_before) {
+                        (false, _) => Above::Nothing,
+                        (true, 1) => Above::Adjacent,
+                        (true, _) => Above::Detached,
+                    });
+            }
+            _ => {}
+        }
     }
+    let header_adjacent = !header.is_empty()
+        && tokens.first().is_some_and(|tok| {
+            tok.newlines_before < 2 && lexed.comments_before(tok).len() == header.len()
+        });
     Shapes {
         header,
+        header_adjacent,
         decls,
         tail,
     }
@@ -264,6 +325,55 @@ fn same_declarations(before: &[&DeclShape], after: &[&DeclShape]) -> Result<(), 
     }
 }
 
+// ── Tokens ──────────────────────────────────────────────────────────
+
+/// What the tree does not hold: how each literal is spelled, and
+/// whether a comment stands directly above a declaration. The
+/// declarations are those of `compare_programs`, which has found them
+/// to be the same ones; imports hold neither.
+fn compare_tokens(before: &[DeclShape], after: &[DeclShape]) -> Result<(), Refusal> {
+    let rest = |decls: &'_ [DeclShape]| -> Vec<usize> {
+        (0..decls.len()).filter(|i| !decls[*i].is_import).collect()
+    };
+    for (b, a) in rest(before).into_iter().zip(rest(after)) {
+        let (b, a) = (&before[b], &after[a]);
+        let texts = |decl: &DeclShape| -> Vec<String> {
+            decl.literals.iter().map(|n| n.text.clone()).collect()
+        };
+        if texts(b) != texts(a) {
+            let changed = b
+                .literals
+                .iter()
+                .zip(a.literals.iter())
+                .find(|(x, y)| x.text != y.text)
+                .map(|(x, _)| x)
+                .or(b.literals.last());
+            return Err(Refusal {
+                message: match changed {
+                    Some(note) => format!(
+                        "the result would spell `{}` in {} another way",
+                        excerpt(&note.text),
+                        b.label
+                    ),
+                    None => format!("the result would hold another literal in {}", b.label),
+                },
+                span: changed.map(|n| n.span).or(Some(b.span)),
+            });
+        }
+        if b.docs != a.docs {
+            return Err(Refusal {
+                message: format!(
+                    "the result would move a comment onto or away from the declaration \
+                     it stands above in {}",
+                    b.label
+                ),
+                span: Some(b.span),
+            });
+        }
+    }
+    Ok(())
+}
+
 // ── Comments ────────────────────────────────────────────────────────
 
 /// The result has to hold the comments of the input: the same texts in
@@ -313,7 +423,30 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
         }
     }
 
-    same_comments("the top of the file", &before.header, &after.header)?;
+    // Where the input has no header, the comments above the import that
+    // comes first in the result start the file, and read as a header
+    // there: they are that import's.
+    let mut after_header = after.header.as_slice();
+    let mut moved_up: &[Note] = &[];
+    if before.header.is_empty() && after.decls.first().is_some_and(|d| d.is_import) {
+        (moved_up, after_header) = (after_header, &[]);
+    }
+    same_comments("the top of the file", &before.header, after_header)?;
+    // The header stays directly above the first declaration, or apart
+    // from it, as long as that declaration stays the first.
+    if let (Some(first_before), Some(first_after)) = (before.decls.first(), after.decls.first())
+        && first_before.shape == first_after.shape
+        && before.header_adjacent != after.header_adjacent
+    {
+        return Err(Refusal {
+            message: format!(
+                "the result would move a comment onto or away from the declaration \
+                 it stands above at the top of the file ({})",
+                first_before.label
+            ),
+            span: before.header.first().map(|n| n.span),
+        });
+    }
     same_comments("the end of the file", &before.tail, &after.tail)?;
     let rest = |shapes: &'_ Shapes| -> Vec<(String, Vec<Note>)> {
         shapes
@@ -333,7 +466,10 @@ fn compare_comments(before: &Shapes, after: &Shapes) -> Result<(), Refusal> {
             .iter()
             .filter(|d| d.is_import)
             .map(|d| {
-                let texts: Vec<&str> = d.comments.iter().map(|n| n.text.as_str()).collect();
+                let mut texts: Vec<&str> = d.comments.iter().map(|n| n.text.as_str()).collect();
+                if std::ptr::eq(d, &shapes.decls[0]) && std::ptr::eq(shapes, after) {
+                    texts.splice(0..0, moved_up.iter().map(|n| n.text.as_str()));
+                }
                 (
                     format!("{}\n{}", d.shape, texts.join("\n")),
                     d.label.clone(),
@@ -1169,12 +1305,76 @@ mod tests {
             "fn f() {\n  1 -- about g\n}\nfn g() {\n  2\n}\n",
         );
         assert!(message.contains("`-- about g`"), "{message}");
-        // The file's header is a place of its own.
+    }
+
+    #[test]
+    fn the_header_stays_on_top() {
+        // The comment lines that start the file do not go with the
+        // import under them.
+        let source = "-- cmd: check\n-- exit: 0\nimport b\nimport a\n";
+        let message = refusal(source, "import a\n-- cmd: check\n-- exit: 0\nimport b\n");
+        assert!(message.contains("the top of the file"), "{message}");
+        assert_eq!(
+            judge(source, "-- cmd: check\n-- exit: 0\n\nimport a\nimport b\n"),
+            Ok(())
+        );
+        // Nor does a comment join them.
         let message = refusal(
-            "-- header\n\nfn f() {\n  1\n}\n",
-            "-- header\nfn f() {\n  1\n}\n",
+            "-- header\n\n-- about f\nfn f() {\n}\n",
+            "-- header\n-- about f\nfn f() {\n}\n",
         );
         assert!(message.contains("the top of the file"), "{message}");
+    }
+
+    #[test]
+    fn a_literal_spelled_another_way_is_refused() {
+        for (source, output) in [
+            ("let a = 0xFF\n", "let a = 255\n"),
+            ("let a = 1_000\n", "let a = 1000\n"),
+            ("let a = 1.50\n", "let a = 1.5\n"),
+            ("let a = \"x\\ty\"\n", "let a = \"x\ty\"\n"),
+            ("let a = \"\"\"x\"\"\"\n", "let a = \"x\"\n"),
+            ("let a = \"x{b}\\n\"\n", "let a = \"x{b}\n\"\n"),
+            (
+                "fn f(x) {\n  match x {\n    0x10 -> 1\n    _ -> 0\n  }\n}\n",
+                "fn f(x) {\n  match x {\n    16 -> 1\n    _ -> 0\n  }\n}\n",
+            ),
+        ] {
+            let message = refusal(source, output);
+            assert!(message.contains("another way"), "{source:?}: {message}");
+        }
+    }
+
+    #[test]
+    fn a_comment_that_is_detached_from_its_declaration_or_attached_to_it_is_refused() {
+        let attached = "fn f() {\n}\n\n-- Adds one.\nfn inc(x) {\n  x + 1\n}\n";
+        let detached = "fn f() {\n}\n\n-- Adds one.\n\nfn inc(x) {\n  x + 1\n}\n";
+        for (source, output) in [(attached, detached), (detached, attached)] {
+            let message = refusal(source, output);
+            assert!(message.contains("onto or away from"), "{message}");
+            assert!(message.contains("function `inc`"), "{message}");
+        }
+        // A method in a trait has its documentation too.
+        let message = refusal(
+            "trait T {\n  -- doc\n  fn f(self) -> Int\n}\n",
+            "trait T {\n  -- doc\n\n  fn f(self) -> Int\n}\n",
+        );
+        assert!(message.contains("trait `T`"), "{message}");
+    }
+
+    #[test]
+    fn a_changed_declaration_is_refused() {
+        // `pub` dropped.
+        let message = refusal("pub fn f() {\n}\n", "fn f() {\n}\n");
+        assert!(message.contains("function `f`"), "{message}");
+        // Another operator.
+        let message = refusal("fn f() {\n  1 + 2\n}\n", "fn f() {\n  1 - 2\n}\n");
+        assert!(message.contains("function `f`"), "{message}");
+        // A declaration lost, and one gained.
+        let message = refusal("fn f() {\n}\nfn g() {\n}\n", "fn f() {\n}\n");
+        assert!(message.contains("function `g`"), "{message}");
+        let message = refusal("fn f() {\n}\n", "fn f() {\n}\nfn g() {\n}\n");
+        assert!(message.contains("it would hold function `g`"), "{message}");
     }
 
     #[test]

@@ -8,8 +8,9 @@
 //!   2. did not panic,
 //!   3. produced text that lexes and parses and holds every comment of
 //!      the input as often as the input holds it (checked here with the
-//!      lexer, apart from the formatter's own check), and
-//!   4. is idempotent: formatting the result changes nothing.
+//!      lexer, apart from the formatter's own check),
+//!   4. left the comment lines that start the file where they are, and
+//!   5. is idempotent: formatting the result changes nothing.
 //!
 //! Inputs are the examples, the `silt` snippets of the docs, the golden
 //! cases, the formatter's fuzz corpus, a directory named by
@@ -80,49 +81,61 @@ pub struct Input {
 
 #[derive(Clone, Copy)]
 pub enum CommentKind {
+    /// ` -- c` and a line break.
     Line,
+    /// ` {- c -} `.
     Block,
+    /// A line break, ` -- c` and a line break.
+    OwnLine,
+    /// ` {- c`, a line break and ` more -} `.
+    BlockOverLines,
 }
 
-/// One run of the formatter: an input as it is, or with one comment put
-/// in front of the token at `site`.
+/// One run of the formatter: an input as it is, or with a comment put
+/// in front of the token at each of some sites.
 pub struct Job<'a> {
     pub input: &'a Input,
-    pub mutation: Option<(usize, CommentKind)>,
+    /// The sites, in falling order, each with the comment it gets.
+    pub mutation: Vec<(usize, CommentKind)>,
+    /// What tells this job from the others of its input, when the
+    /// mutation is too long to name.
+    pub label: String,
 }
 
 impl Job<'_> {
     fn name(&self) -> String {
-        match self.mutation {
-            None => self.input.name.clone(),
-            Some((site, CommentKind::Line)) => format!("{} + `--` at byte {site}", self.input.name),
-            Some((site, CommentKind::Block)) => {
+        match self.mutation.as_slice() {
+            [] => self.input.name.clone(),
+            [(site, CommentKind::Line)] => format!("{} + `--` at byte {site}", self.input.name),
+            [(site, CommentKind::Block)] => {
                 format!("{} + `{{- -}}` at byte {site}", self.input.name)
             }
+            _ => format!("{} + {}", self.input.name, self.label),
         }
     }
 
     fn class(&self) -> String {
-        match self.mutation {
-            None => self.input.class.to_string(),
-            Some(_) => format!("{} mutants", self.input.class),
+        match self.mutation.len() {
+            0 => self.input.class.to_string(),
+            1 => format!("{} mutants", self.input.class),
+            _ => format!("{} with several comments", self.input.class),
         }
     }
 
     /// The text to format. A line comment takes the rest of its line, so
     /// the token it stands before moves to a line of its own.
     fn text(&self) -> String {
-        let text = &self.input.text;
-        match self.mutation {
-            None => text.clone(),
-            Some((site, kind)) => {
-                let comment = match kind {
-                    CommentKind::Line => format!(" -- C{site}Z\n "),
-                    CommentKind::Block => format!(" {{- C{site}Z -}} "),
-                };
-                format!("{}{comment}{}", &text[..site], &text[site..])
-            }
+        let mut text = self.input.text.clone();
+        for (site, kind) in &self.mutation {
+            let comment = match kind {
+                CommentKind::Line => format!(" -- C{site}Z\n "),
+                CommentKind::Block => format!(" {{- C{site}Z -}} "),
+                CommentKind::OwnLine => format!("\n -- C{site}Z\n "),
+                CommentKind::BlockOverLines => format!(" {{- C{site}Z\n more -}} "),
+            };
+            text.insert_str(*site, &comment);
         }
+        text
     }
 }
 
@@ -322,7 +335,8 @@ pub fn plain(inputs: &[Input]) -> Vec<Job<'_>> {
         .iter()
         .map(|input| Job {
             input,
-            mutation: None,
+            mutation: Vec::new(),
+            label: String::new(),
         })
         .collect()
 }
@@ -345,7 +359,8 @@ pub fn mutants(inputs: &[Input], every: usize) -> Vec<Job<'_>> {
             for kind in [CommentKind::Line, CommentKind::Block] {
                 jobs.push(Job {
                     input,
-                    mutation: Some((site, kind)),
+                    mutation: vec![(site, kind)],
+                    label: String::new(),
                 });
             }
         }
@@ -353,12 +368,65 @@ pub fn mutants(inputs: &[Input], every: usize) -> Vec<Job<'_>> {
     jobs
 }
 
+/// `count` jobs, each an input of `inputs` with two to twelve comments
+/// of every kind at sites drawn with `seed`: what one comment per input
+/// does not find, how two comments get in each other's way.
+pub fn stress(inputs: &[Input], count: usize, seed: u64) -> Vec<Job<'_>> {
+    // xorshift64*: the same jobs for the same seed, on every platform.
+    let mut state = seed.max(1);
+    let mut next = move |below: usize| {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as usize % below
+    };
+    let parses = parse(inputs);
+    let sites: Vec<(&Input, Vec<usize>)> = inputs
+        .iter()
+        .zip(parses)
+        .filter(|(input, parses)| *parses && input.text.len() <= MAX_MUTATED_BYTES)
+        .map(|(input, _)| (input, gaps(&input.text)))
+        .filter(|(_, gaps)| !gaps.is_empty())
+        .collect();
+    if sites.is_empty() {
+        return Vec::new();
+    }
+    let kinds = [
+        CommentKind::Line,
+        CommentKind::Block,
+        CommentKind::OwnLine,
+        CommentKind::BlockOverLines,
+    ];
+    (0..count)
+        .map(|n| {
+            let (input, gaps) = &sites[next(sites.len())];
+            let wanted = [2, 3, 4, 6, 8, 12][next(6)].min(gaps.len());
+            let mut chosen: Vec<usize> = Vec::new();
+            while chosen.len() < wanted {
+                let site = gaps[next(gaps.len())];
+                if !chosen.contains(&site) {
+                    chosen.push(site);
+                }
+            }
+            chosen.sort_unstable_by(|a, b| b.cmp(a));
+            Job {
+                input,
+                mutation: chosen
+                    .into_iter()
+                    .map(|site| (site, kinds[next(4)]))
+                    .collect(),
+                label: format!("{wanted} comments (seed {seed}, job {n})"),
+            }
+        })
+        .collect()
+}
+
 /// One input the formatter got wrong.
 pub struct Failure {
     pub name: String,
     pub class: String,
     /// `refused`, `panicked`, `result does not parse`, `comments changed`,
-    /// `second pass refused` or `not idempotent`.
+    /// `header changed`, `second pass refused` or `not idempotent`.
     pub kind: &'static str,
     pub detail: String,
 }
@@ -395,6 +463,19 @@ fn parsed_comments(text: &str) -> Option<Vec<String>> {
     Some(comments)
 }
 
+/// The comment lines that start `text`, up to the first line that is
+/// not a `--` comment. The golden harness reads a case's directives from
+/// them, and a reader the file's purpose: they stay where they are.
+fn leading_comment_lines(text: &str) -> Vec<&str> {
+    text.strip_prefix('\u{feff}')
+        .unwrap_or(text)
+        .lines()
+        .map(str::trim)
+        .skip_while(|line| line.is_empty())
+        .take_while(|line| line.starts_with("--"))
+        .collect()
+}
+
 /// The first line of `text`, shortened.
 fn excerpt(text: &str) -> String {
     let line = text.lines().next().unwrap_or("");
@@ -423,6 +504,12 @@ fn check(text: &str, format: Formatter) -> Result<bool, (&'static str, String)> 
             None => "a comment is repeated or new".to_string(),
         };
         return Err(("comments changed", detail));
+    }
+    // (Where the file starts with an import that has a comment above
+    // it, the result starts with whichever import is the first then,
+    // and its comment: lines may follow the header, none may leave it.)
+    if !leading_comment_lines(&first).starts_with(&leading_comment_lines(text)) {
+        return Err(("header changed", excerpt(&first)));
     }
     match format(&first) {
         Formatted::Ok(second) if second == first => Ok(true),
@@ -486,8 +573,17 @@ pub fn run(jobs: &[Job<'_>], format: Formatter, workers: usize) -> Report {
                             Err(_) => ("panicked", String::new()),
                         };
                         *report.checked.entry(job.class()).or_default() += 1;
+                        // `SILT_FMT_FAILED=<dir>` keeps the inputs that
+                        // failed, numbered as in the report.
+                        let mut name = job.name();
+                        if let Some(dir) = std::env::var_os("SILT_FMT_FAILED") {
+                            let file = format!("failed-{}.silt", report.failures.len());
+                            let _ = std::fs::create_dir_all(&dir);
+                            let _ = std::fs::write(Path::new(&dir).join(&file), &text);
+                            name = format!("{name} [{file}]");
+                        }
                         report.failures.push(Failure {
-                            name: job.name(),
+                            name,
                             class: job.class(),
                             kind: failure.0,
                             detail: failure.1,

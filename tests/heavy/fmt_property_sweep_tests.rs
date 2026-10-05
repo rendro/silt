@@ -16,7 +16,7 @@
 
 use crate::fmt_property::{
     Expect, Formatter, SUITE_WORKERS, conclude, current_formatter, doc_snippets, examples,
-    extra_corpus, fuzz_corpus, golden_files, mutants, next_formatter, plain, run,
+    extra_corpus, fuzz_corpus, golden_files, mutants, next_formatter, plain, run, stress,
 };
 
 /// Without `SILT_FMT_FULL`, every n-th gap of a doc snippet and of a
@@ -36,6 +36,40 @@ fn every_input_and_its_comment_mutants() {
 #[test]
 fn new_printer_on_every_input_and_its_comment_mutants() {
     sweep("sweep, new printer", next_formatter, Expect::Clean);
+}
+
+/// Inputs with several comments each, at random sites: what one comment
+/// per input does not find. Off unless `SILT_FMT_STRESS=<count>` says
+/// how many; `SILT_FMT_SEED=<n>` draws other ones.
+///
+/// ```text
+/// SILT_FMT_STRESS=200000 cargo test --release --all-features --test heavy new_printer_on_random -- --nocapture
+/// ```
+#[test]
+fn new_printer_on_random_comments() {
+    let Ok(count) = std::env::var("SILT_FMT_STRESS") else {
+        eprintln!("skipped: set SILT_FMT_STRESS=<count> to run it");
+        return;
+    };
+    let count: usize = count.parse().expect("SILT_FMT_STRESS is a number");
+    let seed: u64 = match std::env::var("SILT_FMT_SEED") {
+        Ok(seed) => seed.parse().expect("SILT_FMT_SEED is a number"),
+        Err(_) => 1,
+    };
+    let mut inputs = examples();
+    inputs.extend(doc_snippets());
+    inputs.extend(
+        golden_files()
+            .into_iter()
+            .filter(|input| !input.name.starts_with("tests/golden/repros/")),
+    );
+    let jobs = stress(&inputs, count, seed);
+    let workers = match std::env::var("SILT_FMT_WORKERS") {
+        Ok(n) => n.parse().expect("SILT_FMT_WORKERS is a number"),
+        Err(_) => std::thread::available_parallelism().map_or(4, |n| n.get()),
+    };
+    let report = run(&jobs, next_formatter, workers);
+    conclude("random comments, new printer", &report, Expect::Clean);
 }
 
 fn sweep(what: &str, format: Formatter, expect: Expect) {

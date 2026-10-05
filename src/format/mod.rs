@@ -63,9 +63,22 @@ pub struct Refusal {
 }
 
 /// Format `source`, the text of `file`. The result is checked before it
-/// is returned (see `check`): it parses, it is the same program, and it
-/// holds the same comments in the same order.
+/// is returned (see `check`): it parses, it is the same program, it
+/// spells every literal the same way, and it holds the same comments in
+/// the same order.
 pub fn format(file: FileId, source: &str) -> Result<String, Error> {
+    format_with(file, source, |text| text)
+}
+
+/// `format`, with `tamper` applied to the printer's result before the
+/// oracle sees it: the way to test that a wrong result is refused and
+/// not returned.
+#[doc(hidden)]
+pub fn format_with(
+    file: FileId,
+    source: &str,
+    tamper: impl FnOnce(String) -> String,
+) -> Result<String, Error> {
     let lexed = Lexer::new(file, source).tokenize().map_err(Error::Syntax)?;
     let program = Parser::new(lexed.clone(), source)
         .parse_program()
@@ -81,6 +94,7 @@ pub fn format(file: FileId, source: &str) -> Result<String, Error> {
     if source.starts_with('\u{feff}') {
         output.insert(0, '\u{feff}');
     }
+    let output = tamper(output);
     // Text that is returned unchanged needs no check.
     if output != source {
         check::verify(source, &lexed, &program, &output).map_err(Error::Refused)?;
@@ -138,6 +152,27 @@ mod tests {
         assert!(matches!(error, Error::Syntax(_)), "{error:?}");
         let error = format(FileId::default(), "fn main() { \"open }").unwrap_err();
         assert!(matches!(error, Error::Syntax(_)), "{error:?}");
+    }
+
+    #[test]
+    fn a_wrong_result_is_refused_and_not_returned() {
+        // The oracle is fed what a defect in the printer would give it.
+        let source = "-- Adds one.\nfn inc(x) {\n  x + 0x01 -- one\n}\n";
+        let refused = |tamper: fn(String) -> String| match format_with(
+            FileId::default(),
+            &format!("\n{source}"),
+            tamper,
+        ) {
+            Err(Error::Refused(refusal)) => refusal.message,
+            other => panic!("not refused: {other:?}"),
+        };
+        assert!(refused(|text| text.replace("0x01", "1")).contains("another way"));
+        assert!(refused(|text| text.replace(" -- one", "")).contains("lose the comment"));
+        assert!(refused(|text| text.replace("x +", "x -")).contains("would not stay"));
+        assert!(refused(|text| text.replace("one.\n", "one.\n\n")).contains("the top of the file"));
+        assert!(refused(|text| text.replace("x + 0x01", "(x + 0x01")).contains("would not parse"));
+        // Untampered, it is formatted.
+        assert_eq!(fmt(&format!("\n{source}")), source);
     }
 
     #[test]
