@@ -67,7 +67,7 @@ impl BuiltinEnv {
                 checker.register_trait_impl(ti, &mut scope);
             }
         }
-        checker.check_decl_bodies(&mut impls, &scope);
+        checker.check_decl_bodies(&mut impls, &mut scope);
         checker.finalize_deferred_checks();
         debug_assert!(
             checker.errors.is_empty(),

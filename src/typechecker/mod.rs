@@ -752,7 +752,7 @@ impl TypeChecker {
         let pre_pass3_field_count = self.pending_field_accesses.len();
         let pre_pass3_numeric_count = self.pending_numeric_checks.len();
         let pre_pass3_qmark_count = self.pending_question_marks.len();
-        self.check_decl_bodies(&mut program.decls, &env);
+        self.check_decl_bodies(&mut program.decls, &mut env);
 
         // Narrow function schemes based on body constraints, then re-check.
         //
@@ -890,7 +890,7 @@ impl TypeChecker {
                 self.pending_where_constraints.clear();
 
                 // Re-check the bodies with the narrowed schemes.
-                self.check_decl_bodies(&mut program.decls, &env);
+                self.check_decl_bodies(&mut program.decls, &mut env);
             }
         }
 
@@ -968,7 +968,7 @@ impl TypeChecker {
     /// from the template's type variables to those of the new type, and
     /// the same mapping is applied to the constraints' trait arguments,
     /// which may mention those variables.
-    pub(super) fn check_decl_bodies(&mut self, decls: &mut [Decl], env: &TypeEnv) {
+    pub(super) fn check_decl_bodies(&mut self, decls: &mut [Decl], env: &mut TypeEnv) {
         for decl in decls.iter_mut() {
             if let Decl::Fn(f) = decl
                 && !f.is_recovery_stub

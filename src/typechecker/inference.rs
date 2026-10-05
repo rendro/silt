@@ -601,7 +601,7 @@ impl TypeChecker {
 
     // ── Check function body ─────────────────────────────────────────
 
-    pub(super) fn check_fn_body(&mut self, f: &mut FnDecl, env: &TypeEnv) {
+    pub(super) fn check_fn_body(&mut self, f: &mut FnDecl, env: &mut TypeEnv) {
         let _ = self.check_fn_body_with_name(f, env, f.name);
     }
 
@@ -614,11 +614,9 @@ impl TypeChecker {
     pub(super) fn check_fn_body_with_name(
         &mut self,
         f: &mut FnDecl,
-        env: &TypeEnv,
+        env: &mut TypeEnv,
         lookup_name: Symbol,
     ) -> Option<Type> {
-        let mut local_env = env.child();
-
         // Validate where clauses
         for wc in &f.where_clauses {
             // A bound the resolver resolved to nothing: it reported why.
@@ -768,12 +766,13 @@ impl TypeChecker {
         // this, `fn f(a: Int, a: Int)` typechecks and the second param
         // silently shadows the first. See `check_fn_params_duplicate_bindings`.
         self.check_fn_params_duplicate_bindings(&f.params);
+        env.push();
         for (i, param) in f.params.iter().enumerate() {
             if let Some(ty) = param_types.get(i) {
                 self.bind_irrefutable_pattern(
                     &param.pattern,
                     ty,
-                    &mut local_env,
+                    env,
                     f.span,
                     BindingSite::FnParam,
                 );
@@ -789,7 +788,8 @@ impl TypeChecker {
         let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
         // Infer the body and unify with declared return type
-        let body_type = self.infer_expr(&mut f.body, &mut local_env);
+        let body_type = self.infer_expr(&mut f.body, env);
+        env.pop();
         let ret_unify_err_count = self.errors.len();
         self.unify(&body_type, &ret_type, f.body.span);
         self.retarget_ok_wrap_fixes(ret_unify_err_count, &f.body);
@@ -2603,7 +2603,7 @@ impl TypeChecker {
             }
 
             ExprKind::Lambda { params, body } => {
-                let mut local_env = env.child();
+                env.push();
                 // Soundness: lambda param lists are a single conjunctive
                 // scope too — `|a, a| ...` must be rejected the same way
                 // `fn f(a, a)` is.
@@ -2624,7 +2624,7 @@ impl TypeChecker {
                         self.bind_irrefutable_pattern(
                             &p.pattern,
                             &ty,
-                            &mut local_env,
+                            env,
                             span,
                             BindingSite::ClosureParam,
                         );
@@ -2645,7 +2645,8 @@ impl TypeChecker {
                 let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
                 let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
-                let body_type = self.infer_expr(body, &mut local_env);
+                let body_type = self.infer_expr(body, env);
+                env.pop();
                 let ret_unify_err_count = self.errors.len();
                 self.unify(&body_type, &lambda_ret, body.span);
                 self.retarget_ok_wrap_fixes(ret_unify_err_count, body);
@@ -3132,12 +3133,12 @@ impl TypeChecker {
                         // tracked here to type such a match `Never`.
                         let mut every_arm_diverges = !arms.is_empty();
                         for arm in arms.iter_mut() {
-                            let mut arm_env = env.child();
+                            env.push();
                             // Soundness: `match e { (x, x) -> x }` used to
                             // typecheck silently, binding the second `x` on
                             // top of the first. Reject duplicate binders
                             // in the arm pattern before check_pattern walks
-                            // it and defines them in `arm_env`.
+                            // it and defines them in the arm's frame.
                             self.check_pattern_duplicate_bindings(&arm.pattern);
                             // A name in the pattern the resolver reported:
                             // what the arm covers is not known.
@@ -3145,12 +3146,7 @@ impl TypeChecker {
                                 any_pattern_mismatch = true;
                             }
                             let pat_err_count = self.errors.len();
-                            self.check_pattern(
-                                &arm.pattern,
-                                &scrutinee_ty,
-                                &mut arm_env,
-                                scrutinee_span,
-                            );
+                            self.check_pattern(&arm.pattern, &scrutinee_ty, env, scrutinee_span);
                             if self.errors.len() > pat_err_count {
                                 let new_diags: Vec<Diagnostic> =
                                     self.errors.drain(pat_err_count..).collect();
@@ -3177,12 +3173,13 @@ impl TypeChecker {
 
                             if let Some(ref mut guard) = arm.guard {
                                 let guard_span = guard.span;
-                                let guard_ty = self.infer_expr(guard, &mut arm_env);
+                                let guard_ty = self.infer_expr(guard, env);
                                 self.unify(&guard_ty, &Type::Bool, guard_span);
                             }
 
                             let body_span = arm.body.span;
-                            let arm_ty = self.infer_expr(&mut arm.body, &mut arm_env);
+                            let arm_ty = self.infer_expr(&mut arm.body, env);
+                            env.pop();
                             every_arm_diverges &= matches!(arm_ty, Type::Never);
                             self.unify(&result_ty, &arm_ty, body_span);
                         }
@@ -3250,16 +3247,17 @@ impl TypeChecker {
                         let mut every_arm_diverges = !arms.is_empty();
 
                         for arm in arms.iter_mut() {
-                            let mut arm_env = env.child();
+                            env.push();
 
                             if let Some(ref mut guard) = arm.guard {
                                 let guard_span = guard.span;
-                                let guard_ty = self.infer_expr(guard, &mut arm_env);
+                                let guard_ty = self.infer_expr(guard, env);
                                 self.unify(&guard_ty, &Type::Bool, guard_span);
                             }
 
                             let body_span = arm.body.span;
-                            let arm_ty = self.infer_expr(&mut arm.body, &mut arm_env);
+                            let arm_ty = self.infer_expr(&mut arm.body, env);
+                            env.pop();
                             every_arm_diverges &= matches!(arm_ty, Type::Never);
                             self.unify(&result_ty, &arm_ty, body_span);
                         }
@@ -3287,27 +3285,31 @@ impl TypeChecker {
 
             ExprKind::Block(stmts) => {
                 let mut last_ty = Type::Unit;
-                let mut block_env = env.child();
-
+                env.push();
                 for stmt in stmts {
-                    last_ty = self.infer_stmt(stmt, &mut block_env);
+                    last_ty = self.infer_stmt(stmt, env);
                 }
+                env.pop();
 
                 last_ty
             }
 
             ExprKind::Loop { bindings, body } => {
-                let mut loop_env = env.child();
+                // Each initialiser is checked outside the loop's frame: it
+                // does not see the bindings.
                 let mut binding_types = Vec::new();
-                for (name, _, value) in bindings.iter_mut() {
-                    let ty = self.infer_expr(value, env);
-                    binding_types.push(ty.clone());
-                    loop_env.define(*name, Scheme::mono(ty));
+                for (_, _, value) in bindings.iter_mut() {
+                    binding_types.push(self.infer_expr(value, env));
+                }
+                env.push();
+                for ((name, _, _), ty) in bindings.iter().zip(&binding_types) {
+                    env.define(*name, Scheme::mono(ty.clone()));
                 }
                 self.check_recur_tail_positions(body, RecurPos::Tail);
                 let prev_loop = self.loop_binding_types.take();
                 self.loop_binding_types = Some(binding_types);
-                let result = self.infer_expr(body, &mut loop_env);
+                let result = self.infer_expr(body, env);
+                env.pop();
                 self.loop_binding_types = prev_loop;
                 result
             }
