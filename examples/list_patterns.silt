@@ -43,8 +43,7 @@ fn main() {
     Some(n) -> println("first element: {n}")
     None -> println("empty list")
   }
-  [[], [1], [1, 2], [1, 2, 3, 4, 5]]
-  |> list.each { xs -> println(describe(xs)) }
+  [[], [1], [1, 2], [1, 2, 3, 4, 5]] |> list.each { xs -> println(describe(xs)) }
   -- Pin operator: ^var matches against an existing variable's value
   let target = 20
   match [10, 20, 30] {
@@ -55,10 +54,12 @@ fn main() {
   let needle = "world"
   let words = ["hello", "world", "goodbye"]
   let found = words
-  |> list.find { w -> match w {
-    ^needle -> true
-    _ -> false
-  } }
+    |> list.find { w ->
+      match w {
+        ^needle -> true
+        _ -> false
+      }
+    }
   match found {
     Some(w) -> println("found: {w}")
     None -> println("not found")

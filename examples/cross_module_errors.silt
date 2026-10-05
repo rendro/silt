@@ -42,16 +42,13 @@ type AppError {
 -- constructor directly to result.map_err.
 
 fn load_and_fetch(path: String) -> Result(String, AppError) {
-  let contents = io.read_file(path)
-  |> result.map_err(ConfigRead)?
-  let config = json.parse(contents, Config)
-  |> result.map_err(ConfigParse)?
+  let contents = io.read_file(path) |> result.map_err(ConfigRead)?
+  let config = json.parse(contents, Config) |> result.map_err(ConfigParse)?
   match config.retries < 0 {
     true -> return Err(Custom("retries must be non-negative"))
     false -> ()
   }
-  let resp = http.get(config.api_url)
-  |> result.map_err(ApiCall)?
+  let resp = http.get(config.api_url) |> result.map_err(ApiCall)?
   Ok(resp.body)
 }
 

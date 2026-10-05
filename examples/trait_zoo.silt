@@ -8,18 +8,18 @@ import math
 type Shape {
   Circle(Float),
   Rect(Float, Float),
-  Triangle(Float, Float, Float)
+  Triangle(Float, Float, Float),
 }
 
 type Color {
   Red,
   Green,
   Blue,
-  Custom(Int, Int, Int)
+  Custom(Int, Int, Int),
 }
 
 type Styled {
-  Styled(Shape, Color)
+  Styled(Shape, Color),
 }
 
 -- Custom Display for Shape
@@ -29,7 +29,11 @@ trait Display for Shape {
     match self {
       Circle(r) -> "Circle(r={float.to_string(r, 2)})"
       Rect(w, h) -> "Rect({float.to_string(w, 2)} x {float.to_string(h, 2)})"
-      Triangle(a, b, c) -> "Triangle({float.to_string(a, 2)}, {float.to_string(b, 2)}, {float.to_string(c, 2)})"
+      Triangle(
+        a,
+        b,
+        c,
+      ) -> "Triangle({float.to_string(a, 2)}, {float.to_string(b, 2)}, {float.to_string(c, 2)})"
     }
   }
 }
@@ -117,35 +121,42 @@ fn main() {
   println("=== Trait Zoo ===")
   println("")
   -- Create a list of shapes
-  let shapes = [Circle(5.0), Rect(3.0, 4.0), Triangle(3.0, 4.0, 5.0), Circle(1.0), Rect(10.0, 2.0), Triangle(6.0, 7.0, 8.0)]
+  let shapes = [
+    Circle(5.0),
+    Rect(3.0, 4.0),
+    Triangle(3.0, 4.0, 5.0),
+    Circle(1.0),
+    Rect(10.0, 2.0),
+    Triangle(6.0, 7.0, 8.0),
+  ]
   -- Display all shapes with area and perimeter
   println("-- All Shapes --")
   shapes
-  |> list.each { s ->
-    println("  {describe(s)}")
-    println("    Area:      {fmt(s.area())}")
-    println("    Perimeter: {fmt(s.perimeter())}")
-  }
+    |> list.each { s ->
+      println("  {describe(s)}")
+      println("    Area:      {fmt(s.area())}")
+      println("    Perimeter: {fmt(s.perimeter())}")
+    }
   -- Sort shapes by area
   println("")
   println("-- Sorted by Area (ascending) --")
-  let sorted = shapes
-  |> list.sort_by { s -> s.area() }
-  sorted
-  |> list.each { s -> println("  {describe(s)} -> area = {fmt(s.area())}") }
+  let sorted = shapes |> list.sort_by { s -> s.area() }
+  sorted |> list.each { s -> println("  {describe(s)} -> area = {fmt(s.area())}") }
   -- Total area
-  let total_area = shapes
-  |> list.map { s -> s.area() }
-  |> list.fold(0.0) { acc, a -> acc + a }
+  let total_area = shapes |> list.map { s -> s.area() } |> list.fold(0.0) { acc, a -> acc + a }
   println("")
   println("Total area: {fmt(total_area)}")
   -- Colors and styled shapes
   println("")
   println("-- Styled Shapes --")
   let colors = [Red, Green, Blue, Custom(255, 128, 0)]
-  let styled_shapes = [Styled(Circle(3.0), Red), Styled(Rect(5.0, 2.0), Green), Styled(Triangle(3.0, 4.0, 5.0), Blue), Styled(Circle(7.0), Custom(255, 128, 0))]
-  styled_shapes
-  |> list.each { s -> println("  {describe(s)}") }
+  let styled_shapes = [
+    Styled(Circle(3.0), Red),
+    Styled(Rect(5.0, 2.0), Green),
+    Styled(Triangle(3.0, 4.0, 5.0), Blue),
+    Styled(Circle(7.0), Custom(255, 128, 0)),
+  ]
+  styled_shapes |> list.each { s -> println("  {describe(s)}") }
   -- Exercise math.pi and math.sqrt
   println("")
   println("-- Math Constants --")
@@ -155,6 +166,5 @@ fn main() {
   -- Display colors
   println("")
   println("-- Colors --")
-  colors
-  |> list.each { c -> println("  {describe(c)}") }
+  colors |> list.each { c -> println("  {describe(c)}") }
 }

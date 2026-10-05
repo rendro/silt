@@ -30,9 +30,51 @@ fn rand_range(seed, max) {
 
 -- Name pools
 
-let first_names = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank", "Ivy", "Jack", "Kate", "Leo", "Mona", "Nick", "Olga", "Paul", "Quinn", "Rose", "Sam", "Tina"]
+let first_names = [
+  "Alice",
+  "Bob",
+  "Carol",
+  "Dave",
+  "Eve",
+  "Frank",
+  "Grace",
+  "Hank",
+  "Ivy",
+  "Jack",
+  "Kate",
+  "Leo",
+  "Mona",
+  "Nick",
+  "Olga",
+  "Paul",
+  "Quinn",
+  "Rose",
+  "Sam",
+  "Tina",
+]
 
-let last_names = ["Smith", "Jones", "Brown", "Davis", "Miller", "Wilson", "Moore", "Taylor", "Anderson", "Thomas", "Jackson", "White", "Harris", "Martin", "Garcia", "Clark", "Lewis", "Hall", "Young", "King"]
+let last_names = [
+  "Smith",
+  "Jones",
+  "Brown",
+  "Davis",
+  "Miller",
+  "Wilson",
+  "Moore",
+  "Taylor",
+  "Anderson",
+  "Thomas",
+  "Jackson",
+  "White",
+  "Harris",
+  "Martin",
+  "Garcia",
+  "Clark",
+  "Lewis",
+  "Hall",
+  "Young",
+  "King",
+]
 
 -- Student record
 
@@ -47,8 +89,7 @@ type Student {
 fn pick_from(items, seed) {
   let len = list.length(items)
   let (idx, new_seed) = rand_range(seed, len)
-  let item = list.get(items, idx)
-  |> option.unwrap_or("")
+  let item = list.get(items, idx) |> option.unwrap_or("")
   (item, new_seed)
 }
 
@@ -84,8 +125,7 @@ fn gen_students(n, seed) {
 -- Statistics functions
 
 fn sum_list(nums) {
-  nums
-  |> list.fold(0.0) { acc, x -> acc + x }
+  nums |> list.fold(0.0) { acc, x -> acc + x }
 }
 
 fn mean(nums) {
@@ -103,14 +143,11 @@ fn median(nums) {
   let mid = n / 2
   match n % 2 {
     0 -> {
-      let a = list.get(sorted, mid - 1)
-      |> option.unwrap_or(0.0)
-      let b = list.get(sorted, mid)
-      |> option.unwrap_or(0.0)
+      let a = list.get(sorted, mid - 1) |> option.unwrap_or(0.0)
+      let b = list.get(sorted, mid) |> option.unwrap_or(0.0)
       (a + b) / 2.0
     }
-    _ -> list.get(sorted, mid)
-    |> option.unwrap_or(0.0)
+    _ -> list.get(sorted, mid) |> option.unwrap_or(0.0)
   }
 }
 
@@ -118,10 +155,10 @@ fn std_deviation(nums) {
   let avg = mean(nums)
   let n = list.length(nums)
   let sum_sq = nums
-  |> list.fold(0.0) { acc, x ->
-    let diff = x - avg
-    acc + diff * diff
-  }
+    |> list.fold(0.0) { acc, x ->
+      let diff = x - avg
+      acc + diff * diff
+    }
   match n {
     0 -> 0.0
     _ -> math.sqrt(sum_sq / int.to_float(n))
@@ -133,34 +170,29 @@ fn std_deviation(nums) {
 
 fn histogram(label, values, bucket_size) {
   let sorted = list.sort(values)
-  let min_val = list.head(sorted)
-  |> option.unwrap_or(0.0)
-  let max_val = list.last(sorted)
-  |> option.unwrap_or(0.0)
+  let min_val = list.head(sorted) |> option.unwrap_or(0.0)
+  let max_val = list.last(sorted) |> option.unwrap_or(0.0)
   let min_bucket = float.to_int(float.floor(min_val / int.to_float(bucket_size))) * bucket_size
   let max_bucket = float.to_int(float.floor(max_val / int.to_float(bucket_size))) * bucket_size
   -- Build frequency map: bucket_start -> count
   let counts = values
-  |> list.fold(#{}) { acc, v ->
-    let bucket_key = float.to_int(v) / bucket_size * bucket_size
-    map.update(acc, bucket_key, 0) { n -> n + 1 }
-  }
+    |> list.fold(#{}) { acc, v ->
+      let bucket_key = float.to_int(v) / bucket_size * bucket_size
+      map.update(acc, bucket_key, 0) { n -> n + 1 }
+    }
   -- Generate bucket boundaries using range syntax
   let num_buckets = (max_bucket - min_bucket) / bucket_size + 1
-  let bucket_starts = 0..num_buckets
-  |> list.map { i -> min_bucket + i * bucket_size }
+  let bucket_starts = 0..num_buckets |> list.map { i -> min_bucket + i * bucket_size }
   println("\n{label} Histogram:")
   println(string.repeat("-", 40))
   bucket_starts
-  |> list.each { bucket_start ->
-    let bucket_end = bucket_start + bucket_size
-    let count = map.get(counts, bucket_start)
-    |> option.unwrap_or(0)
-    let range_label = "{bucket_start}-{bucket_end}"
-    |> string.pad_right(10, " ")
-    let bar = string.repeat("#", count)
-    println("{range_label} | {bar} ({count})")
-  }
+    |> list.each { bucket_start ->
+      let bucket_end = bucket_start + bucket_size
+      let count = map.get(counts, bucket_start) |> option.unwrap_or(0)
+      let range_label = "{bucket_start}-{bucket_end}" |> string.pad_right(10, " ")
+      let bar = string.repeat("#", count)
+      println("{range_label} | {bar} ({count})")
+    }
 }
 
 fn main() {
@@ -169,16 +201,14 @@ fn main() {
   -- Display all students
   println("=== Generated Students ===")
   students
-  |> list.enumerate
-  |> list.each { entry ->
-    let (i, s) = entry
-    println("{i + 1}. {s.name} | age: {s.age} | score: {s.score}")
-  }
+    |> list.enumerate
+    |> list.each { entry ->
+      let (i, s) = entry
+      println("{i + 1}. {s.name} | age: {s.age} | score: {s.score}")
+    }
   -- Extract scores as floats for statistics
-  let scores = students
-  |> list.map { s -> int.to_float(s.score) }
-  let ages = students
-  |> list.map { s -> int.to_float(s.age) }
+  let scores = students |> list.map { s -> int.to_float(s.score) }
+  let ages = students |> list.map { s -> int.to_float(s.age) }
   -- Compute statistics
   println("\n=== Score Statistics ===")
   let score_mean = mean(scores)
@@ -197,39 +227,34 @@ fn main() {
   -- Group students by score range using list.group_by
   println("\n=== Students by Score Range ===")
   let grouped = students
-  |> list.group_by { s ->
-    let bucket = s.score / 10 * 10
-    "{bucket}-{bucket + 9}"
-  }
+    |> list.group_by { s ->
+      let bucket = s.score / 10 * 10
+      "{bucket}-{bucket + 9}"
+    }
   map.each(grouped) { range, group ->
-    let names = group
-    |> list.map { s -> s.name }
-    |> string.join(", ")
+    let names = group |> list.map { s -> s.name } |> string.join(", ")
     println("{range}: {names}")
   }
   -- Sort students by score descending using list.sort_by
   println("\n=== Students Ranked by Score ===")
-  let ranked = students
-  |> list.sort_by { s -> -s.score }
+  let ranked = students |> list.sort_by { s -> -s.score }
   ranked
-  |> list.enumerate
-  |> list.each { entry ->
-    let (i, s) = entry
-    println("{i + 1}. {s.name}: {s.score}")
-  }
+    |> list.enumerate
+    |> list.each { entry ->
+      let (i, s) = entry
+      println("{i + 1}. {s.name}: {s.score}")
+    }
   -- Zip names with scores
   println("\n=== Name-Score Pairs (via list.zip) ===")
-  let names = students
-  |> list.map { s -> s.name }
-  let score_list = students
-  |> list.map { s -> s.score }
+  let names = students |> list.map { s -> s.name }
+  let score_list = students |> list.map { s -> s.score }
   let pairs = list.zip(names, score_list)
   pairs
-  |> list.take(5)
-  |> list.each { pair ->
-    let (name, score) = pair
-    println("{name} -> {score}")
-  }
+    |> list.take(5)
+    |> list.each { pair ->
+      let (name, score) = pair
+      println("{name} -> {score}")
+    }
   -- Histograms
   histogram("Score", scores, 10)
   histogram("Age", ages, 2)

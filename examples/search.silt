@@ -17,10 +17,8 @@ fn bfs(graph, start, goal) {
       [node, ..rest] -> match node == goal {
         true -> Some(node)
         _ -> {
-          let neighbors = map.get(graph, node)
-          |> option.unwrap_or([])
-          let new = neighbors
-          |> list.filter { n -> !list.contains(visited, n) }
+          let neighbors = map.get(graph, node) |> option.unwrap_or([])
+          let new = neighbors |> list.filter { n -> !list.contains(visited, n) }
           loop(list.concat(rest, new), list.concat(visited, new))
         }
       }
@@ -38,10 +36,8 @@ fn dfs(graph, start, goal) {
       [node, ..rest] -> match node == goal {
         true -> Some(node)
         _ -> {
-          let neighbors = map.get(graph, node)
-          |> option.unwrap_or([])
-          let new = neighbors
-          |> list.filter { n -> !list.contains(visited, n) }
+          let neighbors = map.get(graph, node) |> option.unwrap_or([])
+          let new = neighbors |> list.filter { n -> !list.contains(visited, n) }
           loop(list.concat(new, rest), list.concat(visited, new))
         }
       }

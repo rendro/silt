@@ -25,16 +25,9 @@ fn format(f) {
 fn apply_binary(stack, op_name, op_fn) {
   match list.length(stack) >= 2 {
     true -> {
-      let b = stack
-      |> list.head
-      |> option.unwrap_or(0.0)
-      let a = stack
-      |> list.tail
-      |> list.head
-      |> option.unwrap_or(0.0)
-      let rest = stack
-      |> list.tail
-      |> list.tail
+      let b = stack |> list.head |> option.unwrap_or(0.0)
+      let a = stack |> list.tail |> list.head |> option.unwrap_or(0.0)
+      let rest = stack |> list.tail |> list.tail
       let outcome = op_fn(a, b)
       println("{format(a)} {op_name} {format(b)} = {format(outcome)}")
       (list.prepend(rest, outcome), Some("{format(a)} {op_name} {format(b)} = {format(outcome)}"))
@@ -49,11 +42,8 @@ fn apply_binary(stack, op_name, op_fn) {
 fn apply_unary(stack, op_name, op_fn) {
   match list.length(stack) >= 1 {
     true -> {
-      let a = stack
-      |> list.head
-      |> option.unwrap_or(0.0)
-      let rest = stack
-      |> list.tail
+      let a = stack |> list.head |> option.unwrap_or(0.0)
+      let rest = stack |> list.tail
       let outcome = op_fn(a)
       println("{op_name}({format(a)}) = {format(outcome)}")
       (list.prepend(rest, outcome), Some("{op_name}({format(a)}) = {format(outcome)}"))
@@ -71,12 +61,12 @@ fn print_stack(stack) {
     _ -> {
       println("Stack (bottom to top):")
       stack
-      |> list.reverse
-      |> list.enumerate
-      |> list.each { pair ->
-        let (i, v) = pair
-        println("  [{i}] {format(v)}")
-      }
+        |> list.reverse
+        |> list.enumerate
+        |> list.each { pair ->
+          let (i, v) = pair
+          println("  [{i}] {format(v)}")
+        }
     }
   }
 }
@@ -87,11 +77,11 @@ fn print_history(history) {
     _ -> {
       println("History:")
       history
-      |> list.enumerate
-      |> list.each { pair ->
-        let (i, entry) = pair
-        println("  {i + 1}. {entry}")
-      }
+        |> list.enumerate
+        |> list.each { pair ->
+          let (i, entry) = pair
+          println("  {i + 1}. {entry}")
+        }
     }
   }
 }
@@ -157,31 +147,37 @@ fn main() {
             }
           }
           "/" -> {
-            let (s, e) = apply_binary(stack, "/") { a, b -> match b {
-              0.0 -> 0.0
-              _ -> a / b
-            } }
+            let (s, e) = apply_binary(stack, "/") { a, b ->
+              match b {
+                0.0 -> 0.0
+                _ -> a / b
+              }
+            }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
             }
           }
           "sqrt" -> {
-            let (s, e) = apply_unary(stack, "sqrt") { a -> match {
-              a < 0.0 -> 0.0
-              _ -> math.sqrt(a)
-            } }
+            let (s, e) = apply_unary(stack, "sqrt") { a ->
+              match {
+                a < 0.0 -> 0.0
+                _ -> math.sqrt(a)
+              }
+            }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
             }
           }
           "pow" -> {
-            let (s, e) = apply_binary(stack, "pow") { a, b -> match {
-              a == 0.0 && b < 0.0 -> 0.0
-              a < 0.0 && float.floor(b) != b -> 0.0
-              _ -> math.pow(a, b)
-            } }
+            let (s, e) = apply_binary(stack, "pow") { a, b ->
+              match {
+                a == 0.0 && b < 0.0 -> 0.0
+                a < 0.0 && float.floor(b) != b -> 0.0
+                _ -> math.pow(a, b)
+              }
+            }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
@@ -202,10 +198,12 @@ fn main() {
             }
           }
           "log" -> {
-            let (s, e) = apply_unary(stack, "log") { a -> match {
-              a <= 0.0 -> 0.0
-              _ -> math.log(a)
-            } }
+            let (s, e) = apply_unary(stack, "log") { a ->
+              match {
+                a <= 0.0 -> 0.0
+                _ -> math.log(a)
+              }
+            }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
