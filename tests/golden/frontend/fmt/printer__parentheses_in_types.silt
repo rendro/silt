@@ -1,0 +1,19 @@
+-- cmd: fmt --next
+-- Parentheses around a type group nothing: they are dropped, around a
+-- tuple type too, unless a comment stands at their inside. A tuple of
+-- one keeps its comma.
+type A = ((Int, String))
+type B = Fn((Int)) -> ((Int))
+type C = Fn(((Int, Int)), (Fn() -> Int)) -> (Fn(Int) -> Int)
+type D(a) { D1((a)), D2(((a, a))), D3 ( Fn ( a ) -> ( a ) ), D4((a,)) }
+type R { f: (Fn(Int) -> Int), g: ((Int, Int)), h: List(((Int))) }
+type K = ( -- the pair
+  (Int, String))
+fn f(x: ((Int, Int)), y: (Fn(Int) -> Int)) -> ((Int, Int)) { x }
+fn g(x: (((Int, Int)), Int)) -> ({- one -} Int) { 1 }
+fn main() {
+  let a: ((Int, Int)) = (1, 2)
+  let h = { x: ((Int, Int)) -> x }
+  println(f(a, { x -> x }))
+  println(1 as (Int))
+}

@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue tuple type, found Int
+ --> comma_list__unclosed_tuple_type.silt:5:26
+   |
+ 5 | fn first(p: (Int, String Int)) -> Int { 0 }
+   |                          ^^^ expected ')' or ',' to continue tuple type, found Int
+ ::: comma_list__unclosed_tuple_type.silt:5:13
+   |
+ 5 | fn first(p: (Int, String Int)) -> Int { 0 }
+   |             - the tuple type starts here

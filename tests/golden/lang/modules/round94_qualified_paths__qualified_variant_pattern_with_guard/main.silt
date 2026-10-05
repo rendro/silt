@@ -2,9 +2,9 @@ import shapes
 
 fn main() {
   let m = match shapes.Circle(2.0) {
-    shapes.Circle(r) when r > 1.0 -> "big",
-    shapes.Circle(_) -> "small",
-    shapes.Rect(_, _) -> "rect",
+    shapes.Circle(r) when r > 1.0 -> "big"
+    shapes.Circle(_) -> "small"
+    shapes.Rect(_, _) -> "rect"
   }
   print(m)
 }

@@ -69,7 +69,7 @@ fn h() {
   let n = m.P { x: 1 }.{ x: 2 }
   let o = { ...p }
   let p = "a{"b{{ -> 1 }()}c"}d{[1, 2]}"
-  let q = x.0.y?.1
+  let q = x.a.y?.b
   let r = (-x)? as m.T(Int)
   let s = !!x && - -y == -(-z)
   let t = #[]

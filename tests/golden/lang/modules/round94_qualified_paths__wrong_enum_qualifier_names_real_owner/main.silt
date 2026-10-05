@@ -11,8 +11,8 @@ type Color {
 
 fn main() {
   let m = match Circle(1) {
-    Shape.Red -> 1,
-    _ -> 2,
+    Shape.Red -> 1
+    _ -> 2
   }
   print(m)
 }

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A name is made of ASCII letters, digits and '_', after its first
+-- character as well as at it.
+fn main() {
+  let café = 1
+  println(café)
+}

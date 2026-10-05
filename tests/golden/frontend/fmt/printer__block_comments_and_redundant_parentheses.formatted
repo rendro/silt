@@ -12,7 +12,7 @@ fn main() {
   let z = (x + 1) * y
   let w = (x {- inner -} + 1) * 2
   let v = -(-x)
-  let u = (x, y).0
+  let u = (x, y).first
   let t = ( -- kept
     x + y
   )

@@ -1,0 +1,5 @@
+error[parse]: expected ']' after `..` in a list pattern, found end
+ --> comma_list__element_behind_a_rest.silt:7:23
+   |
+ 7 |     [first, ..others, end] -> println(first + end)
+   |                       ^^^ expected ']' after `..` in a list pattern, found end

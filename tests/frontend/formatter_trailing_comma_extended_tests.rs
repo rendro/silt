@@ -18,8 +18,8 @@
 //! item 7 spec: list literals, tuple literals, record literals,
 //! record-update literals, set literals, map literals, call arguments,
 //! fn parameter lists, lambda parameter lists, type record field lists,
-//! selective import item lists, and match arms (whose comma separator
-//! is grammar-optional but must still be mirrored).
+//! selective import item lists. Match arms take no comma: the last
+//! tests check that the formatter writes none.
 
 use silt::formatter;
 use silt::fuzz_invariants::check_formatter_invariants;
@@ -241,55 +241,12 @@ fn import_items_does_not_insert_trailing_comma() {
     assert_trailing_comma_behavior(src, Some("sqrt, abs }"), Some("abs, }"));
 }
 
-// ── Match arms (comma separator is grammar-optional) ────────────────
-
-#[test]
-fn match_arms_preserve_separator_commas() {
-    let src = "fn f(x) { match x { 1 -> \"one\", 2 -> \"two\", _ -> \"other\" } }\n";
-    let out = formatter::format(src).expect("format");
-    check_formatter_invariants(src, &out).expect("invariants");
-    // Source had 2 commas between arms (no trailing); output must
-    // keep 2 top-level `,` tokens to preserve the significant-token
-    // count (see `significant_token_count` in
-    // `src/fuzz_invariants.rs`).
-    use silt::lexer::{Lexer, Token};
-    let src_commas = Lexer::new(silt::source::FileId::default(), src)
-        .tokenize()
-        .unwrap()
-        .tokens
-        .iter()
-        .filter(|t| matches!(t.kind, Token::Comma))
-        .count();
-    let out_commas = Lexer::new(silt::source::FileId::default(), &out)
-        .tokenize()
-        .unwrap()
-        .tokens
-        .iter()
-        .filter(|t| matches!(t.kind, Token::Comma))
-        .count();
-    assert_eq!(
-        src_commas, out_commas,
-        "match arm comma count changed: {src_commas} -> {out_commas}; output:\n{out}"
-    );
-    let twice = formatter::format(&out).expect("pass 2");
-    assert_eq!(out, twice);
-}
-
-#[test]
-fn match_arms_preserve_trailing_comma_on_last_arm() {
-    // Source has 3 commas — between each pair plus one after the last
-    // arm (trailing). Output must preserve all 3 for the invariant.
-    let src = "fn f(x) { match x { 1 -> \"one\", 2 -> \"two\", _ -> \"other\", } }\n";
-    let out = formatter::format(src).expect("format");
-    check_formatter_invariants(src, &out).expect("invariants");
-    let twice = formatter::format(&out).expect("pass 2");
-    assert_eq!(out, twice);
-}
+// ── Match arms (separated by line breaks, never by commas) ──────────
 
 #[test]
 fn match_arms_does_not_insert_commas_when_source_has_none() {
-    // Source has NO commas between arms (newline-separated is the
-    // canonical multi-line form). Output must also have none.
+    // Arms are separated by line breaks. The output has no comma
+    // behind an arm.
     let src =
         "fn f(x) {\n  match x {\n    1 -> \"one\"\n    2 -> \"two\"\n    _ -> \"other\"\n  }\n}\n";
     let out = formatter::format(src).expect("format");

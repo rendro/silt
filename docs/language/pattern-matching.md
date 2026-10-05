@@ -20,6 +20,9 @@ fn describe(shape) {
 }
 ```
 
+Each arm starts on its own line; there is no separator between arms. A match
+with one arm may be written on one line: `match pair { (a, b) -> a + b }`.
+
 ## Match without Scrutinee (Boolean Dispatch)
 
 Omit the scrutinee for boolean conditions:
@@ -154,6 +157,17 @@ match n {
 }
 ```
 
+A long list of alternatives may continue on the next line, which then
+starts with its `|`:
+
+```silt
+match day {
+  "Saturday"
+  | "Sunday" -> "weekend"
+  _ -> "weekday"
+}
+```
+
 All alternatives must bind the **same** variables (and, as in any match,
 all alternatives must have the same type — you can't mix `Some(x)` with
 `Ok(x)` in one or-pattern):
@@ -255,6 +269,6 @@ The compiler checks that your match covers all possible cases. Missing a
 variant produces a compile-time error. This is one of the strongest benefits
 of `match` as the sole branching construct.
 
-**Trade-off: no `if`.** Simple boolean checks are more verbose (`match debug
-{ true -> ..., false -> () }`). In practice, guardless match and `when`-`else`
-cover most cases.
+**Trade-off: no `if`.** Simple boolean checks are more verbose (a `match
+debug { ... }` with a `true` arm and a `false` arm, each on its own line). In
+practice, guardless match and `when`-`else` cover most cases.

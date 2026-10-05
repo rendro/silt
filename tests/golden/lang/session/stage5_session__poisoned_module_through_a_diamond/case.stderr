@@ -1,8 +1,12 @@
-error[parse]: expected '}' or ',' to continue record type fields, found EOF
+error[parse]: expected '}' or ',' to continue record type, found EOF
  --> m.silt:2:29
    |
  2 | pub type Pt { x: Int, y: Int
-   |                             ^ expected '}' or ',' to continue record type fields, found EOF
+   |                             ^ expected '}' or ',' to continue record type, found EOF
+ ::: m.silt:2:13
+   |
+ 2 | pub type Pt { x: Int, y: Int
+   |             - the record type starts here
  ::: l.silt:1:1
    |
  1 | import m.{ Box, Pt }

@@ -1,0 +1,9 @@
+error[parse]: expected '{' or ',' to continue where clause, found fn
+ --> comma_list__unclosed_where_clause.silt:7:1
+   |
+ 7 | fn main() {}
+   | ^^ expected '{' or ',' to continue where clause, found fn
+ ::: comma_list__unclosed_where_clause.silt:5:25
+   |
+ 5 | fn show(x: a) -> String where a: Display,
+   |                         ----- the where clause starts here

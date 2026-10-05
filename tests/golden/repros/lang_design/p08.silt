@@ -1,7 +1,10 @@
 -- verdict: same
 fn id(s) { s }
 fn f(x) {
-  let y = id(match x { 5 -> "in", _ -> "out" })
+  let y = id(match x {
+    5 -> "in"
+    _ -> "out"
+  })
   y
 }
 fn g(x) {
@@ -12,7 +15,10 @@ fn g(x) {
   y
 }
 fn h(x) {
-  1 + match x { 5 -> 10, _ -> 20 }
+  1 + match x {
+    5 -> 10
+    _ -> 20
+  }
 }
 fn main() {
   println(h(5))

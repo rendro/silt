@@ -1,0 +1,5 @@
+error[lex]: number literal too large
+ --> int_min__magnitude_without_minus_rejected.silt:6:15
+   |
+ 6 |   let x = 1 - 9223372036854775808
+   |               ^^^^^^^^^^^^^^^^^^^ number literal too large

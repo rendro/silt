@@ -5,6 +5,9 @@ trait MyEq { fn my_eq(self, other: Self) -> Bool }
 trait MyOrd { fn my_cmp(self, other: Self) -> Int }
 trait MyEq for String { fn my_eq(self, other: String) -> Bool { self == other } }
 fn use_both(x: a, y: a) -> Int where a: MyEq + MyOrd {
-  match x.my_eq(y) { true -> 0, false -> x.my_cmp(y) }
+  match x.my_eq(y) {
+    true -> 0
+    false -> x.my_cmp(y)
+  }
 }
 fn main() { println(use_both("a", "b")) }

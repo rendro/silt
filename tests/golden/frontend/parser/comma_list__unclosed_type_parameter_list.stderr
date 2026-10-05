@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue type parameter list, found b
+ --> comma_list__unclosed_type_parameter_list.silt:5:13
+   |
+ 5 | type Pair(a b) { first: a, second: b }
+   |             ^ expected ')' or ',' to continue type parameter list, found b
+ ::: comma_list__unclosed_type_parameter_list.silt:5:10
+   |
+ 5 | type Pair(a b) { first: a, second: b }
+   |          - the type parameter list starts here

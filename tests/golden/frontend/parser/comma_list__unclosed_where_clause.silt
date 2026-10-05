@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A where clause with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn show(x: a) -> String where a: Display,
+
+fn main() {}

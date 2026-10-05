@@ -9,5 +9,8 @@ fn name(c) {
 fn main() {
   println(name(Blue))
   let n = 5
-  println(match n { 1 -> "one", 2 -> "two" })
+  println(match n {
+    1 -> "one"
+    2 -> "two"
+  })
 }

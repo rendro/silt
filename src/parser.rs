@@ -567,10 +567,6 @@ fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
 
 const MAX_DEPTH: usize = 128;
 
-/// Right binding power of `|>`. A pipe stage is parsed at exactly this
-/// power, which is how the postfix `?` arm recognises the end of a stage.
-const PIPE_R_BP: u8 = 56;
-
 /// Upper bound on the number of operations one expression tree may chain
 /// or nest (see `Parser::expr_height`). Every operator, pipe, call, index,
 /// field access, record update and ascription is one operation; a method
@@ -620,6 +616,32 @@ struct BlockHeader {
     depth: i32,
     /// True while the right operand of a `|>` in the header is parsed.
     in_pipe_rhs: bool,
+}
+
+/// How a comma-separated list ends (see `Parser::comma_list`).
+#[derive(Clone, Copy)]
+enum ListEnd<'t> {
+    /// At its closing delimiter, which `comma_list` consumes: `)`, `]`
+    /// or `}`.
+    Close(&'t Token),
+    /// In front of the token that follows the list, which is left for
+    /// the caller: the `->` after closure parameters, the `{` after
+    /// `loop` bindings.
+    Before(&'t Token),
+    /// As `Before`, for a list that may also end with its last element:
+    /// the `where` clauses of a function, whose body `{` is missing in a
+    /// trait's method signature.
+    BeforeOrNothing(&'t Token),
+}
+
+impl<'t> ListEnd<'t> {
+    fn token(self) -> &'t Token {
+        match self {
+            ListEnd::Close(token) | ListEnd::Before(token) | ListEnd::BeforeOrNothing(token) => {
+                token
+            }
+        }
+    }
 }
 
 pub struct Parser<'src> {
@@ -1023,20 +1045,6 @@ impl<'src> Parser<'src> {
     // pointing at the current token. `construct` names the enclosing form
     // (e.g. "list literal") and `closer` is the expected closing delimiter.
 
-    /// Build an "unclosed delimiter" error for a construct that uses commas
-    /// to separate elements (list, tuple, map, set, call args, fn params).
-    fn delim_unclosed_err(&self, construct: &str, closer: char, opener_span: Span) -> Diagnostic {
-        Diagnostic::error(
-            Code::UnclosedDelimiter,
-            self.span(),
-            format!(
-                "expected '{closer}' or ',' to continue {construct}, found {}",
-                self.peek()
-            ),
-        )
-        .with_label(opener_span, format!("the {construct} starts here"))
-    }
-
     /// Build an "unclosed delimiter" error for a construct that does not
     /// use commas internally (block expressions).
     fn delim_unclosed_err_no_comma(
@@ -1064,81 +1072,72 @@ impl<'src> Parser<'src> {
             && std::mem::discriminant(self.peek()) != std::mem::discriminant(our_closer)
     }
 
-    /// Wrap `parse_expr()` so that if it fails because the next token is
-    /// EOF or a foreign closer, the error is upgraded to a contextual
-    /// unclosed-delimiter message.
-    fn parse_expr_in_delim(
-        &mut self,
-        construct: &str,
-        our_closer: &Token,
-        closer_char: char,
-        opener_span: Span,
-    ) -> Result<Expr> {
-        // Pre-check: if we're already at EOF / foreign closer before parsing,
-        // produce the contextual error immediately.
-        self.skip_nl();
-        if self.at(&Token::Eof) || self.at_foreign_closer(our_closer) {
-            return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
-        }
-        // `fn` never starts an expression: it is the next declaration,
-        // so blame the unclosed opener. (Round-52 deferred item 3.)
-        if self.at(&Token::Fn) {
-            return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
-        }
-        self.parse_expr()
-    }
-
-    /// After an element in a delimited list has been parsed, either
-    /// consume the inter-element comma (and any newlines) or verify
-    /// we're at the closing delimiter. Strict: absence of a comma
-    /// when we are not at the closer is an error.
+    /// The one parser of comma-separated lists: elements parsed by `elem`
+    /// and separated by commas, up to `end`. Line breaks may stand
+    /// anywhere between elements, and a comma may follow the last one.
     ///
-    /// silt intentionally does NOT allow whitespace-only separation
-    /// between elements in any list-style construct; every fn param,
-    /// list/tuple/map/set element, call argument, record field,
-    /// pattern destructuring, import item, type parameter, and trait
-    /// argument must be comma-separated. Trailing commas remain
-    /// permitted — if `close_tok` is seen immediately after the
-    /// comma-advance, the enclosing while-loop exits cleanly.
-    fn expect_list_sep(&mut self, construct: &str, closer: char, close_tok: &Token) -> Result<()> {
-        self.expect_list_sep_with_opener(construct, closer, close_tok, None)
+    /// `what` names the list in the error for a list that is not closed
+    /// ("expected ')' or ',' to continue function call argument list"),
+    /// which is reported where an element or the end of the list should
+    /// stand and labels `open`, the token that opened the list (already
+    /// consumed by the caller). It is given when the input ends, when a
+    /// closing delimiter of an enclosing form or a `fn` declaration comes
+    /// instead of an element, and when an element is followed by neither
+    /// a comma nor the end of the list.
+    fn comma_list<T>(
+        &mut self,
+        what: &str,
+        open: Span,
+        end: ListEnd,
+        mut elem: impl FnMut(&mut Self) -> Result<T>,
+    ) -> Result<Vec<T>> {
+        let close = end.token();
+        let mut items = Vec::new();
+        loop {
+            self.skip_nl();
+            if self.at(close) {
+                break;
+            }
+            if self.at(&Token::Eof) || self.at_foreign_closer(close) || self.at_fn_decl() {
+                return Err(self.unclosed_list_err(what, open, close));
+            }
+            items.push(elem(self)?);
+            self.skip_nl();
+            if self.at(&Token::Comma) {
+                self.advance();
+            } else if self.at(close) {
+                break;
+            } else if matches!(end, ListEnd::BeforeOrNothing(_)) {
+                return Ok(items);
+            } else {
+                return Err(self.unclosed_list_err(what, open, close));
+            }
+        }
+        if matches!(end, ListEnd::Close(_)) {
+            self.advance();
+        }
+        Ok(items)
     }
 
-    /// Variant of `expect_list_sep` that carries the opener span so
-    /// unclosed-delimiter errors can point back at the construct's
-    /// opening bracket. Prefer this variant at call sites that
-    /// already tracked the opener.
-    fn expect_list_sep_with_opener(
-        &mut self,
-        construct: &str,
-        closer: char,
-        close_tok: &Token,
-        opener: Option<Span>,
-    ) -> Result<()> {
-        self.skip_nl();
-        if self.at(close_tok) {
-            return Ok(());
-        }
-        if self.at(&Token::Comma) {
-            self.advance();
-            self.skip_nl();
-            return Ok(());
-        }
-        // If the caller gave us an opener, emit the richer
-        // "starting at line N" form so the error points back at the
-        // opening delimiter — particularly valuable when the missing
-        // comma is really a missing closer.
-        if let Some(op) = opener {
-            return Err(self.delim_unclosed_err(construct, closer, op));
-        }
-        Err(Diagnostic::error(
+    /// The error for a comma-separated list that is not closed; see
+    /// `comma_list`.
+    fn unclosed_list_err(&self, what: &str, open: Span, close: &Token) -> Diagnostic {
+        Diagnostic::error(
             Code::UnclosedDelimiter,
             self.span(),
             format!(
-                "expected '{closer}' or ',' to continue {construct}, found {}",
+                "expected '{close}' or ',' to continue {what}, found {}",
                 self.peek()
             ),
-        ))
+        )
+        .with_label(open, format!("the {what} starts here"))
+    }
+
+    /// True at a `fn` that starts a declaration (`fn name`), which no
+    /// list element does: the list before it was not closed. `fn(` is
+    /// left to the element parser, which has a hint for it in a type.
+    fn at_fn_decl(&self) -> bool {
+        self.at(&Token::Fn) && !matches!(self.peek_at(1), Some(Token::LParen))
     }
 
     /// The error for a function type written `(A -> B)`, at its `->`,
@@ -1565,29 +1564,9 @@ impl<'src> Parser<'src> {
         };
 
         // Try where clauses.
-        let where_clauses = if self.peek_skip_nl() == &Token::Where {
-            self.advance();
-            let mut clauses: Vec<WhereClause> = Vec::new();
-            let result: Result<()> = (|| {
-                loop {
-                    self.skip_nl();
-                    let (type_param, _) = self.expect_ident()?;
-                    self.expect(&Token::Colon)?;
-                    clauses.push(self.parse_trait_ref()?.bound_on(type_param));
-                    while self.at(&Token::Plus) {
-                        self.advance();
-                        clauses.push(self.parse_trait_ref()?.bound_on(type_param));
-                    }
-                    self.skip_nl();
-                    if self.at(&Token::Comma) {
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                }
-                Ok(())
-            })();
-            if let Err(e) = result {
+        let where_clauses = match self.parse_where_clauses_opt() {
+            Ok(clauses) => clauses,
+            Err(e) => {
                 return Err(Box::new((
                     self.make_recovery_stub(
                         name,
@@ -1600,9 +1579,6 @@ impl<'src> Parser<'src> {
                     e,
                 )));
             }
-            clauses
-        } else {
-            Vec::new()
         };
 
         self.skip_nl();
@@ -1673,31 +1649,33 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_fn_params(&mut self) -> Result<Vec<Param>> {
-        self.expect(&Token::LParen)?;
-        let mut params = Vec::new();
+        let open = self.expect(&Token::LParen)?.span;
         let mut first_type_param_span: Option<Span> = None;
-        self.skip_nl();
-        while !self.at(&Token::RParen) {
-            if self.at(&Token::Type) {
-                let type_kw_span = self.span();
-                self.advance();
-                let pattern = self.parse_simple_param_pattern()?;
-                if self.peek_skip_nl() == &Token::Colon {
-                    return Err(Diagnostic::error(
-                        Code::InvalidDeclaration,
-                        self.span(),
-                        "'type' parameter cannot carry a type annotation; write `type a`",
-                    ));
+        self.comma_list(
+            "function parameter list",
+            open,
+            ListEnd::Close(&Token::RParen),
+            |p| {
+                if p.at(&Token::Type) {
+                    let type_kw_span = p.span();
+                    p.advance();
+                    let pattern = p.parse_simple_param_pattern()?;
+                    if p.peek_skip_nl() == &Token::Colon {
+                        return Err(Diagnostic::error(
+                            Code::InvalidDeclaration,
+                            p.span(),
+                            "'type' parameter cannot carry a type annotation; write `type a`",
+                        ));
+                    }
+                    if first_type_param_span.is_none() {
+                        first_type_param_span = Some(type_kw_span);
+                    }
+                    return Ok(Param {
+                        kind: ParamKind::Type,
+                        pattern,
+                        ty: None,
+                    });
                 }
-                params.push(Param {
-                    kind: ParamKind::Type,
-                    pattern,
-                    ty: None,
-                });
-                if first_type_param_span.is_none() {
-                    first_type_param_span = Some(type_kw_span);
-                }
-            } else {
                 if let Some(type_span) = first_type_param_span {
                     // Point at the MISPLACED `type` keyword rather than
                     // the innocent data param that follows. The reader
@@ -1709,24 +1687,27 @@ impl<'src> Parser<'src> {
                         "'type' parameters must come after all data parameters; move the `type` param to the end of the parameter list",
                     ));
                 }
-                let pattern = self.parse_param_pattern()?;
-                let ty = if self.peek_skip_nl() == &Token::Colon {
-                    self.advance();
-                    self.skip_nl();
-                    Some(self.parse_type_expr()?)
-                } else {
-                    None
-                };
-                params.push(Param {
-                    kind: ParamKind::Data,
-                    pattern,
-                    ty,
-                });
-            }
-            self.expect_list_sep("function parameter list", ')', &Token::RParen)?;
-        }
-        self.expect(&Token::RParen)?;
-        Ok(params)
+                p.parse_data_param()
+            },
+        )
+    }
+
+    /// A data parameter of a named function or a closure: `pattern` or
+    /// `pattern: Type`.
+    fn parse_data_param(&mut self) -> Result<Param> {
+        let pattern = self.parse_param_pattern()?;
+        let ty = if self.peek_skip_nl() == &Token::Colon {
+            self.advance();
+            self.skip_nl();
+            Some(self.parse_type_expr()?)
+        } else {
+            None
+        };
+        Ok(Param {
+            kind: ParamKind::Data,
+            pattern,
+            ty,
+        })
     }
 
     /// A data parameter of a named function, trait method or closure: a
@@ -1773,16 +1754,13 @@ impl<'src> Parser<'src> {
 
         // Optional type parameters: type Result(a, e) { ... } or type Pair(a) = (a, a)
         let params = if self.peek_skip_nl() == &Token::LParen {
-            self.advance();
-            let mut ps = Vec::new();
-            self.skip_nl();
-            while !self.at(&Token::RParen) {
-                let (p, _) = self.expect_ident()?;
-                ps.push(p);
-                self.expect_list_sep("type parameter list", ')', &Token::RParen)?;
-            }
-            self.expect(&Token::RParen)?;
-            ps
+            let open = self.advance().span;
+            self.comma_list(
+                "type parameter list",
+                open,
+                ListEnd::Close(&Token::RParen),
+                |p| Ok(p.expect_ident()?.0),
+            )?
         } else {
             Vec::new()
         };
@@ -1809,19 +1787,16 @@ impl<'src> Parser<'src> {
             });
         }
 
-        self.expect(&Token::LBrace)?;
+        let open = self.expect(&Token::LBrace)?.span;
         self.skip_nl();
 
         // Determine if this is an enum or record by peeking at the first field.
         // Record fields look like `name: Type`, enum variants look like `Name` or `Name(Type)`.
         let body = if self.is_record_body() {
-            self.parse_record_body()?
+            self.parse_record_body(open)?
         } else {
-            self.parse_enum_body()?
+            self.parse_enum_body(open)?
         };
-
-        self.skip_nl();
-        self.expect(&Token::RBrace)?;
         check_type_decl_names(name, name_span, &body)?;
 
         Ok(TypeDecl {
@@ -1851,69 +1826,65 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_record_body(&mut self) -> Result<TypeBody> {
-        let mut fields = Vec::new();
-        while !self.at(&Token::RBrace) {
-            self.skip_nl();
-            if self.at(&Token::RBrace) {
-                break;
-            }
-            let (name, name_span) = self.expect_ident()?;
+    /// The fields of a record type and its closing brace; `open` is the
+    /// `{` in front of them.
+    fn parse_record_body(&mut self, open: Span) -> Result<TypeBody> {
+        let mut first = true;
+        let fields = self.comma_list("record type", open, ListEnd::Close(&Token::RBrace), |p| {
+            let (name, name_span) = p.expect_ident()?;
             // The body was taken for a record because its first name is
             // lower case. A first name without `:` that looks like an
             // enum variant may be a variant spelled in lower case.
-            if fields.is_empty() && self.peek_skip_nl() != &Token::Colon {
+            if std::mem::take(&mut first) && p.peek_skip_nl() != &Token::Colon {
                 let text = intern::resolve(name);
                 return Err(Diagnostic::error(
                     Code::ExpectedToken,
                     name_span,
                     format!(
                         "expected `:` after record field '{text}'; if '{text}' is meant as an \
-                         enum variant, variant names start with an uppercase letter, e.g. `{}`",
+                             enum variant, variant names start with an uppercase letter, e.g. `{}`",
                         capitalized(&text)
                     ),
                 ));
             }
-            self.expect(&Token::Colon)?;
-            let ty = self.parse_type_expr()?;
-            fields.push(RecordField {
+            p.expect(&Token::Colon)?;
+            let ty = p.parse_type_expr()?;
+            Ok(RecordField {
                 name,
                 name_span,
                 ty,
-            });
-            self.expect_list_sep("record type fields", '}', &Token::RBrace)?;
-        }
+            })
+        })?;
         Ok(TypeBody::Record(fields))
     }
 
-    fn parse_enum_body(&mut self) -> Result<TypeBody> {
-        let mut variants = Vec::new();
-        while !self.at(&Token::RBrace) {
-            self.skip_nl();
-            if self.at(&Token::RBrace) {
-                break;
-            }
-            let (name, name_span) = self.expect_ident()?;
-            let fields = if self.peek() == &Token::LParen {
-                self.advance();
-                let mut fs = Vec::new();
-                self.skip_nl();
-                while !self.at(&Token::RParen) {
-                    fs.push(self.parse_type_expr()?);
-                    self.expect_list_sep("enum variant fields", ')', &Token::RParen)?;
-                }
-                self.expect(&Token::RParen)?;
-                fs
-            } else {
-                Vec::new()
-            };
-            variants.push(EnumVariant {
-                name,
-                name_span,
-                fields,
-            });
-            self.expect_list_sep("enum variant list", '}', &Token::RBrace)?;
-        }
+    /// The variants of an enum and its closing brace; `open` is the `{`
+    /// in front of them.
+    fn parse_enum_body(&mut self, open: Span) -> Result<TypeBody> {
+        let variants = self.comma_list(
+            "enum variant list",
+            open,
+            ListEnd::Close(&Token::RBrace),
+            |p| {
+                let (name, name_span) = p.expect_ident()?;
+                let fields = if p.peek() == &Token::LParen {
+                    let open = p.advance().span;
+                    p.comma_list(
+                        "enum variant field list",
+                        open,
+                        ListEnd::Close(&Token::RParen),
+                        Self::parse_type_expr,
+                    )?
+                } else {
+                    Vec::new()
+                };
+                Ok(EnumVariant {
+                    name,
+                    name_span,
+                    fields,
+                })
+            },
+        )?;
         Ok(TypeBody::Enum(variants))
     }
 
@@ -1922,34 +1893,30 @@ impl<'src> Parser<'src> {
     /// multi-trait bounds per clause (`where a: Equal + Hash, b: Show`).
     /// Returns an empty Vec if no `where` token is present.
     ///
-    /// Shared between `parse_fn_decl`'s non-recovering path and the new
-    /// trait-impl parser. The recovery-variant fn-decl parser at
-    /// `parse_fn_decl_tail` keeps its inline copy because each failure
-    /// site must emit a recovery stub instead of propagating the error.
+    /// The list ends in front of the `{` of the body, or with its last
+    /// clause where there is no body (a trait's method signature).
     fn parse_where_clauses_opt(&mut self) -> Result<Vec<WhereClause>> {
         if self.peek_skip_nl() != &Token::Where {
             return Ok(Vec::new());
         }
-        self.advance(); // consume 'where'
-        let mut clauses: Vec<WhereClause> = Vec::new();
-        loop {
-            self.skip_nl();
-            let (type_param, _) = self.expect_ident()?;
-            self.expect(&Token::Colon)?;
-            clauses.push(self.parse_trait_ref()?.bound_on(type_param));
+        let open = self.advance().span;
+        let end = ListEnd::BeforeOrNothing(&Token::LBrace);
+        let clauses = self.comma_list("where clause", open, end, |p| {
+            let (type_param, _) = p.expect_ident()?;
+            p.expect(&Token::Colon)?;
+            let mut bounds = vec![p.parse_trait_ref()?.bound_on(type_param)];
             // Multi-trait bounds: `where a: Equal + Hash`
-            while self.at(&Token::Plus) {
-                self.advance();
-                clauses.push(self.parse_trait_ref()?.bound_on(type_param));
+            while p.at(&Token::Plus) {
+                p.advance();
+                bounds.push(p.parse_trait_ref()?.bound_on(type_param));
             }
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-            } else {
-                break;
-            }
+            Ok(bounds)
+        })?;
+        if clauses.is_empty() {
+            // `where {`: the first clause is missing.
+            self.expect_ident()?;
         }
-        Ok(clauses)
+        Ok(clauses.into_iter().flatten().collect())
     }
 
     /// Parse a name that may carry one module qualifier: `Shape` or
@@ -1988,15 +1955,7 @@ impl<'src> Parser<'src> {
     fn parse_trait_ref(&mut self) -> Result<TraitRef> {
         let (module, name, name_span) = self.parse_qualified_name("trait name")?;
         let args = if self.at(&Token::LParen) {
-            self.advance();
-            let mut args = Vec::new();
-            self.skip_nl();
-            while !self.at(&Token::RParen) {
-                args.push(self.parse_type_expr()?);
-                self.expect_list_sep("trait argument list", ')', &Token::RParen)?;
-            }
-            self.expect(&Token::RParen)?;
-            args
+            self.parse_trait_args()?
         } else {
             Vec::new()
         };
@@ -2007,6 +1966,18 @@ impl<'src> Parser<'src> {
             span: name_span,
             res: None,
         })
+    }
+
+    /// The argument list of a trait: `(Int)` in `TryInto(Int)`, `(a, b)`
+    /// in `trait Convert(a, b)`.
+    fn parse_trait_args(&mut self) -> Result<Vec<TypeExpr>> {
+        let open = self.expect(&Token::LParen)?.span;
+        self.comma_list(
+            "trait argument list",
+            open,
+            ListEnd::Close(&Token::RParen),
+            Self::parse_type_expr,
+        )
     }
 
     fn parse_trait_or_impl(&mut self) -> Result<Decl> {
@@ -2027,15 +1998,7 @@ impl<'src> Parser<'src> {
         // expression (concrete types, generics, or tyvars from a
         // parameterized impl target).
         let trait_args: Vec<TypeExpr> = if self.at(&Token::LParen) {
-            self.advance();
-            let mut args = Vec::new();
-            self.skip_nl();
-            while !self.at(&Token::RParen) {
-                args.push(self.parse_type_expr()?);
-                self.expect_list_sep("trait argument list", ')', &Token::RParen)?;
-            }
-            self.expect(&Token::RParen)?;
-            args
+            self.parse_trait_args()?
         } else {
             Vec::new()
         };
@@ -2310,14 +2273,13 @@ impl<'src> Parser<'src> {
         }
         if self.at(&Token::Dot) {
             self.advance();
-            self.expect(&Token::LBrace)?;
-            let mut items = Vec::new();
-            self.skip_nl();
-            while !self.at(&Token::RBrace) {
-                items.push(self.expect_ident()?);
-                self.expect_list_sep("selective import list", '}', &Token::RBrace)?;
-            }
-            self.expect(&Token::RBrace)?;
+            let open = self.expect(&Token::LBrace)?.span;
+            let items = self.comma_list(
+                "selective import list",
+                open,
+                ListEnd::Close(&Token::RBrace),
+                Self::expect_ident,
+            )?;
             Ok(Decl::Import(
                 ImportTarget::Items(name, items),
                 self.close(import_span),
@@ -2412,14 +2374,13 @@ impl<'src> Parser<'src> {
 
     /// The rest of a function type after its `Fn`: `(A, B) -> C`.
     fn parse_fn_type_rest(&mut self, start: Span) -> Result<TypeExpr> {
-        self.expect(&Token::LParen)?;
-        let mut params = Vec::new();
-        self.skip_nl();
-        while !self.at(&Token::RParen) {
-            params.push(self.parse_type_expr()?);
-            self.expect_list_sep("function type parameter list", ')', &Token::RParen)?;
-        }
-        self.expect(&Token::RParen)?;
+        let open = self.expect(&Token::LParen)?.span;
+        let params = self.comma_list(
+            "function type parameter list",
+            open,
+            ListEnd::Close(&Token::RParen),
+            Self::parse_type_expr,
+        )?;
         self.expect(&Token::Arrow)?;
         let ret = self.parse_type_expr()?;
         Ok(self.mk_type(TypeExprKind::Function(params, Box::new(ret)), start))
@@ -2501,54 +2462,74 @@ impl<'src> Parser<'src> {
             ));
         }
         // Tuple type: (A, B, ...)
+        // Parentheses, as in an expression: `()` is the unit type, `(T)`
+        // is `T`, and a comma makes a tuple, `(T,)` the tuple of one.
         if self.at(&Token::LParen) {
             self.advance();
-            let mut elems = Vec::new();
             self.skip_nl();
-            while !self.at(&Token::RParen) {
-                let elem = self.parse_type_expr()?;
-                if elems.is_empty() && self.at(&Token::Arrow) {
-                    return Err(self.arrow_fn_type_error(start, &elem));
-                }
-                elems.push(elem);
-                self.expect_list_sep("tuple type", ')', &Token::RParen)?;
+            if self.at(&Token::RParen) {
+                self.advance();
+                return Ok(self.mk_type(TypeExprKind::Tuple(Vec::new()), start));
             }
-            self.expect(&Token::RParen)?;
+            let close = Token::RParen;
+            if self.at(&Token::Eof) || self.at_foreign_closer(&close) || self.at_fn_decl() {
+                return Err(self.unclosed_list_err("tuple type", start, &close));
+            }
+            let first = self.parse_type_expr()?;
+            if self.at(&Token::Arrow) {
+                return Err(self.arrow_fn_type_error(start, &first));
+            }
+            self.skip_nl();
+            if self.at(&Token::RParen) {
+                self.advance();
+                return Ok(first);
+            }
+            if !self.at(&Token::Comma) {
+                return Err(self.unclosed_list_err("tuple type", start, &close));
+            }
+            self.advance();
+            let mut elems = vec![first];
+            elems.extend(self.comma_list(
+                "tuple type",
+                start,
+                ListEnd::Close(&close),
+                Self::parse_type_expr,
+            )?);
             return Ok(self.mk_type(TypeExprKind::Tuple(elems), start));
         }
         // Anonymous record type: `{name: Type, age: Type}` or open
         // `{name: Type, ...r}`.
         if self.at(&Token::LBrace) {
             self.advance();
-            self.skip_nl();
-            let mut fields: Vec<(Symbol, TypeExpr)> = Vec::new();
             let mut tail: Option<Symbol> = None;
             let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-            while !self.at(&Token::RBrace) {
-                self.skip_nl();
-                if self.at(&Token::DotDotDot) {
-                    self.advance();
-                    // Row variable name (e.g. `r` in `...r`). Required.
-                    let (rname, _) = self.expect_ident()?;
-                    tail = Some(rname);
-                    self.skip_nl();
-                    break;
-                }
-                let (fname, fname_span) = self.expect_ident()?;
-                self.expect(&Token::Colon)?;
-                self.skip_nl();
-                let fty = self.parse_type_expr()?;
-                if !seen.insert(fname) {
-                    return Err(Diagnostic::error(
-                        Code::DuplicateField,
-                        fname_span,
-                        format!("duplicate field '{}' in anon record type", fname),
-                    ));
-                }
-                fields.push((fname, fty));
-                self.expect_list_sep("anon record type fields", '}', &Token::RBrace)?;
-            }
-            self.expect(&Token::RBrace)?;
+            let fields = self.comma_list(
+                "anon record type",
+                start,
+                ListEnd::Close(&Token::RBrace),
+                |p| {
+                    p.nothing_after_rest(tail.is_some(), "...", '}', "an anon record type")?;
+                    if p.at(&Token::DotDotDot) {
+                        p.advance();
+                        // Row variable name (e.g. `r` in `...r`). Required.
+                        tail = Some(p.expect_ident()?.0);
+                        return Ok(None);
+                    }
+                    let (fname, fname_span) = p.expect_ident()?;
+                    p.expect(&Token::Colon)?;
+                    p.skip_nl();
+                    let fty = p.parse_type_expr()?;
+                    if !seen.insert(fname) {
+                        return Err(Diagnostic::error(
+                            Code::DuplicateField,
+                            fname_span,
+                            format!("duplicate field '{}' in anon record type", fname),
+                        ));
+                    }
+                    Ok(Some((fname, fty)))
+                },
+            )?;
+            let fields = fields.into_iter().flatten().collect();
             return Ok(self.mk_type(TypeExprKind::AnonRecord { fields, tail }, start));
         }
         let (module, name, name_span) = self.parse_qualified_name("type name")?;
@@ -2583,14 +2564,13 @@ impl<'src> Parser<'src> {
             return Ok(self.mk_type(TypeExprKind::SelfType, start));
         }
         if self.peek() == &Token::LParen {
-            self.advance();
-            let mut args = Vec::new();
-            self.skip_nl();
-            while !self.at(&Token::RParen) {
-                args.push(self.parse_type_expr()?);
-                self.expect_list_sep("generic type argument list", ')', &Token::RParen)?;
-            }
-            self.expect(&Token::RParen)?;
+            let open = self.advance().span;
+            let args = self.comma_list(
+                "generic type argument list",
+                open,
+                ListEnd::Close(&Token::RParen),
+                Self::parse_type_expr,
+            )?;
             Ok(self.mk_type(
                 TypeExprKind::Generic {
                     module,
@@ -2691,6 +2671,27 @@ impl<'src> Parser<'src> {
         )
     }
 
+    /// Refuses the integer token `n` where no minus sign precedes it and
+    /// it is the magnitude 2^63 (see `Token::Int`): the largest Int is
+    /// one less.
+    fn int_in_range(&self, n: i64) -> Result<()> {
+        if n == i64::MIN {
+            let span = self.span();
+            let digits = &self.source[span.start_offset()..span.end_offset()];
+            let kind = match digits.get(..2) {
+                Some("0x" | "0X") => "hex",
+                Some("0b" | "0B") => "binary",
+                _ => "number",
+            };
+            return Err(Diagnostic::error(
+                Code::InvalidNumber,
+                span,
+                format!("{kind} literal too large"),
+            ));
+        }
+        Ok(())
+    }
+
     /// The error for a token that follows a complete statement (or
     /// top-level declaration) on the same line. Statements are separated
     /// by a newline, so `let a = 1 let b = 2` and `let t = price quantity`
@@ -2724,9 +2725,9 @@ impl<'src> Parser<'src> {
     /// equivalent. Used by the statement-level guard in `parse_stmt`.
     fn foreign_keyword_hint(text: &str) -> Option<&'static str> {
         match text {
-            "if" => {
-                Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'")
-            }
+            "if" => Some(
+                "silt has no 'if' keyword — use 'match cond { ... }' with a 'true -> ...' and a 'false -> ...' arm",
+            ),
             "while" | "for" => Some(
                 "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
             ),
@@ -2820,7 +2821,8 @@ impl<'src> Parser<'src> {
                 Code::UnsupportedSyntax,
                 self.span(),
                 "'else' only follows a 'when' condition; silt has no 'if' keyword — \
-                          for a conditional value use 'match cond { true -> ..., false -> ... }'",
+                          for a conditional value use 'match cond { ... }' with a 'true -> ...' and a \
+                          'false -> ...' arm",
             ));
         }
 
@@ -3023,7 +3025,7 @@ impl<'src> Parser<'src> {
                         // that ends a stage (parsed at exactly the pipe's
                         // right binding power) is left for the pipe loop,
                         // so `x |> f |> g?` means `(x |> f |> g)?`.
-                        if min_bp == PIPE_R_BP {
+                        if min_bp == prec::PIPE.1 {
                             break;
                         }
                         let span = left.span;
@@ -3032,24 +3034,21 @@ impl<'src> Parser<'src> {
                         continue;
                     }
                     Token::LParen => {
-                        let bp = 120;
-                        if bp < min_bp {
+                        if prec::CALL < min_bp {
                             break;
                         }
                         left = self.parse_call_expr(left)?;
                         continue;
                     }
                     Token::LBracket => {
-                        let bp = 120;
-                        if bp < min_bp {
+                        if prec::CALL < min_bp {
                             break;
                         }
                         left = self.parse_index_expr(left)?;
                         continue;
                     }
                     Token::LBrace if self.is_trailing_closure() => {
-                        let bp = 115; // lower than call (120) so match scrutinee can suppress it
-                        if bp < min_bp {
+                        if prec::TRAILING_CLOSURE < min_bp {
                             break;
                         }
                         let closure = self.parse_trailing_closure()?;
@@ -3066,11 +3065,26 @@ impl<'src> Parser<'src> {
             let had_newline = self.has_newline_before();
             self.skip_nl();
 
+            // Binary operators. + and - are newline-sensitive: `-` is
+            // ambiguous with unary negation starting the next statement
+            // (`+` is treated the same; silt has no unary plus), so a
+            // newline terminates the expression in front of them.
+            let binary = BinOp::from_token(self.peek())
+                .filter(|op| !(had_newline && matches!(op, BinOp::Add | BinOp::Sub)));
+            if let Some(op) = binary {
+                let (l_bp, r_bp) = op.binding_power();
+                let Some(right) = self.parse_infix_rhs(saved, min_bp, l_bp, r_bp, false)? else {
+                    break;
+                };
+                let span = left.span;
+                left = self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
+                continue;
+            }
+
             match self.peek() {
                 // Field access / record update (always allowed across newlines)
                 Token::Dot => {
-                    let bp = 130;
-                    if bp < min_bp {
+                    if prec::FIELD < min_bp {
                         self.restore(saved);
                         break;
                     }
@@ -3079,9 +3093,7 @@ impl<'src> Parser<'src> {
                     if self.at(&Token::LBrace) {
                         // Record update: expr.{ field: value }
                         let span = left.span;
-                        self.advance(); // {
                         let fields = self.parse_record_fields()?;
-                        self.expect(&Token::RBrace)?;
                         left = self.mk_expr(
                             ExprKind::RecordUpdate {
                                 expr: Box::new(left),
@@ -3089,16 +3101,18 @@ impl<'src> Parser<'src> {
                             },
                             span,
                         );
-                    } else if let Token::Int(n) = self.peek() {
-                        // `t.0`: parsed so that the checker can say tuple
-                        // indexing is not supported.
-                        let field = intern::intern(&n.to_string());
-                        let field_span = self.advance().span;
-                        let span = left.span;
-                        left = self.mk_expr(
-                            ExprKind::FieldAccess(Box::new(left), field, field_span),
-                            span,
-                        );
+                    } else if matches!(self.peek(), Token::Int(_) | Token::Float(_)) {
+                        // `t.0`, and `t.0.1`, whose `0.1` is one token.
+                        let index = self.span();
+                        let index = &self.source[index.start_offset()..index.end_offset()];
+                        return Err(Diagnostic::error(
+                            Code::UnsupportedSyntax,
+                            self.span(),
+                            format!(
+                                "tuple indexing ('t.{index}') is not supported; \
+                                 destructure instead: 'let (a, b) = t'"
+                            ),
+                        ));
                     } else {
                         let (field, field_span) = self.expect_ident()?;
                         // Round 94: qualified record construction —
@@ -3134,9 +3148,7 @@ impl<'src> Parser<'src> {
                                     name: *module,
                                     span: left.span,
                                 };
-                                self.advance(); // {
                                 let fields = self.parse_record_fields()?;
-                                self.expect(&Token::RBrace)?;
                                 let span = left.span;
                                 left = self.mk_expr(
                                     ExprKind::RecordCreate {
@@ -3200,7 +3212,8 @@ impl<'src> Parser<'src> {
                     // match body are the match body themselves (see
                     // `is_trailing_closure`):
                     //   match items |> list.head { Some(x) -> … }
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 55, PIPE_R_BP, true)?
+                    let Some(right) =
+                        self.parse_infix_rhs(saved, min_bp, prec::PIPE.0, prec::PIPE.1, true)?
                     else {
                         break;
                     };
@@ -3211,7 +3224,9 @@ impl<'src> Parser<'src> {
 
                 // Range — binds tighter than pipe so `1..10 |> f()` works
                 Token::DotDot => {
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 60, 61, false)? else {
+                    let (l_bp, r_bp) = prec::RANGE;
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, l_bp, r_bp, false)?
+                    else {
                         break;
                     };
                     let span = left.span;
@@ -3219,100 +3234,9 @@ impl<'src> Parser<'src> {
                     continue;
                 }
 
-                // Binary operators
-                Token::OrOr => {
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 20, 21, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left = self.mk_expr(
-                        ExprKind::Binary(Box::new(left), BinOp::Or, Box::new(right)),
-                        span,
-                    );
-                    continue;
-                }
-                Token::AndAnd => {
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 30, 31, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left = self.mk_expr(
-                        ExprKind::Binary(Box::new(left), BinOp::And, Box::new(right)),
-                        span,
-                    );
-                    continue;
-                }
-                Token::EqEq | Token::NotEq => {
-                    let op = if self.peek() == &Token::EqEq {
-                        BinOp::Eq
-                    } else {
-                        BinOp::Neq
-                    };
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 40, 41, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left =
-                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
-                    continue;
-                }
-                Token::Lt | Token::Gt | Token::LtEq | Token::GtEq => {
-                    let op = match self.peek() {
-                        Token::Lt => BinOp::Lt,
-                        Token::Gt => BinOp::Gt,
-                        Token::LtEq => BinOp::Leq,
-                        Token::GtEq => BinOp::Geq,
-                        _ => unreachable!(
-                            "guarded by Token::Lt | Token::Gt | Token::LtEq | Token::GtEq arm"
-                        ),
-                    };
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 50, 51, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left =
-                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
-                    continue;
-                }
-                Token::Plus | Token::Minus if !had_newline => {
-                    // + and - are newline-sensitive: `-` is ambiguous with unary
-                    // negation starting the next statement (`+` is treated the
-                    // same; silt has no unary plus), so a newline terminates it.
-                    let op = if self.peek() == &Token::Plus {
-                        BinOp::Add
-                    } else {
-                        BinOp::Sub
-                    };
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 70, 71, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left =
-                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
-                    continue;
-                }
-                Token::Star | Token::Slash | Token::Percent => {
-                    let op = match self.peek() {
-                        Token::Star => BinOp::Mul,
-                        Token::Slash => BinOp::Div,
-                        Token::Percent => BinOp::Mod,
-                        _ => unreachable!(
-                            "guarded by Token::Star | Token::Slash | Token::Percent arm"
-                        ),
-                    };
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 80, 81, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left =
-                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
-                    continue;
-                }
-
                 // Type ascription: expr as Type
                 Token::As => {
-                    let bp = 95;
-                    if bp < min_bp {
+                    if prec::AS < min_bp {
                         self.restore(saved);
                         break;
                     }
@@ -3340,13 +3264,19 @@ impl<'src> Parser<'src> {
             Token::Minus => {
                 let span = self.span();
                 self.advance();
-                let expr = self.parse_expr_bp(90)?;
+                // The smallest Int: its magnitude is no Int, so the minus
+                // sign and the digits are one literal.
+                if matches!(self.peek(), Token::Int(i64::MIN)) {
+                    self.advance();
+                    return Ok(self.mk_expr(ExprKind::Int(i64::MIN), span));
+                }
+                let expr = self.parse_expr_bp(prec::UNARY)?;
                 Ok(self.mk_expr(ExprKind::Unary(UnaryOp::Neg, Box::new(expr)), span))
             }
             Token::Not => {
                 let span = self.span();
                 self.advance();
-                let expr = self.parse_expr_bp(90)?;
+                let expr = self.parse_expr_bp(prec::UNARY)?;
                 Ok(self.mk_expr(ExprKind::Unary(UnaryOp::Not, Box::new(expr)), span))
             }
             _ => self.parse_atom(),
@@ -3359,6 +3289,7 @@ impl<'src> Parser<'src> {
 
         match self.peek().clone() {
             Token::Int(n) => {
+                self.int_in_range(n)?;
                 self.advance();
                 Ok(self.mk_expr(ExprKind::Int(n), span))
             }
@@ -3393,9 +3324,7 @@ impl<'src> Parser<'src> {
                     && !self.is_trailing_closure()
                 {
                     // Record creation: User { name: "Alice", ... }
-                    self.advance(); // {
                     let fields = self.parse_record_fields()?;
-                    self.expect(&Token::RBrace)?;
                     Ok(self.mk_expr(
                         ExprKind::RecordCreate {
                             module: None,
@@ -3414,7 +3343,6 @@ impl<'src> Parser<'src> {
                 Ok(self.mk_expr(ExprKind::Ident(name), span))
             }
             Token::LParen => {
-                let opener = self.span();
                 self.advance();
                 self.skip_nl();
                 // Unit: ()
@@ -3422,40 +3350,31 @@ impl<'src> Parser<'src> {
                     self.advance();
                     return Ok(self.mk_expr(ExprKind::Unit, span));
                 }
-                // Parse first expression
-                let first = self.parse_expr_in_delim(
-                    "parenthesized expression",
-                    &Token::RParen,
-                    ')',
-                    opener,
-                )?;
+                let unclosed = |p: &Self| {
+                    p.at(&Token::Eof) || p.at_foreign_closer(&Token::RParen) || p.at_fn_decl()
+                };
+                if unclosed(self) {
+                    return Err(self.delim_unclosed_err_no_comma(
+                        "parenthesized expression",
+                        ')',
+                        span,
+                    ));
+                }
+                let first = self.parse_expr()?;
                 self.skip_nl();
                 if self.at(&Token::Comma) {
                     // Tuple: (a, b, c)
                     self.advance();
                     let mut elems = vec![first];
-                    self.skip_nl();
-                    while !self.at(&Token::RParen) {
-                        if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RParen) {
-                            return Err(self.delim_unclosed_err("tuple", ')', opener));
-                        }
-                        elems.push(self.parse_expr_in_delim(
-                            "tuple",
-                            &Token::RParen,
-                            ')',
-                            opener,
-                        )?);
-                        self.expect_list_sep_with_opener(
-                            "tuple literal",
-                            ')',
-                            &Token::RParen,
-                            Some(opener),
-                        )?;
-                    }
-                    self.expect(&Token::RParen)?;
+                    elems.extend(self.comma_list(
+                        "tuple literal",
+                        span,
+                        ListEnd::Close(&Token::RParen),
+                        Self::parse_expr,
+                    )?);
                     Ok(self.mk_expr(ExprKind::Tuple(elems), span))
-                } else if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RParen) {
-                    Err(self.delim_unclosed_err_no_comma("parenthesized expression", ')', opener))
+                } else if unclosed(self) {
+                    Err(self.delim_unclosed_err_no_comma("parenthesized expression", ')', span))
                 } else {
                     // Parenthesized expression
                     self.expect(&Token::RParen)?;
@@ -3463,89 +3382,40 @@ impl<'src> Parser<'src> {
                 }
             }
             Token::LBracket => {
-                let opener = self.span();
                 self.advance();
-                let mut elems = Vec::new();
-                self.skip_nl();
-                while !self.at(&Token::RBracket) {
-                    if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RBracket) {
-                        return Err(self.delim_unclosed_err("list literal", ']', opener));
-                    }
-                    if self.at(&Token::DotDot) {
-                        self.advance();
-                        elems.push(ListElem::Spread(self.parse_expr_in_delim(
-                            "list literal",
-                            &Token::RBracket,
-                            ']',
-                            opener,
-                        )?));
-                    } else {
-                        elems.push(ListElem::Single(self.parse_expr_in_delim(
-                            "list literal",
-                            &Token::RBracket,
-                            ']',
-                            opener,
-                        )?));
-                    }
-                    self.expect_list_sep_with_opener(
-                        "list literal",
-                        ']',
-                        &Token::RBracket,
-                        Some(opener),
-                    )?;
-                }
-                self.expect(&Token::RBracket)?;
+                let elems = self.comma_list(
+                    "list literal",
+                    span,
+                    ListEnd::Close(&Token::RBracket),
+                    |p| {
+                        if p.at(&Token::DotDot) {
+                            p.advance();
+                            Ok(ListElem::Spread(p.parse_expr()?))
+                        } else {
+                            Ok(ListElem::Single(p.parse_expr()?))
+                        }
+                    },
+                )?;
                 Ok(self.mk_expr(ExprKind::List(elems), span))
             }
             Token::HashBrace => {
-                let opener = self.span();
                 self.advance();
-                let mut pairs = Vec::new();
-                self.skip_nl();
-                while !self.at(&Token::RBrace) {
-                    if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RBrace) {
-                        return Err(self.delim_unclosed_err("map literal", '}', opener));
-                    }
-                    let key =
-                        self.parse_expr_in_delim("map literal", &Token::RBrace, '}', opener)?;
-                    self.expect(&Token::Colon)?;
-                    self.skip_nl();
-                    let value =
-                        self.parse_expr_in_delim("map literal", &Token::RBrace, '}', opener)?;
-                    pairs.push((key, value));
-                    self.expect_list_sep_with_opener(
-                        "map literal",
-                        '}',
-                        &Token::RBrace,
-                        Some(opener),
-                    )?;
-                }
-                self.expect(&Token::RBrace)?;
+                let pairs =
+                    self.comma_list("map literal", span, ListEnd::Close(&Token::RBrace), |p| {
+                        let key = p.parse_expr()?;
+                        p.expect(&Token::Colon)?;
+                        Ok((key, p.parse_expr()?))
+                    })?;
                 Ok(self.mk_expr(ExprKind::Map(pairs), span))
             }
             Token::HashBracket => {
-                let opener = self.span();
                 self.advance();
-                let mut elems = Vec::new();
-                self.skip_nl();
-                while !self.at(&Token::RBracket) {
-                    if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RBracket) {
-                        return Err(self.delim_unclosed_err("set literal", ']', opener));
-                    }
-                    elems.push(self.parse_expr_in_delim(
-                        "set literal",
-                        &Token::RBracket,
-                        ']',
-                        opener,
-                    )?);
-                    self.expect_list_sep_with_opener(
-                        "set literal",
-                        ']',
-                        &Token::RBracket,
-                        Some(opener),
-                    )?;
-                }
-                self.expect(&Token::RBracket)?;
+                let elems = self.comma_list(
+                    "set literal",
+                    span,
+                    ListEnd::Close(&Token::RBracket),
+                    Self::parse_expr,
+                )?;
                 Ok(self.mk_expr(ExprKind::SetLit(elems), span))
             }
             Token::LBrace => {
@@ -3646,29 +3516,13 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_call_args(&mut self) -> Result<Vec<Expr>> {
-        let opener = self.span();
-        self.expect(&Token::LParen)?;
-        let mut args = Vec::new();
-        self.skip_nl();
-        while !self.at(&Token::RParen) {
-            if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RParen) {
-                return Err(self.delim_unclosed_err("function call argument list", ')', opener));
-            }
-            args.push(self.parse_expr_in_delim(
-                "function call argument list",
-                &Token::RParen,
-                ')',
-                opener,
-            )?);
-            self.expect_list_sep_with_opener(
-                "function call argument list",
-                ')',
-                &Token::RParen,
-                Some(opener),
-            )?;
-        }
-        self.expect(&Token::RParen)?;
-        Ok(args)
+        let open = self.expect(&Token::LParen)?.span;
+        self.comma_list(
+            "function call argument list",
+            open,
+            ListEnd::Close(&Token::RParen),
+            Self::parse_expr,
+        )
     }
 
     fn parse_index_expr(&mut self, left: Expr) -> Result<Expr> {
@@ -3896,8 +3750,7 @@ impl<'src> Parser<'src> {
     fn parse_trailing_closure_as_lambda(&mut self) -> Result<Expr> {
         let span = self.span();
         self.expect(&Token::LBrace)?;
-        self.skip_nl();
-        let params = self.parse_closure_params()?;
+        let params = self.parse_closure_params(span)?;
         self.expect(&Token::Arrow)?;
         self.skip_nl();
 
@@ -3929,53 +3782,20 @@ impl<'src> Parser<'src> {
     /// ended by `->`. The pattern may destructure (`(a, b)`,
     /// `Point { x, y }`, `User { name, .. }`); there is no return-type
     /// annotation, the body's type is the closure's return type.
-    fn parse_closure_params(&mut self) -> Result<Vec<Param>> {
-        let mut params = Vec::new();
-        loop {
-            self.skip_nl();
-            if self.at(&Token::Arrow) {
-                break;
-            }
-            if self.at(&Token::Type) {
+    /// `open` is the `{` of the closure; the `->` is left for the caller.
+    fn parse_closure_params(&mut self, open: Span) -> Result<Vec<Param>> {
+        // Closure params terminate at `->`, not a closing bracket.
+        let end = ListEnd::Before(&Token::Arrow);
+        self.comma_list("closure parameter list", open, end, |p| {
+            if p.at(&Token::Type) {
                 return Err(Diagnostic::error(
                     Code::UnsupportedSyntax,
-                    self.span(),
+                    p.span(),
                     "a closure cannot take a 'type' parameter; declare a named function",
                 ));
             }
-            let pattern = self.parse_param_pattern()?;
-            let ty = if self.peek_skip_nl() == &Token::Colon {
-                self.advance();
-                self.skip_nl();
-                Some(self.parse_type_expr()?)
-            } else {
-                None
-            };
-            params.push(Param {
-                kind: ParamKind::Data,
-                pattern,
-                ty,
-            });
-            // Closure params terminate at `->`, not a closing bracket.
-            self.skip_nl();
-            if self.at(&Token::Arrow) {
-                break;
-            }
-            if self.at(&Token::Comma) {
-                self.advance();
-                self.skip_nl();
-            } else {
-                return Err(Diagnostic::error(
-                    Code::UnclosedDelimiter,
-                    self.span(),
-                    format!(
-                        "expected '->' or ',' to continue closure parameter list, found {}",
-                        self.peek()
-                    ),
-                ));
-            }
-        }
-        Ok(params)
+            p.parse_data_param()
+        })
     }
 
     fn attach_trailing_closure(&mut self, callee: Expr, closure: Expr) -> Expr {
@@ -3999,7 +3819,7 @@ impl<'src> Parser<'src> {
         self.expect(&Token::Match)?;
         self.skip_nl();
 
-        // Guardless match: `match { cond -> body, ... }`
+        // Guardless match: `match { cond -> body ... }`
         let guardless = self.at(&Token::LBrace);
         let scrutinee = if guardless {
             None
@@ -4017,9 +3837,9 @@ impl<'src> Parser<'src> {
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
             arms.push(self.parse_match_arm(guardless)?);
-            // Allow optional comma between match arms
-            if self.at(&Token::Comma) {
-                self.advance();
+            // Arms are separated by line breaks, as statements are.
+            if !self.at_newline() && !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
+                return Err(self.same_line_err("match arm"));
             }
             self.skip_nl();
         }
@@ -4114,26 +3934,17 @@ impl<'src> Parser<'src> {
         }
 
         // Binding variant: `loop x = init, y = init { body }`
-        let mut bindings = Vec::new();
-        loop {
-            self.skip_nl();
-            let (name, name_span) = self.expect_ident()?;
-            self.expect(&Token::Eq)?;
-            self.skip_nl();
+        let end = ListEnd::Before(&Token::LBrace);
+        let bindings = self.comma_list("loop binding list", span, end, |p| {
+            let (name, name_span) = p.expect_ident()?;
+            p.expect(&Token::Eq)?;
+            p.skip_nl();
             // An initialiser is a header expression (see `BlockHeader`):
             // in `loop i = n, acc = Nil { ... }` the `{` opens the loop
             // body, it does not make `Nil { ... }` a record literal.
-            let init = self.parse_header_expr(HeaderKind::LoopInit)?;
-            bindings.push((name, name_span, init));
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-
-        self.skip_nl();
+            let init = p.parse_header_expr(HeaderKind::LoopInit)?;
+            Ok((name, name_span, init))
+        })?;
         let body = self.parse_block()?;
 
         Ok(self.mk_expr(
@@ -4184,75 +3995,82 @@ impl<'src> Parser<'src> {
     fn parse_anon_record_literal(&mut self) -> Result<Expr> {
         let span = self.span();
         self.expect(&Token::LBrace)?;
-        self.skip_nl();
         let mut spread: Option<Box<Expr>> = None;
-        if self.at(&Token::DotDotDot) {
-            self.advance();
-            self.skip_nl();
-            let e = self.parse_expr()?;
-            spread = Some(Box::new(e));
-            // After the spread expression, expect a comma if more
-            // fields follow, else closing brace.
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-                self.skip_nl();
-            } else if !self.at(&Token::RBrace) {
-                return Err(Diagnostic::error(
-                    Code::ExpectedToken,
-                    self.span(),
-                    "expected ',' or '}' after spread expression in anon record literal",
-                ));
-            }
-        }
-        let mut fields: Vec<(Symbol, Expr)> = Vec::new();
+        let mut first = true;
         let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-        while !self.at(&Token::RBrace) {
-            self.skip_nl();
-            if self.at(&Token::DotDotDot) {
-                return Err(Diagnostic::error(
-                    Code::UnsupportedSyntax,
-                    self.span(),
-                    "v1 row polymorphism allows only one spread head per anon record literal",
-                ));
-            }
-            let (name, name_span) = self.expect_ident()?;
-            self.expect(&Token::Colon)?;
-            self.skip_nl();
-            let value = self.parse_expr()?;
-            if !seen.insert(name) {
-                return Err(Diagnostic::error(
-                    Code::DuplicateField,
-                    name_span,
-                    format!("duplicate field '{}' in anon record literal", name),
-                ));
-            }
-            fields.push((name, value));
-            self.expect_list_sep("anon record literal fields", '}', &Token::RBrace)?;
-        }
-        self.expect(&Token::RBrace)?;
+        let fields = self.comma_list(
+            "anon record literal",
+            span,
+            ListEnd::Close(&Token::RBrace),
+            |p| {
+                let first = std::mem::take(&mut first);
+                if p.at(&Token::DotDotDot) {
+                    if !first {
+                        return Err(Diagnostic::error(
+                            Code::UnsupportedSyntax,
+                            p.span(),
+                            "v1 row polymorphism allows only one spread head per anon record literal",
+                        ));
+                    }
+                    p.advance();
+                    spread = Some(Box::new(p.parse_expr()?));
+                    return Ok(None);
+                }
+                let (name, name_span) = p.expect_ident()?;
+                p.expect(&Token::Colon)?;
+                let value = p.parse_expr()?;
+                if !seen.insert(name) {
+                    return Err(Diagnostic::error(
+                        Code::DuplicateField,
+                        name_span,
+                        format!("duplicate field '{}' in anon record literal", name),
+                    ));
+                }
+                Ok(Some((name, value)))
+            },
+        )?;
+        let fields = fields.into_iter().flatten().collect();
         Ok(self.mk_expr(ExprKind::AnonRecord { spread, fields }, span))
     }
 
+    /// The braces of a record literal or a record update, at the `{`:
+    /// `{ name: expr, ... }`.
     fn parse_record_fields(&mut self) -> Result<Vec<(Symbol, Expr)>> {
-        let mut fields = Vec::new();
-        self.skip_nl();
-        while !self.at(&Token::RBrace) {
-            if self.at(&Token::DotDot) || self.at(&Token::Dot) {
-                return Err(Diagnostic::error(
-                    Code::UnsupportedSyntax,
-                    self.span(),
-                    "spread syntax is not supported; use `value.{ field: expr }` for record updates",
-                ));
-            }
-            let (name, _) = self.expect_ident()?;
-            self.expect(&Token::Colon)?;
-            self.skip_nl();
-            let value = self.parse_expr()?;
-            fields.push((name, value));
-            self.expect_list_sep("record literal fields", '}', &Token::RBrace)?;
+        let open = self.expect(&Token::LBrace)?.span;
+        self.comma_list(
+            "record literal",
+            open,
+            ListEnd::Close(&Token::RBrace),
+            |p| {
+                if p.at(&Token::DotDot) || p.at(&Token::Dot) {
+                    return Err(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        p.span(),
+                        "spread syntax is not supported; use `value.{ field: expr }` for record updates",
+                    ));
+                }
+                let (name, _) = p.expect_ident()?;
+                p.expect(&Token::Colon)?;
+                Ok((name, p.parse_expr()?))
+            },
+        )
+    }
+
+    /// The error for an element behind the rest of a pattern (`..`,
+    /// `..tail`, `...rest`) or the row variable of a record type, when
+    /// `seen` says there was one: the rest stands last.
+    fn nothing_after_rest(&self, seen: bool, rest: &str, close: char, list: &str) -> Result<()> {
+        if !seen {
+            return Ok(());
         }
-        Ok(fields)
+        Err(Diagnostic::error(
+            Code::ExpectedToken,
+            self.span(),
+            format!(
+                "expected '{close}' after `{rest}` in {list}, found {}",
+                self.peek()
+            ),
+        ))
     }
 
     // ── Patterns ─────────────────────────────────────────────────────
@@ -4275,10 +4093,11 @@ impl<'src> Parser<'src> {
     fn parse_pattern_inner(&mut self) -> Result<Pattern> {
         let first = self.parse_primary_pattern()?;
         // Check for or-pattern: pat1 | pat2 | ...
-        if self.at(&Token::Bar) {
+        // An alternative may start the next line with its `|`.
+        if self.at_bar_skip_nl() {
             let or_span = first.span;
             let mut alts = vec![first];
-            while self.at(&Token::Bar) {
+            while self.at_bar_skip_nl() {
                 self.advance();
                 alts.push(self.parse_primary_pattern()?);
             }
@@ -4293,17 +4112,10 @@ impl<'src> Parser<'src> {
     /// start bound. Used by both the positive (`N..`) and negated
     /// (`-N..`) head paths in `parse_primary_pattern` so the four
     /// `..[-]N` exits stay in lock-step.
-    ///
-    /// i64::MIN safety: silt's lexer rejects `9223372036854775808` at
-    /// lex time (see src/lexer.rs:647-648), so `Token::Int(n)` is always
-    /// in `[0, i64::MAX]`. The negated tail `-m` therefore never
-    /// underflows, and the caller's `-n` for the head is likewise safe.
-    /// We still spell the negation as a plain unary minus to match the
-    /// historical behavior the audit and `negate_i64_min_message_tests`
-    /// pinned.
     fn parse_range_tail_int(&mut self, start: i64) -> Result<PatternKind> {
         match self.peek().clone() {
             Token::Int(m) => {
+                self.int_in_range(m)?;
                 self.advance();
                 Ok(PatternKind::Range(start, m))
             }
@@ -4312,7 +4124,7 @@ impl<'src> Parser<'src> {
                 match self.peek().clone() {
                     Token::Int(m) => {
                         self.advance();
-                        Ok(PatternKind::Range(start, -m))
+                        Ok(PatternKind::Range(start, m.wrapping_neg()))
                     }
                     _ => Err(Diagnostic::error(
                         Code::ExpectedPattern,
@@ -4393,14 +4205,13 @@ impl<'src> Parser<'src> {
         } = head;
         // Constructor pattern: Some(x), Ok(value), Rect(w, h)
         if self.at(&Token::LParen) {
-            self.advance();
-            let mut pats = Vec::new();
-            self.skip_nl();
-            while !self.at(&Token::RParen) {
-                pats.push(self.parse_pattern()?);
-                self.expect_list_sep("constructor pattern", ')', &Token::RParen)?;
-            }
-            self.expect(&Token::RParen)?;
+            let open = self.advance().span;
+            let pats = self.comma_list(
+                "constructor pattern",
+                open,
+                ListEnd::Close(&Token::RParen),
+                Self::parse_pattern,
+            )?;
             Ok(mk(PatternKind::Constructor {
                 qualifier,
                 name,
@@ -4409,30 +4220,23 @@ impl<'src> Parser<'src> {
             }))
         } else if self.at(&Token::LBrace) {
             // Record pattern: User { name, age, .. }
-            self.advance();
-            self.skip_nl();
-            let mut fields = Vec::new();
+            let open = self.advance().span;
             let mut has_rest = false;
-            while !self.at(&Token::RBrace) {
-                self.skip_nl();
-                if self.at(&Token::DotDot) {
-                    self.advance();
-                    has_rest = true;
-                    self.skip_nl();
-                    break;
-                }
-                let (field_name, field_span) = self.expect_ident()?;
-                // Optional sub-pattern: `name: pat`
-                let sub = if self.peek_skip_nl() == &Token::Colon {
-                    self.advance();
-                    Some(self.parse_pattern()?)
-                } else {
-                    None
-                };
-                fields.push((field_name, field_span, sub));
-                self.expect_list_sep("record pattern fields", '}', &Token::RBrace)?;
-            }
-            self.expect(&Token::RBrace)?;
+            let fields = self.comma_list(
+                "record pattern",
+                open,
+                ListEnd::Close(&Token::RBrace),
+                |p| {
+                    p.nothing_after_rest(has_rest, "..", '}', "a record pattern")?;
+                    if p.at(&Token::DotDot) {
+                        p.advance();
+                        has_rest = true;
+                        return Ok(None);
+                    }
+                    p.parse_field_pattern().map(Some)
+                },
+            )?;
+            let fields = fields.into_iter().flatten().collect();
             // A record type is reached through at most its module.
             if qualifier.len() > 1 {
                 return Err(Diagnostic::error(
@@ -4460,6 +4264,18 @@ impl<'src> Parser<'src> {
                 args: Vec::new(),
             }))
         }
+    }
+
+    /// A field of a record pattern: `name` or `name: pattern`.
+    fn parse_field_pattern(&mut self) -> Result<(Symbol, Span, Option<Pattern>)> {
+        let (field_name, field_span) = self.expect_ident()?;
+        let sub = if self.peek_skip_nl() == &Token::Colon {
+            self.advance();
+            Some(self.parse_pattern()?)
+        } else {
+            None
+        };
+        Ok((field_name, field_span, sub))
     }
 
     fn parse_primary_pattern(&mut self) -> Result<Pattern> {
@@ -4533,6 +4349,7 @@ impl<'src> Parser<'src> {
                 self.parse_constructor_pattern_tail(segments, head, start)
             }
             Token::Int(n) => {
+                self.int_in_range(n)?;
                 self.advance();
                 // Check for range pattern: n..m
                 if self.at(&Token::DotDot) {
@@ -4571,12 +4388,12 @@ impl<'src> Parser<'src> {
                 if self.at(&Token::Comma) {
                     self.advance();
                     let mut pats = vec![first];
-                    self.skip_nl();
-                    while !self.at(&Token::RParen) {
-                        pats.push(self.parse_pattern()?);
-                        self.expect_list_sep("tuple pattern", ')', &Token::RParen)?;
-                    }
-                    self.expect(&Token::RParen)?;
+                    pats.extend(self.comma_list(
+                        "tuple pattern",
+                        start,
+                        ListEnd::Close(&Token::RParen),
+                        Self::parse_pattern,
+                    )?);
                     Ok(mk(PatternKind::Tuple(pats)))
                 } else {
                     self.expect(&Token::RParen)?;
@@ -4591,96 +4408,66 @@ impl<'src> Parser<'src> {
                 // block / trailing-closure disambiguation in expression
                 // contexts.
                 self.advance();
-                self.skip_nl();
-                let mut fields: Vec<(Symbol, Span, Option<Pattern>)> = Vec::new();
                 let mut rest: Option<(Symbol, Span)> = None;
-                while !self.at(&Token::RBrace) {
-                    self.skip_nl();
-                    if self.at(&Token::DotDotDot) {
-                        self.advance();
-                        // Named rest binding required (B6: no unnamed rest).
-                        rest = Some(self.expect_ident()?);
-                        self.skip_nl();
-                        break;
-                    }
-                    let (field_name, field_span) = self.expect_ident()?;
-                    let sub = if self.peek_skip_nl() == &Token::Colon {
-                        self.advance();
-                        Some(self.parse_pattern()?)
-                    } else {
-                        None
-                    };
-                    fields.push((field_name, field_span, sub));
-                    self.expect_list_sep("anon record pattern fields", '}', &Token::RBrace)?;
-                }
-                self.expect(&Token::RBrace)?;
+                let fields = self.comma_list(
+                    "anon record pattern",
+                    start,
+                    ListEnd::Close(&Token::RBrace),
+                    |p| {
+                        p.nothing_after_rest(rest.is_some(), "...", '}', "an anon record pattern")?;
+                        if p.at(&Token::DotDotDot) {
+                            p.advance();
+                            // Named rest binding required (B6: no unnamed rest).
+                            rest = Some(p.expect_ident()?);
+                            return Ok(None);
+                        }
+                        p.parse_field_pattern().map(Some)
+                    },
+                )?;
+                let fields = fields.into_iter().flatten().collect();
                 Ok(mk(PatternKind::AnonRecord { fields, rest }))
             }
             Token::LBracket => {
                 self.advance(); // consume [
-                self.skip_nl();
-                if self.at(&Token::RBracket) {
-                    self.advance();
-                    return Ok(mk(PatternKind::List(vec![], None))); // empty list pattern
-                }
-                let mut patterns = Vec::new();
                 let mut rest = None;
-                loop {
-                    self.skip_nl();
-                    if self.at(&Token::DotDot) {
-                        // ...rest pattern
-                        self.advance(); // consume ..
-                        let rest_pat = self.parse_pattern()?;
-                        rest = Some(Box::new(rest_pat));
-                        self.skip_nl();
-                        break;
-                    }
-                    patterns.push(self.parse_pattern()?);
-                    self.skip_nl();
-                    if self.at(&Token::Comma) {
-                        self.advance();
-                        self.skip_nl();
-                        // Check if next is ..rest after comma
-                        if self.at(&Token::DotDot) {
-                            self.advance();
-                            let rest_pat = self.parse_pattern()?;
-                            rest = Some(Box::new(rest_pat));
-                            self.skip_nl();
-                            break;
+                let patterns = self.comma_list(
+                    "list pattern",
+                    start,
+                    ListEnd::Close(&Token::RBracket),
+                    |p| {
+                        p.nothing_after_rest(rest.is_some(), "..", ']', "a list pattern")?;
+                        if p.at(&Token::DotDot) {
+                            p.advance(); // consume ..
+                            rest = Some(Box::new(p.parse_pattern()?));
+                            return Ok(None);
                         }
-                    } else {
-                        break;
-                    }
-                }
-                self.expect(&Token::RBracket)?;
+                        p.parse_pattern().map(Some)
+                    },
+                )?;
+                let patterns = patterns.into_iter().flatten().collect();
                 Ok(mk(PatternKind::List(patterns, rest)))
             }
             Token::HashBrace => {
                 // Map pattern: #{ "key": pattern, ... }
                 self.advance();
-                self.skip_nl();
-                let mut entries = Vec::new();
-                while !self.at(&Token::RBrace) {
-                    self.skip_nl();
-                    let key = match self.peek().clone() {
-                        Token::StringLit(s, _) => {
-                            self.advance();
-                            s
-                        }
-                        _ => {
-                            return Err(Diagnostic::error(
-                                Code::ExpectedPattern,
-                                self.span(),
-                                "expected string key in map pattern",
-                            ));
-                        }
-                    };
-                    self.expect(&Token::Colon)?;
-                    let pat = self.parse_pattern()?;
-                    entries.push((key, pat));
-                    self.expect_list_sep("map pattern", '}', &Token::RBrace)?;
-                }
-                self.expect(&Token::RBrace)?;
+                let entries =
+                    self.comma_list("map pattern", start, ListEnd::Close(&Token::RBrace), |p| {
+                        let key = match p.peek().clone() {
+                            Token::StringLit(s, _) => {
+                                p.advance();
+                                s
+                            }
+                            _ => {
+                                return Err(Diagnostic::error(
+                                    Code::ExpectedPattern,
+                                    p.span(),
+                                    "expected string key in map pattern",
+                                ));
+                            }
+                        };
+                        p.expect(&Token::Colon)?;
+                        Ok((key, p.parse_pattern()?))
+                    })?;
                 Ok(mk(PatternKind::Map(entries)))
             }
             Token::Minus => {
@@ -4690,11 +4477,13 @@ impl<'src> Parser<'src> {
                     Token::Int(n) => {
                         self.advance();
                         // Check for range pattern: -n..m
+                        // `wrapping_neg`: the magnitude 2^63 is
+                        // `i64::MIN` already (see `Token::Int`).
                         if self.at(&Token::DotDot) {
                             self.advance();
-                            self.parse_range_tail_int(-n).map(mk)
+                            self.parse_range_tail_int(n.wrapping_neg()).map(mk)
                         } else {
-                            Ok(mk(PatternKind::Int(-n)))
+                            Ok(mk(PatternKind::Int(n.wrapping_neg())))
                         }
                     }
                     Token::Float(n) => {
@@ -4736,6 +4525,20 @@ impl<'src> Parser<'src> {
     }
 
     // ── Utility ──────────────────────────────────────────────────────
+
+    /// Is the next token, past any line breaks, a `|`? Skips the line
+    /// breaks only if so.
+    fn at_bar_skip_nl(&mut self) -> bool {
+        let mut n = 0;
+        while matches!(self.peek_at(n), Some(Token::Newline)) {
+            n += 1;
+        }
+        let bar = matches!(self.peek_at(n), Some(Token::Bar));
+        if bar {
+            self.pos += n;
+        }
+        bar
+    }
 
     fn peek_skip_nl(&mut self) -> &Token {
         self.skip_nl();

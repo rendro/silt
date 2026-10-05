@@ -1,0 +1,27 @@
+-- The smallest Int is a literal pattern and a bound of a range pattern.
+fn name(n) {
+  match n {
+    -9223372036854775808 -> "min"
+    -0x7fffffffffffffff..-9223372036854775806 -> "next two"
+    _ -> "other"
+  }
+}
+
+fn low(n) {
+  match n {
+    -9223372036854775808..-0x8000000000000000 -> "min"
+    -9223372036854775807..-1 -> "negative"
+    _ -> "not negative"
+  }
+}
+
+fn main() {
+  let min = -9223372036854775808
+  println(name(min))
+  println(name(min + 1))
+  println(name(min + 2))
+  println(name(min + 3))
+  println(low(min))
+  println(low(min + 1))
+  println(low(0))
+}

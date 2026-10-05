@@ -1,0 +1,9 @@
+error[parse]: expected ']' or ',' to continue set literal, found 2
+ --> comma_list__unclosed_set_literal.silt:6:15
+   |
+ 6 |   let s = #[1 2]
+   |               ^ expected ']' or ',' to continue set literal, found 2
+ ::: comma_list__unclosed_set_literal.silt:6:11
+   |
+ 6 |   let s = #[1 2]
+   |           -- the set literal starts here

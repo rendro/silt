@@ -1,0 +1,9 @@
+error[parse]: expected ']' or ',' to continue list pattern, found b
+ --> comma_list__unclosed_list_pattern.silt:7:8
+   |
+ 7 |     [a b] -> a
+   |        ^ expected ']' or ',' to continue list pattern, found b
+ ::: comma_list__unclosed_list_pattern.silt:7:5
+   |
+ 7 |     [a b] -> a
+   |     - the list pattern starts here

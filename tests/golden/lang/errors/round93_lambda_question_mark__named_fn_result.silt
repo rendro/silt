@@ -1,7 +1,7 @@
 fn safe_div(a: Int, b: Int) -> Result(Int, String) {
   match b == 0 {
-    true -> Err("div by zero"),
-    false -> Ok(a / b),
+    true -> Err("div by zero")
+    false -> Ok(a / b)
   }
 }
 

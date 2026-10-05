@@ -1,0 +1,20 @@
+-- A match with one arm may stand on one line; several arms take one line
+-- each, and an arm's body may be a block or another match.
+fn main() {
+  let pair = (1, 2)
+  let sum = match pair { (a, b) -> a + b }
+  println(sum)
+  let name = match sum {
+    3 -> {
+      "three"
+    }
+    n when n > 3 -> match n { _ -> "more" }
+    _ -> "less"
+  }
+  println(name)
+  let sign = match {
+    sum > 0 -> "positive"
+    _ -> "not positive"
+  }
+  println(sign)
+}

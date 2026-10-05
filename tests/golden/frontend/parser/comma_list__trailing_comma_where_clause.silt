@@ -1,0 +1,17 @@
+-- A comma may follow the last where clause, as it may follow the last
+-- element of every other list.
+fn show_both(x: a, y: b) -> String where a: Display, b: Display, {
+  "{x} {y}"
+}
+
+fn show_one(x: a) -> String
+where
+  a: Display,
+{
+  "{x}"
+}
+
+fn main() {
+  println(show_both(1, "two"))
+  println(show_one(3))
+}

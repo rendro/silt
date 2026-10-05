@@ -1,0 +1,9 @@
+error[parse]: expected '{' or ',' to continue loop binding list, found n
+ --> comma_list__unclosed_loop_binding_list.silt:6:14
+   |
+ 6 |   loop i = 0 n = 3 {
+   |              ^ expected '{' or ',' to continue loop binding list, found n
+ ::: comma_list__unclosed_loop_binding_list.silt:6:3
+   |
+ 6 |   loop i = 0 n = 3 {
+   |   ---- the loop binding list starts here

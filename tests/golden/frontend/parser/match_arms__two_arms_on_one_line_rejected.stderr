@@ -1,0 +1,5 @@
+error[parse]: expected a newline before '_': each match arm must start on its own line
+ --> match_arms__two_arms_on_one_line_rejected.silt:6:35
+   |
+ 6 |   let name = match n { 1 -> "one" _ -> "many" }
+   |                                   ^ expected a newline before '_': each match arm must start on its own line

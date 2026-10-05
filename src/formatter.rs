@@ -7055,7 +7055,11 @@ pub(crate) fn format_type_expr(ty: &TypeExpr) -> String {
         }
         TypeExprKind::Tuple(elems) => {
             let items: Vec<String> = elems.iter().map(format_type_expr).collect();
-            format!("({})", items.join(", "))
+            // `(T)` is `T`; the tuple of one keeps its comma.
+            match items.as_slice() {
+                [one] => format!("({one},)"),
+                _ => format!("({})", items.join(", ")),
+            }
         }
         TypeExprKind::Function(params, ret) => {
             let param_strs: Vec<String> = params.iter().map(format_type_expr).collect();
@@ -7154,30 +7158,18 @@ fn escape_string(s: &str) -> String {
 /// top-level construct has an `l_bp` strictly below the parent position's
 /// required min_bp will be re-parsed with the wrong associativity.
 mod bp {
-    use crate::ast::BinOp;
+    use crate::ast::{BinOp, prec};
 
-    pub const RANGE_L: u8 = 60;
-    pub const RANGE_R: u8 = 61;
-    pub const PIPE_L: u8 = 55;
-    pub const PIPE_R: u8 = 56;
-    pub const ASCRIPTION: u8 = 95;
+    pub const RANGE_L: u8 = prec::RANGE.0;
+    pub const RANGE_R: u8 = prec::RANGE.1;
+    pub const PIPE_L: u8 = prec::PIPE.0;
+    pub const PIPE_R: u8 = prec::PIPE.1;
+    pub const ASCRIPTION: u8 = prec::AS;
 
-    /// Left binding power for each `BinOp`, mirroring the `(l_bp, r_bp)`
-    /// pairs in `parse_expr_bp` (src/parser.rs). All Binary operators are
-    /// left-associative so `r_bp == l_bp + 1`. This is the SINGLE source
-    /// of truth used by both `expr_top_l_bp` (cross-family precedence)
-    /// and `format_expr_with_parens` (parent-position min_bp). Earlier
-    /// rounds had this table replicated 3 times in formatter.rs which
-    /// silently drifted the next time the parser changed.
+    /// Left binding power of each `BinOp`, from the table the parser
+    /// reads (`ast::prec`).
     pub fn binop_l_bp(op: BinOp) -> u8 {
-        match op {
-            BinOp::Or => 20,
-            BinOp::And => 30,
-            BinOp::Eq | BinOp::Neq => 40,
-            BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
-            BinOp::Add | BinOp::Sub => 70,
-            BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
-        }
+        op.binding_power().0
     }
 }
 
@@ -7714,7 +7706,8 @@ fn main() {
 
     #[test]
     fn test_format_loop_expression() {
-        let source = "fn countdown(n) { loop i = n { match i { 0 -> 0 _ -> loop(i - 1) } } }\n";
+        let source =
+            "fn countdown(n) { loop i = n { match i {\n  0 -> 0\n  _ -> loop(i - 1)\n} } }\n";
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
         assert_eq!(first, second, "loop formatting should be idempotent");

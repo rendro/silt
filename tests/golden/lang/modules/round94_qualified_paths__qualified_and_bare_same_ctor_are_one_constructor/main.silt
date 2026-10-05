@@ -2,9 +2,9 @@ import shapes
 
 fn main() {
   let m = match shapes.Circle(1.0) {
-    shapes.Circle(r) -> "first",
-    shapes.Circle(r) -> "shadowed",
-    shapes.Rect(w, h) -> "rect",
+    shapes.Circle(r) -> "first"
+    shapes.Circle(r) -> "shadowed"
+    shapes.Rect(w, h) -> "rect"
   }
   print(m)
 }

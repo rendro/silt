@@ -36,30 +36,17 @@ pub fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<Doc, Mi
 
 // ── Binding powers ───────────────────────────────────────────────────
 //
-// The parser's (`parse_expr_bp_inner`); stage 8 step C2 moves them to
-// `ast::prec`, for both to read.
+// The parser's table (`ast::prec`).
 
-const PIPE_L: u8 = 55;
-const PIPE_R: u8 = 56;
-const RANGE_L: u8 = 60;
-const RANGE_R: u8 = 61;
-const UNARY: u8 = 90;
-const ASCRIPTION: u8 = 95;
-const CLOSURE: u8 = 115;
-const CALL: u8 = 120;
-const FIELD: u8 = 130;
+const PIPE_L: u8 = prec::PIPE.0;
+const PIPE_R: u8 = prec::PIPE.1;
+const RANGE_L: u8 = prec::RANGE.0;
+const RANGE_R: u8 = prec::RANGE.1;
 /// Binds tighter than any operator: an operand that is closed.
 const CLOSED: u8 = u8::MAX;
 
 fn binop_bp(op: BinOp) -> u8 {
-    match op {
-        BinOp::Or => 20,
-        BinOp::And => 30,
-        BinOp::Eq | BinOp::Neq => 40,
-        BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
-        BinOp::Add | BinOp::Sub => 70,
-        BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
-    }
+    op.binding_power().0
 }
 
 fn binop_token(op: BinOp) -> Token {
@@ -166,7 +153,7 @@ fn top_bp(expr: &Expr) -> u8 {
         ExprKind::Binary(_, op, _) => binop_bp(*op),
         ExprKind::Pipe(..) => PIPE_L,
         ExprKind::Range(..) => RANGE_L,
-        ExprKind::Ascription(..) => ASCRIPTION,
+        ExprKind::Ascription(..) => prec::AS,
         // `a |> f?`: the `?` applies to the pipeline.
         ExprKind::QuestionMark(inner) if matches!(inner.kind, ExprKind::Pipe(..)) => PIPE_L,
         _ => CLOSED,
@@ -198,10 +185,10 @@ fn question_on_left_spine(expr: &Expr, ctx: Ctx) -> bool {
         ExprKind::QuestionMark(_) => true,
         ExprKind::Binary(left, op, _) => through(left, binop_bp(*op)),
         ExprKind::Range(left, _) => through(left, RANGE_L),
-        ExprKind::Ascription(left, _) => through(left, ASCRIPTION),
-        ExprKind::Call(left, _) => through(left, CALL),
+        ExprKind::Ascription(left, _) => through(left, prec::AS),
+        ExprKind::Call(left, _) => through(left, prec::CALL),
         ExprKind::FieldAccess(left, ..) | ExprKind::RecordUpdate { expr: left, .. } => {
-            through(left, FIELD)
+            through(left, prec::FIELD)
         }
         _ => false,
     }
@@ -265,12 +252,12 @@ fn opens_brace_in_header(expr: &Expr) -> bool {
 fn takes_from_unwrapped(expr: &Expr, ctx: Ctx) -> u8 {
     match &expr.kind {
         ExprKind::Binary(_, op, right) => {
-            let r_bp = binop_bp(*op) + 1;
+            let r_bp = op.binding_power().1;
             r_bp.min(takes_from(right, ctx.right(r_bp)))
         }
         ExprKind::Pipe(_, stage) => PIPE_R.min(takes_from(stage, ctx.stage())),
         ExprKind::Range(_, right) => RANGE_R.min(takes_from(right, ctx.right(RANGE_R))),
-        ExprKind::Unary(_, operand) => UNARY.min(takes_from(operand, ctx.right(UNARY))),
+        ExprKind::Unary(_, operand) => prec::UNARY.min(takes_from(operand, ctx.right(prec::UNARY))),
         ExprKind::Return(_) => 0,
         _ => CLOSED,
     }
@@ -284,15 +271,11 @@ struct ListStyle {
     spaced: bool,
     /// One item per line, whatever the width.
     always_break: bool,
-    /// A comma behind the last item when the list is broken. Off where
-    /// the grammar does not take one.
-    trailing_comma: bool,
 }
 
 const TIGHT: ListStyle = ListStyle {
     spaced: false,
     always_break: false,
-    trailing_comma: true,
 };
 const SPACED: ListStyle = ListStyle {
     spaced: true,
@@ -387,15 +370,14 @@ impl Printer<'_> {
         }
     }
 
-    /// The comma behind the last item of a list: the printer's, by the
-    /// style; the source's is skipped and its comments stay here.
+    /// The comma behind the last item of a list, written when the list
+    /// is broken (every list of the grammar takes one); the source's is
+    /// skipped and its comments stay here.
     fn last_comma(&mut self, style: ListStyle, required: bool) -> Doc {
-        let comma = if required || (style.trailing_comma && style.always_break) {
+        let comma = if required || style.always_break {
             Doc::text(",")
-        } else if style.trailing_comma {
-            Doc::if_break(Doc::text(","), Doc::Nil)
         } else {
-            Doc::Nil
+            Doc::if_break(Doc::text(","), Doc::Nil)
         };
         Doc::concat(vec![comma, self.cur.skip(&Token::Comma)])
     }
@@ -1048,6 +1030,8 @@ impl Printer<'_> {
 
     fn bare_expr(&mut self, expr: &Expr, ctx: Ctx) -> Doc {
         match &expr.kind {
+            // The smallest Int: the minus sign belongs to the literal.
+            ExprKind::Int(i64::MIN) => self.number_pattern(Token::Int(0), false),
             ExprKind::Int(_) => self.tok(Token::Int(0)),
             ExprKind::Float(_) => self.tok(Token::Float(0.0)),
             ExprKind::Bool(_) => self.tok(Token::Bool(true)),
@@ -1108,7 +1092,7 @@ impl Printer<'_> {
                     return Doc::concat(vec![op_doc, open, inner, close]);
                 }
                 let gap = if doubled { space() } else { Doc::Nil };
-                let operand = self.expr(operand, ctx.right(UNARY));
+                let operand = self.expr(operand, ctx.right(prec::UNARY));
                 Doc::concat(vec![op_doc, gap, operand])
             }
             ExprKind::Pipe(..) => self.pipeline(expr, ctx),
@@ -1127,7 +1111,7 @@ impl Printer<'_> {
                 // those of its stage.
                 let open_stage = takes_from(stage, Ctx::top().stage()) != CLOSED;
                 let inner = if open_stage && self.cur.wrappers(inner.span.end) > 0 {
-                    self.expr(inner, ctx.left(CALL))
+                    self.expr(inner, ctx.left(prec::CALL))
                 } else {
                     self.expr(
                         inner,
@@ -1140,7 +1124,7 @@ impl Printer<'_> {
                 Doc::concat(vec![inner, self.tok(Token::Question)])
             }
             ExprKind::Ascription(inner, ty) => Doc::concat(vec![
-                self.expr(inner, ctx.left(ASCRIPTION)),
+                self.expr(inner, ctx.left(prec::AS)),
                 space(),
                 self.tok(Token::As),
                 space(),
@@ -1335,7 +1319,7 @@ impl Printer<'_> {
             // A `?` behind the pipeline stands behind its last stage.
             let stage_ctx = if ctx.question_follows && i + 1 == count {
                 Ctx {
-                    left_of: Some(CALL),
+                    left_of: Some(prec::CALL),
                     ..ctx.stage()
                 }
             } else {
@@ -1421,10 +1405,6 @@ impl Printer<'_> {
             }
         }
         links.reverse();
-        let numbered = |link: &Expr| {
-            matches!(&link.kind, ExprKind::FieldAccess(_, field, _)
-                if intern::resolve(*field).starts_with(|c: char| c.is_ascii_digit()))
-        };
         let is_call = |link: &&Expr| matches!(link.kind, ExprKind::Call(..));
         let is_dot = |link: &Expr| {
             matches!(
@@ -1446,32 +1426,23 @@ impl Printer<'_> {
                 Some(Expr {
                     kind: ExprKind::Lambda { .. },
                     ..
-                }) => CLOSURE,
-                _ => CALL,
+                }) => prec::TRAILING_CLOSURE,
+                _ => prec::CALL,
             },
-            ExprKind::QuestionMark(_) => CALL,
-            _ => FIELD,
+            ExprKind::QuestionMark(_) => prec::CALL,
+            _ => prec::FIELD,
         };
-        // `(t.0).1`: without the parentheses, `0.1` is a number.
-        let head_doc = if numbered(first) && numbered(head) && self.cur.wrappers(head.span.end) > 0
-        {
-            let open = self.tok(Token::LParen);
-            let inner = self.expr(head, Ctx::top());
-            let close = self.tok(Token::RParen);
-            Doc::concat(vec![open, inner, close])
-        } else {
-            let wrapped = self.cur.wrappers(head.span.end) > 0;
-            let doc = self.expr(head, ctx.left(first_bp));
-            match &head.kind {
-                // `1 .f` is a field of `1`; `1.f` may be a number.
-                ExprKind::Int(_) if is_dot(first) => Doc::concat(vec![doc, space()]),
-                // Behind `x as T` without parentheses, only a line break
-                // keeps a `.` from being part of the type.
-                ExprKind::Ascription(..) if is_dot(first) && !wrapped => {
-                    Doc::concat(vec![doc, Doc::nest(Doc::HardLine)])
-                }
-                _ => doc,
+        let wrapped = self.cur.wrappers(head.span.end) > 0;
+        let head_doc = self.expr(head, ctx.left(first_bp));
+        let head_doc = match &head.kind {
+            // `1 .f` is a field of `1`; `1.` starts a number.
+            ExprKind::Int(_) if is_dot(first) => Doc::concat(vec![head_doc, space()]),
+            // Behind `x as T` without parentheses, only a line break
+            // keeps a `.` from being part of the type.
+            ExprKind::Ascription(..) if is_dot(first) && !wrapped => {
+                Doc::concat(vec![head_doc, Doc::nest(Doc::HardLine)])
             }
+            _ => head_doc,
         };
         // A name and its first field stay together: `list.map`, `self.x`.
         let simple_head = matches!(head.kind, ExprKind::Ident(_));
@@ -1482,16 +1453,9 @@ impl Printer<'_> {
                     if breakable && !(i == 0 && simple_head) {
                         docs.push(Doc::SoftLine);
                     }
-                    // `t.0 .1`, not `t.0.1`.
-                    if i > 0 && numbered(link) && numbered(links[i - 1]) {
-                        docs.push(space());
-                    }
                     docs.push(self.tok(Token::Dot));
                     match &link.kind {
                         ExprKind::RecordUpdate { fields, .. } => docs.push(self.fields(fields)),
-                        // `t.0`: the parser takes a number for a field
-                        // name.
-                        _ if self.cur.at(&Token::Int(0)) => docs.push(self.tok(Token::Int(0))),
                         _ => docs.push(self.name()),
                     }
                 }
@@ -1727,8 +1691,6 @@ impl Printer<'_> {
         docs.push(space());
         docs.push(self.tok(Token::Arrow));
         docs.push(self.after(&arm.body));
-        // Arms are separated by line breaks; a comma is not written.
-        docs.push(self.cur.skip(&Token::Comma));
         Doc::concat(docs)
     }
 
@@ -1833,20 +1795,16 @@ impl Printer<'_> {
         rest: Option<Token>,
         named_rest: bool,
     ) -> Doc {
-        // The rest is the last item of the list, and takes no comma.
+        // The rest is the last item of the list.
         let mut items: Vec<Option<&Option<Pattern>>> =
             fields.iter().map(|(_, _, sub)| Some(sub)).collect();
         if rest.is_some() {
             items.push(None);
         }
-        let style = ListStyle {
-            trailing_comma: rest.is_none(),
-            ..SPACED
-        };
         self.delimited(
             Token::LBrace,
             Token::RBrace,
-            style,
+            SPACED,
             &items,
             |p, item| match (item, &rest) {
                 (Some(sub), _) => {
@@ -1924,15 +1882,10 @@ impl Printer<'_> {
                 if rest.is_some() {
                     items.push(None);
                 }
-                // A list pattern takes no trailing comma.
-                let style = ListStyle {
-                    trailing_comma: false,
-                    ..TIGHT
-                };
                 self.delimited(
                     Token::LBracket,
                     Token::RBracket,
-                    style,
+                    TIGHT,
                     &items,
                     |p, item| match (item, rest) {
                         (Some(elem), _) => p.pattern(elem),
@@ -1970,7 +1923,34 @@ impl Printer<'_> {
 
     // ── Types ────────────────────────────────────────────────────────
 
+    /// A type. Parentheses around it group nothing and are dropped,
+    /// unless a comment stands at their inside.
     fn type_expr(&mut self, ty: &TypeExpr) -> Doc {
+        let wrappers = self.cur.wrappers(ty.span.end);
+        if wrappers == 0 {
+            return self.bare_type(ty);
+        }
+        if self.cur.comments_inside_parens(wrappers) {
+            let mut opens = Vec::new();
+            for _ in 0..wrappers {
+                opens.push(self.tok(Token::LParen));
+            }
+            let mut doc = self.bare_type(ty);
+            for open in opens.into_iter().rev() {
+                let tail = self.dangling();
+                let close = self.tok(Token::RParen);
+                doc = parenthesized(open, Doc::concat(vec![doc, tail]), close);
+            }
+            doc
+        } else {
+            self.cur.skip_n(&Token::LParen, wrappers);
+            let doc = self.bare_type(ty);
+            self.cur.skip_n(&Token::RParen, wrappers);
+            Doc::concat(vec![doc, self.cur.carried()])
+        }
+    }
+
+    fn bare_type(&mut self, ty: &TypeExpr) -> Doc {
         match &ty.kind {
             TypeExprKind::Named { module, .. } => self.qualified(module.is_some()),
             TypeExprKind::SelfType => self.name(),
@@ -1981,8 +1961,6 @@ impl Printer<'_> {
                 });
                 Doc::concat(vec![name, args])
             }
-            // `(T)` is a tuple of one: no parentheses are redundant in
-            // a type.
             TypeExprKind::Tuple(elems) => self.tuple(elems, |p, elem| p.type_expr(elem)),
             TypeExprKind::Function(params, ret) => {
                 // `Fn` is an identifier to the lexer.
@@ -2029,14 +2007,10 @@ impl Printer<'_> {
                 if tail.is_some() {
                     items.push(None);
                 }
-                let style = ListStyle {
-                    trailing_comma: tail.is_none(),
-                    ..SPACED
-                };
                 self.delimited(
                     Token::LBrace,
                     Token::RBrace,
-                    style,
+                    SPACED,
                     &items,
                     |p, item| match item {
                         Some(ty) => Doc::concat(vec![
