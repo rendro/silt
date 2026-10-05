@@ -28,10 +28,6 @@ pub(crate) struct TypeEnv {
     log: Vec<Symbol>,
     /// Where in `log` each open frame starts.
     frames: Vec<usize>,
-    /// Whether no scheme of this scope or its parents has a free type
-    /// variable: true of the builtin scope, whose schemes are all
-    /// generalized, so `free_vars` need not walk it.
-    pub(super) closed: bool,
 }
 
 impl TypeEnv {
@@ -43,7 +39,6 @@ impl TypeEnv {
             locals: HashMap::new(),
             log: Vec::new(),
             frames: Vec::new(),
-            closed: false,
         }
     }
 
@@ -118,8 +113,9 @@ impl TypeEnv {
     }
 
     /// Collect all in-scope names into `out`: the local ones, the
-    /// top-level scope's and its parents', each `Symbol` once. Used by the "did you mean ...?" suggestion path so the type
-    /// checker can enumerate candidate names to match against a typo.
+    /// top-level scope's and its parents', each `Symbol` once. Used by
+    /// the "did you mean ...?" suggestion path so the type checker can
+    /// enumerate candidate names to match against a typo.
     pub(super) fn collect_names(&self, out: &mut BTreeSet<Symbol>) {
         for k in self.locals.keys().chain(self.bindings.keys()) {
             out.insert(*k);
@@ -127,32 +123,5 @@ impl TypeEnv {
         if let Some(ref parent) = self.parent {
             parent.collect_names(out);
         }
-    }
-
-    /// Collect all free type variables in the environment.
-    pub(super) fn free_vars(&self, checker: &TypeChecker) -> Vec<TyVar> {
-        let mut fvs = Vec::new();
-        if self.closed {
-            return fvs;
-        }
-        for scheme in self.locals.values().flatten().chain(self.bindings.values()) {
-            let ty = checker.apply(&scheme.ty);
-            let mut ty_fvs = free_vars_in(&ty);
-            // Remove the scheme's own quantified variables
-            ty_fvs.retain(|v| !scheme.vars.contains(v));
-            for v in ty_fvs {
-                if !fvs.contains(&v) {
-                    fvs.push(v);
-                }
-            }
-        }
-        if let Some(ref parent) = self.parent {
-            for v in parent.free_vars(checker) {
-                if !fvs.contains(&v) {
-                    fvs.push(v);
-                }
-            }
-        }
-        fvs
     }
 }

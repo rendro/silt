@@ -47,9 +47,6 @@ impl BuiltinEnv {
         for (name, scheme) in variants {
             env.define(name, scheme);
         }
-        // Every builtin scheme is generalized, so the bodies below are
-        // checked without walking the builtin scope for free variables.
-        env.closed = env.free_vars(&checker).is_empty();
         // Derive the builtin types' impls once, as a check of a program
         // with no declarations would, and check their bodies. They are
         // registered in a scope over the builtin one, so the scopes their
@@ -79,8 +76,6 @@ impl BuiltinEnv {
         drop(scope);
         let mut env = Rc::try_unwrap(root).expect("no scope over the builtin scope is left");
         env.bindings.extend(bindings);
-        env.closed = false;
-        env.closed = env.free_vars(&checker).is_empty();
         let tables = std::mem::take(&mut checker.tables);
         BuiltinEnv {
             checker,
