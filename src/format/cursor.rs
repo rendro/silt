@@ -12,18 +12,21 @@
 //! How a comment is written depends only on what stands around it in the
 //! source:
 //!
-//! - a `--` comment, a `{- -}` comment that spans lines, and a one-line
-//!   `{- -}` comment that ends its line are *end-of-line* comments.
-//!   Behind a token of their line they become a [`Doc::LineSuffix`];
-//!   first on their line, a [`Doc::OwnLine`];
-//! - a one-line `{- -}` comment with a token behind it on its line is
-//!   *inline*, a [`Doc::Comment`]. It is written with the token after
-//!   it, or with the token before it when a comma or a closing bracket
-//!   follows.
+//! - a `--` comment behind a token of its line is a
+//!   [`Doc::LineSuffix`];
+//! - a `{- -}` comment with a token in front of it or behind it on its
+//!   line is a [`Doc::Comment`]: it stays between its tokens. It is
+//!   written with the token behind it, or with the token in front of it
+//!   when a comma, a closing bracket or the end of the line follows;
+//! - a comment on a line without a token, or with nothing but a closing
+//!   bracket behind it, is a [`Doc::OwnLine`].
 //!
 //! A token the printer does not write (redundant parentheses, a comma it
-//! decides for itself) is skipped; its comments go to the next token
-//! that is written, as end-of-line comments.
+//! decides for itself) is skipped. The comments in front of a skipped
+//! opening parenthesis stay as they are, in front of what it opened;
+//! those of a skipped comma or closing parenthesis go to the next token
+//! that is written and end the line there, because the line break they
+//! stood at may have been allowed by the skipped token alone.
 
 use crate::lexer::{Comment, CommentKind, Lexed, Tok, Token};
 use crate::source::Span;
@@ -48,6 +51,18 @@ pub struct Cursor<'a> {
     next_comment: u32,
     /// Comments of skipped tokens, for the next token that is written.
     carried: Vec<Doc>,
+    /// For each `(` that is open at the cursor, whether it was skipped.
+    parens: Vec<bool>,
+    /// For each token that is a `(`, the index of its `)`.
+    closers: Vec<usize>,
+    /// The opening parentheses skipped since the last written token:
+    /// for each, the index of the first comment behind it and the line
+    /// breaks in front of it. Those line breaks stand in front of what
+    /// follows the parenthesis now.
+    skipped_open: Vec<(u32, u8)>,
+    /// A comment that ends its line was written or carried since the
+    /// last token: a second one cannot follow it on that line.
+    line_ended: bool,
     /// The first thing the printer asked for that the source does not
     /// hold. Once set, the printer's result is not used.
     pub error: Option<Mismatch>,
@@ -55,7 +70,8 @@ pub struct Cursor<'a> {
 
 enum Class {
     Inline,
-    /// With whether nothing can follow the comment on its line.
+    /// With whether it is a `--` comment: nothing can follow that on
+    /// its line.
     EndOfLine(bool),
 }
 
@@ -73,17 +89,35 @@ fn is_closer_or_comma(kind: &Token) -> bool {
 
 impl<'a> Cursor<'a> {
     pub fn new(source: &'a str, lexed: &'a Lexed) -> Self {
+        let tokens: Vec<&Tok> = lexed
+            .tokens
+            .iter()
+            .filter(|tok| tok.kind != Token::Newline)
+            .collect();
+        let mut closers = vec![0; tokens.len()];
+        let mut open = Vec::new();
+        for (i, tok) in tokens.iter().enumerate() {
+            match tok.kind {
+                Token::LParen => open.push(i),
+                Token::RParen => {
+                    if let Some(opener) = open.pop() {
+                        closers[opener] = i;
+                    }
+                }
+                _ => {}
+            }
+        }
         Cursor {
             source,
-            tokens: lexed
-                .tokens
-                .iter()
-                .filter(|tok| tok.kind != Token::Newline)
-                .collect(),
+            tokens,
+            closers,
+            skipped_open: Vec::new(),
+            line_ended: false,
             comments: &lexed.comments,
             pos: 0,
             next_comment: 0,
             carried: Vec::new(),
+            parens: Vec::new(),
             error: None,
         }
     }
@@ -110,19 +144,9 @@ impl<'a> Cursor<'a> {
         std::mem::discriminant(self.peek()) == std::mem::discriminant(kind)
     }
 
-    /// Whether the next source token is the identifier `name`.
-    pub fn at_word(&self, name: &str) -> bool {
-        matches!(self.peek(), Token::Ident(_)) && self.text_of(self.tok()) == name
-    }
-
     /// Where the next source token starts.
     pub fn offset(&self) -> u32 {
         self.tok().span.start
-    }
-
-    /// The index of the next source token, to compare two positions.
-    pub fn position(&self) -> usize {
-        self.pos
     }
 
     /// How many comments are written so far, to tell whether a stretch
@@ -160,20 +184,30 @@ impl<'a> Cursor<'a> {
         if comment.kind == CommentKind::Line {
             return Class::EndOfLine(true);
         }
-        if comment.text(self.source).contains('\n') {
-            return Class::EndOfLine(true);
+        // Inline: the next token stands on the comment's line, with
+        // nothing but comments between them.
+        if !self.token_on_line(index, end) {
+            return Class::EndOfLine(false);
         }
-        let token_follows = index + 1 == end;
-        let next_newlines = if token_follows {
-            next.newlines_before
-        } else {
-            self.comments[index as usize + 1].newlines_before
-        };
-        if next_newlines == 0 && !(token_follows && next.kind == Token::Eof) {
-            Class::Inline
-        } else {
-            Class::EndOfLine(false)
+        // If that token is a closing bracket or a comma, and no token
+        // stands in front of the comment on its line, the comment is
+        // taken as one on a line of its own: a line that holds only
+        // comments and a closing bracket is not kept as such.
+        let start = self.next_comment.min(next.comments.start).min(index);
+        let fresh_line =
+            self.pos == 0 || (start..=index).any(|i| self.newlines_before_comment(i) > 0);
+        if fresh_line && is_closer_or_comma(&next.kind) {
+            return Class::EndOfLine(false);
         }
+        Class::Inline
+    }
+
+    /// Whether the next token stands on the line of the comment `index`,
+    /// with nothing but comments between them.
+    fn token_on_line(&self, index: u32, end: u32) -> bool {
+        self.newlines_before_token() == 0
+            && self.tok().kind != Token::Eof
+            && (index + 1..end).all(|later| self.newlines_before_comment(later) == 0)
     }
 
     fn comment_text(&self, index: u32) -> String {
@@ -186,28 +220,50 @@ impl<'a> Cursor<'a> {
     /// The comments in front of the next token that are not written
     /// yet.
     fn gap(&self) -> std::ops::Range<u32> {
-        let range = &self.tok().comments;
-        range.start.max(self.next_comment)..range.end.max(self.next_comment)
+        // The comments of a skipped opening parenthesis are still to
+        // be written: they stand in front of this token now.
+        self.next_comment..self.tok().comments.end.max(self.next_comment)
     }
 
     /// Whether the next token, or the first comment on a line of its own
     /// in front of it, stands after an empty line.
     pub fn blank_before(&self) -> bool {
         for index in self.gap() {
-            let newlines = self.comments[index as usize].newlines_before;
+            let newlines = self.newlines_before_comment(index);
             if newlines > 0 {
                 return newlines >= 2;
             }
         }
-        self.tok().newlines_before >= 2
+        self.newlines_before_token() >= 2
+    }
+
+    /// The line breaks in front of the next token, those in front of
+    /// skipped opening parentheses included.
+    fn newlines_before_token(&self) -> u8 {
+        let tok = self.tok();
+        self.skipped_open
+            .iter()
+            .filter(|(first_comment, _)| *first_comment == tok.comments.end)
+            .map(|(_, newlines)| *newlines)
+            .fold(tok.newlines_before, u8::max)
+    }
+
+    /// The line breaks in front of the comment `index`, those in front
+    /// of skipped opening parentheses included.
+    fn newlines_before_comment(&self, index: u32) -> u8 {
+        self.skipped_open
+            .iter()
+            .filter(|(first_comment, _)| *first_comment == index)
+            .map(|(_, newlines)| *newlines)
+            .fold(self.comments[index as usize].newlines_before, u8::max)
     }
 
     /// Whether a line break stands between the token written last (and
     /// the comments on its line) and the next token.
     pub fn line_break_before(&self) -> bool {
         self.gap()
-            .any(|index| self.comments[index as usize].newlines_before > 0)
-            || self.tok().newlines_before > 0
+            .any(|index| self.newlines_before_comment(index) > 0)
+            || self.newlines_before_token() > 0
     }
 
     /// Whether a comment in front of the next token will stand on a line
@@ -216,15 +272,34 @@ impl<'a> Cursor<'a> {
         let tok = self.tok();
         let gap = self.gap();
         gap.clone().any(|index| {
-            let newlines = self.comments[index as usize].newlines_before;
+            let newlines = self.newlines_before_comment(index);
             matches!(self.class(index, tok, gap.end), Class::EndOfLine(_))
                 && (newlines > 0 || self.pos == 0)
         })
     }
 
+    /// Whether a comment that ends its line stands behind the token
+    /// written last.
+    pub fn line_ended(&self) -> bool {
+        self.line_ended
+    }
+
     /// Whether a comment stands in front of the next token.
     pub fn comment_ahead(&self) -> bool {
         !self.gap().is_empty() || !self.carried.is_empty()
+    }
+
+    /// As `leading`, without the empty lines between the comments and
+    /// behind them: for a declaration that is moved (an import).
+    pub fn leading_without_blank_lines(&mut self) -> Doc {
+        fn strip(doc: Doc) -> Doc {
+            match doc {
+                Doc::BlankLine => Doc::Nil,
+                Doc::Concat(parts) => Doc::Concat(parts.into_iter().map(strip).collect()),
+                other => other,
+            }
+        }
+        strip(self.leading())
     }
 
     /// The comments in front of the next token, and those carried over
@@ -238,15 +313,20 @@ impl<'a> Cursor<'a> {
         let mut first = true;
         let mut own_line = false;
         for index in gap.clone() {
-            let newlines = self.comments[index as usize].newlines_before;
+            let newlines = self.newlines_before_comment(index);
             let text = self.comment_text(index);
             if !first && newlines >= 2 {
                 docs.push(Doc::BlankLine);
             }
             match self.class(index, tok, gap.end) {
                 Class::Inline => docs.push(Doc::Comment(text)),
-                Class::EndOfLine(ends_line) if newlines == 0 && self.pos > 0 => {
-                    docs.push(Doc::LineSuffix(text, ends_line));
+                // Behind a comment on a line of its own, a comment is
+                // on a line of its own too.
+                Class::EndOfLine(true) if newlines == 0 && self.pos > 0 && !own_line => {
+                    docs.push(Doc::LineSuffix(text));
+                }
+                Class::EndOfLine(false) if newlines == 0 && self.pos > 0 && !own_line => {
+                    docs.push(Doc::Comment(text));
                 }
                 Class::EndOfLine(_) => {
                     docs.push(Doc::OwnLine(text));
@@ -259,7 +339,7 @@ impl<'a> Cursor<'a> {
         // An empty line between a comment and what it stands above is
         // kept: it says the comment is not about that.
         if own_line
-            && tok.newlines_before >= 2
+            && self.newlines_before_token() >= 2
             && !is_closer_or_comma(&tok.kind)
             && tok.kind != Token::Eof
         {
@@ -274,12 +354,18 @@ impl<'a> Cursor<'a> {
         let gap = self.gap();
         let mut docs = Vec::new();
         for index in gap.clone() {
-            if self.comments[index as usize].newlines_before > 0 || self.pos == 0 {
+            if self.newlines_before_comment(index) > 0 || self.pos == 0 {
                 break;
             }
             let text = self.comment_text(index);
             match self.class(index, tok, gap.end) {
-                Class::EndOfLine(ends_line) => docs.push(Doc::LineSuffix(text, ends_line)),
+                Class::EndOfLine(true) => {
+                    docs.push(Doc::LineSuffix(text));
+                    self.line_ended = true;
+                }
+                // A `{- -}` comment at the end of the line stays behind
+                // its token, wherever the line ends then.
+                Class::EndOfLine(false) => docs.push(Doc::Comment(text)),
                 Class::Inline if is_closer_or_comma(&tok.kind) => docs.push(Doc::Comment(text)),
                 Class::Inline => break,
             }
@@ -299,7 +385,7 @@ impl<'a> Cursor<'a> {
         let gap = self.gap();
         let mut end = gap.start;
         for index in gap.clone().skip(1) {
-            if self.comments[index as usize].newlines_before >= 2 {
+            if self.newlines_before_comment(index) >= 2 {
                 end = index;
             }
         }
@@ -308,7 +394,7 @@ impl<'a> Cursor<'a> {
         }
         let mut docs = Vec::new();
         for index in gap.start..end {
-            if index > gap.start && self.comments[index as usize].newlines_before >= 2 {
+            if index > gap.start && self.newlines_before_comment(index) >= 2 {
                 docs.push(Doc::BlankLine);
             }
             let text = self.comment_text(index);
@@ -326,9 +412,9 @@ impl<'a> Cursor<'a> {
     fn bare(&mut self) -> Doc {
         let tok = self.tok();
         let text = self.text_of(tok);
-        if tok.kind != Token::Eof {
-            self.pos += 1;
-        }
+        self.skipped_open.clear();
+        self.line_ended = false;
+        self.step(false);
         match tok.kind {
             // The span of the rest of a string starts behind the brace
             // that closes the interpolation.
@@ -337,24 +423,198 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// Move past the next source token, which is written or skipped.
+    fn step(&mut self, skipped: bool) {
+        match self.tok().kind {
+            Token::Eof => return,
+            Token::LParen => self.parens.push(skipped),
+            Token::RParen => {
+                self.parens.pop();
+            }
+            _ => {}
+        }
+        self.pos += 1;
+    }
+
+    /// Skip the closing parentheses whose opening ones were skipped: the
+    /// printer has written what stood between them. Called after an
+    /// expression or a pattern, so that the printer can look at what
+    /// follows it.
+    pub fn close_skipped_parens(&mut self) {
+        while self.at(&Token::RParen) && self.parens.last() == Some(&true) {
+            self.skip_one();
+        }
+    }
+
+    /// How many of the `(` at the cursor are parentheses around the
+    /// expression that starts here and ends at byte `end`: those whose
+    /// `)` stand directly behind the expression's last token. A `(`
+    /// that closes earlier is around a part of the expression.
+    pub fn wrappers(&self, end: u32) -> usize {
+        let last = self.tokens.partition_point(|tok| tok.span.end < end);
+        if self.tokens.get(last).is_none_or(|tok| tok.span.end != end) {
+            return 0;
+        }
+        let run = self.tokens[last + 1..]
+            .iter()
+            .take_while(|tok| tok.kind == Token::RParen)
+            .count();
+        self.tokens[self.pos.min(self.tokens.len())..]
+            .iter()
+            .enumerate()
+            .take_while(|(i, tok)| {
+                let closer = self.closers[self.pos + i];
+                tok.kind == Token::LParen && closer > last && closer <= last + run
+            })
+            .count()
+    }
+
+    /// Skip `count` tokens of the kind of `kind`, as far as they stand
+    /// at the cursor.
+    pub fn skip_n(&mut self, kind: &Token, count: usize) {
+        for _ in 0..count {
+            if !self.at(kind) {
+                break;
+            }
+            self.skip_one();
+        }
+    }
+
+    /// The comments carried over from skipped tokens, for this place:
+    /// behind what the skipped tokens closed.
+    pub fn carried(&mut self) -> Doc {
+        Doc::concat(std::mem::take(&mut self.carried))
+    }
+
+    /// Skip the opening parentheses at the cursor: the printer knows
+    /// that what it is about to write does not start with one.
+    pub fn skip_open_parens(&mut self) {
+        while self.at(&Token::LParen) {
+            self.skip_one();
+        }
+    }
+
+    /// Skip `()` at the cursor: an empty list the tree does not record.
+    pub fn skip_empty_parens(&mut self) {
+        if self.at(&Token::LParen) && matches!(self.peek_at(1), Token::RParen) {
+            self.skip_one();
+            self.skip_one();
+        }
+    }
+
     /// Skip the next source token; its comments are carried to the next
     /// token that is written.
     fn skip_one(&mut self) {
         let tok = self.tok();
+        if tok.kind == Token::LParen {
+            // The comments in front of an opening parenthesis stay
+            // where they are, in front of what it opened.
+            let newlines = self.newlines_before_token();
+            self.skipped_open.push((tok.comments.end, newlines));
+        } else {
+            // The line break at a comment in front of a closing
+            // parenthesis or a comma was inside brackets that may be
+            // gone: the comment ends the line instead.
+            let gap = self.gap();
+            for index in gap.clone() {
+                let text = self.comment_text(index);
+                let class = self.class(index, tok, gap.end);
+                self.carry(text, class);
+            }
+            self.next_comment = gap.end;
+        }
+        self.step(true);
+        // The comments behind the skipped token, on its line.
+        let tok = self.tok();
         let gap = self.gap();
         for index in gap.clone() {
+            if self.newlines_before_comment(index) > 0 {
+                break;
+            }
+            let class = self.class(index, tok, gap.end);
+            if matches!(class, Class::Inline) && !is_closer_or_comma(&tok.kind) {
+                break;
+            }
             let text = self.comment_text(index);
-            self.carried.push(match self.class(index, tok, gap.end) {
-                Class::Inline => Doc::Comment(text),
-                Class::EndOfLine(ends_line) => Doc::LineSuffix(text, ends_line),
-            });
+            self.carry(text, class);
+            self.next_comment = index + 1;
         }
-        self.next_comment = gap.end;
-        self.pos += 1;
-        let trailing = self.trailing();
-        if !trailing.is_nil() {
-            self.carried.push(trailing);
+    }
+
+    /// Carry the comment of a skipped token to the next written token.
+    /// It ends the line there; behind another comment that ends the
+    /// line, it gets a line of its own.
+    fn carry(&mut self, text: String, class: Class) {
+        self.carried.push(match class {
+            Class::Inline | Class::EndOfLine(false) => Doc::Comment(text),
+            Class::EndOfLine(true) if self.line_ended => Doc::OwnLine(text),
+            Class::EndOfLine(true) => {
+                self.line_ended = true;
+                Doc::LineSuffix(text)
+            }
+        });
+    }
+
+    /// Whether a comment stands in the source between the bytes `start`
+    /// and `end`.
+    pub fn comments_between(&self, start: u32, end: u32) -> bool {
+        let first = self.comments.partition_point(|c| c.span.start < start);
+        self.comments.get(first).is_some_and(|c| c.span.start < end)
+    }
+
+    /// Whether a comment stands directly inside one of the `count`
+    /// pairs of parentheses at the cursor, which are around an
+    /// expression that ends at byte `end`: behind an opening one or in
+    /// front of a closing one. There a line break is allowed that is not
+    /// allowed without the parentheses.
+    pub fn comments_inside_wrappers(&self, count: usize, end: u32) -> bool {
+        let Some(inner) = self.tokens.get(self.pos + count) else {
+            return false;
+        };
+        let last = self.tokens.partition_point(|tok| tok.span.end < end);
+        let Some(closer) = self.tokens.get(last + count) else {
+            return false;
+        };
+        self.comments_between(self.tok().span.end, inner.span.start)
+            || self.comments_between(end, closer.span.start)
+    }
+
+    /// Whether the next source token is a `(` with a comment directly
+    /// behind it or in front of its `)`.
+    pub fn comments_inside_paren(&self) -> bool {
+        if !self.at(&Token::LParen) {
+            return false;
         }
+        let closer = self.tokens[self.closers[self.pos]];
+        let behind = self.tokens[(self.pos + 1).min(self.tokens.len() - 1)];
+        !behind.comments.is_empty() || !closer.comments.is_empty()
+    }
+
+    /// Whether the `(` at the cursor holds a token of the kind of
+    /// `kind` that is in no other bracket.
+    pub fn paren_holds(&self, kind: &Token) -> bool {
+        if !self.at(&Token::LParen) {
+            return false;
+        }
+        let mut depth = 0;
+        for tok in &self.tokens[self.pos + 1..self.closers[self.pos].max(self.pos + 1)] {
+            match tok.kind {
+                Token::LParen
+                | Token::LBracket
+                | Token::LBrace
+                | Token::HashBrace
+                | Token::HashBracket
+                | Token::StringStart(_) => depth += 1,
+                Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => depth -= 1,
+                _ if depth == 0
+                    && std::mem::discriminant(&tok.kind) == std::mem::discriminant(kind) =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Move to the next source token of the kind of `kind`, over
@@ -478,8 +738,12 @@ mod tests {
             ("a {- c -}", "a {- c -}\n"),
             ("a\n\n-- c\n", "a\n-- c\n"),
             ("-- only\n", "-- only\n"),
-            // A comment that spans lines ends its line.
-            ("a {- c\n d -} b\n", "a b {- c\n d -}\n"),
+            // A comment that spans lines stays between its tokens too.
+            ("a {- c\n d -} b\n", "a {- c\n d -} b\n"),
+            // A line of comments and a closing bracket: the comments
+            // get lines of their own.
+            ("( a\n{- c -} {- d -} )\n", "( a\n{- c -}\n{- d -}\n)\n"),
+            ("( a {- c -} )\n", "( a {- c -} )\n"),
             // The space behind a comment is not part of it.
             ("a -- c   \nb\n", "a -- c\nb\n"),
         ];
@@ -518,6 +782,18 @@ mod tests {
         assert_eq!(respace("a, -- c\nb\n", &[Token::Comma]), "a -- c\nb\n");
         assert_eq!(respace("a\n-- c\n, b\n", &[Token::Comma]), "a b -- c\n");
         assert_eq!(respace("a {- c -} , b\n", &[Token::Comma]), "a {- c -} b\n");
+        // The comments in front of a skipped opening parenthesis stay in
+        // front of what it opened.
+        let parens = [Token::LParen, Token::RParen];
+        assert_eq!(respace("a\n\n-- c\n(b)\n", &parens), "a\n\n-- c\nb\n");
+        assert_eq!(
+            respace("a\n-- c\n\n({- d -} b)\n", &parens),
+            "a\n-- c\n\n{- d -} b\n"
+        );
+        assert_eq!(
+            respace("a ( -- c\nb -- d\n)\n", &parens),
+            "a -- c\nb -- d\n"
+        );
     }
 
     #[test]

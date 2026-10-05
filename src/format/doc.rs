@@ -15,9 +15,10 @@ pub enum Doc {
     /// Text as it is. A line break inside it (a multi-line string
     /// literal) is written as it is, without indentation.
     Text(String),
-    /// A one-line `{- -}` comment between two tokens of a line. The
-    /// renderer keeps it apart from its neighbours by a space, except
-    /// after an opening bracket and before a closing one or a comma.
+    /// A `{- -}` comment between two tokens, or behind the last token
+    /// of a line. The renderer keeps it apart from its neighbours by a
+    /// space, except after an opening bracket and before a closing one
+    /// or a comma. It does not count for the width.
     Comment(String),
     /// A space in a group that fits its line, a line break in one that
     /// does not.
@@ -39,16 +40,18 @@ pub enum Doc {
     Concat(Vec<Doc>),
     /// The first if the enclosing group is broken, the second if not.
     IfBreak(Box<Doc>, Box<Doc>),
-    /// A comment at the end of a line: held back and written before the
-    /// next line break of the output, so it never comments out what
-    /// follows it on its line. A group does not fit when one is waiting
-    /// at one of its `Line`s. The flag says that nothing can follow the
-    /// comment on its line (a `--` comment, or a `{- -}` that spans
-    /// lines).
-    LineSuffix(String, bool),
+    /// A `--` comment at the end of a line: held back and written before
+    /// the next line break of the output, so it never comments out what
+    /// follows it on its line. A group does not fit when one that was
+    /// met inside it is waiting at one of its `Line`s.
+    LineSuffix(String),
     /// A comment on a line of its own, wherever the output stands. The
     /// groups around it break.
     OwnLine(String),
+    /// What follows holds a comment of its own (a string with a comment
+    /// in an interpolation): the line suffixes that wait are written
+    /// first, where they were met.
+    Settle,
 }
 
 impl Doc {
@@ -95,7 +98,8 @@ impl Doc {
                 | Doc::Line
                 | Doc::SoftLine
                 | Doc::IfBreak(..)
-                | Doc::LineSuffix(..) => {}
+                | Doc::LineSuffix(_)
+                | Doc::Settle => {}
             }
         }
         false
@@ -125,14 +129,13 @@ struct Suffix {
     text: String,
     /// Where in the output it was met.
     at: usize,
-    /// Nothing can follow it on its line.
-    ends_line: bool,
 }
 
 struct Renderer {
     width: usize,
     out: String,
-    /// Characters on the current line, its indentation included.
+    /// Characters on the current line, its indentation included and
+    /// its inline comments left out.
     col: usize,
     /// Nothing is written on the current line yet; `indent` is the
     /// indentation it gets when something is.
@@ -190,48 +193,133 @@ pub fn render(doc: &Doc, width: usize) -> String {
                 let chosen = if mode == Mode::Break { broken } else { flat };
                 stack.push((indent, mode, chosen));
             }
-            Doc::LineSuffix(text, ends_line) => r.suffix(text, *ends_line, indent),
+            Doc::LineSuffix(text) => {
+                let breaks_here = comment_before_line_break(&stack);
+                r.suffix(text, indent);
+                if breaks_here {
+                    r.settle_suffixes();
+                }
+            }
             Doc::OwnLine(text) => r.own_line(text, indent),
+            Doc::Settle => {
+                if !r.suffixes.is_empty() {
+                    r.settle_suffixes();
+                }
+            }
         }
     }
     r.finish()
 }
 
+/// Whether another comment, or text that spans lines, follows in `rest`
+/// before the next line break that is certain: a second comment cannot
+/// stand on the line of a comment that ends its line, and text that
+/// spans lines cannot take a comment at the end of its first line. So
+/// the line is broken at the first comment, and it is broken at once:
+/// what follows is laid out on the new line. (A line break that is not
+/// certain, one of a group that is still to be measured, does not count:
+/// the answer may not depend on where a comment stands on its line,
+/// which is different the next time.)
+fn comment_before_line_break(rest: &[Cmd]) -> bool {
+    // The flag says that the document stands directly in a group that
+    // is broken.
+    let mut stack: Vec<(bool, &Doc)> = Vec::new();
+    let mut rest_index = rest.len();
+    loop {
+        let (broken, doc) = match stack.pop() {
+            Some(step) => step,
+            None if rest_index == 0 => return false,
+            None => {
+                rest_index -= 1;
+                let (_, mode, doc) = rest[rest_index];
+                (mode == Mode::Break, doc)
+            }
+        };
+        match doc {
+            Doc::Nil => {}
+            Doc::Text(text) => {
+                if text.contains('\n') {
+                    return true;
+                }
+            }
+            Doc::Comment(_) | Doc::LineSuffix(_) | Doc::Settle => return true,
+            Doc::Line | Doc::SoftLine => {
+                if broken {
+                    return false;
+                }
+            }
+            Doc::HardLine | Doc::BlankLine | Doc::OwnLine(_) => return false,
+            Doc::Group(inner, forced) => stack.push((*forced, inner)),
+            Doc::Nest(inner) => stack.push((broken, inner)),
+            Doc::Concat(parts) => stack.extend(parts.iter().rev().map(|part| (broken, part))),
+            Doc::IfBreak(on_break, flat) => {
+                stack.push((broken, if broken { on_break } else { flat }));
+            }
+        }
+    }
+}
+
 impl Renderer {
     /// Whether `next`, followed by the rest of the document up to its
     /// first line break, fits what is left of the current line.
+    ///
+    /// A line suffix that waits at a `Line` makes the answer no, if the
+    /// `Line` belongs to `next` or to a group in it that was open when
+    /// the suffix was met: the comment stands in that group, and the
+    /// group is the one to break. A group that opens behind the comment
+    /// is not broken for it.
     fn fits(&self, next: Cmd, rest: &[Cmd]) -> bool {
+        enum Step<'a> {
+            Doc(Cmd<'a>),
+            /// The end of a group inside `next`.
+            GroupEnd,
+        }
         let start = if self.at_line_start {
             self.indent
         } else {
             self.col
         };
         let mut left = self.width as isize - start as isize;
-        let mut suffix_waits = !self.suffixes.is_empty();
+        // How deep in groups the walk is; `next` itself is at 0.
+        let mut depth: isize = 0;
+        // The deepest level at which a `Line` still belongs to a group
+        // that was open when a suffix was met; -1 if there is none.
+        let mut suffix_depth: isize = -1;
         let mut rest_index = rest.len();
-        let mut stack: Vec<Cmd> = vec![next];
+        let mut stack: Vec<Step> = vec![Step::Doc(next)];
         loop {
             let (indent, mode, doc) = match stack.pop() {
-                Some(cmd) => cmd,
+                Some(Step::Doc(cmd)) => cmd,
+                Some(Step::GroupEnd) => {
+                    depth -= 1;
+                    suffix_depth = suffix_depth.min(depth);
+                    continue;
+                }
                 None if rest_index == 0 => return true,
                 None => {
+                    // Behind `next`: no group of it is open any more.
+                    suffix_depth = -1;
+                    depth = -1;
                     rest_index -= 1;
                     rest[rest_index]
                 }
             };
             match doc {
-                Doc::Nil => {}
+                Doc::Nil | Doc::Settle => {}
                 Doc::Text(text) => match text.split_once('\n') {
                     // The line ends inside the text.
                     Some((first, _)) => return left >= first.chars().count() as isize,
                     None => left -= text.chars().count() as isize,
                 },
-                Doc::Comment(text) => left -= text.chars().count() as isize + 1,
+                // A comment does not count, whichever kind it is: one
+                // that is inline now may end a line after a break, and
+                // would then be a line suffix the next time.
+                Doc::Comment(_) => {}
                 Doc::Line | Doc::SoftLine => {
                     if mode == Mode::Break {
                         return true;
                     }
-                    if suffix_waits {
+                    if depth >= 0 && depth <= suffix_depth {
                         return false;
                     }
                     if matches!(doc, Doc::Line) {
@@ -241,17 +329,30 @@ impl Renderer {
                 Doc::HardLine | Doc::BlankLine | Doc::OwnLine(_) => return true,
                 Doc::Group(inner, forced) => {
                     let mode = if *forced { Mode::Break } else { mode };
-                    stack.push((indent, mode, inner));
+                    if depth >= 0 {
+                        depth += 1;
+                        stack.push(Step::GroupEnd);
+                    }
+                    stack.push(Step::Doc((indent, mode, inner)));
                 }
-                Doc::Nest(inner) => stack.push((indent, mode, inner)),
+                Doc::Nest(inner) => stack.push(Step::Doc((indent, mode, inner))),
                 Doc::Concat(parts) => {
-                    stack.extend(parts.iter().rev().map(|part| (indent, mode, part)));
+                    stack.extend(
+                        parts
+                            .iter()
+                            .rev()
+                            .map(|part| Step::Doc((indent, mode, part))),
+                    );
                 }
                 Doc::IfBreak(broken, flat) => {
                     let chosen = if mode == Mode::Break { broken } else { flat };
-                    stack.push((indent, mode, chosen));
+                    stack.push(Step::Doc((indent, mode, chosen)));
                 }
-                Doc::LineSuffix(..) => suffix_waits = true,
+                Doc::LineSuffix(_) => {
+                    if depth >= 0 {
+                        suffix_depth = suffix_depth.max(depth);
+                    }
+                }
             }
             if left < 0 {
                 return false;
@@ -285,12 +386,23 @@ impl Renderer {
         }
         // A space between the parts of a line is not worth a line of
         // its own.
-        if text == " " && (self.at_line_start || self.line_is_closed) {
+        let text = if self.at_line_start || self.line_is_closed {
+            text.trim_start_matches(' ')
+        } else {
+            text
+        };
+        if text.is_empty() {
             return;
+        }
+        // A comment cannot be written into text that spans lines (a
+        // string): the comments that wait are written where they were
+        // met.
+        if text.contains('\n') && !self.suffixes.is_empty() {
+            self.settle_suffixes();
         }
         self.open_line(indent);
         if self.after_comment && !text.starts_with([' ', ')', ']', '}', ',']) {
-            self.push(" ");
+            self.out.push(' ');
         }
         self.after_comment = false;
         self.push(text);
@@ -304,32 +416,37 @@ impl Renderer {
         }
         let fresh = self.at_line_start || self.line_is_closed;
         self.open_line(indent);
+        // The comment and its spaces are left out of the column: the
+        // layout is the same with and without it.
         if !fresh && !self.out.ends_with([' ', '(', '[', '{']) {
-            self.push(" ");
+            self.out.push(' ');
         }
-        self.push(text);
+        self.out.push_str(text);
+        // Behind a comment that spans lines, the line is a new one.
+        if let Some((_, last)) = text.rsplit_once('\n') {
+            self.col = last.chars().count();
+        }
         self.after_comment = true;
     }
 
-    fn suffix(&mut self, text: &str, ends_line: bool, indent: usize) {
+    fn suffix(&mut self, text: &str, indent: usize) {
         if self.line_is_closed {
             self.newline(indent);
         }
-        // Nothing can follow a comment that ends its line, so the line
-        // is broken where that comment was met.
-        if self.suffixes.last().is_some_and(|last| last.ends_line) {
+        // Nothing can follow a `--` comment on its line, so the line is
+        // broken where the one that waits was met.
+        if !self.suffixes.is_empty() {
             self.settle_suffixes();
         }
         self.suffixes.push(Suffix {
             text: text.to_string(),
             at: self.out.len(),
-            ends_line,
         });
     }
 
     /// Write the waiting comments where they were met, and break the
-    /// line after one that ends its line: what was written behind it
-    /// moves to a new line, indented one level more than this one.
+    /// line behind each: what was written behind it moves to a new
+    /// line, indented one level more than this one.
     fn settle_suffixes(&mut self) {
         let line_start = self.out.rfind('\n').map_or(0, |i| i + 1);
         let line_indent = if self.at_line_start {
@@ -352,26 +469,18 @@ impl Renderer {
                 self.out.extend(std::iter::repeat_n(' ', line_indent));
             }
             self.out.push_str(&suffix.text);
-            if suffix.ends_line {
-                self.out.push('\n');
-                if behind.is_empty() {
-                    // Only possible for the comment met last: the line
-                    // after it is still to be written.
-                    self.at_line_start = true;
-                    self.indent = line_indent + INDENT;
-                } else {
-                    self.out
-                        .extend(std::iter::repeat_n(' ', line_indent + INDENT));
-                    self.out.push_str(behind);
-                    self.at_line_start = false;
-                }
-            } else {
-                if !behind.is_empty() {
-                    self.out.push(' ');
-                    self.out.push_str(behind);
-                }
-                self.at_line_start = false;
+            self.out.push('\n');
+            if !behind.is_empty() {
+                self.out
+                    .extend(std::iter::repeat_n(' ', line_indent + INDENT));
+                self.out.push_str(behind);
             }
+        }
+        // Behind the comment that was met last, the next line is still
+        // to be written.
+        self.at_line_start = self.out.ends_with('\n');
+        if self.at_line_start {
+            self.indent = line_indent + INDENT;
         }
         let last_line = self.out.rfind('\n').map_or(0, |i| i + 1);
         self.col = self.out[last_line..].chars().count();
@@ -533,7 +642,7 @@ mod tests {
         // The comment was met before the comma and lands behind it.
         let doc = Doc::concat(vec![
             t("a"),
-            Doc::LineSuffix("-- c".into(), true),
+            Doc::LineSuffix("-- c".into()),
             t(","),
             Doc::HardLine,
             t("b"),
@@ -546,7 +655,7 @@ mod tests {
         let doc = list(
             "f(",
             vec![
-                Doc::concat(vec![t("a"), Doc::LineSuffix("-- c".into(), true)]),
+                Doc::concat(vec![t("a"), Doc::LineSuffix("-- c".into())]),
                 t("b"),
             ],
             ")",
@@ -562,17 +671,29 @@ mod tests {
             t("g("),
             Doc::SoftLine,
             t("x)"),
-            Doc::LineSuffix("-- c".into(), true),
+            Doc::LineSuffix("-- c".into()),
         ]));
         let doc = list("f(", vec![inner, t("b")], ")");
         assert_eq!(render(&doc, 80), "f(\n  g(x), -- c\n  b,\n)\n");
     }
 
     #[test]
+    fn a_group_that_opens_behind_a_waiting_line_suffix_does_not_break_for_it() {
+        // The comment stands in front of the call, not in it.
+        let doc = Doc::concat(vec![
+            t("x ="),
+            Doc::LineSuffix("-- c".into()),
+            t(" "),
+            list("f(", vec![t("a"), t("b")], ")"),
+        ]);
+        assert_eq!(render(&doc, 80), "x = f(a, b) -- c\n");
+    }
+
+    #[test]
     fn a_line_suffix_does_not_count_for_the_width() {
         let doc = Doc::concat(vec![
             list("[", vec![t("a"), t("b")], "]"),
-            Doc::LineSuffix("-- a long comment".into(), true),
+            Doc::LineSuffix("-- a long comment".into()),
         ]);
         assert_eq!(render(&doc, 6), "[a, b] -- a long comment\n");
     }
@@ -581,34 +702,38 @@ mod tests {
     fn a_second_line_suffix_breaks_the_line_where_the_first_was_met() {
         let doc = Doc::concat(vec![
             t("let x ="),
-            Doc::LineSuffix("-- one".into(), true),
+            Doc::LineSuffix("-- one".into()),
             t(" 5"),
-            Doc::LineSuffix("-- two".into(), true),
+            Doc::LineSuffix("-- two".into()),
         ]);
         assert_eq!(render(&doc, 80), "let x = -- one\n  5 -- two\n");
-    }
-
-    #[test]
-    fn a_block_comment_and_a_line_comment_share_the_end_of_a_line() {
-        let doc = Doc::concat(vec![
-            t("a"),
-            Doc::LineSuffix("{- one -}".into(), false),
-            t(" + b"),
-            Doc::LineSuffix("-- two".into(), true),
-        ]);
-        assert_eq!(render(&doc, 80), "a + b {- one -} -- two\n");
     }
 
     #[test]
     fn an_inline_comment_keeps_its_place_behind_a_waiting_one() {
         let doc = Doc::concat(vec![
             t("x ="),
-            Doc::LineSuffix("-- one".into(), true),
+            Doc::LineSuffix("-- one".into()),
             t(" "),
             Doc::Comment("{- two -}".into()),
             t("5"),
         ]);
         assert_eq!(render(&doc, 80), "x = -- one\n  {- two -} 5\n");
+    }
+
+    #[test]
+    fn settle_writes_the_waiting_comments_where_they_were_met() {
+        let doc = Doc::concat(vec![
+            t("x ="),
+            Doc::LineSuffix("-- one".into()),
+            t(" "),
+            Doc::Settle,
+            t("\"{ {- two -} y }\""),
+        ]);
+        assert_eq!(render(&doc, 80), "x = -- one\n  \"{ {- two -} y }\"\n");
+        // Without a waiting comment it is nothing.
+        let doc = Doc::concat(vec![t("x = "), Doc::Settle, t("1")]);
+        assert_eq!(render(&doc, 80), "x = 1\n");
     }
 
     #[test]
@@ -643,7 +768,7 @@ mod tests {
     fn a_waiting_comment_is_written_before_an_own_line_comment() {
         let doc = Doc::concat(vec![
             t("a"),
-            Doc::LineSuffix("-- one".into(), true),
+            Doc::LineSuffix("-- one".into()),
             Doc::OwnLine("-- two".into()),
             Doc::BlankLine,
             t("b"),
@@ -670,14 +795,14 @@ mod tests {
     }
 
     #[test]
-    fn an_inline_comment_counts_for_the_width() {
+    fn an_inline_comment_does_not_count_for_the_width() {
         let doc = list(
             "[",
             vec![Doc::concat(vec![Doc::Comment("{- c -}".into()), t("a")])],
             "]",
         );
-        assert_eq!(render(&doc, 11), "[{- c -} a]\n");
-        assert_eq!(render(&doc, 10), "[\n  {- c -} a,\n]\n");
+        assert_eq!(render(&doc, 3), "[{- c -} a]\n");
+        assert_eq!(render(&doc, 2), "[\n  {- c -} a,\n]\n");
     }
 
     #[test]
@@ -715,7 +840,7 @@ mod tests {
             t("a = "),
             Doc::HardLine,
             t("b "),
-            Doc::LineSuffix("-- c".into(), true),
+            Doc::LineSuffix("-- c".into()),
             Doc::HardLine,
             Doc::BlankLine,
         ]);
