@@ -1,0 +1,14 @@
+-- Port of repros/type_soundness/r3.silt, with block bodies for its `= expr` ones.
+type P { name: String, age: Int }
+fn idn(p: {name: String, ...r}) -> {name: String, ...r} { p }
+fn ren(p: {name: String, ...r}) -> {name: String, ...r} { p.{ name: "renamed" } }
+fn takes_p(p: P) -> Int { p.age }
+fn main() {
+  let p = P { name: "p", age: 1 }
+  let q = idn(p)
+  println(q.age)
+  println(takes_p(q))
+  let z = ren(p)
+  println(takes_p(z))
+  println(z.name)
+}

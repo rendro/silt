@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected String, got Int
+-- Port of repros/type_soundness/q3.silt, in the loop syntax.
+fn f() {
+  loop i = 0, acc = "" {
+    match i {
+      3 -> acc
+      _ -> loop(i + 1, i)
+    }
+  }
+}
+fn main() { println(f()) }

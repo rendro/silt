@@ -1,0 +1,10 @@
+-- Port of repros/type_soundness/gen3.silt, in brace closures.
+import channel
+let mk = { -> channel.new(4) }
+fn main() {
+  let a = mk()
+  let b = mk()
+  channel.send(a, 1)
+  channel.send(b, "s")
+  println("ok")
+}

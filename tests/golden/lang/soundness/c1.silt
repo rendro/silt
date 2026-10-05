@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'Compare'
+-- Port of repros/type_soundness/c1.silt, in brace closures.
+fn lt(a: t, b: t) -> Bool where t: Compare { a < b }
+fn main() {
+  let f = { x -> x + 1 }
+  println(lt(f, f))
+}

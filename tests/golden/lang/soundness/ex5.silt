@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: missing variant X
+-- Port of repros/type_soundness/ex5.silt, two statements on one line split.
+type R { a: Bool, b: Bool }
+fn r(x: R) -> Int {
+  match x {
+    R { a: true, .. } -> 1
+    R { b: true, .. } -> 2
+    R { a: false, b: false } -> 3
+  }
+}
+type E { X(Bool, Bool), Y }
+fn e(x: E) -> Int {
+  match x {
+    X(true, _) -> 1
+    X(_, true) -> 2
+    Y -> 3
+  }
+}
+fn main() {
+  println(r(R { a: false, b: true }))
+  println(e(X(false, false)))
+}

@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: not all patterns are covered
+-- Port of repros/type_soundness/ex10.silt, two statements on one line split.
+-- A false rejection, pending in repros/SOUNDNESS.tsv.
+fn h(r: {on: Bool, n: Int}) -> Int {
+  match r {
+    {on: true, n: n} -> n
+    {on: false, n: n} -> n
+  }
+}
+fn h2(r: {on: Bool}) -> Int {
+  match r {
+    {on: true} -> 1
+    {on: false} -> 0
+  }
+}
+fn main() {
+  println(h({on: false, n: 5}))
+  println(h2({on: true}))
+}

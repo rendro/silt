@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'String' does not implement trait 'Greet'
+-- Port of repros/type_soundness/w10.silt, in brace closures.
+import list
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+fn main() {
+  println(list.map(["a", "b"], { x -> hello(x) }))
+}

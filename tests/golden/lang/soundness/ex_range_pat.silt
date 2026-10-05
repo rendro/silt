@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: not all patterns are covered
+-- Port of repros/typechecker_arch/ex_range_pat.silt, two statements on one line split.
+fn f(n: Int) -> Int {
+  match n {
+    0..10 -> 1
+    _ -> 2
+  }
+}
+fn g(t: (Bool, Int)) -> Int {
+  match t {
+    (true, 0..10) -> 1
+    (false, _) -> 2
+  }
+}
+fn main() {
+  println(f(10))
+  println(g((true, 50)))
+}

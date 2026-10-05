@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 0
+-- Port of repros/type_soundness/w12.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: list.sort: type 'Fn' does not implement Compare
+import list
+import map
+fn keyed(k: a) -> Map(a, Int) where a: Hash { #{ k: 1 } }
+fn main() {
+  let ms = list.map([{ x -> x }], keyed)
+  println(list.length(ms))
+  let sorted = [{ x -> x + 1 }] |> list.map({ f -> f }) |> list.sort
+  println(list.length(sorted))
+}

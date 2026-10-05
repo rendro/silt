@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 0
+-- Port of repros/type_soundness/i9.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: type 'Fn' does not implement Equal
+type Box(a) { Box(a) }
+fn same(x: Box(a), y: Box(a)) -> Bool { x == y }
+fn main() {
+  println(same(Box(1), Box(1)))
+  println(same(Box({ x -> x }), Box({ x -> x })))
+}

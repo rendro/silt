@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: not all patterns are covered
+-- Port of repros/type_soundness/k6.silt, two statements on one line split.
+fn f(m: Map(String, Int)) -> Int {
+  match m {
+    #{ "a": a } -> a
+  }
+}
+fn p(x: Int, y: Int) -> Int {
+  match y {
+    ^x -> 1
+  }
+}
+fn main() {
+  println(p(1, 2))
+  println(f(#{"b": 1}))
+}
