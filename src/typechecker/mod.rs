@@ -1,11 +1,12 @@
 //! Hindley-Milner type inference and checking for Silt.
 //!
-//! This module implements Algorithm W-style type inference with:
-//! - Type variables and unification
-//! - Let-polymorphism (generalization at let bindings)
+//! Inference is by unification, in the order the definitions refer to
+//! each other:
+//! - Type variables with levels; generalisation of a `let` that binds a
+//!   value and of each group of top-level definitions
+//! - Annotation variables that are rigid inside their declaration
 //! - Exhaustiveness checking for match expressions
-//! - Type narrowing after `when` guard statements
-//! - Trait constraint checking
+//! - Trait bounds: declared, inferred and owed at each use
 
 mod auto_derive;
 mod builtin_env;
@@ -163,10 +164,18 @@ pub struct TypeChecker {
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
-    /// The top-level definitions whose types are being inferred together
-    /// (a function alone, or a group that is mutually recursive): inside
-    /// the group each has one type.
-    pub(super) inferred_together: std::collections::HashSet<Symbol>,
+    /// The annotation variables with a `where` clause whose trait is
+    /// unknown (reported): what bounds them is not known, so a method
+    /// call or a bound owed on one is not reported as well.
+    pub(super) unknown_bounds: std::collections::HashSet<TyVar>,
+    /// The annotation variables of the functions of the group being
+    /// inferred together, when it has several: each with the functions
+    /// (by declaration) it is a variable of. Two of different functions
+    /// may turn out to be one variable of the group
+    /// (`same_in_group`); `rigid_alias` then says which one each stands
+    /// for.
+    pub(super) group_rigid: HashMap<TyVar, Vec<usize>>,
+    pub(super) rigid_alias: HashMap<TyVar, RigidId>,
     /// The declaration of each top-level `let` of the module, by the
     /// names it binds, and the one whose value is being checked: its
     /// value may not read a `let` declared after it, which has not run
@@ -274,7 +283,9 @@ impl TypeChecker {
             closed_mark: 0,
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
-            inferred_together: std::collections::HashSet::new(),
+            unknown_bounds: std::collections::HashSet::new(),
+            group_rigid: HashMap::new(),
+            rigid_alias: HashMap::new(),
             let_index: HashMap::new(),
             checking_let: None,
             impl_sigs: HashMap::new(),
@@ -506,19 +517,30 @@ impl TypeChecker {
         }
     }
 
-    /// Report each `pub let` whose type the module's check leaves partly
-    /// unknown (`pub let ch = channel.new(1)` before anything sends on
-    /// it): an importer would fix the rest, and two importers could fix it
-    /// two ways. The declaration is where it is reported, whichever
-    /// module is checked first.
-    fn report_unknown_pub_let_types(&mut self, program: &Program, env: &TypeEnv) {
+    /// Report each top-level `let` whose type the module's check leaves
+    /// partly unknown (`let ch = channel.new(1)` when nothing in the
+    /// module sends on it). A module's check is where its types are
+    /// decided: an importer would fix the rest of a `pub let`, and two
+    /// importers could fix it two ways; a private one is reached through
+    /// the module's public functions just the same. The declaration is
+    /// where it is reported. A REPL cell is exempt: the next cell may
+    /// decide it.
+    fn report_unknown_let_types(&mut self, program: &Program, env: &TypeEnv) {
         if self.is_cell {
             return;
         }
         for decl in &program.decls {
-            if !matches!(decl, Decl::Let { is_pub: true, .. }) {
+            let Decl::Let { is_pub, .. } = decl else {
                 continue;
-            }
+            };
+            let (what, keyword, why) = match is_pub {
+                true => (
+                    "public let",
+                    "pub let",
+                    "a module that imports it cannot decide it",
+                ),
+                false => ("top-level let", "let", "nothing in the module decides it"),
+            };
             for (name, span, _) in crate::parser::top_level_binders(decl) {
                 let Some(scheme) = env.lookup(name).cloned() else {
                     continue;
@@ -532,13 +554,12 @@ impl TypeChecker {
                         Code::AmbiguousType,
                         span,
                         format!(
-                            "the type of public let '{name}' is not fully known here: {}",
+                            "the type of {what} '{name}' is not fully known here: {}",
                             self.show_type(&ty)
                         ),
                     )
                     .with_help(format!(
-                        "annotate it, e.g. `pub let {name}: <type> = ...`: a module that \
-                         imports it cannot decide it"
+                        "annotate it, e.g. `{keyword} {name}: <type> = ...`: {why}"
                     )),
                 );
             }
@@ -709,13 +730,19 @@ impl TypeChecker {
         env: &mut TypeEnv,
     ) {
         // Inside the group each definition has one type.
-        self.inferred_together.clear();
+        self.group_rigid.clear();
+        if component.members.len() > 1 {
+            for &i in &component.members {
+                for r in sigs[i].iter().flat_map(|sig| &sig.rigid) {
+                    self.group_rigid.insert(r.var, vec![i]);
+                }
+            }
+        }
         let mut awaited: Vec<(Symbol, Type)> = Vec::new();
         for &i in &component.members {
             match (&decls[i], &sigs[i]) {
                 (Decl::Fn(f), Some(sig)) if !sig.complete => {
                     env.define(f.name, Scheme::mono(sig.ty()));
-                    self.inferred_together.insert(f.name);
                 }
                 // A `let` the group reaches before its value is checked.
                 (Decl::Let { pattern, .. }, _) if component.cyclic => {
@@ -780,9 +807,10 @@ impl TypeChecker {
                 let Some(bound) = env.lookup(*name).cloned() else {
                     continue;
                 };
-                if !is_value {
-                    self.keep_monomorphic(&bound.ty);
+                if *is_value {
+                    continue;
                 }
+                self.keep_monomorphic(&bound.ty);
                 // A function of the group gave it the type of one of
                 // its annotation variables (see `TypeChecker::bind`).
                 if let Some(r) = rigid_in(&self.apply(&bound.ty)) {
@@ -800,13 +828,15 @@ impl TypeChecker {
                 }
             }
         }
-        // A function's type may mention an annotation variable of another
-        // function of the group: the bounds are the group's.
+        // A definition's type may mention an annotation variable of
+        // another function of the group: the bounds are the group's, each
+        // on the variable its own stands for.
         let bounds: Vec<(TyVar, TraitKey)> = component
             .members
             .iter()
             .filter_map(|&i| sigs[i].as_ref())
             .flat_map(|sig| sig.bounds.iter().copied())
+            .map(|(var, bound)| (self.rigid_rep_var(var), bound))
             .collect();
         for &i in &component.members {
             if let (Decl::Fn(f), Some(sig)) = (&decls[i], &sigs[i])
@@ -824,14 +854,14 @@ impl TypeChecker {
                     if let Some(bound) = env.lookup(*name).cloned()
                         && bound.vars.is_empty()
                     {
-                        let scheme = self.generalize(&bound.ty);
+                        let scheme = self.generalize_fn(&bound.ty, &bounds);
                         env.define(*name, scheme);
                     }
                 }
             }
         }
+        self.group_rigid.clear();
         self.settle_bounds();
-        self.inferred_together.clear();
         self.enter_level();
     }
 
@@ -850,16 +880,10 @@ impl TypeChecker {
         let is_value = self.is_syntactic_value(value);
         let mut val_ty = self.infer_expr(value, env);
         if let Some(te) = ty {
-            // B2: populate the arity-error span hint with the
-            // annotation's own span so diagnostics from
-            // `resolve_type_expr` point at the user-written type,
-            // not a zero-span sentinel. Without this, errors in
-            // `let x: Box(Int) = ...` where `Box` is parameterized
-            // emitted a span-less first error followed by a
-            // duplicate from the subsequent unify.
-            let prev_type_span = self.current_type_anno_span.replace(te.span);
-            let declared = self.resolve_type_expr(te, &mut std::collections::HashMap::new());
-            self.current_type_anno_span = prev_type_span;
+            // (A type variable the annotation introduces is rigid; a
+            // `let` that generalises is general in it, like a function
+            // in its signature's.)
+            let (declared, _) = self.resolve_let_annotation(te);
             self.unify(&val_ty, &declared, span);
             // A value of unknown type (from a module that failed to
             // load) takes the declared type.
@@ -912,9 +936,9 @@ impl TypeChecker {
     /// use what those promise and nothing an impl's type happens to
     /// have.
     pub(super) fn check_decl_bodies(&mut self, decls: &mut [Decl], env: &mut TypeEnv) {
-        // One level deep, as every body: its variables are a
-        // declaration's, not an outer value's.
-        self.enter_level();
+        // Each body one level deep: its variables are a declaration's,
+        // not an outer value's, and what waits for one of them is dropped
+        // with it.
         for decl in decls.iter_mut() {
             match decl {
                 Decl::TraitImpl(ti) => {
@@ -928,8 +952,7 @@ impl TypeChecker {
                         else {
                             continue;
                         };
-                        self.check_body(method, &sig, env);
-                        self.finalize_deferred_checks();
+                        self.check_method_body(method, &sig, env);
                     }
                 }
                 Decl::Trait(t) => {
@@ -937,14 +960,20 @@ impl TypeChecker {
                         let Some(sig) = self.default_method_sig(t.name, method.name) else {
                             continue;
                         };
-                        self.check_body(method, &sig, env);
-                        self.finalize_deferred_checks();
+                        self.check_method_body(method, &sig, env);
                     }
                 }
                 _ => {}
             }
         }
+    }
+
+    fn check_method_body(&mut self, method: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
+        self.enter_level();
+        self.check_body(method, sig, env);
+        self.finalize_deferred_checks();
         self.exit_level();
+        self.settle_bounds();
     }
 }
 
@@ -1166,7 +1195,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     }
     let env = checker.check_program_in(program, env);
     checker.report_private_in_schemes(program, &env);
-    checker.report_unknown_pub_let_types(program, &env);
+    checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);
     // The type of each top-level value: the module's own, by name; an
     // imported item, by its definition.

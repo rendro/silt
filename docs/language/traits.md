@@ -42,6 +42,10 @@ trait Scale for Int  { fn scale(self, by) { self * by } }      -- by: Int, retur
 trait Scale for Bool { fn scale(self, by) { "no" } }           -- ERROR: expected Int, got String
 ```
 
+A method's own `where` clause is part of its signature too
+(`fn shw(self, x: a) -> String where a: Display`): it holds in the
+default body and in every impl's body, and every call owes it.
+
 (`Greet` is a fresh trait local to this snippet. Silt's `Display`
 trait is built in and cannot be redeclared, so doc snippets that
 illustrate trait *declaration* use a fresh local name; impls of the

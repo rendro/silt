@@ -260,3 +260,39 @@ fn collect_int_hints_at_let_x(uri: &str, src: &str) -> usize {
     client.shutdown();
     count
 }
+
+/// Hover inside a default method body answers from the trait's own
+/// body, which is where the body is typed: with an impl that leaves the
+/// method out (and gets an untyped copy of it), and without one.
+#[test]
+fn hover_inside_trait_default_method_body() {
+    let body = "\
+trait Loud {
+  fn loud(self) -> String
+  fn twice(self) -> String {
+    let me = self
+    \"{me.loud()}{me.loud()}\"
+  }
+}
+";
+    let with_impl = format!(
+        "{body}trait Loud for Int {{ fn loud(self) -> String {{ \"i\" }} }}\nfn main() {{ println(1.twice()) }}\n"
+    );
+    let without_impl = format!("{body}fn main() {{ println(1) }}\n");
+    for (name, src) in [("with_impl", with_impl), ("without_impl", without_impl)] {
+        let mut client = LspClient::spawn();
+        let uri = format!("file:///tmp/silt_hover_trait_default_{name}.silt");
+        client.did_open_and_wait(&uri, &src);
+        // `me` in the interpolation, and `self` in the `let`.
+        for (line, character) in [(4, 6), (3, 13)] {
+            let hover = client.hover(&uri, line, character);
+            let shown = hover.to_string();
+            assert!(
+                shown.contains("Self"),
+                "{name}: hover at {line}:{character} inside the default body shows the type \
+                 `Self`; got {shown}"
+            );
+        }
+        client.shutdown();
+    }
+}

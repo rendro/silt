@@ -79,14 +79,19 @@ impl TypeChecker {
             let resolved = self.apply(&obj_ty);
             match &resolved {
                 Type::Error | Type::Never => {}
+                // Still unknown: it waits. `settle_bounds` drops it once
+                // the variable is generalised (see above); on a variable
+                // of an outer binding it is checked when that is decided.
                 Type::Var(_) => {
-                    // Polymorphic / unresolved — leave alone (see above).
+                    self.pending_field_accesses
+                        .push((obj_ty, field, result_ty, span));
                 }
                 // The receiver became an annotation variable: it has the
                 // methods of its bounds, and nothing else.
                 Type::Rigid(r) => match self.bound_methods(*r, field).as_slice() {
-                    [(trait_name, method_ty)] => {
-                        let method_ty = self.instantiate_method_type(method_ty);
+                    [(trait_name, method_ty, bounds)] => {
+                        let method_ty =
+                            self.instantiate_bound_method(method_ty, bounds, field, span);
                         self.deferred_method_traits.insert(span, *trait_name);
                         self.unify_deferred_method(&result_ty, &method_ty, span);
                     }
@@ -235,7 +240,11 @@ impl TypeChecker {
             // call passing a non-conforming operand is not caught statically
             // — the VM catches it at runtime with a clean operator-domain
             // diagnostic.
-            if matches!(resolved, Type::Var(_) | Type::Rigid(_)) {
+            if matches!(resolved, Type::Var(_)) {
+                self.pending_numeric_checks.push((ty, op_desc, span));
+                continue;
+            }
+            if matches!(resolved, Type::Rigid(_)) {
                 continue;
             }
             // Classify the op based on its recorded tag (string literals set
@@ -294,7 +303,12 @@ impl TypeChecker {
         for (inner_ty, result_ty, expected_ret, span) in pending_qmarks {
             let resolved = self.apply(&inner_ty);
             let (head, args) = match &resolved {
-                Type::Error | Type::Never | Type::Var(_) => continue,
+                Type::Error | Type::Never => continue,
+                Type::Var(_) => {
+                    self.pending_question_marks
+                        .push((inner_ty, result_ty, expected_ret, span));
+                    continue;
+                }
                 Type::Generic(name, args) if name.is_builtin("Result") && args.len() == 2 => {
                     ("Result", args.clone())
                 }
@@ -376,7 +390,14 @@ impl TypeChecker {
             } = pending;
             let resolved = self.apply(&Type::Var(tyvar));
             match &resolved {
-                Type::Error | Type::Never | Type::Var(_) => {}
+                Type::Error | Type::Never => {}
+                Type::Var(v) => self.pending_where_constraints.push(PendingWhereConstraint {
+                    tyvar: *v,
+                    trait_name,
+                    callee_fn_name,
+                    span,
+                    bound_trait_args,
+                }),
                 Type::Rigid(r) => self.require_declared_bound(*r, trait_name, callee_fn_name, span),
                 _ => self.verify_trait_obligation(trait_name, &bound_trait_args, &resolved, span),
             }

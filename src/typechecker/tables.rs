@@ -73,6 +73,11 @@ pub(super) struct TraitInfo {
     /// `param_var_ids`. An impl's method has this type, with the impl's
     /// type for `Self` and its trait arguments for the parameters.
     pub(super) methods: Vec<(Symbol, Type)>,
+    /// The bounds each method's own `where` clauses put on its type
+    /// variables, with the bound's trait arguments. They are part of the
+    /// method's signature: in force in its default body and in every
+    /// impl's body, and owed by every call.
+    pub(super) method_bounds: HashMap<Symbol, Vec<MethodBound>>,
     /// The variable `Self` is in the methods' types.
     pub(super) self_var: TyVar,
     /// The name of each variable the trait's declaration writes: `Self`,
@@ -107,6 +112,10 @@ pub(super) struct TraitInfo {
     /// (a check outside a session).
     pub(super) defined_in: Symbol,
 }
+
+/// A bound on a type variable of a method: the variable, the trait and
+/// the trait's arguments.
+pub(super) type MethodBound = (TyVar, TraitKey, Vec<Type>);
 
 /// Information about a single associated-type declaration inside a
 /// trait. Bounds are stored as `(trait_name, trait_args)` pairs — the

@@ -659,6 +659,22 @@ pub fn unrigidify(ty: &Type) -> (Type, Vec<TyVar>) {
     (ty, vars)
 }
 
+/// The type `ty` with each of the rigid variables `own` written as the
+/// variable a scheme quantifies, and those of them it mentions.
+pub fn release_rigid(ty: &Type, own: &[RigidId]) -> (Type, Vec<TyVar>) {
+    let mut vars = Vec::new();
+    let ty = map_rigid(ty, &mut |r| {
+        if !own.contains(&r) {
+            return Type::Rigid(r);
+        }
+        if !vars.contains(&r.var) {
+            vars.push(r.var);
+        }
+        Type::Var(r.var)
+    });
+    (ty, vars)
+}
+
 /// `ty` with each rigid variable replaced by what `f` gives for it.
 fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
     match ty {

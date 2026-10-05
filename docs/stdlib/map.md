@@ -20,13 +20,13 @@ Functions for working with immutable, ordered maps (`Map(k, v)`). Maps use
 | `filter` | `(Map(a, b), Fn(a, b) -> Bool) -> Map(a, b)` | Keep entries matching predicate |
 | `from_entries` | `(List((a, b))) -> Map(a, b)` | Build map from tuple list |
 | `get` | `(Map(a, b), a) -> Option(b) where a: Hash` | Look up value by key |
-| `keys` | `(Map(a, b)) -> List(a) where a: Hash` | All keys as a list |
-| `length` | `(Map(a, b)) -> Int where a: Hash` | Number of entries |
+| `keys` | `(Map(a, b)) -> List(a)` | All keys as a list |
+| `length` | `(Map(a, b)) -> Int` | Number of entries |
 | `map` | `(Map(a, b), Fn(a, b) -> (c, d)) -> Map(c, d)` | Transform all entries |
 | `merge` | `(Map(a, b), Map(a, b)) -> Map(a, b) where a: Hash` | Merge two maps (right wins) |
 | `set` | `(Map(a, b), a, b) -> Map(a, b) where a: Hash` | Insert or update a key |
 | `update` | `(Map(a, b), a, b, Fn(b) -> b) -> Map(a, b)` | Update existing or insert default |
-| `values` | `(Map(a, b)) -> List(b) where a: Hash` | All values as a list |
+| `values` | `(Map(a, b)) -> List(b)` | All values as a list |
 
 
 ## `map.contains`
@@ -159,7 +159,7 @@ fn main() {
 ## `map.keys`
 
 ```
-map.keys(m: Map(a, b)) -> List(a) where a: Hash
+map.keys(m: Map(a, b)) -> List(a)
 ```
 
 Returns all keys as a list, in sorted order.
@@ -176,7 +176,7 @@ fn main() {
 ## `map.length`
 
 ```
-map.length(m: Map(a, b)) -> Int where a: Hash
+map.length(m: Map(a, b)) -> Int
 ```
 
 Returns the number of entries in the map.
@@ -269,7 +269,7 @@ fn main() {
 ## `map.values`
 
 ```
-map.values(m: Map(a, b)) -> List(b) where a: Hash
+map.values(m: Map(a, b)) -> List(b)
 ```
 
 Returns all values as a list, in key-sorted order.

@@ -38,11 +38,12 @@ fn record_info_size_locked() {
 fn trait_info_size_locked() {
     // Round 63 item 5 added `defined_in: Symbol` to track the
     // owning package for the trait-orphan rule; stage 5 shrank its
-    // spans from 24 to 12 bytes; stage 6 added `self_var` and
-    // `var_names`, which a default body and an impl are checked with.
+    // spans from 24 to 12 bytes; stage 6 added `self_var`,
+    // `var_names` and `method_bounds`, which a default body and an impl
+    // are checked with.
     assert_eq!(
         std::mem::size_of::<TraitInfo>(),
-        264,
+        312,
         "TraitInfo size changed — see module doc"
     );
 }

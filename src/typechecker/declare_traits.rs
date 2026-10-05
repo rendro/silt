@@ -293,6 +293,7 @@ impl TypeChecker {
                 supertrait_args: Vec::new(),
                 param_where_clauses: Vec::new(),
                 methods: Vec::new(),
+                method_bounds: HashMap::new(),
                 self_var: 0,
                 var_names: Vec::new(),
                 default_method_bodies: HashMap::new(),
@@ -327,6 +328,7 @@ impl TypeChecker {
         // An impl's method has the declared type whatever the impl
         // writes, and a default body is checked against it.
         let mut methods: Vec<(Symbol, Type)> = Vec::with_capacity(t.methods.len());
+        let mut method_bounds: HashMap<Symbol, Vec<MethodBound>> = HashMap::new();
         for m in &t.methods {
             let mut param_map = HashMap::new();
             param_map.insert(self_sym, self_var.clone());
@@ -402,6 +404,30 @@ impl TypeChecker {
                 .collect();
             own.sort_by_key(|(v, _)| *v);
             var_names.extend(own);
+            // The method's own bounds. (An unknown trait in one is
+            // reported where a body is checked against the method.)
+            let mut bounds: Vec<MethodBound> = Vec::new();
+            for wc in &m.where_clauses {
+                let (Some(Type::Var(tv)), Some(bound)) = (
+                    param_map.get(&wc.type_param).cloned(),
+                    self.named_trait(wc.trait_res, wc.trait_name)
+                        .filter(|bound| self.tables.traits.contains_key(bound) || *bound == key),
+                ) else {
+                    continue;
+                };
+                let args: Vec<Type> = wc
+                    .trait_args
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te, &mut param_map))
+                    .collect();
+                if !args.is_empty() {
+                    self.trait_arg_bindings.insert((tv, bound), args.clone());
+                }
+                bounds.push((tv, bound, args));
+            }
+            if !bounds.is_empty() {
+                method_bounds.insert(m.name, bounds);
+            }
             methods.push((m.name, Type::Fun(param_types, Box::new(ret_type))));
         }
 
@@ -459,6 +485,7 @@ impl TypeChecker {
                 supertrait_args,
                 param_where_clauses,
                 methods,
+                method_bounds,
                 self_var: self_var_id,
                 var_names,
                 default_method_bodies,
@@ -502,6 +529,9 @@ impl TypeChecker {
             if let Some(i) = info.params.iter().position(|p| p == param) {
                 bounds.push((info.param_var_ids[i], *bound));
             }
+        }
+        for (var, bound, _) in info.method_bounds.get(&method).into_iter().flatten() {
+            bounds.push((*var, *bound));
         }
         Some(FnSig {
             params: params.iter().map(|t| rigidify(t, &rigid)).collect(),
@@ -1134,6 +1164,13 @@ impl TypeChecker {
         let expanded_self_args = self.type_args_of(&self_type);
         let mut impl_obligations_by_index: Vec<(usize, TraitKey, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
+            let unknown = wc.trait_res == Some(crate::defs::Res::Error)
+                || self
+                    .named_trait(wc.trait_res, wc.trait_name)
+                    .is_none_or(|t| !self.tables.traits.contains_key(&t));
+            if unknown && let Some(Type::Var(tv)) = impl_param_map.get(&wc.type_param) {
+                self.unknown_bounds.insert(*tv);
+            }
             // A bound the resolver resolved to nothing: it reported why.
             if wc.trait_res == Some(crate::defs::Res::Error) {
                 continue;
@@ -1544,6 +1581,9 @@ impl TypeChecker {
                 let (_, ty) = info.methods.iter().find(|(n, _)| *n == method.name)?;
                 Some((info, ty))
             });
+            // The bounds the trait declares for the method, on this
+            // impl's variables.
+            let mut declared_bounds: Vec<MethodBound> = Vec::new();
             let seeded: Option<Type> = declared.map(|(info, ty)| {
                 let mut mapping = seed.clone();
                 for v in free_vars_in(ty) {
@@ -1559,6 +1599,7 @@ impl TypeChecker {
                         });
                     }
                 }
+                declared_bounds = Self::bounds_under(info, method.name, &mapping);
                 substitute_vars(ty, &mapping)
             });
             let expected = seeded.as_ref().map(|ty| rigidify(ty, &method_rigid));
@@ -1642,6 +1683,12 @@ impl TypeChecker {
             //       the method's param_map — which sees BOTH impl-level
             //       binders AND method-local type annos.
             let mut method_constraints = impl_level_constraints.clone();
+            for (tv, bound, args) in &declared_bounds {
+                if !args.is_empty() {
+                    self.trait_arg_bindings.insert((*tv, *bound), args.clone());
+                }
+            }
+            method_constraints.extend(declared_bounds);
             for wc in &method.where_clauses {
                 // A bound the resolver resolved to nothing: it reported why.
                 if wc.trait_res == Some(crate::defs::Res::Error) {
@@ -1771,6 +1818,8 @@ impl TypeChecker {
                 for v in free_vars_in(ty) {
                     mapping.entry(v).or_insert_with(|| self.fresh_var());
                 }
+                let mut method_constraints = impl_level_constraints.clone();
+                method_constraints.extend(Self::bounds_under(info, *name, &mapping));
                 self.register_method_entry(
                     target_type,
                     *name,
@@ -1779,11 +1828,32 @@ impl TypeChecker {
                         span: ti.span,
                         is_auto_derived: ti.is_auto_derived,
                         trait_name: Some(trait_key),
-                        method_constraints: impl_level_constraints.clone(),
+                        method_constraints,
                     },
                 );
             }
         }
+    }
+
+    /// The bounds the trait `info` declares for its method `method`,
+    /// with the trait's variables replaced as `mapping` says.
+    fn bounds_under(
+        info: &TraitInfo,
+        method: Symbol,
+        mapping: &HashMap<TyVar, Type>,
+    ) -> Vec<MethodBound> {
+        info.method_bounds
+            .get(&method)
+            .into_iter()
+            .flatten()
+            .filter_map(|(tv, bound, args)| {
+                let Some(Type::Var(tv)) = mapping.get(tv) else {
+                    return None;
+                };
+                let args = args.iter().map(|t| substitute_vars(t, mapping)).collect();
+                Some((*tv, *bound, args))
+            })
+            .collect()
     }
 
     /// Enter a method of an impl in the method table, and by its trait

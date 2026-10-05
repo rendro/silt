@@ -1,7 +1,7 @@
--- Polymorphic `.display()` on a function fails at run time, prints nothing, and has no interpolation suffix.
+-- Polymorphic `.display()` on a function is rejected where the function with the declared `Display` bound is called, with no interpolation suffix.
 -- exit: 1
--- stderr-contains: does not implement Display
+-- stderr-contains: does not implement trait 'Display'
 -- stderr-contains: 'Fn'
 -- stderr-not-contains: required for string interpolation
-fn show(x) { x.display() }
+fn show(x: a) -> String where a: Display { x.display() }
 fn main() { println(show({ y -> y })) }

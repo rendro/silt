@@ -391,8 +391,8 @@ lang/soundness/gen3.silt	holds	accept	control: a top-level closure that makes a 
 lang/soundness/i1.silt	holds	reject E0315	`==` and `<` on a variant that holds a closure
 lang/soundness/i10.silt	pending:3b	reject E0314	TS-2.4: `==` and `<` on containers of closures through polymorphic functions
 lang/soundness/i11.silt	pending:3b	reject E0314	TS-9: a set literal of closures
-lang/soundness/i12.silt	holds	reject E0314	a closure as a map key through a polymorphic function
-lang/soundness/i2.silt	holds	reject E0314	a variant holding a closure as a map key and set element
+lang/soundness/i12.silt	pending:3b	reject E0314	a closure as a map key through a polymorphic function
+lang/soundness/i2.silt	pending:3b	reject E0314	a variant holding a closure as a map key and set element
 lang/soundness/i3.silt	holds	reject E0314	a closure as a map key
 lang/soundness/i4.silt	pending:3b	reject E0314	TS-9: list.sort, list.contains and list.unique over closures
 lang/soundness/i5.silt	holds	reject E0314	Display of a variant that holds a closure
@@ -416,3 +416,5 @@ lang/soundness/z1.silt	holds	reject E0314	TS-9: Display of closures; holds throu
 lang/soundness/z2.silt	holds	reject E0314	TS-9: as z1; holds through the direct `pr(Box(f))` only
 lang/soundness/z3.silt	pending:3b	reject E0314	TS-9: Display of containers of closures through polymorphic functions
 lang/soundness/z4.silt	holds	reject E0315	control: `[f] == [f]` written directly
+lang/soundness/d06.silt	pending:3b	reject E0316	a default body uses `"{self}"`, `==` and `<` on `Self` without the bound; the impl is for a record that holds a function
+lang/soundness/e05.silt	pending:3a	reject E0331	an impl method adds a `where` bound its trait does not declare; a call through the trait does not owe it

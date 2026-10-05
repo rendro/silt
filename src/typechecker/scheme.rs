@@ -64,43 +64,41 @@ impl TypeChecker {
     }
 
     /// Forget the bounds recorded in the scope `exit_level` just left,
-    /// once everything it defines is generalised, except those on a
-    /// variable that is still unresolved and belongs to an outer binding.
+    /// and the checks that wait for a variable (`finalize_deferred_checks`),
+    /// once everything the scope defines is generalised: except those on a
+    /// variable that is still unresolved and belongs to an outer binding
+    /// (a top-level `let` that is not generalised), which are owed, and
+    /// checked, when a later definition decides it.
     pub(super) fn settle_bounds(&mut self) {
         let recorded = self.bound_log.split_off(self.closed_mark);
         for (tv, trait_name) in recorded {
-            if let Type::Var(rv) = self.apply(&Type::Var(tv))
-                && !self.tables.vars.is_generalizable(rv)
-            {
+            if self.waits_for_outer(&Type::Var(tv)) {
                 self.bound_log.push((tv, trait_name));
             }
         }
+        let mut fields = std::mem::take(&mut self.pending_field_accesses);
+        fields.retain(|(obj_ty, ..)| self.waits_for_outer(obj_ty));
+        self.pending_field_accesses = fields;
+        let mut numeric = std::mem::take(&mut self.pending_numeric_checks);
+        numeric.retain(|(ty, ..)| self.waits_for_outer(ty));
+        self.pending_numeric_checks = numeric;
+        let mut questions = std::mem::take(&mut self.pending_question_marks);
+        questions.retain(|(inner_ty, ..)| self.waits_for_outer(inner_ty));
+        self.pending_question_marks = questions;
+        let mut bounds = std::mem::take(&mut self.pending_where_constraints);
+        bounds.retain(|pending| self.waits_for_outer(&Type::Var(pending.tyvar)));
+        self.pending_where_constraints = bounds;
+    }
+
+    /// Whether `ty` is a variable still unresolved that the scope
+    /// `exit_level` just left does not own.
+    fn waits_for_outer(&self, ty: &Type) -> bool {
+        matches!(self.apply(ty), Type::Var(v) if !self.tables.vars.is_generalizable(v))
     }
 
     /// Instantiate a scheme by replacing quantified variables with fresh ones.
     pub(super) fn instantiate(&mut self, scheme: &Scheme) -> Type {
         self.instantiate_with_constraints(scheme).0
-    }
-
-    /// Instantiate a `MethodEntry`'s template type by generating fresh type
-    /// variables for every free type variable in it.
-    ///
-    /// Method entries store a raw `Type` (not a `Scheme`) for historical
-    /// reasons. Without this instantiation, the first call to a polymorphic
-    /// auto-derived method (e.g. `equal`) would permanently bind its
-    /// parameter type variables via unification, breaking subsequent calls
-    /// with different argument types.
-    pub(super) fn instantiate_method_type(&mut self, ty: &Type) -> Type {
-        let ty = self.apply(ty);
-        let fvs = free_vars_in(&ty);
-        if fvs.is_empty() {
-            return ty;
-        }
-        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-        for v in fvs {
-            mapping.insert(v, self.fresh_var());
-        }
-        substitute_vars(&ty, &mapping)
     }
 
     /// Instantiate a `MethodEntry`'s template type AND its where-clause
@@ -237,7 +235,7 @@ impl TypeChecker {
             if let Some(scheme) = env.lookup(def.name) {
                 let mut scheme = scheme.clone();
                 // A `pub let` whose type is partly unknown is reported at
-                // its declaration (`report_unknown_pub_let_types`); its
+                // its declaration (`report_unknown_let_types`); its
                 // importers see the unknown part as an error type, so no
                 // importer fixes it.
                 if def.kind == crate::defs::DefKind::Let

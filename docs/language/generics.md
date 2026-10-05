@@ -130,7 +130,15 @@ fn show(x: a) -> String where a: Display { x.display() }   -- ok
 ```
 
 An annotation in the body that writes one of the signature's variables
-means the same variable (`let first: a = x`).
+means the same variable (`let first: a = x`). A variable that a `let`
+annotation introduces itself is any type for that `let`:
+`let id: Fn(b) -> b = { y -> y }` is general in `b`, and
+`let n: b = 1` is an error.
+
+Functions that call each other may leave their return types out and
+still annotate parameters with variables: inside the group two such
+variables of two functions can be the same one, and each function stays
+general in it.
 
 A function without annotations is not restricted this way: its type is
 inferred from its body, bounds included, so `fn wrap(x) { show(x) }` has

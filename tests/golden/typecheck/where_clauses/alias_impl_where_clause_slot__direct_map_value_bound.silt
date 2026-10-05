@@ -5,7 +5,7 @@ trait Marked { fn m(self) -> Int }
 trait Marked for Int { fn m(self) -> Int { self } }
 
 trait Vals { fn total(self) -> Int }
-trait Vals for Map(k, v) where k: Hash, v: Marked {
+trait Vals for Map(k, v) where v: Marked {
   fn total(self) -> Int { map.length(self) }
 }
 
