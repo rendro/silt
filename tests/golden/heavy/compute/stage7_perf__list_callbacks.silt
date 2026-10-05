@@ -1,0 +1,23 @@
+-- timeout: 60
+-- A compute program of the stage 7 performance guard: closures called
+-- back by `list.map`, `list.filter` and `list.fold`, 4.5 million
+-- callbacks over lists of 50,000 elements.
+import list
+
+fn round(xs, k) {
+  xs
+  |> list.map { x -> x * k + 1 }
+  |> list.filter { x -> x % 3 != 0 }
+  |> list.fold(0) { acc, x -> (acc + x) % 1000003 }
+}
+
+fn main() {
+  let xs = list.map(1..50000) { x -> x }
+  let total = loop k = 1, acc = 0 {
+    match k > 30 {
+      true -> acc
+      false -> loop(k + 1, acc + round(xs, k))
+    }
+  }
+  println(total)
+}

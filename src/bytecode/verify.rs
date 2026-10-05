@@ -39,7 +39,7 @@ use std::fmt;
 
 use crate::value::Value;
 
-use super::ops::{ConstKind, Flow, Instr, Operand, decode};
+use super::ops::{ConstKind, Effect, Flow, Instr, Operand, decode};
 use super::{Const, Function};
 
 /// Why a function's code is malformed.
@@ -97,48 +97,54 @@ pub fn verify(function: &Function) -> Result<(), VerifyError> {
         height: function.arity(),
         ragged: false,
     });
+    // Tell the instruction `target` that control arrives with `frame`;
+    // whether that is news to it.
+    fn arrive(frames: &mut [Option<Frame>], target: usize, frame: Frame) -> bool {
+        let merged = match frames[target] {
+            None => frame,
+            Some(known) => Frame {
+                height: known.height.min(frame.height),
+                ragged: known.ragged || frame.ragged || known.height != frame.height,
+            },
+        };
+        let news = frames[target] != Some(merged);
+        frames[target] = Some(merged);
+        news
+    }
+    // The instructions whose frame changed. Each is followed on to the
+    // ones after it for as long as theirs change too.
     let mut work = vec![0];
-    while let Some(index) = work.pop() {
-        let (at, instr, next) = instrs[index];
-        let frame = frames[index].expect("an instruction in the work list has a frame");
-        let after = check(function, at, &instr, frame)?;
-        let mut arrive = |offset: usize| -> Result<(), VerifyError> {
-            let Some(&target) = starting_at.get(offset).filter(|index| **index != NONE) else {
-                return fail(
-                    at,
-                    format!("control goes to {offset}, where no instruction starts"),
-                );
-            };
-            let merged = match frames[target] {
-                None => after,
-                Some(known) => Frame {
-                    height: known.height.min(after.height),
-                    ragged: known.ragged || after.ragged || known.height != after.height,
-                },
-            };
-            if frames[target] != Some(merged) {
-                frames[target] = Some(merged);
-                work.push(target);
-            }
-            Ok(())
-        };
-        let target = || {
-            let mut target = None;
-            instr.operands(|operand| {
-                if let Operand::Target(offset) = operand {
-                    target = Some(offset);
+    while let Some(mut index) = work.pop() {
+        loop {
+            let (at, instr, _) = instrs[index];
+            let frame = frames[index].expect("an instruction in the work list has a frame");
+            let effect = instr.effect();
+            let after = check(function, at, &instr, &effect, frame)?;
+            if matches!(effect.flow, Flow::Branch | Flow::Jump) {
+                let mut offset = 0;
+                instr.operands(|operand| {
+                    if let Operand::Target(target) = operand {
+                        offset = target;
+                    }
+                });
+                let Some(&target) = starting_at.get(offset).filter(|index| **index != NONE) else {
+                    return fail(
+                        at,
+                        format!("control goes to {offset}, where no instruction starts"),
+                    );
+                };
+                if arrive(&mut frames, target, after) {
+                    work.push(target);
                 }
-            });
-            target.expect("an instruction that jumps has a target")
-        };
-        match instr.effect().flow {
-            Flow::Next => arrive(next)?,
-            Flow::Branch => {
-                arrive(next)?;
-                arrive(target())?;
             }
-            Flow::Jump => arrive(target())?,
-            Flow::End => {}
+            // The last instruction goes on to no next one (checked
+            // above), so there is an instruction at `index + 1`.
+            if matches!(effect.flow, Flow::Jump | Flow::End)
+                || !arrive(&mut frames, index + 1, after)
+            {
+                break;
+            }
+            index += 1;
         }
     }
     Ok(())
@@ -150,6 +156,7 @@ fn check(
     function: &Function,
     at: usize,
     instr: &Instr,
+    effect: &Effect,
     frame: Frame,
 ) -> Result<Frame, VerifyError> {
     let chunk = function.chunk();
@@ -262,7 +269,6 @@ fn check(
         _ => {}
     }
 
-    let effect = instr.effect();
     if effect.pops > frame.height {
         return fail(format!(
             "`{op}` takes {} values off a frame of {}",
