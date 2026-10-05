@@ -268,6 +268,11 @@ is not the program's own waiting stays in real time: the scheduler's
 time slices, the socket timeouts of `http` and `tcp`, and how long I/O
 takes.
 
+If a method of the clock panics, the clock is not called again and the
+program ends with the runtime error `the clock panicked: ...`: the
+builtin that read it fails, and every wait that was pending on the clock
+ends, its waiter failing the same way at its next step.
+
 `time.today` gives the date of `now` in the local time zone (in UTC in a
 build without the `local-clock` feature).
 

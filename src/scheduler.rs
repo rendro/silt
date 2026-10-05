@@ -307,7 +307,15 @@ fn watchdog_loop(registry: Arc<WatchdogRegistry>, io: HostIo) {
         if registry.shutdown.load(Ordering::SeqCst) {
             return;
         }
-        registry.scan_and_fire(io.monotonic());
+        // If the clock has panicked, every watched wait ends now: the
+        // task runs into the clock's failure at its next builtin call.
+        let now = io.monotonic();
+        let now = if io.clock_failure().is_some() {
+            Duration::MAX
+        } else {
+            now
+        };
+        registry.scan_and_fire(now);
     }
 }
 

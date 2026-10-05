@@ -94,7 +94,9 @@ impl Output for ProcessStderr {
 }
 
 /// The clock a program reads. Called from the thread that runs the
-/// program and from the runtime's threads.
+/// program and from the runtime's threads. If one of its methods
+/// panics, the clock is not called again and the program ends with the
+/// runtime error `the clock panicked: ...`.
 pub trait Clock: Send + Sync {
     /// The time of day, as the time since the Unix epoch
     /// (1970-01-01T00:00:00Z). `time.now` and `time.today` give it.
@@ -142,6 +144,12 @@ pub struct HostIo {
     /// that long: the runtime's threads then wait a deadline out
     /// instead of reading the clock again and again.
     system_clock: bool,
+    /// The message of the first panic of `clock`, once it has
+    /// panicked. From then on the clock is not called again, its
+    /// readings are zero, and whatever the program does next fails with
+    /// [`HostIo::clock_failure`]: a clock that panics must not leave a
+    /// wait that never ends.
+    clock_panic: Arc<OnceLock<String>>,
 }
 
 impl HostIo {
@@ -152,6 +160,7 @@ impl HostIo {
             stderr: Arc::new(stderr),
             clock: Arc::new(SystemClock),
             system_clock: true,
+            clock_panic: Arc::default(),
         }
     }
 
@@ -181,6 +190,7 @@ impl HostIo {
         HostIo {
             clock: Arc::new(clock),
             system_clock: false,
+            clock_panic: Arc::default(),
             ..self
         }
     }
@@ -198,14 +208,39 @@ impl HostIo {
         let _ = write_caught(&*self.stderr, text);
     }
 
+    /// Call the clock with a panic caught: the first one is kept as
+    /// the clock's failure, and the call gives `T::default()` then and
+    /// ever after.
+    fn read_clock<T: Default>(&self, read: impl FnOnce(&dyn Clock) -> T) -> T {
+        if self.clock_panic.get().is_some() {
+            return T::default();
+        }
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(&*self.clock))) {
+            Ok(value) => value,
+            Err(payload) => {
+                let _ = self.clock_panic.set(panic_message(&payload).to_string());
+                T::default()
+            }
+        }
+    }
+
+    /// The runtime error of a program whose clock has panicked; `None`
+    /// while it has not. Checked after every builtin call, and by the
+    /// runtime's threads, which then end every wait they hold.
+    pub(crate) fn clock_failure(&self) -> Option<String> {
+        self.clock_panic
+            .get()
+            .map(|message| format!("the clock panicked: {message}"))
+    }
+
     /// The time since the Unix epoch.
     pub(crate) fn now(&self) -> Duration {
-        self.clock.now()
+        self.read_clock(|clock| clock.now())
     }
 
     /// The clock's monotonic reading.
     pub(crate) fn monotonic(&self) -> Duration {
-        self.clock.monotonic()
+        self.read_clock(|clock| clock.monotonic())
     }
 
     /// The reading at which a wait of `duration` that starts now ends;
@@ -216,7 +251,7 @@ impl HostIo {
 
     /// Block the calling thread for `duration` on the clock.
     pub(crate) fn sleep(&self, duration: Duration) {
-        self.clock.sleep(duration)
+        self.read_clock(|clock| clock.sleep(duration))
     }
 
     /// How long a thread of the runtime waits, in real time, before it
@@ -240,14 +275,19 @@ fn write_caught(output: &dyn Output, text: &str) -> io::Result<()> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| output.write(text))) {
         Ok(result) => result,
         Err(payload) => {
-            let message = if let Some(s) = payload.downcast_ref::<&'static str>() {
-                s
-            } else if let Some(s) = payload.downcast_ref::<String>() {
-                s.as_str()
-            } else {
-                "<non-string panic payload>"
-            };
+            let message = panic_message(&payload);
             Err(io::Error::other(format!("the output panicked: {message}")))
         }
+    }
+}
+
+/// The message a panic was raised with.
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "<non-string panic payload>"
     }
 }

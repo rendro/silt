@@ -438,11 +438,23 @@ impl Vm {
 
     // ── Builtin dispatch ──────────────────────────────────────────
 
+    /// Call the builtin `name`. A host clock that has panicked, in
+    /// this call or on one of the runtime's threads, fails the call:
+    /// the readings the builtin got since are not real, and the waits
+    /// it was woken from have not ended.
     pub(super) fn dispatch_builtin(
         &mut self,
         name: &str,
         args: &[Value],
     ) -> Result<Value, VmError> {
+        let value = self.dispatch_builtin_unchecked(name, args)?;
+        match self.runtime.io.clock_failure() {
+            Some(failure) => Err(VmError::new(failure)),
+            None => Ok(value),
+        }
+    }
+
+    fn dispatch_builtin_unchecked(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         if let Some((module, func)) = name.split_once('.') {
             // Each arm is wrapped in `catch_builtin_panic` so that a panic
             // inside a builtin module becomes a clean `VmError` instead of

@@ -220,7 +220,15 @@ impl TimerManager {
             // BTreeMap and holds no scheduler locks here, so firing
             // `completion.complete(...)` (which runs wakers → requeue →
             // watchdog.remove) is safe in a disjoint lock domain.
+            // If the clock has panicked, every wait ends now: what
+            // was waiting runs into the clock's failure at its next
+            // builtin call.
             let now = io.monotonic();
+            let now = if io.clock_failure().is_some() {
+                Duration::MAX
+            } else {
+                now
+            };
             let expired: Vec<Duration> = deadlines.range(..=now).map(|(k, _)| *k).collect();
             for key in expired {
                 if let Some(targets) = deadlines.remove(&key) {
@@ -247,6 +255,9 @@ impl TimerManager {
             .io
             .deadline_after(delay)
             .ok_or_else(|| unavailable(&"the duration is out of range"))?;
+        if let Some(failure) = self.io.clock_failure() {
+            return Err(VmError::new(failure));
+        }
         let mut thread = self.thread.lock();
         if let Threads::Idle = *thread {
             let (tx, rx) = std::sync::mpsc::channel::<TimerRequest>();
