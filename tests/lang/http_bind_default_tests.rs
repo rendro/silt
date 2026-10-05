@@ -1,6 +1,6 @@
 //! Regression tests for the default bind address of `http.serve`.
 //!
-//! Locks the HIGH-5 fix in `src/builtins/data.rs`:
+//! Locks the HIGH-5 fix in `src/builtins/http.rs`:
 //!
 //! - `http.serve(port, handler)` binds `127.0.0.1:<port>` (loopback only),
 //!   so a freshly written server is NOT accidentally exposed on every

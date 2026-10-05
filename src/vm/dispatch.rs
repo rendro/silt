@@ -130,16 +130,16 @@ type ErrorTraitFn = fn(&str, &[Value]) -> Result<Value, VmError>;
 /// Lock test: `tests/meta/round73_error_enum_registry_parity_tests.rs`.
 static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
     ("IoError", builtins::io::call_io_error_trait),
-    ("JsonError", builtins::data::call_json_error_trait),
+    ("JsonError", builtins::json::call_json_error_trait),
     ("TomlError", builtins::toml::call_toml_error_trait),
     ("ParseError", builtins::numeric::call_parse_error_trait),
-    ("HttpError", builtins::data::call_http_error_trait),
-    ("RegexError", builtins::data::call_regex_error_trait),
+    ("HttpError", builtins::http::call_http_error_trait),
+    ("RegexError", builtins::regex::call_regex_error_trait),
     #[cfg(feature = "postgres")]
     ("PgError", builtins::postgres::call_pg_error_trait),
     #[cfg(feature = "tcp")]
     ("TcpError", builtins::tcp::call_tcp_error_trait),
-    ("TimeError", builtins::data::call_time_error_trait),
+    ("TimeError", builtins::time::call_time_error_trait),
     ("BytesError", builtins::bytes::call_bytes_error_trait),
     (
         "ChannelError",
@@ -540,11 +540,11 @@ impl Vm {
                 ),
                 "regex" => catch_builtin_panic(
                     "regex",
-                    AssertUnwindSafe(|| builtins::data::call_regex(self, func, args)),
+                    AssertUnwindSafe(|| builtins::regex::call_regex(self, func, args)),
                 ),
                 "json" => catch_builtin_panic(
                     "json",
-                    AssertUnwindSafe(|| builtins::data::call_json(self, func, args)),
+                    AssertUnwindSafe(|| builtins::json::call_json(self, func, args)),
                 ),
                 "toml" => catch_builtin_panic(
                     "toml",
@@ -560,11 +560,11 @@ impl Vm {
                 ),
                 "time" => catch_builtin_panic(
                     "time",
-                    AssertUnwindSafe(|| builtins::data::call_time(self, func, args)),
+                    AssertUnwindSafe(|| builtins::time::call_time(self, func, args)),
                 ),
                 "http" => catch_builtin_panic(
                     "http",
-                    AssertUnwindSafe(|| builtins::data::call_http(self, func, args)),
+                    AssertUnwindSafe(|| builtins::http::call_http(self, func, args)),
                 ),
                 #[cfg(feature = "postgres")]
                 "postgres" => catch_builtin_panic(

@@ -1,4 +1,4 @@
-//! Round-36 parity locks for `builtins::data::call_regex`.
+//! Round-36 parity locks for `builtins::regex::call_regex`.
 //!
 //! Eight `call_regex` match arms (six 2-arg: `is_match`, `find`,
 //! `find_all`, `split`, `captures`, `captures_all`, `captures_named`;
@@ -28,7 +28,7 @@
 //! migrated to the helper and is *not* covered here — that's the
 //! intended scope boundary.
 
-use silt::builtins::data::call_regex;
+use silt::builtins::regex::call_regex;
 use silt::value::Value;
 use silt::vm::Vm;
 

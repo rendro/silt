@@ -280,7 +280,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             // (pinned by tests/concurrency/channel_timeout_tests.rs).
             let mut fresh_dur_ns: i64 = 0;
             if resume_timer.is_none() {
-                fresh_dur_ns = crate::builtins::data::extract_duration(&args[1])?;
+                fresh_dur_ns = crate::builtins::time::extract_duration(&args[1])?;
                 if fresh_dur_ns < 0 {
                     return Err(VmError::new(
                         "channel.recv_timeout: duration must be non-negative".into(),
@@ -713,7 +713,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "task.spawn_until takes 2 arguments (duration, fn)".into(),
                 ));
             }
-            let dur_ns = crate::builtins::data::extract_duration(&args[0])?;
+            let dur_ns = crate::builtins::time::extract_duration(&args[0])?;
             if dur_ns < 0 {
                 return Err(VmError::new(
                     "task.spawn_until: duration must be non-negative".into(),
@@ -759,7 +759,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // signal that we're resuming a paused invoke_callable.
             let is_resume = vm.suspended_invoke.is_some();
             if !is_resume {
-                let dur_ns = crate::builtins::data::extract_duration(&args[0])?;
+                let dur_ns = crate::builtins::time::extract_duration(&args[0])?;
                 if dur_ns < 0 {
                     return Err(VmError::new(
                         "task.deadline: duration must be non-negative".into(),
