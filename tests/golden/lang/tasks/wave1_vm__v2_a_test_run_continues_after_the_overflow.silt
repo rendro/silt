@@ -1,6 +1,6 @@
 -- cmd: test
 -- exit: 1
--- stderr-contains: stack overflow: recursion depth exceeded
+-- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
 -- stderr-not-contains: overflowed its stack
 -- stderr-contains: 2 tests: 1 passed, 1 failed, 0 skipped
 -- stderr-contains: FAIL wave1_vm__v2_a_test_run_continues_after_the_overflow.silt::test_a_recursion_far_beyond_the_budget
@@ -18,7 +18,7 @@ trait Deep for Int {
 }
 
 fn test_a_recursion_far_beyond_the_budget() {
-  test.assert_eq(50000.go(), 50000)
+  test.assert_eq(200000.go(), 200000)
 }
 fn test_b_moderate_recursion_afterwards() {
   test.assert_eq(500.go(), 500)

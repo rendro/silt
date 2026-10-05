@@ -37,15 +37,16 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::source::FileId;
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{Step, Vm, VmError};
 
 /// What a call of a row runs, until the row has a typed body: the
 /// module's `call_*` function, given the function's name and the
-/// arguments as values.
-pub type UntypedCall = fn(&mut Vm, &str, &[Value]) -> Result<Value, VmError>;
+/// arguments as values. It gives the function's value, or the frame
+/// the builtin goes on as ([`Step::Run`]).
+pub(crate) type UntypedCall = fn(&mut Vm, &str, &[Value]) -> Result<Step, VmError>;
 
 /// What a row is at run time.
-pub enum Body {
+pub(crate) enum Body {
     /// A function: the module's untyped entry point, called with the
     /// row's name.
     Untyped(UntypedCall),
@@ -77,7 +78,7 @@ pub struct Row {
     pub feature: Option<&'static str>,
     /// Whether the row's feature and its module's are built.
     pub enabled: bool,
-    pub body: Body,
+    pub(crate) body: Body,
 }
 
 impl Row {
@@ -117,7 +118,7 @@ impl Row {
     }
 
     /// Call the row with `args`.
-    pub fn call(&self, vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+    pub(crate) fn call(&self, vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         match &self.body {
             Body::Untyped(call) => call(vm, self.name, args),
             Body::Const(_) | Body::Off => {
@@ -276,8 +277,10 @@ impl Module {
 }
 
 /// The module `$name`: see [`Module`] for the fields. `call` is the
-/// module's untyped entry point, the body of each function row; with a
-/// `feature`, it is compiled only when the feature is built.
+/// module's untyped entry point, the body of each function row, which
+/// gives a value; `steps` is one that gives a [`Step`], of a module
+/// with functions that call functions or wait. With a `feature`, it is
+/// compiled only when the feature is built.
 macro_rules! module {
     (
         name: $name:literal,
@@ -288,14 +291,15 @@ macro_rules! module {
         $(opaque: $opaque:expr,)?
         $(error: $error:literal,)?
         $(shares: $shares:expr,)?
-        call: $call:expr,
+        $(call: $call:expr,)?
+        $(steps: $steps:expr,)?
         rows: [$($row:expr),* $(,)?] $(,)?
     ) => {{
         #[allow(unused_mut, unused_assignments)]
         let mut feature: Option<&'static str> = None;
         #[allow(unused_mut, unused_assignments)]
         let mut call: Option<UntypedCall> = None;
-        module!(@call call, $call $(, $feature)?);
+        module!(@call call, [$($feature)?], [$($call)?], [$($steps)?]);
         $(feature = Some($feature);)?
         #[allow(unused_mut, unused_assignments)]
         let mut types: &'static str = "";
@@ -323,13 +327,16 @@ macro_rules! module {
             vec![$($row),*],
         )
     }};
-    (@call $slot:ident, $call:expr) => {
-        $slot = Some($call);
+    (@call $slot:ident, [], [$call:expr], []) => {
+        $slot = Some(|vm, name, args| ($call)(vm, name, args).map(crate::vm::Step::Done));
     };
-    (@call $slot:ident, $call:expr, $feature:literal) => {
+    (@call $slot:ident, [], [], [$steps:expr]) => {
+        $slot = Some($steps);
+    };
+    (@call $slot:ident, [$feature:literal], [$($call:expr)?], [$($steps:expr)?]) => {
         #[cfg(feature = $feature)]
         {
-            $slot = Some($call);
+            module!(@call $slot, [], [$($call)?], [$($steps)?]);
         }
     };
 }

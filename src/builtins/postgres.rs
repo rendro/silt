@@ -40,7 +40,7 @@ use crate::runtime::channel::{Channel, TrySendResult};
 use crate::runtime::completion::IoCompletion;
 use crate::typeinfo::{bv, ty};
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{Native, Step, Vm, VmError};
 
 /// Factory: deadline-cancelled postgres op surfaces as `Err(PgTimeout)`
 /// rather than the default `Err(IoUnknown(_))`. Used by every postgres.*
@@ -1751,13 +1751,20 @@ pub fn call_pg_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError>
 
 // ── Public dispatch ─────────────────────────────────────────────────
 
-pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    match name {
+        "transact" => transact(args),
+        _ => plain(vm, name, args).map(Step::Done),
+    }
+}
+
+/// The `postgres` functions that call no function.
+fn plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "connect" => connect(vm, args),
         "connect_with" => connect_with(vm, args),
         "query" => query(vm, args),
         "execute" => execute(vm, args),
-        "transact" => transact(vm, args),
         "close" => close(vm, args),
         "stream" => stream(vm, args),
         "cursor" => cursor_open(vm, args),
@@ -1956,115 +1963,112 @@ fn execute(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 ///
 /// Lifecycle
 /// ---------
-/// 1. Fresh entry (args[0] is `PgPool`, no suspended invoke):
-///    checkout a conn from the pool, run `BEGIN`, register the conn in
-///    the tx registry, mint a `PgTx` handle, and invoke the callback
-///    with it. The original args we re-push on yield are
-///    `[PgTx(id), callback]` — so if the callback yields and this
-///    builtin is re-dispatched, `args[0]` carries the tx id forward.
+/// 1. The call (args[0] is a `PgPool`): check out a conn from the pool,
+///    run `BEGIN`, register the conn in the tx registry, mint a `PgTx`
+///    handle. The builtin goes on as a frame ([`Transact`]) that calls
+///    the callback with the handle.
 ///
-/// 2. Resume (suspended_invoke set): re-enter the callback via
-///    `invoke_callable_resumable` without re-running BEGIN. The tx id
-///    comes from args[0].
+/// 2. Completion, when the callback has returned:
+///    - `Ok(_)` → `COMMIT` on the pinned conn.
+///    - `Err(_)` → `ROLLBACK`.
+///    - a non-Result value → `COMMIT`, wrap as `Ok`.
 ///
-/// 3. Completion:
-///    - Callback returned `Ok(_)` → `COMMIT` on the pinned conn.
-///    - Callback returned `Err(_)` → `ROLLBACK`.
-///    - Callback returned a non-Result value → `COMMIT`, wrap as `Ok`.
-///    - Callback returned a hard VM error → `ROLLBACK` and propagate.
-///    - Callback yielded → propagate (tx stays registered).
+///    An error of the program inside the callback drops the frame,
+///    which rolls back.
 ///
 ///    The pinned conn is dropped after commit/rollback, returning it
 ///    to the pool. COMMIT errors are surfaced as the function's Err;
 ///    the callback's return value is discarded in that edge case.
 ///
-/// Nested transact is not supported — re-entering with `args[0]` as a
-/// `PgTx` returns an Err telling the caller to use `SAVEPOINT` manually.
-/// That's reserved for a v2 nested-tx API.
-fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+/// Nested transact is not supported — calling it with a `PgTx` returns
+/// an Err telling the caller to use `SAVEPOINT` manually. That's
+/// reserved for a v2 nested-tx API.
+fn transact(args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new(
             "postgres.transact takes 2 arguments (pool, callback)".into(),
         ));
     }
-    let callback = args[1].clone();
-    let is_resume = vm.suspended_invoke.is_some();
-
-    // Resolve (or mint) the tx id for this invocation. On fresh entry
-    // we expect a `PgPool`; we open a conn, BEGIN, and register. On
-    // resume we expect the synthetic `PgTx` handle that the previous
-    // yield re-pushed onto the stack.
-    let tx_id: u64 = if is_resume {
-        // Resumption: args[0] must be the PgTx we pushed last time.
-        match &args[0] {
-            Value::Variant(tag, _) if tag.is(bv::PG_TX) => extract_tx_id(&args[0])?,
-            _ => {
-                return Err(VmError::new(
-                    "postgres.transact: internal VM error: resume without PgTx handle".into(),
-                ));
-            }
-        }
-    } else {
-        // Nested transact: the outer caller already handed us a PgTx.
-        // We don't model SAVEPOINTs yet — surface an Err so the caller
-        // can fall back to raw SQL.
-        if let Value::Variant(tag, _) = &args[0]
-            && tag.is(bv::PG_TX)
-        {
-            return Ok(err(other_error(
-                "postgres.transact: nested transactions are not supported — \
-                 issue SAVEPOINT manually via postgres.execute on the PgTx"
-                    .to_string(),
-            )));
-        }
-        let pool = match extract_pool(&args[0]) {
-            Ok(p) => p,
-            Err(v) => return Ok(err(v)),
-        };
-        let mut conn = match pool.get() {
-            Ok(c) => c,
-            Err(e) => return Ok(err(pool_error_value(&e))),
-        };
-        if let Err(e) = conn.client_mut().batch_execute("BEGIN") {
-            return Ok(err(pg_error_to_variant(&e)));
-        }
-        insert_tx(conn)
-    };
-
-    // Build the "effective args" that we'll both pass to the callback
-    // and re-push on yield. args[0] becomes the PgTx handle — so on
-    // resumption the same dispatch lands back in the `is_resume` arm.
-    let tx_handle = make_tx_handle(tx_id);
-    let effective_args = [tx_handle.clone(), callback.clone()];
-
-    let cb_result =
-        vm.invoke_callable_resumable(&callback, std::slice::from_ref(&tx_handle), &effective_args);
-
-    // If the callback yielded, we must NOT unregister the tx: the next
-    // re-entry (via CallBuiltin re-dispatch) will resume it. Propagate
-    // the yield unchanged; the scheduler will re-enter us later.
-    if let Err(e) = &cb_result
-        && e.is_yield
+    // Nested transact: the outer caller already handed us a PgTx.
+    // We don't model SAVEPOINTs yet — surface an Err so the caller
+    // can fall back to raw SQL.
+    if let Value::Variant(tag, _) = &args[0]
+        && tag.is(bv::PG_TX)
     {
-        return cb_result;
+        return Ok(Step::Done(err(other_error(
+            "postgres.transact: nested transactions are not supported — \
+             issue SAVEPOINT manually via postgres.execute on the PgTx"
+                .to_string(),
+        ))));
+    }
+    let pool = match extract_pool(&args[0]) {
+        Ok(p) => p,
+        Err(v) => return Ok(Step::Done(err(v))),
+    };
+    let mut conn = match pool.get() {
+        Ok(c) => c,
+        Err(e) => return Ok(Step::Done(err(pool_error_value(&e)))),
+    };
+    if let Err(e) = conn.client_mut().batch_execute("BEGIN") {
+        return Ok(Step::Done(err(pg_error_to_variant(&e))));
+    }
+    Ok(Step::Run(Box::new(Transact {
+        tx_id: Some(insert_tx(conn)),
+        callback: Some(args[1].clone()),
+    })))
+}
+
+/// A transaction whose callback is running.
+struct Transact {
+    /// The registered transaction, until it is committed or rolled
+    /// back.
+    tx_id: Option<u64>,
+    /// The callback, until it is called.
+    callback: Option<Value>,
+}
+
+impl Native for Transact {
+    fn name(&self) -> &str {
+        "postgres.transact"
     }
 
-    // Callback finished (normally, or with a hard error). Pull the conn
-    // out of the tx registry and finalise it.
-    let cell = match remove_tx(tx_id) {
-        Some(c) => c,
-        None => {
-            // Shouldn't happen — the registry entry was valid on entry
-            // and nothing else removes it. If it does, surface the
-            // callback's result as-is and skip commit/rollback.
-            return cb_result;
+    fn resume(&mut self, _vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        let Some(tx_id) = self.tx_id else {
+            return Ok(Step::Done(input));
+        };
+        if let Some(callee) = self.callback.take() {
+            return Ok(Step::Call {
+                callee,
+                args: vec![make_tx_handle(tx_id)],
+            });
         }
+        self.tx_id = None;
+        Ok(Step::Done(end_tx(tx_id, Some(input))))
+    }
+
+    fn abandon(&mut self, _vm: &mut Vm) {
+        if let Some(tx_id) = self.tx_id.take() {
+            end_tx(tx_id, None);
+        }
+    }
+}
+
+/// End the transaction `tx_id`: commit or roll back as the callback's
+/// value `returned` says, or roll back when the callback failed with
+/// an error of the program (`None`). The value is `postgres.transact`'s.
+fn end_tx(tx_id: u64, returned: Option<Value>) -> Value {
+    // Pull the conn out of the tx registry and finalise it.
+    let Some(cell) = remove_tx(tx_id) else {
+        // Shouldn't happen — the registry entry was valid on entry
+        // and nothing else removes it. If it does, surface the
+        // callback's result as-is and skip commit/rollback.
+        return returned.unwrap_or(Value::Unit);
     };
     // We are the last owner of `cell`. Moving the conn out of the
     // `Arc<Mutex<...>>` requires unwrapping both layers. `Arc::try_unwrap`
     // can fail if a racing query on the io_pool thread still holds a
     // reference — that's a logic bug (all query submits for this tx
-    // should have completed by now since we're not yielding). In the
+    // should have completed by now: the callback has returned). In the
     // rare race, fall back to locking in-place and running COMMIT /
     // ROLLBACK against the locked cell without reclaiming ownership.
     let finalise = |sql: &str, cell: Arc<Mutex<PinnedConn>>| -> Option<Value> {
@@ -2096,35 +2100,22 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     // clean "not registered" error rather than racing with the reap.
     drain_cursors_for_tx(tx_id);
 
-    match cb_result {
-        Ok(v) => match &v {
-            Value::Variant(tag, _) if tag.is(bv::OK) => {
-                if let Some(e) = finalise("COMMIT", cell) {
-                    Ok(e)
-                } else {
-                    Ok(v)
-                }
-            }
+    match returned {
+        Some(v) => match &v {
+            Value::Variant(tag, _) if tag.is(bv::OK) => finalise("COMMIT", cell).unwrap_or(v),
             Value::Variant(tag, _) if tag.is(bv::ERR) => {
                 let _ = finalise("ROLLBACK", cell);
-                Ok(v)
+                v
             }
-            _ => {
-                // Callback didn't return Result(_, _). Treat as Ok and
-                // forward the raw value, but COMMIT first so the user's
-                // statements persist. Mirrors what most pg wrappers do
-                // for callbacks that return a non-Result type.
-                if let Some(e) = finalise("COMMIT", cell) {
-                    Ok(e)
-                } else {
-                    Ok(ok(v))
-                }
-            }
+            // Callback didn't return Result(_, _). Treat as Ok and
+            // forward the raw value, but COMMIT first so the user's
+            // statements persist. Mirrors what most pg wrappers do
+            // for callbacks that return a non-Result type.
+            _ => finalise("COMMIT", cell).unwrap_or_else(|| ok(v)),
         },
-        Err(e) => {
-            // Hard VM error in the callback — roll back and propagate.
+        None => {
             let _ = finalise("ROLLBACK", cell);
-            Err(e)
+            Value::Unit
         }
     }
 }
