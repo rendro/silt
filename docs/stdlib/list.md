@@ -63,7 +63,7 @@ channel-backed lazy pipelines over the same combinator names.
 ## `list.all`
 
 ```
-list.all(xs: List(a), pred: Fn(a) -> Bool) -> Bool
+list.all(xs: List(a), f: Fn(a) -> Bool) -> Bool
 ```
 
 Returns `true` if `f` returns `true` for every element. Short-circuits on the
@@ -81,7 +81,7 @@ fn main() {
 ## `list.any`
 
 ```
-list.any(xs: List(a), pred: Fn(a) -> Bool) -> Bool
+list.any(xs: List(a), f: Fn(a) -> Bool) -> Bool
 ```
 
 Returns `true` if `f` returns `true` for at least one element. Short-circuits on
@@ -99,7 +99,7 @@ fn main() {
 ## `list.append`
 
 ```
-list.append(xs: List(a), x: a) -> List(a)
+list.append(xs: List(a), elem: a) -> List(a)
 ```
 
 Returns a new list with `elem` added at the end.
@@ -133,7 +133,7 @@ fn main() {
 ## `list.contains`
 
 ```
-list.contains(xs: List(a), x: a) -> Bool
+list.contains(xs: List(a), elem: a) -> Bool
 ```
 
 Returns `true` if `elem` is in the list (by value equality).
@@ -202,7 +202,7 @@ fn main() {
 ## `list.filter`
 
 ```
-list.filter(xs: List(a), pred: Fn(a) -> Bool) -> List(a)
+list.filter(xs: List(a), f: Fn(a) -> Bool) -> List(a)
 ```
 
 Returns a list containing only the elements for which `f` returns `true`.
@@ -244,7 +244,7 @@ fn main() {
 ## `list.find`
 
 ```
-list.find(xs: List(a), pred: Fn(a) -> Bool) -> Option(a)
+list.find(xs: List(a), f: Fn(a) -> Bool) -> Option(a)
 ```
 
 Returns `Some(element)` for the first element where `f` returns `true`, or
@@ -359,7 +359,7 @@ fn main() {
 ## `list.group_by`
 
 ```
-list.group_by(xs: List(a), key: Fn(a) -> b) -> Map(b, List(a))
+list.group_by(xs: List(a), f: Fn(a) -> b) -> Map(b, List(a))
 ```
 
 Groups elements by the result of applying `f`. Returns a map from keys to lists
@@ -394,7 +394,7 @@ fn main() {
 ## `list.index_of`
 
 ```
-list.index_of(xs: List(a), x: a) -> Option(Int)
+list.index_of(xs: List(a), target: a) -> Option(Int)
 ```
 
 Returns `Some(index)` of the first element equal to `target` (by value
@@ -526,7 +526,7 @@ fn main() {
 ## `list.prepend`
 
 ```
-list.prepend(xs: List(a), x: a) -> List(a)
+list.prepend(xs: List(a), elem: a) -> List(a)
 ```
 
 Returns a new list with `elem` added at the front.
@@ -579,7 +579,7 @@ fn main() {
 ## `list.remove_at`
 
 ```
-list.remove_at(xs: List(a), i: Int) -> List(a)
+list.remove_at(xs: List(a), index: Int) -> List(a)
 ```
 
 Returns a new list with the element at `index` removed. Panics if the index is
@@ -613,7 +613,7 @@ fn main() {
 ## `list.set`
 
 ```
-list.set(xs: List(a), i: Int, x: a) -> List(a)
+list.set(xs: List(a), index: Int, value: a) -> List(a)
 ```
 
 Returns a new list with the element at `index` replaced by `value`. Panics if
