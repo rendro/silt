@@ -256,14 +256,16 @@ fn match_arms_preserve_separator_commas() {
     let src_commas = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap()
+        .tokens
         .iter()
-        .filter(|(t, _)| matches!(t, Token::Comma))
+        .filter(|t| matches!(t.kind, Token::Comma))
         .count();
     let out_commas = Lexer::new(silt::source::FileId::default(), &out)
         .tokenize()
         .unwrap()
+        .tokens
         .iter()
-        .filter(|(t, _)| matches!(t, Token::Comma))
+        .filter(|t| matches!(t.kind, Token::Comma))
         .count();
     assert_eq!(
         src_commas, out_commas,

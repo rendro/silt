@@ -45,8 +45,9 @@
 
 use std::sync::Arc;
 
+use silt::runtime::completion::IoCompletion;
 use silt::typeinfo::bv;
-use silt::value::{IoCompletion, Value};
+use silt::value::Value;
 use silt::vm::{Vm, submit_panicking_io_for_test};
 
 /// Build a typed factory that wraps any message in

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Int, got String
+-- Port of repros/type_soundness/gen2.silt, in brace closures.
+import channel
+fn main() {
+  let ch = channel.new(4)
+  let ops = { put: { v -> channel.send(ch, v) }, ch: ch }
+  ops.put(1)
+  ops.put("two")
+  println("sent")
+}

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 0
+-- Port of repros/type_soundness/c5.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: unsupported operation: cannot compare Fn and Fn
+fn pick(flag, a, b) {
+  match flag {
+    true -> a < b
+    false -> true
+  }
+}
+fn main() {
+  let f = { x -> x }
+  println(pick(false, f, f))
+  println(pick(true, f, f))
+}

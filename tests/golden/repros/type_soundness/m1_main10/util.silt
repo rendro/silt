@@ -5,6 +5,6 @@ pub fn viahelper(x) { helper(x) }
 fn helper(x) { x + 1 }
 pub type Pt { x: Int, y: Int }
 pub type Secret { Hidden(Int) }
-type Priv { Priv(Int) }
+pub type Priv { Priv(Int) }
 pub fn mkpriv() { Priv(3) }
 fn secret_fn() { "secret" }

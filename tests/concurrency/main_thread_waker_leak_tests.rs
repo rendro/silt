@@ -22,7 +22,8 @@
 //! `tests/golden/concurrency/channels/main_thread_waker_leak__*` and
 //! `tests/golden/concurrency/select/main_thread_waker_leak__*`.
 
-use silt::value::{Channel, TrySendResult, Value};
+use silt::runtime::channel::{Channel, TrySendResult};
+use silt::value::Value;
 use std::sync::Arc;
 
 // ── Rust-level unit tests using the public Channel API ───────────────
@@ -108,7 +109,7 @@ fn test_main_thread_select_cleanup_keeps_counters_zero() {
     // Drain A so state is clean.
     assert!(matches!(
         a.try_receive(),
-        silt::value::TryReceiveResult::Value(_)
+        silt::runtime::channel::TryReceiveResult::Value(_)
     ));
 
     // Fixed select arm: deregister the sibling (B) and any pending

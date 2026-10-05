@@ -110,8 +110,9 @@ fn lexer_multi_char_operators() -> BTreeSet<String> {
             continue;
         };
         let significant: Vec<Token> = tokens
+            .tokens
             .into_iter()
-            .map(|(tok, _span)| tok)
+            .map(|tok| tok.kind)
             .filter(|tok| !matches!(tok, Token::Newline | Token::Eof))
             .collect();
         if let [tok] = significant.as_slice()

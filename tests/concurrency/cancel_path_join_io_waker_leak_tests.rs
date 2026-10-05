@@ -11,7 +11,7 @@
 //! leak N closures into `join_wakers`. Each closure pins one
 //! `Arc<SchedulerInner>` and the (already-emptied) task slot.
 //!
-//! Fix: `src/value.rs` introduces `JoinWakerRegistration` and
+//! Fix: `src/runtime/` introduces `JoinWakerRegistration` and
 //! `IoWakerRegistration` RAII guards (analogous to
 //! `WakerRegistration` for channels). The scheduler's Join and Io
 //! arms use the new `register_join_waker_guard` /
@@ -35,7 +35,9 @@
 
 #![cfg(feature = "test-hooks")]
 
-use silt::value::{IoCompletion, TaskHandle, Value};
+use silt::runtime::completion::IoCompletion;
+use silt::runtime::handle::TaskHandle;
+use silt::value::Value;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 

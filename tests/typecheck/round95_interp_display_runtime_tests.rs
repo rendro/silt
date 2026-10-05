@@ -50,8 +50,9 @@
 //! What stays here needs a live socket (TcpListener) or calls the
 //! VM-side predicate directly.
 
+use silt::runtime::handle::TaskHandle;
 use silt::scheduler::test_support::InProcessRunner;
-use silt::value::{TaskHandle, Value};
+use silt::value::Value;
 use silt::vm::Vm;
 use std::sync::Arc;
 use std::time::Duration;

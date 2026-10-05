@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 0
+-- Port of repros/type_soundness/b1.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: type 'Fn' does not implement Equal
+fn lt(a, b) { a < b }
+fn eq(a, b) { a == b }
+fn add(a, b) { a + b }
+
+fn main() {
+  let f = { x -> x + 1 }
+  let g = { x -> x + 2 }
+  println(eq(f, g))
+  println(eq(f, f))
+  println(lt(f, g))
+  println(lt(g, f))
+}

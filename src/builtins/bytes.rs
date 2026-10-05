@@ -1,6 +1,6 @@
 //! `bytes.*` builtin functions: immutable byte sequences with structural
 //! equality. The value variant `Value::Bytes(Arc<Vec<u8>>)` is defined in
-//! `src/value.rs`; this module exposes the user-facing operations.
+//! `src/value/mod.rs`; this module exposes the user-facing operations.
 //!
 //! All functions are pure (no I/O) — no scheduler integration needed. The
 //! tcp module (PR 2) will use `Value::Bytes` as its read/write payload type.

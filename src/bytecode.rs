@@ -236,10 +236,6 @@ pub enum Op {
     Negate,
     Not,
 
-    // ── Logical ────────────────────────────────────────────────
-    And,
-    Or,
-
     // ── String interpolation ───────────────────────────────────
     /// Concatenate `u8` stringified values into one String.
     StringConcat, // operand: u8 count
@@ -321,8 +317,6 @@ pub enum Op {
     JumpIfTrue, // operand: u16 offset
     /// Discard TOS.
     Pop,
-    /// Discard `u8` values.
-    PopN, // operand: u8 count
     /// Duplicate TOS.
     Dup,
 
@@ -371,13 +365,6 @@ pub enum Op {
     DestructMapValue, // operand: u16 const_index (string key)
 
     // ── Loop ───────────────────────────────────────────────────
-    /// Reserved/unused. The compiler does NOT emit this opcode — loop
-    /// bindings are established by the normal local-variable path. Kept
-    /// in the enum so the `#[repr(u8)]` numbering of subsequent opcodes
-    /// is not perturbed (L4 fix). The VM dispatch arm panics with
-    /// `unreachable!()` if this is ever encountered, so an accidental
-    /// emission crashes loudly instead of silently no-oping.
-    LoopSetup, // operand: u8 binding_count (unused)
     /// Update loop bindings and jump back.
     Recur, // operands: u8 arg_count, u16 first_slot
 
@@ -428,8 +415,6 @@ impl Op {
             b if b == Op::Geq as u8 => Some(Op::Geq),
             b if b == Op::Negate as u8 => Some(Op::Negate),
             b if b == Op::Not as u8 => Some(Op::Not),
-            b if b == Op::And as u8 => Some(Op::And),
-            b if b == Op::Or as u8 => Some(Op::Or),
             b if b == Op::StringConcat as u8 => Some(Op::StringConcat),
             b if b == Op::DisplayValue as u8 => Some(Op::DisplayValue),
             b if b == Op::GetLocal as u8 => Some(Op::GetLocal),
@@ -456,7 +441,6 @@ impl Op {
             b if b == Op::JumpIfFalse as u8 => Some(Op::JumpIfFalse),
             b if b == Op::JumpIfTrue as u8 => Some(Op::JumpIfTrue),
             b if b == Op::Pop as u8 => Some(Op::Pop),
-            b if b == Op::PopN as u8 => Some(Op::PopN),
             b if b == Op::Dup as u8 => Some(Op::Dup),
             b if b == Op::TestTag as u8 => Some(Op::TestTag),
             b if b == Op::TestEqual as u8 => Some(Op::TestEqual),
@@ -475,7 +459,6 @@ impl Op {
             b if b == Op::TestRecordTag as u8 => Some(Op::TestRecordTag),
             b if b == Op::TestMapHasKey as u8 => Some(Op::TestMapHasKey),
             b if b == Op::DestructMapValue as u8 => Some(Op::DestructMapValue),
-            b if b == Op::LoopSetup as u8 => Some(Op::LoopSetup),
             b if b == Op::Recur as u8 => Some(Op::Recur),
             b if b == Op::QuestionMark as u8 => Some(Op::QuestionMark),
             b if b == Op::Panic as u8 => Some(Op::Panic),

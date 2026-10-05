@@ -803,7 +803,7 @@ impl Derive {
     // ── Hash on enum ─────────────────────────────────────────────────────
 
     /// Hash combine function — must mirror the bit-wise behavior of
-    /// `impl Hash for Value` in src/value.rs (which uses
+    /// `impl Hash for Value` in src/value/key.rs (which uses
     /// `std::collections::hash_map::DefaultHasher` and writes
     /// `discriminant.hash` then each component). Because we don't have
     /// access to a structural hasher in surface syntax, we approximate by
@@ -917,7 +917,7 @@ impl Derive {
         // Round-74 fix: stdlib error enums route `display(self)` through
         // `self.message()` so `e.display()` matches `format!("{e}")` (which
         // is also routed through `message()` via the
-        // `render_stdlib_error_message` arm in `value.rs::Display`). User
+        // `render_stdlib_error_message` arm in `value/fmt.rs` Display). User
         // enums keep the constructor-form body.
         if self.is_stdlib_error_enum() {
             let self_sym = intern("self");

@@ -20,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use silt::bytecode::{Function, VmClosure};
-use silt::value::{TaskHandle, Value};
+use silt::runtime::handle::TaskHandle;
+use silt::value::Value;
 
 // ── TaskHandle ─────────────────────────────────────────────────────
 

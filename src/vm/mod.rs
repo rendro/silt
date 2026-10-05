@@ -3,15 +3,17 @@
 //! Executes compiled `Function` objects produced by the compiler.
 
 mod arithmetic;
+mod calls;
 pub(crate) mod dispatch;
 pub mod error;
-mod execute;
 mod io;
+mod iter;
+mod run;
 mod runtime;
 
 pub use error::VmError;
-pub(crate) use execute::BuiltinIterKind;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
+pub(crate) use iter::BuiltinIterKind;
 pub use runtime::Runtime;
 pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind, SuspendedBuiltin};
 
@@ -76,9 +78,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::bytecode::{Function, Globals, VmClosure};
+use crate::runtime::completion::IoCompletion;
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
-use crate::value::{IoCompletion, Value};
+use crate::value::Value;
 use runtime::{IoPool, RegexCache, TimerManager};
 
 // ── Native stack budget ───────────────────────────────────────────
@@ -1055,7 +1058,7 @@ impl Vm {
 
     /// Whether a runtime value's type has a Display impl — the single
     /// runtime-side oracle for the string-interpolation Display gate
-    /// (`Op::DisplayValue`, src/vm/execute.rs) and the polymorphic
+    /// (`Op::DisplayValue`, src/vm/run.rs) and the polymorphic
     /// `.display()` method gate (`dispatch_trait_method`'s "display"
     /// arm, src/vm/dispatch.rs).
     ///
@@ -1115,12 +1118,12 @@ impl Vm {
     /// called with lists of lambdas) still launders a container of
     /// functions past the typechecker. Without a runtime backstop such
     /// values fell into `Value::cmp` / `PartialEq for Value`, which order
-    /// closures by `Arc::as_ptr` (src/value.rs) — an ASLR-nondeterministic
+    /// closures by `Arc::as_ptr` (src/value/key.rs) — an ASLR-nondeterministic
     /// Bool for ordering and a silent identity-equality Bool for `==`.
     ///
     /// Consulted by the container arms of `compare()`
     /// (src/vm/arithmetic.rs), the `Op::Eq` / `Op::Neq` gate
-    /// (`equality_operand_violation`, src/vm/execute.rs), the
+    /// (`equality_operand_violation`, src/vm/run.rs), the
     /// `"equal"` / `"compare"` / `"hash"` trait-method arms of
     /// `dispatch_trait_method` (src/vm/dispatch.rs), and the collection
     /// builtin backstop `ensure_no_fn` (src/builtins/collections.rs).

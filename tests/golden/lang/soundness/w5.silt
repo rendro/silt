@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'String' does not implement trait 'Greet'
+-- Port of repros/type_soundness/w5.silt, in brace closures.
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+fn main() {
+  let h = hello
+  println(h("s"))
+  let k = { x -> hello(x) }
+  println(k("s"))
+}

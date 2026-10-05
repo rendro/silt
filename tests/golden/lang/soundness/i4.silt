@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 0
+-- Port of repros/type_soundness/i4.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: list.sort: type 'Fn' does not implement Compare
+import list
+type W(a) { W(a) }
+fn main() {
+  let fs = [{ x -> x + 1 }, { x -> x + 2 }]
+  let sorted = list.sort(fs)
+  println(list.length(sorted))
+  let ws = [W({ x -> x }), W({ x -> x })]
+  println(list.length(list.sort(ws)))
+  println(list.contains(fs, { x -> x + 1 }))
+  println(list.unique(fs) |> list.length)
+}

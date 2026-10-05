@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 0
+-- Port of repros/type_soundness/z3.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: type 'Fn' does not implement Display
+type Box(a) { Box(a) }
+fn show(x) { "{x}" }
+fn show2(x) { x.display() }
+fn pr(x) { println(x) }
+fn main() {
+  let f = { x -> x }
+  println(show([f]))
+  println(show(Box(f)))
+  println(show((1, f)))
+  println(show2(Box(f)))
+  println(show2(f))
+  pr([f])
+  println([f])
+  println(show(f))
+}

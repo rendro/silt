@@ -48,6 +48,7 @@ pub mod types;
 // The self-updater shells out to curl/tar and replaces the running binary in
 // place. Neither mechanism applies on wasm32 — the playground is embedded via
 // the library path, not the CLI — so gate the module to native targets only.
+pub mod runtime;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod update;
 pub mod value;

@@ -17,7 +17,7 @@
 //! side-effect-free so it stays safe to call from `no_main` fuzz drivers.
 
 use crate::ast::{Decl, Program};
-use crate::lexer::{Lexer, SpannedToken, Token};
+use crate::lexer::{Lexed, Lexer, Tok, Token};
 use crate::parser::Parser;
 use crate::source::Span;
 
@@ -34,7 +34,11 @@ use crate::source::Span;
 /// 4. Exactly one `Eof` token is emitted, and it is the final token.
 /// 5. The final `Eof` span offset equals the source length in bytes
 ///    (the lexer consumed everything).
-pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(), String> {
+/// 6. The comment ranges of the tokens follow each other and leave no
+///    comment out, a newline token has none, and each comment lies
+///    between the token before it and the token that carries it.
+pub fn check_lexer_invariants(source: &str, lexed: &Lexed) -> Result<(), String> {
+    let tokens = &lexed.tokens;
     if tokens.is_empty() {
         return Err("token stream is empty (expected at least Eof)".into());
     }
@@ -43,7 +47,13 @@ pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(
     let mut prev: Option<&Span> = None;
     let mut seen_eof = false;
 
-    for (idx, (tok, span)) in tokens.iter().enumerate() {
+    for (
+        idx,
+        Tok {
+            kind: tok, span, ..
+        },
+    ) in tokens.iter().enumerate()
+    {
         if seen_eof {
             return Err(format!("token {tok:?} at index {idx} emitted after Eof"));
         }
@@ -87,6 +97,57 @@ pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(
         return Err("token stream ended without emitting Eof".into());
     }
 
+    let mut next_comment = 0;
+    let mut floor = 0;
+    for (idx, tok) in tokens.iter().enumerate() {
+        if tok.kind == Token::Newline {
+            if !tok.comments.is_empty() || tok.newlines_before != 0 {
+                return Err(format!("newline token at index {idx} carries trivia"));
+            }
+            continue;
+        }
+        if tok.comments.start != next_comment || tok.comments.end < tok.comments.start {
+            return Err(format!(
+                "token {:?} at index {idx} has comments {:?}, expected a range from {next_comment}",
+                tok.kind, tok.comments
+            ));
+        }
+        let Some(comments) = lexed
+            .comments
+            .get(tok.comments.start as usize..tok.comments.end as usize)
+        else {
+            return Err(format!(
+                "token {:?} at index {idx} has comments {:?} of {}",
+                tok.kind,
+                tok.comments,
+                lexed.comments.len()
+            ));
+        };
+        for comment in comments {
+            if comment.span.start < floor || comment.span.end < comment.span.start {
+                return Err(format!(
+                    "comment at {}..{} starts before offset {floor}",
+                    comment.span.start, comment.span.end
+                ));
+            }
+            floor = comment.span.end;
+        }
+        if tok.span.start < floor {
+            return Err(format!(
+                "token {:?} at index {idx} starts at {} inside a comment (ends at {floor})",
+                tok.kind, tok.span.start
+            ));
+        }
+        floor = tok.span.end;
+        next_comment = tok.comments.end;
+    }
+    if next_comment as usize != lexed.comments.len() {
+        return Err(format!(
+            "{} comments, of which the tokens carry {next_comment}",
+            lexed.comments.len()
+        ));
+    }
+
     Ok(())
 }
 
@@ -114,11 +175,11 @@ pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(
 /// Braces and brackets remain counted (the formatter never inserts
 /// `{`, `}`, `[`, or `]` tokens the source didn't already have), and
 /// non-trailing commas remain counted.
-fn significant_token_count(tokens: &[SpannedToken]) -> usize {
+fn significant_token_count(tokens: &[Tok]) -> usize {
     tokens
         .iter()
         .enumerate()
-        .filter(|(i, (t, _))| {
+        .filter(|(i, Tok { kind: t, .. })| {
             if matches!(
                 t,
                 Token::Newline | Token::Eof | Token::LParen | Token::RParen
@@ -129,11 +190,14 @@ fn significant_token_count(tokens: &[SpannedToken]) -> usize {
                 // Skip whitespace-equivalent tokens (`Newline`) when
                 // looking for the next non-trivial token.
                 let mut j = i + 1;
-                while j < tokens.len() && matches!(tokens[j].0, Token::Newline) {
+                while j < tokens.len() && matches!(tokens[j].kind, Token::Newline) {
                     j += 1;
                 }
                 if j < tokens.len()
-                    && matches!(tokens[j].0, Token::RParen | Token::RBracket | Token::RBrace)
+                    && matches!(
+                        tokens[j].kind,
+                        Token::RParen | Token::RBracket | Token::RBrace
+                    )
                 {
                     return false;
                 }
@@ -147,12 +211,12 @@ fn significant_token_count(tokens: &[SpannedToken]) -> usize {
 /// program has all zeros; mismatched open/close produces non-zero or
 /// negative counts (we saturate at 0 on underflow since this runs on
 /// fuzz inputs where the lexer is tolerant).
-fn delimiter_balance(tokens: &[SpannedToken]) -> (i64, i64, i64) {
+fn delimiter_balance(tokens: &[Tok]) -> (i64, i64, i64) {
     let mut p = 0i64;
     let mut b = 0i64;
     let mut k = 0i64;
-    for (tok, _) in tokens {
-        match tok {
+    for tok in tokens {
+        match tok.kind {
             Token::LParen => p += 1,
             Token::RParen => p -= 1,
             Token::LBrace | Token::HashBrace => b += 1,
@@ -285,16 +349,16 @@ pub fn check_formatter_invariants(original: &str, formatted: &str) -> Result<(),
         .tokenize()
         .map_err(|e| format!("formatted output failed to lex: {}", e.message))?;
 
-    let orig_sig = significant_token_count(&orig_tokens);
-    let fmt_sig = significant_token_count(&fmt_tokens);
+    let orig_sig = significant_token_count(&orig_tokens.tokens);
+    let fmt_sig = significant_token_count(&fmt_tokens.tokens);
     if orig_sig != fmt_sig {
         return Err(format!(
             "significant token count changed: {orig_sig} -> {fmt_sig}"
         ));
     }
 
-    let orig_bal = delimiter_balance(&orig_tokens);
-    let fmt_bal = delimiter_balance(&fmt_tokens);
+    let orig_bal = delimiter_balance(&orig_tokens.tokens);
+    let fmt_bal = delimiter_balance(&fmt_tokens.tokens);
     if orig_bal != fmt_bal {
         return Err(format!(
             "delimiter balance changed: {orig_bal:?} -> {fmt_bal:?}"
@@ -353,7 +417,7 @@ fn decl_span(decl: &Decl) -> Span {
 ///    bugs (accidental push-in-a-loop).
 pub fn check_parser_invariants(
     source: &str,
-    tokens: &[SpannedToken],
+    lexed: &Lexed,
     program: &Program,
 ) -> Result<(), String> {
     let src_len = source.len();
@@ -367,6 +431,7 @@ pub fn check_parser_invariants(
         }
     }
 
+    let tokens = &lexed.tokens;
     let sig = significant_token_count(tokens);
     if sig == 0 && !program.decls.is_empty() {
         return Err(format!(

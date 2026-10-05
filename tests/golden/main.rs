@@ -15,6 +15,7 @@
 //! all of it with `SILT_GOLDEN_FULL_CORPUS=1`.
 
 mod lsp;
+mod soundness;
 mod verdict;
 
 use std::path::{Path, PathBuf};

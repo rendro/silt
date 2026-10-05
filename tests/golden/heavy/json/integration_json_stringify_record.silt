@@ -1,5 +1,5 @@
 -- Lock exact serialization shape, not loose substring presence.
--- Record fields are stored in a `BTreeMap` (src/builtins/data.rs
+-- Record fields are stored in a `BTreeMap` (src/builtins/json.rs
 -- `value_to_json`), and `serde_json::Map` without the
 -- `preserve_order` feature also sorts keys alphabetically — so the
 -- stable output is `{"age":30,"name":"Alice"}` (age first).

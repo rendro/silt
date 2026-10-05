@@ -130,16 +130,16 @@ type ErrorTraitFn = fn(&str, &[Value]) -> Result<Value, VmError>;
 /// Lock test: `tests/meta/round73_error_enum_registry_parity_tests.rs`.
 static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
     ("IoError", builtins::io::call_io_error_trait),
-    ("JsonError", builtins::data::call_json_error_trait),
+    ("JsonError", builtins::json::call_json_error_trait),
     ("TomlError", builtins::toml::call_toml_error_trait),
     ("ParseError", builtins::numeric::call_parse_error_trait),
-    ("HttpError", builtins::data::call_http_error_trait),
-    ("RegexError", builtins::data::call_regex_error_trait),
+    ("HttpError", builtins::http::call_http_error_trait),
+    ("RegexError", builtins::regex::call_regex_error_trait),
     #[cfg(feature = "postgres")]
     ("PgError", builtins::postgres::call_pg_error_trait),
     #[cfg(feature = "tcp")]
     ("TcpError", builtins::tcp::call_tcp_error_trait),
-    ("TimeError", builtins::data::call_time_error_trait),
+    ("TimeError", builtins::time::call_time_error_trait),
     ("BytesError", builtins::bytes::call_bytes_error_trait),
     (
         "ChannelError",
@@ -195,7 +195,7 @@ impl Vm {
                     return Some(Err(VmError::new("display() takes no arguments".into())));
                 }
                 // Runtime Display gate — the .display() twin of the
-                // round-95 `Op::DisplayValue` gate (src/vm/execute.rs
+                // round-95 `Op::DisplayValue` gate (src/vm/run.rs
                 // ~:1457). For a *concrete* receiver the typechecker
                 // already rejects `.display()` on no-Display types
                 // ("unknown method 'display' on type Fn"), but silt
@@ -236,7 +236,7 @@ impl Vm {
                     return Some(Err(VmError::new("equal() takes 1 argument".into())));
                 }
                 // Execution-site backstop mirroring the `Op::Eq` gate
-                // (`equality_operand_violation`, src/vm/execute.rs): an
+                // (`equality_operand_violation`, src/vm/run.rs): an
                 // operand that is, or transitively contains, a
                 // function-shaped leaf has no Equal impl. A polymorphic
                 // wrapper (`fn eq(a: x, b: x) -> Bool { a.equal(b) }`)
@@ -252,14 +252,14 @@ impl Vm {
                 // that passes the round-93 field-aware auto-derive gate
                 // (`compute_auto_derive_field_negatives`), a synth-emitted
                 // `equal` impl method is produced and `Op::CallMethod`
-                // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                // (src/vm/run.rs) resolves it FIRST, so a
                 // Variant/Record receiver never reaches this arm. Types
                 // with non-supportable fields (e.g. Channel/Map/Tuple/
                 // Function/Bytes/Handle) are now statically REJECTED by
                 // that gate (`type 'X' does not implement trait`), so the
                 // old "such fields are laundered through here" path no
                 // longer exists, and no valid program reaches it. `impl PartialEq for Value` (in
-                // src/value.rs) compares records and variants structurally,
+                // src/value/key.rs) compares records and variants structurally,
                 // so this arm stays sound even on that malformed input.
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
             }
@@ -304,13 +304,13 @@ impl Vm {
                     // that passes the round-93 field-aware auto-derive gate
                     // (`compute_auto_derive_field_negatives`), a synth-emitted
                     // `compare` impl method is produced and `Op::CallMethod`
-                    // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                    // (src/vm/run.rs) resolves it FIRST, so a
                     // Variant/Record receiver never reaches this arm. Types
                     // with non-supportable fields (e.g. Channel/Map/Tuple/
                     // Function/Bytes/Handle) are now statically REJECTED by
                     // that gate (`type 'X' does not implement trait`), so the
                     // old "such fields are laundered through here" path no
-                    // longer exists, and no valid program reaches it. `fn cmp` (in src/value.rs)
+                    // longer exists, and no valid program reaches it. `fn cmp` (in src/value/key.rs)
                     // orders records and variants structurally, so this arm
                     // stays sound even on that malformed input.
                     (Value::Variant(..), Value::Variant(..))
@@ -342,7 +342,7 @@ impl Vm {
                 // auto-derived primitives fall through to here.
                 //
                 // `Value` already implements `std::hash::Hash` with a
-                // canonical bit-hash for floats (see `impl Hash for Value` in src/value.rs).
+                // canonical bit-hash for floats (see `impl Hash for Value` in src/value/key.rs).
                 // We reuse that impl via `DefaultHasher` so the result
                 // matches `HashMap<Value, Value>` keying.
                 if !extra_args.is_empty() {
@@ -360,7 +360,7 @@ impl Vm {
                 // so `[{ y -> y }].hash()` reaches this arm — and the
                 // std `Hash` impl on `Value` hashes every closure as a
                 // constant discriminant tag ("not meaningfully
-                // hashable", src/value.rs), so two distinct closures
+                // hashable", src/value/key.rs), so two distinct closures
                 // would hash identically and collide silently.
                 if Self::value_contains_fn(receiver) {
                     return Some(Err(VmError::new(
@@ -375,14 +375,14 @@ impl Vm {
                 // the round-93 field-aware auto-derive gate
                 // (`compute_auto_derive_field_negatives`), a synth-emitted
                 // `hash` impl method is produced and `Op::CallMethod`
-                // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                // (src/vm/run.rs) resolves it FIRST, so a
                 // Variant/Record receiver never reaches this arm. Types
                 // with non-supportable fields (e.g. Channel/Map/Tuple/
                 // Function/Bytes/Handle) are now statically REJECTED by
                 // that gate (`type 'X' does not implement trait`), so the
                 // old "such fields are laundered through here" path no
                 // longer exists, and no valid program reaches it. `impl Hash for Value` (in
-                // src/value.rs) hashes records and variants structurally, so
+                // src/value/key.rs) hashes records and variants structurally, so
                 // this arm stays sound even on that malformed input.
                 match receiver {
                     Value::Int(_)
@@ -391,7 +391,7 @@ impl Vm {
                     | Value::String(_)
                     | Value::List(_)
                     // Range hashes via the same `impl Hash for Value`
-                    // (in src/value.rs); typechecker registers Hash for
+                    // (in src/value/key.rs); typechecker registers Hash for
                     // every `List(T)` that flows through a `Hash` bound,
                     // and `1..5` reaches dispatch as `Value::Range`.
                     | Value::Range(..)
@@ -540,11 +540,11 @@ impl Vm {
                 ),
                 "regex" => catch_builtin_panic(
                     "regex",
-                    AssertUnwindSafe(|| builtins::data::call_regex(self, func, args)),
+                    AssertUnwindSafe(|| builtins::regex::call_regex(self, func, args)),
                 ),
                 "json" => catch_builtin_panic(
                     "json",
-                    AssertUnwindSafe(|| builtins::data::call_json(self, func, args)),
+                    AssertUnwindSafe(|| builtins::json::call_json(self, func, args)),
                 ),
                 "toml" => catch_builtin_panic(
                     "toml",
@@ -560,11 +560,11 @@ impl Vm {
                 ),
                 "time" => catch_builtin_panic(
                     "time",
-                    AssertUnwindSafe(|| builtins::data::call_time(self, func, args)),
+                    AssertUnwindSafe(|| builtins::time::call_time(self, func, args)),
                 ),
                 "http" => catch_builtin_panic(
                     "http",
-                    AssertUnwindSafe(|| builtins::data::call_http(self, func, args)),
+                    AssertUnwindSafe(|| builtins::http::call_http(self, func, args)),
                 ),
                 #[cfg(feature = "postgres")]
                 "postgres" => catch_builtin_panic(

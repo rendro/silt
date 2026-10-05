@@ -1,6 +1,6 @@
 //! Regression tests for HTTP builtin security hardening.
 //!
-//! Locks four fixes in `src/builtins/data.rs`:
+//! Locks four fixes in `src/builtins/http.rs`:
 //!
 //! - HIGH-1: `http.serve` caps request bodies at 10 MiB and returns 413
 //!   Payload Too Large for anything larger (or for a Content-Length that

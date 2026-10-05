@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected {nonexistent_method: Fn() -> _, ...}, got Int
+-- Port of repros/type_soundness/e4.silt, in brace closures.
+import list
+fn main() {
+  let xs = [1, 2, 3]
+  let ys = list.map(xs) { x -> x.display() }
+  println(ys)
+  let f = { x -> x.nonexistent_method() }
+  println(f(1))
+}

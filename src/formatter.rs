@@ -3001,17 +3001,18 @@ impl std::error::Error for FmtError {}
 /// `self_check`). If it fails the check, the error is
 /// [`FmtError::Internal`] and no text is returned.
 pub fn format(source: &str) -> Result<String, FmtError> {
-    let (tokens, comments) = Lexer::new(FileId::default(), source)
-        .tokenize_with_comments()
+    let lexed = Lexer::new(FileId::default(), source)
+        .tokenize()
         .map_err(FmtError::Syntax)?;
-    let program = Parser::new(tokens.clone(), source)
+    let program = Parser::new(lexed.clone(), source)
         .parse_program()
         .map_err(FmtError::Syntax)?;
     let formatted = with_current_source(source, || format_program_with_comments(&program, source));
-    let output = splice_inline_block_comments(source, &tokens, formatted);
+    let output = splice_inline_block_comments(source, &lexed.tokens, formatted);
     // Text that is returned unchanged needs no check.
     if output != source {
-        self_check::verify(&program, &comments, &output).map_err(FmtError::Internal)?;
+        self_check::verify(&program, source, &lexed.comments, &output)
+            .map_err(FmtError::Internal)?;
     }
     Ok(output)
 }
@@ -3054,28 +3055,31 @@ mod self_check {
 
     use crate::ast::*;
     use crate::intern::{Symbol, resolve};
-    use crate::lexer::{Lexer, SourceComment};
+    use crate::lexer::{Comment, Lexer};
     use crate::parser::Parser;
     use crate::source::{FileId, SourceFile, SourceName, Span};
 
     use super::InternalError;
 
     /// Check `output`, the text produced for a program whose tree is
-    /// `source_program` and whose comments are `source_comments`.
+    /// `source_program` and whose comments are `source_comments`, lexed
+    /// from `source`.
     pub(super) fn verify(
         source_program: &Program,
-        source_comments: &[SourceComment],
+        source: &str,
+        source_comments: &[Comment],
         output: &str,
     ) -> Result<(), InternalError> {
-        let (tokens, output_comments) = Lexer::new(FileId::default(), output)
-            .tokenize_with_comments()
+        let lexed = Lexer::new(FileId::default(), output)
+            .tokenize()
             .map_err(|e| unparseable(&e.message, e.span, output))?;
-        let output_program = Parser::new(tokens, output)
+        let output_comments = lexed.comments.clone();
+        let output_program = Parser::new(lexed, output)
             .parse_program()
             .map_err(|e| unparseable(&e.message, e.span, output))?;
 
         compare_programs(&decl_shapes(source_program), &decl_shapes(&output_program))?;
-        compare_comments(source_comments, &output_comments)
+        compare_comments(source, source_comments, output, &output_comments)
     }
 
     fn unparseable(message: &str, span: Span, output: &str) -> InternalError {
@@ -3203,9 +3207,9 @@ mod self_check {
     /// A comment's text with every run of white space as one space. The
     /// printer re-indents comments and trims them; it does nothing else
     /// to their text.
-    fn comment_text(comment: &SourceComment) -> String {
+    fn comment_text(comment: &Comment, source: &str) -> String {
         comment
-            .text
+            .text(source)
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
@@ -3221,11 +3225,16 @@ mod self_check {
     /// line at the end of its first. Each of these can carry one comment
     /// past another.
     fn compare_comments(
-        before: &[SourceComment],
-        after: &[SourceComment],
+        source: &str,
+        before: &[Comment],
+        output: &str,
+        after: &[Comment],
     ) -> Result<(), InternalError> {
-        let before_texts: Vec<String> = before.iter().map(comment_text).collect();
-        let after_texts: Vec<String> = after.iter().map(comment_text).collect();
+        let texts = |comments: &[Comment], text: &str| -> Vec<String> {
+            comments.iter().map(|c| comment_text(c, text)).collect()
+        };
+        let before_texts = texts(before, source);
+        let after_texts = texts(after, output);
         if before_texts == after_texts {
             return Ok(());
         }
@@ -4007,7 +4016,7 @@ mod self_check {
 ///      space padding on each side.
 fn splice_inline_block_comments(
     source: &str,
-    source_tokens: &[crate::lexer::SpannedToken],
+    source_tokens: &[crate::lexer::Tok],
     output: String,
 ) -> String {
     // Collect source block-comment byte ranges (outside strings / line comments).
@@ -4019,15 +4028,22 @@ fn splice_inline_block_comments(
     // comments (handled by the top-level leading-comment emitter) as
     // out-of-scope, but comments after the last real token need to be
     // spliced into the tail of the output so they aren't lost.
-    let src_tokens: Vec<&crate::lexer::SpannedToken> = source_tokens
+    let src_tokens: Vec<&crate::lexer::Tok> = source_tokens
         .iter()
-        .filter(|(tok, _)| !matches!(tok, crate::lexer::Token::Eof | crate::lexer::Token::Newline))
+        .filter(|tok| {
+            !matches!(
+                tok.kind,
+                crate::lexer::Token::Eof | crate::lexer::Token::Newline
+            )
+        })
         .collect();
     if src_tokens.is_empty() {
         return output;
     }
-    let src_token_offsets: Vec<usize> =
-        src_tokens.iter().map(|(_, sp)| sp.start as usize).collect();
+    let src_token_offsets: Vec<usize> = src_tokens
+        .iter()
+        .map(|tok| tok.span.start as usize)
+        .collect();
 
     // Gap index semantics:
     //   gap_index in 0..src_tokens.len()-1 => "between src_tokens[gap]
@@ -4060,9 +4076,15 @@ fn splice_inline_block_comments(
         Ok(t) => t,
         Err(_) => return output,
     };
-    let out_tokens: Vec<crate::lexer::SpannedToken> = out_tokens
+    let out_tokens: Vec<crate::lexer::Tok> = out_tokens
+        .tokens
         .into_iter()
-        .filter(|(tok, _)| !matches!(tok, crate::lexer::Token::Eof | crate::lexer::Token::Newline))
+        .filter(|tok| {
+            !matches!(
+                tok.kind,
+                crate::lexer::Token::Eof | crate::lexer::Token::Newline
+            )
+        })
         .collect();
     // The formatter occasionally ADDS tokens relative to source — for
     // example, record-field trailing commas. Greedy-align the source
@@ -4076,8 +4098,10 @@ fn splice_inline_block_comments(
         Some(m) => m,
         None => return output,
     };
-    let out_token_offsets: Vec<usize> =
-        out_tokens.iter().map(|(_, sp)| sp.start as usize).collect();
+    let out_token_offsets: Vec<usize> = out_tokens
+        .iter()
+        .map(|tok| tok.span.start as usize)
+        .collect();
 
     // Group comments by gap index in source order. Within a single gap,
     // multiple block comments keep their source order.
@@ -4197,7 +4221,7 @@ fn splice_inline_block_comments(
         // byte immediately before `gap_hi` is `}`.
         let mut insert_at = gap_hi;
         if matches!(
-            out_tokens[gap_hi_out].0,
+            out_tokens[gap_hi_out].kind,
             crate::lexer::Token::StringMiddle(_) | crate::lexer::Token::StringEnd(_)
         ) && insert_at > 0
             && output.as_bytes()[insert_at - 1] == b'}'
@@ -4253,14 +4277,14 @@ fn splice_inline_block_comments(
 /// alignment only fails if a source token has no corresponding output
 /// token at all, which would indicate a more serious mismatch.
 fn align_source_tokens_to_output(
-    src: &[&crate::lexer::SpannedToken],
-    out: &[crate::lexer::SpannedToken],
+    src: &[&crate::lexer::Tok],
+    out: &[crate::lexer::Tok],
 ) -> Option<Vec<usize>> {
     let mut map = Vec::with_capacity(src.len());
     let mut j = 0usize;
-    for (src_tok, _) in src.iter().map(|st| (&st.0, &st.1)) {
+    for src_tok in src.iter().map(|st| &st.kind) {
         // Advance `j` until `out[j]` matches `src_tok` (or we run out).
-        while j < out.len() && !token_kinds_equivalent(src_tok, &out[j].0) {
+        while j < out.len() && !token_kinds_equivalent(src_tok, &out[j].kind) {
             j += 1;
         }
         if j >= out.len() {
@@ -9437,11 +9461,10 @@ mod self_check_tests {
         // No input is known to make the printer produce text that does
         // not parse, so the check is fed such a result directly.
         let src = "fn main() {\n  1\n}\n";
-        let (tokens, comments) = Lexer::new(FileId::default(), src)
-            .tokenize_with_comments()
-            .unwrap();
-        let program = Parser::new(tokens, src).parse_program().unwrap();
-        let e = self_check::verify(&program, &comments, "fn main() {\n  (1\n}\n")
+        let lexed = Lexer::new(FileId::default(), src).tokenize().unwrap();
+        let comments = lexed.comments.clone();
+        let program = Parser::new(lexed, src).parse_program().unwrap();
+        let e = self_check::verify(&program, src, &comments, "fn main() {\n  (1\n}\n")
             .expect_err("an unparseable result must be refused");
         assert!(e.message.contains("would not parse"), "{}", e.message);
         assert!(e.span.is_none());

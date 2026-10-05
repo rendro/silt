@@ -1,0 +1,8 @@
+-- Port of repros/type_soundness/e7.silt, in brace closures.
+import list
+fn main() {
+  let xs = [1, 2, 3]
+  let ys = list.map(xs, { x: Int -> x.display() })
+  println(ys)
+  println(1.display())
+}

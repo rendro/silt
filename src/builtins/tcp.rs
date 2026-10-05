@@ -24,8 +24,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 
 use super::common::ok;
+use crate::runtime::completion::IoCompletion;
+use crate::runtime::handle::{ReadWrite, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
-use crate::value::{IoCompletion, ReadWrite, TcpListenerHandle, TcpStreamHandle, Value};
+use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
 /// Factory: deadline-cancelled tcp op surfaces as `Err(TcpTimeout)`

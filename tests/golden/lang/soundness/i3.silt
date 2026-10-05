@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'Hash'
+-- Port of repros/type_soundness/i3.silt, in brace closures.
+import map
+fn main() {
+  let f = { x -> x + 1 }
+  let m = #{ f: 1 }
+  println(map.get(m, f))
+  let m2 = map.set(#{}, f, 2)
+  println(map.get(m2, { x -> x + 1 }))
+}

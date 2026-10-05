@@ -1,4 +1,4 @@
-//! Round-36 parity locks for `builtins::data::do_http_request` dispatch.
+//! Round-36 parity locks for `builtins::http::do_http_request` dispatch.
 //!
 //! The 7 verb arms (POST / PUT / PATCH / GET / DELETE / HEAD / OPTIONS)
 //! previously each duplicated an identical header-loop prelude and only
@@ -41,7 +41,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use silt::builtins::data::call_http;
+use silt::builtins::http::call_http;
 use silt::value::Value;
 use silt::vm::Vm;
 

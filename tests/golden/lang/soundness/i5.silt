@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'Display'
+-- Port of repros/type_soundness/i5.silt, in brace closures.
+type W(a) { W(a) }
+fn main() {
+  let w1 = W({ x -> x + 1 })
+  println(w1.display())
+  println("{w1}")
+  println(w1)
+}

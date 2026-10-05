@@ -1,7 +1,7 @@
 //! Round 75 — io / data / postgres builtins adopt the canonical
 //! `"<fn> requires <Kind>, got <kind>"` wording.
 //!
-//! Round 75 finished the sweep across `io.rs`, `data.rs`, and
+//! Round 75 finished the sweep across `io.rs`, the data builtins, and
 //! `postgres.rs` — ~50 sites that previously read e.g. `"requires a
 //! string path"`, `"requires Int days"`, `"expected a Date record"`.
 //! Each terse form lacked the offending `got <kind>` suffix that lets
@@ -47,7 +47,7 @@ fn fs_exists_non_string_path_says_canonical_form() {
 fn extract_date_non_record_says_canonical_form() {
     // `time.add_days` reads its Date argument through `extract_date`.
     let mut vm = Vm::new(silt::HostIo::process());
-    let msg = err_msg(silt::builtins::data::call_time(
+    let msg = err_msg(silt::builtins::time::call_time(
         &mut vm,
         "add_days",
         &[Value::Int(42), Value::Int(1)],

@@ -1,0 +1,14 @@
+P {x: 1, y: s}
+B {v: 1, w: 2}
+A(1)
+Wrap(1)
+P {x: 1, y: s} B {v: 1, w: 2}
+true
+true
+-1
+-1
+true
+true
+true
+-1
+-1

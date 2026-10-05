@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 0
+-- Port of repros/type_soundness/i10.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: type 'Fn' does not implement Equal
+type Box(a) { Box(a) }
+fn same(x, y) { x == y }
+fn less(x, y) { x < y }
+fn main() {
+  let b = Box({ x -> x })
+  let c = Box({ x -> x })
+  println(same(b, b))
+  println(same(b, c))
+  println(less(b, c))
+  println(less(c, b))
+  println(same([{ x -> x }], [{ x -> x }]))
+  println(same((1, { x -> x }), (1, { x -> x })))
+  println(less([{ x -> x }], [{ x -> x }]))
+}

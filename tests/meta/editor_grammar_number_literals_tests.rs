@@ -110,8 +110,9 @@ fn lex_single_number(src: &str) -> Option<Kind> {
         .tokenize()
         .ok()?;
     let significant: Vec<Token> = tokens
+        .tokens
         .into_iter()
-        .map(|(tok, _span)| tok)
+        .map(|tok| tok.kind)
         .filter(|tok| !matches!(tok, Token::Newline | Token::Eof))
         .collect();
     match significant.as_slice() {

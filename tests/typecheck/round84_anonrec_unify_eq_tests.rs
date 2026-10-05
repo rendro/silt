@@ -18,7 +18,7 @@
 //! `type_name`. So the original `Value::Record("P", ...)` flows
 //! through unchanged, and `==` then compares it to a
 //! `Value::Record("<anon>", ...)` literal of the same shape. The
-//! naïve `na == nb && fa == fb` check (`src/value.rs` ~1714)
+//! naïve `na == nb && fa == fb` check (`src/value/key.rs`)
 //! returned `false` — a runtime contradiction of the type-level
 //! decision.
 //!

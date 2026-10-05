@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: not all patterns are covered
+-- Port of repros/type_soundness/k4.silt, two statements on one line split.
+fn f(x: Float) -> Int {
+  match x {
+    0.0 -> 0
+    1.0 -> 1
+  }
+}
+fn g(s: String) -> Int {
+  match s {
+    "a" -> 1
+  }
+}
+fn main() {
+  println(f(2.0))
+  println(g("b"))
+}

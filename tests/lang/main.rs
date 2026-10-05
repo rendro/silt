@@ -33,7 +33,6 @@ mod postgres_hardening_tests;
 mod property_tests;
 mod round73_postgres_poisoned_mutex_tests;
 mod round74_io_args_forward_via_double_dash_tests;
-mod round75_op_and_or_unreachable_tests;
 mod round76_assoc_cycle_tests;
 mod round76_row_tail_merge_tests;
 mod round77_errors_clamp_offset_tests;

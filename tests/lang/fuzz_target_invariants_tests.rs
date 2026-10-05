@@ -14,7 +14,7 @@ use silt::fuzz_invariants::{
     check_format_idempotent, check_formatter_invariants, check_lexer_invariants,
     check_parser_invariants,
 };
-use silt::lexer::{Lexer, Token};
+use silt::lexer::{Lexed, Lexer, Tok, Token};
 use silt::parser::Parser;
 use silt::source::Span;
 
@@ -31,6 +31,22 @@ fn lexer_invariants_accept_real_tokenization() {
     check_lexer_invariants(src, &tokens).expect("real source must satisfy invariants");
 }
 
+/// A hand-made token stream with no trivia, as the lexer would return it.
+fn lexed(tokens: Vec<(Token, Span)>) -> Lexed {
+    Lexed {
+        tokens: tokens
+            .into_iter()
+            .map(|(kind, span)| Tok {
+                kind,
+                span,
+                newlines_before: 0,
+                comments: 0..0,
+            })
+            .collect(),
+        comments: Vec::new(),
+    }
+}
+
 #[test]
 fn lexer_invariants_reject_missing_eof() {
     // Synthesize a token stream without the terminating Eof. The old
@@ -41,7 +57,7 @@ fn lexer_invariants_reject_missing_eof() {
         Token::Ident(silt::intern::intern("x")),
         Span::point(silt::source::FileId::default(), 0),
     )];
-    let err = check_lexer_invariants(src, &tokens).unwrap_err();
+    let err = check_lexer_invariants(src, &lexed(tokens)).unwrap_err();
     assert!(err.contains("Eof"), "unexpected error: {err}");
 }
 
@@ -57,7 +73,7 @@ fn lexer_invariants_reject_offset_past_source() {
         // silent bug in a real lexer; the old fuzz driver never noticed.
         (Token::Eof, Span::point(silt::source::FileId::default(), 99)),
     ];
-    let err = check_lexer_invariants(src, &tokens).unwrap_err();
+    let err = check_lexer_invariants(src, &lexed(tokens)).unwrap_err();
     assert!(
         err.contains("beyond source length") || err.contains("Eof span offset"),
         "unexpected error: {err}"
@@ -80,7 +96,7 @@ fn lexer_invariants_reject_non_monotonic_offsets() {
         ),
         (Token::Eof, Span::point(silt::source::FileId::default(), 2)),
     ];
-    let err = check_lexer_invariants(src, &tokens).unwrap_err();
+    let err = check_lexer_invariants(src, &lexed(tokens)).unwrap_err();
     assert!(err.contains("non-monotonic"), "unexpected error: {err}");
 }
 
@@ -96,7 +112,7 @@ fn lexer_invariants_reject_token_after_eof() {
         // Bogus extra token after Eof.
         (Token::Plus, Span::point(silt::source::FileId::default(), 1)),
     ];
-    let err = check_lexer_invariants(src, &tokens).unwrap_err();
+    let err = check_lexer_invariants(src, &lexed(tokens)).unwrap_err();
     assert!(err.contains("after Eof"), "unexpected error: {err}");
 }
 

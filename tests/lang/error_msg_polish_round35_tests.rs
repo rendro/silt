@@ -12,7 +12,7 @@
 // ── F12: http credential scrubber ─────────────────────────────────────
 
 #[cfg(feature = "http")]
-use silt::builtins::data::redact_http_url_userinfo;
+use silt::builtins::http::redact_http_url_userinfo;
 
 #[cfg(feature = "http")]
 #[test]

@@ -9,7 +9,7 @@
 //!
 //! Hashing safety note: the merged Hash arm is sound because the outer
 //! `impl Hash` body prefixes every value's hash with
-//! `std::mem::discriminant(self).hash(state)` (see `src/value.rs`), so
+//! `std::mem::discriminant(self).hash(state)` (see `src/value/key.rs`), so
 //! the two variants still produce different total hashes despite sharing
 //! the body — preserving the prior behaviour exactly.
 //!
