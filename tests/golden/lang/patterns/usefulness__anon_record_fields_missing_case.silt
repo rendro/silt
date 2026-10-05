@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: non-exhaustive match
+-- `{on: true, loud: false}` is left out.
+fn word(r: {on: Bool, loud: Bool}) -> String {
+  match r {
+    {on: false} -> "off"
+    {loud: true} -> "loud"
+  }
+}
+fn main() {
+  println(word({on: true, loud: false}))
+}

@@ -91,7 +91,7 @@ repros/type_soundness/ex4.silt	holds	reject E0320	tuple of lists
 repros/type_soundness/ex5.silt	-	obsolete	two statements on a line; ported: lang/soundness/ex5.silt
 repros/type_soundness/ex6.silt	-	obsolete	two statements on a line; ported: lang/soundness/ex6.silt
 repros/type_soundness/ex7.silt	-	obsolete	two statements on a line; ported: lang/soundness/ex7.silt
-repros/type_soundness/ex8.silt	pending:2	accept	TS-10: refutable patterns in a list head add no coverage (false rejection)
+repros/type_soundness/ex8.silt	holds	accept	TS-10: refutable patterns in a list head add no coverage (false rejection)
 repros/type_soundness/ex9.silt	-	obsolete	two statements on a line; ported: lang/soundness/ex9.silt
 repros/type_soundness/f1.silt	holds	reject E0301	TS-7.1: `fn f(x: a) -> a { 1 }` (today at the caller, with rigid variables at the definition)
 repros/type_soundness/f2.silt	holds	reject E0301	TS-7.1: `fn f(x: a, y: b) -> a { y }`
@@ -153,8 +153,8 @@ repros/type_soundness/k3.silt	holds	reject E0320	`Some(Some(false))` is missed
 repros/type_soundness/k4.silt	-	obsolete	two statements on a line; ported: lang/soundness/k4.silt
 repros/type_soundness/k5.silt	holds	reject E0320	a guarded arm covers nothing
 repros/type_soundness/k6.silt	-	obsolete	two statements on a line; ported: lang/soundness/k6.silt
-repros/type_soundness/k7.silt	pending:2	accept	TS-10: five exhaustive matches; the list-head one is rejected (as ex8)
-repros/type_soundness/k8.silt	pending:2	accept	TS-10: anonymous-record patterns add no coverage (false rejection)
+repros/type_soundness/k7.silt	holds	accept	TS-10: five exhaustive matches; the list-head one is rejected (as ex8)
+repros/type_soundness/k8.silt	holds	accept	TS-10: anonymous-record patterns add no coverage (false rejection)
 repros/type_soundness/k9.silt	holds	reject E0322	refutable list and literal patterns in `let`
 repros/type_soundness/m1_main	holds	reject E0301	TS-1 across a module: `let s: String = util.mid()`
 repros/type_soundness/m1_main10	holds	reject E0317	TS-8: a module-qualified call with a missing argument
@@ -378,7 +378,7 @@ lang/soundness/e12.silt	holds	accept	TS-2.6: a closure calling a user method, th
 lang/soundness/e4.silt	holds	reject E0301	a closure calling a method no trait declares
 lang/soundness/e5.silt	pending:3b	reject E0301	TS-2.1: `let n: Int = f(1)` where the closure returns `x.display()`
 lang/soundness/e7.silt	holds	accept	control: an annotated closure parameter
-lang/soundness/ex10.silt	pending:2	accept	TS-10: literal fields in anonymous-record patterns add no coverage (false rejection)
+lang/soundness/ex10.silt	holds	accept	TS-10: literal fields in anonymous-record patterns add no coverage (false rejection)
 lang/soundness/ex5.silt	holds	reject E0320	`X(false, false)` is missed (the record match is exhaustive)
 lang/soundness/ex6.silt	holds	reject E0320	string and range literals, a guarded arm
 lang/soundness/ex7.silt	holds	reject E0320	a pin covers nothing
@@ -398,7 +398,7 @@ lang/soundness/i4.silt	pending:3b	reject E0314	TS-9: list.sort, list.contains an
 lang/soundness/i5.silt	holds	reject E0314	Display of a variant that holds a closure
 lang/soundness/i8.silt	holds	reject E0315	a recursive enum derives; with a closure inside, `==` is an error
 lang/soundness/i9.silt	pending:3b	reject E0316	TS-2.4: `x == y` at `Box(a)` in an annotated function that declares no bound
-lang/soundness/k13_g.silt	pending:2	accept	TS-10: the exhaustive match of k13, 25 tuples deep (false rejection)
+lang/soundness/k13_g.silt	holds	accept	TS-10: the exhaustive match of k13, 25 tuples deep (false rejection)
 lang/soundness/k4.silt	holds	reject E0320	Float and String literals never cover
 lang/soundness/k6.silt	holds	reject E0320	a map pattern and a pin never cover
 lang/soundness/p2.silt	holds	accept	control: a `let`-bound closure is polymorphic, a channel is not

@@ -1,10 +1,20 @@
-use super::super::exhaustiveness::Irrefutability;
+use super::super::exhaustiveness::{CtorId, Pat, Unverified};
 use super::super::inference::*;
 use super::super::*;
 
+/// Where a pattern stands, for `TypeChecker::check_pattern`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::typechecker) enum PatternMode {
+    /// At a place with no branch to take when the pattern fails to
+    /// match: the pattern must be irrefutable.
+    Binding(BindingSite),
+    /// In a `match` arm or a `when let ... else`, which go on to the next
+    /// arm or to the `else` when the pattern fails to match.
+    Arm,
+}
+
 /// A place that binds a pattern and has no branch to take when the
-/// pattern fails to match. Such a place accepts irrefutable patterns
-/// only; see `TypeChecker::bind_irrefutable_pattern`.
+/// pattern fails to match.
 ///
 /// `loop` bindings are not listed: a `loop` binds plain names, never a
 /// pattern.
@@ -74,74 +84,74 @@ enum CtorTarget {
 }
 
 impl TypeChecker {
-    // ── Irrefutable binding sites ──────────────────────────────────
-    //
-    // A binding site without a failure branch — `let`, a function
-    // parameter, a closure parameter — takes only a pattern that matches
-    // every value of its type. The compiler emits no test for such a
-    // pattern, so a refutable one would read the payload of `Cents` as
-    // that of `Dollars`, or index past the fields of `None`. `match`
-    // arms and `when let ... else` have a failure branch; they bind with
-    // `check_pattern` / `bind_pattern` directly.
+    // ── The one pattern checker ────────────────────────────────────
 
-    /// Bind `pattern` against `ty` at a binding site that has no failure
-    /// branch, and require the pattern to be irrefutable for `ty`.
+    /// Check `pattern` against a value of type `expected`: type its
+    /// parts, bind its names in `env`, mark it and every pattern inside
+    /// it irrefutable or not (`Pattern::irrefutable`, which the compiler
+    /// reads), and return what it tests, for the usefulness search.
     ///
-    /// The pattern is type checked first, because irrefutability is
-    /// judged against the type the pattern settles: a closure parameter
-    /// starts as a fresh type variable, and it is `bind_pattern` that
-    /// ties it to the enum or tuple the pattern names. A pattern that
-    /// failed to type check already has its diagnostic and is not judged.
-    pub(in crate::typechecker) fn bind_irrefutable_pattern(
+    /// `span` is the span of the value. In `PatternMode::Binding` the
+    /// pattern must be irrefutable, and is reported when it is not: the
+    /// compiler emits no test for the pattern of a `let` or a parameter,
+    /// so a refutable one would read the payload of `Cents` as that of
+    /// `Dollars`, or index past the fields of `None`.
+    pub(in crate::typechecker) fn check_pattern(
         &mut self,
-        pattern: &Pattern,
-        ty: &Type,
+        pattern: &mut Pattern,
+        expected: &Type,
         env: &mut TypeEnv,
         span: Span,
-        site: BindingSite,
-    ) {
+        mode: PatternMode,
+    ) -> Pat {
         let errors_before = self.errors.len();
-        self.bind_pattern(pattern, ty, env, span);
-        let bind_failed = self.errors[errors_before..]
-            .iter()
-            .any(|e| matches!(e.severity, Severity::Error));
-        // A name in the pattern the resolver reported: what it matches
-        // is not known.
-        if !bind_failed && !names_unresolved(pattern) {
-            self.require_irrefutable(pattern, ty, span, site);
+        let pat = self.type_pattern(pattern, expected, env, span);
+        if let PatternMode::Binding(site) = mode {
+            // Irrefutability is judged for a pattern that type checked:
+            // one that did not has its diagnostic. So has a name in the
+            // pattern the resolver reported; what it matches is not
+            // known.
+            let failed = self.errors[errors_before..]
+                .iter()
+                .any(|e| matches!(e.severity, Severity::Error));
+            if !failed && !names_unresolved(pattern) {
+                self.require_irrefutable(pattern, &pat, expected, span, site);
+            }
         }
+        pat
     }
 
-    /// Report `pattern` unless it is irrefutable for `ty`. The verdict is
-    /// the exhaustiveness checker's (`irrefutability`); this function only
-    /// words the diagnostic, naming the part of the pattern that can fail.
+    /// Report `pattern`, lowered to `pat`, unless it is irrefutable. The
+    /// verdict is the usefulness search's; this function only words the
+    /// diagnostic, naming the part of the pattern that can fail.
     ///
     /// `span` is the span of the value being bound. A `let` reports a
     /// refutable constructor there and any other refutable part at the
     /// part itself; a parameter always reports at the part.
-    fn require_irrefutable(&mut self, pattern: &Pattern, ty: &Type, span: Span, site: BindingSite) {
-        let verdict = self.irrefutability(pattern, ty);
-        if verdict == Irrefutability::Irrefutable {
-            return;
-        }
-        let part = match verdict {
-            Irrefutability::Refutable => self.refutable_part(pattern),
-            Irrefutability::Irrefutable | Irrefutability::Unverified => None,
-        };
-        let (reason, reason_span) = match part {
-            Some(part) => {
-                let reason_span = match (site, &part.kind) {
-                    (BindingSite::Let, PatternKind::Constructor { .. }) => span,
-                    _ => part.span,
-                };
-                (self.refutable_part_reason(part, ty), reason_span)
-            }
-            None if verdict == Irrefutability::Unverified => (
-                "the pattern is nested too deeply to verify that it matches every value"
-                    .to_string(),
+    fn require_irrefutable(
+        &mut self,
+        pattern: &Pattern,
+        pat: &Pat,
+        ty: &Type,
+        span: Span,
+        site: BindingSite,
+    ) {
+        let (reason, reason_span) = match self.irrefutable(pat) {
+            Ok(true) => return,
+            Ok(false) => match self.refutable_part(pattern) {
+                Some(part) => {
+                    let reason_span = match (site, &part.kind) {
+                        (BindingSite::Let, PatternKind::Constructor { .. }) => span,
+                        _ => part.span,
+                    };
+                    (self.refutable_part_reason(part, ty), reason_span)
+                }
+                None => (self.refutable_type_reason(ty), pattern.span),
+            },
+            Err(Unverified) => (
+                "the pattern is too large to verify that it matches every value".to_string(),
                 pattern.span,
             ),
-            None => (self.refutable_type_reason(ty), pattern.span),
         };
         self.error(
             Code::InvalidPatternUse,
@@ -152,6 +162,43 @@ impl TypeChecker {
             ),
             reason_span,
         );
+    }
+
+    /// The part of a refutable `pattern` to name in a diagnostic: the
+    /// first pattern in it, outermost first and left to right, whose own
+    /// form can fail to match whatever its parts are. `None` when the
+    /// pattern is irrefutable, or when only its parts together fail.
+    fn refutable_part<'p>(&self, pattern: &'p Pattern) -> Option<&'p Pattern> {
+        if pattern.irrefutable {
+            return None;
+        }
+        let form_can_fail = match &pattern.kind {
+            PatternKind::Wildcard
+            | PatternKind::Ident(_)
+            | PatternKind::Tuple(_)
+            | PatternKind::Record { .. }
+            | PatternKind::AnonRecord { .. }
+            | PatternKind::Or(_) => false,
+            PatternKind::Constructor { .. } => self
+                .pattern_constructor_enum(pattern)
+                .is_none_or(|(_, info)| info.variants.len() != 1),
+            // `[..rest]` takes a list of any length.
+            PatternKind::List(elems, rest) => !(elems.is_empty() && rest.is_some()),
+            PatternKind::Int(_)
+            | PatternKind::Float(_)
+            | PatternKind::Bool(_)
+            | PatternKind::StringLit(..)
+            | PatternKind::Range(..)
+            | PatternKind::FloatRange(..)
+            | PatternKind::Map(..)
+            | PatternKind::Pin(_) => true,
+        };
+        if form_can_fail {
+            return Some(pattern);
+        }
+        sub_patterns(pattern)
+            .into_iter()
+            .find_map(|p| self.refutable_part(p))
     }
 
     /// Why `part`, the refutable part of a pattern bound against `ty`,
@@ -225,7 +272,7 @@ impl TypeChecker {
     /// once per alternative, then merge the union of binder sets back up
     /// into the outer conjunctive scope (all alternatives must bind the
     /// same set of vars — that invariant is enforced separately in the
-    /// `Or` arms of `bind_pattern` / `check_pattern`).
+    /// `Or` arm of `type_pattern_form`).
     pub(in crate::typechecker) fn check_pattern_duplicate_bindings(&mut self, pattern: &Pattern) {
         let mut seen: HashMap<Symbol, Span> = HashMap::new();
         let mut dups: Vec<(Symbol, Span)> = Vec::new();
@@ -441,822 +488,170 @@ impl TypeChecker {
         }
     }
 
-    /// Bind names in a pattern to their types in the environment.
-    pub(in crate::typechecker) fn bind_pattern(
+    /// `check_pattern` for a pattern and, through itself, the patterns
+    /// inside it.
+    fn type_pattern(
         &mut self,
-        pattern: &Pattern,
-        ty: &Type,
-        env: &mut TypeEnv,
-        span: Span,
-    ) {
-        match &pattern.kind {
-            PatternKind::Wildcard => {}
-            PatternKind::Ident(name) => {
-                env.define(*name, Scheme::mono(ty.clone()));
-            }
-            // BROKEN (round 35 F3): literal patterns in binding position
-            // (e.g. `let 5 = "hello"`) used to fall through as empty arms,
-            // silently ignoring the scrutinee's type. Mirror `check_pattern`
-            // and unify the scrutinee against the literal's concrete type
-            // so `let 5 = "hello"` becomes a compile-time error.
-            PatternKind::Int(_) => {
-                self.unify(ty, &Type::Int, span);
-            }
-            PatternKind::Float(_) => {
-                self.unify(ty, &Type::Float, span);
-            }
-            PatternKind::Bool(_) => {
-                self.unify(ty, &Type::Bool, span);
-            }
-            PatternKind::StringLit(..) => {
-                self.unify(ty, &Type::String, span);
-            }
-            PatternKind::Tuple(pats) => {
-                // BROKEN (round 15): bind_pattern Pattern::Tuple used to
-                // silently fall through to fresh vars when the scrutinee
-                // wasn't already a tuple, letting `let (a, b) = 42` slip
-                // past the type checker and blow up at runtime. Build the
-                // expected tuple shape up front and either unify against
-                // the scrutinee (general mismatch) or emit a dedicated
-                // arity error whose wording reads from the pattern's
-                // perspective ("expected 3, got 2"). The two message
-                // orderings differ because unify's tuple-tuple arm puts
-                // the first arg as "expected", while its fallback
-                // general-mismatch arm puts the second arg as "expected".
-                //
-                // BROKEN (round 23 #1): the empty-tuple pattern `()` is
-                // the unit pattern. `resolve_type_expr` normalizes the
-                // empty tuple type expr to `Type::Unit` (mod.rs around
-                // the `TypeExpr::Tuple` arm). Unifying the scrutinee
-                // against `Type::Tuple(vec![])` instead of `Type::Unit`
-                // produced a nonsense "expected (), got ()" diagnostic
-                // because the two types render identically but aren't
-                // equal. Match the type-expr side of the language and
-                // unify against `Type::Unit` when `pats.is_empty()`.
-                if pats.is_empty() {
-                    self.unify(ty, &Type::Unit, span);
-                    return;
-                }
-                let resolved_pre = self.apply(ty);
-                if let Type::Tuple(scrutinee_elems) = &resolved_pre {
-                    if scrutinee_elems.len() == pats.len() {
-                        let elems = scrutinee_elems.clone();
-                        for (p, t) in pats.iter().zip(elems.iter()) {
-                            self.bind_pattern(p, t, env, span);
-                        }
-                    } else {
-                        // Arity mismatch — emit the pattern-centric error
-                        // directly so the message reads "expected <N>, got
-                        // <M>" from the pattern's point of view.
-                        self.error(
-                            Code::TypeMismatch,
-                            format!(
-                                "tuple length mismatch: expected {}, got {}",
-                                pats.len(),
-                                scrutinee_elems.len()
-                            ),
-                            span,
-                        );
-                        for p in pats {
-                            let tv = self.fresh_var();
-                            self.bind_pattern(p, &tv, env, span);
-                        }
-                    }
-                } else {
-                    // Non-tuple scrutinee (or an unresolved var). Unify
-                    // against a fresh tuple shape so a) Var scrutinees get
-                    // the correct tuple type, and b) concrete non-tuple
-                    // scrutinees produce "expected (..), got <type>".
-                    let shape_elems: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
-                    let shape = Type::Tuple(shape_elems.clone());
-                    self.unify(ty, &shape, span);
-                    // After unify, if the scrutinee unified into a tuple
-                    // (via a fresh var), recurse properly; otherwise fall
-                    // back to the shape vars.
-                    let resolved_post = self.apply(ty);
-                    match &resolved_post {
-                        Type::Tuple(elems) if elems.len() == pats.len() => {
-                            let elems = elems.clone();
-                            for (p, t) in pats.iter().zip(elems.iter()) {
-                                self.bind_pattern(p, t, env, span);
-                            }
-                        }
-                        _ => {
-                            for (p, t) in pats.iter().zip(shape_elems.iter()) {
-                                self.bind_pattern(p, t, env, span);
-                            }
-                        }
-                    }
-                }
-            }
-            PatternKind::Constructor {
-                name,
-                args: sub_pats,
-                ..
-            } => {
-                let resolved: Option<(TypeRef, EnumInfo)> = match self.ctor_target(pattern) {
-                    CtorTarget::Enum(enum_name, info) => Some((enum_name, info)),
-                    CtorTarget::Unknown => None,
-                    CtorTarget::Silent => {
-                        self.bind_unresolved(pattern, env);
-                        return;
-                    }
-                };
-                // Look up the constructor to find inner types
-                if let Some((enum_name, enum_info)) = resolved
-                    && let Some(var_info) = enum_info.variants.iter().find(|v| v.name == *name)
-                {
-                    if sub_pats.len() != var_info.field_types.len() {
-                        let expected = var_info.field_types.len();
-                        // Fix A: point the caret at the constructor pattern
-                        // itself, not at the enclosing let/when scrutinee.
-                        self.error(
-                            Code::ArityMismatch,
-                            format!(
-                                "constructor '{}' expects {} {}, but pattern has {}",
-                                name,
-                                expected,
-                                plural(expected, "field", "fields"),
-                                sub_pats.len()
-                            ),
-                            pattern.span,
-                        );
-                    }
-                    // BROKEN (round 15): unify the scrutinee against
-                    // `Generic(enum_name, fresh args)` BEFORE recursing,
-                    // so `let Ok(x) = 42` is caught at typecheck rather
-                    // than deferred to a runtime `DestructVariant` crash.
-                    // Try to reuse existing type args if the scrutinee is
-                    // already a Generic of the right enum.
-                    let resolved_pre = self.apply(ty);
-                    let type_args: Vec<Type> = match &resolved_pre {
-                        Type::Generic(n, args) if *n == enum_name => args.clone(),
-                        _ => enum_info.params.iter().map(|_| self.fresh_var()).collect(),
-                    };
-                    let enum_shape = Type::Generic(enum_name, type_args.clone());
-                    self.unify(ty, &enum_shape, span);
-                    for (i, sp) in sub_pats.iter().enumerate() {
-                        if i < var_info.field_types.len() {
-                            let field_ty = substitute_enum_params(
-                                &var_info.field_types[i],
-                                &enum_info.param_var_ids,
-                                &type_args,
-                            );
-                            self.bind_pattern(sp, &field_ty, env, span);
-                        } else {
-                            let tv = self.fresh_var();
-                            self.bind_pattern(sp, &tv, env, span);
-                        }
-                    }
-                    return;
-                }
-                // LATENT (round 26 L1): mirror round-23's check_pattern
-                // behavior — if `name` refers to a declared record type,
-                // emit the record-syntax hint instead of the generic
-                // "undefined constructor" message. The previous fallback
-                // only existed on check_pattern, so `let Circle(r) = c`
-                // gave a confusing error when the real issue was shape,
-                // not existence.
-                // LATENT (round 26 L3): also point the caret at
-                // `pattern.span`, not the outer `span` (the outer span
-                // is the enclosing let/match scrutinee).
-                if self.names_record(pattern.res, *name) {
-                    self.error(Code::InvalidPatternUse,
-                        format!(
-                            "'{name}' is a record type; use record-pattern syntax `{name} {{ ... }}` instead of constructor-pattern syntax"
-                        ),
-                        pattern.span,
-                    );
-                } else {
-                    self.error(
-                        Code::UndefinedConstructor,
-                        format!("undefined constructor '{name}' in pattern"),
-                        pattern.span,
-                    );
-                }
-                for sp in sub_pats {
-                    let tv = self.fresh_var();
-                    self.bind_pattern(sp, &tv, env, span);
-                }
-            }
-            PatternKind::List(pats, rest) => {
-                let elem_ty = self.fresh_var();
-                let list_ty = Type::List(Box::new(elem_ty.clone()));
-                self.unify(ty, &list_ty, span);
-                let resolved_elem = self.apply(&elem_ty);
-                for p in pats {
-                    self.bind_pattern(p, &resolved_elem, env, span);
-                }
-                if let Some(rest_pat) = rest {
-                    let rest_ty = Type::List(Box::new(resolved_elem));
-                    self.bind_pattern(rest_pat, &rest_ty, env, span);
-                }
-            }
-            PatternKind::Record { name, fields, .. } => {
-                // BROKEN (round 52): duplicate field names in record
-                // patterns slipped through — both the explicit-sub form
-                // (`Point { x: a, x: b }` — distinct binders, so the
-                // round-51 binder-dedup walk can't see the collision) and
-                // any latent shorthand case. See the helper's rustdoc.
-                self.check_record_pattern_duplicate_fields(fields, pattern.span);
-                // BROKEN-4: `let Name { f } = v` used to silently bind `f`
-                // to a fresh TyVar when the base wasn't a record, or when
-                // the field didn't exist. Both were deferred to VM runtime
-                // errors. Reject them at the type-check stage. The type
-                // identity is the bare name (`util.Pt { x }` names `Pt`).
-                if pattern.res == Some(crate::defs::Res::Error) {
-                    self.bind_unresolved(pattern, env);
-                    return;
-                }
-                let resolved = self.apply(ty);
-                let looked = match name {
-                    Some(rec_name) => self.named_record(pattern.res, *rec_name, span, true),
-                    None => None,
-                };
-                let pattern_record: Option<(TypeRef, Vec<(Symbol, Type)>)> =
-                    if let Some((rec_ty, rec_info, param_ids)) = looked {
-                        let instantiated_fields =
-                            self.instantiate_record_fields(&rec_info, param_ids.as_deref());
-                        Some((rec_ty, instantiated_fields))
-                    } else {
-                        None
-                    };
-                if let Some((pname, pfields)) = &pattern_record {
-                    let rec_ty = Type::Record(*pname, pfields.clone());
-                    self.unify(ty, &rec_ty, span);
-                }
-                let resolved = self.apply(&resolved);
-
-                // R1 (round 15): when the scrutinee's type surfaces as
-                // `Type::Generic(name, args)` and `name` names a declared
-                // record (common for records passed through fn boundaries
-                // — `resolve_type_expr` maps user record annotations to
-                // `Type::Generic`), instantiate the record's field
-                // templates and bind sub-patterns directly. The named
-                // pattern case — `let Pair { a, b } = p` — has already
-                // computed these fields in `pattern_record`; prefer those
-                // so the declared and inferred instantiations stay linked.
-                let generic_record_fields: Option<(TypeRef, Vec<(Symbol, Type)>)> =
-                    if let Type::Generic(type_name, type_args) = &resolved
-                        && let Some(rec_info) = self.tables.records.get(type_name).cloned()
-                    {
-                        let fields = if let Some((pname, pfields)) = &pattern_record
-                            && *pname == *type_name
-                        {
-                            pfields.clone()
-                        } else if let Some(param_var_ids) =
-                            self.tables.record_param_var_ids.get(type_name).cloned()
-                        {
-                            let mapping: HashMap<TyVar, Type> =
-                                if type_args.len() == param_var_ids.len() {
-                                    param_var_ids
-                                        .iter()
-                                        .zip(type_args.iter())
-                                        .map(|(&v, t)| (v, t.clone()))
-                                        .collect()
-                                } else {
-                                    param_var_ids
-                                        .iter()
-                                        .map(|&v| (v, self.fresh_var()))
-                                        .collect()
-                                };
-                            rec_info
-                                .fields
-                                .iter()
-                                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                                .collect()
-                        } else {
-                            rec_info.fields.clone()
-                        };
-                        Some((*type_name, fields))
-                    } else {
-                        None
-                    };
-
-                if let Type::Record(rec_name, field_types) = &resolved {
-                    for (field_name, _, sub_pat) in fields {
-                        if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
-                            if let Some(sp) = sub_pat {
-                                self.bind_pattern(sp, ft, env, span);
-                            } else {
-                                env.define(*field_name, Scheme::mono(ft.clone()));
-                            }
-                        } else {
-                            // GAP (round 26 L5): append a did-you-mean
-                            // hint when a near edit-distance field
-                            // exists on this record.
-                            let base = format!("record '{rec_name}' has no field '{field_name}'");
-                            self.error_help(
-                                Code::NoSuchField,
-                                format_record_field_suggestion(base, *field_name, field_types),
-                                span,
-                            );
-                            if let Some(sp) = sub_pat {
-                                let tv = self.fresh_var();
-                                self.bind_pattern(sp, &tv, env, span);
-                            } else {
-                                let tv = self.fresh_var();
-                                env.define(*field_name, Scheme::mono(tv));
-                            }
-                        }
-                    }
-                } else if let Some((rec_name, field_types)) = generic_record_fields {
-                    for (field_name, _, sub_pat) in fields {
-                        if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
-                            if let Some(sp) = sub_pat {
-                                self.bind_pattern(sp, ft, env, span);
-                            } else {
-                                env.define(*field_name, Scheme::mono(ft.clone()));
-                            }
-                        } else {
-                            // GAP (round 26 L5): same hint on the generic
-                            // resolution path.
-                            let base = format!("record '{rec_name}' has no field '{field_name}'");
-                            self.error_help(
-                                Code::NoSuchField,
-                                format_record_field_suggestion(base, *field_name, &field_types),
-                                span,
-                            );
-                            if let Some(sp) = sub_pat {
-                                let tv = self.fresh_var();
-                                self.bind_pattern(sp, &tv, env, span);
-                            } else {
-                                let tv = self.fresh_var();
-                                env.define(*field_name, Scheme::mono(tv));
-                            }
-                        }
-                    }
-                } else if matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
-                    for (field_name, _, sub_pat) in fields {
-                        if let Some(sp) = sub_pat {
-                            let tv = self.fresh_var();
-                            self.bind_pattern(sp, &tv, env, span);
-                        } else {
-                            let tv = self.fresh_var();
-                            env.define(*field_name, Scheme::mono(tv));
-                        }
-                    }
-                } else {
-                    self.error(Code::TypeMismatch,
-                        format!(
-                            "record pattern requires a record value, but '{resolved}' is not a record type"
-                        ),
-                        span,
-                    );
-                    for (field_name, _, sub_pat) in fields {
-                        if let Some(sp) = sub_pat {
-                            let tv = self.fresh_var();
-                            self.bind_pattern(sp, &tv, env, span);
-                        } else {
-                            let tv = self.fresh_var();
-                            env.define(*field_name, Scheme::mono(tv));
-                        }
-                    }
-                }
-            }
-            PatternKind::Or(alts) => {
-                // Validate that all alternatives bind the same set of variables.
-                if alts.len() >= 2 {
-                    let first_vars: BTreeSet<Symbol> =
-                        collect_pattern_vars(&alts[0]).into_iter().collect();
-                    for (i, alt) in alts.iter().enumerate().skip(1) {
-                        let alt_vars: BTreeSet<Symbol> =
-                            collect_pattern_vars(alt).into_iter().collect();
-                        if first_vars != alt_vars {
-                            // BROKEN (round 26 B2): `{:?}` on a BTreeSet<Symbol>
-                            // leaks `Symbol(N: "x")` debug output into a
-                            // user-facing diagnostic. Render the sets as
-                            // sorted comma-separated lists of resolved names.
-                            self.error(
-                                Code::InvalidPatternUse,
-                                format!(
-                                    "or-pattern alternatives must bind the same variables; \
-                                     first alternative binds {}, alternative {} binds {}",
-                                    format_symbol_set(&first_vars),
-                                    i + 1,
-                                    format_symbol_set(&alt_vars)
-                                ),
-                                span,
-                            );
-                        }
-                    }
-                }
-                // Bind each alternative in a frame of its own so we
-                // can collect the per-alternative type for every variable the
-                // or-pattern binds, then unify those types pairwise. This
-                // enforces that the alternatives agree on each binding's
-                // type (e.g. `Left(x) | Right(x)` where `x: Int` on one side
-                // and `x: String` on the other must be rejected).
-                let mut per_alt_types: Vec<HashMap<Symbol, Type>> = Vec::with_capacity(alts.len());
-                for alt in alts {
-                    env.push();
-                    self.bind_pattern(alt, ty, env, span);
-                    let names: HashMap<Symbol, Type> = env
-                        .pop()
-                        .into_iter()
-                        .map(|(name, scheme)| (name, scheme.ty))
-                        .collect();
-                    per_alt_types.push(names);
-                }
-                // Pairwise-unify the first alt's types with each other alt.
-                if per_alt_types.len() >= 2 {
-                    let (first, rest) = per_alt_types.split_first().unwrap();
-                    for other in rest {
-                        for (name, first_ty) in first {
-                            if let Some(other_ty) = other.get(name) {
-                                let a = self.apply(first_ty);
-                                let b = self.apply(other_ty);
-                                if a != b {
-                                    // Try to unify — if they're still
-                                    // incompatible, report a targeted error.
-                                    let err_count = self.errors.len();
-                                    self.unify(&a, &b, span);
-                                    if self.errors.len() > err_count {
-                                        // Replace the generic unify error with
-                                        // a clearer or-pattern-specific one.
-                                        self.errors.truncate(err_count);
-                                        self.error(Code::TypeMismatch,
-                                            format!(
-                                                "or-pattern alternatives bind '{}' to conflicting types: {} vs {}",
-                                                name, a, b
-                                            ),
-                                            span,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // Finally, bind the first alternative's variables into the
-                // real environment so downstream code sees them.
-                if let Some(first_alt) = alts.first() {
-                    self.bind_pattern(first_alt, ty, env, span);
-                }
-            }
-            PatternKind::Range(_, _) => {
-                self.unify(ty, &Type::Int, span);
-            }
-            PatternKind::FloatRange(_, _) => {
-                self.unify(ty, &Type::Float, span);
-            }
-            PatternKind::Map(entries) => {
-                // L3: Map patterns are currently restricted to String keys at
-                // parse time — `PatternKind::Map(Vec<(String, Pattern)>)` in
-                // src/ast.rs. If the scrutinee has a non-String key type, give
-                // a targeted error rather than the cryptic unification failure.
-                let val_ty = self.fresh_var();
-                let resolved_scrutinee = self.apply(ty);
-                if let Type::Map(existing_key, _) = &resolved_scrutinee {
-                    let existing_key = self.apply(existing_key);
-                    if !matches!(existing_key, Type::String | Type::Var(_) | Type::Error) {
-                        self.error(Code::InvalidPatternUse,
-                            format!(
-                                "map patterns currently only match string keys; your scrutinee has key type '{existing_key}'"
-                            ),
-                            span,
-                        );
-                    }
-                }
-                let key_ty = Type::String;
-                let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
-                self.unify(ty, &map_ty, span);
-                let resolved_val = self.apply(&val_ty);
-                for (_key, pat) in entries {
-                    self.bind_pattern(pat, &resolved_val, env, span);
-                }
-            }
-            PatternKind::Pin(name) => {
-                // Pin does not introduce a new binding — it checks against an
-                // existing variable.  Look it up in the parent (pre-match) scope
-                // first, then fall back to the current scope for when/let contexts.
-                let found = env
-                    .parent
-                    .as_ref()
-                    .and_then(|p| p.lookup(*name).cloned())
-                    .or_else(|| env.lookup(*name).cloned());
-                if let Some(scheme) = found {
-                    let pinned_ty = self.instantiate(&scheme);
-                    self.unify(ty, &pinned_ty, span);
-                } else {
-                    // LATENT (round 26 L4): point the caret at the pin
-                    // pattern, not the enclosing match/let scrutinee.
-                    let msg = format_undefined_variable_message(*name, env, "in pin pattern");
-                    self.error_help(Code::UndefinedVariable, msg, pattern.span);
-                }
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                // For each field, allocate a fresh field type. Build an
-                // open anon-record type and unify with the scrutinee —
-                // unify handles widening from a nominal record so
-                // `match person { {name: n, ...rest} -> ... }` works on
-                // a `type Person { ... }` value too.
-                use std::collections::BTreeMap;
-                let mut field_tys: BTreeMap<Symbol, Type> = BTreeMap::new();
-                for (fname, _, _) in fields.iter() {
-                    field_tys.insert(*fname, self.fresh_var());
-                }
-                // The row tail is open (a fresh row variable) regardless
-                // of whether the pattern has a `...rest` binding — when
-                // there's no rest, the leftover fields just aren't named.
-                let row_var = self.fresh_tyvar_id();
-                let anon_ty = Type::AnonRecord {
-                    fields: field_tys.clone(),
-                    tail: RowTail::Var(row_var),
-                };
-                self.unify(ty, &anon_ty, span);
-                // Resolve to get post-unification field types.
-                let resolved = self.apply(&anon_ty);
-                let resolved_fields: BTreeMap<Symbol, Type> =
-                    if let Type::AnonRecord { fields: rf, .. } = &resolved {
-                        rf.clone()
-                    } else {
-                        field_tys.clone()
-                    };
-                for (fname, _, sub) in fields.iter() {
-                    let ft = resolved_fields
-                        .get(fname)
-                        .cloned()
-                        .unwrap_or_else(|| self.fresh_var());
-                    let ft = self.apply(&ft);
-                    match sub {
-                        Some(p) => self.bind_pattern(p, &ft, env, span),
-                        None => {
-                            // Shorthand `{name}` binds `name` directly.
-                            env.define(*fname, Scheme::mono(ft));
-                        }
-                    }
-                }
-                if let Some((rest_name, _)) = rest {
-                    // Bind rest to a record carrying just the row var —
-                    // unification will plug it in to the leftover row.
-                    let rest_ty = Type::AnonRecord {
-                        fields: BTreeMap::new(),
-                        tail: RowTail::Var(row_var),
-                    };
-                    let rest_ty = self.apply(&rest_ty);
-                    env.define(*rest_name, Scheme::mono(rest_ty));
-                }
-            }
-        }
-    }
-
-    // ── Pattern checking (type check, not just bind) ────────────────
-
-    pub(in crate::typechecker) fn check_pattern(
-        &mut self,
-        pattern: &Pattern,
+        pattern: &mut Pattern,
         expected: &Type,
         env: &mut TypeEnv,
         span: Span,
-    ) {
-        match &pattern.kind {
-            PatternKind::Wildcard => {}
+    ) -> Pat {
+        let pat = self.type_pattern_form(pattern, expected, env, span);
+        // A search that gave up shows nothing: the pattern keeps its test.
+        pattern.irrefutable = self.irrefutable(&pat).unwrap_or(false);
+        pat
+    }
+
+    /// `type_pattern` without the mark.
+    fn type_pattern_form(
+        &mut self,
+        pattern: &mut Pattern,
+        expected: &Type,
+        env: &mut TypeEnv,
+        span: Span,
+    ) -> Pat {
+        let pattern_span = pattern.span;
+        let res = pattern.res;
+        match &mut pattern.kind {
+            PatternKind::Wildcard => Pat::Wild,
             PatternKind::Ident(name) => {
                 env.define(*name, Scheme::mono(expected.clone()));
+                Pat::Wild
             }
-            PatternKind::Int(_) => {
+            PatternKind::Int(n) => {
                 self.unify(expected, &Type::Int, span);
+                Pat::IntRange(*n, *n)
             }
             PatternKind::Float(_) => {
                 self.unify(expected, &Type::Float, span);
+                Pat::Lit
             }
-            PatternKind::Bool(_) => {
+            PatternKind::Bool(b) => {
                 self.unify(expected, &Type::Bool, span);
+                Pat::Ctor(CtorId::Bool(*b), Vec::new())
             }
             PatternKind::StringLit(..) => {
                 self.unify(expected, &Type::String, span);
+                Pat::Lit
+            }
+            PatternKind::Range(lo, hi) => {
+                self.unify(expected, &Type::Int, span);
+                Pat::IntRange(*lo, *hi)
+            }
+            PatternKind::FloatRange(_, _) => {
+                self.unify(expected, &Type::Float, span);
+                Pat::Lit
             }
             PatternKind::Tuple(pats) => {
-                // BROKEN (round 23 #1): mirror bind_pattern — `()` is the
-                // unit pattern, not a zero-arity tuple. See the comment on
-                // PatternKind::Tuple in bind_pattern for background.
+                // `()` is the unit pattern: the type of the empty tuple
+                // is `Type::Unit`.
                 if pats.is_empty() {
                     self.unify(expected, &Type::Unit, span);
-                } else {
-                    let elem_types: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
-                    let tuple_ty = Type::Tuple(elem_types.clone());
-                    self.unify(expected, &tuple_ty, span);
-
-                    for (p, t) in pats.iter().zip(elem_types.iter()) {
-                        self.check_pattern(p, t, env, span);
-                    }
+                    return Pat::Ctor(CtorId::Tuple, Vec::new());
                 }
+                let elem_types: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
+                self.unify(expected, &Type::Tuple(elem_types.clone()), span);
+                let subs = pats
+                    .iter_mut()
+                    .zip(&elem_types)
+                    .map(|(p, t)| self.type_pattern(p, t, env, span))
+                    .collect();
+                Pat::Ctor(CtorId::Tuple, subs)
             }
-            PatternKind::Constructor {
-                name,
-                args: sub_pats,
-                ..
-            } => {
-                // The variant's constructor is its definition's scheme
-                // (in the builtin environment, whose derived impls are
-                // not resolved, bound as `Enum.Variant`). A name that is
-                // no variant is looked up bare, for the hints below.
-                let scheme = match self.ctor_target(pattern) {
-                    CtorTarget::Silent => {
-                        self.bind_unresolved(pattern, env);
-                        return;
-                    }
-                    CtorTarget::Enum(enum_name, _) => self
-                        .def_scheme(pattern.res, env)
-                        .or_else(|| env.lookup(intern(&format!("{enum_name}.{name}"))).cloned()),
-                    CtorTarget::Unknown => env.lookup(*name).cloned(),
-                };
-                // Look up the constructor type
-                if let Some(scheme) = scheme {
-                    let ctor_ty = self.instantiate(&scheme);
-                    let ctor_ty = self.apply(&ctor_ty);
-
-                    match &ctor_ty {
-                        Type::Fun(params, ret) => {
-                            self.unify(expected, ret, span);
-                            if sub_pats.len() != params.len() {
-                                let expected = params.len();
-                                // Fix A: the arity error is about the
-                                // pattern itself — point at the
-                                // constructor pattern's own span rather
-                                // than the enclosing match scrutinee.
-                                // LATENT (round 26 L2): include the
-                                // constructor name to match bind_pattern's
-                                // wording ("constructor 'Some' expects ..."),
-                                // otherwise the user has no idea which
-                                // alternative arm is wrong when multiple
-                                // constructors appear in a match.
-                                self.error(
-                                    Code::ArityMismatch,
-                                    format!(
-                                        "constructor '{}' expects {} {}, but pattern has {}",
-                                        name,
-                                        expected,
-                                        plural(expected, "field", "fields"),
-                                        sub_pats.len()
-                                    ),
-                                    pattern.span,
-                                );
-                            }
-                            for (i, sp) in sub_pats.iter().enumerate() {
-                                if i < params.len() {
-                                    self.check_pattern(sp, &params[i], env, span);
-                                }
-                            }
-                        }
-                        _ => {
-                            // Zero-arg constructor
-                            if sub_pats.is_empty() {
-                                self.unify(expected, &ctor_ty, span);
-                            } else if self.names_record(pattern.res, *name) {
-                                // GAP (round 23 #4): the user wrote
-                                // `Circle(r)` where `Circle` is a record
-                                // type, not an enum constructor. The old
-                                // error said "expects 0 fields, but
-                                // pattern has N", which is misleading —
-                                // record types DO have fields, they just
-                                // use `Circle { radius: r }` pattern
-                                // syntax. Surface the real issue and
-                                // point at the correct shape.
-                                self.error(Code::InvalidPatternUse,
-                                    format!(
-                                        "'{name}' is a record type; use record-pattern syntax `{name} {{ ... }}` instead of constructor-pattern syntax"
-                                    ),
-                                    pattern.span,
-                                );
-                                for sp in sub_pats {
-                                    let tv = self.fresh_var();
-                                    self.check_pattern(sp, &tv, env, span);
-                                }
-                            } else {
-                                self.error(
-                                    Code::ArityMismatch,
-                                    format!(
-                                        "constructor '{}' expects 0 fields, but pattern has {}",
-                                        name,
-                                        sub_pats.len()
-                                    ),
-                                    pattern.span,
-                                );
-                            }
-                        }
-                    }
-                } else {
-                    // Unknown constructor — report error and bind sub-patterns with fresh vars.
-                    // LATENT (round 26 L3): point the caret at the
-                    // constructor pattern, not the enclosing match
-                    // scrutinee — round-17 F4 threaded pattern.span
-                    // through arity sites but missed this fallback.
-                    self.error(
-                        Code::UndefinedConstructor,
-                        format!("undefined constructor '{name}' in pattern"),
-                        pattern.span,
-                    );
-                    for sp in sub_pats {
-                        let tv = self.fresh_var();
-                        self.check_pattern(sp, &tv, env, span);
-                    }
-                }
+            PatternKind::Constructor { .. } => {
+                self.type_constructor_pattern(pattern, expected, env, span)
             }
             PatternKind::List(pats, rest) => {
                 let elem_ty = self.fresh_var();
                 let list_ty = Type::List(Box::new(elem_ty.clone()));
                 self.unify(expected, &list_ty, span);
-                let resolved_elem = self.apply(&elem_ty);
-                for p in pats {
-                    self.check_pattern(p, &resolved_elem, env, span);
-                }
-                if let Some(rest_pat) = rest {
-                    let rest_ty = Type::List(Box::new(resolved_elem));
-                    self.check_pattern(rest_pat, &rest_ty, env, span);
-                }
+                let elem_ty = self.apply(&elem_ty);
+                let elems: Vec<Pat> = pats
+                    .iter_mut()
+                    .map(|p| self.type_pattern(p, &elem_ty, env, span))
+                    .collect();
+                // A list is `nil` or `cons`: `[a, b]` is
+                // `cons(a, cons(b, nil))`, and `[a, ..rest]` is
+                // `cons(a, rest)`.
+                let tail = match rest {
+                    Some(rest_pat) => {
+                        let rest_ty = Type::List(Box::new(elem_ty));
+                        self.type_pattern(rest_pat, &rest_ty, env, span)
+                    }
+                    None => Pat::nil(),
+                };
+                Pat::list(elems, tail)
             }
             PatternKind::Record { name, fields, .. } => {
-                // BROKEN (round 52): same duplicate-field guard as in
-                // `bind_pattern`'s Record arm — match-arm record patterns
-                // flow through `check_pattern`, so the check has to fire
-                // on both paths.
-                self.check_record_pattern_duplicate_fields(fields, pattern.span);
-                if pattern.res == Some(crate::defs::Res::Error) {
+                self.check_record_pattern_duplicate_fields(fields, pattern_span);
+                if res == Some(crate::defs::Res::Error) {
                     self.bind_unresolved(pattern, env);
-                    return;
+                    return Pat::Wild;
                 }
-                if let Some(rec_name) = name {
-                    let looked = self.named_record(pattern.res, *rec_name, span, true);
-                    if let Some((rec_ref, rec_info, param_ids)) = looked {
-                        let instantiated_fields =
+                // The record type the pattern names, with its fields in
+                // the order of the declaration.
+                let declared = name
+                    .and_then(|rec_name| self.named_record(res, rec_name, span, true))
+                    .map(|(rec_ref, rec_info, param_ids)| {
+                        let fields =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());
-
-                        let rec_ty = Type::Record(rec_ref, instantiated_fields.clone());
-                        self.unify(expected, &rec_ty, span);
-
-                        for (field_name, _, sub_pat) in fields {
-                            if let Some((_, ft)) =
-                                instantiated_fields.iter().find(|(n, _)| n == field_name)
-                            {
-                                if let Some(sp) = sub_pat {
-                                    self.check_pattern(sp, ft, env, span);
-                                } else {
-                                    env.define(*field_name, Scheme::mono(ft.clone()));
-                                }
-                            } else {
-                                // BROKEN-3: Reject unknown field names in
-                                // match record patterns at compile time.
-                                // GAP (round 26 L5): append a did-you-mean
-                                // hint when a near edit-distance field
-                                // exists on the record.
-                                let base =
-                                    format!("record '{rec_name}' has no field '{field_name}'");
-                                self.error_help(
-                                    Code::NoSuchField,
-                                    format_record_field_suggestion(
-                                        base,
-                                        *field_name,
-                                        &instantiated_fields,
-                                    ),
-                                    span,
-                                );
-                                if let Some(sp) = sub_pat {
-                                    let tv = self.fresh_var();
-                                    self.check_pattern(sp, &tv, env, span);
+                        self.unify(expected, &Type::Record(rec_ref, fields.clone()), span);
+                        (rec_ref, fields)
+                    });
+                let mut subs: Vec<(Symbol, Pat)> = Vec::with_capacity(fields.len());
+                for (field_name, _, sub_pat) in fields.iter_mut() {
+                    let field_ty = match &declared {
+                        Some((rec_ref, declared_fields)) => {
+                            match declared_fields.iter().find(|(n, _)| n == field_name) {
+                                Some((_, ft)) => ft.clone(),
+                                None => {
+                                    let base =
+                                        format!("record '{rec_ref}' has no field '{field_name}'");
+                                    self.error_help(
+                                        Code::NoSuchField,
+                                        format_record_field_suggestion(
+                                            base,
+                                            *field_name,
+                                            declared_fields,
+                                        ),
+                                        span,
+                                    );
+                                    self.fresh_var()
                                 }
                             }
                         }
-                    } else {
-                        for (_, _, sub_pat) in fields {
-                            if let Some(sp) = sub_pat {
-                                let tv = self.fresh_var();
-                                self.check_pattern(sp, &tv, env, span);
-                            }
+                        None => self.fresh_var(),
+                    };
+                    let sub = match sub_pat {
+                        Some(sp) => self.type_pattern(sp, &field_ty, env, span),
+                        None => {
+                            // Shorthand `{ x }` binds `x`.
+                            env.define(*field_name, Scheme::mono(field_ty));
+                            Pat::Wild
                         }
-                    }
-                } else {
-                    for (field_name, _, sub_pat) in fields {
-                        let tv = self.fresh_var();
-                        if let Some(sp) = sub_pat {
-                            self.check_pattern(sp, &tv, env, span);
-                        } else {
-                            env.define(*field_name, Scheme::mono(tv));
-                        }
-                    }
+                    };
+                    subs.push((*field_name, sub));
                 }
+                let (names, subs) = subs.into_iter().unzip();
+                Pat::Ctor(CtorId::Record(names), subs)
             }
             PatternKind::Or(alts) => {
-                // Validate that all alternatives bind the same set of variables.
-                if alts.len() >= 2 {
+                // All alternatives bind the same names.
+                if let Some((first, others)) = alts.split_first() {
                     let first_vars: BTreeSet<Symbol> =
-                        collect_pattern_vars(&alts[0]).into_iter().collect();
-                    for (i, alt) in alts.iter().enumerate().skip(1) {
+                        collect_pattern_vars(first).into_iter().collect();
+                    for (i, alt) in others.iter().enumerate() {
                         let alt_vars: BTreeSet<Symbol> =
                             collect_pattern_vars(alt).into_iter().collect();
                         if first_vars != alt_vars {
-                            // BROKEN (round 26 B2): `{:?}` on a BTreeSet<Symbol>
-                            // leaks `Symbol(N: "x")` debug output into a
-                            // user-facing diagnostic. Render the sets as
-                            // sorted comma-separated lists of resolved names.
                             self.error(
                                 Code::InvalidPatternUse,
                                 format!(
                                     "or-pattern alternatives must bind the same variables; \
                                      first alternative binds {}, alternative {} binds {}",
                                     format_symbol_set(&first_vars),
-                                    i + 1,
+                                    i + 2,
                                     format_symbol_set(&alt_vars)
                                 ),
                                 span,
@@ -1264,63 +659,50 @@ impl TypeChecker {
                         }
                     }
                 }
-                // Check each alternative in a frame of its own so
-                // we can collect the per-alternative type for every variable
-                // the or-pattern binds, then unify those types pairwise.
-                let mut per_alt_types: Vec<HashMap<Symbol, Type>> = Vec::with_capacity(alts.len());
-                for alt in alts {
+                // Each alternative is checked in a frame of its own, and
+                // every name must have one type in all of them
+                // (`Left(x) | Right(x)` with an `Int` on one side and a
+                // `String` on the other is rejected). The names of the
+                // first alternative are the ones the or-pattern binds.
+                let mut subs = Vec::with_capacity(alts.len());
+                let mut bound: Option<Vec<(Symbol, Scheme)>> = None;
+                for alt in alts.iter_mut() {
                     env.push();
-                    self.check_pattern(alt, expected, env, span);
-                    let names: HashMap<Symbol, Type> = env
-                        .pop()
-                        .into_iter()
-                        .map(|(name, scheme)| (name, scheme.ty))
-                        .collect();
-                    per_alt_types.push(names);
-                }
-                if per_alt_types.len() >= 2 {
-                    let (first, rest) = per_alt_types.split_first().unwrap();
-                    for other in rest {
-                        for (name, first_ty) in first {
-                            if let Some(other_ty) = other.get(name) {
-                                let a = self.apply(first_ty);
-                                let b = self.apply(other_ty);
-                                if a != b {
-                                    let err_count = self.errors.len();
-                                    self.unify(&a, &b, span);
-                                    if self.errors.len() > err_count {
-                                        self.errors.truncate(err_count);
-                                        self.error(Code::TypeMismatch,
-                                            format!(
-                                                "or-pattern alternatives bind '{}' to conflicting types: {} vs {}",
-                                                name, a, b
-                                            ),
-                                            span,
-                                        );
-                                    }
-                                }
-                            }
+                    subs.push(self.type_pattern(alt, expected, env, span));
+                    let names = env.pop();
+                    let Some(first) = &bound else {
+                        bound = Some(names);
+                        continue;
+                    };
+                    for (name, first_scheme) in first {
+                        let Some((_, scheme)) = names.iter().find(|(n, _)| n == name) else {
+                            continue;
+                        };
+                        let a = self.apply(&first_scheme.ty);
+                        let b = self.apply(&scheme.ty);
+                        if self.unify_types(&a, &b).is_err() {
+                            self.error(
+                                Code::TypeMismatch,
+                                format!(
+                                    "or-pattern alternatives bind '{name}' to conflicting \
+                                     types: {a} vs {b}"
+                                ),
+                                span,
+                            );
                         }
                     }
                 }
-                if let Some(first_alt) = alts.first() {
-                    self.check_pattern(first_alt, expected, env, span);
+                for (name, scheme) in bound.unwrap_or_default() {
+                    env.define(name, scheme);
                 }
-            }
-            PatternKind::Range(_, _) => {
-                self.unify(expected, &Type::Int, span);
-            }
-            PatternKind::FloatRange(_, _) => {
-                self.unify(expected, &Type::Float, span);
+                Pat::Or(subs)
             }
             PatternKind::Map(entries) => {
-                // L3: Map patterns are restricted to String keys (parser
-                // invariant — see PatternKind::Map in src/ast.rs). Give a
-                // targeted error if the scrutinee has a non-String key type.
+                // A map pattern's keys are string literals. A scrutinee
+                // with another key type gets an error that says so.
                 let val_ty = self.fresh_var();
-                let resolved_scrutinee = self.apply(expected);
-                if let Type::Map(existing_key, _) = &resolved_scrutinee {
-                    let existing_key = self.apply(existing_key);
+                if let Type::Map(existing_key, _) = self.apply(expected) {
+                    let existing_key = self.apply(&existing_key);
                     if !matches!(existing_key, Type::String | Type::Var(_) | Type::Error) {
                         self.error(Code::InvalidPatternUse,
                             format!(
@@ -1330,73 +712,234 @@ impl TypeChecker {
                         );
                     }
                 }
-                let key_ty = Type::String;
-                let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
+                let map_ty = Type::Map(Box::new(Type::String), Box::new(val_ty.clone()));
                 self.unify(expected, &map_ty, span);
-                let resolved_val = self.apply(&val_ty);
-                for (_key, pat) in entries {
-                    self.check_pattern(pat, &resolved_val, env, span);
+                let val_ty = self.apply(&val_ty);
+                for (_key, pat) in entries.iter_mut() {
+                    self.type_pattern(pat, &val_ty, env, span);
                 }
+                // A key may be missing whatever the value patterns are.
+                Pat::Lit
             }
             PatternKind::Pin(name) => {
-                // Look up the pinned variable in the parent (pre-match) scope,
-                // falling back to current scope for when/let contexts.
-                let found = env
-                    .parent
-                    .as_ref()
-                    .and_then(|p| p.lookup(*name).cloned())
-                    .or_else(|| env.lookup(*name).cloned());
-                if let Some(scheme) = found {
+                // A pin binds nothing: it compares with the value of a
+                // name in scope.
+                if let Some(scheme) = env.lookup(*name).cloned() {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(expected, &pinned_ty, span);
                 } else {
-                    // LATENT (round 26 L4): point the caret at the pin
-                    // pattern, not the enclosing match scrutinee.
                     let msg = format_undefined_variable_message(*name, env, "in pin pattern");
-                    self.error_help(Code::UndefinedVariable, msg, pattern.span);
+                    self.error_help(Code::UndefinedVariable, msg, pattern_span);
                 }
+                Pat::Lit
             }
             PatternKind::AnonRecord { fields, rest } => {
+                // The pattern's type is an open record with a fresh type
+                // for every field it names. The tail is open with or
+                // without a `...rest` binding: without one the other
+                // fields are just not named. Unification widens a nominal
+                // record, so `{name: n, ...rest}` matches a
+                // `type Person { ... }` value too.
                 use std::collections::BTreeMap;
-                let mut field_tys: BTreeMap<Symbol, Type> = BTreeMap::new();
-                for (fname, _, _) in fields.iter() {
-                    field_tys.insert(*fname, self.fresh_var());
-                }
+                let field_tys: BTreeMap<Symbol, Type> = fields
+                    .iter()
+                    .map(|(fname, _, _)| (*fname, self.fresh_var()))
+                    .collect();
                 let row_var = self.fresh_tyvar_id();
                 let anon_ty = Type::AnonRecord {
                     fields: field_tys.clone(),
                     tail: RowTail::Var(row_var),
                 };
                 self.unify(expected, &anon_ty, span);
-                let resolved = self.apply(&anon_ty);
-                let resolved_fields: BTreeMap<Symbol, Type> =
-                    if let Type::AnonRecord { fields: rf, .. } = &resolved {
-                        rf.clone()
-                    } else {
-                        field_tys.clone()
-                    };
-                for (fname, _, sub) in fields.iter() {
-                    let ft = resolved_fields
-                        .get(fname)
-                        .cloned()
-                        .unwrap_or_else(|| self.fresh_var());
-                    let ft = self.apply(&ft);
-                    match sub {
-                        Some(p) => self.check_pattern(p, &ft, env, span),
+                let mut subs: BTreeMap<Symbol, Pat> = BTreeMap::new();
+                for (fname, _, sub) in fields.iter_mut() {
+                    let ft = self.apply(&field_tys[fname]);
+                    let sub = match sub {
+                        Some(p) => self.type_pattern(p, &ft, env, span),
                         None => {
+                            // Shorthand `{name}` binds `name`.
                             env.define(*fname, Scheme::mono(ft));
+                            Pat::Wild
                         }
-                    }
+                    };
+                    subs.insert(*fname, sub);
                 }
                 if let Some((rest_name, _)) = rest {
-                    let rest_ty = Type::AnonRecord {
+                    // The rest is a record of the fields the row
+                    // variable stands for.
+                    let rest_ty = self.apply(&Type::AnonRecord {
                         fields: BTreeMap::new(),
                         tail: RowTail::Var(row_var),
-                    };
-                    let rest_ty = self.apply(&rest_ty);
+                    });
                     env.define(*rest_name, Scheme::mono(rest_ty));
                 }
+                let (names, subs) = subs.into_iter().unzip();
+                Pat::Ctor(CtorId::Record(names), subs)
             }
         }
+    }
+
+    /// `type_pattern_form` for a constructor pattern.
+    fn type_constructor_pattern(
+        &mut self,
+        pattern: &mut Pattern,
+        expected: &Type,
+        env: &mut TypeEnv,
+        span: Span,
+    ) -> Pat {
+        let target = self.ctor_target(pattern);
+        if matches!(target, CtorTarget::Silent) {
+            self.bind_unresolved(pattern, env);
+            return Pat::Wild;
+        }
+        let pattern_span = pattern.span;
+        let res = pattern.res;
+        let PatternKind::Constructor { name, args, .. } = &mut pattern.kind else {
+            return Pat::Wild;
+        };
+        let name = *name;
+        let CtorTarget::Enum(enum_ref, enum_info) = target else {
+            // No variant of that name. A record type's name written as a
+            // constructor gets the record syntax pointed out.
+            if self.names_record(res, name) {
+                self.error(Code::InvalidPatternUse,
+                    format!(
+                        "'{name}' is a record type; use record-pattern syntax `{name} {{ ... }}` instead of constructor-pattern syntax"
+                    ),
+                    pattern_span,
+                );
+            } else {
+                self.error(
+                    Code::UndefinedConstructor,
+                    format!("undefined constructor '{name}' in pattern"),
+                    pattern_span,
+                );
+            }
+            for arg in args.iter_mut() {
+                let tv = self.fresh_var();
+                self.type_pattern(arg, &tv, env, span);
+            }
+            return Pat::Wild;
+        };
+        let Some(index) = enum_info.variants.iter().position(|v| v.name == name) else {
+            return Pat::Wild;
+        };
+        let field_types = &enum_info.variants[index].field_types;
+        if args.len() != field_types.len() {
+            let expected = field_types.len();
+            self.error(
+                Code::ArityMismatch,
+                format!(
+                    "constructor '{}' expects {} {}, but pattern has {}",
+                    name,
+                    expected,
+                    plural(expected, "field", "fields"),
+                    args.len()
+                ),
+                pattern_span,
+            );
+        }
+        // The value is of the enum, with the type arguments it already
+        // has when it is known to be of it: `let Ok(x) = 42` is a type
+        // error.
+        let type_args: Vec<Type> = match self.apply(expected) {
+            Type::Generic(n, args) if n == enum_ref => args,
+            _ => enum_info.params.iter().map(|_| self.fresh_var()).collect(),
+        };
+        self.unify(expected, &Type::Generic(enum_ref, type_args.clone()), span);
+        let subs = args
+            .iter_mut()
+            .enumerate()
+            .map(|(i, arg)| {
+                let field_ty = match field_types.get(i) {
+                    Some(ft) => substitute_enum_params(ft, &enum_info.param_var_ids, &type_args),
+                    None => self.fresh_var(),
+                };
+                self.type_pattern(arg, &field_ty, env, span)
+            })
+            .collect();
+        Pat::Ctor(CtorId::Variant(enum_ref, index), subs)
+    }
+}
+
+/// The patterns directly inside `pattern`, in source order.
+fn sub_patterns(pattern: &Pattern) -> Vec<&Pattern> {
+    match &pattern.kind {
+        PatternKind::Tuple(ps) | PatternKind::Or(ps) => ps.iter().collect(),
+        PatternKind::Constructor { args, .. } => args.iter().collect(),
+        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            fields.iter().filter_map(|(_, _, p)| p.as_ref()).collect()
+        }
+        PatternKind::List(elems, rest) => elems.iter().chain(rest.as_deref()).collect(),
+        PatternKind::Map(entries) => entries.iter().map(|(_, p)| p).collect(),
+        PatternKind::Wildcard
+        | PatternKind::Ident(_)
+        | PatternKind::Int(_)
+        | PatternKind::Float(_)
+        | PatternKind::Bool(_)
+        | PatternKind::StringLit(..)
+        | PatternKind::Range(..)
+        | PatternKind::FloatRange(..)
+        | PatternKind::Pin(_) => Vec::new(),
+    }
+}
+
+/// Collect the set of variable names bound by a pattern.
+pub(in crate::typechecker) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
+    match &pat.kind {
+        PatternKind::Ident(name) => vec![*name],
+        PatternKind::Tuple(pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
+        PatternKind::List(pats, rest) => {
+            let mut vars: Vec<Symbol> = pats.iter().flat_map(collect_pattern_vars).collect();
+            if let Some(rest_pat) = rest {
+                vars.extend(collect_pattern_vars(rest_pat));
+            }
+            vars
+        }
+        PatternKind::Constructor { args: pats, .. } => {
+            pats.iter().flat_map(collect_pattern_vars).collect()
+        }
+        PatternKind::Record { fields, .. } => {
+            let mut vars: Vec<Symbol> = Vec::new();
+            for (field_name, _, sub_pat) in fields {
+                if let Some(p) = sub_pat {
+                    vars.extend(collect_pattern_vars(p));
+                } else {
+                    // Shorthand field `{ x }` binds `x`
+                    vars.push(*field_name);
+                }
+            }
+            vars
+        }
+        PatternKind::AnonRecord { fields, rest } => {
+            let mut vars: Vec<Symbol> = Vec::new();
+            for (field_name, _, sub_pat) in fields {
+                if let Some(p) = sub_pat {
+                    vars.extend(collect_pattern_vars(p));
+                } else {
+                    vars.push(*field_name);
+                }
+            }
+            if let Some((r, _)) = rest {
+                vars.push(*r);
+            }
+            vars
+        }
+        PatternKind::Or(alts) => {
+            // Return vars from first alt (they should all be the same after validation)
+            alts.first().map(collect_pattern_vars).unwrap_or_default()
+        }
+        PatternKind::Map(entries) => entries
+            .iter()
+            .flat_map(|(_, p)| collect_pattern_vars(p))
+            .collect(),
+        PatternKind::Wildcard
+        | PatternKind::Int(_)
+        | PatternKind::Float(_)
+        | PatternKind::Bool(_)
+        | PatternKind::StringLit(..)
+        | PatternKind::Range(_, _)
+        | PatternKind::FloatRange(_, _)
+        | PatternKind::Pin(_) => vec![],
     }
 }

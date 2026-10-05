@@ -1,0 +1,11 @@
+-- Two arms with an or-pattern in each of 20 columns and a `Bool` in the
+-- last are exhaustive.
+type T { A, B }
+fn main() {
+  let v = (B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, B, false)
+  let r = match v {
+    (A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, true) -> "true"
+    (A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, A | B, false) -> "false"
+  }
+  println(r)
+}

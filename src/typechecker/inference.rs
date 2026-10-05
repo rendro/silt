@@ -786,14 +786,14 @@ impl TypeChecker {
         // silently shadows the first. See `check_fn_params_duplicate_bindings`.
         self.check_fn_params_duplicate_bindings(&f.params);
         env.push();
-        for (i, param) in f.params.iter().enumerate() {
+        for (i, param) in f.params.iter_mut().enumerate() {
             if let Some(ty) = param_types.get(i) {
-                self.bind_irrefutable_pattern(
-                    &param.pattern,
+                self.check_pattern(
+                    &mut param.pattern,
                     ty,
                     env,
                     f.span,
-                    BindingSite::FnParam,
+                    PatternMode::Binding(BindingSite::FnParam),
                 );
             }
         }
@@ -2612,7 +2612,7 @@ impl TypeChecker {
                 // `fn f(a, a)` is.
                 self.check_fn_params_duplicate_bindings(params);
                 let param_types: Vec<Type> = params
-                    .iter()
+                    .iter_mut()
                     .map(|p| {
                         let ty = if let Some(te) = &p.ty {
                             // B2: annotation arity errors carry the
@@ -2624,12 +2624,12 @@ impl TypeChecker {
                         } else {
                             self.fresh_var()
                         };
-                        self.bind_irrefutable_pattern(
-                            &p.pattern,
+                        self.check_pattern(
+                            &mut p.pattern,
                             &ty,
                             env,
                             span,
-                            BindingSite::ClosureParam,
+                            PatternMode::Binding(BindingSite::ClosureParam),
                         );
                         ty
                     })
@@ -3130,6 +3130,9 @@ impl TypeChecker {
                             bool,
                         )> = std::collections::HashSet::new();
                         let mut any_pattern_mismatch = false;
+                        // What each arm's pattern tests, for the
+                        // exhaustiveness check.
+                        let mut arm_pats = Vec::with_capacity(arms.len());
                         // A match diverges when it has arms and every
                         // arm diverges. `unify` leaves `result_ty`
                         // unbound against `Never`, so the arms are
@@ -3149,7 +3152,13 @@ impl TypeChecker {
                                 any_pattern_mismatch = true;
                             }
                             let pat_err_count = self.errors.len();
-                            self.check_pattern(&arm.pattern, &scrutinee_ty, env, scrutinee_span);
+                            arm_pats.push(self.check_pattern(
+                                &mut arm.pattern,
+                                &scrutinee_ty,
+                                env,
+                                scrutinee_span,
+                                PatternMode::Arm,
+                            ));
                             if self.errors.len() > pat_err_count {
                                 let new_diags: Vec<Diagnostic> =
                                     self.errors.drain(pat_err_count..).collect();
@@ -3195,7 +3204,12 @@ impl TypeChecker {
                         // So is a scrutinee of a type already reported.
                         let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
                         if !any_pattern_mismatch && resolved_scrutinee_ty != Type::Error {
-                            self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee_span);
+                            self.check_exhaustiveness(
+                                arms,
+                                &arm_pats,
+                                &resolved_scrutinee_ty,
+                                scrutinee_span,
+                            );
                         }
 
                         if every_arm_diverges {
@@ -3567,12 +3581,12 @@ impl TypeChecker {
                         self.check_pattern_duplicate_bindings(pattern);
                         // A `let` has no failure branch: the pattern
                         // must match every value of the bound type.
-                        self.bind_irrefutable_pattern(
+                        self.check_pattern(
                             pattern,
                             &val_ty,
                             env,
                             value_span,
-                            BindingSite::Let,
+                            PatternMode::Binding(BindingSite::Let),
                         );
                         // Each name the pattern binds to a part of a value
                         // is general as the part is.
@@ -3613,13 +3627,11 @@ impl TypeChecker {
                 }
 
                 // Bind the pattern in the current scope (type narrowing).
-                // bind_pattern handles all pattern kinds including constructors
-                // (enum lookup, param substitution, recursive sub-pattern binding).
                 //
                 // Soundness: reject duplicate binders before defining so
                 // `when let (a, a) = expr` doesn't silently shadow.
                 self.check_pattern_duplicate_bindings(pattern);
-                self.bind_pattern(pattern, &expr_ty, env, expr_span);
+                self.check_pattern(pattern, &expr_ty, env, expr_span, PatternMode::Arm);
 
                 Type::Unit
             }
