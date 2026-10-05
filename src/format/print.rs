@@ -1751,8 +1751,9 @@ impl Printer<'_> {
     fn alternatives(&mut self, alts: &[Pattern], docs: &mut Vec<Doc>) {
         for (i, alt) in alts.iter().enumerate() {
             if i > 0 {
-                // A line may break behind `|`, not in front.
-                docs.extend([space(), self.tok(Token::Bar), Doc::Line]);
+                // A line breaks in front of `|`, as in front of an
+                // operator.
+                docs.extend([Doc::Line, self.tok(Token::Bar), space()]);
             }
             let PatternKind::Or(inner) = &alt.kind else {
                 docs.push(self.pattern(alt));

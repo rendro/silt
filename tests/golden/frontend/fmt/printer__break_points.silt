@@ -2,8 +2,8 @@
 -- A line that does not fit breaks where the grammar allows a line break:
 -- in front of each `.` of a chain of two method calls or more, behind
 -- the commas of a closure's parameters, behind each `+` of a list of
--- bounds, behind `|` between the alternatives of a pattern (in front of
--- `|` and of `+` the grammar allows none).
+-- bounds (in front of `+` the grammar allows none), in front of `|`
+-- between the alternatives of a pattern.
 trait Describe(a): FirstSuperTraitWithALongName(a) + SecondSuperTraitWithALongName + ThirdSuperTraitWithALongName {
   fn describe(self) -> String
 }

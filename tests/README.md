@@ -62,8 +62,9 @@ other two run today's `silt fmt` and are marked `Expect::KnownFailing`:
 it refuses many of the mutants, so those tests report the count and
 pass; they go when the old formatter goes (stage 8 step A3).
 
-The runner also checks that the comment lines that start a file stay
-its first lines: the golden harness reads a case's directives there.
+The runner also checks that the comments that start a file, up to the
+first empty line or declaration, are the first bytes of the result: the
+golden harness reads a case's directives there.
 
 The exit test of the stage is the full sweep of the new printer, with
 the audit's mutants and the fuzz corpora added from outside the tree,

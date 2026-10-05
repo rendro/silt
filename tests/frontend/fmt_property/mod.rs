@@ -9,7 +9,7 @@
 //!   3. produced text that lexes and parses and holds every comment of
 //!      the input as often as the input holds it (checked here with the
 //!      lexer, apart from the formatter's own check),
-//!   4. left the comment lines that start the file where they are, and
+//!   4. left the comments that start the file as its first bytes, and
 //!   5. is idempotent: formatting the result changes nothing.
 //!
 //! Inputs are the examples, the `silt` snippets of the docs, the golden
@@ -463,17 +463,38 @@ fn parsed_comments(text: &str) -> Option<Vec<String>> {
     Some(comments)
 }
 
-/// The comment lines that start `text`, up to the first line that is
-/// not a `--` comment. The golden harness reads a case's directives from
-/// them, and a reader the file's purpose: they stay where they are.
-fn leading_comment_lines(text: &str) -> Vec<&str> {
-    text.strip_prefix('\u{feff}')
-        .unwrap_or(text)
-        .lines()
-        .map(str::trim)
-        .skip_while(|line| line.is_empty())
-        .take_while(|line| line.starts_with("--"))
-        .collect()
+/// The header of `text` as the formatter writes it: the comments that
+/// start the file, `--` and `{- -}` alike, up to the first empty line or
+/// the first declaration, one to a line, without the white space behind
+/// them and with line feeds for their line ends. The golden harness reads
+/// a case's directives from it, and a reader the file's purpose: the
+/// result starts with exactly these bytes. Empty when `text` does not
+/// lex or starts with no comment.
+fn header(text: &str) -> String {
+    let Ok(lexed) = Lexer::new(FileId::default(), text).tokenize() else {
+        return String::new();
+    };
+    let Some(first) = lexed.tokens.iter().find(|tok| tok.kind != Token::Newline) else {
+        return String::new();
+    };
+    let leading = &lexed.comments[..first.comments.end as usize];
+    let mut header = String::new();
+    for (i, comment) in leading.iter().enumerate() {
+        if i > 0 && comment.newlines_before >= 2 {
+            break;
+        }
+        // A `{- -}` comment with the first token behind it on its line
+        // belongs to that token.
+        let on_token_line = first.kind != Token::Eof
+            && first.newlines_before == 0
+            && leading[i + 1..].iter().all(|c| c.newlines_before == 0);
+        if on_token_line && !comment.text(text).starts_with("--") {
+            break;
+        }
+        header.push_str(&comment.text(text).trim_end().replace("\r\n", "\n"));
+        header.push('\n');
+    }
+    header
 }
 
 /// The first line of `text`, shortened.
@@ -505,10 +526,8 @@ fn check(text: &str, format: Formatter) -> Result<bool, (&'static str, String)> 
         };
         return Err(("comments changed", detail));
     }
-    // (Where the file starts with an import that has a comment above
-    // it, the result starts with whichever import is the first then,
-    // and its comment: lines may follow the header, none may leave it.)
-    if !leading_comment_lines(&first).starts_with(&leading_comment_lines(text)) {
+    let result = first.strip_prefix('\u{feff}').unwrap_or(&first);
+    if !result.starts_with(&header(text)) {
         return Err(("header changed", excerpt(&first)));
     }
     match format(&first) {

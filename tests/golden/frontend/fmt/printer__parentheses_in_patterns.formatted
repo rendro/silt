@@ -16,10 +16,10 @@ fn main() {
     _ -> println("other")
   }
   match b {
-    1 |
-      2 |
-      3 | -- a comment breaks the one list they are
-      4 -> println("small")
+    1
+      | 2
+      | 3 -- a comment breaks the one list they are
+      | 4 -> println("small")
     _ -> println("other")
   }
   let f = { (Ok(v) | Err(v)) -> v }
