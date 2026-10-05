@@ -72,36 +72,76 @@ pub fn format(file: FileId, source: &str) -> Result<String, Error> {
 
 /// The stack `format` works on. The printer and the oracle recurse over
 /// the syntax tree, as the checker and the compiler do, and the tree of
-/// a chain of 2,000 operators is 2,000 levels deep: `format` runs on a
+/// a chain of 2,000 operators is 2,000 levels deep: `format` works on a
 /// thread of its own with the reserve `silt` gives its main thread, so
 /// that it does not depend on the stack of its caller (a language
 /// server's request thread, a test thread of 1 MiB on Windows). The
 /// reserve is address space; only the pages that are touched are
 /// committed.
+#[cfg(not(target_arch = "wasm32"))]
 const STACK: usize = 256 << 20;
 
 /// `format`, with `tamper` applied to the printer's result before the
 /// oracle sees it: the way to test that a wrong result is refused and
 /// not returned.
 #[doc(hidden)]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn format_with(
     file: FileId,
     source: &str,
-    tamper: impl FnOnce(String) -> String + Send,
+    tamper: impl FnOnce(String) -> String + Send + 'static,
 ) -> Result<String, Error> {
-    // The tree and its symbols stay on the thread (the interner is per
-    // thread); text and diagnostics, which hold none, come back.
-    std::thread::scope(|scope| {
-        let worker = std::thread::Builder::new()
-            .name("silt-format".into())
-            .stack_size(STACK)
-            .spawn_scoped(scope, || format_here(file, source, tamper))
-            .expect("spawning the formatter's thread");
-        match worker.join() {
-            Ok(result) => result,
-            Err(payload) => std::panic::resume_unwind(payload),
-        }
-    })
+    use std::sync::mpsc;
+
+    type Job = Box<dyn FnOnce() + Send>;
+
+    /// The thread that formats for the thread that owns this. Starting
+    /// one costs several times what formatting a file does, so it is
+    /// kept; it ends when its owner does.
+    struct Worker(mpsc::Sender<Job>);
+
+    thread_local! {
+        static WORKER: Worker = {
+            let (jobs, queue) = mpsc::channel::<Job>();
+            std::thread::Builder::new()
+                .name("silt-format".into())
+                .stack_size(STACK)
+                .spawn(move || {
+                    for job in queue {
+                        job();
+                    }
+                })
+                .expect("spawning the formatter's thread");
+            Worker(jobs)
+        };
+    }
+
+    // The tree and its symbols stay on that thread (the interner is per
+    // thread, and each run starts with an empty one); text and
+    // diagnostics, which hold no symbol, come back.
+    let (reply, result) = mpsc::sync_channel(1);
+    let source = source.to_string();
+    let job: Job = Box::new(move || {
+        crate::intern::reset();
+        let run = std::panic::AssertUnwindSafe(|| format_here(file, &source, tamper));
+        let _ = reply.send(std::panic::catch_unwind(run));
+    });
+    WORKER.with(|worker| worker.0.send(job).expect("the formatter's thread is gone"));
+    match result.recv().expect("the formatter's thread is gone") {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// On wasm32 there are no threads to give a stack to.
+#[doc(hidden)]
+#[cfg(target_arch = "wasm32")]
+pub fn format_with(
+    file: FileId,
+    source: &str,
+    tamper: impl FnOnce(String) -> String + Send + 'static,
+) -> Result<String, Error> {
+    format_here(file, source, tamper)
 }
 
 fn format_here(
@@ -237,5 +277,16 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn a_panic_of_the_printer_is_the_caller_s_and_the_next_text_is_formatted() {
+        let source = "fn main() {\n  1\n}\n";
+        let panicked = std::panic::catch_unwind(|| {
+            format_with(FileId::default(), source, |_| panic!("a defect"))
+        });
+        let payload = panicked.expect_err("the panic is passed on");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"a defect"));
+        assert_eq!(fmt(source), source);
     }
 }
