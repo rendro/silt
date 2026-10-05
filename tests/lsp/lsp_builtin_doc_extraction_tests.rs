@@ -1,11 +1,7 @@
-//! Integration tests for round 62 phase-2 LSP doc extraction:
-//! every `docs/stdlib/*.md` file's prose has been inlined into
-//! `src/typechecker/builtins/docs.rs` as `*_MD` raw-string constants
-//! and attached to the corresponding `env.bindings` entries via
-//! `attach_module_docs` / `attach_module_overview` /
-//! `attach_module_docs_filtered`. The LSP `Server` ingests these
-//! through `typechecker::builtin_docs()` and surfaces them via
-//! hover, completion, and signature-help.
+//! Integration tests for the stdlib docs an editor shows: the builtin
+//! registry cuts each builtin name's doc from the pages of
+//! `docs/stdlib/` (`registry::docs::builtin_docs`), and the LSP
+//! `Server` surfaces them via hover, completion, and signature-help.
 //!
 //! These tests spawn the compiled `silt lsp` binary as a subprocess
 //! and exercise the LSP request handlers end-to-end. Helpers are
@@ -182,7 +178,7 @@ fn hover_on_channel_message_returns_its_own_section() {
 /// `*_MD` blob fails this test.
 #[test]
 fn every_authoritative_builtin_has_a_non_empty_doc_via_lsp_pipeline() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let sigs = silt::typechecker::builtin_type_signatures();
 
     let mut missing: Vec<String> = Vec::new();
@@ -197,13 +193,8 @@ fn every_authoritative_builtin_has_a_non_empty_doc_via_lsp_pipeline() {
         missing.sort();
         panic!(
             "{} authoritative builtin name(s) lack a non-empty doc \
-             string: {:?}\n\nThe LSP `Server` populates its \
-             `builtin_docs` cache from `typechecker::builtin_docs()` \
-             at startup. Each entry feeds hover / completion / \
-             signature-help. Adding a new builtin without inlining \
-             its prose into the corresponding `super::docs::*_MD` \
-             blob in `src/typechecker/builtins/docs.rs` (per round \
-             62 phase-2) fails this test.",
+             string: {:?}\n\nEach entry of `registry::docs::builtin_docs()` \
+             feeds hover / completion / signature-help.",
             missing.len(),
             missing,
         );

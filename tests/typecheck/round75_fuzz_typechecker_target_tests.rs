@@ -121,8 +121,7 @@ fn fuzz_typechecker_corpus_dir_has_seeds() {
 // Rather than grep for `fuzz_typechecker` by name (which would rot the
 // moment a sixth target lands), derive the authoritative target list
 // from fuzz/Cargo.toml's `[[bin]]` entries and assert every registered
-// target appears in every harness surface. Same self-maintaining
-// philosophy as tests/meta/comprehensive_module_function_parity_tests.rs:
+// target appears in every harness surface:
 // adding a target without wiring it — or de-wiring an existing one —
 // fails this test with a message naming the missing surface.
 

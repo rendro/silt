@@ -5,8 +5,8 @@
 //! editor-grammar tests, etc.) historically drifted whenever a new
 //! built-in type was added. This module is the single place to add or
 //! remove a built-in type name; every consumer derives from
-//! [`BUILTIN_TYPES`] (or, for editor-grammar text files, is parity-locked
-//! against it via `tests/meta/builtin_types_authoritative_parity_tests.rs`).
+//! [`BUILTIN_TYPES`] (or, for editor-grammar text files, is locked
+//! against it by `tests/meta/editor_grammar_primitives_tests.rs`).
 //!
 //! ## Adding a new built-in type
 //!

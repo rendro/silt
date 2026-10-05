@@ -53,7 +53,7 @@ fn partial_eq_handle_different_ids() {
 
 fn mk_closure(name: &str) -> Arc<VmClosure> {
     Arc::new(VmClosure {
-        function: Arc::new(Function::new(name.to_string(), 0)),
+        function: Arc::new(Function::returning_unit(name.to_string(), 0)),
         upvalues: Vec::new(),
     })
 }

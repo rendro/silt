@@ -302,9 +302,9 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             // formats with a fixed number of decimal places; the 1-arg form
             // uses the shortest round-trippable representation (Rust's
             // default `Display` for `f64`). The typechecker signature
-            // declares the `decimals` parameter optional
-            // (`with_optional_last_param` in
-            // `typechecker/builtins/float.rs`), so both forms reach here.
+            // declares the `decimals` parameter optional (`optional_last`
+            // on its row in the builtin registry), so both forms reach
+            // here.
             if args.is_empty() || args.len() > 2 {
                 return Err(VmError::new(
                     "float.to_string takes 1 or 2 arguments".into(),

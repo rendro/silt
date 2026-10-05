@@ -1,7 +1,7 @@
 //! Regression tests for round-26 audit findings L8 and G5.
 //!
 //! L8 — `module::builtin_module_constants` must enumerate every constant
-//!      registered on a builtin module in `src/typechecker/builtins.rs`.
+//!      of a builtin module (the constant rows of the builtin registry).
 //!      Before the fix, it only listed `math.{pi,e}` and silently omitted
 //!      all four `float.*` constants (`max_value`, `min_value`, `epsilon`,
 //!      `min_positive`).
@@ -48,8 +48,7 @@ fn math_constants_are_listed() {
 
 #[test]
 fn float_constants_are_listed() {
-    // L8 fix: all four float constants registered by
-    // `TypeChecker::register_float_builtins` in src/typechecker/builtins.rs
+    // L8 fix: all four float constants of the builtin registry
     // must appear in `builtin_module_constants("float")`. Prior to the fix
     // the function returned an empty Vec for "float".
     let consts = module::builtin_module_constants("float");
@@ -400,8 +399,8 @@ fn lsp_dot_completion_after_math_still_includes_functions() {
 
 #[test]
 fn lsp_dot_completion_after_float_includes_all_constants() {
-    // `float.` must surface every constant registered in
-    // src/typechecker/builtins.rs. "  float." is 8 characters.
+    // `float.` must surface every constant of the module.
+    // "  float." is 8 characters.
     let source = "import float\nfn main() {\n  float.\n}\n";
     let labels = dot_completion_labels(source, 2, 8);
 

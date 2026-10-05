@@ -5,6 +5,7 @@
 
 mod support;
 
+mod builtin_signature_help_tests;
 mod docs_lsp_capabilities_advertisement_tests;
 mod lsp;
 mod lsp_anon_record_field_completion_tests;
@@ -41,7 +42,6 @@ mod round76_lsp_folding_no_dups_tests;
 mod round76_lsp_hover_stdlib_method_tests;
 mod round77_lsp_inlay_trait_default_tests;
 mod round80_lsp_round80_tests;
-mod round81_lsp_completion_parity_tests;
 mod round81_lsp_dot_type_narrow_tests;
 mod round81_lsp_rename_user_shadow_tests;
 mod round83_lsp_selection_range_decl_bounds_tests;

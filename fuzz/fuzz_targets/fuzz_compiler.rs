@@ -67,7 +67,7 @@ fuzz_target!(|data: &[u8]| {
         assert!(
             !text.is_empty(),
             "disassembly of function {:?} produced empty output",
-            func.name
+            func.name()
         );
     }
 });

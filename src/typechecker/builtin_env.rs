@@ -29,7 +29,8 @@ impl BuiltinEnv {
         // the `__builtin__` sentinel by `defining_package()`, which the
         // orphan rule relies on: `trait Display for List(a)` in user code
         // must not look trait-local.
-        checker.register_builtins(&mut env);
+        register_prelude(&mut checker, &mut env);
+        enter_registry(&mut checker, &mut env);
         register_builtin_trait_impls(&mut checker);
         // Each builtin variant is bound as `Enum.Variant` too, which is
         // what a resolved use of it reads.
@@ -149,52 +150,16 @@ pub(super) fn builtin_scheme(def: &crate::defs::Def) -> Option<Scheme> {
     builtin_env().root.lookup(intern(&key)).cloned()
 }
 
-/// The builtin names, as the resolver enters them: every name the builtin
-/// scope binds, each builtin enum with the arity of each variant, and the
-/// builtin traits.
-pub(super) struct BuiltinNames {
-    pub bindings: Vec<Symbol>,
-    pub enums: Vec<(Symbol, Vec<(Symbol, usize)>)>,
-    pub traits: Vec<Symbol>,
-}
-
-pub(super) fn builtin_names() -> BuiltinNames {
-    let env = builtin_env();
-    let mut bindings: Vec<Symbol> = env.root.bindings.keys().copied().collect();
-    bindings.sort_by_key(|name| resolve(*name));
-    let mut enums: Vec<(Symbol, Vec<(Symbol, usize)>)> = env
-        .tables
-        .enums
-        .iter()
-        .map(|(name, info)| {
-            let variants = info
-                .variants
-                .iter()
-                .map(|v| (v.name, v.field_types.len()))
-                .collect();
-            (name.name, variants)
-        })
-        .collect();
-    enums.sort_by_key(|(name, _)| resolve(*name));
-    let mut traits: Vec<Symbol> = env.tables.traits.keys().map(|t| t.name).collect();
-    traits.sort_by_key(|name| resolve(*name));
-    BuiltinNames {
-        bindings,
-        enums,
-        traits,
-    }
-}
-
 /// Return a map of builtin qualified names to their type signature strings.
 /// Used by the LSP to show type info in completions.
 pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
-    let mut checker = TypeChecker::new();
-    let mut env = TypeEnv::new();
-    checker.register_builtins(&mut env);
+    let env = builtin_env();
+    let (mut checker, _) = env.start();
+    checker.tables = env.tables.clone();
     let mut sigs = std::collections::HashMap::new();
-    for (name, scheme) in &env.bindings {
+    for (name, scheme) in &env.root.bindings {
         let name_str = resolve(*name);
-        if name_str.contains('.') {
+        if name_str.contains('.') && crate::module::is_builtin_module(module_of(&name_str)) {
             let ty = checker.instantiate(scheme);
             sigs.insert(name_str, format!("{ty}"));
         }
@@ -202,222 +167,224 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
     sigs
 }
 
-/// Snapshot every nominal record / enum name registered by
-/// `register_builtins`. Used by the round-82 parity test in
-/// `tests/typecheck/round82_stdlib_types_registry_tests.rs` to lock the central
-/// registry (`module::BUILTIN_STDLIB_TYPE_NAMES`) against runtime
-/// state. Routes through a fresh `TypeChecker` so the snapshot reflects
-/// every per-module `register` callback's effect on `checker.tables.records`
-/// / `checker.tables.enums` — including the `Result`/`Option`/`Step`/
-/// `ChannelResult`/`ChannelOp` prelude enums declared directly in
-/// `register_builtins` itself.
-///
-/// Each entry's category (`"record"` vs `"enum"`) is preserved so the
-/// test can render a useful diff when the sets diverge.
-pub fn registered_builtin_type_names() -> Vec<(String, &'static str)> {
-    let mut checker = TypeChecker::new();
-    let mut env = TypeEnv::new();
-    checker.register_builtins(&mut env);
-    let mut out: Vec<(String, &'static str)> = Vec::new();
-    for ty in checker.tables.records.keys() {
-        out.push((resolve(ty.name), "record"));
-    }
-    for ty in checker.tables.enums.keys() {
-        out.push((resolve(ty.name), "enum"));
-    }
-    out.sort();
-    out
+/// The part of a qualified name before its first dot.
+fn module_of(qualified: &str) -> &str {
+    qualified.split('.').next().unwrap_or(qualified)
 }
 
-/// Return a map of builtin qualified names to their parameter-name lists,
-/// indexed in argument order. Sibling registry to
-/// `builtin_type_signatures`: signatures carry only types (the rendered
-/// `Fn(T1, T2) -> R` form has no `name:` per param), so the LSP
-/// `signatureHelp` handler — which needs `ParameterInformation` per
-/// arg to drive active-arg highlighting — has nowhere else to look up
-/// names.
-///
-/// Round-71 DX-4 fix (audit): pre-round, `signature_help.rs` emitted
-/// `parameters: vec![]` for every builtin call site, so the active-arg
-/// highlight was broken across the entire stdlib surface. This
-/// registry seeds names for the most-used `list.*`, `string.*`,
-/// `map.*`, `set.*`, `io.*` modules. Builtins not present here surface
-/// as before with empty parameter info — a follow-up round can extend
-/// the coverage.
-///
-/// Names are deliberately compact (`xs`, `f`, `k`, `v`, `s`, `path`)
-/// to mirror the doc comments in `src/typechecker/builtins/*.rs`. A
-/// follow-up audit can normalize wording.
-pub fn builtin_param_names() -> std::collections::HashMap<&'static str, &'static [&'static str]> {
-    let entries: &[(&'static str, &'static [&'static str])] = &[
-        // ── list.* ───────────────────────────────────────────────
-        ("list.map", &["xs", "f"]),
-        ("list.filter", &["xs", "pred"]),
-        ("list.fold", &["xs", "init", "f"]),
-        ("list.each", &["xs", "f"]),
-        ("list.find", &["xs", "pred"]),
-        ("list.zip", &["xs", "ys"]),
-        ("list.flatten", &["xs"]),
-        ("list.sort_by", &["xs", "key"]),
-        ("list.flat_map", &["xs", "f"]),
-        ("list.filter_map", &["xs", "f"]),
-        ("list.any", &["xs", "pred"]),
-        ("list.all", &["xs", "pred"]),
-        ("list.fold_until", &["xs", "init", "f"]),
-        ("list.unfold", &["seed", "f"]),
-        ("list.append", &["xs", "x"]),
-        ("list.prepend", &["xs", "x"]),
-        ("list.concat", &["xs", "ys"]),
-        ("list.get", &["xs", "i"]),
-        ("list.set", &["xs", "i", "x"]),
-        ("list.take", &["xs", "n"]),
-        ("list.drop", &["xs", "n"]),
-        ("list.enumerate", &["xs"]),
-        ("list.head", &["xs"]),
-        ("list.tail", &["xs"]),
-        ("list.last", &["xs"]),
-        ("list.reverse", &["xs"]),
-        ("list.sort", &["xs"]),
-        ("list.unique", &["xs"]),
-        ("list.contains", &["xs", "x"]),
-        ("list.length", &["xs"]),
-        ("list.group_by", &["xs", "key"]),
-        ("list.index_of", &["xs", "x"]),
-        ("list.remove_at", &["xs", "i"]),
-        ("list.min_by", &["xs", "key"]),
-        ("list.max_by", &["xs", "key"]),
-        ("list.sum", &["xs"]),
-        ("list.sum_float", &["xs"]),
-        ("list.product", &["xs"]),
-        ("list.product_float", &["xs"]),
-        ("list.scan", &["xs", "init", "f"]),
-        ("list.intersperse", &["xs", "sep"]),
-        // ── string.* ─────────────────────────────────────────────
-        ("string.from", &["x"]),
-        ("string.split", &["s", "sep"]),
-        ("string.join", &["xs", "sep"]),
-        ("string.trim", &["s"]),
-        ("string.trim_start", &["s"]),
-        ("string.trim_end", &["s"]),
-        ("string.char_code", &["s"]),
-        ("string.from_char_code", &["code"]),
-        ("string.contains", &["s", "needle"]),
-        ("string.replace", &["s", "from", "to"]),
-        ("string.length", &["s"]),
-        ("string.byte_length", &["s"]),
-        ("string.to_upper", &["s"]),
-        ("string.to_lower", &["s"]),
-        ("string.starts_with", &["s", "prefix"]),
-        ("string.ends_with", &["s", "suffix"]),
-        ("string.chars", &["s"]),
-        ("string.repeat", &["s", "n"]),
-        ("string.index_of", &["s", "needle"]),
-        ("string.last_index_of", &["s", "needle"]),
-        ("string.split_at", &["s", "i"]),
-        ("string.lines", &["s"]),
-        ("string.starts_with_at", &["s", "i", "prefix"]),
-        ("string.slice", &["s", "start", "end"]),
-        ("string.pad_left", &["s", "width", "pad"]),
-        ("string.pad_right", &["s", "width", "pad"]),
-        ("string.is_empty", &["s"]),
-        ("string.is_alpha", &["s"]),
-        ("string.is_digit", &["s"]),
-        ("string.is_upper", &["s"]),
-        ("string.is_lower", &["s"]),
-        ("string.is_alnum", &["s"]),
-        ("string.is_whitespace", &["s"]),
-        // ── map.* ────────────────────────────────────────────────
-        ("map.get", &["m", "k"]),
-        ("map.set", &["m", "k", "v"]),
-        ("map.delete", &["m", "k"]),
-        ("map.contains", &["m", "k"]),
-        ("map.keys", &["m"]),
-        ("map.values", &["m"]),
-        ("map.merge", &["m", "other"]),
-        ("map.length", &["m"]),
-        ("map.filter", &["m", "pred"]),
-        ("map.map", &["m", "f"]),
-        ("map.entries", &["m"]),
-        ("map.from_entries", &["entries"]),
-        ("map.each", &["m", "f"]),
-        ("map.update", &["m", "k", "default", "f"]),
-        // ── set.* ────────────────────────────────────────────────
-        ("set.new", &[]),
-        ("set.from_list", &["xs"]),
-        ("set.to_list", &["s"]),
-        ("set.contains", &["s", "x"]),
-        ("set.insert", &["s", "x"]),
-        ("set.remove", &["s", "x"]),
-        ("set.length", &["s"]),
-        ("set.union", &["s", "other"]),
-        ("set.intersection", &["s", "other"]),
-        ("set.difference", &["s", "other"]),
-        ("set.symmetric_difference", &["s", "other"]),
-        ("set.is_subset", &["s", "other"]),
-        ("set.map", &["s", "f"]),
-        ("set.filter", &["s", "pred"]),
-        ("set.each", &["s", "f"]),
-        ("set.fold", &["s", "init", "f"]),
-        // ── io.* ─────────────────────────────────────────────────
-        ("io.inspect", &["x"]),
-        ("io.read_file", &["path"]),
-        ("io.write_file", &["path", "contents"]),
-        ("io.read_line", &[]),
-        ("io.args", &[]),
-    ];
-    entries.iter().copied().collect()
-}
+// ── What the builtin scope is made of ───────────────────────────────
 
-/// Return a map of every built-in name (qualified or bare) to its
-/// markdown doc string, for the LSP to render in hover / completion /
-/// signature-help. Includes everything registered with
-/// `env.define_with_doc` / `env.attach_doc` under
-/// `src/typechecker/builtins/` plus the unqualified globals
-/// (`println`, `panic`, `Some`, `Ok`, …) registered in
-/// `register_builtins` itself. Names without a registered doc are
-/// omitted; callers do an `Option<&str>` lookup.
-///
-/// The map is keyed by the resolved (string) name so LSP code can
-/// look up `"list.map"` directly without going through the intern
-/// table — symmetric with `builtin_type_signatures`.
-pub fn builtin_docs() -> std::collections::HashMap<String, String> {
-    let mut checker = TypeChecker::new();
-    let mut env = TypeEnv::new();
-    checker.register_builtins(&mut env);
-    let mut docs = std::collections::HashMap::new();
-    for (name, doc) in &env.builtin_docs {
-        docs.insert(resolve(*name), doc.clone());
+/// Bind the prelude's functions and the types that are values: `print`,
+/// `println` and `panic` (whose result type, `Never`, no signature text
+/// can say), and the descriptors of the primitive and container types.
+fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
+    // The run time formats the argument with `Display`.
+    for (name, result) in [
+        ("print", Type::Unit),
+        ("println", Type::Unit),
+        ("panic", Type::Never),
+    ] {
+        let (a, av) = checker.fresh_tv();
+        env.define(
+            intern(name),
+            Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a], Box::new(result)),
+                constraints: vec![(av, TraitKey::builtin("Display"))],
+                optional_last_param: false,
+            },
+        );
     }
-    docs
+    // A primitive type written as a value is its descriptor, of the type
+    // `TypeOf(T)`, not a value of the type: `Int * 2` does not check.
+    for name in crate::module::BUILTIN_PRIMITIVE_NAMES {
+        let inner = match *name {
+            "Int" => Type::Int,
+            "Float" => Type::Float,
+            "String" => Type::String,
+            "Bool" => Type::Bool,
+            _ => unreachable!(),
+        };
+        env.define(intern(name), Scheme::mono(Type::type_of(inner)));
+    }
+    // A container type written as a value (`make(List)` for a `type a`
+    // parameter) is a descriptor of any of its instances. `Tuple` has a
+    // descriptor at run time only.
+    for name in crate::module::BUILTIN_GENERIC_CONTAINER_NAMES {
+        let (vars, ty) = match *name {
+            "List" => {
+                let (a, av) = checker.fresh_tv();
+                (vec![av], Type::List(Box::new(a)))
+            }
+            "Set" => {
+                let (a, av) = checker.fresh_tv();
+                (vec![av], Type::Set(Box::new(a)))
+            }
+            "Channel" => {
+                let (a, av) = checker.fresh_tv();
+                (vec![av], Type::Channel(Box::new(a)))
+            }
+            "Map" => {
+                let (k, kv) = checker.fresh_tv();
+                let (v, vv) = checker.fresh_tv();
+                (vec![kv, vv], Type::Map(Box::new(k), Box::new(v)))
+            }
+            _ => continue,
+        };
+        env.define(
+            intern(name),
+            Scheme {
+                vars,
+                ty: Type::type_of(ty),
+                constraints: vec![],
+                optional_last_param: false,
+            },
+        );
+    }
 }
 
-/// Test-only: the sorted names (qualified or bare) of every
-/// function-typed binding registered by `register_builtins`.
-#[doc(hidden)]
-pub fn builtin_function_names() -> Vec<String> {
-    let mut checker = TypeChecker::new();
-    let mut env = TypeEnv::new();
-    checker.register_builtins(&mut env);
-    let mut out: Vec<String> = env
-        .bindings
+/// Enter the builtin registry: the prelude's enums and, for each module
+/// that is built, its type declarations and its rows. Each module's text
+/// is parsed and elaborated as a module's declarations are
+/// (`register_type_decl`, `register_fn_decl`), so a row's parameter
+/// types, `where` bounds and type variables are what its signature
+/// says. A function is bound as `module.name`, a variant by its name.
+fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
+    use crate::builtins::registry::{self, registry};
+    let registry = registry();
+    // A declaration names the type it declares by its name; the builtin
+    // definitions say which variant of it each name is.
+    checker.own_types = crate::defs::builtin_types()
         .iter()
-        .filter(|(_, s)| matches!(s.ty, Type::Fun(_, _)))
-        .map(|(name, _)| resolve(*name))
+        .enumerate()
+        .map(|(k, (name, _))| {
+            let name = intern(name);
+            let id = crate::defs::TypeId(crate::defs::DefId(k as u32));
+            (name, TypeRef { id, name })
+        })
         .collect();
-    out.sort();
-    out
-}
+    checker.defs = Some(std::sync::Arc::new(names::new_def_table()));
 
-/// Test-only: iterate `(qualified_name, doc)` for every built-in name
-/// that has a registered doc. Used by the parity walker
-/// (`tests/meta/docs_stdlib_println_parity_tests.rs`) to scan inlined
-/// markdown for `\`\`\`silt` fenced blocks with `println(...) --
-/// expected` annotations and run them against `silt run`.
-#[doc(hidden)]
-pub fn iter_builtin_docs() -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = builtin_docs().into_iter().collect();
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
+    // The types of every module first: a signature or a field may name
+    // a type of a later module (`fs.FileStat` holds a `time.DateTime`).
+    let mut types: Vec<TypeDecl> = Vec::new();
+    let texts = std::iter::once(registry::PRELUDE_TYPES)
+        .chain(registry.enabled_modules().map(|module| module.types));
+    for text in texts {
+        for decl in registry::parse(text).decls {
+            if let Decl::Type(td) = decl {
+                types.push(td);
+            }
+        }
+    }
+    for td in &types {
+        let ty = checker.own_type(td.name);
+        let defined_in = TypeChecker::builtin_pkg();
+        match &td.body {
+            TypeBody::Enum(_) => {
+                checker.tables.enums.insert(
+                    ty,
+                    EnumInfo {
+                        variants: Vec::new(),
+                        params: td.params.clone(),
+                        param_var_ids: Vec::new(),
+                        defined_in,
+                    },
+                );
+            }
+            TypeBody::Record(_) => {
+                checker.tables.records.insert(
+                    ty,
+                    RecordInfo {
+                        fields: Vec::new(),
+                        defined_in,
+                    },
+                );
+            }
+            TypeBody::Alias(_) => {}
+        }
+    }
+    // A declaration also binds its type as a value and stamps the impls
+    // a program's type derives. A builtin type is not a value, and which
+    // traits it derives is `register_builtin_trait_impls`'s to say.
+    let impls = checker.tables.trait_impl_set.clone();
+    let methods = checker.tables.method_table.clone();
+    let mut as_values = TypeEnv::new();
+    for td in &types {
+        checker.register_type_decl(td, &mut as_values);
+    }
+    checker.tables.trait_impl_set = impls;
+    checker.tables.method_table = methods;
+    // Each variant's scheme is the builtin scope's, under its name.
+    let (defs, _) = names::builtins();
+    for variants in defs.variants.values() {
+        for id in variants {
+            if let Some(scheme) = checker.tables.schemes.remove(id) {
+                env.define(defs.defs[id.0 as usize].name, scheme);
+            }
+        }
+    }
+
+    for module in registry.enabled_modules() {
+        for decl in registry::parse(&module.text()).decls {
+            let Decl::Fn(f) = decl else {
+                continue;
+            };
+            let mut scope = TypeEnv::new();
+            let checked = checker.errors.len();
+            checker.register_fn_decl(&f, &mut scope);
+            // A builtin's result may be of a type no argument fixes
+            // (`set.new() -> Set(a)`, `channel.new`), which a program's
+            // function cannot be.
+            let mut at = 0;
+            checker.errors.retain(|e| {
+                at += 1;
+                at <= checked || !e.message.contains("in return type is not introduced")
+            });
+            let Some(mut scheme) = scope.bindings.remove(&f.name) else {
+                continue;
+            };
+            let name = resolve(f.name);
+            let row = module.row(&name).expect("the row the text was made from");
+            if row.is_constant()
+                && let Type::Fun(_, value) = scheme.ty
+            {
+                scheme = Scheme::mono(*value);
+            }
+            scheme.optional_last_param = row.optional_last;
+            env.define(intern(&format!("{}.{name}", module.name)), scheme);
+        }
+        // The module's error enum implements `Error` natively
+        // (`Vm::dispatch_trait_method`), and `Display` with it.
+        if let Some(error) = module.error {
+            let ty = TypeRef::builtin(error);
+            let self_ty = Type::Generic(ty, vec![]);
+            for (trait_name, method) in [("Error", "message"), ("Display", "display")] {
+                let key = TraitKey::builtin(trait_name);
+                checker.tables.trait_impl_set.insert((key, ty));
+                checker.tables.method_table.insert(
+                    (ty, intern(method)),
+                    MethodEntry {
+                        method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
+                        span: Span::BUILTIN,
+                        is_auto_derived: false,
+                        trait_name: Some(key),
+                        method_constraints: Vec::new(),
+                    },
+                );
+            }
+        }
+    }
+
+    assert!(
+        checker.errors.is_empty(),
+        "the builtin registry does not check: {:?}",
+        checker.errors
+    );
+    checker.defs = None;
+    checker.own_types.clear();
+    checker.fully_annotated_fn_names.clear();
+    checker.trait_arg_bindings.clear();
 }
 
 /// Test-only introspection: collect the auto-derived trait-impl and
@@ -440,7 +407,8 @@ pub fn __trait_init_fingerprint_check_program() -> (
     use std::collections::BTreeSet;
     let mut checker = TypeChecker::new();
     let mut env = TypeEnv::new();
-    checker.register_builtins(&mut env);
+    register_prelude(&mut checker, &mut env);
+    enter_registry(&mut checker, &mut env);
     register_builtin_trait_impls(&mut checker);
     let trait_impls: BTreeSet<String> = checker
         .tables
@@ -465,11 +433,7 @@ pub fn __trait_init_fingerprint_check_program() -> (
 ///    supertrait_args_count, default_method_bodies_count,
 ///    params_count, supertraits_count, param_where_clauses_count)
 ///
-/// Used by `tests/meta/typechecker_builtin_trait_registration_parity_tests.rs`
-/// to lock the semantics of the round-61 dead-code collapse: the four
-/// near-identical TraitInfo construction blocks were replaced with a
-/// single parameterised helper, and this fingerprint proves the
-/// before/after shapes are identical.
+/// Used by `tests/typecheck/unified_trait_registration_tests.rs`.
 #[doc(hidden)]
 pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     String,
@@ -517,3 +481,6 @@ pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     }
     out
 }
+
+#[cfg(test)]
+mod tests;

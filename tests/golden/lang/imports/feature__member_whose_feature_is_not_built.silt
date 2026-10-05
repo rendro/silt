@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- without-feature: tcp-tls
+-- requires-feature: tcp
+-- A function of a builtin module that needs one more cargo feature than
+-- its module: a use of it, or an import of it by name, is an error that
+-- names the feature, not "has no member".
+import tcp
+import tcp.{ accept_tls }
+
+fn main() {
+  let connect = tcp.connect_tls
+}

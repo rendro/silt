@@ -13,7 +13,6 @@ mod round75_kind_naming_canonical_tests;
 mod round76_iopool_panic_typed_err_tests;
 mod round79_typechecker_fixes_tests;
 mod round80_typechecker_fixes_tests;
-mod round82_stdlib_types_registry_tests;
 mod round84_anonrec_unify_eq_tests;
 mod round85_anonrec_hash_ord_contract_tests;
 mod round92_range_hash_tests;

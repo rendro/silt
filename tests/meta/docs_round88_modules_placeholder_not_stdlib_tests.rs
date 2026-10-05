@@ -5,21 +5,21 @@
 //! `import math ...` as the placeholder for a user-defined module,
 //! and `docs/getting-started.md`'s "Modules and imports" section used
 //! `import list ...`. Both `math` and `list` are stdlib modules
-//! registered in `silt::module::BUILTIN_MODULES`. Any reader who
+//! registered in `silt::module::builtin_modules()`. Any reader who
 //! copy-pasted the snippet to learn the syntax — or to seed their own
 //! module file under `src/math.silt` / `src/list.silt` — would shadow
 //! a stdlib name, producing surprising "name already in scope" /
 //! resolution errors that the doc itself did not warn about.
 //!
 //! Post-fix: both sections use `geometry`, a name that is NOT in
-//! `BUILTIN_MODULES`. This test locks both files to that invariant by
+//! `builtin_modules()`. This test locks both files to that invariant by
 //! parsing the `import <name>` lines in the targeted sections and
 //! asserting every extracted module-root name is absent from
-//! `silt::module::BUILTIN_MODULES`. Future drift (renaming back to a
+//! `silt::module::builtin_modules()`. Future drift (renaming back to a
 //! stdlib name, or adding a new stdlib name with the same string)
 //! flips the assertion.
 
-use silt::module::BUILTIN_MODULES;
+use silt::module::builtin_modules;
 
 const MODULES_DOC: &str = include_str!("../../docs/language/modules.md");
 const GETTING_STARTED_DOC: &str = include_str!("../../docs/getting-started.md");
@@ -77,7 +77,7 @@ fn assert_no_stdlib_collision(slice: &str, section_label: &str) {
     );
     let mut bad: Vec<(String, &'static str)> = Vec::new();
     for root in &roots {
-        if let Some(stdlib) = BUILTIN_MODULES.iter().find(|m| **m == root.as_str()) {
+        if let Some(stdlib) = builtin_modules().iter().find(|m| **m == root.as_str()) {
             bad.push((root.clone(), *stdlib));
         }
     }
@@ -86,7 +86,8 @@ fn assert_no_stdlib_collision(slice: &str, section_label: &str) {
         "{section_label} uses stdlib module name(s) as the user-module placeholder: \
          {bad:?}. Rename to a non-stdlib name (e.g. `geometry`, `shapes`, `mymath`) \
          so copy-pasting the snippet does not collide with a stdlib module. \
-         Full BUILTIN_MODULES list: {BUILTIN_MODULES:?}"
+         The builtin modules: {:?}",
+        builtin_modules()
     );
 }
 
@@ -114,7 +115,7 @@ fn getting_started_doc_modules_section_uses_non_stdlib_placeholder() {
     );
     // The section also shows a `geometry.silt` user-defined module
     // example after the placeholder snippet. `geometry` is NOT in
-    // BUILTIN_MODULES, so it's safe — the assertion below catches
+    // builtin_modules(), so it's safe — the assertion below catches
     // any stdlib name in the whole section.
     assert_no_stdlib_collision(slice, "docs/getting-started.md `## 5. Modules and imports`");
 }
@@ -206,7 +207,7 @@ fn assert_names_no_stdlib_collision(names: &[String], section_label: &str) {
     );
     let mut bad: Vec<(String, &'static str)> = Vec::new();
     for n in names {
-        if let Some(stdlib) = BUILTIN_MODULES.iter().find(|m| **m == n.as_str()) {
+        if let Some(stdlib) = builtin_modules().iter().find(|m| **m == n.as_str()) {
             bad.push((n.clone(), *stdlib));
         }
     }
@@ -216,8 +217,9 @@ fn assert_names_no_stdlib_collision(names: &[String], section_label: &str) {
          {bad:?}. A first-time reader who seeds their own `src/<name>.silt` from this \
          snippet would be shadowed by the stdlib module of the same name (e.g. \
          `import math; math.add(...)` yields `unknown function 'add' on module 'math'`). \
-         Rename to a non-stdlib name (e.g. `geometry`). Full BUILTIN_MODULES: \
-         {BUILTIN_MODULES:?}"
+         Rename to a non-stdlib name (e.g. `geometry`). The builtin modules: \
+         {:?}",
+        builtin_modules()
     );
 }
 

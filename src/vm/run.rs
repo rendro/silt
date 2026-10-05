@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::bytecode::{Op, VmClosure, record_type_matches};
+use crate::bytecode::{Instr, Op, VmClosure, record_type_matches};
 use crate::scheduler::SliceResult;
 use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
@@ -75,6 +75,15 @@ pub(super) enum DispatchResult {
 }
 
 impl Vm {
+    /// The strings a list operand of the instruction being run names.
+    fn names(&self, names: crate::bytecode::Operands<crate::bytecode::Const>) -> Vec<String> {
+        let chunk = self.chunk();
+        names
+            .iter(chunk.code())
+            .map(|k| chunk.string(k).to_owned())
+            .collect()
+    }
+
     // ── Main execution loop ───────────────────────────────────────
 
     pub(crate) fn execute(&mut self) -> Result<Value, VmError> {
@@ -83,13 +92,11 @@ impl Vm {
         // the `task.spawn` call of its parent.
         let _native_level = enter_native_level()?;
         loop {
-            let op_byte = self.read_byte()?;
-            let op = Op::from_byte(op_byte)
-                .ok_or_else(|| VmError::new(format!("unknown opcode: {op_byte}")))?;
-            match self.dispatch_one(op)? {
+            let instr = self.fetch();
+            match self.dispatch_one(instr)? {
                 DispatchResult::Continue => {}
                 DispatchResult::Return(result) => {
-                    let finished_base = self.current_frame()?.base_slot;
+                    let finished_base = self.frame().base_slot;
                     self.frames.pop();
                     // Prune any tail-call elided diagnostic entries that
                     // belong to the just-popped frame slot so stale data
@@ -127,15 +134,6 @@ impl Vm {
     /// Run up to `max_steps` instructions and return a `SliceResult`.
     /// Used by the M:N scheduler's worker threads.
     pub fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
-        // Helper macro to convert Result to SliceResult::Failed on error.
-        macro_rules! try_or_fail {
-            ($expr:expr) => {
-                match $expr {
-                    Ok(v) => v,
-                    Err(e) => return SliceResult::Failed(e),
-                }
-            };
-        }
         for _ in 0..max_steps {
             if self.frames.is_empty() {
                 let result = if self.stack.is_empty() {
@@ -145,18 +143,12 @@ impl Vm {
                 };
                 return SliceResult::Completed(result);
             }
-            let saved_ip = try_or_fail!(self.current_frame()).ip;
-            let op_byte = try_or_fail!(self.read_byte());
-            let op = match Op::from_byte(op_byte) {
-                Some(op) => op,
-                None => {
-                    return SliceResult::Failed(VmError::new(format!("unknown opcode: {op_byte}")));
-                }
-            };
-            match self.dispatch_one(op) {
+            let saved_ip = self.frame().ip;
+            let instr = self.fetch();
+            match self.dispatch_one(instr) {
                 Ok(DispatchResult::Continue) => {}
                 Ok(DispatchResult::Return(result)) => {
-                    let finished_base = try_or_fail!(self.current_frame()).base_slot;
+                    let finished_base = self.frame().base_slot;
                     self.frames.pop();
                     let keep = self.frames.len();
                     self.prune_tco_elided(keep);
@@ -181,7 +173,9 @@ impl Vm {
                     self.push(value);
                 }
                 Err(e) if e.is_yield => {
-                    try_or_fail!(self.current_frame_mut()).ip = saved_ip;
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.ip = saved_ip;
+                    }
                     if self.block_reason.is_some() {
                         return SliceResult::Blocked;
                     }
@@ -197,25 +191,25 @@ impl Vm {
         SliceResult::Yielded
     }
 
-    /// Dispatch a single opcode. All three execution loops call this.
-    pub(super) fn dispatch_one(&mut self, op: Op) -> Result<DispatchResult, VmError> {
-        match op {
-            Op::Constant => {
-                let index = self.read_u16()? as usize;
-                let value = self.read_constant(index)?;
+    /// Run the instruction `instr`, which [`Vm::fetch`] has stepped
+    /// past. Every execution loop calls this.
+    pub(super) fn dispatch_one(&mut self, instr: Instr) -> Result<DispatchResult, VmError> {
+        match instr {
+            Instr::Constant { k } => {
+                let value = self.chunk().constant(k).clone();
                 self.push(value);
             }
-            Op::Unit => self.push(Value::Unit),
-            Op::True => self.push(Value::Bool(true)),
-            Op::False => self.push(Value::Bool(false)),
-            Op::Add => self.binary_arithmetic(Op::Add)?,
-            Op::Sub => self.binary_arithmetic(Op::Sub)?,
-            Op::Mul => self.binary_arithmetic(Op::Mul)?,
-            Op::Div => self.binary_arithmetic(Op::Div)?,
-            Op::Mod => self.binary_arithmetic(Op::Mod)?,
-            Op::Eq => {
-                let b = self.pop()?;
-                let a = self.pop()?;
+            Instr::Unit => self.push(Value::Unit),
+            Instr::True => self.push(Value::Bool(true)),
+            Instr::False => self.push(Value::Bool(false)),
+            Instr::Add => self.binary_arithmetic(Op::Add)?,
+            Instr::Sub => self.binary_arithmetic(Op::Sub)?,
+            Instr::Mul => self.binary_arithmetic(Op::Mul)?,
+            Instr::Div => self.binary_arithmetic(Op::Div)?,
+            Instr::Mod => self.binary_arithmetic(Op::Mod)?,
+            Instr::Eq => {
+                let b = self.pop();
+                let a = self.pop();
                 self.check_same_type(&a, &b)?;
                 // Reject function-shaped operands at the execution site: the
                 // typechecker skips this bound on still-polymorphic operands
@@ -228,31 +222,31 @@ impl Vm {
                 if let Some(name) =
                     equality_operand_violation(&a).or_else(|| equality_operand_violation(&b))
                 {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "type '{name}' does not implement Equal"
                     )));
                 }
                 self.push(Value::Bool(a == b));
             }
-            Op::Neq => {
-                let b = self.pop()?;
-                let a = self.pop()?;
+            Instr::Neq => {
+                let b = self.pop();
+                let a = self.pop();
                 self.check_same_type(&a, &b)?;
                 if let Some(name) =
                     equality_operand_violation(&a).or_else(|| equality_operand_violation(&b))
                 {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "type '{name}' does not implement Equal"
                     )));
                 }
                 self.push(Value::Bool(a != b));
             }
-            Op::Lt => self.compare(|ord| ord.is_lt())?,
-            Op::Gt => self.compare(|ord| ord.is_gt())?,
-            Op::Leq => self.compare(|ord| ord.is_le())?,
-            Op::Geq => self.compare(|ord| ord.is_ge())?,
-            Op::Negate => {
-                let val = self.pop()?;
+            Instr::Lt => self.compare(|ord| ord.is_lt())?,
+            Instr::Gt => self.compare(|ord| ord.is_gt())?,
+            Instr::Leq => self.compare(|ord| ord.is_le())?,
+            Instr::Geq => self.compare(|ord| ord.is_ge())?,
+            Instr::Negate => {
+                let val = self.pop();
                 match val {
                     Value::Int(n) => match n.checked_neg() {
                         Some(v) => self.push(Value::Int(v)),
@@ -265,27 +259,27 @@ impl Vm {
                         self.push(Value::Float(result));
                     }
                     other => {
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "cannot negate {}",
                             self.user_facing_type_name(&other)
                         )));
                     }
                 }
             }
-            Op::Not => {
-                let val = self.pop()?;
+            Instr::Not => {
+                let val = self.pop();
                 match val {
                     Value::Bool(b) => self.push(Value::Bool(!b)),
                     other => {
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "cannot apply 'not' to {}",
                             self.user_facing_type_name(&other)
                         )));
                     }
                 }
             }
-            Op::DisplayValue => {
-                let val = self.pop()?;
+            Instr::DisplayValue => {
+                let val = self.pop();
                 match &val {
                     Value::String(_) => self.push(val),
                     // Mirror the typechecker's string-interpolation Display
@@ -329,7 +323,7 @@ impl Vm {
                             }
                             _ => crate::types::canonical::dispatch_type_name(&val),
                         };
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "type '{name}' does not implement Display \
                              (required for string interpolation)"
                         )));
@@ -340,15 +334,7 @@ impl Vm {
                     }
                 }
             }
-            Op::StringConcat => {
-                let count = self.read_u8()? as usize;
-                if count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: string interpolation expects {} values but only {} are available",
-                        count,
-                        self.stack.len()
-                    )));
-                }
+            Instr::StringConcat { count } => {
                 let start = self.stack.len() - count;
                 // Pre-calculate total capacity to avoid reallocations
                 let mut total_len = 0;
@@ -356,7 +342,7 @@ impl Vm {
                     if let Value::String(ref s) = self.stack[i] {
                         total_len += s.len();
                     } else {
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "string interpolation requires string values, got {} \
                              — call `.to_string()` or `.display()` on the value first",
                             self.user_facing_type_name(&self.stack[i])
@@ -372,36 +358,17 @@ impl Vm {
                 self.stack.truncate(start);
                 self.push(Value::String(result));
             }
-            Op::GetLocal => {
-                let slot = self.read_u16()? as usize;
-                let base = self.current_frame()?.base_slot;
-                let value = self
-                    .stack
-                    .get(base + slot)
-                    .ok_or_else(|| {
-                        VmError::new(format!(
-                            "stack index out of bounds (slot {slot}, base {base}, stack len {})",
-                            self.stack.len()
-                        ))
-                    })?
-                    .clone();
+            Instr::GetLocal { slot } => {
+                let base = self.frame().base_slot;
+                let value = self.stack[base + slot].clone();
                 self.push(value);
             }
-            Op::SetLocal => {
-                let slot = self.read_u16()? as usize;
-                let base = self.current_frame()?.base_slot;
-                let value = self.peek()?.clone();
-                let target = base + slot;
-                if target >= self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: local binding slot out of range (slot {slot}, base {base}, stack len {})",
-                        self.stack.len()
-                    )));
-                }
-                self.stack[target] = value;
+            Instr::SetLocal { slot } => {
+                let base = self.frame().base_slot;
+                let value = self.peek().clone();
+                self.stack[base + slot] = value;
             }
-            Op::GetGlobal => {
-                let slot = self.read_u16()?;
+            Instr::GetGlobal { slot } => {
                 let value = match self.globals.get(slot as usize) {
                     Some(Some(value)) => value.clone(),
                     // A top-level `let` initializer that calls code which
@@ -415,67 +382,38 @@ impl Vm {
                 };
                 self.push(value);
             }
-            Op::SetGlobal => {
-                let slot = self.read_u16()? as usize;
-                let value = self.peek()?.clone();
-                let Some(global) = self.globals.get_mut(slot) else {
-                    return Err(VmError::new(format!(
-                        "internal VM error: global slot {slot} out of range ({} slots)",
-                        self.globals.len()
-                    )));
-                };
-                *global = Some(value);
+            Instr::SetGlobal { slot } => {
+                // A slot is installed the first time it is set: a VM that
+                // was handed no program (a test's) has none yet.
+                let slot = usize::from(slot);
+                let value = self.peek().clone();
+                if slot >= self.globals.len() {
+                    self.globals.resize(slot + 1, None);
+                }
+                self.globals[slot] = Some(value);
             }
-            Op::GetUpvalue => {
-                let index = self.read_u8()? as usize;
-                let upvalues = &self.current_frame()?.closure.upvalues;
-                let value = upvalues
-                    .get(index)
-                    .ok_or_else(|| {
-                        VmError::new(format!(
-                            "upvalue index {index} out of bounds (count {})",
-                            upvalues.len()
-                        ))
-                    })?
-                    .clone();
+            Instr::GetUpvalue { index } => {
+                let value = self.frame().closure.upvalues[index].clone();
                 self.push(value);
             }
-            Op::Call => {
-                let argc = self.read_u8()? as usize;
-                if argc + 1 > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "call: argc {argc} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::Call { argc } => {
                 let func_slot = self.stack.len() - 1 - argc;
                 let func_val = self.stack[func_slot].clone();
                 self.call_value(func_val, argc, func_slot)?;
             }
-            Op::TailCall => {
-                let argc = self.read_u8()? as usize;
-                if argc + 1 > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "tail call: argc {argc} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::TailCall { argc } => {
                 let func_slot = self.stack.len() - 1 - argc;
                 let func_val = self.stack[func_slot].clone();
                 if let Value::VmClosure(closure) = func_val {
-                    if argc != closure.function.arity as usize {
-                        return Err(VmError::new(format!(
+                    if argc != closure.function.arity() {
+                        return Err(VmError::type_confusion(format!(
                             "function '{}' expects {} arguments, got {}",
-                            closure.function.name, closure.function.arity, argc
+                            closure.function.name(),
+                            closure.function.arity(),
+                            argc
                         )));
                     }
-                    let base = self.current_frame()?.base_slot;
-                    if base + argc > self.stack.len() {
-                        return Err(VmError::new(format!(
-                            "tail call: destination slot out of bounds (base {base}, argc {argc}, stack len {})",
-                            self.stack.len()
-                        )));
-                    }
+                    let base = self.frame().base_slot;
                     for i in 0..argc {
                         self.stack[base + i] = self.stack[func_slot + 1 + i].clone();
                     }
@@ -485,7 +423,7 @@ impl Vm {
                     // stack for runtime errors. The caller's name comes
                     // from its closure's function name; the caller's span
                     // points at the tail-call site (the op just before
-                    // `frame.ip`, which is pre-advanced by `read_u8`).
+                    // `frame.ip`, which `fetch` has stepped past it).
                     // Bounded by TCO_ELIDED_CAP entries per depth — on
                     // overflow we drop the oldest caller at this depth.
                     // The existing `render_call_stack` head/tail truncation
@@ -497,11 +435,11 @@ impl Vm {
                     // and `test_tail_call_chain_ring_buffer_caps_diagnostic_chain`.
                     let depth = self.frames.len().saturating_sub(1);
                     let (caller_name, caller_span) = {
-                        let frame = self.current_frame()?;
+                        let frame = self.frame();
                         let caller_ip = frame.ip.saturating_sub(1);
                         (
-                            frame.closure.function.name.clone(),
-                            frame.closure.function.chunk.span_at(caller_ip),
+                            frame.closure.function.name().to_string(),
+                            frame.closure.function.chunk().span_at(caller_ip),
                         )
                     };
                     let count_at_depth = self
@@ -515,27 +453,19 @@ impl Vm {
                         self.tco_elided.remove(pos);
                     }
                     self.tco_elided.push((depth, caller_name, caller_span));
-                    let frame = self.current_frame_mut()?;
+                    let frame = self.frame_mut();
                     frame.closure = closure;
                     frame.ip = 0;
                 } else {
                     self.call_value(func_val, argc, func_slot)?;
                 }
             }
-            Op::Return => {
-                let result = self.pop()?;
+            Instr::Return => {
+                let result = self.pop();
                 return Ok(DispatchResult::Return(result));
             }
-            Op::CallBuiltin => {
-                let name_index = self.read_u16()? as usize;
-                let argc = self.read_u8()? as usize;
-                let name = self.read_constant_string(name_index)?;
-                if argc > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "call builtin '{name}': argc {argc} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::CallBuiltin { name, argc } => {
+                let name = self.chunk().string(name).to_owned();
                 let start = self.stack.len() - argc;
                 let args: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
@@ -550,81 +480,36 @@ impl Vm {
                     Err(e) => return Err(e),
                 }
             }
-            Op::MakeClosure => {
-                let func_index = self.read_u16()? as usize;
-                let upvalue_count = self.read_u8()? as usize;
-                let constant = self.read_constant(func_index)?;
-                let mut upvalues = Vec::with_capacity(upvalue_count);
-                for _ in 0..upvalue_count {
-                    let is_local = self.read_u8()? != 0;
-                    let index = self.read_u8()? as usize;
-                    let val = if is_local {
-                        let base = self.current_frame()?.base_slot;
-                        self.stack.get(base + index)
-                            .ok_or_else(|| VmError::new(format!(
-                                "closure capture: stack index out of bounds (index {index}, base {base}, stack len {})",
-                                self.stack.len()
-                            )))?
-                            .clone()
-                    } else {
-                        let upvalues = &self.current_frame()?.closure.upvalues;
-                        upvalues.get(index)
-                            .ok_or_else(|| VmError::new(format!(
-                                "closure capture: upvalue index {index} out of bounds (count {})",
-                                upvalues.len()
-                            )))?
-                            .clone()
-                    };
-                    upvalues.push(val);
-                }
-                if let Value::VmClosure(existing) = constant {
-                    let closure = Arc::new(VmClosure {
-                        function: existing.function.clone(),
-                        upvalues,
-                    });
-                    self.push(Value::VmClosure(closure));
-                } else {
-                    return Err(VmError::new(
-                        "internal VM error: closure construction constant is not a closure"
-                            .to_string(),
-                    ));
-                }
+            Instr::MakeClosure { f, captures } => {
+                let frame = self.frame();
+                let chunk = frame.closure.function.chunk();
+                let upvalues = captures
+                    .iter(chunk.code())
+                    .map(|capture| {
+                        let index = usize::from(capture.index);
+                        match capture.is_local {
+                            true => self.stack[frame.base_slot + index].clone(),
+                            false => frame.closure.upvalues[index].clone(),
+                        }
+                    })
+                    .collect();
+                let function = chunk.closure(f).function.clone();
+                self.push(Value::VmClosure(Arc::new(VmClosure { function, upvalues })));
             }
-            Op::MakeTuple => {
-                let count = self.read_u8()? as usize;
-                if count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: tuple construction count {count} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::MakeTuple { count } => {
                 let start = self.stack.len() - count;
                 let elements: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
                 self.push(Value::Tuple(elements));
             }
-            Op::MakeList => {
-                let count = self.read_u16()? as usize;
-                if count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: list construction count {count} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::MakeList { count } => {
                 let start = self.stack.len() - count;
                 let elements: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
                 self.push(Value::List(Arc::new(elements)));
             }
-            Op::MakeMap => {
-                let pair_count = self.read_u16()? as usize;
-                let total = pair_count * 2;
-                if total > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: map construction needs {total} values but stack has {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::MakeMap { pairs } => {
+                let total = pairs * 2;
                 let start = self.stack.len() - total;
                 let mut map = BTreeMap::new();
                 for i in (start..self.stack.len()).step_by(2) {
@@ -633,14 +518,7 @@ impl Vm {
                 self.stack.truncate(start);
                 self.push(Value::Map(Arc::new(map)));
             }
-            Op::MakeSet => {
-                let count = self.read_u16()? as usize;
-                if count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: set construction count {count} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::MakeSet { count } => {
                 let start = self.stack.len() - count;
                 let mut set = BTreeSet::new();
                 for i in start..self.stack.len() {
@@ -649,22 +527,10 @@ impl Vm {
                 self.stack.truncate(start);
                 self.push(Value::Set(Arc::new(set)));
             }
-            Op::MakeRecord => {
-                let type_name_index = self.read_u16()? as usize;
-                let field_count = self.read_u8()? as usize;
-                let mut field_names = Vec::with_capacity(field_count);
-                for _ in 0..field_count {
-                    let name_index = self.read_u16()? as usize;
-                    field_names.push(self.read_constant_string(name_index)?);
-                }
-                let ty = self.read_constant_type(type_name_index)?;
-                if field_count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "MakeRecord: field count {field_count} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
-                let start = self.stack.len() - field_count;
+            Instr::MakeRecord { ty, fields } => {
+                let field_names = self.names(fields);
+                let ty = self.chunk().type_info(ty).clone();
+                let start = self.stack.len() - field_names.len();
                 let mut fields = BTreeMap::new();
                 for (i, name) in field_names.into_iter().enumerate() {
                     fields.insert(name, self.stack[start + i].clone());
@@ -672,7 +538,7 @@ impl Vm {
                 self.stack.truncate(start);
                 self.push(Value::Record(ty, Arc::new(fields)));
             }
-            Op::RecordUpdate => {
+            Instr::RecordUpdate { fields } => {
                 // Functional record update: preserves the base's
                 // `type_name`. Used for both nominal `.{...}` updates
                 // and `{...base, ...}` spreads. Round 83 had introduced
@@ -684,22 +550,11 @@ impl Vm {
                 // `Value::Hash` `<anon>` wildcards close the soundness
                 // gap from the other side, leaving the rebrand strictly
                 // redundant.
-                let field_count = self.read_u8()? as usize;
-                let mut field_names = Vec::with_capacity(field_count);
-                for _ in 0..field_count {
-                    let ni = self.read_u16()? as usize;
-                    field_names.push(self.read_constant_string(ni)?);
-                }
-                if field_count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "RecordUpdate: field count {field_count} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
-                let start = self.stack.len() - field_count;
+                let field_names = self.names(fields);
+                let start = self.stack.len() - field_names.len();
                 let new_values: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
-                let base = self.pop()?;
+                let base = self.pop();
                 if let Value::Record(type_name, mut existing) = base {
                     let fields = Arc::make_mut(&mut existing);
                     for (name, val) in field_names.into_iter().zip(new_values) {
@@ -707,28 +562,28 @@ impl Vm {
                     }
                     self.push(Value::Record(type_name, existing));
                 } else {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "record update `.{{...}}` requires a record, got {}",
                         self.user_facing_type_name(&base)
                     )));
                 }
             }
-            Op::MakeRange => {
-                let end = self.pop()?;
-                let start = self.pop()?;
+            Instr::MakeRange => {
+                let end = self.pop();
+                let start = self.pop();
                 if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
                     self.push(Value::Range(*a, *b));
                 } else {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "range `a..b` requires two Int operands, got {} and {}",
                         self.user_facing_type_name(&start),
                         self.user_facing_type_name(&end)
                     )));
                 }
             }
-            Op::ListConcat => {
-                let b = self.pop()?;
-                let a = self.pop()?;
+            Instr::ListConcat => {
+                let b = self.pop();
+                let a = self.pop();
                 let mut result = match a {
                     Value::List(xs) => xs.as_ref().clone(),
                     Value::Range(lo, hi) => {
@@ -736,8 +591,8 @@ impl Vm {
                         (lo..=hi).map(Value::Int).collect()
                     }
                     _ => {
-                        return Err(VmError::new(
-                            "ListConcat: left operand is not a list or range".into(),
+                        return Err(VmError::type_confusion(
+                            "ListConcat: left operand is not a list or range",
                         ));
                     }
                 };
@@ -747,8 +602,8 @@ impl Vm {
                     Value::List(xs) => xs.len(),
                     Value::Range(lo, hi) => checked_range_len(*lo, *hi).map_err(VmError::new)?,
                     _ => {
-                        return Err(VmError::new(
-                            "ListConcat: right operand is not a list or range".into(),
+                        return Err(VmError::type_confusion(
+                            "ListConcat: right operand is not a list or range",
                         ));
                     }
                 };
@@ -767,16 +622,14 @@ impl Vm {
                 }
                 self.push(Value::List(Arc::new(result)));
             }
-            Op::GetField => {
-                let name_index = self.read_u16()? as usize;
-                let name = self.read_constant_string(name_index)?;
-                let target = self.pop()?;
+            Instr::GetField { name } => {
+                let name = self.chunk().string(name).to_owned();
+                let target = self.pop();
                 match target {
                     Value::Record(_, ref fields) => {
-                        let val = fields
-                            .get(&name)
-                            .cloned()
-                            .ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
+                        let val = fields.get(&name).cloned().ok_or_else(|| {
+                            VmError::type_confusion(format!("record has no field '{name}'"))
+                        })?;
                         self.push(val);
                     }
                     Value::Map(ref map) => {
@@ -787,7 +640,7 @@ impl Vm {
                         self.push(val);
                     }
                     other => {
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "cannot access field '{}' on {}",
                             name,
                             self.user_facing_type_name(&other)
@@ -795,106 +648,73 @@ impl Vm {
                     }
                 }
             }
-            Op::Jump => {
-                let offset = self.read_u16()? as usize;
-                self.current_frame_mut()?.ip += offset;
+            Instr::Jump { to } => {
+                self.frame_mut().ip = to;
             }
-            Op::JumpBack => {
-                let offset = self.read_u16()? as usize;
-                let frame = self.current_frame_mut()?;
-                frame.ip = frame.ip.checked_sub(offset).ok_or_else(|| {
-                    VmError::new("jump back offset exceeds current instruction pointer".to_string())
-                })?;
-            }
-            Op::JumpIfFalse => {
-                let offset = self.read_u16()? as usize;
-                let val = self.pop()?;
+            Instr::JumpIfFalse { to } => {
+                let val = self.pop();
                 if self.is_falsy(&val) {
-                    self.current_frame_mut()?.ip += offset;
+                    self.frame_mut().ip = to;
                 }
             }
-            Op::JumpIfTrue => {
-                let offset = self.read_u16()? as usize;
-                let val = self.pop()?;
+            Instr::JumpIfTrue { to } => {
+                let val = self.pop();
                 if self.is_truthy(&val) {
-                    self.current_frame_mut()?.ip += offset;
+                    self.frame_mut().ip = to;
                 }
             }
-            Op::Pop => {
-                self.pop()?;
+            Instr::Pop => {
+                self.pop();
             }
-            Op::Dup => {
-                let val = self.peek()?.clone();
+            Instr::Dup => {
+                let val = self.peek().clone();
                 self.push(val);
             }
-            Op::TestTag => {
-                let ni = self.read_u16()? as usize;
-                let expected = self.read_constant_tag(ni)?;
-                let val = self.peek()?;
-                let result = matches!(val, Value::Variant(tag, _) if *tag == expected);
+            Instr::TestTag { tag } => {
+                let expected = self.chunk().tag(tag);
+                let result = matches!(self.peek(), Value::Variant(tag, _) if tag == expected);
                 self.push(Value::Bool(result));
             }
-            Op::TestEqual => {
-                let ci = self.read_u16()? as usize;
-                let constant = self.read_constant(ci)?;
-                let val = self.peek()?;
-                let result = *val == constant;
+            Instr::TestEqual { k } => {
+                let result = self.peek() == self.chunk().constant(k);
                 self.push(Value::Bool(result));
             }
-            Op::TestTupleLen => {
-                let len = self.read_u8()? as usize;
-                let val = self.peek()?;
+            Instr::TestTupleLen { len } => {
+                let val = self.peek();
                 let result = matches!(val, Value::Tuple(elems) if elems.len() == len);
                 self.push(Value::Bool(result));
             }
-            Op::TestListMin => {
-                let min_len = self.read_u8()? as usize;
-                let val = self.peek()?;
+            Instr::TestListMin { len: min_len } => {
+                let val = self.peek();
                 let result = val.collection_len().is_some_and(|len| len >= min_len);
                 self.push(Value::Bool(result));
             }
-            Op::TestListExact => {
-                let len = self.read_u8()? as usize;
-                let val = self.peek()?;
+            Instr::TestListExact { len } => {
+                let val = self.peek();
                 let result = val.collection_len() == Some(len);
                 self.push(Value::Bool(result));
             }
-            Op::TestIntRange => {
-                let lo_index = self.read_u16()? as usize;
-                let hi_index = self.read_u16()? as usize;
-                let lo = self.read_constant(lo_index)?;
-                let hi = self.read_constant(hi_index)?;
-                let val = self.peek()?;
-                let result = match (val, &lo, &hi) {
+            Instr::TestIntRange { lo, hi } => {
+                let chunk = self.chunk();
+                let result = match (self.peek(), chunk.constant(lo), chunk.constant(hi)) {
                     (Value::Int(n), Value::Int(lo), Value::Int(hi)) => *n >= *lo && *n <= *hi,
                     _ => false,
                 };
                 self.push(Value::Bool(result));
             }
-            Op::TestFloatRange => {
-                let lo_index = self.read_u16()? as usize;
-                let hi_index = self.read_u16()? as usize;
-                let lo = self.read_constant(lo_index)?;
-                let hi = self.read_constant(hi_index)?;
-                let val = self.peek()?;
-                let result = match (val, &lo, &hi) {
+            Instr::TestFloatRange { lo, hi } => {
+                let chunk = self.chunk();
+                let result = match (self.peek(), chunk.constant(lo), chunk.constant(hi)) {
                     (Value::Float(n), Value::Float(lo), Value::Float(hi)) => *n >= *lo && *n <= *hi,
                     _ => false,
                 };
                 self.push(Value::Bool(result));
             }
-            Op::TestBool => {
-                let expected = self.read_u8()? != 0;
-                let val = self.peek()?;
-                let result = matches!(val, Value::Bool(b) if *b == expected);
-                self.push(Value::Bool(result));
-            }
-            Op::DestructTuple => {
-                let index = self.read_u8()? as usize;
-                let val = self.peek()?.clone();
+            Instr::DestructTuple { index } => {
+                let val = self.peek().clone();
                 if let Value::Tuple(elems) = val {
                     let elem = elems.get(index).ok_or_else(|| {
-                        VmError::new(format!(
+                        VmError::type_confusion(format!(
                             "tuple destructure: expected at least {} elements, got {}",
                             index + 1,
                             elems.len()
@@ -902,18 +722,17 @@ impl Vm {
                     })?;
                     self.push(elem.clone());
                 } else {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "tuple destructure: expected tuple, got {}",
                         self.user_facing_type_name(&val)
                     )));
                 }
             }
-            Op::DestructVariant => {
-                let index = self.read_u8()? as usize;
-                let val = self.peek()?.clone();
+            Instr::DestructVariant { index } => {
+                let val = self.peek().clone();
                 if let Value::Variant(_, fields) = val {
                     let field = fields.get(index).ok_or_else(|| {
-                        VmError::new(format!(
+                        VmError::type_confusion(format!(
                             "variant destructure: field index {} out of bounds (variant has {} fields)",
                             index,
                             fields.len()
@@ -921,19 +740,18 @@ impl Vm {
                     })?;
                     self.push(field.clone());
                 } else {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "variant destructure: expected variant, got {}",
                         self.user_facing_type_name(&val)
                     )));
                 }
             }
-            Op::DestructList => {
-                let index = self.read_u8()? as usize;
-                let val = self.peek()?.clone();
+            Instr::DestructList { index } => {
+                let val = self.peek().clone();
                 match val {
                     Value::List(ref xs) => {
                         let elem = xs.get(index).ok_or_else(|| {
-                            VmError::new(format!(
+                            VmError::type_confusion(format!(
                                 "list destructure: expected at least {} elements, got {}",
                                 index + 1,
                                 xs.len()
@@ -944,27 +762,26 @@ impl Vm {
                     Value::Range(lo, hi) => {
                         let i = lo
                             .checked_add(index as i64)
-                            .ok_or_else(|| VmError::new("range index overflow".to_string()))?;
+                            .ok_or_else(|| VmError::type_confusion("range index overflow"))?;
                         if i > hi {
-                            return Err(VmError::new("range index out of bounds".into()));
+                            return Err(VmError::type_confusion("range index out of bounds"));
                         }
                         self.push(Value::Int(i));
                     }
                     _ => {
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "list destructure: expected list, got {}",
                             self.user_facing_type_name(&val)
                         )));
                     }
                 }
             }
-            Op::DestructListRest => {
-                let start = self.read_u8()? as usize;
-                let val = self.peek()?.clone();
+            Instr::DestructListRest { start } => {
+                let val = self.peek().clone();
                 match val {
                     Value::List(ref xs) => {
                         if start > xs.len() {
-                            return Err(VmError::new(format!(
+                            return Err(VmError::type_confusion(format!(
                                 "list destructure: rest pattern start {} exceeds list length {}",
                                 start,
                                 xs.len()
@@ -975,7 +792,7 @@ impl Vm {
                     Value::Range(lo, hi) => {
                         let new_lo = lo
                             .checked_add(start as i64)
-                            .ok_or_else(|| VmError::new("range index overflow".to_string()))?;
+                            .ok_or_else(|| VmError::type_confusion("range index overflow"))?;
                         let exceeds = match hi.checked_add(1) {
                             Some(hi_plus_1) => new_lo > hi_plus_1,
                             None => false, // hi == i64::MAX; new_lo can never exceed hi+1
@@ -987,38 +804,31 @@ impl Vm {
                         }
                     }
                     _ => {
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "list destructure: expected list, got {}",
                             self.user_facing_type_name(&val)
                         )));
                     }
                 }
             }
-            Op::DestructRecordField => {
-                let ni = self.read_u16()? as usize;
-                let name = self.read_constant_string(ni)?;
-                let val = self.peek()?.clone();
+            Instr::DestructRecordField { name } => {
+                let name = self.chunk().string(name).to_owned();
+                let val = self.peek().clone();
                 if let Value::Record(_, fields) = val {
-                    let field = fields
-                        .get(&name)
-                        .cloned()
-                        .ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
+                    let field = fields.get(&name).cloned().ok_or_else(|| {
+                        VmError::type_confusion(format!("record has no field '{name}'"))
+                    })?;
                     self.push(field);
                 } else {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "record destructure: expected record, got {}",
                         self.user_facing_type_name(&val)
                     )));
                 }
             }
-            Op::DestructRecordRest => {
-                let count = self.read_u8()? as usize;
-                let mut excluded: Vec<String> = Vec::with_capacity(count);
-                for _ in 0..count {
-                    let ni = self.read_u16()? as usize;
-                    excluded.push(self.read_constant_string(ni)?);
-                }
-                let val = self.pop()?;
+            Instr::DestructRecordRest { excluded } => {
+                let excluded = self.names(excluded);
+                let val = self.pop();
                 if let Value::Record(_, fields) = val {
                     let mut rest_fields: std::collections::BTreeMap<String, Value> =
                         std::collections::BTreeMap::new();
@@ -1032,77 +842,62 @@ impl Vm {
                         rest_fields,
                     ));
                 } else {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "record rest destructure: expected record, got {}",
                         self.user_facing_type_name(&val)
                     )));
                 }
             }
-            Op::TestRecordTag => {
-                let ni = self.read_u16()? as usize;
-                let expected = self.read_constant_type(ni)?;
-                let val = self.peek()?;
-                let result =
-                    matches!(val, Value::Record(ty, _) if record_type_matches(ty, expected.id));
+            Instr::TestRecordTag { ty } => {
+                let expected = self.chunk().type_info(ty).id;
+                let result = matches!(self.peek(), Value::Record(ty, _) if record_type_matches(ty, expected));
                 self.push(Value::Bool(result));
             }
-            Op::TestMapHasKey => {
-                let ci = self.read_u16()? as usize;
-                let key_name = self.read_constant_string(ci)?;
-                let val = self.peek()?;
+            Instr::TestMapHasKey { key } => {
+                let key_name = self.chunk().string(key).to_owned();
+                let val = self.peek();
                 let result = match val {
                     Value::Map(map) => map.contains_key(&Value::String(key_name)),
                     _ => false,
                 };
                 self.push(Value::Bool(result));
             }
-            Op::DestructMapValue => {
-                let ci = self.read_u16()? as usize;
-                let key_name = self.read_constant_string(ci)?;
-                let val = self.peek()?.clone();
+            Instr::DestructMapValue { key } => {
+                let key_name = self.chunk().string(key).to_owned();
+                let val = self.peek().clone();
                 if let Value::Map(map) = val {
                     let value = map
                         .get(&Value::String(key_name.clone()))
                         .cloned()
-                        .ok_or_else(|| VmError::new(format!("map has no key '{key_name}'")))?;
+                        .ok_or_else(|| {
+                            VmError::type_confusion(format!("map has no key '{key_name}'"))
+                        })?;
                     self.push(value);
                 } else {
-                    return Err(VmError::new(format!(
+                    return Err(VmError::type_confusion(format!(
                         "map destructure: expected map, got {}",
                         self.user_facing_type_name(&val)
                     )));
                 }
             }
-            Op::Recur => {
-                let arg_count = self.read_u8()? as usize;
-                let first_slot = self.read_u16()? as usize;
-                let base = self.current_frame()?.base_slot;
-                if arg_count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "recur: arg count {arg_count} exceeds stack size {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::Recur {
+                argc: arg_count,
+                first: first_slot,
+            } => {
+                let base = self.frame().base_slot;
                 let start = self.stack.len() - arg_count;
-                let dest_end = base + first_slot + arg_count;
-                if dest_end > self.stack.len() || start + arg_count > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "recur: destination slot out of bounds (base {base}, first_slot {first_slot}, arg_count {arg_count}, stack len {})",
-                        self.stack.len()
-                    )));
-                }
                 for i in 0..arg_count {
                     self.stack[base + first_slot + i] = self.stack[start + i].clone();
                 }
                 // Truncate all the way back to just after loop bindings.
                 self.stack.truncate(base + first_slot + arg_count);
             }
-            Op::QuestionMark => {
-                let val = self.peek()?.clone();
+            Instr::QuestionMark => {
+                let val = self.peek().clone();
                 match val {
                     Value::Variant(ref tag, ref fields) => match tag {
                         _ if tag.is(bv::OK) || tag.is(bv::SOME) => {
-                            self.pop()?;
+                            self.pop();
                             self.push(if fields.len() == 1 {
                                 fields[0].clone()
                             } else {
@@ -1110,8 +905,8 @@ impl Vm {
                             });
                         }
                         _ if tag.is(bv::ERR) || tag.is(bv::NONE) => {
-                            let value = self.pop()?;
-                            let finished_base = self.current_frame()?.base_slot;
+                            let value = self.pop();
+                            let finished_base = self.frame().base_slot;
                             self.frames.pop();
                             return Ok(DispatchResult::EarlyReturn {
                                 value,
@@ -1119,43 +914,29 @@ impl Vm {
                             });
                         }
                         _ => {
-                            return Err(VmError::new(format!(
+                            return Err(VmError::type_confusion(format!(
                                 "`?` applies only to Result or Option; got variant `{tag}`"
                             )));
                         }
                     },
                     _ => {
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "`?` applies only to Result or Option; got {}",
                             self.user_facing_type_name(&val)
                         )));
                     }
                 }
             }
-            Op::Panic => {
-                let msg = self.pop()?;
+            Instr::Panic => {
+                let msg = self.pop();
                 return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
             }
-            Op::CallMethod => {
-                let method_name_index = self.read_u16()? as usize;
-                let argc = self.read_u8()? as usize;
-                let trait_index = self.read_u16()?;
-                let method_name = self.read_constant_string(method_name_index)?;
-                // Defense-in-depth: the compiler always emits
-                // `argc = (args.len() + 1) as u8` (the receiver counts
-                // toward argc), so argc==0 means corrupt bytecode and
-                // would otherwise OOB-index `self.stack[receiver_slot]`
-                // below (receiver_slot would equal stack.len()).
-                // Reject argc==0 alongside the upper-bound check, using
-                // the canonical `internal VM error:` prefix.
-                if argc == 0 || argc > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: call method '{method_name}' \
-                         expects argc >= 1 (receiver required) and argc \
-                         <= stack size; got argc {argc}, stack size {}",
-                        self.stack.len()
-                    )));
-                }
+            Instr::CallMethod {
+                method,
+                argc,
+                of: trait_index,
+            } => {
+                let method_name = self.chunk().string(method).to_owned();
                 let receiver_slot = self.stack.len() - argc;
                 let receiver = self.stack[receiver_slot].clone();
                 let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
@@ -1242,34 +1023,25 @@ impl Vm {
                             )?;
                             self.push(result);
                         } else {
-                            return Err(VmError::new(format!(
+                            return Err(VmError::type_confusion(format!(
                                 "no method '{method_name}' for type '{}'",
                                 crate::types::canonical::dispatch_type_name(&receiver)
                             )));
                         }
                     } else {
-                        return Err(VmError::new(format!(
+                        return Err(VmError::type_confusion(format!(
                             "no method '{method_name}' for type '{}'",
                             crate::types::canonical::dispatch_type_name(&receiver)
                         )));
                     }
                 }
             }
-            Op::Slide => {
+            Instr::Slide { slot } => {
                 // Keep the top value, cut the frame back to `slot` values
-                // and put the value on top of them. A frame shorter than
-                // `slot` means the compiler counted a value that was never
-                // pushed.
-                let slot = self.read_u16()? as usize;
-                let base = self.current_frame()?.base_slot;
-                let value = self.pop()?;
+                // and put the value on top of them.
+                let base = self.frame().base_slot;
+                let value = self.pop();
                 let target = base + slot;
-                if target > self.stack.len() {
-                    return Err(VmError::new(format!(
-                        "internal VM error: scope result slot out of range (slot {slot}, base {base}, stack len {})",
-                        self.stack.len()
-                    )));
-                }
                 self.stack.truncate(target);
                 self.push(value);
             }

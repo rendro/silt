@@ -1,19 +1,11 @@
 //! Stdout-parity walker for `println(...)  -- <expected>` annotations
 //! inside markdown doc files (`docs/**/*.md`, `README.md`).
 //!
-//! Round-62 audit gap G1: the existing walkers fall short on
-//! `docs/**/*.md` content:
-//!
-//!   - `tests/meta/docs_stdlib_println_parity_tests.rs` only walks builtin
-//!     doc strings via `silt::typechecker::iter_builtin_docs()`.
-//!   - `tests/lang/examples_check.rs::all_doc_fn_main_blocks_run_if_safe`
-//!     compiles + runs markdown ```silt fences but does NOT diff
-//!     stdout against `-- <expected>` annotations.
-//!
-//! Result: `docs/concurrency.md`, `docs/language/*.md`,
-//! `docs/proposals/*.md`, and `README.md` operated under a weak gate.
-//! Round 62 caught a quoted-string `println(msg) -- "hello"` in
-//! `concurrency.md:215` that this walker would have caught immediately.
+//! `tests/lang/examples_check.rs::all_doc_fn_main_blocks_run_if_safe`
+//! compiles and runs the markdown ```silt fences but does not compare
+//! stdout with the `-- <expected>` annotations; this walker does, for
+//! the stdlib reference pages (`docs/stdlib/*.md`, which are also what
+//! an editor shows for a builtin name) as for every other page.
 //!
 //! ## What this walker does
 //!
@@ -31,7 +23,7 @@
 //!
 //! ## Skip rules
 //!
-//! Same conservative deny list as the stdlib parity walker (and as
+//! Same conservative deny list as the examples check (and as
 //! `all_doc_fn_main_blocks_run_if_safe`). The deny list intentionally
 //! avoids blanket-skipping concurrency / time / fs APIs unless the
 //! block actually invokes them — the round-62 regression appeared in
@@ -47,7 +39,7 @@
 //! Annotations that contain `approximately`, start with `e.g.`, or
 //! contain `...` are treated as illustrative — we still require the
 //! corresponding println produced *some* non-empty output, but we
-//! don't byte-compare. This matches the stdlib walker's behavior.
+//! don't byte-compare.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -55,7 +47,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Same deny list as the stdlib parity walker. Kept in lockstep so a
+/// The deny list. A
 /// block that's safe to *run* under the existing markdown walker is
 /// also safe to *stdout-diff* here. If you tighten one list, tighten
 /// the other in the same patch.
@@ -150,8 +142,8 @@ fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Extract every ```silt fenced block from a markdown body. Returns a
 /// vector of `(opener_line_number_1indexed, block_source)` tuples.
-/// Mirrors `extract_silt_blocks` in `tests/lang/examples_check.rs` and the
-/// stdlib parity walker so the three walkers see the same fences.
+/// Mirrors `extract_silt_blocks` in `tests/lang/examples_check.rs` so the
+/// two walkers see the same fences.
 fn extract_silt_blocks(body: &str) -> Vec<(usize, String)> {
     let mut blocks: Vec<(usize, String)> = Vec::new();
     let mut lines = body.lines().enumerate();
@@ -234,7 +226,7 @@ fn find_expected_comment(line: &str) -> Option<String> {
 }
 
 /// Some doc annotations are deliberately illustrative (random output,
-/// timestamps, hashes). Match the same heuristic as the stdlib walker.
+/// timestamps, hashes).
 fn is_illustrative(expected: &str) -> bool {
     let lower = expected.to_ascii_lowercase();
     lower.contains("approximately")
@@ -244,7 +236,7 @@ fn is_illustrative(expected: &str) -> bool {
 }
 
 /// Strip parenthesised commentary from the expected, e.g.
-/// `42 (the answer)` -> `42`. Matches the stdlib walker.
+/// `42 (the answer)` -> `42`.
 fn strip_trailing_commentary(expected: &str) -> &str {
     if let Some(pos) = expected.find("  (") {
         return &expected[..pos];

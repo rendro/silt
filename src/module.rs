@@ -1,147 +1,96 @@
-/// Module system utilities.
-/// Known builtin module names: their functions (`module.func`) are
-/// builtins, not loaded from files.
-pub const BUILTIN_MODULES: &[&str] = &[
-    "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
-    "regex", "json", "toml", "set", "math", "time", "http", "fs", "env", "postgres", "bytes",
-    "crypto", "encoding", "tcp", "stream", "uuid",
-];
+//! Module system utilities: what the builtin modules are, as the
+//! builtin registry (`crate::builtins::registry`) declares them, and
+//! the diagnostic for a module file that cannot be loaded.
+
+use std::sync::OnceLock;
+
+use crate::builtins::registry::{TypeShape, registry};
+
+/// The builtin modules, built or not, in the order of their ids
+/// ([`crate::session::ModuleId::builtin`]): their functions
+/// (`module.func`) are builtins, not loaded from files.
+pub fn builtin_modules() -> &'static [&'static str] {
+    static NAMES: OnceLock<Vec<&'static str>> = OnceLock::new();
+    NAMES.get_or_init(|| registry().modules.iter().map(|m| m.name).collect())
+}
+
+/// Returns true if `name` is a builtin module (io, string, int, etc.).
+pub fn is_builtin_module(name: &str) -> bool {
+    registry().module(name).is_some()
+}
+
+/// The cargo feature the builtin module `name` needs and this build
+/// lacks; `None` for a module that is built and for any other name.
+pub fn missing_feature(name: &str) -> Option<&'static str> {
+    let module = registry().module(name)?;
+    if module.enabled { None } else { module.feature }
+}
+
+/// The cargo feature the member `name` of the builtin module `module`
+/// needs and this build lacks, when the module itself is built
+/// (`tcp-tls` for `tcp.connect_tls`); `None` for a member that is built
+/// and for any other name.
+pub fn member_missing_feature(module: &str, name: &str) -> Option<&'static str> {
+    let module = registry().module(module).filter(|m| m.enabled)?;
+    let row = module.rows.iter().find(|row| row.name == name)?;
+    if row.enabled { None } else { row.feature }
+}
+
+/// What to say of a builtin module or member that needs the cargo
+/// feature `feature`, which this build lacks: `what` "is not part of
+/// this build of silt: ...".
+pub fn needs_feature(what: &str, feature: &str) -> String {
+    format!("{what} is not part of this build of silt: it needs the cargo feature `{feature}`")
+}
 
 /// Names of the built-in primitive type descriptors (uppercase) usable
 /// as `type a` arguments and for static-style trait dispatch
 /// (`Int.parse(...)`, etc.). The compiler emits each one, used as a
 /// value, as a `Value::PrimitiveDescriptor("<Name>")` constant; the
-/// typechecker registers each as `TypeOf(<inner>)`.
-///
-/// Round-73 BLOAT-2 fix: the name set is hoisted here so the compiler
-/// and `src/typechecker/builtins.rs::register_builtins` cannot drift.
-///
-/// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
+/// typechecker binds each as `TypeOf(<inner>)`.
 pub const BUILTIN_PRIMITIVE_NAMES: &[&str] = &["Int", "Float", "String", "Bool"];
 
 /// Names of the built-in generic container type descriptors (uppercase)
 /// usable as `type a` arguments and for static-style trait dispatch
 /// (`List.empty()`, etc.). The compiler emits each one, used as a value,
 /// as a `Value::TypeDescriptor` constant of the builtin type; the
-/// typechecker registers each as a polymorphic `TypeOf(Container(...))`
-/// scheme with arity matching the container's generic parameter count.
-///
-/// Parity lock: `tests/meta/round73_descriptor_name_parity_tests.rs`.
+/// typechecker binds each but `Tuple` as a polymorphic
+/// `TypeOf(Container(...))`.
 pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Channel", "Tuple"];
 
-/// Central registry of the record / enum type NAMES the stdlib registers
-/// per-module at typechecker startup (i.e. via the `register` entry
-/// points in `src/typechecker/builtins/`). These are uppercase nominal
-/// type names a user can write in type-annotation position but are
-/// owned by the stdlib — renaming one via the LSP would silently
-/// rewrite user references while leaving the builtin type intact.
-///
-/// Unlike [`crate::types::builtins::BUILTIN_TYPES`] (which lists
-/// primitives + generic containers), this registry covers the nominal
-/// types declared by per-module `register` functions:
-///
-/// - `fs.rs`           → `FileStat`
-/// - `time.rs`         → `Instant`, `Date`, `Time`, `DateTime`,
-///                       `Duration`, `Weekday`
-/// - `http.rs`         → `Method`, `Response`, `Request`
-/// - `errors.rs`       → `IoError`, `JsonError`, `TomlError`,
-///                       `ParseError`, `HttpError`, `RegexError`,
-///                       `TimeError`, `BytesError`, `ChannelError`,
-///                       and the cfg-gated `PgError`, `TcpError`.
-///
-/// Parity lock: `tests/typecheck/round82_stdlib_types_registry_tests.rs` walks
-/// `checker.records.keys() ∪ checker.enums.keys()` after stdlib init
-/// and asserts the set matches this registry. Adding a new stdlib
-/// record/enum without updating this list will fail that test.
-///
-/// Consumers:
-/// 1. Editor grammars (`editors/vim/syntax/silt.vim`,
-///    `editors/vscode/syntaxes/silt.tmLanguage.json`) — surface these
-///    names so cross-editor highlighting matches the language.
-/// 2. LSP rename gate (`src/lsp/rename.rs::builtin_globals`) — reject
-///    rename so stdlib types are not silently rewritten away.
-pub const BUILTIN_STDLIB_TYPE_NAMES: &[&str] = &[
-    // fs.rs
-    "FileStat",
-    // time.rs
-    "Instant",
-    "Date",
-    "Time",
-    "DateTime",
-    "Duration",
-    "Weekday",
-    // http.rs
-    "Method",
-    "Response",
-    "Request",
-    // errors.rs (always-on)
-    "IoError",
-    "JsonError",
-    "TomlError",
-    "ParseError",
-    "HttpError",
-    "RegexError",
-    "TimeError",
-    "BytesError",
-    "ChannelError",
-    // errors.rs (cfg-gated) — listed but conditional. The
-    // `feature_gated_stdlib_type` helper below routes each gated name
-    // to its required cargo feature; the parity test in
-    // `tests/typecheck/round82_stdlib_types_registry_tests.rs` filters by the
-    // active feature set when comparing against typechecker state.
-    "PgError",
-    "TcpError",
-];
-
-/// Returns the cargo feature required for the given stdlib type to be
-/// registered by the typechecker, or `None` if the type is
-/// unconditionally registered under default features.
-///
-/// Used by the round-82 parity test to filter out feature-gated names
-/// when the active build does not include the relevant feature.
-pub fn feature_gated_stdlib_type(name: &str) -> Option<&'static str> {
-    match name {
-        "PgError" => Some("postgres"),
-        "TcpError" => Some("tcp"),
-        _ => None,
-    }
+/// Names of silt's builtin global free functions, callable without a
+/// module prefix: `print(...)`, not `io.print(...)`. Used as a value,
+/// each is a `BuiltinFn` constant. Alphabetic.
+pub fn builtin_free_function_names() -> &'static [&'static str] {
+    &["panic", "print", "println"]
 }
 
-/// The builtin module that declares the stdlib type `name` (an enum or a
-/// record of [`BUILTIN_STDLIB_TYPE_NAMES`], or one of the non-error
-/// enums `Step`, `ChannelResult` and `ChannelOp`): `time` for `Weekday`,
-/// `http` for `Request`. `None` for the prelude types and for any other
-/// name. A module's types are reached as `time.Weekday`; their variants
-/// as `time.Monday` (see [`builtin_variant_module`]).
+/// The record and enum types the builtin modules declare, built or not:
+/// uppercase names a program writes in type position (`time.Date`) but
+/// the stdlib owns, which editors highlight and the LSP refuses to
+/// rename.
+pub fn builtin_module_types() -> &'static [&'static str] {
+    static NAMES: OnceLock<Vec<&'static str>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        registry()
+            .modules
+            .iter()
+            .flat_map(|m| m.type_decls.iter().map(|ty| ty.name))
+            .collect()
+    })
+}
+
+/// The builtin module that declares the record or enum type `name`:
+/// `time` for `Weekday`, `http` for `Request`. `None` for the prelude
+/// types and for any other name. A module's types are reached as
+/// `time.Weekday`; their variants as `time.Monday` (see
+/// [`builtin_variant_module`]).
 pub fn builtin_type_module(name: &str) -> Option<&'static str> {
-    match name {
-        "Step" => Some("list"),
-        "ChannelResult" | "ChannelOp" | "ChannelError" => Some("channel"),
-        "Instant" | "Date" | "Time" | "DateTime" | "Duration" | "Weekday" | "TimeError" => {
-            Some("time")
-        }
-        "Method" | "Response" | "Request" | "HttpError" => Some("http"),
-        "FileStat" => Some("fs"),
-        "IoError" => Some("io"),
-        "JsonError" => Some("json"),
-        "TomlError" => Some("toml"),
-        "ParseError" => Some("int"),
-        "RegexError" => Some("regex"),
-        "BytesError" => Some("bytes"),
-        "PgError" => Some("postgres"),
-        "TcpError" => Some("tcp"),
-        _ => None,
-    }
-}
-
-/// The stdlib types the builtin module `module` declares (see
-/// [`builtin_type_module`]), including the feature-gated ones.
-pub fn builtin_module_type_names(module: &str) -> impl Iterator<Item = &'static str> + '_ {
-    BUILTIN_STDLIB_TYPE_NAMES
+    registry()
+        .modules
         .iter()
-        .copied()
-        .chain(["Step", "ChannelResult", "ChannelOp"])
-        .filter(move |name| builtin_type_module(name) == Some(module))
+        .find(|m| m.type_decls.iter().any(|ty| ty.name == name))
+        .map(|m| m.name)
 }
 
 /// The builtin module whose enum declares the variant `name`, which is
@@ -149,28 +98,59 @@ pub fn builtin_module_type_names(module: &str) -> impl Iterator<Item = &'static 
 /// `Recv`, `time` for `Monday`. `None` for the prelude variants and for
 /// any other name.
 pub fn builtin_variant_module(name: &str) -> Option<&'static str> {
-    builtin_enum_variants()
+    registry()
+        .modules
         .iter()
-        .find(|(_, variants)| variants.contains(&name))
-        .and_then(|(enum_name, _)| builtin_type_module(enum_name))
+        .find(|m| {
+            m.type_decls
+                .iter()
+                .any(|ty| ty.variants().iter().any(|(variant, _)| *variant == name))
+        })
+        .map(|m| m.name)
 }
 
-/// Returns true if `name` is a builtin module (io, string, int, etc.).
-pub fn is_builtin_module(name: &str) -> bool {
-    BUILTIN_MODULES.contains(&name)
+/// The `(enum, [(variant, arity)])` listing of the builtin enums `keep`
+/// accepts, given each with whether it is its module's error enum.
+fn enums_with_arity(
+    keep: impl Fn(bool) -> bool,
+) -> Vec<(&'static str, &'static [(&'static str, usize)])> {
+    let registry = registry();
+    let mut out = Vec::new();
+    let errors: Vec<&str> = registry.modules.iter().filter_map(|m| m.error).collect();
+    for (_, ty) in registry.types() {
+        if let TypeShape::Enum(variants) = &ty.shape
+            && keep(errors.contains(&ty.name))
+        {
+            out.push((ty.name, &*Box::leak(variants.clone().into_boxed_slice())));
+        }
+    }
+    out
+}
+
+/// The `(variant_name, arity)` listing of every builtin module's error
+/// enum (`IoError`, `JsonError`, ...), built or not: the enums that
+/// implement `Error` natively.
+pub fn builtin_error_enum_variants_with_arity()
+-> &'static [(&'static str, &'static [(&'static str, usize)])] {
+    static ENUMS: OnceLock<Vec<(&'static str, &'static [(&'static str, usize)])>> = OnceLock::new();
+    ENUMS.get_or_init(|| enums_with_arity(|is_error| is_error))
+}
+
+/// The `(variant_name, arity)` listing of every other builtin enum:
+/// `Result`, `Option`, `Step`, `ChannelResult`, `ChannelOp`, `Weekday`,
+/// `Method`.
+pub fn builtin_prelude_enum_variants_with_arity()
+-> &'static [(&'static str, &'static [(&'static str, usize)])] {
+    static ENUMS: OnceLock<Vec<(&'static str, &'static [(&'static str, usize)])>> = OnceLock::new();
+    ENUMS.get_or_init(|| enums_with_arity(|is_error| !is_error))
 }
 
 /// The builtin enums as `(enum_name, variant_names)` pairs: the prelude
-/// enums (Result, Option) and the enums of the builtin modules, from the
-/// one listing of their variants
-/// ([`builtin_prelude_enum_variants_with_arity`] and
-/// [`builtin_error_enum_variants_with_arity`]). The compiler finds a
-/// builtin variant by its name here in the derived impls of the builtin
-/// types, which name variants unresolved; it also names the module of
-/// each variant (`builtin_variant_module`).
+/// enums (Result, Option) and the enums of the builtin modules. The
+/// compiler finds a builtin variant by its name here in the derived
+/// impls of the builtin types, which name variants unresolved.
 pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
-    static ENUMS: std::sync::OnceLock<Vec<(&'static str, Vec<&'static str>)>> =
-        std::sync::OnceLock::new();
+    static ENUMS: OnceLock<Vec<(&'static str, Vec<&'static str>)>> = OnceLock::new();
     ENUMS.get_or_init(|| {
         builtin_prelude_enum_variants_with_arity()
             .iter()
@@ -180,588 +160,43 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, Vec<&'static str>)] {
     })
 }
 
-/// Iterator over every builtin enum variant name across all builtin enums
-/// (both prelude and gated). Used by LSP rename/completion and REPL
-/// completion to keep hand-rolled parallel lists from drifting away from
-/// the authoritative source at `builtin_enum_variants`.
-///
-/// A parity-lock test at `tests/meta/builtin_constructor_parity_tests.rs`
-/// asserts every surface that mentions builtin constructors consults
-/// this helper (directly or by name-set membership).
+/// Every builtin enum variant name across all builtin enums, for LSP
+/// rename and completion and for REPL completion.
 pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
     builtin_enum_variants()
         .iter()
         .flat_map(|(_, variants)| variants.iter().copied())
 }
 
-/// Names of silt's builtin global free functions — i.e. callable without
-/// a module prefix: `print(...)`, not `io.print(...)`. These are the
-/// non-constructor identifiers `register_builtins` (in
-/// `src/typechecker/builtins.rs`) defines unqualified at the top of the
-/// type environment; used as a value, each is a `BuiltinFn` constant.
-///
-/// Authoritative for: REPL completion, LSP completion/rename, the
-/// typechecker's "did you mean" candidate set for unqualified
-/// identifiers, and VM dispatch's free-fn shadow check. Sibling shape
-/// to `all_builtin_constructor_names` (round-58/64) and the
-/// `KEYWORD_LITERALS`/`KEYWORDS` consolidations (round-63/64).
-///
-/// A parity-lock test at
-/// `tests/meta/builtin_free_function_parity_tests.rs` asserts every surface
-/// that mentions these free-function names consults this helper, and
-/// that the helper itself matches what's actually registered in the
-/// typechecker's free-function table at runtime.
-///
-/// Keep alphabetic.
-pub fn builtin_free_function_names() -> &'static [&'static str] {
-    &["panic", "print", "println"]
-}
-
-/// Authoritative `(variant_name, arity)` listings for every stdlib
-/// typed-error enum. Single source of truth for the builtin types'
-/// variants (`crate::typeinfo`) and the typechecker's error enums.
-///
-/// Phase 0 of the stdlib error redesign (implemented and proposal
-/// removed in commit 7680536) — this is the canonical doc-mention.
-/// Sibling registries / dispatch arms cross-reference this helper
-/// instead of repeating the wording.
-///
-/// A parity-lock test at
-/// `tests/meta/error_enum_dispatch_parity_tests.rs` asserts the typechecker
-/// registrations in `src/typechecker/builtins/errors.rs::register`
-/// match these `(variant, arity)` tuples shape-for-shape.
-///
-/// Round-64 DUP-1 fix (audit): adding/renaming a typed-error variant
-/// previously required edits in three independent registries
-/// (this file, `errors.rs`, and `dispatch.rs`). The dispatch-side list
-/// is now derived; `errors.rs` remains the type-side definition and is
-/// cross-checked against this data by the parity test.
-pub fn builtin_error_enum_variants_with_arity()
--> &'static [(&'static str, &'static [(&'static str, usize)])] {
-    &[
-        (
-            "IoError",
-            &[
-                ("IoNotFound", 1),
-                ("IoPermissionDenied", 1),
-                ("IoAlreadyExists", 1),
-                ("IoInvalidInput", 1),
-                ("IoInterrupted", 0),
-                ("IoUnexpectedEof", 0),
-                ("IoWriteZero", 0),
-                ("IoUnknown", 1),
-            ],
-        ),
-        (
-            "JsonError",
-            &[
-                ("JsonSyntax", 2),
-                ("JsonTypeMismatch", 2),
-                ("JsonMissingField", 1),
-                ("JsonUnknown", 1),
-            ],
-        ),
-        (
-            "TomlError",
-            &[
-                ("TomlSyntax", 2),
-                ("TomlTypeMismatch", 2),
-                ("TomlMissingField", 1),
-                ("TomlUnknown", 1),
-            ],
-        ),
-        (
-            "ParseError",
-            &[
-                ("ParseEmpty", 0),
-                ("ParseInvalidDigit", 1),
-                ("ParseOverflow", 0),
-                ("ParseUnderflow", 0),
-            ],
-        ),
-        (
-            "HttpError",
-            &[
-                ("HttpConnect", 1),
-                ("HttpTls", 1),
-                ("HttpTimeout", 0),
-                ("HttpInvalidUrl", 1),
-                ("HttpInvalidResponse", 1),
-                ("HttpClosedEarly", 0),
-                ("HttpStatusCode", 2),
-                ("HttpUnknown", 1),
-            ],
-        ),
-        (
-            "RegexError",
-            &[("RegexInvalidPattern", 2), ("RegexTooBig", 0)],
-        ),
-        (
-            "PgError",
-            &[
-                ("PgConnect", 1),
-                ("PgTls", 1),
-                ("PgAuthFailed", 1),
-                ("PgQuery", 2),
-                ("PgTypeMismatch", 3),
-                ("PgNoSuchColumn", 1),
-                ("PgClosed", 0),
-                ("PgTimeout", 0),
-                ("PgTxnAborted", 0),
-                ("PgUnknown", 1),
-            ],
-        ),
-        (
-            "TcpError",
-            &[
-                ("TcpConnect", 1),
-                ("TcpTls", 1),
-                ("TcpClosed", 0),
-                ("TcpTimeout", 0),
-                ("TcpUnknown", 1),
-            ],
-        ),
-        (
-            "TimeError",
-            &[("TimeParseFormat", 1), ("TimeOutOfRange", 1)],
-        ),
-        (
-            "BytesError",
-            &[
-                ("BytesInvalidUtf8", 1),
-                ("BytesInvalidHex", 1),
-                ("BytesInvalidBase64", 1),
-                ("BytesByteOutOfRange", 1),
-                ("BytesOutOfBounds", 1),
-            ],
-        ),
-        (
-            "ChannelError",
-            &[("ChannelTimeout", 0), ("ChannelClosed", 0)],
-        ),
-    ]
-}
-
-/// Reverse lookup: given a variant tag (e.g. `"IoNotFound"`), return
-/// the parent stdlib error enum name (e.g. `"IoError"`), or `None` if
-/// the tag isn't a stdlib-error variant. Routes through the
-/// authoritative `builtin_error_enum_variants_with_arity` registry, so
-/// adding a new error variant requires no edit here. Used by
-/// `Value::Display` to route stdlib error variants through their
-/// `Error::message()` implementation rather than the default
-/// constructor-form render — collapses the prior dual shape between
-/// `"{e}"` and `e.message()` per the "explicit over implicit"
-/// principle.
-pub fn variant_to_error_enum(tag: &str) -> Option<&'static str> {
-    for (enum_name, variants) in builtin_error_enum_variants_with_arity() {
-        if variants.iter().any(|(v, _)| *v == tag) {
-            return Some(enum_name);
-        }
-    }
-    None
-}
-
-/// Authoritative `(variant_name, arity)` listings for every builtin
-/// non-error enum: `Result`, `Option`, `Step`, `ChannelResult`,
-/// `ChannelOp`, `Weekday`, `Method`. Single source of truth for the
-/// builtin types' variants (`crate::typeinfo`), as
-/// `builtin_error_enum_variants_with_arity` is for the typed-error
-/// enums.
-///
-/// A parity-lock test at
-/// `tests/meta/round71_dispatch_collapse_and_parity_tests.rs` asserts these
-/// `(variant, arity)` tuples agree with the previous hand-rolled
-/// constructor registrations on every prelude / gated non-error enum.
-pub fn builtin_prelude_enum_variants_with_arity()
--> &'static [(&'static str, &'static [(&'static str, usize)])] {
-    &[
-        ("Result", &[("Ok", 1), ("Err", 1)]),
-        ("Option", &[("Some", 1), ("None", 0)]),
-        ("Step", &[("Stop", 1), ("Continue", 1)]),
-        (
-            "ChannelResult",
-            &[("Message", 1), ("Closed", 0), ("Sent", 0), ("Empty", 0)],
-        ),
-        // ChannelOp constructors for `channel.select`. `Recv(ch)` and
-        // `Send(ch, value)` are the one-and-only shapes accepted by the
-        // select op list.
-        ("ChannelOp", &[("Recv", 1), ("Send", 2)]),
-        (
-            "Weekday",
-            &[
-                ("Monday", 0),
-                ("Tuesday", 0),
-                ("Wednesday", 0),
-                ("Thursday", 0),
-                ("Friday", 0),
-                ("Saturday", 0),
-                ("Sunday", 0),
-            ],
-        ),
-        (
-            "Method",
-            &[
-                ("GET", 0),
-                ("POST", 0),
-                ("PUT", 0),
-                ("PATCH", 0),
-                ("DELETE", 0),
-                ("HEAD", 0),
-                ("OPTIONS", 0),
-            ],
-        ),
-    ]
-}
-
-/// Returns the list of builtin function suffixes for a given builtin module.
-/// E.g., for "string" returns ["split", "trim", "trim_start", ...].
+/// The functions of the builtin module `module` whose features are
+/// built: for "string", `["char_code", "chars", ...]`.
 pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
-    match module {
-        "string" => vec![
-            "from",
-            "split",
-            "split_at",
-            "trim",
-            "trim_start",
-            "trim_end",
-            "char_code",
-            "from_char_code",
-            "contains",
-            "replace",
-            "join",
-            "length",
-            "byte_length",
-            "to_upper",
-            "to_lower",
-            "starts_with",
-            "starts_with_at",
-            "ends_with",
-            "chars",
-            "repeat",
-            "index_of",
-            "last_index_of",
-            "lines",
-            "slice",
-            "pad_left",
-            "pad_right",
-            "is_empty",
-            "is_alpha",
-            "is_digit",
-            "is_upper",
-            "is_lower",
-            "is_alnum",
-            "is_whitespace",
-        ],
-        "list" => vec![
-            "map",
-            "filter",
-            "each",
-            "fold",
-            "find",
-            "zip",
-            "flatten",
-            "sort_by",
-            "flat_map",
-            "filter_map",
-            "any",
-            "all",
-            "fold_until",
-            "unfold",
-            "head",
-            "tail",
-            "last",
-            "reverse",
-            "sort",
-            "unique",
-            "contains",
-            "length",
-            "append",
-            "prepend",
-            "concat",
-            "get",
-            "set",
-            "take",
-            "drop",
-            "enumerate",
-            "group_by",
-            // Round-72 widen: typechecker registrations these names had
-            // schemes for, but `builtin_module_functions` did not enumerate.
-            "sum",
-            "sum_float",
-            "product",
-            "product_float",
-            "min_by",
-            "max_by",
-            "scan",
-            "intersperse",
-            "remove_at",
-            "index_of",
-        ],
-        "map" => vec![
-            "get",
-            "set",
-            "delete",
-            "contains",
-            "keys",
-            "values",
-            "length",
-            "merge",
-            "filter",
-            "map",
-            "entries",
-            "from_entries",
-            "each",
-            "update",
-        ],
-        "io" => vec!["read_file", "write_file", "read_line", "args", "inspect"],
-        "int" => vec![
-            "parse",
-            "abs",
-            "min",
-            "max",
-            "clamp",
-            "to_float",
-            "to_string",
-        ],
-        "float" => vec![
-            "parse",
-            "round",
-            "ceil",
-            "floor",
-            "abs",
-            "to_string",
-            "to_int",
-            "min",
-            "max",
-            "clamp",
-        ],
-        "result" => vec![
-            "unwrap_or",
-            "map_ok",
-            "map_err",
-            "flatten",
-            "flat_map",
-            "is_ok",
-            "is_err",
-        ],
-        "option" => vec![
-            "map",
-            "unwrap_or",
-            "to_result",
-            "is_some",
-            "is_none",
-            "flat_map",
-        ],
-        "test" => vec!["assert", "assert_eq", "assert_ne"],
-        "math" => vec![
-            "sqrt", "pow", "log", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-            "exp", "random",
-        ],
-        "regex" => vec![
-            "is_match",
-            "find",
-            "find_all",
-            "split",
-            "replace",
-            "replace_all",
-            "replace_all_with",
-            "captures",
-            "captures_all",
-            "captures_named",
-        ],
-        "json" => vec!["parse", "parse_list", "parse_map", "stringify", "pretty"],
-        "toml" => vec!["parse", "parse_list", "parse_map", "stringify", "pretty"],
-        "channel" => vec![
-            "new",
-            "send",
-            "receive",
-            "close",
-            "try_send",
-            "try_receive",
-            "recv_timeout",
-            "select",
-            "each",
-            "timeout",
-        ],
-        "task" => vec!["spawn", "spawn_until", "deadline", "join", "cancel"],
-        "set" => vec![
-            "new",
-            "from_list",
-            "to_list",
-            "contains",
-            "insert",
-            "remove",
-            "length",
-            "union",
-            "intersection",
-            "difference",
-            "symmetric_difference",
-            "is_subset",
-            "map",
-            "filter",
-            "each",
-            "fold",
-        ],
-        "time" => vec![
-            "now",
-            "today",
-            "date",
-            "time",
-            "datetime",
-            "to_datetime",
-            "to_instant",
-            "to_utc",
-            "from_utc",
-            "format",
-            "format_date",
-            "parse",
-            "parse_date",
-            "add_days",
-            "add_months",
-            "add",
-            "since",
-            "hours",
-            "minutes",
-            "seconds",
-            "ms",
-            "micros",
-            "nanos",
-            "weekday",
-            "days_between",
-            "days_in_month",
-            "is_leap_year",
-            "sleep",
-        ],
-        "http" => vec![
-            "get",
-            "request",
-            "serve",
-            "serve_all",
-            "segments",
-            "parse_query",
-        ],
-        "postgres" => vec![
-            "connect",
-            "connect_with",
-            "query",
-            "execute",
-            "transact",
-            "close",
-            "cursor",
-            "cursor_close",
-            "cursor_next",
-            "stream",
-            "listen",
-            "notify",
-            "uuidv7",
-        ],
-        "fs" => vec![
-            "exists",
-            "is_file",
-            "is_dir",
-            "is_symlink",
-            "list_dir",
-            "mkdir",
-            "remove",
-            "rename",
-            "copy",
-            "stat",
-            "walk",
-            "glob",
-            "read_link",
-        ],
-        "env" => vec!["get", "set", "remove", "vars"],
-        "bytes" => vec![
-            "empty",
-            "from_string",
-            "to_string",
-            "from_hex",
-            "to_hex",
-            "from_base64",
-            "to_base64",
-            "from_list",
-            "to_list",
-            "length",
-            "slice",
-            "concat",
-            "concat_all",
-            "get",
-            "eq",
-            "starts_with",
-            "ends_with",
-            "split",
-            "index_of",
-        ],
-        "crypto" => vec![
-            "sha256",
-            "sha512",
-            "md5",
-            "md5_hex",
-            "blake2b",
-            "blake2b_hex",
-            "hmac_sha256",
-            "hmac_sha512",
-            "random_bytes",
-            "constant_time_eq",
-        ],
-        "encoding" => vec!["url_encode", "url_decode", "form_encode", "form_decode"],
-        "uuid" => vec!["v4", "v7", "parse", "nil", "is_valid"],
-        "stream" => vec![
-            "from_list",
-            "from_range",
-            "repeat",
-            "unfold",
-            "file_chunks",
-            "file_lines",
-            "tcp_chunks",
-            "tcp_lines",
-            "map",
-            "map_ok",
-            "filter",
-            "filter_ok",
-            "flat_map",
-            "take",
-            "drop",
-            "take_while",
-            "drop_while",
-            "chunks",
-            "scan",
-            "dedup",
-            "buffered",
-            "merge",
-            "zip",
-            "concat",
-            "collect",
-            "fold",
-            "each",
-            "count",
-            "first",
-            "last",
-            "write_to_tcp",
-            "write_to_file",
-        ],
-        "tcp" => {
-            #[allow(unused_mut)]
-            let mut fns = vec![
-                "listen",
-                "accept",
-                "connect",
-                "read",
-                "read_exact",
-                "write",
-                "close",
-                "peer_addr",
-                "set_nodelay",
-            ];
-            #[cfg(feature = "tcp-tls")]
-            {
-                fns.push("connect_tls");
-                fns.push("accept_tls");
-                fns.push("accept_tls_mtls");
-            }
-            fns
-        }
-        _ => vec![],
+    registry().module(module).map_or_else(Vec::new, |m| {
+        m.enabled_rows()
+            .filter(|row| !row.is_constant())
+            .map(|row| row.name)
+            .collect()
+    })
+}
+
+/// The constants (non-function values) of the builtin module `module`:
+/// for "math", `["e", "pi"]`.
+pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
+    registry().module(module).map_or_else(Vec::new, |m| {
+        m.enabled_rows()
+            .filter(|row| row.is_constant())
+            .map(|row| row.name)
+            .collect()
+    })
+}
+
+/// The value of the builtin module constant `qualified` (`math.pi`);
+/// `None` for any other name.
+pub fn builtin_constant_value(qualified: &str) -> Option<crate::value::Value> {
+    let (module, name) = qualified.split_once('.')?;
+    match &registry().row(module, name)?.body {
+        crate::builtins::registry::Body::Const(value) => Some(value.clone()),
+        _ => None,
     }
 }
 
@@ -826,40 +261,4 @@ fn sibling_module_suggestion(
         }
     }
     crate::typechecker::suggest::suggest_similar(module_name, candidates.iter())
-}
-
-/// Returns the list of builtin constants (non-function values) for a module.
-/// E.g., for "math" returns ["pi", "e"].
-///
-/// Keep this in sync with the constants registered in
-/// `src/typechecker/builtins.rs` (`register_math_builtins` /
-/// `register_float_builtins`). LSP dot-completion (`src/lsp.rs::dot_completions`)
-/// consults this list so editor autocompletion surfaces module constants.
-///
-/// Parity lock: `tests/lang/module_constants_completion_tests.rs`
-/// (`math_constants_are_listed`, `float_constants_are_listed`,
-/// `unknown_module_has_no_constants`,
-/// `float_functions_do_not_duplicate_constants`) — round-26 audit
-/// findings L8/G5.
-pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
-    match module {
-        "math" => vec!["pi", "e"],
-        "float" => vec!["max_value", "min_value", "epsilon", "min_positive"],
-        _ => vec![],
-    }
-}
-
-/// The value of the builtin module constant `qualified` (`math.pi`);
-/// `None` for any other name.
-pub fn builtin_constant_value(qualified: &str) -> Option<crate::value::Value> {
-    let value = match qualified {
-        "math.pi" => std::f64::consts::PI,
-        "math.e" => std::f64::consts::E,
-        "float.max_value" => f64::MAX,
-        "float.min_value" => f64::MIN,
-        "float.epsilon" => f64::EPSILON,
-        "float.min_positive" => f64::MIN_POSITIVE,
-        _ => return None,
-    };
-    Some(crate::value::Value::Float(value))
 }

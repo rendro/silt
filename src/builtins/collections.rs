@@ -1088,8 +1088,8 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
                     && pair.len() == 2
                 {
                     // Runtime Fn gate on the KEY only (values are never
-                    // compared): `map.from_entries` has `constraints:
-                    // vec![]` (src/typechecker/builtins/map.rs), unlike
+                    // compared): `map.from_entries` has no `where`
+                    // bound (its row in the builtin registry), unlike
                     // `map.get`/`set` which carry `k: Hash`, so Fn keys
                     // typecheck and would be BTreeMap-ordered by Arc
                     // pointer address — ASLR-nondeterministic entry

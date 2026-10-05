@@ -4,18 +4,13 @@
 //! editor syntax-highlighting grammars, and neither grammar may list a
 //! stray builtin not present in that helper.
 //!
-//! GAP lock (round 95 follow-up): `tests/meta/builtin_free_function_parity_tests.rs`
-//! already locks `builtin_free_function_names()` against the typechecker
-//! registry, REPL completion, LSP completion, and the GLOBALS_MD docs
-//! surface — but NOT the two editor grammars. The trio is hand-encoded in:
+//! The trio is hand-encoded in:
 //!   - editors/vim/syntax/silt.vim
 //!     (`syntax keyword siltBuiltin print println panic`)
 //!   - editors/vscode/syntaxes/silt.tmLanguage.json
 //!     (`"builtins"` entry: `"match": "\\b(print|println|panic)\\b"`)
 //! Adding or removing a builtin free function (e.g. a future `assert` or
-//! `debug`) updates the helper + its 4 locked consumers but would silently
-//! leave both grammars stale — exactly the drift the round-59/60/72/79
-//! constructor & primitive locks were created to prevent.
+//! `debug`) would otherwise leave both grammars stale.
 //!
 //! Mirrors the pattern of:
 //!   - tests/meta/editor_grammar_constructors_tests.rs

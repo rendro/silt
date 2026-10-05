@@ -1,5 +1,5 @@
 //! Regression lock: every builtin module listed in `src/module.rs`
-//! (the authoritative `BUILTIN_MODULES` constant) must appear in both
+//! (the authoritative `silt::module::builtin_modules()` list) must appear in both
 //! editor syntax-highlighting grammars.
 //!
 //! If this test fails after adding a new builtin module, add the
@@ -12,7 +12,7 @@
 //! this test was introduced. Do not loosen this check — it is the
 //! mechanism that keeps the grammars honest.
 
-use silt::module::BUILTIN_MODULES;
+use silt::module::builtin_modules;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -100,7 +100,7 @@ fn every_builtin_module_appears_in_both_editor_grammars() {
 
     let mut missing: Vec<String> = Vec::new();
 
-    for &module in BUILTIN_MODULES {
+    for &module in builtin_modules() {
         if !grammar_mentions_module(vim_scope, module) {
             missing.push(format!(
                 "editors/vim/syntax/silt.vim (siltModule alternation) is missing builtin module \
@@ -119,9 +119,9 @@ fn every_builtin_module_appears_in_both_editor_grammars() {
 
     assert!(
         missing.is_empty(),
-        "Editor syntax grammars are out of sync with src/module.rs BUILTIN_MODULES.\n\
+        "Editor syntax grammars are out of sync with silt::module::builtin_modules().\n\
          Add the following module name(s) to the grammar file(s) listed:\n  - {}\n\
-         Authoritative source: src/module.rs (BUILTIN_MODULES).",
+         Authoritative source: the builtin registry (`silt::module::builtin_modules()`).",
         missing.join("\n  - ")
     );
 }
@@ -175,21 +175,21 @@ fn vscode_module_tokens(block: &str) -> BTreeSet<String> {
 fn every_vim_module_entry_is_authoritative() {
     // Reverse direction (round-72 LATENT L7): catch stale entries left
     // in the vim grammar after a builtin module is removed from
-    // `src/module.rs::BUILTIN_MODULES`. The forward test above only
+    // `silt::module::builtin_modules()`. The forward test above only
     // catches additions; without this test, removals silently leave
     // ghost highlighting in editors.
     let vim_raw = read_grammar("editors/vim/syntax/silt.vim");
     let vim_scope = vim_module_line(&vim_raw);
     let tokens = vim_module_tokens(vim_scope);
 
-    let authoritative: BTreeSet<&str> = BUILTIN_MODULES.iter().copied().collect();
+    let authoritative: BTreeSet<&str> = builtin_modules().iter().copied().collect();
 
     let mut stray: Vec<String> = Vec::new();
     for tok in &tokens {
         if !authoritative.contains(tok.as_str()) {
             stray.push(format!(
                 "editors/vim/syntax/silt.vim siltModule alternation contains stray entry \
-                 `{}` not in src/module.rs::BUILTIN_MODULES",
+                 `{}` not in silt::module::builtin_modules()",
                 tok
             ));
         }
@@ -197,10 +197,10 @@ fn every_vim_module_entry_is_authoritative() {
 
     assert!(
         stray.is_empty(),
-        "vim grammar lists module names not present in BUILTIN_MODULES. \
+        "vim grammar lists module names not present in builtin_modules(). \
          Either remove the stray entries from editors/vim/syntax/silt.vim, \
          or (if the module is genuinely new) add it to \
-         src/module.rs::BUILTIN_MODULES first:\n  - {}",
+         silt::module::builtin_modules() first:\n  - {}",
         stray.join("\n  - ")
     );
 }
@@ -209,19 +209,19 @@ fn every_vim_module_entry_is_authoritative() {
 fn every_vscode_module_entry_is_authoritative() {
     // Reverse direction (round-72 LATENT L7): catch stale entries left
     // in the VS Code grammar after a builtin module is removed from
-    // `src/module.rs::BUILTIN_MODULES`.
+    // `silt::module::builtin_modules()`.
     let vscode_raw = read_grammar("editors/vscode/syntaxes/silt.tmLanguage.json");
     let vscode_scope = vscode_modules_block(&vscode_raw);
     let tokens = vscode_module_tokens(&vscode_scope);
 
-    let authoritative: BTreeSet<&str> = BUILTIN_MODULES.iter().copied().collect();
+    let authoritative: BTreeSet<&str> = builtin_modules().iter().copied().collect();
 
     let mut stray: Vec<String> = Vec::new();
     for tok in &tokens {
         if !authoritative.contains(tok.as_str()) {
             stray.push(format!(
                 "editors/vscode/syntaxes/silt.tmLanguage.json \"modules\" alternation \
-                 contains stray entry `{}` not in src/module.rs::BUILTIN_MODULES",
+                 contains stray entry `{}` not in silt::module::builtin_modules()",
                 tok
             ));
         }
@@ -229,10 +229,10 @@ fn every_vscode_module_entry_is_authoritative() {
 
     assert!(
         stray.is_empty(),
-        "VS Code grammar lists module names not present in BUILTIN_MODULES. \
+        "VS Code grammar lists module names not present in builtin_modules(). \
          Either remove the stray entries from \
          editors/vscode/syntaxes/silt.tmLanguage.json, or (if the module is \
-         genuinely new) add it to src/module.rs::BUILTIN_MODULES first:\n  - {}",
+         genuinely new) add it to silt::module::builtin_modules() first:\n  - {}",
         stray.join("\n  - ")
     );
 }

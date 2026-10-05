@@ -134,9 +134,9 @@ impl TypeChecker {
         // deterministic for every Value shape.
         self.enforce_auto_derive_field_gate(&user_decl_type_names);
 
-        // Built-in enums and records are registered directly into
-        // `self.tables.enums` / `self.tables.records` from `register_builtins` and
-        // the per-module init paths under `src/typechecker/builtins/`
+        // Built-in enums and records are entered into
+        // `self.tables.enums` / `self.tables.records` by the builtin
+        // environment, from the builtin registry's type declarations,
         // without ever appearing as a top-level `Decl::Type`. Walk
         // both maps to give them the same synth treatment as user
         // types: every built-in `(trait, type)` pair pre-stamped in
@@ -732,73 +732,25 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     register_auto_derived_impls_for(checker, &["List"], all_auto_traits);
     // Tuple/Map/Set: Equal/Hash/Display only.
     register_auto_derived_impls_for(checker, &["Tuple", "Map", "Set"], non_ordering_traits);
-    // Option/Result: Equal/Hash/Display only (generic wrappers, stored
-    // as polymorphic templates).
-    register_auto_derived_impls_for(checker, &["Option", "Result"], non_ordering_traits);
-
     // ── Built-in enums + records that flow through synth ────────────
     //
-    // Round-62 follow-up: extend auto-derive coverage from primitives
-    // and the four parametric containers to every built-in enum and
-    // record registered in `register_builtins`. Each entry below
-    // pre-stamps `trait_impl_set` for the policy-permitted traits so
-    // `synthesize_auto_derive_impls` knows which (trait, type) pairs
-    // are allowed to receive a synthesized impl method,
-    // and `field_type_supports_trait` returns true for fields that
-    // reference these types (e.g. `Option(DateTime)` on `FileStat`).
-    //
-    // Trait selection mirrors the existing patterns:
-    //   - All four traits where every variant / field is orderable.
-    //   - Equal/Hash/Display only when a field type lacks Compare
-    //     (e.g. records carrying a `Map` field — `Response`/`Request`).
-    //   - Skip entirely for types whose fields can't satisfy any of
-    //     the four (e.g. `ChannelOp` carries `Channel(_)`); the synth
-    //     pass's `field_type_supports_trait` gate would block synth
-    //     anyway and a stamp without a runtime impl would surface as
-    //     a misleading "no method" error.
-    //
-    // The synth pass (`synthesize_auto_derive_impls`) discovers these
-    // types via a uniform walk over `self.tables.enums` / `self.tables.records` and
-    // emits the same `TraitImpl` AST that user-declared types receive,
-    // producing real impl methods at compile time. After this round,
-    // `Op::CallMethod` always finds an impl method for built-in
-    // enum/record receivers, and the Variant /
-    // Record arms in `dispatch_trait_method` are dead.
+    // Each stamp below tells `synthesize_auto_derive_impls` which
+    // (trait, type) pairs may receive a synthesized impl method, and
+    // makes `field_type_supports_trait` true for fields of these types
+    // (e.g. `Option(DateTime)` on `FileStat`). The synth pass finds the
+    // types by a walk over `self.tables.enums` / `self.tables.records`
+    // and emits the `TraitImpl` AST a user-declared type receives.
 
-    // Built-in enums — non-generic, all four traits.
-    //
-    // Round 73 L4 (LATENT, dead-code dedup): the stdlib error-enum
-    // names are no longer hand-rolled here; they're sourced from
-    // `module::builtin_error_enum_variants_with_arity()` — the
-    // single authoritative registry. Adding/renaming a typed-error
-    // enum no longer requires a parallel-array edit at this site.
-    let error_enum_names: Vec<&'static str> =
-        crate::module::builtin_error_enum_variants_with_arity()
-            .iter()
-            .map(|(name, _)| *name)
-            .collect();
-    let mut all_enum_names: Vec<&'static str> = vec!["Step", "ChannelResult", "Method", "Weekday"];
-    // Stdlib error enums: Display + Error are already registered in
-    // `errors.rs`; re-stamping with all_auto_traits adds the missing
-    // Equal/Compare/Hash without disturbing the existing entries
-    // (insert is idempotent).
-    all_enum_names.extend(error_enum_names);
-    register_auto_derived_impls_for(checker, &all_enum_names, all_auto_traits);
-
-    // Built-in records — Date/Time/DateTime/Duration/Instant/FileStat
-    // and Weekday are already stamped by `register_auto_derived_impls_for`
-    // calls in `time.rs` / `fs.rs` (kept there so the per-module file
-    // owns its derive policy). Re-stamping is harmless if any drift
-    // appears here.
-
-    // HTTP records carry a `Map(String, String)` headers field. Map
-    // has no Compare (see line 4359), so Compare is excluded.
-    register_auto_derived_impls_for(checker, &["Response", "Request"], non_ordering_traits);
-
-    // ChannelOp variants carry `Channel(_)` which has no Compare /
-    // Equal / Hash / Display impl. No stamps; the synth pass walks
-    // `self.tables.enums` and skips this entry because every trait fails
-    // the field-support gate.
+    // Each type the builtin registry declares derives what the registry
+    // says: all four traits, unless it names fewer (`Option` and
+    // `Result`, generic wrappers: no `Compare`; `http.Response` holds a
+    // `Map`: no `Compare`; `channel.ChannelOp` holds a channel: none).
+    // The stamps of a module's error enum add `Equal`/`Compare`/`Hash`
+    // to the `Error` and `Display` the builtin environment entered for
+    // it (insert is idempotent).
+    for (_, ty) in crate::builtins::registry::registry().types() {
+        register_auto_derived_impls_for(checker, &[ty.name], ty.derives);
+    }
 
     // Bytes: Display only. The generic `dispatch_trait_method` arm at
     // src/vm/dispatch.rs:309 routes `display` to `display_value`, and

@@ -476,7 +476,19 @@ impl ModuleGraph {
         let mut imports = Vec::with_capacity(decls.len());
         for (name, span) in decls {
             let mut problem = None;
-            let resolution = if module::is_builtin_module(&resolve(name)) {
+            let resolution = if let Some(feature) = module::missing_feature(&resolve(name)) {
+                // The module is known, so no file or dependency is looked
+                // for, and what the program takes from it is not reported
+                // again name by name.
+                ImportResolution::Unresolved(
+                    Diagnostic::error(
+                        Code::ModuleNotFound,
+                        span,
+                        module::needs_feature(&format!("the builtin module '{name}'"), feature),
+                    )
+                    .with_help(format!("rebuild silt with `--features {feature}`")),
+                )
+            } else if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
             } else if let Some(cell) = self.cell_module(name) {
                 ImportResolution::Cell(cell)

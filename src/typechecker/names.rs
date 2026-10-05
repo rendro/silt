@@ -131,9 +131,6 @@ pub struct BuiltinScopes {
     pub modules: HashMap<ModuleId, Exports>,
 }
 
-/// The value names of the prelude that are not variants or types.
-const PRELUDE_FUNCTIONS: &[&str] = &["panic", "print", "println"];
-
 thread_local! {
     static BUILTINS: RefCell<Option<(u64, Arc<BuiltinDefs>, Arc<BuiltinScopes>)>> =
         const { RefCell::new(None) };
@@ -166,8 +163,17 @@ pub fn new_def_table() -> DefTable {
     DefTable::new(builtins().0)
 }
 
+/// The builtin definitions, from the builtin registry: the types, the
+/// traits, each enum's variants, the prelude's functions, then each
+/// module's rows. A row of a cargo feature that is not built is not
+/// offered; neither are the rows of a module that is not built.
 fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
-    let names = super::builtin_names();
+    let registry = crate::builtins::registry::registry();
+    let enums: HashMap<&str, &[(&str, usize)]> = registry
+        .types()
+        .map(|(_, ty)| (ty.name, ty.variants()))
+        .filter(|(_, variants)| !variants.is_empty())
+        .collect();
     let mut defs = BuiltinDefs::default();
     let mut scopes = BuiltinScopes::default();
     let add = |defs: &mut BuiltinDefs, module: ModuleId, name: Symbol, kind: DefKind| {
@@ -205,11 +211,6 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
     }
     // The traits, so that their ids are those of
     // `defs::builtin_trait_id`.
-    debug_assert_eq!(
-        names.traits.iter().map(|t| resolve(*t)).collect::<Vec<_>>(),
-        crate::defs::BUILTIN_TRAITS,
-        "the builtin traits are the ones defs::BUILTIN_TRAITS lists"
-    );
     let mut traits = Vec::new();
     for name in crate::defs::BUILTIN_TRAITS {
         let name = intern(name);
@@ -218,7 +219,7 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         traits.push((id, name));
     }
     for (id, module_id, name) in types {
-        let Some((_, variants)) = names.enums.iter().find(|(e, _)| *e == name) else {
+        let Some(variants) = enums.get(resolve(name).as_str()) else {
             continue;
         };
         let exports = if module_id == ModuleId::PRELUDE {
@@ -228,17 +229,18 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         };
         let mut ids = Vec::new();
         for (ordinal, (variant, arity)) in variants.iter().enumerate() {
+            let variant = intern(variant);
             let v = add(
                 &mut defs,
                 module_id,
-                *variant,
+                variant,
                 DefKind::Variant {
                     ty: TypeId(id),
                     ordinal: ordinal as u16,
                     arity: *arity as u16,
                 },
             );
-            exports.values.insert(*variant, Binding::Def(v));
+            exports.values.insert(variant, Binding::Def(v));
             ids.push(v);
         }
         defs.variants.insert(id, ids);
@@ -247,7 +249,7 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
     // The prelude's functions and traits.
     let prelude = ModuleId::PRELUDE;
     let mut exports = prelude_exports;
-    for name in PRELUDE_FUNCTIONS {
+    for name in crate::module::builtin_free_function_names() {
         let name = intern(name);
         let id = add(&mut defs, prelude, name, DefKind::Fn);
         exports.values.insert(name, Binding::Def(id));
@@ -257,41 +259,40 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
     }
     scopes.prelude = exports;
 
-    // The builtin modules' functions.
-    for module_name in crate::module::BUILTIN_MODULES {
-        let module = ModuleId::builtin(module_name).expect("a builtin module");
-        let mut exports = module_exports.remove(&module).unwrap_or_default();
-        let prefix = format!("{module_name}.");
-        let mut members: Vec<Symbol> = names
-            .bindings
-            .iter()
-            .filter_map(|name| {
-                let name = resolve(*name);
-                let member = name.strip_prefix(&prefix)?;
-                (!member.contains('.')).then(|| intern(member))
-            })
-            .collect();
+    // The builtin modules' functions and constants. A module that is
+    // not built keeps its types and variants, so that a use of one is
+    // answered with the module and the feature it needs; nothing can
+    // import it (the session rejects the import).
+    for module in &registry.modules {
+        let id = ModuleId::builtin(module.name).expect("a builtin module");
+        let mut exports = module_exports.remove(&id).unwrap_or_default();
+        let mut members: Vec<Symbol> = module.enabled_rows().map(|row| intern(row.name)).collect();
         members.sort_by_key(|m| resolve(*m));
-        members.dedup();
         for member in members {
-            let id = add(&mut defs, module, member, DefKind::Fn);
-            exports.values.insert(member, Binding::Def(id));
+            let def = add(&mut defs, id, member, DefKind::Fn);
+            exports.values.insert(member, Binding::Def(def));
         }
-        scopes.modules.insert(module, exports);
+        scopes.modules.insert(id, exports);
     }
-    // `ParseError` is the error of `int.parse` and of `float.parse`: it is
-    // declared in `int` and reached through `float` as well.
-    let int = ModuleId::builtin("int").expect("a builtin module");
-    let float = ModuleId::builtin("float").expect("a builtin module");
-    let parse_error = intern("ParseError");
-    if let Some(Binding::Def(ty)) = scopes.modules[&int].types.get(&parse_error).cloned() {
-        let variants = defs.variants.get(&ty).cloned().unwrap_or_default();
-        let float_exports = scopes.modules.get_mut(&float).expect("float's exports");
-        float_exports.types.insert(parse_error, Binding::Def(ty));
-        for v in variants {
-            float_exports
-                .values
-                .insert(defs.defs[v.0 as usize].name, Binding::Def(v));
+    // A type a module shares with the module that declares it
+    // (`ParseError` is the error of `int.parse` and of `float.parse`) is
+    // reached through both, and so are its variants.
+    for module in registry.enabled_modules() {
+        let id = ModuleId::builtin(module.name).expect("a builtin module");
+        for (owner, ty_name) in module.shares {
+            let owner = ModuleId::builtin(owner).expect("a builtin module");
+            let ty_name = intern(ty_name);
+            let Some(Binding::Def(ty)) = scopes.modules[&owner].types.get(&ty_name).cloned() else {
+                continue;
+            };
+            let variants = defs.variants.get(&ty).cloned().unwrap_or_default();
+            let exports = scopes.modules.get_mut(&id).expect("the module's exports");
+            exports.types.insert(ty_name, Binding::Def(ty));
+            for v in variants {
+                exports
+                    .values
+                    .insert(defs.defs[v.0 as usize].name, Binding::Def(v));
+            }
         }
     }
     (defs, scopes)
@@ -576,7 +577,11 @@ fn bind_imports(
                     let value = exports.values.get(item).cloned();
                     let ty = exports.types.get(item).cloned();
                     if value.is_none() && ty.is_none() {
-                        diagnostics.push(missing_item(*m, *item, *item_span, exports));
+                        let builtin = match imported {
+                            Imported::Builtin(id) => id.builtin_name(),
+                            _ => None,
+                        };
+                        diagnostics.push(missing_item(*m, builtin, *item, *item_span, exports));
                         scope.values.entry(*item).or_insert(Binding::Poisoned);
                         continue;
                     }
@@ -745,7 +750,24 @@ fn report_private_in_public(
 }
 
 /// `import m.{ item }` where `m` does not offer `item`.
-fn missing_item(module: Symbol, item: Symbol, span: Span, exports: &Exports) -> Diagnostic {
+fn missing_item(
+    module: Symbol,
+    builtin: Option<&str>,
+    item: Symbol,
+    span: Span,
+    exports: &Exports,
+) -> Diagnostic {
+    // A member of a builtin module that this build lacks.
+    if let Some(builtin) = builtin
+        && let Some(feature) = crate::module::member_missing_feature(builtin, &resolve(item))
+    {
+        return Diagnostic::error(
+            Code::NotExported,
+            span,
+            crate::module::needs_feature(&format!("`{builtin}.{item}`"), feature),
+        )
+        .with_help(format!("rebuild silt with `--features {feature}`"));
+    }
     if exports.private.contains_key(&item) {
         return Diagnostic::error(
             Code::PrivateItem,
@@ -894,6 +916,9 @@ impl Resolver<'_> {
 
     /// The help for a builtin module used without its import.
     fn import_help(&self, module: &str) -> String {
+        if let Some(feature) = crate::module::missing_feature(module) {
+            return crate::module::needs_feature(&format!("module `{module}`"), feature);
+        }
         match self.kind {
             ModuleKind::Cell => format!("enter `import {module}` first"),
             _ => format!("add `import {module}` at the top of the file"),
@@ -1048,7 +1073,7 @@ impl Resolver<'_> {
         if !resolve(name).starts_with(char::is_uppercase) {
             return found;
         }
-        for module in crate::module::BUILTIN_MODULES {
+        for module in crate::module::builtin_modules() {
             let module_sym = intern(module);
             if let Some(id) = ModuleId::builtin(module)
                 && let Some(exports) = self.builtins.modules.get(&id)
@@ -1082,6 +1107,12 @@ impl Resolver<'_> {
     /// modules `elsewhere` offer.
     fn elsewhere_help(&self, name: Symbol, elsewhere: &[(Symbol, Option<Symbol>)]) -> String {
         let (module, bound_as) = elsewhere[0];
+        if let Some(feature) = crate::module::missing_feature(&resolve(module)) {
+            return format!(
+                "`{name}` is in module `{module}`, which is not part of this build of silt: it \
+                 needs the cargo feature `{feature}`"
+            );
+        }
         match bound_as {
             Some(bound_as) => format!(
                 "did you mean `{bound_as}.{name}`? or import the name: `import {module}.{{ {name} }}`"
@@ -2183,10 +2214,10 @@ impl Resolver<'_> {
         ))
     }
 
-    /// The first builtin module (in the order of `BUILTIN_MODULES`) with a
+    /// The first builtin module (in the order of `builtin_modules`) with a
     /// function `name`.
     fn builtin_function_module(&self, name: Symbol) -> Option<&'static str> {
-        crate::module::BUILTIN_MODULES.iter().copied().find(|m| {
+        crate::module::builtin_modules().iter().copied().find(|m| {
             ModuleId::builtin(m)
                 .and_then(|id| self.builtins.modules.get(&id))
                 .is_some_and(|exports| exports.values.contains_key(&name))
@@ -2300,18 +2331,20 @@ impl Resolver<'_> {
                 && self.alias_of(head_name).is_none() =>
             {
                 let module_str = resolve(head_name);
-                self.error(
-                    Diagnostic::error(
-                        Code::ModuleNotImported,
-                        span,
-                        format!("module '{module_str}' is not imported"),
-                    )
-                    .with_help(self.import_help(&module_str))
-                    .with_fix(
+                let mut d = Diagnostic::error(
+                    Code::ModuleNotImported,
+                    span,
+                    format!("module '{module_str}' is not imported"),
+                )
+                .with_help(self.import_help(&module_str));
+                // An import of a module this build lacks would not help.
+                if crate::module::missing_feature(&module_str).is_none() {
+                    d = d.with_fix(
                         format!("Add import for `{module_str}`"),
                         vec![(Span::point(span.file, 0), format!("import {module_str}\n"))],
-                    ),
-                );
+                    );
+                }
+                self.error(d);
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
             }
@@ -2346,7 +2379,7 @@ impl Resolver<'_> {
             }
             Some(binding) => self.binding_res(&binding),
             None => {
-                let d = missing_item(bound_as, field, span, exports);
+                let d = missing_item(bound_as, id.builtin_name(), field, span, exports);
                 self.error(d);
                 Res::Error
             }

@@ -128,13 +128,12 @@ fn main() {
     unsafe { std::env::remove_var("SILT_TEST_ENV_SHAPE_PROBE") };
 }
 
-/// Docs ↔ registration cross-check, mirroring the encoding module's
-/// test. Every function registered for `env` must be present in the
-/// shared io-fs docs body (round 62 phase-2: inlined as
-/// `super::docs::IO_FS_MD` and surfaced via per-name LSP hover docs).
+/// Docs ↔ registry cross-check, mirroring the encoding module's test.
+/// Every row of `env` has a doc an editor shows, cut from
+/// `docs/stdlib/io-fs.md`.
 #[test]
 fn test_documented_env_functions_match_registration() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let expected = silt::module::builtin_module_functions("env");
     assert!(
         !expected.is_empty(),
@@ -145,10 +144,8 @@ fn test_documented_env_functions_match_registration() {
         let doc = docs.get(&qualified).cloned().unwrap_or_default();
         assert!(
             !doc.trim().is_empty(),
-            "no registered builtin doc for `{qualified}` — the `env` \
-             section in `super::docs::IO_FS_MD` (in \
-             src/typechecker/builtins/docs.rs) must include a \
-             `## \\`env.{name}\\`` heading."
+            "no builtin doc for `{qualified}`: the `env` part of \
+             docs/stdlib/io-fs.md has a `## \\`env.{name}\\`` section."
         );
     }
 }

@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- without-feature: postgres
+-- The types and variants of a builtin module that is not built are not
+-- in scope bare, like those of any module that is not imported; the
+-- help names the module and the feature it needs. A use of the module
+-- without its import does not suggest the import.
+fn pool(p: PgPool, tx: PgTx, c: PgCursor) -> Int {
+  1
+}
+
+fn rows(v: Value, q: QueryResult, e: ExecResult) -> Int {
+  2
+}
+
+type Holder { pool: PgPool, values: List(Value) }
+
+fn main() {
+  println(postgres.uuidv7())
+  let e: PgError = PgClosed
+  println(e)
+}
