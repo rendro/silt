@@ -2539,3 +2539,383 @@ fn test_println_rejects_wrong_arity() {
         "expected print 2-arg guard message, got: {msg}"
     );
 }
+
+// ── Type confusion: one test per guard family ───────────────────────
+//
+// The code a VM runs is verified, so an instruction always finds its
+// operands; what the verifier cannot know is their kind. The typechecker
+// claims it, and where the claim is wrong the instruction stops with a
+// `VmError::type_confusion` error (code E0704). No well-typed program
+// reaches these once the checker is sound, so each test hands the VM
+// code no compiler emits for a checked program: well-formed, built with
+// the emitter, and wrong about a value.
+mod type_confusion {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::bytecode::{NO_TRAIT, VmClosure};
+    use crate::diagnostic::Code;
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn string(s: &str) -> Value {
+        Value::String(s.to_string())
+    }
+
+    fn name(e: &mut Emitter, s: &str) -> crate::bytecode::Const {
+        e.constant(string(s), span()).unwrap()
+    }
+
+    fn record(fields: &[(&str, Value)]) -> Value {
+        let fields: BTreeMap<String, Value> = fields
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect();
+        Value::builtin_record(crate::typeinfo::ty::ANON_RECORD, fields)
+    }
+
+    fn function(arity: u8) -> Value {
+        Value::VmClosure(Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit("f".to_string(), arity)),
+            upvalues: vec![],
+        }))
+    }
+
+    /// Run the script `build` emits (followed by a `Return`), which
+    /// must stop with a type-confusion error whose message contains
+    /// `phrase`.
+    fn confused(phrase: &str, build: impl FnOnce(&mut Emitter)) {
+        let script = make_function(|e| {
+            build(e);
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let err = Vm::new(crate::HostIo::process())
+            .run(script)
+            .expect_err("an instruction that meets a value of the wrong kind stops");
+        assert!(
+            err.message.contains(phrase),
+            "expected {phrase:?} in: {}",
+            err.message
+        );
+        assert!(err.type_confusion, "not a type-confusion error: {err}");
+        assert_eq!(err.to_diagnostic().code, Code::TypeConfusion);
+    }
+
+    #[test]
+    fn arithmetic_on_a_value_that_is_no_number() {
+        confused("cannot apply '+' to String and Int", |e| {
+            push(e, string("a"));
+            push(e, Value::Int(1));
+            e.emit(Asm::Add, span()).unwrap();
+        });
+        confused("cannot apply '*' to Bool and Bool", |e| {
+            e.emit(Asm::True, span()).unwrap();
+            e.emit(Asm::False, span()).unwrap();
+            e.emit(Asm::Mul, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn arithmetic_on_an_int_and_a_float() {
+        confused("cannot mix Int and Float", |e| {
+            push(e, Value::Int(1));
+            push(e, Value::Float(2.5));
+            e.emit(Asm::Sub, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn negation_of_a_value_that_is_no_number() {
+        confused("cannot negate String", |e| {
+            push(e, string("a"));
+            e.emit(Asm::Negate, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn not_of_a_value_that_is_no_bool() {
+        confused("cannot apply 'not' to Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::Not, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn ordering_of_values_of_different_types() {
+        confused("cannot compare Int and String", |e| {
+            push(e, Value::Int(1));
+            push(e, string("a"));
+            e.emit(Asm::Lt, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn ordering_of_functions() {
+        confused("type 'Fn' does not implement Compare", |e| {
+            push(e, Value::List(Arc::new(vec![function(0)])));
+            push(e, Value::List(Arc::new(vec![function(0)])));
+            e.emit(Asm::Geq, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn equality_of_values_of_different_types() {
+        confused("cannot compare Int and String", |e| {
+            push(e, Value::Int(1));
+            push(e, string("a"));
+            e.emit(Asm::Eq, span()).unwrap();
+        });
+        confused("cannot compare Bool and Unit", |e| {
+            e.emit(Asm::True, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Neq, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn equality_of_functions() {
+        confused("type 'Fn' does not implement Equal", |e| {
+            push(e, function(0));
+            push(e, function(0));
+            e.emit(Asm::Eq, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn interpolation_of_a_part_that_is_no_string() {
+        confused(
+            "string interpolation requires string values, got Int",
+            |e| {
+                push(e, string("a"));
+                push(e, Value::Int(1));
+                e.emit(Asm::StringConcat { count: 2 }, span()).unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn display_of_a_value_without_display() {
+        confused("type 'Fn' does not implement Display", |e| {
+            push(e, function(0));
+            e.emit(Asm::DisplayValue, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn call_of_a_value_that_is_no_function() {
+        confused("cannot call value of type Int", |e| {
+            push(e, Value::Int(1));
+            push(e, Value::Int(2));
+            e.emit(Asm::Call { argc: 1 }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn call_with_the_wrong_number_of_arguments() {
+        confused("function 'f' expects 2 arguments, got 1", |e| {
+            push(e, function(2));
+            push(e, Value::Int(1));
+            e.emit(Asm::Call { argc: 1 }, span()).unwrap();
+        });
+        confused("function 'f' expects 2 arguments, got 0", |e| {
+            push(e, function(2));
+            e.emit(Asm::TailCall { argc: 0 }, span()).unwrap();
+        });
+        confused(
+            "variant constructor 'Some' expects 1 arguments, got 2",
+            |e| {
+                push(e, Value::VariantConstructor(bv::SOME.tag()));
+                push(e, Value::Int(1));
+                push(e, Value::Int(2));
+                e.emit(Asm::Call { argc: 2 }, span()).unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn method_call_on_a_type_without_the_method() {
+        confused("no method 'nope' for type 'Int'", |e| {
+            push(e, Value::Int(1));
+            let method = name(e, "nope");
+            e.emit(
+                Asm::CallMethod {
+                    method,
+                    argc: 1,
+                    of: NO_TRAIT,
+                },
+                span(),
+            )
+            .unwrap();
+        });
+    }
+
+    #[test]
+    fn record_update_of_a_value_that_is_no_record() {
+        confused("requires a record, got Int", |e| {
+            push(e, Value::Int(1));
+            push(e, Value::Int(2));
+            let x = name(e, "x");
+            e.emit(Asm::RecordUpdate { fields: &[x] }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn range_of_values_that_are_no_ints() {
+        confused("requires two Int operands, got String and Int", |e| {
+            push(e, string("a"));
+            push(e, Value::Int(2));
+            e.emit(Asm::MakeRange, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn spread_of_a_value_that_is_no_list() {
+        confused("left operand is not a list or range", |e| {
+            push(e, Value::Int(1));
+            push(e, Value::List(Arc::new(vec![])));
+            e.emit(Asm::ListConcat, span()).unwrap();
+        });
+        confused("right operand is not a list or range", |e| {
+            push(e, Value::List(Arc::new(vec![])));
+            push(e, Value::Int(1));
+            e.emit(Asm::ListConcat, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn field_of_a_value_without_it() {
+        confused("cannot access field 'x' on Int", |e| {
+            push(e, Value::Int(1));
+            let x = name(e, "x");
+            e.emit(Asm::GetField { name: x }, span()).unwrap();
+        });
+        confused("record has no field 'x'", |e| {
+            push(e, record(&[("y", Value::Int(1))]));
+            let x = name(e, "x");
+            e.emit(Asm::GetField { name: x }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn tuple_pattern_on_a_value_of_another_shape() {
+        confused("tuple destructure: expected tuple, got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructTuple { index: 0 }, span()).unwrap();
+        });
+        confused(
+            "tuple destructure: expected at least 3 elements, got 1",
+            |e| {
+                push(e, Value::Tuple(vec![Value::Int(1)]));
+                e.emit(Asm::DestructTuple { index: 2 }, span()).unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn variant_pattern_on_a_value_of_another_shape() {
+        confused("variant destructure: expected variant, got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
+        });
+        confused("variant destructure: field index 1 out of bounds", |e| {
+            push(e, Value::variant(bv::SOME, vec![Value::Int(1)]));
+            e.emit(Asm::DestructVariant { index: 1 }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn list_pattern_on_a_value_of_another_shape() {
+        confused("list destructure: expected list, got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructList { index: 0 }, span()).unwrap();
+        });
+        confused(
+            "list destructure: expected at least 2 elements, got 1",
+            |e| {
+                push(e, Value::List(Arc::new(vec![Value::Int(1)])));
+                e.emit(Asm::DestructList { index: 1 }, span()).unwrap();
+            },
+        );
+        confused("range index out of bounds", |e| {
+            push(e, Value::Range(1, 2));
+            e.emit(Asm::DestructList { index: 5 }, span()).unwrap();
+        });
+        confused("list destructure: expected list, got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructListRest { start: 0 }, span()).unwrap();
+        });
+        confused("rest pattern start 3 exceeds list length 1", |e| {
+            push(e, Value::List(Arc::new(vec![Value::Int(1)])));
+            e.emit(Asm::DestructListRest { start: 3 }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn record_pattern_on_a_value_of_another_shape() {
+        confused("record destructure: expected record, got Int", |e| {
+            push(e, Value::Int(1));
+            let x = name(e, "x");
+            e.emit(Asm::DestructRecordField { name: x }, span())
+                .unwrap();
+        });
+        confused("record has no field 'x'", |e| {
+            push(e, record(&[("y", Value::Int(1))]));
+            let x = name(e, "x");
+            e.emit(Asm::DestructRecordField { name: x }, span())
+                .unwrap();
+        });
+        confused("record rest destructure: expected record, got Int", |e| {
+            push(e, Value::Int(1));
+            let x = name(e, "x");
+            e.emit(Asm::DestructRecordRest { excluded: &[x] }, span())
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn map_pattern_on_a_value_of_another_shape() {
+        confused("map destructure: expected map, got Int", |e| {
+            push(e, Value::Int(1));
+            let k = name(e, "k");
+            e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
+        });
+        confused("map has no key 'k'", |e| {
+            push(e, Value::Map(Arc::new(BTreeMap::new())));
+            let k = name(e, "k");
+            e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn question_mark_on_a_value_that_is_no_result_or_option() {
+        confused("`?` applies only to Result or Option; got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::QuestionMark, span()).unwrap();
+        });
+        confused("`?` applies only to Result or Option; got variant", |e| {
+            push(e, Value::variant(bv::MESSAGE, vec![Value::Int(1)]));
+            e.emit(Asm::QuestionMark, span()).unwrap();
+        });
+    }
+
+    /// The other kind of runtime error keeps its code: a program can
+    /// reach it with every value of the type the checker gave it.
+    #[test]
+    fn an_error_a_well_typed_program_reaches_is_no_type_confusion() {
+        let script = make_function(|e| {
+            push(e, Value::Int(1));
+            push(e, Value::Int(0));
+            e.emit(Asm::Div, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let err = Vm::new(crate::HostIo::process())
+            .run(script)
+            .expect_err("division by zero stops the program");
+        assert!(!err.type_confusion);
+        assert_eq!(err.to_diagnostic().code, Code::RuntimeError);
+    }
+}
