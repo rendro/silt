@@ -13,6 +13,39 @@ use crate::value::Value;
 use super::{BindDestructKind, Compiler, name_without_binding};
 use crate::diagnostic::{Code, Diagnostic};
 
+/// A defence for as long as the soundness manifest
+/// (tests/golden/repros/SOUNDNESS.tsv) has pending rows, to be removed in
+/// stage 6 step 6: a constructor pattern and a pattern that names a
+/// record type keep the test of their tag although the typechecker marked
+/// them irrefutable. Should a hole of the checker let a value of another
+/// type reach such a pattern, an arm is not taken, and a `let` or a
+/// parameter stops the program ("the value does not match the pattern it
+/// is bound to"), instead of reading the value as what it is not. With
+/// `false`, every pattern marked irrefutable goes without a test.
+const TEST_NOMINAL_PATTERNS_MARKED_IRREFUTABLE: bool = true;
+
+/// Whether no test is emitted for `pattern`: the typechecker marked it
+/// irrefutable (it matches every value of its type).
+fn needs_no_test(pattern: &Pattern) -> bool {
+    if !pattern.irrefutable {
+        return false;
+    }
+    if !TEST_NOMINAL_PATTERNS_MARKED_IRREFUTABLE {
+        return true;
+    }
+    // Under the defence, only the patterns that name no type go
+    // untested: a wildcard, a name, and a tuple or an anonymous record
+    // of such patterns.
+    match &pattern.kind {
+        PatternKind::Wildcard | PatternKind::Ident(_) => true,
+        PatternKind::Tuple(parts) => parts.iter().all(needs_no_test),
+        PatternKind::AnonRecord { fields, .. } => fields
+            .iter()
+            .all(|(_, _, sub)| sub.as_ref().is_none_or(needs_no_test)),
+        _ => false,
+    }
+}
+
 impl Compiler {
     /// Emit the shape test of a tuple pattern with `len` elements for the
     /// value on TOS and return the failure jump. The pattern `()` has no
@@ -37,7 +70,7 @@ impl Compiler {
     // looking at above the value.
     //
     // A pattern the typechecker marked irrefutable matches every value
-    // of its type: no test is emitted for it.
+    // of its type: no test is emitted for it (see `needs_no_test`).
 
     pub(super) fn compile_pattern_test(
         &mut self,
@@ -63,7 +96,7 @@ impl Compiler {
         span: Span,
         base_depth: usize,
     ) -> Result<Vec<(Label, usize)>, Diagnostic> {
-        if pattern.irrefutable {
+        if needs_no_test(pattern) {
             return Ok(vec![]);
         }
         match &pattern.kind {
@@ -129,8 +162,11 @@ impl Compiler {
             }
 
             PatternKind::Pin(name) => {
+                // The name is one from outside the pattern, also where
+                // the pattern is tested again while its names are bound
+                // (the alternatives of an or-pattern).
                 self.emit(Asm::Dup, span)?;
-                if let Some(slot) = self.resolve_local(*name) {
+                if let Some(slot) = self.resolve_local_outside_pattern(*name) {
                     self.emit(Asm::GetLocal { slot }, span)?;
                 } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
                     self.emit(
@@ -161,7 +197,7 @@ impl Compiler {
                 let mut all_jumps = vec![(tag_jump, base_depth)];
 
                 for (i, field_pat) in fields.iter().enumerate() {
-                    if !field_pat.irrefutable {
+                    if !needs_no_test(field_pat) {
                         self.emit(Asm::DestructVariant { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(field_pat, span, base_depth + 1)?;
@@ -178,7 +214,7 @@ impl Compiler {
                 let mut all_jumps = vec![(len_jump, base_depth)];
 
                 for (i, pat) in pats.iter().enumerate() {
-                    if !pat.irrefutable {
+                    if !needs_no_test(pat) {
                         self.emit(Asm::DestructTuple { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(pat, span, base_depth + 1)?;
@@ -201,7 +237,7 @@ impl Compiler {
                 let mut all_jumps = vec![(len_jump, base_depth)];
 
                 for (i, pat) in elements.iter().enumerate() {
-                    if !pat.irrefutable {
+                    if !needs_no_test(pat) {
                         self.emit(Asm::DestructList { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(pat, span, base_depth + 1)?;
@@ -211,7 +247,7 @@ impl Compiler {
                 }
 
                 if let Some(rest_pat) = rest
-                    && !rest_pat.irrefutable
+                    && !needs_no_test(rest_pat)
                 {
                     self.emit(Asm::DestructListRest { start: elem_count }, span)?;
                     let sub_fails =
@@ -239,7 +275,7 @@ impl Compiler {
                         Some(p) => p,
                         None => continue,
                     };
-                    if !sub_pattern.irrefutable {
+                    if !needs_no_test(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
                         self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
@@ -260,7 +296,7 @@ impl Compiler {
                         Some(p) => p,
                         None => continue,
                     };
-                    if !sub_pattern.irrefutable {
+                    if !needs_no_test(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
                         self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
@@ -282,7 +318,7 @@ impl Compiler {
                     let key_jump = self.jump_if_false(span)?;
                     all_jumps.push((key_jump, base_depth));
 
-                    if !sub_pat.irrefutable {
+                    if !needs_no_test(sub_pat) {
                         let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
                         self.emit(Asm::DestructMapValue { key: key_idx2 }, span)?;
                         let sub_fails =
@@ -403,7 +439,7 @@ impl Compiler {
         pattern: &Pattern,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        if pattern.irrefutable {
+        if needs_no_test(pattern) {
             return self.compile_pattern_bind(pattern, span);
         }
         // The value is the local on top of the frame.
@@ -456,6 +492,37 @@ impl Compiler {
     //                                    tuple_copy, elem1, b]
 
     pub(super) fn compile_pattern_bind(
+        &mut self,
+        pattern: &Pattern,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        // The locals there are now are the ones a pin of this pattern
+        // can mean; the pattern's own names come after them.
+        let outermost = self.ctx().pattern_floor.is_none();
+        if outermost {
+            let floor = self.ctx().locals.len();
+            self.ctx_mut().pattern_floor = Some(floor);
+        }
+        let result = self.compile_pattern_bind_parts(pattern, span);
+        if outermost {
+            self.ctx_mut().pattern_floor = None;
+        }
+        result
+    }
+
+    /// The local `name` a pin means: the innermost one that is not a
+    /// name of the pattern being bound.
+    fn resolve_local_outside_pattern(&self, name: Symbol) -> Option<usize> {
+        let ctx = self.ctx();
+        let outside = ctx.pattern_floor.unwrap_or(ctx.locals.len());
+        ctx.locals[..outside]
+            .iter()
+            .rev()
+            .find(|local| local.name == name)
+            .map(|local| local.slot)
+    }
+
+    fn compile_pattern_bind_parts(
         &mut self,
         pattern: &Pattern,
         span: Span,
@@ -984,44 +1051,41 @@ mod tests {
     const TYPES: &str = "type Wrap { Wrap(Int) }\ntype Point { x: Int, y: Int }\n";
 
     /// A `let` or a parameter whose pattern the checker marked
-    /// irrefutable is bound without a test, whatever its form.
+    /// irrefutable and that names no type is bound without a test.
     #[test]
     fn test_irrefutable_binding_has_no_test() {
         let f = compiled(
-            &format!(
-                "{TYPES}fn f(Wrap(a), (b, Point {{ x, y }})) -> Int {{\n  \
-                 let (Wrap(c), true | false, [..rest]) = (Wrap(b), a == x, [y])\n  a + c\n}}\n"
-            ),
+            "fn f((a, {x, y}), ()) -> Int {\n  let (c, (d, _)) = (x, (y, a))\n  a + c + d\n}\n",
             "f",
         );
-        for op in [
-            Op::TestTag,
-            Op::TestTupleLen,
-            Op::TestRecordTag,
-            Op::TestEqual,
-            Op::TestListMin,
-            Op::Panic,
-        ] {
+        for op in [Op::TestTupleLen, Op::TestEqual, Op::Panic] {
             assert!(!has_op(&f, op), "{op:?} emitted for an irrefutable binding");
         }
-        assert!(has_op(&f, Op::DestructVariant));
         assert!(has_op(&f, Op::DestructTuple));
+        assert!(has_op(&f, Op::DestructRecordField));
     }
 
-    /// In an arm, the parts of a pattern that cannot fail are not tested
-    /// either: only the variant of the `Option` is.
+    /// The defence `TEST_NOMINAL_PATTERNS_MARKED_IRREFUTABLE`: the one
+    /// variant of an enum and a record type keep the test of their tag,
+    /// in a binding (which stops when it fails) and in an arm.
     #[test]
-    fn test_arm_tests_only_what_can_fail() {
+    fn test_nominal_patterns_keep_their_tag_test() {
         let f = compiled(
-            &format!(
-                "{TYPES}fn f(o: Option((Wrap, Point))) -> Int {{\n  match o {{\n    \
-                 Some((Wrap(a), Point {{ x, y }})) -> a + x + y\n    None -> 0\n  }}\n}}\n"
-            ),
+            &format!("{TYPES}fn f(Wrap(a), Point {{ x, y }}) -> Int {{ a + x + y }}\n"),
             "f",
         );
         assert!(has_op(&f, Op::TestTag));
-        assert!(!has_op(&f, Op::TestTupleLen));
-        assert!(!has_op(&f, Op::TestRecordTag));
+        assert!(has_op(&f, Op::TestRecordTag));
+        assert!(has_op(&f, Op::Panic));
+
+        let g = compiled(
+            &format!(
+                "{TYPES}fn g(o: Option((Wrap, Point))) -> Int {{\n  match o {{\n    \
+                 Some((Wrap(a), Point {{ x, y }})) -> a + x + y\n    None -> 0\n  }}\n}}\n"
+            ),
+            "g",
+        );
+        assert!(has_op(&g, Op::TestRecordTag));
     }
 
     /// A pattern that can fail keeps its test, and the test of its own
