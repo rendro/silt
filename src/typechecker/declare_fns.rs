@@ -122,7 +122,16 @@ impl TypeChecker {
             let trait_args = &wc.trait_args;
             if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
-                // An unknown trait is reported when the body is checked.
+                // An unknown trait is reported when the body is checked
+                // (or was, by the resolver); what the variable is bounded
+                // by is then not known.
+                if let Type::Var(tv) = resolved
+                    && self
+                        .named_trait(wc.trait_res, *trait_name)
+                        .is_none_or(|t| !self.tables.traits.contains_key(&t))
+                {
+                    self.unknown_bounds.insert(tv);
+                }
                 if let Type::Var(tv) = resolved
                     && let Some(trait_name) = self.named_trait(wc.trait_res, *trait_name)
                 {

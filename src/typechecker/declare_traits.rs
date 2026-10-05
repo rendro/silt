@@ -1164,6 +1164,13 @@ impl TypeChecker {
         let expanded_self_args = self.type_args_of(&self_type);
         let mut impl_obligations_by_index: Vec<(usize, TraitKey, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
+            let unknown = wc.trait_res == Some(crate::defs::Res::Error)
+                || self
+                    .named_trait(wc.trait_res, wc.trait_name)
+                    .is_none_or(|t| !self.tables.traits.contains_key(&t));
+            if unknown && let Some(Type::Var(tv)) = impl_param_map.get(&wc.type_param) {
+                self.unknown_bounds.insert(*tv);
+            }
             // A bound the resolver resolved to nothing: it reported why.
             if wc.trait_res == Some(crate::defs::Res::Error) {
                 continue;

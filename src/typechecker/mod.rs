@@ -164,6 +164,10 @@ pub struct TypeChecker {
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
+    /// The annotation variables with a `where` clause whose trait is
+    /// unknown (reported): what bounds them is not known, so a method
+    /// call or a bound owed on one is not reported as well.
+    pub(super) unknown_bounds: std::collections::HashSet<TyVar>,
     /// The annotation variables of the functions of the group being
     /// inferred together, when it has several: each with the functions
     /// (by declaration) it is a variable of. Two of different functions
@@ -279,6 +283,7 @@ impl TypeChecker {
             closed_mark: 0,
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
+            unknown_bounds: std::collections::HashSet::new(),
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),
             let_index: HashMap::new(),

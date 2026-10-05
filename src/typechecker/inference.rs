@@ -233,7 +233,7 @@ impl TypeChecker {
         callee_fn_name: Option<Symbol>,
         span: Span,
     ) {
-        if self.bound_in_scope(r, trait_name) {
+        if self.bound_in_scope(r, trait_name) || self.unknown_bounds.contains(&r.var) {
             return;
         }
         let fn_label = callee_fn_name
@@ -1788,6 +1788,10 @@ impl TypeChecker {
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
+                        } else if self.unknown_bounds.contains(&r.var) {
+                            // One of its bounds names an unknown trait
+                            // (reported): the method may be that trait's.
+                            Type::Error
                         } else if trait_names.is_empty() {
                             self.errors.push(
                                 Diagnostic::error(
