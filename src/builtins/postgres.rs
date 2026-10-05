@@ -36,8 +36,10 @@ use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
 
 use super::common::{ok, value_kind};
+use crate::runtime::channel::{Channel, TrySendResult};
+use crate::runtime::completion::IoCompletion;
 use crate::typeinfo::{bv, ty};
-use crate::value::{Channel, IoCompletion, TrySendResult, Value};
+use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
 /// Factory: deadline-cancelled postgres op surfaces as `Err(PgTimeout)`
@@ -2442,7 +2444,7 @@ mod tests {
     /// nothing is asserted about time.
     #[test]
     fn blocking_stream_send_leaves_no_send_waker_behind() {
-        use crate::value::TryReceiveResult;
+        use crate::runtime::channel::TryReceiveResult;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::Duration;
 

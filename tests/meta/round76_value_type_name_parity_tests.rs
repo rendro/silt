@@ -1,6 +1,6 @@
 //! Round 76 ERR-1 GAP — FFI `value_type_name` parity lock.
 //!
-//! `src/value.rs::value_type_name` (private fn used by every
+//! `src/value/convert.rs::value_type_name` (private fn used by every
 //! `FromValue::from_value` impl — `i64`, `f64`, `bool`, `String`,
 //! `()`, `Vec<Value>`) hand-rolled its own match arms and drifted
 //! from the two canonical kind oracles
@@ -46,7 +46,9 @@ use std::sync::Arc;
 
 use silt::builtins::value_kind;
 use silt::bytecode::{Function, VmClosure};
-use silt::value::{Channel, FromValue, HostFn, HostShape, TaskHandle, Value};
+use silt::runtime::channel::Channel;
+use silt::runtime::handle::TaskHandle;
+use silt::value::{FromValue, HostFn, HostShape, Value};
 use silt::vm::Vm;
 
 // ── Builders mirroring tests/typecheck/round75_kind_naming_canonical_tests.rs ──
@@ -78,7 +80,7 @@ struct AllVariants {
 }
 
 fn build_all_variants() -> AllVariants {
-    use silt::value::{TcpListenerHandle, TcpStreamHandle};
+    use silt::runtime::handle::{TcpListenerHandle, TcpStreamHandle};
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
     let port = listener.local_addr().unwrap().port();
@@ -451,7 +453,7 @@ fn from_value_error_messages_no_longer_use_pre_fix_drift_strings() {
 
 /// Extract `value_type_name`'s output for `v` from the observable
 /// `i64::from_value` error message (`"expected Int, got <kind>"`).
-/// `value_type_name` is private in `src/value.rs` and delegates to
+/// `value_type_name` is private in `src/value/convert.rs` and delegates to
 /// `crate::builtins::value_kind`; the `FromValue<i64>` impl is the public
 /// path that surfaces its string, so this is the canonical observation
 /// point. (Int values are excluded by the caller, since they succeed.)
@@ -474,7 +476,7 @@ fn value_type_name_via_ffi(v: &Value) -> String {
 /// oracles return the SAME string:
 ///   - `builtins::common::value_kind`        (src/builtins/common.rs)
 ///   - `vm::Vm::type_name`                    (src/vm/mod.rs)
-///   - `value::value_type_name` (via FFI obs) (src/value.rs)
+///   - `value::value_type_name` (via FFI obs) (src/value/convert.rs)
 ///
 /// Compile-lock proof: adding a `Value` variant makes `expected_kind`'s
 /// match non-exhaustive, so this test fails to COMPILE until the new

@@ -3,7 +3,7 @@
 //!
 //! Before the round-36 collapse, every `call_<X>_error_trait` (11 of
 //! them, across 8 modules: concurrency, bytes, toml, postgres, tcp,
-//! io, numeric, plus 4 in data.rs — json/http/regex/time) duplicated
+//! io, numeric, plus json.rs, http.rs, regex.rs, time.rs) duplicated
 //! the same three-piece scaffolding:
 //!
 //!   1. `args.len() != 1` → "takes 1 argument (self), got {n}"
@@ -25,11 +25,12 @@
 
 use silt::builtins::bytes::call_bytes_error_trait;
 use silt::builtins::concurrency::call_channel_error_trait;
-use silt::builtins::data::{
-    call_http_error_trait, call_json_error_trait, call_regex_error_trait, call_time_error_trait,
-};
+use silt::builtins::http::call_http_error_trait;
 use silt::builtins::io::call_io_error_trait;
+use silt::builtins::json::call_json_error_trait;
 use silt::builtins::numeric::call_parse_error_trait;
+use silt::builtins::regex::call_regex_error_trait;
+use silt::builtins::time::call_time_error_trait;
 use silt::builtins::toml::call_toml_error_trait;
 use silt::value::Value;
 

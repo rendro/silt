@@ -1,7 +1,7 @@
 //! `toml.*` builtin functions: parse TOML documents into typed silt records
 //! and serialize silt values into TOML text.
 //!
-//! The API mirrors the `json` module in `src/builtins/data.rs`, with each
+//! The API mirrors the `json` module in `src/builtins/json.rs`, with each
 //! fallible call returning a typed `TomlError`. See
 //! `module.rs::builtin_error_enum_variants_with_arity` for Phase 0
 //! background:
@@ -48,16 +48,14 @@ use crate::typeinfo::{FieldType, TypeInfo, bv, ty};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
-use super::data::{
-    decodable_record, field_record_type, make_date, make_datetime, make_time,
-    unsupported_field_type_message,
-};
+use super::json::{decodable_record, field_record_type, unsupported_field_type_message};
+use super::time::{make_date, make_datetime, make_time};
 
 // ── TomlError helpers ────────────────────────────────────────────────
 //
 // Phase 1 of the stdlib error redesign: every fallible toml.* call now
 // surfaces a typed `TomlError` variant wrapped in `Err(...)` instead of
-// a bare `Err(String)`. Mirrors `json_*_err` in `src/builtins/data.rs`.
+// a bare `Err(String)`. Mirrors `json_*_err` in `src/builtins/json.rs`.
 //
 // `TomlError` variants:
 //   TomlSyntax(message, byte_offset)

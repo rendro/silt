@@ -21,8 +21,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::common::ok;
+use crate::runtime::channel::{Channel, TryReceiveResult, TrySendResult};
 use crate::typeinfo::bv;
-use crate::value::{Channel, TryReceiveResult, TrySendResult, Value};
+use crate::value::Value;
 use crate::vm::{BuiltinAcc, SuspendedBuiltin, Vm, VmError};
 
 const DEFAULT_CAPACITY: usize = 16;

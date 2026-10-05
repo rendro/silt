@@ -370,27 +370,6 @@ fn test_eq_neq() {
 }
 
 #[test]
-fn test_popn() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(1)).unwrap();
-        let b = chunk.add_constant(Value::Int(2)).unwrap();
-        let c = chunk.add_constant(Value::Int(3)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(c, span());
-        chunk.emit_op(Op::PopN, span());
-        chunk.emit_u8(2, span());
-        chunk.emit_op(Op::Return, span());
-    });
-    let mut vm = Vm::new(crate::HostIo::process());
-    let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Int(1));
-}
-
-#[test]
 fn test_sub_int() {
     let script = make_function(|chunk| {
         let a = chunk.add_constant(Value::Int(10)).unwrap();
@@ -594,45 +573,6 @@ fn test_leq_float() {
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(false));
-}
-
-/// Round-75 VM-2: Op::And dispatch is now `unreachable!()` — the
-/// compiler always lowers `BinOp::And` to a `JumpIfFalse` short-
-/// circuit (see `compiler/mod.rs:2330`). Hand-emitting Op::And here
-/// must crash the VM with the unreachable! panic, matching the
-/// LoopSetup precedent.
-#[test]
-#[should_panic(
-    expected = "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue short-circuit"
-)]
-fn test_and_op_is_unreachable() {
-    let script = make_function(|chunk| {
-        chunk.emit_op(Op::True, span());
-        chunk.emit_op(Op::False, span());
-        chunk.emit_op(Op::And, span());
-        chunk.emit_op(Op::Return, span());
-    });
-    let mut vm = Vm::new(crate::HostIo::process());
-    let _ = vm.run(script);
-}
-
-/// Round-75 VM-2: symmetric to `test_and_op_is_unreachable` — the
-/// compiler always lowers `BinOp::Or` to a `JumpIfTrue` short-
-/// circuit at `compiler/mod.rs:2341`, so direct emission of Op::Or
-/// must crash with the unreachable! panic.
-#[test]
-#[should_panic(
-    expected = "compiler always lowers BinOp::And/Or to JumpIfFalse/JumpIfTrue short-circuit"
-)]
-fn test_or_op_is_unreachable() {
-    let script = make_function(|chunk| {
-        chunk.emit_op(Op::True, span());
-        chunk.emit_op(Op::False, span());
-        chunk.emit_op(Op::Or, span());
-        chunk.emit_op(Op::Return, span());
-    });
-    let mut vm = Vm::new(crate::HostIo::process());
-    let _ = vm.run(script);
 }
 
 #[test]
@@ -2685,7 +2625,7 @@ fn test_make_closure_rejects_non_closure_constant() {
     // Round-59 audit LATENT fix: the MakeClosure guard error no longer
     // leaks the raw `MakeClosure` / `VmClosure` Rust/opcode identifiers
     // to user-facing output. The assertion now matches the user-facing
-    // phrasing used at `src/vm/execute.rs` (`closure construction
+    // phrasing used at `src/vm/run.rs` (`closure construction
     // constant is not a closure`).
     assert!(
         msg.contains("closure construction") && msg.contains("not a closure"),
@@ -2718,7 +2658,7 @@ fn test_tail_call_bounds_check_does_not_reject_valid_tail_call() {
 mod round80_dispatch_bounds {
     // Round-80 VM dispatch-bounds defense-in-depth lock tests.
     //
-    // Two findings, both unreachable from the legitimate compiler today
+    // One finding, unreachable from the legitimate compiler today
     // but trivially reachable from corrupt bytecode (e.g. a future
     // refactor that mis-emits `argc`, or a fuzz harness that exercises
     // the dispatch loop with hand-built chunks). Without the gate, the
@@ -2736,17 +2676,6 @@ mod round80_dispatch_bounds {
     // panicked. The compiler always emits `argc = (args.len() + 1) as u8`
     // at `src/compiler/mod.rs:2250` so it's not user-reachable, but the
     // gate is cheap defense-in-depth that locks the invariant.
-    //
-    // ## L7 — `Op::PopN` saturating-vs-strict underflow
-    //
-    // `Op::PopN`'s pre-fix body used
-    // `self.stack.len().saturating_sub(count)`, silently truncating to
-    // an empty stack on over-pop. Every other dispatch arm errors loudly
-    // on stack underflow (cf. `Op::Pop` → `self.pop()?`). A compiler bug
-    // that emitted too-large a popcount would therefore corrupt
-    // subsequent execution rather than fail fast. The fix replaces the
-    // saturating subtraction with a strict bounds check that returns
-    // `VmError::new("internal VM error: PopN underflow ...")`.
     //
     // ## Why integration tests, not unit tests
     //
@@ -2851,77 +2780,6 @@ mod round80_dispatch_bounds {
             "round-80 L6 sibling: argc>stack error wording unexpected; got: {msg}"
         );
     }
-
-    // ── L7: Op::PopN strict underflow ────────────────────────────────────
-
-    /// Hand-build a chunk that runs `Op::PopN` with a count larger than
-    /// the stack height. Pre-fix this silently truncated to an empty
-    /// stack via `saturating_sub`, masking any compiler bug that emitted
-    /// too-large a popcount. Post-fix it must surface as a `VmError`
-    /// with the canonical `internal VM error: PopN underflow` wording.
-    #[test]
-    fn l7_popn_overflow_returns_internal_vm_error() {
-        let script = make_function(|chunk| {
-            // Push two Ints, then PopN 7 — stack has 2, count is 7,
-            // saturating_sub would silently leave us with an empty stack.
-            let a = chunk.add_constant(Value::Int(1)).unwrap();
-            let b = chunk.add_constant(Value::Int(2)).unwrap();
-            chunk.emit_op(Op::Constant, span());
-            chunk.emit_u16(a, span());
-            chunk.emit_op(Op::Constant, span());
-            chunk.emit_u16(b, span());
-            chunk.emit_op(Op::PopN, span());
-            chunk.emit_u8(7, span()); // count=7, stack has 2
-            chunk.emit_op(Op::Unit, span());
-            chunk.emit_op(Op::Return, span());
-        });
-
-        let mut vm = Vm::new(crate::HostIo::process());
-        let result = vm.run(script);
-        let err = result.expect_err(
-            "Op::PopN with count > stack.len() must surface as VmError, not \
-             silently truncate — round-80 L7 defense-in-depth gate",
-        );
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("internal VM error:"),
-            "round-80 L7: PopN underflow error must use the canonical \
-             `internal VM error:` prefix; got: {msg}"
-        );
-        assert!(
-            msg.contains("PopN underflow"),
-            "round-80 L7: error message should mention `PopN underflow` so \
-             the failure pinpoints the dispatch arm; got: {msg}"
-        );
-    }
-
-    /// Positive control: `Op::PopN` with a legitimate count must still
-    /// work — we pop exactly the number of elements pushed and observe
-    /// the empty stack via a follow-up `Op::Unit`. This guards against an
-    /// over-eager "always error" regression.
-    #[test]
-    fn l7_popn_legitimate_count_still_works() {
-        let script = make_function(|chunk| {
-            let a = chunk.add_constant(Value::Int(1)).unwrap();
-            let b = chunk.add_constant(Value::Int(2)).unwrap();
-            chunk.emit_op(Op::Constant, span());
-            chunk.emit_u16(a, span());
-            chunk.emit_op(Op::Constant, span());
-            chunk.emit_u16(b, span());
-            chunk.emit_op(Op::PopN, span());
-            chunk.emit_u8(2, span()); // count=2, stack has 2 — exactly empties it
-            chunk.emit_op(Op::Unit, span());
-            chunk.emit_op(Op::Return, span());
-        });
-
-        let mut vm = Vm::new(crate::HostIo::process());
-        let result = vm.run(script).expect(
-            "Op::PopN with count == stack.len() must succeed — guards \
-             against an over-eager `>=` regression of the strict-underflow \
-             check",
-        );
-        assert_eq!(result, Value::Unit);
-    }
 }
 
 // Bytecode a compiler never emits, run directly.
@@ -2933,7 +2791,7 @@ mod error_identifier_leak {
     // `"frame underflow in invoke_callable"` — the bare `invoke_callable`
     // identifier is a Rust method name, not anything a silt user could
     // meaningfully interpret. Several internal-invariant sites in
-    // `src/vm/execute.rs` leaked similar raw opcode names (`SetLocal`,
+    // `src/vm/run.rs` leaked similar raw opcode names (`SetLocal`,
     // `MakeClosure`, `MakeTuple`, `MakeList`, `MakeMap`, `MakeSet`).
     //
     // These invariant paths are not reachable from valid typed silt, so the

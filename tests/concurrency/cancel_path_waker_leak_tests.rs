@@ -24,7 +24,7 @@
 //! - **B4** sender starvation (buffered, cap=1) — symmetric to B3
 //!   on a buffered channel after drain.
 //!
-//! Fix: `src/value.rs` introduces a `WakerRegistration` RAII guard
+//! Fix: `src/runtime/channel.rs` introduces a `WakerRegistration` RAII guard
 //! that owns `(Arc<Channel>, WakerId, WakerKind)` and calls
 //! `remove_recv_waker` / `remove_send_waker` on drop. The scheduler's
 //! Receive/Send/Select arms and the main-thread helpers in
@@ -38,7 +38,8 @@
 // layer without driving the VM. They would fail immediately if the
 // guard's `Drop` regressed (no-op impl, misrouted kind, etc).
 
-use silt::value::{Channel, TryReceiveResult, TrySendResult, Value, WakerKind};
+use silt::runtime::channel::{Channel, TryReceiveResult, TrySendResult, WakerKind};
+use silt::value::Value;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 

@@ -10,16 +10,19 @@ mod common;
 pub mod concurrency;
 pub mod core;
 pub mod crypto;
-pub mod data;
 pub mod encoding;
+pub mod http;
 pub mod io;
+pub mod json;
 pub mod numeric;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+pub mod regex;
 pub mod stream;
 pub mod string;
 #[cfg(feature = "tcp")]
 pub mod tcp;
+pub mod time;
 pub mod toml;
 pub mod uuid;
 

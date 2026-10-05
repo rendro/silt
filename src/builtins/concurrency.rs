@@ -5,8 +5,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
+use crate::runtime::channel::{Channel, TryReceiveResult, TrySendResult};
+use crate::runtime::handle::TaskHandle;
 use crate::typeinfo::{bv, ty};
-use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
+use crate::value::Value;
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
 /// Build the canonical closed-channel-send VmError (message wording is
@@ -278,7 +280,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             // (pinned by tests/concurrency/channel_timeout_tests.rs).
             let mut fresh_dur_ns: i64 = 0;
             if resume_timer.is_none() {
-                fresh_dur_ns = crate::builtins::data::extract_duration(&args[1])?;
+                fresh_dur_ns = crate::builtins::time::extract_duration(&args[1])?;
                 if fresh_dur_ns < 0 {
                     return Err(VmError::new(
                         "channel.recv_timeout: duration must be non-negative".into(),
@@ -385,7 +387,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             // we only differ in how we map the final Value back to a Result
             // variant.
             let pair = Arc::new((Mutex::new(false), Condvar::new()));
-            let mut registrations: Vec<crate::value::WakerRegistration> =
+            let mut registrations: Vec<crate::runtime::channel::WakerRegistration> =
                 Vec::with_capacity(ops.len());
             for op in &ops {
                 let pair2 = pair.clone();
@@ -711,7 +713,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "task.spawn_until takes 2 arguments (duration, fn)".into(),
                 ));
             }
-            let dur_ns = crate::builtins::data::extract_duration(&args[0])?;
+            let dur_ns = crate::builtins::time::extract_duration(&args[0])?;
             if dur_ns < 0 {
                 return Err(VmError::new(
                     "task.spawn_until: duration must be non-negative".into(),
@@ -757,7 +759,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // signal that we're resuming a paused invoke_callable.
             let is_resume = vm.suspended_invoke.is_some();
             if !is_resume {
-                let dur_ns = crate::builtins::data::extract_duration(&args[0])?;
+                let dur_ns = crate::builtins::time::extract_duration(&args[0])?;
                 if dur_ns < 0 {
                     return Err(VmError::new(
                         "task.deadline: duration must be non-negative".into(),
@@ -961,7 +963,7 @@ fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
 /// the next waiter.
 fn try_select_sweep_registered(
     ops: &[SelectOp],
-    registrations: &mut Vec<crate::value::WakerRegistration>,
+    registrations: &mut Vec<crate::runtime::channel::WakerRegistration>,
 ) -> Result<Option<Value>, VmError> {
     let n = ops.len();
     if n == 0 {
@@ -1280,7 +1282,7 @@ fn report_unjoined_failures(vm: &Vm) {
 }
 
 fn main_thread_wait_for_send(
-    ch: &Arc<crate::value::Channel>,
+    ch: &Arc<crate::runtime::channel::Channel>,
     val: Value,
     vm: &Vm,
 ) -> Result<Value, VmError> {
@@ -1337,7 +1339,8 @@ fn main_thread_wait_for_send(
     // looks similar but is INTENTIONALLY different (no waker or park
     // exists yet; `Full` is an immediate deadlock there) — do not unify
     // it with this closure.
-    let recheck = |reg: &mut Option<crate::value::WakerRegistration>| match ch.try_send(val.clone())
+    let recheck = |reg: &mut Option<crate::runtime::channel::WakerRegistration>| match ch
+        .try_send(val.clone())
     {
         TrySendResult::Sent => {
             drop(reg.take());
@@ -1358,7 +1361,7 @@ fn main_thread_wait_for_send(
     // guard swap on every loop iteration would leave a stale waker
     // closure in the queue (unbounded growth on a channel that nobody
     // is draining).
-    let mut reg: Option<crate::value::WakerRegistration> = None;
+    let mut reg: Option<crate::runtime::channel::WakerRegistration> = None;
     loop {
         // Try first so we don't miss a send slot that just opened.
         if let Some(out) = recheck(&mut reg) {
@@ -1443,7 +1446,7 @@ fn main_thread_wait_for_send(
 /// task; loop and wait again. No 100ms tick, no consecutive-streak
 /// escalator — those were Phase 3 polling-fallback artifacts.
 fn main_thread_wait_for_receive(
-    ch: &Arc<crate::value::Channel>,
+    ch: &Arc<crate::runtime::channel::Channel>,
     vm: &Vm,
 ) -> Result<Value, VmError> {
     // No-scheduler + no-timer fast path: there is no scheduler to
@@ -1491,7 +1494,7 @@ fn main_thread_wait_for_receive(
     // sees a phantom receiver, places a value into the handoff slot,
     // and returns `Sent` with no real receiver. Values are lost. See
     // round-26 B6.
-    let mut reg: Option<crate::value::WakerRegistration> = None;
+    let mut reg: Option<crate::runtime::channel::WakerRegistration> = None;
     // Helper to consistently unpark MAIN from the wake graph on exit.
     // Called before every early-return in the loop.
     let unpark_main = |vm: &Vm| {
@@ -1517,19 +1520,20 @@ fn main_thread_wait_for_receive(
     // NOTE: the no-scheduler fast path at the top of this function is
     // INTENTIONALLY different (no waker or park exists yet; `Empty` is
     // an immediate deadlock there) — do not unify it with this closure.
-    let recheck = |reg: &mut Option<crate::value::WakerRegistration>| match ch.try_receive() {
-        TryReceiveResult::Value(val) => {
-            drop(reg.take());
-            unpark_main(vm);
-            Some(Ok(Value::variant(bv::MESSAGE, vec![val])))
-        }
-        TryReceiveResult::Closed => {
-            drop(reg.take());
-            unpark_main(vm);
-            Some(Ok(Value::variant(bv::CLOSED, vec![])))
-        }
-        TryReceiveResult::Empty => None,
-    };
+    let recheck =
+        |reg: &mut Option<crate::runtime::channel::WakerRegistration>| match ch.try_receive() {
+            TryReceiveResult::Value(val) => {
+                drop(reg.take());
+                unpark_main(vm);
+                Some(Ok(Value::variant(bv::MESSAGE, vec![val])))
+            }
+            TryReceiveResult::Closed => {
+                drop(reg.take());
+                unpark_main(vm);
+                Some(Ok(Value::variant(bv::CLOSED, vec![])))
+            }
+            TryReceiveResult::Empty => None,
+        };
     loop {
         if let Some(out) = recheck(&mut reg) {
             return out;
@@ -1668,14 +1672,15 @@ fn main_thread_wait_for_select(ops: &[SelectOp], vm: &Vm) -> Result<Value, VmErr
     // deregistered before a fresh one is minted (no `waiting_*` leak —
     // same rationale as the receive/send single-waker paths, but here
     // the guards are a `Vec` over the arm set).
-    let mut registrations: Vec<crate::value::WakerRegistration> = Vec::with_capacity(ops.len());
+    let mut registrations: Vec<crate::runtime::channel::WakerRegistration> =
+        Vec::with_capacity(ops.len());
     // Re-check helper: returns Some(result) when an arm is ready,
     // dropping the registrations FIRST then unparking MAIN — same
     // drop/unpark ordering as the receive/send recheck closures. The
     // sweep drops the registrations itself, before it passes on the
     // wake-ups of the arms that were not taken.
     let try_finish =
-        |registrations: &mut Vec<crate::value::WakerRegistration>| -> Result<Option<Value>, VmError> {
+        |registrations: &mut Vec<crate::runtime::channel::WakerRegistration>| -> Result<Option<Value>, VmError> {
             if let Some(result) = try_select_sweep_registered(ops, registrations)? {
                 unpark_main(vm);
                 return Ok(Some(result));
@@ -1765,7 +1770,7 @@ fn main_thread_wait_for_select(ops: &[SelectOp], vm: &Vm) -> Result<Value, VmErr
 /// `is_handle_blocked` carve-out + 100ms-tick streak escalator are
 /// gone — the BFS subsumes them.
 fn main_thread_wait_for_join(
-    handle: &Arc<crate::value::TaskHandle>,
+    handle: &Arc<crate::runtime::handle::TaskHandle>,
     vm: &Vm,
 ) -> Result<Value, VmError> {
     // Fast path: no scheduler exists. The joinee can only have run
@@ -1880,7 +1885,7 @@ fn main_thread_wait_for_join(
 #[cfg(test)]
 mod select_fairness_tests {
     use super::*;
-    use crate::value::Channel;
+    use crate::runtime::channel::Channel;
     use std::sync::Arc;
 
     #[test]
@@ -1929,7 +1934,7 @@ mod select_fairness_tests {
 #[cfg(test)]
 mod wake_up_tests {
     use super::*;
-    use crate::value::{Channel, Waker};
+    use crate::runtime::channel::{Channel, Waker};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -119,7 +119,7 @@ impl Vm {
             | (Value::Range(..), Value::List(_))
             | (Value::Range(..), Value::Range(..)) => Self::ordering_with_fn_gate(&a, &b)?,
             // Round 85: mirror the `<anon>`-wildcard logic from
-            // `Value::PartialEq`/`Ord` (src/value.rs ~1729, ~1875).
+            // `Value::PartialEq`/`Ord` (src/value/key.rs).
             // The typechecker normally rejects source-level ordering of
             // anon-shaped records, but this is defensive for cases
             // where a nominal flows through `unify_anon_nominal` and
@@ -155,7 +155,7 @@ impl Vm {
     /// `pending_numeric_checks` (which skips `Var`-typed operands on the
     /// documented promise that the VM catches the violation at runtime).
     /// Without this gate, `Value::cmp` ordered `VmClosure` leaves by
-    /// `Arc::as_ptr` (src/value.rs), so the resulting Bool depended on
+    /// `Arc::as_ptr` (src/value/key.rs), so the resulting Bool depended on
     /// heap allocation order — nondeterministic across runs. Bare
     /// function-shaped operands never reach this helper: they fall to
     /// `compare()`'s catch-all arm and keep its "cannot compare Fn and

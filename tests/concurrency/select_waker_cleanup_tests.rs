@@ -22,7 +22,8 @@
 //! The end-to-end binary test lives as the golden case
 //! `tests/golden/concurrency/select/select_waker_cleanup__then_send_on_sibling_no_phantom_receive`.
 
-use silt::value::{Channel, TryReceiveResult, TrySendResult, Value, WakerId};
+use silt::runtime::channel::{Channel, TryReceiveResult, TrySendResult, WakerId};
+use silt::value::Value;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

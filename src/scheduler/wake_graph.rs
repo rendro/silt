@@ -59,7 +59,7 @@
 //!
 //! ### Select ordering hazard
 //!
-//! `register_*_waker_guard` (in `src/value.rs`) can synchronously
+//! `register_*_waker_guard` (in `src/runtime/`) can synchronously
 //! invoke the waker mid-registration if a counterparty is already
 //! parked on the channel. For the Select arm — which registers wakers
 //! on N channels in a row — that means an inline-fire on iteration K
@@ -73,7 +73,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::value::{Channel, TaskHandle};
+use crate::runtime::channel::Channel;
+use crate::runtime::handle::TaskHandle;
 
 /// Stable identifier for a node in the wake graph. The main thread is
 /// the singleton `NodeId::MAIN`; every spawned task is `NodeId::Task(id)`

@@ -7,7 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::bytecode::VmClosure;
-use crate::value::{Channel, IoCompletion, TaskHandle, Value};
+use crate::runtime::channel::Channel;
+use crate::runtime::completion::IoCompletion;
+use crate::runtime::handle::TaskHandle;
+use crate::value::Value;
 
 use super::{HostIo, VmError};
 

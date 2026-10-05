@@ -15,7 +15,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use silt::bytecode::{Function, VmClosure};
-use silt::value::{TaskHandle, Value};
+use silt::runtime::handle::TaskHandle;
+use silt::value::Value;
 
 fn hash_of(v: &Value) -> u64 {
     let mut h = DefaultHasher::new();
@@ -98,7 +99,7 @@ fn hashset_dedup_across_list_range() {
 // List↔Range — the cross-discriminant equality cases that motivated
 // the round-74 audit fix. They did NOT cover Handle, VmClosure,
 // BuiltinFn, or VariantConstructor reflexivity. The PartialEq impl
-// at value.rs:1759-1762 declares:
+// in value/key.rs declares:
 //   - Handle(a) == Handle(b) iff a.id == b.id
 //   - VmClosure(a) == VmClosure(b) iff Arc::ptr_eq(a, b)
 //   - BuiltinFn(a) == BuiltinFn(b) iff a == b
