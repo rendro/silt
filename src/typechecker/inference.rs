@@ -4006,7 +4006,7 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         }
         // TYPE-GAP (round 81 F1): closed-row anon records compile down to
         // `Value::Record` and Value's PartialEq compares them element-wise
-        // (src/value.rs ~1714), so `==`/`!=` is well-defined for them.
+        // (src/value/key.rs), so `==`/`!=` is well-defined for them.
         // Open rows are rejected even on equality: two open-row values may
         // differ on unobserved fields, so the answer would depend on the
         // hidden tail — surface the row variable as the reason rather than
@@ -4018,7 +4018,7 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         }
         // TYPE-LATENT-1 (round 82): Channel handles support identity-based
         // equality at runtime (`Value::Channel(a) == Value::Channel(b)` iff
-        // `a.id == b.id`, see src/value.rs ~1717). Without this arm the
+        // `a.id == b.id`, see src/value/key.rs). Without this arm the
         // typechecker rejected `ch1 == ch2` even though the VM produces a
         // well-defined Bool. Ordering is still rejected: Channel ids are
         // identity tokens, not a meaningful well-order — same shape as

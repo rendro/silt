@@ -803,7 +803,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Bytes: Display only. The generic `dispatch_trait_method` arm at
     // src/vm/dispatch.rs:309 routes `display` to `display_value`, and
     // `Value::Bytes` already has a runtime Display impl
-    // (`format_bytes_preview` at src/value.rs:1364 — short hex preview
+    // (`format_bytes_preview` in src/value/fmt.rs — short hex preview
     // + length, e.g. `bytes(de ad be ef, length: 4)`). Equal exists as
     // `bytes.eq(a, b)` but is not auto-derived through the trait
     // surface; Compare / Hash are intentionally omitted (Bytes is an

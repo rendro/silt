@@ -178,7 +178,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // implements the built-in `Error` trait (and, transitively, its
     // `Display` supertrait) with a custom `message(self) -> String`
     // body wired up in `src/builtins/io.rs::call_io_error_trait`,
-    // `src/builtins/data.rs::call_json_error_trait`,
+    // `src/builtins/json.rs::call_json_error_trait`,
     // `src/builtins/toml.rs::call_toml_error_trait`, and
     // `src/builtins/numeric.rs::call_parse_error_trait`.
     //
