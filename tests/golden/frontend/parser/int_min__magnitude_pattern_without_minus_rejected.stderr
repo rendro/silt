@@ -1,0 +1,5 @@
+error[lex]: number literal too large
+ --> int_min__magnitude_pattern_without_minus_rejected.silt:7:8
+   |
+ 7 |     0..9223372036854775808 -> "all"
+   |        ^^^^^^^^^^^^^^^^^^^ number literal too large

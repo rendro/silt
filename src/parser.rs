@@ -2671,6 +2671,27 @@ impl<'src> Parser<'src> {
         )
     }
 
+    /// Refuses the integer token `n` where no minus sign precedes it and
+    /// it is the magnitude 2^63 (see `Token::Int`): the largest Int is
+    /// one less.
+    fn int_in_range(&self, n: i64) -> Result<()> {
+        if n == i64::MIN {
+            let span = self.span();
+            let digits = &self.source[span.start_offset()..span.end_offset()];
+            let kind = match digits.get(..2) {
+                Some("0x" | "0X") => "hex",
+                Some("0b" | "0B") => "binary",
+                _ => "number",
+            };
+            return Err(Diagnostic::error(
+                Code::InvalidNumber,
+                span,
+                format!("{kind} literal too large"),
+            ));
+        }
+        Ok(())
+    }
+
     /// The error for a token that follows a complete statement (or
     /// top-level declaration) on the same line. Statements are separated
     /// by a newline, so `let a = 1 let b = 2` and `let t = price quantity`
@@ -3243,6 +3264,12 @@ impl<'src> Parser<'src> {
             Token::Minus => {
                 let span = self.span();
                 self.advance();
+                // The smallest Int: its magnitude is no Int, so the minus
+                // sign and the digits are one literal.
+                if matches!(self.peek(), Token::Int(i64::MIN)) {
+                    self.advance();
+                    return Ok(self.mk_expr(ExprKind::Int(i64::MIN), span));
+                }
                 let expr = self.parse_expr_bp(prec::UNARY)?;
                 Ok(self.mk_expr(ExprKind::Unary(UnaryOp::Neg, Box::new(expr)), span))
             }
@@ -3262,6 +3289,7 @@ impl<'src> Parser<'src> {
 
         match self.peek().clone() {
             Token::Int(n) => {
+                self.int_in_range(n)?;
                 self.advance();
                 Ok(self.mk_expr(ExprKind::Int(n), span))
             }
@@ -4083,17 +4111,10 @@ impl<'src> Parser<'src> {
     /// start bound. Used by both the positive (`N..`) and negated
     /// (`-N..`) head paths in `parse_primary_pattern` so the four
     /// `..[-]N` exits stay in lock-step.
-    ///
-    /// i64::MIN safety: silt's lexer rejects `9223372036854775808` at
-    /// lex time (see src/lexer.rs:647-648), so `Token::Int(n)` is always
-    /// in `[0, i64::MAX]`. The negated tail `-m` therefore never
-    /// underflows, and the caller's `-n` for the head is likewise safe.
-    /// We still spell the negation as a plain unary minus to match the
-    /// historical behavior the audit and `negate_i64_min_message_tests`
-    /// pinned.
     fn parse_range_tail_int(&mut self, start: i64) -> Result<PatternKind> {
         match self.peek().clone() {
             Token::Int(m) => {
+                self.int_in_range(m)?;
                 self.advance();
                 Ok(PatternKind::Range(start, m))
             }
@@ -4102,7 +4123,7 @@ impl<'src> Parser<'src> {
                 match self.peek().clone() {
                     Token::Int(m) => {
                         self.advance();
-                        Ok(PatternKind::Range(start, -m))
+                        Ok(PatternKind::Range(start, m.wrapping_neg()))
                     }
                     _ => Err(Diagnostic::error(
                         Code::ExpectedPattern,
@@ -4327,6 +4348,7 @@ impl<'src> Parser<'src> {
                 self.parse_constructor_pattern_tail(segments, head, start)
             }
             Token::Int(n) => {
+                self.int_in_range(n)?;
                 self.advance();
                 // Check for range pattern: n..m
                 if self.at(&Token::DotDot) {
@@ -4454,11 +4476,13 @@ impl<'src> Parser<'src> {
                     Token::Int(n) => {
                         self.advance();
                         // Check for range pattern: -n..m
+                        // `wrapping_neg`: the magnitude 2^63 is
+                        // `i64::MIN` already (see `Token::Int`).
                         if self.at(&Token::DotDot) {
                             self.advance();
-                            self.parse_range_tail_int(-n).map(mk)
+                            self.parse_range_tail_int(n.wrapping_neg()).map(mk)
                         } else {
-                            Ok(mk(PatternKind::Int(-n)))
+                            Ok(mk(PatternKind::Int(n.wrapping_neg())))
                         }
                     }
                     Token::Float(n) => {
