@@ -15,6 +15,11 @@ fn main() {
     (1 | 2) | (3 | (4)) -> println("small")
     ((_)) -> println("other")
   }
+  match b {
+    (1 | 2) | (3 | -- a comment breaks the one list they are
+      (4)) -> println("small")
+    _ -> println("other")
+  }
   let f = { (Ok(v) | Err(v)) -> v }
   let g = { (0), (y) -> y }
   let h = { ("s"), ((p, q)): (Int, Int) -> p + q }

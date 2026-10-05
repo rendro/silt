@@ -1780,6 +1780,35 @@ impl Printer<'_> {
         }
     }
 
+    /// The alternatives of an or-pattern, each with the `|` in front of
+    /// it, as one flat list. An alternative that is an or-pattern itself
+    /// stood in parentheses; they are dropped and its alternatives join
+    /// the list, which is what the result is read as: one group, not a
+    /// group in a group that breaks on its own. With a comment at the
+    /// inside of its parentheses it stays as it is.
+    fn alternatives(&mut self, alts: &[Pattern], docs: &mut Vec<Doc>) {
+        for (i, alt) in alts.iter().enumerate() {
+            if i > 0 {
+                // A line may break behind `|`, not in front.
+                docs.extend([space(), self.tok(Token::Bar), Doc::Line]);
+            }
+            let PatternKind::Or(inner) = &alt.kind else {
+                docs.push(self.pattern(alt));
+                continue;
+            };
+            let first_end = inner.first().map(|first| first.span.end);
+            let wrappers = self.cur.pattern_wrappers(alt.span.start, first_end);
+            if self.cur.comments_inside_parens(wrappers) {
+                docs.push(self.pattern(alt));
+            } else {
+                self.cur.skip_n(&Token::LParen, wrappers);
+                self.alternatives(inner, docs);
+                self.cur.skip_n(&Token::RParen, wrappers);
+                docs.push(self.cur.carried());
+            }
+        }
+    }
+
     /// `-1`, `1..5`, `-1.5..-0.5`: the numbers as the source spells
     /// them.
     fn number_pattern(&mut self, number: Token, range: bool) -> Doc {
@@ -1915,18 +1944,9 @@ impl Printer<'_> {
                 )
             }
             PatternKind::Or(alts) => {
-                // An alternative that is an or-pattern itself stood in
-                // parentheses, which `pattern` drops: one flat list.
                 let mut docs = Vec::new();
-                let mut rest = Vec::new();
-                for (i, alt) in alts.iter().enumerate() {
-                    if i == 0 {
-                        docs.push(self.pattern(alt));
-                    } else {
-                        // A line may break behind `|`, not in front.
-                        rest.extend([space(), self.tok(Token::Bar), Doc::Line, self.pattern(alt)]);
-                    }
-                }
+                self.alternatives(alts, &mut docs);
+                let rest = docs.split_off(1);
                 docs.push(Doc::nest(Doc::concat(rest)));
                 Doc::group(Doc::concat(docs))
             }
