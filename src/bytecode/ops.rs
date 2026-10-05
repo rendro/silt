@@ -123,26 +123,22 @@ pub struct Operands<T> {
     item: PhantomData<T>,
 }
 
-/// An item of a list operand.
+/// An item of a list operand: two bytes of the code.
 pub trait Packed: Copy {
-    /// The bytes one item takes.
-    const WIDTH: usize;
-    fn unpack(bytes: &[u8]) -> Self;
+    fn unpack(bytes: [u8; 2]) -> Self;
 }
 
 impl Packed for Const {
-    const WIDTH: usize = 2;
-    fn unpack(bytes: &[u8]) -> Self {
-        Const(u16::from_le_bytes([bytes[0], bytes[1]]))
+    fn unpack(bytes: [u8; 2]) -> Self {
+        Const(u16::from_le_bytes(bytes))
     }
 }
 
 impl Packed for UpvalueDesc {
-    const WIDTH: usize = 2;
-    fn unpack(bytes: &[u8]) -> Self {
+    fn unpack([is_local, index]: [u8; 2]) -> Self {
         UpvalueDesc {
-            is_local: bytes[0] != 0,
-            index: bytes[1],
+            is_local: is_local != 0,
+            index,
         }
     }
 }
@@ -163,9 +159,8 @@ impl<T: Packed> Operands<T> {
     where
         T: 'c,
     {
-        code[self.at..self.at + self.count * T::WIDTH]
-            .chunks_exact(T::WIDTH)
-            .map(T::unpack)
+        let (items, _) = code[self.at..self.at + self.count * 2].as_chunks::<2>();
+        items.iter().map(|bytes| T::unpack(*bytes))
     }
 }
 
@@ -252,7 +247,7 @@ impl Reader<'_> {
     fn list<T: Packed>(&mut self) -> Option<Operands<T>> {
         let count = usize::from(self.u8()?);
         let at = self.at;
-        self.at = at + count * T::WIDTH;
+        self.at = at + count * 2;
         (self.at <= self.code.len()).then_some(Operands {
             at,
             count,

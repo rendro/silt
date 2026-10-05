@@ -226,14 +226,7 @@ fn test_builtin_println() {
             .unwrap();
         let val = e.constant(Value::Int(42), span()).unwrap();
         e.emit(Asm::Constant { k: val }, span()).unwrap();
-        e.emit(
-            Asm::CallBuiltin {
-                name: name,
-                argc: 1,
-            },
-            span(),
-        )
-        .unwrap();
+        e.emit(Asm::CallBuiltin { name, argc: 1 }, span()).unwrap();
         e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());

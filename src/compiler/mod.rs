@@ -3043,7 +3043,12 @@ mod tests {
     /// The names of a program's global slots, in slot order.
     fn global_names(program: &crate::session::Program) -> Vec<String> {
         (0..program.globals.len())
-            .map(|slot| program.globals.name(slot as u16).to_string())
+            .map(|slot| {
+                program
+                    .globals
+                    .name(u16::try_from(slot).unwrap())
+                    .to_string()
+            })
             .collect()
     }
 
@@ -3160,16 +3165,16 @@ mod tests {
         assert!(has_op(f.chunk(), Op::Add));
 
         let fns = compile("fn sub(a, b) { a - b }");
-        assert!(has_op(&find_fn(&fns, "sub").chunk(), Op::Sub));
+        assert!(has_op(find_fn(&fns, "sub").chunk(), Op::Sub));
 
         let fns = compile("fn mul(a, b) { a * b }");
-        assert!(has_op(&find_fn(&fns, "mul").chunk(), Op::Mul));
+        assert!(has_op(find_fn(&fns, "mul").chunk(), Op::Mul));
 
         let fns = compile("fn div(a, b) { a / b }");
-        assert!(has_op(&find_fn(&fns, "div").chunk(), Op::Div));
+        assert!(has_op(find_fn(&fns, "div").chunk(), Op::Div));
 
         let fns = compile("fn modulo(a, b) { a % b }");
-        assert!(has_op(&find_fn(&fns, "modulo").chunk(), Op::Mod));
+        assert!(has_op(find_fn(&fns, "modulo").chunk(), Op::Mod));
     }
 
     #[test]
@@ -3215,13 +3220,13 @@ mod tests {
     #[test]
     fn test_compile_negate() {
         let fns = compile("fn f(x) { -x }");
-        assert!(has_op(&find_fn(&fns, "f").chunk(), Op::Negate));
+        assert!(has_op(find_fn(&fns, "f").chunk(), Op::Negate));
     }
 
     #[test]
     fn test_compile_not() {
         let fns = compile("fn f(x) { !x }");
-        assert!(has_op(&find_fn(&fns, "f").chunk(), Op::Not));
+        assert!(has_op(find_fn(&fns, "f").chunk(), Op::Not));
     }
 
     // ── Variable binding ───────────────────────────────────────────
