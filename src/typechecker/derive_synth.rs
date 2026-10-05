@@ -134,9 +134,9 @@ impl TypeChecker {
         // deterministic for every Value shape.
         self.enforce_auto_derive_field_gate(&user_decl_type_names);
 
-        // Built-in enums and records are registered directly into
-        // `self.tables.enums` / `self.tables.records` from `register_builtins` and
-        // the per-module init paths under `src/typechecker/builtins/`
+        // Built-in enums and records are entered into
+        // `self.tables.enums` / `self.tables.records` by the builtin
+        // environment, from the builtin registry's type declarations,
         // without ever appearing as a top-level `Decl::Type`. Walk
         // both maps to give them the same synth treatment as user
         // types: every built-in `(trait, type)` pair pre-stamped in
@@ -740,7 +740,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     //
     // Round-62 follow-up: extend auto-derive coverage from primitives
     // and the four parametric containers to every built-in enum and
-    // record registered in `register_builtins`. Each entry below
+    // record of the builtin registry. Each entry below
     // pre-stamps `trait_impl_set` for the policy-permitted traits so
     // `synthesize_auto_derive_impls` knows which (trait, type) pairs
     // are allowed to receive a synthesized impl method,

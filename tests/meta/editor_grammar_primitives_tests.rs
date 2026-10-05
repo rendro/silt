@@ -15,9 +15,7 @@
 //! Round-61 extension: the set was widened to include the builtin
 //! container / callable / resource types (Range, Channel, Tuple, Fn,
 //! Fun, Handle). These are legal in type-annotation position (see
-//! docs/language/operators.md; the former per-module stdlib pages were
-//! inlined verbatim into the doc constants in
-//! `src/typechecker/builtins/docs.rs` in round 62 phase-2) and must
+//! docs/language/operators.md and the pages of docs/stdlib/) and must
 //! highlight as types. Authoritative source of the widened list: the
 //! `BUILTIN_TYPES` table in `src/types/builtins.rs` (container-kind
 //! entries, queried via `src/types/builtins.rs::is_container`), which

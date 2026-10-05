@@ -308,7 +308,7 @@ macro_rules! module {
         }
     };
 }
-pub(self) use module;
+use module;
 
 /// Parse `text`, declarations of the builtins. The registry's text is
 /// silt's own: it parses, or the registry is wrong.

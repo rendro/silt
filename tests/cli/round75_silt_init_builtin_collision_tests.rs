@@ -111,7 +111,7 @@ fn round75_init_in_dir_named_http_is_rejected() {
 
 // ─── 4. Behavioral: every builtin module name is rejected ──────────────
 //
-// Drives the end-to-end CLI for every name in `BUILTIN_MODULES`. If
+// Drives the end-to-end CLI for every name in `builtin_modules()`. If
 // someone adds a new builtin without re-running the audit, this catches
 // the gap automatically (init starts producing colliding manifests for
 // the new name and this test fires).
@@ -212,7 +212,7 @@ fn round75_manifest_load_rejects_builtin_package_name() {
 
 #[test]
 fn round75_validate_package_name_rejects_builtins_accepts_others() {
-    // Every BUILTIN_MODULES entry must be rejected.
+    // Every builtin_modules() entry must be rejected.
     for name in silt::module::builtin_modules() {
         let result = silt::manifest::validate_package_name(name);
         assert!(

@@ -20,16 +20,10 @@ fn type_errors(input: &str) -> Vec<String> {
 
 // ── Docs / registration cross-check ───────────────────────────────────
 
-/// Walks the crypto doc page and asserts every function mentioned in
-/// the summary table has a matching registration in the typechecker.
-/// This mirrors the spirit of `docs_round26_tests::every_register_builtins_has_a_per_module_doc`
-/// but runs in the other direction: docs → registration.
+/// Every row of `crypto` has a doc an editor shows, and that doc (the
+/// module's page, `docs/stdlib/crypto.md`) mentions the function.
 #[test]
 fn test_documented_crypto_functions_match_registration() {
-    // Round 62 phase-2 inlined the crypto module markdown into
-    // `super::docs::CRYPTO_MD`, attached as a module-level overview
-    // to every crypto.* binding via `attach_module_overview`. Every
-    // function registered must have a non-empty doc body.
     let docs = silt::builtins::registry::docs::builtin_docs();
     let expected = silt::module::builtin_module_functions("crypto");
     assert!(
@@ -42,17 +36,15 @@ fn test_documented_crypto_functions_match_registration() {
         let body = docs.get(&qualified).cloned().unwrap_or_default();
         assert!(
             !body.trim().is_empty(),
-            "crypto.{name} has no registered builtin doc — verify \
-             `attach_module_overview(env, super::docs::CRYPTO_MD, \
-             \"crypto\")` fires from \
-             src/typechecker/builtins/crypto.rs"
+            "crypto.{name} has no builtin doc \
+             (src/builtins/registry/docs.rs::builtin_docs)"
         );
         // The crypto module overview should mention the function name
         // (it appears in the Summary table at minimum).
         let bare = format!("`{}`", name);
         assert!(
             body.contains(&bare) || body.contains(&qualified),
-            "the crypto module doc (now inlined as `super::docs::CRYPTO_MD`) \
+            "the crypto page (docs/stdlib/crypto.md) \
              does not mention the function `{name}`. Add a row for it to \
              the Summary table."
         );

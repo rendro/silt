@@ -213,8 +213,8 @@ fn is_symbol_user_renameable_at_cursor(
 /// helper falls back to this one only when the symbol has no user
 /// binding in scope.
 ///
-/// `pub` so integration tests (see `tests/meta/builtin_constructor_parity_tests.rs`)
-/// can assert every gated constructor is protected from rename.
+/// `pub` so integration tests (see `tests/meta/lexer_keyword_parity_tests.rs`)
+/// can call the guard.
 pub fn is_user_renameable(name: &str) -> bool {
     if name.is_empty() {
         return false;
@@ -269,8 +269,7 @@ fn is_silt_keyword(name: &str) -> bool {
 
 // Builtin constructor rejection consults `module::all_builtin_constructor_names`
 // so new gated variants (e.g. `IoNotFound`, `PgConnect`, `Recv`/`Send`) are
-// picked up automatically. Parity-lock test in
-// `tests/meta/builtin_constructor_parity_tests.rs` guards the coupling.
+// picked up automatically.
 
 /// Combined list of every reserved global identifier — built-in
 /// free functions plus every name in [`builtin_types::BUILTIN_TYPES`]

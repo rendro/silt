@@ -12,7 +12,7 @@
 //! resolution errors that the doc itself did not warn about.
 //!
 //! Post-fix: both sections use `geometry`, a name that is NOT in
-//! `BUILTIN_MODULES`. This test locks both files to that invariant by
+//! `builtin_modules()`. This test locks both files to that invariant by
 //! parsing the `import <name>` lines in the targeted sections and
 //! asserting every extracted module-root name is absent from
 //! `silt::module::builtin_modules()`. Future drift (renaming back to a
@@ -115,7 +115,7 @@ fn getting_started_doc_modules_section_uses_non_stdlib_placeholder() {
     );
     // The section also shows a `geometry.silt` user-defined module
     // example after the placeholder snippet. `geometry` is NOT in
-    // BUILTIN_MODULES, so it's safe — the assertion below catches
+    // builtin_modules(), so it's safe — the assertion below catches
     // any stdlib name in the whole section.
     assert_no_stdlib_collision(slice, "docs/getting-started.md `## 5. Modules and imports`");
 }

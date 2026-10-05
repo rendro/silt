@@ -12,10 +12,8 @@ fn type_errors(input: &str) -> Vec<String> {
 }
 
 /// Mirror of `test_documented_crypto_functions_match_registration`:
-/// every function registered for the `encoding` module in
-/// `src/module.rs` must have a non-empty inlined builtin doc (round
-/// 62 phase-2 moved encoding's prose into
-/// `super::docs::ENCODING_MD`).
+/// every row of the `encoding` module has a doc an editor shows, cut
+/// from `docs/stdlib/encoding.md`.
 #[test]
 fn test_documented_encoding_functions_match_registration() {
     let docs = silt::builtins::registry::docs::builtin_docs();
@@ -30,12 +28,8 @@ fn test_documented_encoding_functions_match_registration() {
         let body = docs.get(&qualified).cloned().unwrap_or_default();
         assert!(
             !body.trim().is_empty(),
-            "encoding.{name} has no registered builtin doc. Round 62 \
-             phase-2 attaches `super::docs::ENCODING_MD` (and its \
-             json sibling) to every encoding.* binding via \
-             `attach_module_overview` + `attach_module_docs`. Verify \
-             both calls fire from \
-             `src/typechecker/builtins/encoding.rs`."
+            "encoding.{name} has no builtin doc \
+             (src/builtins/registry/docs.rs::builtin_docs)"
         );
     }
 }

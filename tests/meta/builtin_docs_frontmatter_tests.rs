@@ -2,28 +2,15 @@
 //! must never leak into the builtin-doc markdown the LSP renders on
 //! hover / completion / signature-help.
 //!
-//! Every `*_MD` constant in `src/typechecker/builtins/docs.rs` begins
-//! with the verbatim frontmatter its former `docs/stdlib/*.md` source
-//! carried (website metadata: `title:` / `section:` / `order:`).
-//! Per-`##`-section slicing (`iter_sections`) never sees it, but the
-//! two WHOLE-document attach paths used to leak it:
+//! Every page of `docs/stdlib/` begins with frontmatter for the docs
+//! website (`title:` / `section:` / `order:`). A name's own section
+//! never includes it, but a name that shows a whole page would: the
+//! prelude's names show the globals page, and a function with no
+//! section of its own shows its module's page. Hover on `println` once
+//! rendered a stray horizontal rule followed by raw `title: "Globals"`
+//! text; `registry::docs::builtin_docs` strips it.
 //!
-//!   * the `GLOBALS_MD` globals loop in
-//!     `src/typechecker/builtins.rs::register_builtins` (every free
-//!     function — `println`, `print`, `panic`, … — plus the documented
-//!     prelude/import-gated constructors), and
-//!   * `attach_module_overview` in `src/typechecker/builtins/docs.rs`
-//!     (overview-only modules: bytes / crypto / uuid / stream / http /
-//!     tcp / postgres / encoding / …),
-//!
-//! so hover on `println` rendered a stray horizontal rule followed by
-//! raw `title: "Globals"` text. Both sites now route through
-//! `strip_frontmatter`. Attaching the FULL page to globals is a
-//! deliberate round-62 design decision and stays — only the
-//! frontmatter is stripped.
-//!
-//! This walks EVERY registered builtin doc, so any future whole-doc
-//! attach that forgets to strip trips it too.
+//! This walks every builtin doc.
 
 #[test]
 fn no_builtin_doc_leaks_yaml_frontmatter() {
@@ -55,7 +42,7 @@ fn println_doc_starts_with_prose_not_frontmatter() {
     let docs = silt::builtins::registry::docs::builtin_docs();
     let doc = docs
         .get("println")
-        .expect("`println` must have a registered builtin doc (GLOBALS_MD)");
+        .expect("`println` has a builtin doc: the globals page");
     assert!(
         !doc.starts_with("---"),
         "println's hover doc still starts with frontmatter:\n{}",
@@ -69,14 +56,14 @@ fn println_doc_starts_with_prose_not_frontmatter() {
     );
 }
 
-/// Same for a module-overview attach (`attach_module_overview`):
-/// overview-only modules get the whole page, minus frontmatter.
+/// Same for a function with no section of its own: it shows its
+/// module's whole page, minus frontmatter.
 #[test]
 fn module_overview_doc_starts_with_prose_not_frontmatter() {
     let docs = silt::builtins::registry::docs::builtin_docs();
     let doc = docs
         .get("crypto.sha256")
-        .expect("`crypto.sha256` must have a registered builtin doc (CRYPTO_MD overview)");
+        .expect("`crypto.sha256` has a builtin doc: the crypto page");
     assert!(
         !doc.starts_with("---"),
         "crypto.sha256's hover doc still starts with frontmatter:\n{}",

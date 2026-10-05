@@ -126,8 +126,6 @@ type ErrorTraitFn = fn(&str, &[Value]) -> Result<Value, VmError>;
 /// PgError / TcpError stay cfg-gated by being conditionally included
 /// in the table — the gate must match the gate on the corresponding
 /// `call_*_error_trait` symbol.
-///
-/// Lock test: `tests/meta/round73_error_enum_registry_parity_tests.rs`.
 static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
     ("IoError", builtins::io::call_io_error_trait),
     ("JsonError", builtins::json::call_json_error_trait),

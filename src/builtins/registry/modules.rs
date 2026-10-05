@@ -5,8 +5,6 @@
 //! module's untyped `call`. A constant is `k("name: Type", summary,
 //! value)`.
 
-#![allow(clippy::too_many_lines)]
-
 use super::{Module, UntypedCall, build_module, k, module, u};
 #[cfg(feature = "postgres")]
 use crate::builtins::postgres;
@@ -27,7 +25,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type IoError { IoNotFound(String), IoPermissionDenied(String), IoAlreadyExists(String), IoInvalidInput(String), IoInterrupted, IoUnexpectedEof, IoWriteZero, IoUnknown(String) }\n\
             ",
             error: "IoError",
-            call: |vm, name, args| io::call(vm, name, args),
+            call: io::call,
             rows: [
                 u("fn args() -> List(String)", "Command-line arguments"),
                 u("fn inspect(x: a) -> String", "Debug representation of any value"),
@@ -122,7 +120,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type Step(a) { Stop(a), Continue(a) }\n\
             ",
-            call: |vm, name, args| collections::call_list(vm, name, args),
+            call: collections::call_list,
             rows: [
                 u("fn all(xs: List(a), pred: Fn(a) -> Bool) -> Bool", "True if predicate holds for every element"),
                 u("fn any(xs: List(a), pred: Fn(a) -> Bool) -> Bool", "True if predicate holds for at least one element"),
@@ -170,7 +168,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "map",
             page: "map.md",
-            call: |vm, name, args| collections::call_map(vm, name, args),
+            call: collections::call_map,
             rows: [
                 u("fn contains(m: Map(a, b), k: a) -> Bool where a: Hash", "Check if key exists"),
                 u("fn delete(m: Map(a, b), k: a) -> Map(a, b) where a: Hash", "Remove a key"),
@@ -191,7 +189,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "result",
             page: "result-option.md",
-            call: |vm, name, args| core::call_result(vm, name, args),
+            call: core::call_result,
             rows: [
                 u("fn flat_map(r: Result(a, b), f: Fn(a) -> Result(c, b)) -> Result(c, b)", "Chain fallible operations"),
                 u("fn flatten(r: Result(Result(a, b), b)) -> Result(a, b)", "Remove one nesting level"),
@@ -205,7 +203,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "option",
             page: "result-option.md",
-            call: |vm, name, args| core::call_option(vm, name, args),
+            call: core::call_option,
             rows: [
                 u("fn flat_map(opt: Option(a), f: Fn(a) -> Option(b)) -> Option(b)", "Chain optional operations"),
                 u("fn is_none(opt: Option(a)) -> Bool", "True if None"),
@@ -234,7 +232,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type ChannelError { ChannelTimeout, ChannelClosed }\n\
             ",
             error: "ChannelError",
-            call: |vm, name, args| concurrency::call_channel(vm, name, args),
+            call: concurrency::call_channel,
             rows: [
                 u("fn close(ch: Channel(a)) -> ()", "Close the channel"),
                 u("fn each(ch: Channel(a), f: Fn(a) -> b) -> ()", "Iterate until channel closes"),
@@ -251,7 +249,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "task",
             page: "channel-task.md",
-            call: |vm, name, args| concurrency::call_task(vm, name, args),
+            call: concurrency::call_task,
             rows: [
                 u("fn cancel(handle: Handle(a)) -> ()", "Request cancellation of a task (cooperative; see details below)"),
                 u("fn deadline(dur: Duration, f: Fn() -> a) -> a", "Run a callback with a scoped I/O deadline"),
@@ -267,7 +265,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type RegexError { RegexInvalidPattern(String, Int), RegexTooBig }\n\
             ",
             error: "RegexError",
-            call: |vm, name, args| regex::call_regex(vm, name, args),
+            call: regex::call_regex,
             rows: [
                 u("fn captures(pattern: String, text: String) -> Option(List(String))", "Capture groups from first match"),
                 u("fn captures_all(pattern: String, text: String) -> List(List(String))", "Capture groups from all matches"),
@@ -288,7 +286,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type JsonError { JsonSyntax(String, Int), JsonTypeMismatch(String, String), JsonMissingField(String), JsonUnknown(String) }\n\
             ",
             error: "JsonError",
-            call: |vm, name, args| json::call_json(vm, name, args),
+            call: json::call_json,
             rows: [
                 u("fn parse(s: String, type a) -> Result(a, JsonError)", "Parse JSON object into record"),
                 u("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse JSON array into record list"),
@@ -304,7 +302,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type TomlError { TomlSyntax(String, Int), TomlTypeMismatch(String, String), TomlMissingField(String), TomlUnknown(String) }\n\
             ",
             error: "TomlError",
-            call: |vm, name, args| toml::call(vm, name, args),
+            call: toml::call,
             rows: [
                 u("fn parse(s: String, type a) -> Result(a, TomlError)", "Parse a TOML document (top-level table) into a record"),
                 u("fn parse_list(s: String, type a) -> Result(List(a), TomlError)", "Parse a single `[[items]]` section into a list of records"),
@@ -316,7 +314,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "set",
             page: "set.md",
-            call: |vm, name, args| collections::call_set(vm, name, args),
+            call: collections::call_set,
             rows: [
                 u("fn contains(s: Set(a), x: a) -> Bool", "Check membership"),
                 u("fn difference(s: Set(a), other: Set(a)) -> Set(a)", "Elements in first but not second"),
@@ -371,7 +369,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type TimeError { TimeParseFormat(String), TimeOutOfRange(String) }\n\
             ",
             error: "TimeError",
-            call: |vm, name, args| time::call_time(vm, name, args),
+            call: time::call_time,
             rows: [
                 u("fn now() -> Instant", "Current UTC time as nanosecond epoch"),
                 u("fn today() -> Date", "Current local date"),
@@ -413,7 +411,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type HttpError { HttpConnect(String), HttpTls(String), HttpTimeout, HttpInvalidUrl(String), HttpInvalidResponse(String), HttpClosedEarly, HttpStatusCode(Int, String), HttpUnknown(String) }\n\
             ",
             error: "HttpError",
-            call: |vm, name, args| http::call_http(vm, name, args),
+            call: http::call_http,
             rows: [
                 u("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request"),
                 u("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers"),
@@ -465,7 +463,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type PgError { PgConnect(String), PgTls(String), PgAuthFailed(String), PgQuery(String, String), PgTypeMismatch(String, String, String), PgNoSuchColumn(String), PgClosed, PgTimeout, PgTxnAborted, PgUnknown(String) }\n\
             ",
             error: "PgError",
-            call: |vm, name, args| postgres::call(vm, name, args),
+            call: postgres::call,
             rows: [
                 u("fn connect(url: String) -> Result(PgPool, PgError)", "Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)"),
                 u("fn connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PgError)", "Like `connect` with a tunable options bag (see [Connect options](#connect-options))"),
@@ -489,7 +487,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type BytesError { BytesInvalidUtf8(Int), BytesInvalidHex(String), BytesInvalidBase64(String), BytesByteOutOfRange(Int), BytesOutOfBounds(Int) }\n\
             ",
             error: "BytesError",
-            call: |vm, name, args| bytes::call(vm, name, args),
+            call: bytes::call,
             rows: [
                 u("fn concat(a: Bytes, b: Bytes) -> Bytes", "Concatenate two byte sequences"),
                 u("fn concat_all(parts: List(Bytes)) -> Bytes", "Concatenate every element of a list"),
@@ -515,7 +513,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "crypto",
             page: "crypto.md",
-            call: |vm, name, args| crypto::call(vm, name, args),
+            call: crypto::call,
             rows: [
                 u("fn sha256(data: Bytes) -> Bytes", "SHA-256 digest (32 bytes)"),
                 u("fn sha512(data: Bytes) -> Bytes", "SHA-512 digest (64 bytes)"),
@@ -532,7 +530,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "encoding",
             page: "encoding.md",
-            call: |vm, name, args| encoding::call(vm, name, args),
+            call: encoding::call,
             rows: [
                 u("fn url_encode(s: String) -> String", "Percent-encode per RFC 3986 (unreserved = `ALPHA` / `DIGIT` / `-._~`)"),
                 u("fn url_decode(s: String) -> Result(String, String)", "Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding"),
@@ -548,7 +546,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type TcpError { TcpConnect(String), TcpTls(String), TcpClosed, TcpTimeout, TcpUnknown(String) }\n\
             ",
             error: "TcpError",
-            call: |vm, name, args| tcp::call(vm, name, args),
+            call: tcp::call,
             rows: [
                 u("fn accept(listener: TcpListener) -> Result(TcpStream, TcpError)", "Wait for an incoming connection (cooperative I/O)"),
                 u("fn close(stream: TcpStream) -> ()", "Mark the stream as closed; future ops error"),
@@ -567,7 +565,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "stream",
             page: "stream.md",
-            call: |vm, name, args| stream::call(vm, name, args),
+            call: stream::call,
             rows: [
                 u("fn from_list(xs: List(a)) -> Channel(a)", "Emit list elements then close"),
                 u("fn from_range(lo: Int, hi: Int) -> Channel(Int)", "Emit `lo..=hi` then close"),
@@ -606,7 +604,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "uuid",
             page: "uuid.md",
-            call: |vm, name, args| uuid::call(vm, name, args),
+            call: uuid::call,
             rows: [
                 u("fn v4() -> String", "Random UUID (version 4, CSPRNG-backed)"),
                 u("fn v7() -> String", "Time-ordered UUID (version 7, RFC 9562)"),

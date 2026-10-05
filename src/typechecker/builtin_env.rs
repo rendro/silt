@@ -450,11 +450,7 @@ pub fn __trait_init_fingerprint_check_program() -> (
 ///    supertrait_args_count, default_method_bodies_count,
 ///    params_count, supertraits_count, param_where_clauses_count)
 ///
-/// Used by `tests/meta/typechecker_builtin_trait_registration_parity_tests.rs`
-/// to lock the semantics of the round-61 dead-code collapse: the four
-/// near-identical TraitInfo construction blocks were replaced with a
-/// single parameterised helper, and this fingerprint proves the
-/// before/after shapes are identical.
+/// Used by `tests/typecheck/unified_trait_registration_tests.rs`.
 #[doc(hidden)]
 pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     String,

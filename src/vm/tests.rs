@@ -2546,7 +2546,7 @@ fn test_builtin_panic_converted_to_vm_error() {
 fn test_println_rejects_wrong_arity() {
     // Locks the defence-in-depth arity checks in `dispatch_builtin` for
     // the built-in `println` and `print` functions. In well-typed silt
-    // programs the type checker (see `src/typechecker/builtins.rs`)
+    // programs the type checker (see `typechecker/builtin_env.rs`)
     // rejects wrong-arity calls to both with arity 1, so these runtime
     // guards exist purely to catch a hypothetical compiler or emitter
     // bug that mis-emits argc. Mirrors `test_tail_call_rejects_arity_mismatch`

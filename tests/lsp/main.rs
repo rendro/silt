@@ -5,6 +5,7 @@
 
 mod support;
 
+mod builtin_signature_help_tests;
 mod docs_lsp_capabilities_advertisement_tests;
 mod lsp;
 mod lsp_anon_record_field_completion_tests;
