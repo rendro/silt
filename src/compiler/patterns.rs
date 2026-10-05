@@ -31,369 +31,31 @@ impl Compiler {
     // ── Recursive pattern test ───────────────────────────────────
     //
     // Emit test opcodes for a pattern. The value to test is on TOS
-    // (peeked, not consumed). Returns jump-patch addresses for failure.
-    // For nested patterns, uses Dup + Destruct to get sub-values.
+    // (peeked, not consumed). Returns the jumps taken when the test
+    // fails. For nested patterns, uses Destruct to get sub-values; a
+    // failed test of a nested pattern leaves the sub-values it was
+    // looking at above the value.
+    //
+    // A pattern the typechecker marked irrefutable matches every value
+    // of its type: no test is emitted for it.
 
     pub(super) fn compile_pattern_test(
         &mut self,
         pattern: &Pattern,
         span: Span,
     ) -> Result<Vec<Label>, Diagnostic> {
-        match &pattern.kind {
-            PatternKind::Wildcard | PatternKind::Ident(_) => {
-                // Always matches, no test needed
-                Ok(vec![])
-            }
-
-            PatternKind::Int(n) => {
-                let idx = self.add_constant(Value::Int(*n), span)?;
-                self.emit(Asm::TestEqual { k: idx }, span)?;
-                let jump = self.jump_if_false(span)?;
-                Ok(vec![jump])
-            }
-
-            PatternKind::Float(n) => {
-                let idx = self.add_constant(Value::Float(*n), span)?;
-                self.emit(Asm::TestEqual { k: idx }, span)?;
-                let jump = self.jump_if_false(span)?;
-                Ok(vec![jump])
-            }
-
-            PatternKind::Bool(b) => {
-                let idx = self.add_constant(Value::Bool(*b), span)?;
-                self.emit(Asm::TestEqual { k: idx }, span)?;
-                let jump = self.jump_if_false(span)?;
-                Ok(vec![jump])
-            }
-
-            PatternKind::StringLit(s, _) => {
-                let idx = self.add_constant(Value::String(s.clone()), span)?;
-                self.emit(Asm::TestEqual { k: idx }, span)?;
-                let jump = self.jump_if_false(span)?;
-                Ok(vec![jump])
-            }
-
-            PatternKind::Constructor {
-                name, args: fields, ..
-            } => {
-                // Test: is it this variant?
-                let tag = self.pattern_tag(pattern.res, *name, span)?;
-                let idx = self.add_constant(Value::VariantConstructor(tag), span)?;
-                self.emit(Asm::TestTag { tag: idx }, span)?;
-                let tag_jump = self.jump_if_false(span)?;
-                let mut all_jumps = vec![tag_jump];
-
-                // Test nested field patterns
-                for (i, field_pat) in fields.iter().enumerate() {
-                    if !self.pattern_is_irrefutable(field_pat) {
-                        // Destructure to get sub-value, test it, then pop
-                        self.emit(Asm::DestructVariant { index: i }, span)?;
-                        let sub_fails = self.compile_pattern_test(field_pat, span)?;
-                        self.emit(Asm::Pop, span)?;
-                        all_jumps.extend(sub_fails);
-                    }
-                }
-
-                Ok(all_jumps)
-            }
-
-            PatternKind::Tuple(pats) => {
-                if pats.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "tuple pattern cannot have more than 255 elements",
-                    ));
-                }
-                // Test shape
-                let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
-                let mut all_jumps = vec![len_jump];
-
-                // Test nested element patterns
-                for (i, pat) in pats.iter().enumerate() {
-                    if !self.pattern_is_irrefutable(pat) {
-                        self.emit(Asm::DestructTuple { index: i }, span)?;
-                        let sub_fails = self.compile_pattern_test(pat, span)?;
-                        self.emit(Asm::Pop, span)?;
-                        all_jumps.extend(sub_fails);
-                    }
-                }
-
-                Ok(all_jumps)
-            }
-
-            PatternKind::List(elements, rest) => {
-                let elem_count = elements.len();
-
-                if rest.is_some() {
-                    // [h, ..t] — at least elem_count elements
-                    self.emit(Asm::TestListMin { len: elem_count }, span)?;
-                } else {
-                    // [a, b, c] — exactly elem_count elements
-                    self.emit(Asm::TestListExact { len: elem_count }, span)?;
-                }
-                let len_jump = self.jump_if_false(span)?;
-                let mut all_jumps = vec![len_jump];
-
-                // Test nested element patterns
-                for (i, pat) in elements.iter().enumerate() {
-                    if !self.pattern_is_irrefutable(pat) {
-                        self.emit(Asm::DestructList { index: i }, span)?;
-                        let sub_fails = self.compile_pattern_test(pat, span)?;
-                        self.emit(Asm::Pop, span)?;
-                        all_jumps.extend(sub_fails);
-                    }
-                }
-
-                // Test rest pattern if it's refutable
-                if let Some(rest_pat) = rest
-                    && !self.pattern_is_irrefutable(rest_pat)
-                {
-                    self.emit(Asm::DestructListRest { start: elem_count }, span)?;
-                    let sub_fails = self.compile_pattern_test(rest_pat, span)?;
-                    self.emit(Asm::Pop, span)?;
-                    all_jumps.extend(sub_fails);
-                }
-
-                Ok(all_jumps)
-            }
-
-            PatternKind::Record { name, fields, .. } => {
-                let mut all_jumps = Vec::new();
-
-                // Test tag if present
-                if let Some(type_name) = name {
-                    let ty = self.record_type(pattern.res, *type_name, span)?;
-                    let idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
-                    self.emit(Asm::TestRecordTag { ty: idx }, span)?;
-                    let tag_jump = self.jump_if_false(span)?;
-                    all_jumps.push(tag_jump);
-                }
-
-                // Test each field's sub-pattern
-                for (field_name, _, sub_pat) in fields {
-                    let sub_pattern = match sub_pat {
-                        Some(p) => p,
-                        None => continue, // shorthand binding {name} — always matches
-                    };
-                    if !self.pattern_is_irrefutable(sub_pattern) {
-                        let field_idx =
-                            self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
-                        let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
-                        self.emit(Asm::Pop, span)?;
-                        all_jumps.extend(sub_fails);
-                    }
-                }
-
-                Ok(all_jumps)
-            }
-
-            PatternKind::AnonRecord { fields, .. } => {
-                // No tag check — anon records are structural.
-                let mut all_jumps = Vec::new();
-                for (field_name, _, sub_pat) in fields {
-                    let sub_pattern = match sub_pat {
-                        Some(p) => p,
-                        None => continue,
-                    };
-                    if !self.pattern_is_irrefutable(sub_pattern) {
-                        let field_idx =
-                            self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
-                        let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
-                        self.emit(Asm::Pop, span)?;
-                        all_jumps.extend(sub_fails);
-                    }
-                }
-                Ok(all_jumps)
-            }
-
-            PatternKind::Range(lo, hi) => {
-                let lo_idx = self.add_constant(Value::Int(*lo), span)?;
-                let hi_idx = self.add_constant(Value::Int(*hi), span)?;
-                self.emit(
-                    Asm::TestIntRange {
-                        lo: lo_idx,
-                        hi: hi_idx,
-                    },
-                    span,
-                )?;
-                let jump = self.jump_if_false(span)?;
-                Ok(vec![jump])
-            }
-
-            PatternKind::FloatRange(lo, hi) => {
-                let lo_idx = self.add_constant(Value::Float(*lo), span)?;
-                let hi_idx = self.add_constant(Value::Float(*hi), span)?;
-                self.emit(
-                    Asm::TestFloatRange {
-                        lo: lo_idx,
-                        hi: hi_idx,
-                    },
-                    span,
-                )?;
-                let jump = self.jump_if_false(span)?;
-                Ok(vec![jump])
-            }
-
-            PatternKind::Or(alternatives) => {
-                // Try each alternative; if any succeeds, jump to success.
-                //
-                // Compound alternatives (tuple, constructor, list, record,
-                // map) push intermediate destructured values on the stack
-                // via DestructX opcodes.  When a sub-test inside such a
-                // compound fails, the JumpIfFalse skips the Pop that would
-                // normally clean up the destructured value.  If we patch
-                // that JumpIfFalse directly to the next alternative's test
-                // code, the stale destructured value sits on the stack and
-                // the next alternative sees it instead of the original
-                // scrutinee.
-                //
-                // Fix: use `compile_pattern_test_tracked` which returns
-                // each failure jump together with the number of
-                // intermediate destructured values that are live on the
-                // stack at that point.  For non-last alternatives we emit
-                // per-depth cleanup trampolines that Pop the right number
-                // of values before falling through to the next alternative.
-                let mut fail_jumps = Vec::new();
-                let mut success_jumps = Vec::new();
-
-                for (i, alt) in alternatives.iter().enumerate() {
-                    let sub_fails = self.compile_pattern_test_tracked(alt, span, 0)?;
-
-                    if i < alternatives.len() - 1 {
-                        // Not the last alt: if it matched, jump to success
-                        let success = self.jump(span)?;
-                        success_jumps.push(success);
-
-                        // Emit cleanup trampolines for each distinct
-                        // destruct depth, from highest to lowest.  Each
-                        // trampoline pops one value then falls through to
-                        // the next-lower trampoline (or to the next
-                        // alternative's test code at depth 0).
-                        //
-                        // Example for depths {0, 1, 2}:
-                        //   depth-2 trampoline: Pop     ; falls through
-                        //   depth-1 trampoline: Pop     ; falls through
-                        //   depth-0 target:     <next alt code>
-                        // Each failure jump lands on the trampoline of
-                        // its depth; depth-0 failures (and the end of the
-                        // trampolines) land right at the next
-                        // alternative's test code.
-                        self.emit_trampolines(&sub_fails, 0, span)?;
-                    } else {
-                        // Last alt: its failures are the overall failures.
-                        // Need the same cleanup treatment so the caller's
-                        // patch targets see a clean stack.
-                        let max_depth = sub_fails.iter().map(|&(_, d)| d).max().unwrap_or(0);
-
-                        if max_depth == 0 {
-                            // No compound cleanup needed.
-                            fail_jumps = sub_fails.into_iter().map(|(j, _)| j).collect();
-                        } else {
-                            // Emit a jump to skip over the trampolines on
-                            // the success path.  Without this, success
-                            // falls through the trampoline Pops and
-                            // corrupts the stack.
-                            let success_skip = self.jump(span)?;
-
-                            // Emit cleanup trampolines, then a single
-                            // Jump that becomes the returned fail_jump.
-                            let deep: Vec<(Label, usize)> =
-                                sub_fails.iter().copied().filter(|(_, d)| *d > 0).collect();
-                            self.emit_trampolines(&deep, 0, span)?;
-                            let exit_jump = self.jump(span)?;
-
-                            // Patch success_skip to land here (after the
-                            // trampolines), so the success path resumes
-                            // normally.
-                            self.bind(success_skip, span)?;
-
-                            fail_jumps = sub_fails
-                                .into_iter()
-                                .filter(|(_, d)| *d == 0)
-                                .map(|(j, _)| j)
-                                .collect();
-                            fail_jumps.push(exit_jump);
-                        }
-                    }
-                }
-
-                // Patch all success jumps to here
-                for sj in success_jumps {
-                    self.bind(sj, span)?;
-                }
-
-                Ok(fail_jumps)
-            }
-
-            PatternKind::Pin(name) => {
-                // Pin pattern: match against the existing variable's value.
-                // TOS = scrutinee (peeked, not consumed).
-                // Strategy: Dup scrutinee, push pin value, Eq (pops both), JumpIfFalse.
-                // After: scrutinee remains on stack below the bool result.
-
-                // Dup the scrutinee
-                self.emit(Asm::Dup, span)?;
-
-                // Push the pin value
-                if let Some(slot) = self.resolve_local(*name) {
-                    self.emit(Asm::GetLocal { slot }, span)?;
-                } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
-                    self.emit(
-                        Asm::GetUpvalue {
-                            index: usize::from(idx),
-                        },
-                        span,
-                    )?;
-                } else if let Some(def) = self.value_def(pattern.res) {
-                    self.emit_global_value(def, span)?;
-                } else {
-                    return Err(name_without_binding(span, *name));
-                }
-
-                // Stack: [... scrutinee, scrutinee_copy, pin_value]
-                self.emit(Asm::Eq, span)?;
-                // Stack: [... scrutinee, bool_result]
-                let jump = self.jump_if_false(span)?;
-                Ok(vec![jump])
-            }
-
-            PatternKind::Map(entries) => {
-                let mut all_jumps = Vec::new();
-
-                for (key, sub_pat) in entries {
-                    // Test if key exists
-                    let key_idx = self.add_constant(Value::String(key.clone()), span)?;
-                    self.emit(Asm::TestMapHasKey { key: key_idx }, span)?;
-                    let key_jump = self.jump_if_false(span)?;
-                    all_jumps.push(key_jump);
-
-                    // Test sub-pattern if refutable
-                    if !self.pattern_is_irrefutable(sub_pat) {
-                        let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
-                        self.emit(Asm::DestructMapValue { key: key_idx2 }, span)?;
-                        let sub_fails = self.compile_pattern_test(sub_pat, span)?;
-                        self.emit(Asm::Pop, span)?;
-                        all_jumps.extend(sub_fails);
-                    }
-                }
-
-                Ok(all_jumps)
-            }
-        }
+        let fails = self.compile_pattern_test_tracked(pattern, span, 0)?;
+        Ok(fails.into_iter().map(|(jump, _)| jump).collect())
     }
 
-    // ── Depth-tracked pattern test (for Or alternatives) ─────────
+    // `compile_pattern_test`, with the number of sub-values each failed
+    // test leaves above the value: `(jump, depth)` pairs. An or-pattern
+    // needs the depths, to drop the sub-values of a failed alternative
+    // before the next one is tested.
     //
-    // Like `compile_pattern_test`, but tracks the number of
-    // intermediate destructured values on the stack at each failure
-    // point.  Returns `(jump_addr, destruct_depth)` pairs.
-    //
-    // `base_depth` is the number of Destruct-pushed values already on
-    // the stack from an outer compound pattern.  Each DestructX in a
-    // compound pattern increments the depth; each Pop decrements it.
+    // `base_depth` is the number of sub-values already above the value
+    // from an outer compound pattern. Each Destruct in a compound
+    // pattern increments the depth; each Pop decrements it.
 
     fn compile_pattern_test_tracked(
         &mut self,
@@ -401,6 +63,9 @@ impl Compiler {
         span: Span,
         base_depth: usize,
     ) -> Result<Vec<(Label, usize)>, Diagnostic> {
+        if pattern.irrefutable {
+            return Ok(vec![]);
+        }
         match &pattern.kind {
             // ── Simple (leaf) patterns ──────────────────────────
             // These never push intermediate Destruct values, so the
@@ -496,7 +161,7 @@ impl Compiler {
                 let mut all_jumps = vec![(tag_jump, base_depth)];
 
                 for (i, field_pat) in fields.iter().enumerate() {
-                    if !self.pattern_is_irrefutable(field_pat) {
+                    if !field_pat.irrefutable {
                         self.emit(Asm::DestructVariant { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(field_pat, span, base_depth + 1)?;
@@ -509,18 +174,11 @@ impl Compiler {
             }
 
             PatternKind::Tuple(pats) => {
-                if pats.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "tuple pattern cannot have more than 255 elements",
-                    ));
-                }
                 let len_jump = self.emit_tuple_shape_test(pats.len(), span)?;
                 let mut all_jumps = vec![(len_jump, base_depth)];
 
                 for (i, pat) in pats.iter().enumerate() {
-                    if !self.pattern_is_irrefutable(pat) {
+                    if !pat.irrefutable {
                         self.emit(Asm::DestructTuple { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(pat, span, base_depth + 1)?;
@@ -543,7 +201,7 @@ impl Compiler {
                 let mut all_jumps = vec![(len_jump, base_depth)];
 
                 for (i, pat) in elements.iter().enumerate() {
-                    if !self.pattern_is_irrefutable(pat) {
+                    if !pat.irrefutable {
                         self.emit(Asm::DestructList { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(pat, span, base_depth + 1)?;
@@ -553,7 +211,7 @@ impl Compiler {
                 }
 
                 if let Some(rest_pat) = rest
-                    && !self.pattern_is_irrefutable(rest_pat)
+                    && !rest_pat.irrefutable
                 {
                     self.emit(Asm::DestructListRest { start: elem_count }, span)?;
                     let sub_fails =
@@ -581,7 +239,7 @@ impl Compiler {
                         Some(p) => p,
                         None => continue,
                     };
-                    if !self.pattern_is_irrefutable(sub_pattern) {
+                    if !sub_pattern.irrefutable {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
                         self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
@@ -602,7 +260,7 @@ impl Compiler {
                         Some(p) => p,
                         None => continue,
                     };
-                    if !self.pattern_is_irrefutable(sub_pattern) {
+                    if !sub_pattern.irrefutable {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
                         self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
@@ -624,7 +282,7 @@ impl Compiler {
                     let key_jump = self.jump_if_false(span)?;
                     all_jumps.push((key_jump, base_depth));
 
-                    if !self.pattern_is_irrefutable(sub_pat) {
+                    if !sub_pat.irrefutable {
                         let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
                         self.emit(Asm::DestructMapValue { key: key_idx2 }, span)?;
                         let sub_fails =
@@ -637,7 +295,13 @@ impl Compiler {
                 Ok(all_jumps)
             }
 
-            // Or-within-Or: delegate recursively.
+            // Try each alternative; the first that matches jumps to
+            // success. A failed test inside a compound alternative
+            // jumps over the `Pop` of the sub-value it was looking at,
+            // so before the next alternative is tested every failure
+            // goes through a cleanup trampoline that pops what its depth
+            // left (`emit_trampolines`): the next alternative sees the
+            // value itself on TOS.
             PatternKind::Or(alternatives) => {
                 let mut fail_jumps = Vec::new();
                 let mut success_jumps = Vec::new();
@@ -651,7 +315,8 @@ impl Compiler {
 
                         self.emit_trampolines(&sub_fails, base_depth, span)?;
                     } else {
-                        // Last alternative
+                        // Last alternative: its failures are the
+                        // or-pattern's, cleaned up the same way.
                         let max_depth = sub_fails
                             .iter()
                             .map(|&(_, d)| d)
@@ -738,7 +403,7 @@ impl Compiler {
         pattern: &Pattern,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        if !Self::pattern_can_fail(pattern) {
+        if pattern.irrefutable {
             return self.compile_pattern_bind(pattern, span);
         }
         // The value is the local on top of the frame.
@@ -774,31 +439,6 @@ impl Compiler {
         self.emit(Asm::Panic, span)?;
         self.bind(matched, span)?;
         Ok(())
-    }
-
-    /// True if matching `pattern` against a value of the pattern's type
-    /// can fail. A tuple or record pattern cannot fail by itself, the
-    /// type of the value guarantees its shape; it can fail through the
-    /// patterns of its elements.
-    fn pattern_can_fail(pattern: &Pattern) -> bool {
-        match &pattern.kind {
-            PatternKind::Wildcard | PatternKind::Ident(_) => false,
-            PatternKind::Tuple(pats) => pats.iter().any(Self::pattern_can_fail),
-            PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => fields
-                .iter()
-                .any(|(_, _, sub)| sub.as_ref().is_some_and(Self::pattern_can_fail)),
-            PatternKind::Int(_)
-            | PatternKind::Float(_)
-            | PatternKind::Bool(_)
-            | PatternKind::StringLit(..)
-            | PatternKind::Constructor { .. }
-            | PatternKind::List(..)
-            | PatternKind::Or(_)
-            | PatternKind::Range(..)
-            | PatternKind::FloatRange(..)
-            | PatternKind::Map(_)
-            | PatternKind::Pin(_) => true,
-        }
     }
 
     // ── Recursive pattern bind ───────────────────────────────────
@@ -846,13 +486,6 @@ impl Compiler {
             }
 
             PatternKind::Tuple(pats) => {
-                if pats.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "tuple pattern cannot have more than 255 elements",
-                    ));
-                }
                 self.compile_compound_bind(
                     pats.iter()
                         .enumerate()
@@ -1197,11 +830,6 @@ impl Compiler {
 
     // ── Pattern analysis helpers ─────────────────────────────────
 
-    /// Returns true if the pattern always matches (no runtime test needed).
-    pub(super) fn pattern_is_irrefutable(&self, pattern: &Pattern) -> bool {
-        matches!(pattern.kind, PatternKind::Wildcard | PatternKind::Ident(_))
-    }
-
     /// Returns true if the pattern (or any sub-pattern) binds any variable.
     pub(super) fn pattern_has_bindings(&self, pattern: &Pattern) -> bool {
         match &pattern.kind {
@@ -1313,5 +941,103 @@ impl Compiler {
             | PatternKind::FloatRange(..)
             | PatternKind::Pin(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bytecode::{Function, Op};
+    use crate::value::Value;
+
+    /// The function `name` of the compiled declarations `input`.
+    fn compiled(input: &str, name: &str) -> Function {
+        fn find(functions: &[&Function], name: &str) -> Option<Function> {
+            for f in functions {
+                if f.name() == name {
+                    return Some((*f).clone());
+                }
+                let nested: Vec<&Function> = f
+                    .chunk()
+                    .constants()
+                    .iter()
+                    .filter_map(|c| match c {
+                        Value::VmClosure(closure) => Some(&*closure.function),
+                        _ => None,
+                    })
+                    .collect();
+                if let Some(found) = find(&nested, name) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        let program =
+            crate::session::testing::compile_decls_str(input).unwrap_or_else(|e| panic!("{e:?}"));
+        find(&program.functions.iter().collect::<Vec<_>>(), name)
+            .unwrap_or_else(|| panic!("no function '{name}'"))
+    }
+
+    fn has_op(function: &Function, op: Op) -> bool {
+        function.chunk().instrs().any(|(_, instr)| instr.op() == op)
+    }
+
+    const TYPES: &str = "type Wrap { Wrap(Int) }\ntype Point { x: Int, y: Int }\n";
+
+    /// A `let` or a parameter whose pattern the checker marked
+    /// irrefutable is bound without a test, whatever its form.
+    #[test]
+    fn test_irrefutable_binding_has_no_test() {
+        let f = compiled(
+            &format!(
+                "{TYPES}fn f(Wrap(a), (b, Point {{ x, y }})) -> Int {{\n  \
+                 let (Wrap(c), true | false, [..rest]) = (Wrap(b), a == x, [y])\n  a + c\n}}\n"
+            ),
+            "f",
+        );
+        for op in [
+            Op::TestTag,
+            Op::TestTupleLen,
+            Op::TestRecordTag,
+            Op::TestEqual,
+            Op::TestListMin,
+            Op::Panic,
+        ] {
+            assert!(!has_op(&f, op), "{op:?} emitted for an irrefutable binding");
+        }
+        assert!(has_op(&f, Op::DestructVariant));
+        assert!(has_op(&f, Op::DestructTuple));
+    }
+
+    /// In an arm, the parts of a pattern that cannot fail are not tested
+    /// either: only the variant of the `Option` is.
+    #[test]
+    fn test_arm_tests_only_what_can_fail() {
+        let f = compiled(
+            &format!(
+                "{TYPES}fn f(o: Option((Wrap, Point))) -> Int {{\n  match o {{\n    \
+                 Some((Wrap(a), Point {{ x, y }})) -> a + x + y\n    None -> 0\n  }}\n}}\n"
+            ),
+            "f",
+        );
+        assert!(has_op(&f, Op::TestTag));
+        assert!(!has_op(&f, Op::TestTupleLen));
+        assert!(!has_op(&f, Op::TestRecordTag));
+    }
+
+    /// A pattern that can fail keeps its test, and the test of its own
+    /// shape with it: the mark says whether a pattern can fail, not which
+    /// of its tests can.
+    #[test]
+    fn test_refutable_parts_are_tested() {
+        let f = compiled(
+            &format!(
+                "{TYPES}fn f(p: (Wrap, Bool)) -> Int {{\n  match p {{\n    \
+                 (Wrap(0), _) -> 0\n    (Wrap(a), true) -> a\n    (_, false) -> 1\n  }}\n}}\n"
+            ),
+            "f",
+        );
+        assert!(has_op(&f, Op::TestEqual));
+        assert!(has_op(&f, Op::DestructVariant));
+        assert!(has_op(&f, Op::TestTag));
     }
 }

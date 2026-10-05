@@ -3582,6 +3582,7 @@ fn f(x) {
 type Point { x: Int, y: Int }
 fn f(p) {
     match p {
+        Point { x: 0, y } -> y
         Point { x, y } -> x + y
     }
 }
