@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment directly above a declaration stays directly above it, so it
 -- is still the declaration's doc comment (FRONTEND-4 d). A comment with
 -- an empty line below it keeps that line.

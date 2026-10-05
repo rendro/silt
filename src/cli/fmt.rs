@@ -14,15 +14,21 @@ use crate::cli::paths::find_silt_files;
 /// Dispatch `silt fmt [--check] [files...]`.
 pub(crate) fn dispatch(args: &[String]) {
     let mut check_mode = false;
-    let mut next = false;
+    let mut tamper: Option<(String, String)> = None;
     let mut files: Vec<String> = Vec::new();
     for arg in &args[2..] {
         if arg == "--check" {
             check_mode = true;
-        } else if arg == "--next" {
-            // Not in the help: the printer of `src/format/`, until it is
-            // the only one (stage 8 step A3).
-            next = true;
+        } else if let Some(swap) = arg.strip_prefix("--test-tamper=") {
+            // Not in the help: for the test of how a refusal is shown.
+            // `FROM=>TO` replaces the last FROM by TO in the printer's
+            // result before the formatter checks it, as a defect of the
+            // printer would.
+            let Some((from, to)) = swap.split_once("=>") else {
+                eprintln!("silt fmt: --test-tamper takes FROM=>TO");
+                process::exit(1);
+            };
+            tamper = Some((from.to_string(), to.to_string()));
         } else if arg == "--help" || arg == "-h" {
             println!("Usage: silt fmt [--check] [files-or-dirs...]");
             println!();
@@ -142,7 +148,7 @@ pub(crate) fn dispatch(args: &[String]) {
         let mut any_unformatted = false;
         let mut any_infra_error = false;
         for file in &files {
-            match check_format(file, next) {
+            match check_format(file, tamper.as_ref()) {
                 CheckOutcome::Formatted => {}
                 CheckOutcome::Unformatted => any_unformatted = true,
                 CheckOutcome::InfraError => any_infra_error = true,
@@ -157,7 +163,7 @@ pub(crate) fn dispatch(args: &[String]) {
     } else {
         let mut any_failed = false;
         for file in &files {
-            if let Err(e) = format_file(file, next) {
+            if let Err(e) = format_file(file, tamper.as_ref()) {
                 eprintln!("{e}");
                 any_failed = true;
             }
@@ -168,31 +174,39 @@ pub(crate) fn dispatch(args: &[String]) {
     }
 }
 
-/// Format `source` with the printer of `src/format/` if `next`, else
-/// with `src/formatter.rs`.
-fn format_source(source: &str, next: bool) -> Result<String, silt::formatter::FmtError> {
-    use silt::formatter::{FmtError, InternalError};
-    if !next {
-        return silt::formatter::format(source);
-    }
-    silt::format::format(silt::source::FileId::default(), source).map_err(|e| match e {
-        silt::format::Error::Syntax(e) => FmtError::Syntax(e),
-        silt::format::Error::Refused(e) => FmtError::Internal(InternalError {
-            message: e.message,
-            span: e.span,
-        }),
-    })
+type Tamper = (String, String);
+
+/// Format `source`, the text of the file at `path`. An error is the
+/// rendered diagnostic: the lexer's or the parser's, as `silt check`
+/// shows it for the same file, or the formatter's refusal of its own
+/// result.
+fn format_source(source: &str, path: &str, tamper: Option<&Tamper>) -> Result<String, String> {
+    // The formatter lexes the text as the only file of its own.
+    let mut sources = SourceMap::new();
+    let file = sources.add(SourceName::Path(path.into()), source.into());
+    let result = match tamper {
+        None => silt::format::format(file, source),
+        Some((from, to)) => {
+            let (from, to) = (from.clone(), to.clone());
+            silt::format::format_with(file, source, move |mut text| {
+                if let Some(at) = text.rfind(&from) {
+                    text.replace_range(at..at + from.len(), &to);
+                }
+                text
+            })
+        }
+    };
+    result.map_err(|diagnostic| silt::diagnostic::render_human(&sources, &diagnostic))
 }
 
-fn format_file(path: &str, next: bool) -> Result<(), String> {
+fn format_file(path: &str, tamper: Option<&Tamper>) -> Result<(), String> {
     let source = fs::read_to_string(path).map_err(|e| {
         format!(
             "error reading {path}: {}",
             silt::diagnostic::io_error_text(&e)
         )
     })?;
-    let formatted =
-        format_source(&source, next).map_err(|e| render_fmt_error(&e, &source, path))?;
+    let formatted = format_source(&source, path, tamper)?;
     // Skip the write when the file is already formatted. An
     // unconditional `fs::write` bumps the file's mtime even though the
     // bytes are identical, which spuriously retriggers `--watch` loops
@@ -204,35 +218,6 @@ fn format_file(path: &str, next: bool) -> Result<(), String> {
     }
     fs::write(path, formatted).map_err(|e| format!("error writing {path}: {e}"))?;
     Ok(())
-}
-
-/// Render a formatter lex/parse failure as the diagnostic `silt check`
-/// shows for the same file, with its source line and marks.
-///
-/// A refusal (`FmtError::Internal`) is not an error in the user's file,
-/// so it is rendered under its own `error[fmt]` header, names the file,
-/// and says that the file was not touched.
-fn render_fmt_error(err: &silt::formatter::FmtError, source: &str, path: &str) -> String {
-    // The formatter lexes the text as the only file of its own.
-    let mut sources = SourceMap::new();
-    sources.add(SourceName::Path(path.into()), source.into());
-    match err {
-        silt::formatter::FmtError::Syntax(e) => silt::diagnostic::render_human(&sources, e),
-        silt::formatter::FmtError::Internal(e) => {
-            let mut out = format!("error[fmt]: {path}: formatting refused: {}", e.message);
-            if let Some(span) = e.span {
-                let (line, col) = sources.line_col((span.file, span.start));
-                out.push_str(&format!("\n --> {path}:{line}:{col}"));
-            }
-            out.push_str("\n  = note: the file was left unchanged");
-            out.push_str(
-                "\n  = note: this is a defect in `silt fmt`, not in your program; \
-                 until it is fixed, moving the comment onto a line of its own or \
-                 simplifying the expression usually lets the file format",
-            );
-            out
-        }
-    }
 }
 
 /// Three-way result for `silt fmt --check` on a single file. Previously
@@ -257,7 +242,7 @@ enum CheckOutcome {
 
 /// Check if a file is already formatted. Prints a diagnostic on any
 /// non-`Formatted` outcome (same stderr messages as before).
-fn check_format(path: &str, next: bool) -> CheckOutcome {
+fn check_format(path: &str, tamper: Option<&Tamper>) -> CheckOutcome {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -268,7 +253,7 @@ fn check_format(path: &str, next: bool) -> CheckOutcome {
             return CheckOutcome::InfraError;
         }
     };
-    match format_source(&source, next) {
+    match format_source(&source, path, tamper) {
         Ok(formatted) => {
             if source == formatted {
                 CheckOutcome::Formatted
@@ -278,7 +263,7 @@ fn check_format(path: &str, next: bool) -> CheckOutcome {
             }
         }
         Err(e) => {
-            eprintln!("{}", render_fmt_error(&e, &source, path));
+            eprintln!("{e}");
             CheckOutcome::InfraError
         }
     }

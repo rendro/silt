@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- Every kind of declaration, type, pattern and expression in its
 -- loosest spelling: empty lists, optional parentheses and commas,
 -- qualified names, closures in every place.

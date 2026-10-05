@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A pipeline is on one line if it fits; if not, each stage has its
 -- line, indented under the first operand, in parentheses too. A stage
 -- whose closure holds statements breaks the pipeline.

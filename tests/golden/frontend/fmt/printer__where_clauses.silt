@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- `where` stands on the line of the header if it fits; if not, on a
 -- line of its own with each clause on its line, one level deeper.
 trait Table(k) where k: Hash + Equal {

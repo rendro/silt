@@ -34,11 +34,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use silt::diagnostic::Code;
 use silt::lexer::{Lexer, Token};
 use silt::parser::Parser;
 use silt::source::FileId;
 
-/// What a formatter made of one text.
+/// What the formatter made of one text.
 pub enum Formatted {
     Ok(String),
     /// The text does not lex or parse: not an input.
@@ -47,25 +48,12 @@ pub enum Formatted {
     Refused(String),
 }
 
-/// A formatter under test.
-pub type Formatter = fn(&str) -> Formatted;
-
-/// `silt fmt` as it is today.
-pub fn current_formatter(source: &str) -> Formatted {
-    match silt::formatter::format(source) {
-        Ok(text) => Formatted::Ok(text),
-        Err(silt::formatter::FmtError::Syntax(_)) => Formatted::Unparseable,
-        Err(silt::formatter::FmtError::Internal(e)) => Formatted::Refused(e.message),
-    }
-}
-
-/// The printer of `src/format/`, which `silt fmt` runs from stage 8 step
-/// A3 on.
-pub fn next_formatter(source: &str) -> Formatted {
+/// `silt fmt` on one text.
+fn format(source: &str) -> Formatted {
     match silt::format::format(FileId::default(), source) {
         Ok(text) => Formatted::Ok(text),
-        Err(silt::format::Error::Syntax(_)) => Formatted::Unparseable,
-        Err(silt::format::Error::Refused(e)) => Formatted::Refused(e.message),
+        Err(e) if e.code == Code::FormatRefused => Formatted::Refused(e.message),
+        Err(_) => Formatted::Unparseable,
     }
 }
 
@@ -508,7 +496,7 @@ fn excerpt(text: &str) -> String {
 }
 
 /// Check one text. `Ok(false)` when it does not parse.
-fn check(text: &str, format: Formatter) -> Result<bool, (&'static str, String)> {
+fn check(text: &str) -> Result<bool, (&'static str, String)> {
     let first = match format(text) {
         Formatted::Unparseable => return Ok(false),
         Formatted::Refused(message) => return Err(("refused", excerpt(&message))),
@@ -554,8 +542,8 @@ fn check(text: &str, format: Formatter) -> Result<bool, (&'static str, String)> 
 /// timing.
 pub const SUITE_WORKERS: usize = 2;
 
-/// Run `format` over `jobs` on `workers` threads.
-pub fn run(jobs: &[Job<'_>], format: Formatter, workers: usize) -> Report {
+/// Check `jobs` on `workers` threads.
+pub fn run(jobs: &[Job<'_>], workers: usize) -> Report {
     let report = Mutex::new(Report::default());
     let next = AtomicUsize::new(0);
     std::thread::scope(|scope| {
@@ -575,7 +563,7 @@ pub fn run(jobs: &[Job<'_>], format: Formatter, workers: usize) -> Report {
                         silt::intern::reset();
                         let text = job.text();
                         let started = std::time::Instant::now();
-                        let outcome = std::panic::catch_unwind(|| check(&text, format));
+                        let outcome = std::panic::catch_unwind(|| check(&text));
                         let took = started.elapsed();
                         let mut report = report.lock().unwrap();
                         *report.time.entry(job.class()).or_default() += took;
@@ -615,17 +603,6 @@ pub fn run(jobs: &[Job<'_>], format: Formatter, workers: usize) -> Report {
     let mut report = report.into_inner().unwrap();
     report.failures.sort_by(|a, b| a.name.cmp(&b.name));
     report
-}
-
-/// Whether the formatter under test is expected to pass.
-#[derive(Clone, Copy, PartialEq)]
-pub enum Expect {
-    /// Every input passes.
-    Clean,
-    /// The formatter is known to fail some inputs: the run reports its
-    /// counts and passes. A run without a failure fails, so that the
-    /// mark is removed when it is no longer true.
-    KnownFailing,
 }
 
 impl Report {
@@ -682,8 +659,8 @@ impl Failure {
     }
 }
 
-/// Print the report of the run called `what` and pass or fail by `expect`.
-pub fn conclude(what: &str, report: &Report, expect: Expect) {
+/// Print the report of the run called `what`; every input must pass.
+pub fn conclude(what: &str, report: &Report) {
     let checked: usize = report.checked.values().sum();
     let failures = report.failures.len();
     let summary = report.summary();
@@ -705,15 +682,8 @@ pub fn conclude(what: &str, report: &Report, expect: Expect) {
             .expect("write SILT_FMT_REPORT");
     }
     assert!(checked > 0, "fmt property, {what}: no input was checked");
-    match expect {
-        Expect::Clean => assert!(
-            failures == 0,
-            "fmt property, {what}: {failures} of {checked} inputs failed\n{summary}"
-        ),
-        Expect::KnownFailing => assert!(
-            failures > 0,
-            "fmt property, {what}: all {checked} inputs pass, but the run is marked \
-             as known to fail; change its mark to `Expect::Clean`"
-        ),
-    }
+    assert!(
+        failures == 0,
+        "fmt property, {what}: {failures} of {checked} inputs failed\n{summary}"
+    );
 }

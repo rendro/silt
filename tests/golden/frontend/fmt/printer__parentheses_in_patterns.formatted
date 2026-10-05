@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- Parentheses around a pattern are dropped, also around a tuple or an
 -- or-pattern that starts with one; alternatives in parentheses are one
 -- flat list. They stay where the grammar needs them: around a closure

@@ -508,20 +508,16 @@ fn judge(case: &Case, out: &Output, bless: bool) -> Vec<String> {
 
 /// The error diagnostics in `stderr` that render without a ` --> ` line:
 /// every diagnostic has a span, so every one shows where it is. Headers
-/// indented under a test result line count too. An `error[fmt]` refusal
-/// is not a diagnostic about the program and is left out. The verdict
-/// mode applies this to `check`'s stderr of every verdict case, the
-/// repro corpus included.
+/// indented under a test result line count too. The verdict mode applies
+/// this to `check`'s stderr of every verdict case, the repro corpus
+/// included.
 fn unlocated_errors(stderr: &str) -> Vec<String> {
     let lines: Vec<&str> = stderr.lines().collect();
     let mut problems = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let Some((true, kind, _)) = verdict::header(line.trim_start()) else {
+        let Some((true, _, _)) = verdict::header(line.trim_start()) else {
             continue;
         };
-        if kind == "fmt" {
-            continue;
-        }
         let located = lines
             .get(i + 1)
             .is_some_and(|next| next.trim_start().starts_with("--> "));

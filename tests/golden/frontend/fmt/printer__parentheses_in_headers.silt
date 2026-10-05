@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- In a `match` or `loop` header a `{` outside brackets is the block of
 -- the header, and `match {` is a match without a scrutinee. So the
 -- parentheses stay around a scrutinee that would show a block, a

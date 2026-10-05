@@ -1,6 +1,5 @@
-//! The formatter that follows the token stream (stage 8).
-//!
-//! Not yet what `silt fmt` runs by default: see `src/formatter.rs`.
+//! The formatter: `silt fmt` and the language server's formatting. It
+//! follows the token stream.
 //!
 //! - `doc`: the layout document and its renderer;
 //! - `cursor`: the token cursor, which brings every comment;
@@ -36,23 +35,13 @@ pub mod cursor;
 pub mod doc;
 pub mod print;
 
-use crate::diagnostic::Diagnostic;
-use crate::lexer::Lexer;
+use crate::diagnostic::{Code, Diagnostic};
+use crate::lexer::{Lexed, Lexer};
 use crate::parser::Parser;
 use crate::source::{FileId, Span};
 
 /// The width the printer fills.
 pub const WIDTH: usize = 100;
-
-/// Why `format` gave no text.
-#[derive(Debug)]
-pub enum Error {
-    /// The input does not lex or parse.
-    Syntax(Diagnostic),
-    /// The input is fine, but the printer could not follow its tokens,
-    /// or its result failed the oracle. A defect of the formatter.
-    Refused(Refusal),
-}
 
 /// What would have gone wrong, phrased to follow "formatting refused: ",
 /// and the place in the input it belongs to, when there is one.
@@ -62,12 +51,36 @@ pub struct Refusal {
     pub span: Option<Span>,
 }
 
-/// Format `source`, the text of `file`. The result is checked before it
-/// is returned (see `check`): it parses, it is the same program, it
-/// spells every literal the same way, and it holds the same comments in
-/// the same order.
-pub fn format(file: FileId, source: &str) -> Result<String, Error> {
+/// Format `source`, the text of `file`.
+///
+/// An error is the lexer's or the parser's diagnostic for a text that
+/// is not a program, or a refusal ([`Code::FormatRefused`]): the text is
+/// fine, but the printer could not follow its tokens, or its result
+/// failed the check that every result goes through before it is returned
+/// (see `check`): it parses, it is the same program, it spells every
+/// literal the same way, and it holds the same comments in the same
+/// order. A refusal is a defect of the formatter.
+pub fn format(file: FileId, source: &str) -> Result<String, Diagnostic> {
     format_with(file, source, |text| text)
+}
+
+/// A refusal as a diagnostic: at its place, or at the first token.
+fn refused(file: FileId, lexed: &Lexed, refusal: Refusal) -> Diagnostic {
+    let span = refusal
+        .span
+        .or_else(|| lexed.tokens.first().map(|tok| tok.span))
+        .unwrap_or(Span::point(file, 0));
+    Diagnostic::error(
+        Code::FormatRefused,
+        span,
+        format!("formatting refused: {}", refusal.message),
+    )
+    .with_note("the text was left unchanged")
+    .with_note(
+        "this is a defect in `silt fmt`, not in your program; until it is fixed, moving the \
+         comment onto a line of its own or simplifying the expression usually lets the file \
+         format",
+    )
 }
 
 /// The stack `format` works on. The printer and the oracle recurse over
@@ -90,7 +103,7 @@ pub fn format_with(
     file: FileId,
     source: &str,
     tamper: impl FnOnce(String) -> String + Send + 'static,
-) -> Result<String, Error> {
+) -> Result<String, Diagnostic> {
     use std::sync::mpsc;
 
     type Job = Box<dyn FnOnce() + Send>;
@@ -140,7 +153,7 @@ pub fn format_with(
     file: FileId,
     source: &str,
     tamper: impl FnOnce(String) -> String + Send + 'static,
-) -> Result<String, Error> {
+) -> Result<String, Diagnostic> {
     format_here(file, source, tamper)
 }
 
@@ -148,16 +161,15 @@ fn format_here(
     file: FileId,
     source: &str,
     tamper: impl FnOnce(String) -> String,
-) -> Result<String, Error> {
-    let lexed = Lexer::new(file, source).tokenize().map_err(Error::Syntax)?;
-    let program = Parser::new(lexed.clone(), source)
-        .parse_program()
-        .map_err(Error::Syntax)?;
+) -> Result<String, Diagnostic> {
+    let lexed = Lexer::new(file, source).tokenize()?;
+    let program = Parser::new(lexed.clone(), source).parse_program()?;
     let doc = print::program(source, &lexed, &program).map_err(|mismatch| {
-        Error::Refused(Refusal {
+        let refusal = Refusal {
             message: mismatch.message,
             span: Some(mismatch.span),
-        })
+        };
+        refused(file, &lexed, refusal)
     })?;
     let mut output = doc::render(&doc, WIDTH);
     // A byte-order mark stays where it is.
@@ -167,7 +179,8 @@ fn format_here(
     let output = tamper(output);
     // Text that is returned unchanged needs no check.
     if output != source {
-        check::verify(source, &lexed, &program, &output).map_err(Error::Refused)?;
+        check::verify(source, &lexed, &program, &output)
+            .map_err(|refusal| refused(file, &lexed, refusal))?;
     }
     Ok(output)
 }
@@ -219,9 +232,9 @@ mod tests {
     #[test]
     fn a_syntax_error_is_the_parser_s_diagnostic() {
         let error = format(FileId::default(), "fn main() { let }").unwrap_err();
-        assert!(matches!(error, Error::Syntax(_)), "{error:?}");
+        assert_eq!(error.phase(), crate::diagnostic::Phase::Parse, "{error:?}");
         let error = format(FileId::default(), "fn main() { \"open }").unwrap_err();
-        assert!(matches!(error, Error::Syntax(_)), "{error:?}");
+        assert_eq!(error.phase(), crate::diagnostic::Phase::Lex, "{error:?}");
     }
 
     #[test]
@@ -233,7 +246,7 @@ mod tests {
             &format!("\n{source}"),
             tamper,
         ) {
-            Err(Error::Refused(refusal)) => refusal.message,
+            Err(refusal) if refusal.code == Code::FormatRefused => refusal.message,
             other => panic!("not refused: {other:?}"),
         };
         assert!(refused(|text| text.replace("0x01", "1")).contains("another way"));

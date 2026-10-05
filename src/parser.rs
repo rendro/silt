@@ -56,8 +56,8 @@ impl DocIndex {
         let mut line: usize = 1; // 1-based
         let mut i: usize = 0;
 
-        // Mode stack for string/interp awareness. Simplified from
-        // formatter.rs: we only need to know "am I inside any string
+        // Mode stack for string/interp awareness: we only need to know
+        // "am I inside any string
         // context" — if so, `--` is content, not a comment.
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum Mode {
@@ -2448,9 +2448,15 @@ impl<'src> Parser<'src> {
             )
         {
             self.advance();
-            let hint = match self.parse_fn_type_rest(start) {
-                Ok(ty) => format!("`{}`", crate::formatter::format_type_expr(&ty)),
-                Err(_) => "`Fn(...) -> ...`".to_string(),
+            // The type as it is written, behind `Fn` instead of `fn`.
+            let rest = self.parse_fn_type_rest(start).ok().and_then(|ty| {
+                self.source
+                    .get(start.end as usize..ty.span.end as usize)
+                    .filter(|rest| !rest.contains('\n'))
+            });
+            let hint = match rest {
+                Some(rest) => format!("`Fn{rest}`"),
+                None => "`Fn(...) -> ...`".to_string(),
             };
             return Err(Diagnostic::error(
                 Code::ExpectedType,

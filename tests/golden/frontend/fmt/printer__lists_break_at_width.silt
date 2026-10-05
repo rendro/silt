@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A list is on one line if it fits 100 columns; if not, each item has
 -- its line and the last one a comma. A comma behind the last item of a
 -- list that fits is dropped; a tuple of one keeps its comma.

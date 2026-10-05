@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- Parentheses around a type group nothing: they are dropped, around a
 -- tuple type too, unless a comment stands at their inside. A tuple of
 -- one keeps its comma.

@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- Line ends become line feeds, also inside a comment that spans lines;
 -- a string keeps the ones it holds.
 fn main() {

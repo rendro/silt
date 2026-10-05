@@ -10,7 +10,7 @@
 //! 5. **VM** (`vm`) -- executes bytecode, using the `scheduler` for
 //!    concurrent tasks and `builtins` for the standard library.
 //!
-//! Supporting modules: `formatter` (source formatting), `module` (module
+//! Supporting modules: `format` (source formatting), `module` (module
 //! resolution), `intern` (string interning), `disassemble` (bytecode
 //! inspection). Optional features: `lsp`, `repl`, `watch`.
 
@@ -25,9 +25,7 @@ pub mod diagnostic;
 pub mod disassemble;
 pub mod feature_stub;
 pub mod file_discovery;
-#[doc(hidden)]
 pub mod format;
-pub mod formatter;
 pub mod fuzz_invariants;
 pub mod git;
 pub mod intern;

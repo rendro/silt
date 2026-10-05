@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A list that is broken over lines has a comma behind its last item, in
 -- every list form: also in a list pattern, and behind the rest of a
 -- pattern and the row variable of a record type.

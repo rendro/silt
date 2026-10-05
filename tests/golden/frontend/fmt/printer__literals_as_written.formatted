@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- Numbers and strings are written as the source spells them. A string
 -- with a line break in it is not touched at all; in any other, each
 -- interpolation is formatted on its line.
@@ -18,6 +18,11 @@ second line"
   let v = "holes: {a + b} and {c}"
   let w = "a hole with a line break: {
     a+b }"
+  -- A method of a number: as written, and with a space where dropped
+  -- parentheses would leave `1.e5`, which is a number.
+  let x = 1.to_string()
+  let y = 2 .to_string()
+  let z = 3 .e5
   match a {
     0x10..0x1F -> println("low")
     -0x01 -> println("minus one")

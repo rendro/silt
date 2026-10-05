@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A `?` behind a pipeline applies to the pipeline. Where its last stage
 -- would take the `?` for itself, the parentheses that prevent it stay,
 -- around the stage or around the pipeline, as they are written.

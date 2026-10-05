@@ -7,7 +7,6 @@
 //! - Parse-format-parse roundtrip produces structurally equivalent ASTs
 
 use proptest::prelude::*;
-use silt::formatter;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 
@@ -176,7 +175,7 @@ proptest! {
     /// The formatter must never panic, even on garbage input.
     #[test]
     fn formatter_never_panics(input in "\\PC{0,200}") {
-        let _ = formatter::format(&input);
+        let _ = silt::format::format(silt::source::FileId::default(), &input);
     }
 }
 
@@ -190,8 +189,8 @@ proptest! {
     #[test]
     fn formatter_idempotent_on_generated_code(source in arb_formattable_program()) {
         // Only test programs that actually parse and format successfully.
-        if let Ok(first) = formatter::format(&source)
-            && let Ok(second) = formatter::format(&first) {
+        if let Ok(first) = silt::format::format(silt::source::FileId::default(), &source)
+            && let Ok(second) = silt::format::format(silt::source::FileId::default(), &first) {
                 prop_assert_eq!(first, second);
         }
     }
@@ -207,7 +206,7 @@ proptest! {
         if result.is_err() { return Ok(()); }
 
         // Source parses — formatted version must also parse.
-        if let Ok(formatted) = formatter::format(&source) {
+        if let Ok(formatted) = silt::format::format(silt::source::FileId::default(), &source) {
             let tokens2 = Lexer::new(silt::source::FileId::default(), &formatted).tokenize()
                 .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {}", e.message).into()))?;
             Parser::new(tokens2, &formatted).parse_program()

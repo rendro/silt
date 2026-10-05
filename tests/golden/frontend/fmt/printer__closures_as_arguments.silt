@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A closure that is the last argument stands behind the parentheses;
 -- one in front of it stands between them, however the source has them.
 -- In a `match` or a `loop` header every closure stands between them,

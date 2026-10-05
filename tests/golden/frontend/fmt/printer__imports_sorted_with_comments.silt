@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- Imports stand at the top, sorted, without empty lines; each takes
 -- the comments above it and behind it along. The comments above the
 -- last empty line before the first declaration are the file's header

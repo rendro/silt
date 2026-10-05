@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment behind a pattern: in a match arm, a `let`, a parameter and
 -- a closure parameter; and behind a function's parameter list
 -- (FRONTEND-4 b and c).

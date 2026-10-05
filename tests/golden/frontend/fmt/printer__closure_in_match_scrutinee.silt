@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A closure argument in a `match` scrutinee stays between the call's
 -- parentheses, where a `{` cannot be taken for the block of the match
 -- (FRONTEND-3 d, FIX-PLAN row 89); elsewhere it goes behind them.

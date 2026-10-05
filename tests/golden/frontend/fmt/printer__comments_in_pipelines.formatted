@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment behind a pipeline's first operand, behind `|>` and behind a
 -- stage (FRONTEND-4 b).
 import list

@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- Each match arm stands on its own line. An arm's body stays behind its
 -- arrow.
 fn main() {

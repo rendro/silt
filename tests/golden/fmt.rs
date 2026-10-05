@@ -11,20 +11,15 @@ use std::path::Path;
 
 use super::{Case, Output};
 
-/// Whether `case` is a `-- cmd: fmt` case: the command alone, without
+/// Whether `case` is a `-- cmd: fmt` case: the command without
 /// `--check` or a path of its own.
 pub(crate) fn is_fmt_case(case: &Case) -> bool {
-    // `--next` chooses the printer of `src/format/` until it is the
-    // only one (stage 8 step A3).
-    matches!(
-        case.directives
-            .cmd
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .as_slice(),
-        ["fmt"] | ["fmt", "--next"]
-    ) && !case.file.is_empty()
+    // `--test-tamper=` is the hook that makes `silt fmt` refuse its
+    // result: the case of how a refusal is shown.
+    let cmd = &case.directives.cmd;
+    cmd.first().is_some_and(|sub| sub == "fmt")
+        && cmd[1..].iter().all(|arg| arg.starts_with("--test-tamper="))
+        && !case.file.is_empty()
 }
 
 /// What is wrong with the file `silt fmt` left in `dir`, if anything.

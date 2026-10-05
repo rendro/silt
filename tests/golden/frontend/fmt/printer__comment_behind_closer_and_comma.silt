@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment at the end of a line never comments out the closing brace
 -- or the comma that the printer writes behind what the comment follows
 -- (FRONTEND-3 a and b; FRONTEND-4 f).

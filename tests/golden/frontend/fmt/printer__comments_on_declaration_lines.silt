@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment behind the opening brace of a type stays there, and one
 -- behind a declaration's closing brace stays behind it (FRONTEND-4 e,
 -- the snippets of docs/language/modules.md and generics.md).

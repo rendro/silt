@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A closure keeps the types of its parameters when it moves behind the
 -- call's parentheses (FRONTEND-3 c), and stays between them where it
 -- would join another call.

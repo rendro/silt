@@ -51,9 +51,8 @@ Comparison:
 - The exit status is always checked.
 - Every error diagnostic in stderr (`error[<kind>]: ...`, indented or not)
   must be followed by its ` --> ` line: every diagnostic has a place.
-  `error[fmt]` refusals are the exception. The verdict mode checks the
-  same in `check`'s stderr of every verdict case, the repro corpus
-  included.
+  The verdict mode checks the same in `check`'s stderr of every verdict
+  case, the repro corpus included.
 - On Windows, the backslashes in a path to a `.silt` file or to a
   package file (`silt.toml`, `silt.lock`) are turned into `/` before the
   comparison, so one expected file serves every platform: write
@@ -91,11 +90,11 @@ looks at the file as well as at the output:
 - A case with another exit status (a syntax error, a refusal) has no
   `.formatted` file: the copy must be unchanged.
 
-`-- cmd: fmt --next` is the same with the printer of `src/format/`,
-which `silt fmt` runs behind that flag until it is the only one (stage 8
-step A3 then turns these directives into `-- cmd: fmt`). The
-`printer__*` cases under `frontend/fmt/` use it: each holds a layout or
-a comment position that the old formatter gets wrong or refuses.
+`-- cmd: fmt --test-tamper=FROM=>TO` is the case of a refusal: the flag,
+which `silt fmt --help` does not list, replaces the last FROM by TO in the
+printer's result before the formatter checks it, as a defect of the
+printer would. `silt fmt` then refuses, and the case holds what it
+prints.
 
 Stdout, stderr and the exit status are compared as for every case. To
 write the expected file, format a copy and CHECK the result by eye:

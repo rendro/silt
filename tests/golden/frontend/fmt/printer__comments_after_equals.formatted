@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment behind `=`, at the end of the line or on a line of its own
 -- (FRONTEND-4 b): in a `let`, a top-level `let`, a `when let`, a loop
 -- binding, a type alias and an associated type.

@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment between two statements stays between them, whatever the
 -- statement above it looks like, and a second pass leaves it there
 -- (FIX-PLAN row 88: the comment was moved into the call arguments of

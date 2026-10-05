@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- The comment lines that start a file, up to the first empty line or
 -- the first declaration, are its header: they stay first when the
 -- imports are sorted, and do not go with the import under them.

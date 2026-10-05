@@ -1435,8 +1435,11 @@ impl Printer<'_> {
         let wrapped = self.cur.wrappers(head.span.end) > 0;
         let head_doc = self.expr(head, ctx.left(first_bp));
         let head_doc = match &head.kind {
-            // `1 .f` is a field of `1`; `1.` starts a number.
-            ExprKind::Int(_) if is_dot(first) => Doc::concat(vec![head_doc, space()]),
+            // `1.f` as the source has it; where the source has something
+            // between the two (`(1).e5`), a space: `1.e5` is a number.
+            ExprKind::Int(_) if is_dot(first) && (wrapped || !self.cur.joined()) => {
+                Doc::concat(vec![head_doc, space()])
+            }
             // Behind `x as T` without parentheses, only a line break
             // keeps a `.` from being part of the type.
             ExprKind::Ascription(..) if is_dot(first) && !wrapped => {

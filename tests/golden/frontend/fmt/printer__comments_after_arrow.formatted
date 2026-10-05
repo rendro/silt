@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment behind `->` (FRONTEND-4 b): in a match arm, a closure, a
 -- function's return type and a function type.
 import list

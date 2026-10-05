@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- A comment in front of a closing brace, bracket or parenthesis stays
 -- inside what the bracket closes, at the indentation of its content.
 type P {

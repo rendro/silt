@@ -1,4 +1,4 @@
--- cmd: fmt --next
+-- cmd: fmt
 -- One empty line is kept where the source has one or more: between
 -- statements, match arms, fields, variants, list items and the members
 -- of a trait. None is kept at the start or the end of a block.
