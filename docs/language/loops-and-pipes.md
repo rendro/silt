@@ -226,7 +226,10 @@ state:
 ```silt
 -- fold_until: accumulator IS the result
 [1, 2, 3] |> list.fold_until(0) { acc, x ->
-  match acc + x > 6 { true -> list.Stop(acc), _ -> list.Continue(acc + x) }
+  match acc + x > 6 {
+    true -> list.Stop(acc)
+    _ -> list.Continue(acc + x)
+  }
 }
 
 -- loop: state is (queue, visited) but result is Option(node)

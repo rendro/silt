@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Each match arm starts on its own line, as each statement does.
+fn main() {
+  let n = 2
+  let name = match n { 1 -> "one" _ -> "many" }
+  println(name)
+}

@@ -1512,8 +1512,6 @@ impl Printer<'_> {
         docs.push(space());
         docs.push(self.tok(Token::Arrow));
         docs.push(self.after(&arm.body));
-        // Arms are separated by line breaks; a comma is not written.
-        docs.push(self.cur.skip(&Token::Comma));
         Doc::concat(docs)
     }
 

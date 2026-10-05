@@ -20,6 +20,9 @@ fn describe(shape) {
 }
 ```
 
+Each arm starts on its own line; there is no separator between arms. A match
+with one arm may be written on one line: `match pair { (a, b) -> a + b }`.
+
 ## Match without Scrutinee (Boolean Dispatch)
 
 Omit the scrutinee for boolean conditions:

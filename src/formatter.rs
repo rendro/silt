@@ -7706,7 +7706,7 @@ fn main() {
 
     #[test]
     fn test_format_loop_expression() {
-        let source = "fn countdown(n) { loop i = n { match i { 0 -> 0 _ -> loop(i - 1) } } }\n";
+        let source = "fn countdown(n) { loop i = n { match i {\n  0 -> 0\n  _ -> loop(i - 1)\n} } }\n";
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
         assert_eq!(first, second, "loop formatting should be idempotent");

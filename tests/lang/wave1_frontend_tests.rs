@@ -611,8 +611,8 @@ fn main() {
   let m = #{ "a": 1, "b": 2, }
   let n = add(1, 2,)
   let r = match n {
-    3 -> "three",
-    _ -> "other",
+    3 -> "three"
+    _ -> "other"
   }
   println("{xs} {t} {p.x} {m} {n} {r}")
 }
@@ -621,7 +621,6 @@ fn main() {
             "fn add(a, b,) {",
             "let xs = [1, 2, 3,]",
             "let n = add(1, 2,)",
-            "3 -> \"three\",",
         ],
     );
 }

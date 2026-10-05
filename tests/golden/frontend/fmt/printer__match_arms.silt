@@ -1,6 +1,6 @@
 -- cmd: fmt --next
--- Match arms are separated by line breaks; commas between them are not
--- written. An arm's body stays behind its arrow.
+-- Each match arm stands on its own line. An arm's body stays behind its
+-- arrow.
 fn main() {
   let x = 3
   let a = match x {

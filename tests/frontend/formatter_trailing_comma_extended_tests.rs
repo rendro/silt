@@ -245,7 +245,7 @@ fn import_items_does_not_insert_trailing_comma() {
 
 #[test]
 fn match_arms_preserve_separator_commas() {
-    let src = "fn f(x) { match x { 1 -> \"one\", 2 -> \"two\", _ -> \"other\" } }\n";
+    let src = "fn f(x) { match x {\n  1 -> \"one\"\n  2 -> \"two\"\n  _ -> \"other\"\n} }\n";
     let out = formatter::format(src).expect("format");
     check_formatter_invariants(src, &out).expect("invariants");
     // Source had 2 commas between arms (no trailing); output must
@@ -279,7 +279,7 @@ fn match_arms_preserve_separator_commas() {
 fn match_arms_preserve_trailing_comma_on_last_arm() {
     // Source has 3 commas — between each pair plus one after the last
     // arm (trailing). Output must preserve all 3 for the invariant.
-    let src = "fn f(x) { match x { 1 -> \"one\", 2 -> \"two\", _ -> \"other\", } }\n";
+    let src = "fn f(x) { match x {\n  1 -> \"one\"\n  2 -> \"two\"\n  _ -> \"other\"\n} }\n";
     let out = formatter::format(src).expect("format");
     check_formatter_invariants(src, &out).expect("invariants");
     let twice = formatter::format(&out).expect("pass 2");

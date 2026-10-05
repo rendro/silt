@@ -73,7 +73,7 @@ fn shout(i: Int) {
     true -> {
       println(i)
       shout(i - 1)
-    },
+    }
     false -> ()
   }
 }

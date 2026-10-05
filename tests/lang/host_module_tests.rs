@@ -139,10 +139,22 @@ fn generic_and_option_signatures() {
     let source = r#"
 import h
 fn main() {
-  let a = match h.maybe_positive(7) { Some(n) -> n  None -> 0 }
-  let b = match h.safe_reciprocal(0) { Ok(n) -> n  Err(_) -> 1 }
-  let c = match h.first(h.range_up_to(4)) { Some(n) -> n  None -> 100 }
-  let d = match h.first(["x"]) { Some(s) -> s  None -> "" }
+  let a = match h.maybe_positive(7) {
+    Some(n) -> n
+    None -> 0
+  }
+  let b = match h.safe_reciprocal(0) {
+    Ok(n) -> n
+    Err(_) -> 1
+  }
+  let c = match h.first(h.range_up_to(4)) {
+    Some(n) -> n
+    None -> 100
+  }
+  let d = match h.first(["x"]) {
+    Some(s) -> s
+    None -> ""
+  }
   (a, b, c, d)
 }
 "#;
