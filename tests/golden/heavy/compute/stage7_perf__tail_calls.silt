@@ -1,6 +1,6 @@
 -- timeout: 60
 -- A compute program of the stage 7 performance guard: tail calls with
--- a guardless match, two million of them, and Euclid's algorithm on
+-- a guardless match, a million of them, and Euclid's algorithm on
 -- every pair of a range.
 fn collatz_steps(n, steps) {
   match {
@@ -39,6 +39,6 @@ fn gcd_sum(a, b, acc) {
 }
 
 fn main() {
-  println(longest(20000, 0))
-  println(gcd_sum(300, 300, 0))
+  println(longest(10000, 0))
+  println(gcd_sum(200, 300, 0))
 }

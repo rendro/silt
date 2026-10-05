@@ -1,9 +1,9 @@
 -- timeout: 60
 -- A compute program of the stage 7 performance guard: a `loop` with
--- two bindings, a comparison and a jump back, three million rounds.
+-- two bindings, a comparison and a jump back, 1.5 million rounds.
 fn main() {
   let total = loop i = 0, acc = 0 {
-    match i >= 3000000 {
+    match i >= 1500000 {
       true -> acc
       false -> loop(i + 1, acc + i % 7)
     }

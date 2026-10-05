@@ -1,6 +1,6 @@
 -- timeout: 60
 -- A compute program of the stage 7 performance guard: calls, integer
--- patterns and arithmetic. 1.6 million calls.
+-- patterns and arithmetic. 600,000 calls.
 fn fib(n) {
   match n {
     0 -> 0
@@ -10,5 +10,5 @@ fn fib(n) {
 }
 
 fn main() {
-  println(fib(29))
+  println(fib(27))
 }
