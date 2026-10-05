@@ -12,7 +12,7 @@
 //! this test was introduced. Do not loosen this check — it is the
 //! mechanism that keeps the grammars honest.
 
-use silt::module::BUILTIN_MODULES;
+use silt::module::builtin_modules;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -100,7 +100,7 @@ fn every_builtin_module_appears_in_both_editor_grammars() {
 
     let mut missing: Vec<String> = Vec::new();
 
-    for &module in BUILTIN_MODULES {
+    for &module in builtin_modules() {
         if !grammar_mentions_module(vim_scope, module) {
             missing.push(format!(
                 "editors/vim/syntax/silt.vim (siltModule alternation) is missing builtin module \
@@ -182,7 +182,7 @@ fn every_vim_module_entry_is_authoritative() {
     let vim_scope = vim_module_line(&vim_raw);
     let tokens = vim_module_tokens(vim_scope);
 
-    let authoritative: BTreeSet<&str> = BUILTIN_MODULES.iter().copied().collect();
+    let authoritative: BTreeSet<&str> = builtin_modules().iter().copied().collect();
 
     let mut stray: Vec<String> = Vec::new();
     for tok in &tokens {
@@ -214,7 +214,7 @@ fn every_vscode_module_entry_is_authoritative() {
     let vscode_scope = vscode_modules_block(&vscode_raw);
     let tokens = vscode_module_tokens(&vscode_scope);
 
-    let authoritative: BTreeSet<&str> = BUILTIN_MODULES.iter().copied().collect();
+    let authoritative: BTreeSet<&str> = builtin_modules().iter().copied().collect();
 
     let mut stray: Vec<String> = Vec::new();
     for tok in &tokens {

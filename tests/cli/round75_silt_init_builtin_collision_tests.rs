@@ -118,7 +118,7 @@ fn round75_init_in_dir_named_http_is_rejected() {
 
 #[test]
 fn round75_init_rejects_every_builtin_module_name() {
-    for name in silt::module::BUILTIN_MODULES {
+    for name in silt::module::builtin_modules() {
         let dir = temp_dir_named(name);
         let out = silt_cmd()
             .arg("init")
@@ -213,7 +213,7 @@ fn round75_manifest_load_rejects_builtin_package_name() {
 #[test]
 fn round75_validate_package_name_rejects_builtins_accepts_others() {
     // Every BUILTIN_MODULES entry must be rejected.
-    for name in silt::module::BUILTIN_MODULES {
+    for name in silt::module::builtin_modules() {
         let result = silt::manifest::validate_package_name(name);
         assert!(
             result.is_err(),

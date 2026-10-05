@@ -134,7 +134,7 @@ fn main() {
 /// `super::docs::IO_FS_MD` and surfaced via per-name LSP hover docs).
 #[test]
 fn test_documented_env_functions_match_registration() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let expected = silt::module::builtin_module_functions("env");
     assert!(
         !expected.is_empty(),

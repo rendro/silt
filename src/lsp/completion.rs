@@ -467,7 +467,7 @@ impl Server {
                 Some(Binding::Module(id)) => id.builtin_name(),
                 _ => None,
             },
-            None => module::BUILTIN_MODULES
+            None => module::builtin_modules()
                 .iter()
                 .copied()
                 .find(|m| *m == prefix),

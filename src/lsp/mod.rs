@@ -82,22 +82,10 @@ struct Server {
     documents: HashMap<Uri, Document>,
     /// Cached builtin type signatures: "module.func" → type string.
     builtin_sigs: HashMap<String, String>,
-    /// Cached builtin parameter names: "module.func" → ordered argument
-    /// names. Sibling registry to `builtin_sigs`; keyed identically so
-    /// `signature_help` can populate `ParameterInformation` per arg
-    /// (see `src/typechecker/mod.rs::builtin_param_names`). Builtins
-    /// not present here get `parameters: vec![]` — round-71 DX-4 seeds
-    /// the most-used `list.*` / `string.*` / `map.*` / `set.*` / `io.*`
-    /// modules; a follow-up round can extend coverage.
-    builtin_param_names: HashMap<&'static str, &'static [&'static str]>,
-    /// Cached markdown docs for every built-in name with a registered
-    /// doc string. Populated once at startup from
-    /// `typechecker::builtin_docs()`. Used by `hover` /
-    /// `signature_help` / `completion` to surface stdlib prose. The
-    /// runtime source for these strings is the per-module
-    /// `env.define_with_doc` / `env.attach_doc` registration sites
-    /// under `src/typechecker/builtins/`.
-    builtin_docs: HashMap<String, String>,
+    /// The markdown docs of the builtin names, from the reference pages
+    /// of the builtin registry: what `hover`, `signature_help` and
+    /// `completion` show for a stdlib name.
+    builtin_docs: &'static HashMap<String, String>,
     /// The projects of the open documents, by project directory, each
     /// with its session.
     projects: HashMap<PathBuf, project::Project>,
@@ -126,8 +114,7 @@ impl Server {
             connection,
             documents: HashMap::new(),
             builtin_sigs: typechecker::builtin_type_signatures(),
-            builtin_docs: typechecker::builtin_docs(),
-            builtin_param_names: typechecker::builtin_param_names(),
+            builtin_docs: crate::builtins::registry::docs::builtin_docs(),
             projects: HashMap::new(),
             pending: HashSet::new(),
             deadline: None,

@@ -30,7 +30,7 @@ fn test_documented_crypto_functions_match_registration() {
     // `super::docs::CRYPTO_MD`, attached as a module-level overview
     // to every crypto.* binding via `attach_module_overview`. Every
     // function registered must have a non-empty doc body.
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let expected = silt::module::builtin_module_functions("crypto");
     assert!(
         !expected.is_empty(),

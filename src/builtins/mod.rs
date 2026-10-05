@@ -18,6 +18,7 @@ pub mod numeric;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 pub mod regex;
+pub mod registry;
 pub mod stream;
 pub mod string;
 #[cfg(feature = "tcp")]

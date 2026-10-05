@@ -50,7 +50,7 @@ fn read_doc(rel: &str) -> String {
 #[test]
 fn globals_md_lists_every_primitive_descriptor() {
     let names = primitive_descriptor_names();
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let doc = docs.get("println").cloned().expect(
         "globals.md prose is attached to `println` (and the rest of \
                  the unqualified globals); round 62 phase-2 inlined it via \

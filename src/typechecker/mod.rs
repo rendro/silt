@@ -9,7 +9,6 @@
 
 mod auto_derive;
 mod builtin_env;
-mod builtins;
 mod declare_fns;
 mod declare_traits;
 mod declare_types;

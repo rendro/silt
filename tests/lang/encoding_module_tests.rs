@@ -18,7 +18,7 @@ fn type_errors(input: &str) -> Vec<String> {
 /// `super::docs::ENCODING_MD`).
 #[test]
 fn test_documented_encoding_functions_match_registration() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let expected = silt::module::builtin_module_functions("encoding");
     assert!(
         !expected.is_empty(),

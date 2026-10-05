@@ -27,20 +27,15 @@
 
 #[test]
 fn no_builtin_doc_leaks_yaml_frontmatter() {
-    let docs = silt::typechecker::iter_builtin_docs();
-    assert!(
-        !docs.is_empty(),
-        "iter_builtin_docs() returned nothing — builtin doc registration is broken"
-    );
-    for (name, body) in &docs {
+    let docs = silt::builtins::registry::docs::builtin_docs();
+    assert!(!docs.is_empty(), "no builtin name has a doc");
+    for (name, body) in docs {
         assert!(
             !body.starts_with("---\n"),
             "builtin doc for `{name}` starts with a raw YAML frontmatter \
-             delimiter (`---`). Whole-document attach sites must route \
-             through `strip_frontmatter` in \
-             src/typechecker/builtins/docs.rs — see the GLOBALS_MD loop \
-             in src/typechecker/builtins.rs::register_builtins and \
-             `attach_module_overview`."
+             delimiter (`---`). A name that shows a whole page shows it \
+             through `strip_frontmatter` \
+             (src/builtins/registry/docs.rs::builtin_docs)."
         );
         assert!(
             !body.contains("\ntitle: \""),
@@ -57,7 +52,7 @@ fn no_builtin_doc_leaks_yaml_frontmatter() {
 /// page prose, not `---\ntitle: "Globals"…` metadata.
 #[test]
 fn println_doc_starts_with_prose_not_frontmatter() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let doc = docs
         .get("println")
         .expect("`println` must have a registered builtin doc (GLOBALS_MD)");
@@ -78,7 +73,7 @@ fn println_doc_starts_with_prose_not_frontmatter() {
 /// overview-only modules get the whole page, minus frontmatter.
 #[test]
 fn module_overview_doc_starts_with_prose_not_frontmatter() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let doc = docs
         .get("crypto.sha256")
         .expect("`crypto.sha256` must have a registered builtin doc (CRYPTO_MD overview)");

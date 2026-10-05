@@ -182,7 +182,7 @@ fn hover_on_channel_message_returns_its_own_section() {
 /// `*_MD` blob fails this test.
 #[test]
 fn every_authoritative_builtin_has_a_non_empty_doc_via_lsp_pipeline() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let sigs = silt::typechecker::builtin_type_signatures();
 
     let mut missing: Vec<String> = Vec::new();

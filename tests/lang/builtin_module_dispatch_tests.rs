@@ -75,7 +75,7 @@ fn silt(sub: &str, label: &str, src: &str) -> Output {
 #[test]
 fn every_builtin_module_reaches_its_dispatch_arm() {
     let mut missing = Vec::new();
-    for &module in silt::module::BUILTIN_MODULES {
+    for &module in silt::module::builtin_modules() {
         let Some(call) = module_call(module) else {
             missing.push(module);
             continue;

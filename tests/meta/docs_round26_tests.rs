@@ -128,7 +128,7 @@ fn readme_tooling_block_matches_main_help() {
 
 #[test]
 fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
     let body = docs
         .keys()
         .filter(|k| k.starts_with("postgres."))
@@ -178,17 +178,17 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
     );
 }
 
-/// Coverage walker: every builtin module (`silt::module::BUILTIN_MODULES`)
+/// Coverage walker: every builtin module (`silt::module::builtin_modules()`)
 /// must have at least one `<module>.*` binding with a registered doc
 /// string, and the bare-name error-variant constructors registered by
 /// the typechecker's errors pass must be documented too. A new module
 /// then cannot ship without docs.
 #[test]
 fn every_builtin_module_has_a_per_module_doc() {
-    let docs = silt::typechecker::builtin_docs();
+    let docs = silt::builtins::registry::docs::builtin_docs();
 
     let mut missing: Vec<String> = Vec::new();
-    for name in silt::module::BUILTIN_MODULES {
+    for name in silt::module::builtin_modules() {
         let dot = format!("{name}.");
         let has_any_doc = docs
             .iter()

@@ -81,7 +81,7 @@ fn run_silt_raw(label: &str, src: &str) -> (String, String, bool) {
 #[test]
 fn every_registry_constant_is_value_accessible() {
     let mut checked = 0usize;
-    for &module in silt::module::BUILTIN_MODULES {
+    for &module in silt::module::builtin_modules() {
         for konst in silt::module::builtin_module_constants(module) {
             checked += 1;
             let label = format!("{module}_{konst}");

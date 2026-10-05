@@ -456,136 +456,29 @@ impl Vm {
 
     fn dispatch_builtin_unchecked(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         if let Some((module, func)) = name.split_once('.') {
-            // Each arm is wrapped in `catch_builtin_panic` so that a panic
-            // inside a builtin module becomes a clean `VmError` instead of
-            // tearing down the current scheduler worker thread. Mirrors
-            // `invoke_host_fn` for host functions.
-            match module {
-                "list" => catch_builtin_panic(
-                    "list",
-                    AssertUnwindSafe(|| builtins::collections::call_list(self, func, args)),
-                ),
-                "string" => catch_builtin_panic(
-                    "string",
-                    AssertUnwindSafe(|| builtins::string::call(self, func, args)),
-                ),
-                "int" => catch_builtin_panic(
-                    "int",
-                    AssertUnwindSafe(|| builtins::numeric::call_int(func, args)),
-                ),
-                "float" => catch_builtin_panic(
-                    "float",
-                    AssertUnwindSafe(|| builtins::numeric::call_float(func, args)),
-                ),
-                "map" => catch_builtin_panic(
-                    "map",
-                    AssertUnwindSafe(|| builtins::collections::call_map(self, func, args)),
-                ),
-                "set" => catch_builtin_panic(
-                    "set",
-                    AssertUnwindSafe(|| builtins::collections::call_set(self, func, args)),
-                ),
-                "result" => catch_builtin_panic(
-                    "result",
-                    AssertUnwindSafe(|| builtins::core::call_result(self, func, args)),
-                ),
-                "option" => catch_builtin_panic(
-                    "option",
-                    AssertUnwindSafe(|| builtins::core::call_option(self, func, args)),
-                ),
-                "io" => catch_builtin_panic(
-                    "io",
-                    AssertUnwindSafe(|| builtins::io::call(self, func, args)),
-                ),
-                "bytes" => catch_builtin_panic(
-                    "bytes",
-                    AssertUnwindSafe(|| builtins::bytes::call(self, func, args)),
-                ),
-                "crypto" => catch_builtin_panic(
-                    "crypto",
-                    AssertUnwindSafe(|| builtins::crypto::call(self, func, args)),
-                ),
-                "encoding" => catch_builtin_panic(
-                    "encoding",
-                    AssertUnwindSafe(|| builtins::encoding::call(self, func, args)),
-                ),
-                "uuid" => catch_builtin_panic(
-                    "uuid",
-                    AssertUnwindSafe(|| builtins::uuid::call(self, func, args)),
-                ),
-                "stream" => catch_builtin_panic(
-                    "stream",
-                    AssertUnwindSafe(|| builtins::stream::call(self, func, args)),
-                ),
-                #[cfg(feature = "tcp")]
-                "tcp" => catch_builtin_panic(
-                    "tcp",
-                    AssertUnwindSafe(|| builtins::tcp::call(self, func, args)),
-                ),
-                "fs" => catch_builtin_panic(
-                    "fs",
-                    AssertUnwindSafe(|| builtins::io::call_fs(self, func, args)),
-                ),
-                "env" => catch_builtin_panic(
-                    "env",
-                    AssertUnwindSafe(|| builtins::io::call_env(self, func, args)),
-                ),
-                "test" => catch_builtin_panic(
-                    "test",
-                    AssertUnwindSafe(|| builtins::core::call_test(self, func, args)),
-                ),
-                "math" => catch_builtin_panic(
-                    "math",
-                    AssertUnwindSafe(|| builtins::numeric::call_math(self, func, args)),
-                ),
-                "regex" => catch_builtin_panic(
-                    "regex",
-                    AssertUnwindSafe(|| builtins::regex::call_regex(self, func, args)),
-                ),
-                "json" => catch_builtin_panic(
-                    "json",
-                    AssertUnwindSafe(|| builtins::json::call_json(self, func, args)),
-                ),
-                "toml" => catch_builtin_panic(
-                    "toml",
-                    AssertUnwindSafe(|| builtins::toml::call(self, func, args)),
-                ),
-                "channel" => catch_builtin_panic(
-                    "channel",
-                    AssertUnwindSafe(|| builtins::concurrency::call_channel(self, func, args)),
-                ),
-                "task" => catch_builtin_panic(
-                    "task",
-                    AssertUnwindSafe(|| builtins::concurrency::call_task(self, func, args)),
-                ),
-                "time" => catch_builtin_panic(
-                    "time",
-                    AssertUnwindSafe(|| builtins::time::call_time(self, func, args)),
-                ),
-                "http" => catch_builtin_panic(
-                    "http",
-                    AssertUnwindSafe(|| builtins::http::call_http(self, func, args)),
-                ),
-                #[cfg(feature = "postgres")]
-                "postgres" => catch_builtin_panic(
-                    "postgres",
-                    AssertUnwindSafe(|| builtins::postgres::call(self, func, args)),
-                ),
-                // ── Built-in trait Error impls ──
-                #[cfg(test)]
-                "__test_panic_builtin" => {
-                    catch_builtin_panic(
-                        "__test_panic_builtin",
-                        AssertUnwindSafe(|| {
-                            // Force a panic regardless of the function name; the
-                            // test harness uses this arm to verify that
-                            // `catch_builtin_panic` converts the panic into a
-                            // clean `VmError`.
-                            let _ = (&*self, func, args);
-                            panic!("synthetic builtin panic for test")
-                        }),
-                    )
-                }
+            // A builtin module's function: the body of its row in the
+            // builtin registry. A panic inside it becomes a clean
+            // `VmError` instead of tearing down the current scheduler
+            // worker thread, as for a host function (`invoke_host_fn`).
+            #[cfg(test)]
+            if module == "__test_panic_builtin" {
+                // The test harness uses this name to verify that
+                // `catch_builtin_panic` converts a panic into a `VmError`.
+                return catch_builtin_panic(
+                    "__test_panic_builtin",
+                    AssertUnwindSafe(|| {
+                        let _ = (&*self, func, args);
+                        panic!("synthetic builtin panic for test")
+                    }),
+                );
+            }
+            match builtins::registry::registry().module(module) {
+                Some(entry) if entry.enabled => match entry.row(func) {
+                    Some(row) => {
+                        catch_builtin_panic(entry.name, AssertUnwindSafe(|| row.call(self, args)))
+                    }
+                    None => Err(VmError::new(format!("unknown {module} function: {func}"))),
+                },
                 _ => Err(VmError::new(format!("unknown builtin namespace: {module}"))),
             }
         } else {
