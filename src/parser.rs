@@ -2704,9 +2704,9 @@ impl<'src> Parser<'src> {
     /// equivalent. Used by the statement-level guard in `parse_stmt`.
     fn foreign_keyword_hint(text: &str) -> Option<&'static str> {
         match text {
-            "if" => {
-                Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'")
-            }
+            "if" => Some(
+                "silt has no 'if' keyword — use 'match cond { ... }' with a 'true -> ...' and a 'false -> ...' arm",
+            ),
             "while" | "for" => Some(
                 "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
             ),
@@ -2800,7 +2800,8 @@ impl<'src> Parser<'src> {
                 Code::UnsupportedSyntax,
                 self.span(),
                 "'else' only follows a 'when' condition; silt has no 'if' keyword — \
-                          for a conditional value use 'match cond { true -> ..., false -> ... }'",
+                          for a conditional value use 'match cond { ... }' with a 'true -> ...' and a \
+                          'false -> ...' arm",
             ));
         }
 

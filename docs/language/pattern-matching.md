@@ -258,6 +258,6 @@ The compiler checks that your match covers all possible cases. Missing a
 variant produces a compile-time error. This is one of the strongest benefits
 of `match` as the sole branching construct.
 
-**Trade-off: no `if`.** Simple boolean checks are more verbose (`match debug
-{ true -> ..., false -> () }`). In practice, guardless match and `when`-`else`
-cover most cases.
+**Trade-off: no `if`.** Simple boolean checks are more verbose (a `match
+debug { ... }` with a `true` arm and a `false` arm, each on its own line). In
+practice, guardless match and `when`-`else` cover most cases.

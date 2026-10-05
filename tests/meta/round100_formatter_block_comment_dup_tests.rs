@@ -28,7 +28,8 @@ fn count_occurrences(haystack: &str, needle: &str) -> usize {
 
 #[test]
 fn trailing_block_comment_on_expanding_match_is_not_duplicated() {
-    let src = "fn f() {\n  let a = match x {\n    1 -> p\n    _ -> q\n  } {- block -}\n  print(a)\n}\n";
+    let src =
+        "fn f() {\n  let a = match x {\n    1 -> p\n    _ -> q\n  } {- block -}\n  print(a)\n}\n";
     let out = formatter::format(src).expect("format");
     assert_eq!(
         count_occurrences(&out, "{- block -}"),
@@ -40,7 +41,8 @@ fn trailing_block_comment_on_expanding_match_is_not_duplicated() {
 
 #[test]
 fn trailing_block_comment_on_expanding_lambda_is_not_duplicated() {
-    let src = "fn f() {\n  let g = { x -> match x {\n    1 -> a\n    _ -> b\n  } } {- tail -}\n  g\n}\n";
+    let src =
+        "fn f() {\n  let g = { x -> match x {\n    1 -> a\n    _ -> b\n  } } {- tail -}\n  g\n}\n";
     let out = formatter::format(src).expect("format");
     assert_eq!(
         count_occurrences(&out, "{- tail -}"),
@@ -63,7 +65,8 @@ fn top_level_trailing_block_comment_on_expanding_match_is_not_duplicated() {
 
 #[test]
 fn expanding_match_block_comment_is_idempotent() {
-    let src = "fn f() {\n  let a = match x {\n    1 -> p\n    _ -> q\n  } {- block -}\n  print(a)\n}\n";
+    let src =
+        "fn f() {\n  let a = match x {\n    1 -> p\n    _ -> q\n  } {- block -}\n  print(a)\n}\n";
     let once = formatter::format(src).expect("format pass 1");
     let twice = formatter::format(&once).expect("format pass 2");
     assert_eq!(
