@@ -36,30 +36,17 @@ pub fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<Doc, Mi
 
 // ── Binding powers ───────────────────────────────────────────────────
 //
-// The parser's (`parse_expr_bp_inner`); stage 8 step C2 moves them to
-// `ast::prec`, for both to read.
+// The parser's table (`ast::prec`).
 
-const PIPE_L: u8 = 55;
-const PIPE_R: u8 = 56;
-const RANGE_L: u8 = 60;
-const RANGE_R: u8 = 61;
-const UNARY: u8 = 90;
-const ASCRIPTION: u8 = 95;
-const CLOSURE: u8 = 115;
-const CALL: u8 = 120;
-const FIELD: u8 = 130;
+const PIPE_L: u8 = prec::PIPE.0;
+const PIPE_R: u8 = prec::PIPE.1;
+const RANGE_L: u8 = prec::RANGE.0;
+const RANGE_R: u8 = prec::RANGE.1;
 /// Binds tighter than any operator: an operand that is closed.
 const CLOSED: u8 = u8::MAX;
 
 fn binop_bp(op: BinOp) -> u8 {
-    match op {
-        BinOp::Or => 20,
-        BinOp::And => 30,
-        BinOp::Eq | BinOp::Neq => 40,
-        BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
-        BinOp::Add | BinOp::Sub => 70,
-        BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
-    }
+    op.binding_power().0
 }
 
 fn binop_token(op: BinOp) -> Token {
@@ -160,7 +147,7 @@ fn top_bp(expr: &Expr) -> u8 {
         ExprKind::Binary(_, op, _) => binop_bp(*op),
         ExprKind::Pipe(..) => PIPE_L,
         ExprKind::Range(..) => RANGE_L,
-        ExprKind::Ascription(..) => ASCRIPTION,
+        ExprKind::Ascription(..) => prec::AS,
         ExprKind::QuestionMark(inner) if question_ends_pipeline(inner) => PIPE_L,
         _ => CLOSED,
     }
@@ -198,10 +185,10 @@ fn question_on_left_spine(expr: &Expr, ctx: Ctx) -> bool {
         ExprKind::QuestionMark(_) => true,
         ExprKind::Binary(left, op, _) => through(left, binop_bp(*op)),
         ExprKind::Range(left, _) => through(left, RANGE_L),
-        ExprKind::Ascription(left, _) => through(left, ASCRIPTION),
-        ExprKind::Call(left, _) => through(left, CALL),
+        ExprKind::Ascription(left, _) => through(left, prec::AS),
+        ExprKind::Call(left, _) => through(left, prec::CALL),
         ExprKind::FieldAccess(left, ..) | ExprKind::RecordUpdate { expr: left, .. } => {
-            through(left, FIELD)
+            through(left, prec::FIELD)
         }
         _ => false,
     }
@@ -247,12 +234,12 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
 fn takes_from_unwrapped(expr: &Expr, ctx: Ctx) -> u8 {
     match &expr.kind {
         ExprKind::Binary(_, op, right) => {
-            let r_bp = binop_bp(*op) + 1;
+            let r_bp = op.binding_power().1;
             r_bp.min(takes_from(right, ctx.right(r_bp)))
         }
         ExprKind::Pipe(_, stage) => PIPE_R.min(takes_from(stage, ctx.stage())),
         ExprKind::Range(_, right) => RANGE_R.min(takes_from(right, ctx.right(RANGE_R))),
-        ExprKind::Unary(_, operand) => UNARY.min(takes_from(operand, ctx.right(UNARY))),
+        ExprKind::Unary(_, operand) => prec::UNARY.min(takes_from(operand, ctx.right(prec::UNARY))),
         ExprKind::Return(_) => 0,
         _ => CLOSED,
     }
@@ -1012,7 +999,7 @@ impl Printer<'_> {
                     let close = self.tok(Token::RParen);
                     Doc::concat(vec![open, inner, close])
                 } else {
-                    self.expr(base, ctx.left(FIELD))
+                    self.expr(base, ctx.left(prec::FIELD))
                 };
                 // `1 .0` is a field of `1`; `1.0` is a number. And behind
                 // `x as T` without parentheses, only a line break keeps
@@ -1049,7 +1036,7 @@ impl Printer<'_> {
                     return Doc::concat(vec![op_doc, open, inner, close]);
                 }
                 let gap = if doubled { space() } else { Doc::Nil };
-                let operand = self.expr(operand, ctx.right(UNARY));
+                let operand = self.expr(operand, ctx.right(prec::UNARY));
                 Doc::concat(vec![op_doc, gap, operand])
             }
             ExprKind::Pipe(..) => self.pipeline(expr, ctx),
@@ -1062,12 +1049,12 @@ impl Printer<'_> {
                 let inner = if question_ends_pipeline(inner) {
                     self.expr(inner, ctx)
                 } else {
-                    self.expr(inner, ctx.left(CALL))
+                    self.expr(inner, ctx.left(prec::CALL))
                 };
                 Doc::concat(vec![inner, self.tok(Token::Question)])
             }
             ExprKind::Ascription(inner, ty) => Doc::concat(vec![
-                self.expr(inner, ctx.left(ASCRIPTION)),
+                self.expr(inner, ctx.left(prec::AS)),
                 space(),
                 self.tok(Token::As),
                 space(),
@@ -1088,7 +1075,7 @@ impl Printer<'_> {
                     }
                     _ => Doc::Nil,
                 };
-                let base = self.expr(base, ctx.left(FIELD));
+                let base = self.expr(base, ctx.left(prec::FIELD));
                 let base = Doc::concat(vec![base, gap]);
                 let dot = self.tok(Token::Dot);
                 let fields = self.fields(fields);
@@ -1320,7 +1307,11 @@ impl Printer<'_> {
         );
         let in_match_header = ctx.header == Some(Header::Match);
         let callee_is_call = matches!(callee.kind, ExprKind::Call(..));
-        let callee_bp = if closure { CLOSURE } else { CALL };
+        let callee_bp = if closure {
+            prec::TRAILING_CLOSURE
+        } else {
+            prec::CALL
+        };
         let callee_doc = self.expr(callee, ctx.left(callee_bp));
 
         // `f { x -> x }`: the closure is the only argument.

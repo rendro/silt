@@ -567,10 +567,6 @@ fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
 
 const MAX_DEPTH: usize = 128;
 
-/// Right binding power of `|>`. A pipe stage is parsed at exactly this
-/// power, which is how the postfix `?` arm recognises the end of a stage.
-const PIPE_R_BP: u8 = 56;
-
 /// Upper bound on the number of operations one expression tree may chain
 /// or nest (see `Parser::expr_height`). Every operator, pipe, call, index,
 /// field access, record update and ascription is one operation; a method
@@ -2985,7 +2981,7 @@ impl<'src> Parser<'src> {
                         // that ends a stage (parsed at exactly the pipe's
                         // right binding power) is left for the pipe loop,
                         // so `x |> f |> g?` means `(x |> f |> g)?`.
-                        if min_bp == PIPE_R_BP {
+                        if min_bp == prec::PIPE.1 {
                             break;
                         }
                         let span = left.span;
@@ -2994,24 +2990,21 @@ impl<'src> Parser<'src> {
                         continue;
                     }
                     Token::LParen => {
-                        let bp = 120;
-                        if bp < min_bp {
+                        if prec::CALL < min_bp {
                             break;
                         }
                         left = self.parse_call_expr(left)?;
                         continue;
                     }
                     Token::LBracket => {
-                        let bp = 120;
-                        if bp < min_bp {
+                        if prec::CALL < min_bp {
                             break;
                         }
                         left = self.parse_index_expr(left)?;
                         continue;
                     }
                     Token::LBrace if self.is_trailing_closure() => {
-                        let bp = 115; // lower than call (120) so match scrutinee can suppress it
-                        if bp < min_bp {
+                        if prec::TRAILING_CLOSURE < min_bp {
                             break;
                         }
                         let closure = self.parse_trailing_closure()?;
@@ -3028,11 +3021,26 @@ impl<'src> Parser<'src> {
             let had_newline = self.has_newline_before();
             self.skip_nl();
 
+            // Binary operators. + and - are newline-sensitive: `-` is
+            // ambiguous with unary negation starting the next statement
+            // (`+` is treated the same; silt has no unary plus), so a
+            // newline terminates the expression in front of them.
+            let binary = BinOp::from_token(self.peek())
+                .filter(|op| !(had_newline && matches!(op, BinOp::Add | BinOp::Sub)));
+            if let Some(op) = binary {
+                let (l_bp, r_bp) = op.binding_power();
+                let Some(right) = self.parse_infix_rhs(saved, min_bp, l_bp, r_bp, false)? else {
+                    break;
+                };
+                let span = left.span;
+                left = self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
+                continue;
+            }
+
             match self.peek() {
                 // Field access / record update (always allowed across newlines)
                 Token::Dot => {
-                    let bp = 130;
-                    if bp < min_bp {
+                    if prec::FIELD < min_bp {
                         self.restore(saved);
                         break;
                     }
@@ -3158,7 +3166,8 @@ impl<'src> Parser<'src> {
                     // match body are the match body themselves (see
                     // `is_trailing_closure`):
                     //   match items |> list.head { Some(x) -> … }
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 55, PIPE_R_BP, true)?
+                    let Some(right) =
+                        self.parse_infix_rhs(saved, min_bp, prec::PIPE.0, prec::PIPE.1, true)?
                     else {
                         break;
                     };
@@ -3169,7 +3178,9 @@ impl<'src> Parser<'src> {
 
                 // Range — binds tighter than pipe so `1..10 |> f()` works
                 Token::DotDot => {
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 60, 61, false)? else {
+                    let (l_bp, r_bp) = prec::RANGE;
+                    let Some(right) = self.parse_infix_rhs(saved, min_bp, l_bp, r_bp, false)?
+                    else {
                         break;
                     };
                     let span = left.span;
@@ -3177,100 +3188,9 @@ impl<'src> Parser<'src> {
                     continue;
                 }
 
-                // Binary operators
-                Token::OrOr => {
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 20, 21, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left = self.mk_expr(
-                        ExprKind::Binary(Box::new(left), BinOp::Or, Box::new(right)),
-                        span,
-                    );
-                    continue;
-                }
-                Token::AndAnd => {
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 30, 31, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left = self.mk_expr(
-                        ExprKind::Binary(Box::new(left), BinOp::And, Box::new(right)),
-                        span,
-                    );
-                    continue;
-                }
-                Token::EqEq | Token::NotEq => {
-                    let op = if self.peek() == &Token::EqEq {
-                        BinOp::Eq
-                    } else {
-                        BinOp::Neq
-                    };
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 40, 41, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left =
-                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
-                    continue;
-                }
-                Token::Lt | Token::Gt | Token::LtEq | Token::GtEq => {
-                    let op = match self.peek() {
-                        Token::Lt => BinOp::Lt,
-                        Token::Gt => BinOp::Gt,
-                        Token::LtEq => BinOp::Leq,
-                        Token::GtEq => BinOp::Geq,
-                        _ => unreachable!(
-                            "guarded by Token::Lt | Token::Gt | Token::LtEq | Token::GtEq arm"
-                        ),
-                    };
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 50, 51, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left =
-                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
-                    continue;
-                }
-                Token::Plus | Token::Minus if !had_newline => {
-                    // + and - are newline-sensitive: `-` is ambiguous with unary
-                    // negation starting the next statement (`+` is treated the
-                    // same; silt has no unary plus), so a newline terminates it.
-                    let op = if self.peek() == &Token::Plus {
-                        BinOp::Add
-                    } else {
-                        BinOp::Sub
-                    };
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 70, 71, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left =
-                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
-                    continue;
-                }
-                Token::Star | Token::Slash | Token::Percent => {
-                    let op = match self.peek() {
-                        Token::Star => BinOp::Mul,
-                        Token::Slash => BinOp::Div,
-                        Token::Percent => BinOp::Mod,
-                        _ => unreachable!(
-                            "guarded by Token::Star | Token::Slash | Token::Percent arm"
-                        ),
-                    };
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, 80, 81, false)? else {
-                        break;
-                    };
-                    let span = left.span;
-                    left =
-                        self.mk_expr(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
-                    continue;
-                }
-
                 // Type ascription: expr as Type
                 Token::As => {
-                    let bp = 95;
-                    if bp < min_bp {
+                    if prec::AS < min_bp {
                         self.restore(saved);
                         break;
                     }
@@ -3298,13 +3218,13 @@ impl<'src> Parser<'src> {
             Token::Minus => {
                 let span = self.span();
                 self.advance();
-                let expr = self.parse_expr_bp(90)?;
+                let expr = self.parse_expr_bp(prec::UNARY)?;
                 Ok(self.mk_expr(ExprKind::Unary(UnaryOp::Neg, Box::new(expr)), span))
             }
             Token::Not => {
                 let span = self.span();
                 self.advance();
-                let expr = self.parse_expr_bp(90)?;
+                let expr = self.parse_expr_bp(prec::UNARY)?;
                 Ok(self.mk_expr(ExprKind::Unary(UnaryOp::Not, Box::new(expr)), span))
             }
             _ => self.parse_atom(),
