@@ -195,7 +195,7 @@ fn headers_map(pairs: &[(&str, &str)]) -> Value {
 }
 
 fn call_request(method: &str, url: &str, body: &str, headers: &[(&str, &str)]) -> Value {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(silt::HostIo::process());
     let args = vec![
         method_variant(method),
         s(url),
@@ -394,7 +394,7 @@ fn post_empty_body_uses_send_empty_path() {
 
 #[test]
 fn a_variant_of_another_enum_is_not_a_method() {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(silt::HostIo::process());
     let args = vec![
         Value::variant(bv::NONE, Vec::new()),
         s("http://127.0.0.1:1/"),
@@ -430,7 +430,7 @@ fn assert_connect_failure_err_shape(verb: &str) {
     drop(listener);
 
     let url = format!("http://127.0.0.1:{port}/");
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(silt::HostIo::process());
     let args = vec![method_variant(verb), s(&url), s(""), headers_map(&[])];
     let resp = call_http(&mut vm, "request", &args).expect("call_http request");
     match &resp {

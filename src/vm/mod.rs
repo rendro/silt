@@ -6,10 +6,12 @@ mod arithmetic;
 pub(crate) mod dispatch;
 pub mod error;
 mod execute;
+mod io;
 mod runtime;
 
 pub use error::VmError;
 pub(crate) use execute::BuiltinIterKind;
+pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub use runtime::Runtime;
 pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind, SuspendedBuiltin};
 
@@ -71,7 +73,7 @@ use regex::Regex;
 use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::Duration;
 
 use crate::bytecode::{Function, Globals, VmClosure};
 use crate::scheduler::Scheduler;
@@ -291,6 +293,9 @@ impl Drop for ProgramLoop {
 
 pub struct Vm {
     pub(crate) runtime: Arc<Runtime>,
+    /// True for the VM made by [`Vm::new`], false for the VMs of its
+    /// tasks: when that VM is dropped, the runtime's threads end.
+    owns_runtime: bool,
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) stack: Vec<Value>,
     /// The values of the program's global slots; `None` until the
@@ -314,14 +319,15 @@ pub struct Vm {
     pub(crate) is_scheduled_task: bool,
     /// Pending I/O completion handle (persists across yield/re-execute).
     pub(crate) pending_io: Option<Arc<IoCompletion>>,
-    /// Scoped wall-clock deadline in effect for this task. Set by
+    /// Scoped deadline in effect for this task, as a reading of the
+    /// host clock ([`Clock::monotonic`]). Set by
     /// `task.deadline(dur, fn)` for the duration of the callback; the
     /// scheduler's I/O watchdog consults this when the task parks on
     /// I/O, and I/O builtins check it at entry so a call made past the
     /// deadline returns `Err(...)` immediately without submitting to
     /// the I/O pool. Nested `task.deadline` calls use the earlier
     /// deadline (monotonic tightening).
-    pub(crate) current_deadline: Option<Instant>,
+    pub(crate) current_deadline: Option<Duration>,
     /// LIFO stack of outer deadlines, pushed by each task.deadline call
     /// on its first entry and popped on non-yield return. Lets nested
     /// synchronous `task.deadline` scopes correctly restore the outer
@@ -329,7 +335,7 @@ pub struct Vm {
     /// preserved (not touched on yield return), so the first-entry
     /// check `suspended_invoke.is_none()` distinguishes fresh entry
     /// from a resume.
-    pub(crate) deadline_stack: Vec<Option<Instant>>,
+    pub(crate) deadline_stack: Vec<Option<Duration>>,
     /// Saved state from an `invoke_callable` that was interrupted by a yield.
     ///
     /// Invariant: this Option is the TOP of a LIFO stack of suspended invokes.
@@ -380,9 +386,11 @@ pub struct Vm {
     pub(crate) regex_cache: RegexCache,
 }
 
-impl Default for Vm {
-    fn default() -> Self {
-        Self::new()
+impl Drop for Vm {
+    fn drop(&mut self) {
+        if self.owns_runtime {
+            self.runtime.shutdown();
+        }
     }
 }
 
@@ -419,7 +427,7 @@ impl Vm {
         timeout_err: &(dyn Fn(&str) -> Value + Sync),
     ) -> Option<Value> {
         let deadline = self.current_deadline?;
-        if Instant::now() >= deadline {
+        if self.runtime.io.monotonic() >= deadline {
             Some(timeout_err(
                 crate::scheduler::DeadlineSource::Task.message(),
             ))
@@ -584,13 +592,25 @@ impl Vm {
         Ok(op())
     }
 
-    pub fn new() -> Self {
+    /// A VM whose programs write to the output of `io` and read its
+    /// clock.
+    ///
+    /// Dropping it ends the program: the threads that served it (the
+    /// scheduler's, the timer's, the I/O workers) end, tasks that are
+    /// still running or waiting never run again, and the tasks that
+    /// failed since the last report and that nobody joined are reported
+    /// on the stderr of `io`.
+    pub fn new(io: HostIo) -> Self {
         Vm {
             runtime: Arc::new(Runtime {
                 scheduler: parking_lot::Mutex::new(None),
-                timer: TimerManager::new(),
-                io_pool: IoPool::new(runtime::resolve_io_pool_size()),
+                timer: TimerManager::new(io.clone()),
+                io_pool: IoPool::new(runtime::resolve_io_pool_size(), io.clone()),
+                io,
+                rng: parking_lot::Mutex::new(None),
+                uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
             }),
+            owns_runtime: true,
             frames: Vec::new(),
             stack: Vec::new(),
             globals: Vec::new(),
@@ -612,6 +632,15 @@ impl Vm {
         }
     }
 
+    /// Report on the host's stderr the tasks that have failed so far
+    /// and that nobody joined or cancelled. Nothing while a front end
+    /// collects them (`scheduler::collect_unjoined_failures`).
+    fn report_unjoined_failures(&self) {
+        if let Some(scheduler) = self.current_scheduler() {
+            scheduler.report_unjoined_failures();
+        }
+    }
+
     /// Run a compiled program: take in its tables, then run its script.
     /// The value is the script's: `main`'s for a program compiled for
     /// `Entry::Main`. This is the one way to start a [`Program`]; the
@@ -626,16 +655,20 @@ impl Vm {
             program.functions.first().cloned().ok_or_else(|| {
                 VmError::new("internal VM error: a program without a script".into())
             })?;
-        self.run(Arc::new(script))
+        let result = self.run(Arc::new(script));
+        self.report_unjoined_failures();
+        result
     }
 
     /// Call the test function `test` of the program this VM ran with
     /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
     /// arguments, and give its value.
     pub fn call_test(&mut self, test: &crate::session::TestFn) -> Result<Value, VmError> {
-        self.run(Arc::new(crate::bytecode::call_global_script(
+        let result = self.run(Arc::new(crate::bytecode::call_global_script(
             test.slot, &test.name,
-        )))
+        )));
+        self.report_unjoined_failures();
+        result
     }
 
     /// Take in a program about to run: the descriptions its values'
@@ -654,6 +687,7 @@ impl Vm {
     pub(crate) fn spawn_child(&self) -> Self {
         Vm {
             runtime: self.runtime.clone(), // Arc clone = cheap
+            owns_runtime: false,
             frames: Vec::new(),
             stack: Vec::new(),
             globals: self.globals.clone(),
@@ -691,7 +725,7 @@ impl Vm {
         if let Some(ref sched) = *guard {
             sched.clone()
         } else {
-            let sched = Arc::new(Scheduler::new());
+            let sched = Arc::new(Scheduler::new(self.runtime.io.clone()));
             *guard = Some(sched.clone());
             sched
         }

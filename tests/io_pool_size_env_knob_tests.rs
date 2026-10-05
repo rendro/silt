@@ -65,7 +65,7 @@ fn silt_io_pool_size_env_var_overrides_default_to_8() {
     assert_eq!(resolve_io_pool_size(), 8);
 
     // End-to-end: the constructed Vm's I/O pool reflects the env var.
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     assert_eq!(
         io_pool_worker_count(&vm),
         8,
@@ -80,7 +80,7 @@ fn silt_io_pool_size_zero_falls_back_to_default() {
     unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "0") };
     assert_eq!(resolve_io_pool_size(), default_io_pool_size());
 
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     assert_eq!(io_pool_worker_count(&vm), default_io_pool_size());
 }
 
@@ -90,7 +90,7 @@ fn silt_io_pool_size_invalid_falls_back_to_default() {
     unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "abc") };
     assert_eq!(resolve_io_pool_size(), default_io_pool_size());
 
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     assert_eq!(io_pool_worker_count(&vm), default_io_pool_size());
 }
 
@@ -101,7 +101,7 @@ fn silt_io_pool_size_caps_at_upper_bound() {
     let cap = io_pool_size_cap();
     assert_eq!(resolve_io_pool_size(), cap);
 
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     assert_eq!(
         io_pool_worker_count(&vm),
         cap,
@@ -136,7 +136,7 @@ fn default_io_pool_remains_min_cores_4_when_env_var_absent() {
     // bit-for-bit.
     let _g = EnvGuard::acquire();
     // No set_var here — the guard removed the var on entry.
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     let count = io_pool_worker_count(&vm);
     let expected = default_io_pool_size();
     assert_eq!(
@@ -164,6 +164,6 @@ fn silt_io_pool_size_one_is_honored() {
     unsafe { std::env::set_var("SILT_IO_POOL_SIZE", "1") };
     assert_eq!(resolve_io_pool_size(), 1);
 
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     assert_eq!(io_pool_worker_count(&vm), 1);
 }

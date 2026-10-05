@@ -3,7 +3,7 @@
 use parking_lot::{Condvar, Mutex};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::typeinfo::{bv, ty};
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
@@ -330,7 +330,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                     let t = Arc::new(Channel::new(timer_id, 1));
                     vm.runtime
                         .timer
-                        .schedule(Duration::from_millis(ms), t.clone());
+                        .schedule(Duration::from_millis(ms), t.clone())?;
                     t
                 }
             };
@@ -437,7 +437,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             let ch = Arc::new(Channel::new(id, 1));
             vm.runtime
                 .timer
-                .schedule(std::time::Duration::from_millis(ms), ch.clone());
+                .schedule(std::time::Duration::from_millis(ms), ch.clone())?;
             Ok(Value::Channel(ch))
         }
         "each" => {
@@ -549,14 +549,14 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
     }
 }
 
-/// Spawn a child task with an optional scoped wall-clock deadline.
-/// Shared by `task.spawn` (deadline = None) and `task.spawn_until`
-/// (deadline = Some(now + dur)). Returns the Handle wrapping the
+/// Spawn a child task with an optional scoped deadline, a reading of
+/// the host clock. Shared by `task.spawn` (deadline = None) and
+/// `task.spawn_until` (deadline = Some(now + dur)). Returns the Handle wrapping the
 /// spawned task; propagates scheduler.submit errors unchanged.
 fn spawn_with_deadline(
     vm: &mut Vm,
     closure: &Arc<crate::bytecode::VmClosure>,
-    deadline: Option<Instant>,
+    deadline: Option<Duration>,
 ) -> Result<Value, VmError> {
     let task_id = vm.next_task_id();
     // The task belongs to whoever spawns it: the owner of the task that
@@ -722,7 +722,10 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "task.spawn_until requires a function argument".into(),
                 ));
             };
-            let deadline = Instant::now().checked_add(Duration::from_nanos(dur_ns as u64));
+            let deadline = vm
+                .runtime
+                .io
+                .deadline_after(Duration::from_nanos(dur_ns as u64));
             spawn_with_deadline(vm, closure, deadline)
         }
         "deadline" => {
@@ -760,7 +763,10 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         "task.deadline: duration must be non-negative".into(),
                     ));
                 }
-                let new_deadline = Instant::now().checked_add(Duration::from_nanos(dur_ns as u64));
+                let new_deadline = vm
+                    .runtime
+                    .io
+                    .deadline_after(Duration::from_nanos(dur_ns as u64));
                 let prev = vm.current_deadline;
                 vm.deadline_stack.push(prev);
                 // Tighten: earliest of current and new wins.
@@ -913,13 +919,13 @@ fn select_start_index(n: usize) -> usize {
         return 0;
     }
     use std::cell::Cell;
-    use std::time::SystemTime;
+    use std::hash::{BuildHasher, Hasher};
     thread_local! {
+        // Seeded from the standard library's hasher keys, not from a
+        // clock: the sweep has no VM at hand to read the host clock
+        // from, and fairness needs no better seed.
         static SELECT_RNG: Cell<u64> = Cell::new({
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0xA5A5_A5A5_5A5A_5A5A)
+            std::collections::hash_map::RandomState::new().build_hasher().finish()
                 | 1 // xorshift64 must not be seeded with 0
         });
     }

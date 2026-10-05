@@ -18,7 +18,7 @@ typechecked against the signature the embedder declared.
 use std::path::Path;
 
 use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
-use silt::{Value, Vm};
+use silt::{Buffer, HostIo, Value, Vm};
 
 // 1. Declare the host module: each function by its silt signature.
 let mylib = HostModule::new("mylib").fn1("fn double(x: Int) -> Int", |x: i64| x * 2);
@@ -39,9 +39,10 @@ for d in &analysis.diagnostics {
 }
 assert!(!analysis.has_errors());
 
-// 4. Compile it and run it.
+// 4. Compile it and run it. What the program prints is collected in `out`.
 let program = session.compile(file, Entry::Main).expect("compiles");
-let result = Vm::new().run_program(&program).unwrap();
+let out = Buffer::new();
+let result = Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
 assert_eq!(result, Value::Int(42));
 ```
 
@@ -188,16 +189,181 @@ Host functions must be `Send + Sync`, since they may be called from any
 thread in the task scheduler's pool. The type system enforces this. Use
 `Arc<Mutex<T>>` for shared mutable state in a host function.
 
+## Output and clock
+
+A `Vm` is made with a `HostIo`: where the program's output goes, and the
+clock it reads. It is set once, when the `Vm` is made, and holds for the
+program's main thread and for every task.
+
+```rust
+let out = Buffer::new();
+let vm = Vm::new(HostIo::buffer(&out));
+```
+
+| Constructor | stdout and stderr | Clock |
+|-------------|-------------------|-------|
+| `HostIo::buffer(&buffer)` | both into `buffer`, in memory | system |
+| `HostIo::new(stdout, stderr)` | any two `Output`s | system |
+| `HostIo::process()` | the process's stdout and stderr (what the `silt` command uses) | system |
+| `.clock(clock)` on any of them | unchanged | `clock` |
+
+**Output.** `print` and `println` write to stdout. What the runtime
+prints for the program goes to stderr: the report of a task that failed
+and that nobody joined, and the log of an `http.serve` handler that
+failed. A `Buffer` collects text in memory; its clones share the text,
+so the embedder keeps one and reads it with `contents()` or `take()`.
+For anything else, implement `Output`:
+
+```rust
+struct Lines(std::sync::mpsc::Sender<String>);
+
+impl Output for Lines {
+    fn write(&self, text: &str) -> std::io::Result<()> {
+        self.0.send(text.to_string()).map_err(std::io::Error::other)
+    }
+}
+```
+
+`write` is called once for each `print`, `println` or report, from the
+thread that runs the program and from the scheduler's threads. An error
+it returns for a `print` or `println` is a runtime error of the program
+(`cannot write to stdout: ...`), and so is a panic inside it; for a
+report on stderr both are dropped.
+
+The report of tasks that failed and that nobody joined is written when
+`run_program` returns, for the tasks that have failed by then. It does
+not change the result: `run_program` still returns `main`'s value. A
+task that fails later is reported when the `Vm` is dropped, if it has
+failed by then. With `HostIo::process()`, a program
+that writes to a closed stdout pipe ends the process quietly with status
+141; give `HostIo::new` your own `Output` if the process must go on.
+
+**Clock.** A `Clock` gives the time of day, a monotonic reading, and a
+way to block:
+
+```rust
+pub trait Clock: Send + Sync {
+    /// The time since the Unix epoch.
+    fn now(&self) -> Duration;
+    /// The time since some fixed moment; it never goes back.
+    fn monotonic(&self) -> Duration;
+    /// Block the calling thread until `duration` has passed.
+    fn sleep(&self, duration: Duration);
+}
+```
+
+| The program | reads |
+|-------------|-------|
+| `time.now`, `time.today`, the timestamp in `uuid.v7`, the seed of `math.random` (at its first call) | `now` |
+| `time.sleep` outside a task | `sleep` |
+| `time.sleep` in a task, `channel.timeout`, `channel.recv_timeout` | `monotonic`: the wait ends when the reading reaches its deadline |
+| `task.deadline`, `task.spawn_until`, `SILT_IO_TIMEOUT` | `monotonic`: I/O started after the deadline fails at once, and a task parked on I/O is cancelled when the reading passes the deadline |
+
+The runtime's own threads wait in real time between two readings of an
+embedder's clock. A task's sleep and the channel timeouts end within a
+millisecond of the moment the clock reaches the deadline. A deadline
+that cancels a parked task's I/O is noticed at the scheduler's next scan
+(every 100 ms by default; `SILT_IO_WATCHDOG_INTERVAL` sets it). Everything that
+is not the program's own waiting stays in real time: the scheduler's
+time slices, the socket timeouts of `http` and `tcp`, and how long I/O
+takes.
+
+If a method of the clock panics, the clock is not called again and the
+program ends with the runtime error `the clock panicked: ...`: the
+builtin that read it fails, and every wait that was pending on the clock
+ends, its waiter failing the same way at its next step.
+
+`time.today` gives the date of `now` in the local time zone (in UTC in a
+build without the `local-clock` feature).
+
+A program with a clock of its own, whose output is collected:
+
+```rust
+use std::path::Path;
+use std::time::Duration;
+
+use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+use silt::{Buffer, Clock, HostIo, Vm};
+
+// A clock that starts at a fixed time and moves only when the
+// program sleeps.
+struct Simulated(std::sync::Mutex<Duration>);
+
+impl Clock for Simulated {
+    fn now(&self) -> Duration {
+        // 2026-10-05T12:00:00Z, plus what has passed.
+        Duration::from_secs(1_791_201_600) + self.monotonic()
+    }
+    fn monotonic(&self) -> Duration {
+        *self.0.lock().unwrap()
+    }
+    fn sleep(&self, duration: Duration) {
+        *self.0.lock().unwrap() += duration;
+    }
+}
+
+let mut session = Session::new(Config {
+    project: ProjectSetup::None,
+    lock: LockPolicy::ReadOnly,
+    host: vec![],
+});
+let source = r#"
+import time
+fn main() {
+  println("started")
+  time.sleep(time.minutes(90))
+  println(time.now() |> time.to_utc |> time.format("%H:%M"))
+}
+"#;
+let file = session.set_overlay(Path::new("main.silt"), source.to_string());
+let program = session.compile(file, Entry::Main).expect("compiles");
+
+// The program's output is collected in `out`; it reads `Simulated`.
+let out = Buffer::new();
+let io = HostIo::buffer(&out).clock(Simulated(Default::default()));
+Vm::new(io).run_program(&program).unwrap();
+assert_eq!(out.contents(), "started\n13:30\n");
+```
+
+### WebAssembly
+
+The library builds for `wasm32-unknown-unknown` with
+`default-features = false`. That target has no clock, no threads and no
+source of randomness of its own, so the embedder supplies them:
+
+- **Clock.** Give the `Vm` a `Clock` (in a browser, from `Date.now()`
+  and `performance.now()`): the system clock panics there. `sleep`
+  cannot block a browser's main thread; it can return at once, or move
+  a simulated clock on as above.
+- **Tasks.** `task.spawn` runs the task to its end before it returns,
+  on the caller's stack. A task that waits for something only later
+  code would provide (a value on a channel nobody has sent to yet)
+  fails with a deadlock error. A task that failed and that nobody
+  joined is not reported.
+- **Timers.** `channel.timeout` and `channel.recv_timeout` need the
+  timer thread: they are a runtime error (`cannot start a timer: ...`).
+- **Randomness.** `getrandom` and `uuid` refuse to build for the target
+  until the embedder's crate picks a source: in a browser, add
+  `getrandom = { version = "0.2", features = ["js"] }` and
+  `uuid = { version = "1", features = ["js"] }` to its dependencies.
+
 ## Vm Lifecycle
 
 A `Vm` is a single interpreter instance. `vm.run_program(&program)` runs
 a compiled program: it takes in the types of the program's values and
 its global slots (one per top-level function, `let`, host function and
 trait method), then runs the program's script and returns `main`'s
-value. The program carries its host functions: the `Vm` needs no other
-set-up.
+value. The program carries its host functions, and the `Vm` its output
+and clock: there is no other set-up.
 
-**Reusing a Vm.** Run one program per `Vm`: build a fresh `Vm::new()`
+**Dropping a Vm** ends its program. The threads that served it end (the
+scheduler's workers, the timer thread, the I/O workers; each when what
+it is doing returns), tasks that are still running or waiting never run
+again, and pending timers never fire. The state behind `math.random`
+and `uuid.v7` belongs to the `Vm` too: one `Vm` does not affect
+another's numbers.
+
+**Reusing a Vm.** Run one program per `Vm`: build a fresh `Vm::new(io)`
 for each. (The entries of a REPL session are compiled to follow one
 another, and share one `Vm`.)
 

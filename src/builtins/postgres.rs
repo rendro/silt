@@ -2307,11 +2307,11 @@ fn close(_vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 /// Time-ordered: first 48 bits are Unix timestamp in ms, remainder is
 /// random. Good for B-tree primary keys (monotonic inserts) while being
 /// unguessable. Returned as a lowercase hyphenated string.
-fn uuidv7(_vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn uuidv7(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::new("postgres.uuidv7 takes no arguments".into()));
     }
-    Ok(Value::String(uuid::Uuid::now_v7().to_string()))
+    Ok(Value::String(super::uuid::now_v7(vm).to_string()))
 }
 
 /// `postgres.listen(pool, channel_name)` — open a notification

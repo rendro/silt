@@ -419,7 +419,7 @@ fn host_module_named_like_a_module_file_is_rejected_at_the_import() {
 #[test]
 fn docs_ffi_quick_start() {
     use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
-    use silt::{Value, Vm};
+    use silt::{Buffer, HostIo, Value, Vm};
     use std::path::Path;
 
     // 1. Declare the host module: each function by its silt signature.
@@ -441,8 +441,9 @@ fn docs_ffi_quick_start() {
     }
     assert!(!analysis.has_errors());
 
-    // 4. Compile it and run it.
+    // 4. Compile it and run it. What the program prints is collected in `out`.
     let program = session.compile(file, Entry::Main).expect("compiles");
-    let result = Vm::new().run_program(&program).unwrap();
+    let out = Buffer::new();
+    let result = Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
     assert_eq!(result, Value::Int(42));
 }

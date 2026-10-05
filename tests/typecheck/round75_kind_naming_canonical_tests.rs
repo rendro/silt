@@ -202,7 +202,7 @@ fn value_kind_titlecase_for_all_value_variants() {
     // enumerated explicitly and matches the canonical TitleCase from
     // `vm::Vm::type_name`.
     let av = build_all_variants();
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     for_each_variant(&av, |v, expected| {
         let kind = value_kind(v);
         let tn = vm.type_name(v);
@@ -275,7 +275,7 @@ fn user_facing_type_name_titlecase_aligned_with_type_name() {
     // For each variant, assert either equality or the documented alias
     // shape. No "a " article anywhere. No lowercase form anywhere.
     let av = build_all_variants();
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     for_each_variant(&av, |v, expected_type_name| {
         let ufn = vm.user_facing_type_name(v);
         let tn = vm.type_name(v);

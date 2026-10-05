@@ -101,7 +101,7 @@ fn compile_and_run_capped(source: &str) -> Result<RunOutcome, TestCaseError> {
     let (tx, rx) = mpsc::sync_channel::<Result<Result<Value, String>, String>>(1);
     let handle = thread::spawn(move || {
         let result = catch_unwind(AssertUnwindSafe(move || {
-            silt::vm::Vm::new().run_program(&program)
+            silt::vm::Vm::new(silt::HostIo::process()).run_program(&program)
         }));
         let payload = match result {
             Ok(Ok(v)) => Ok(Ok(v)),

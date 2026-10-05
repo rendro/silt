@@ -81,7 +81,9 @@ pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Va
             .map(|d| d.message.clone())
             .unwrap_or_default()
     })?;
-    Vm::new().run_program(&program).map_err(|e| e.to_string())
+    Vm::new(crate::HostIo::process())
+        .run_program(&program)
+        .map_err(|e| e.to_string())
 }
 
 /// Compile `source` as a program that starts at `main`. `Err` holds the

@@ -20,10 +20,10 @@ use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
 /// Dispatch `uuid.<name>(args)`.
-pub fn call(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "v4" => v4(args),
-        "v7" => v7(args),
+        "v7" => v7(vm, args),
         "parse" => parse(args),
         "nil" => nil(args),
         "is_valid" => is_valid(args),
@@ -48,11 +48,22 @@ fn v4(args: &[Value]) -> Result<Value, VmError> {
 /// the remaining bits are random, so two v7 UUIDs minted in order
 /// compare correctly via lexicographic string comparison. Good for
 /// B-tree primary keys.
-fn v7(args: &[Value]) -> Result<Value, VmError> {
+fn v7(vm: &Vm, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::new("uuid.v7 takes no arguments".into()));
     }
-    Ok(Value::String(::uuid::Uuid::now_v7().to_string()))
+    Ok(Value::String(now_v7(vm).to_string()))
+}
+
+/// A version 7 UUID whose timestamp is the host clock's time. The VM's
+/// counter keeps the UUIDs minted within a millisecond in order.
+pub(crate) fn now_v7(vm: &Vm) -> ::uuid::Uuid {
+    let now = vm.runtime.io.now();
+    ::uuid::Uuid::new_v7(::uuid::Timestamp::from_unix(
+        &vm.runtime.uuid_v7,
+        now.as_secs(),
+        now.subsec_nanos(),
+    ))
 }
 
 // ── Parse / validate / nil ─────────────────────────────────────────────

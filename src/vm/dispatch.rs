@@ -29,22 +29,15 @@ use crate::value::{HostFn, Value};
 // must produce the expected output, which it cannot do via the
 // catch-all error arm that remains in `dispatch_trait_method`.
 
-/// Write `text` to stdout for `print` / `println`. A closed pipe (`silt
-/// run x.silt | head -1`) ends the process quietly, with the status a
-/// death by SIGPIPE gives (141), whatever the signal's disposition or
-/// mask: `println!` would panic there. Any other failure is a runtime
-/// error.
-fn write_stdout(text: &str) -> Result<(), VmError> {
-    use std::io::Write;
-    let mut out = std::io::stdout().lock();
-    match out.write_all(text.as_bytes()) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => std::process::exit(141),
-        Err(e) => Err(VmError::new(format!(
+/// Write `text` to the host's stdout for `print` / `println`. A failure
+/// is a runtime error.
+fn write_stdout(vm: &Vm, text: &str) -> Result<(), VmError> {
+    vm.runtime.io.out(text).map_err(|e| {
+        VmError::new(format!(
             "cannot write to stdout: {}",
             crate::diagnostic::io_error_text(&e)
-        ))),
-    }
+        ))
+    })
 }
 
 /// Call the host function `host` while catching panics that escape it.
@@ -445,11 +438,23 @@ impl Vm {
 
     // ── Builtin dispatch ──────────────────────────────────────────
 
+    /// Call the builtin `name`. A host clock that has panicked, in
+    /// this call or on one of the runtime's threads, fails the call:
+    /// the readings the builtin got since are not real, and the waits
+    /// it was woken from have not ended.
     pub(super) fn dispatch_builtin(
         &mut self,
         name: &str,
         args: &[Value],
     ) -> Result<Value, VmError> {
+        let value = self.dispatch_builtin_unchecked(name, args)?;
+        match self.runtime.io.clock_failure() {
+            Some(failure) => Err(VmError::new(failure)),
+            None => Ok(value),
+        }
+    }
+
+    fn dispatch_builtin_unchecked(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         if let Some((module, func)) = name.split_once('.') {
             // Each arm is wrapped in `catch_builtin_panic` so that a panic
             // inside a builtin module becomes a clean `VmError` instead of
@@ -531,7 +536,7 @@ impl Vm {
                 ),
                 "math" => catch_builtin_panic(
                     "math",
-                    AssertUnwindSafe(|| builtins::numeric::call_math(func, args)),
+                    AssertUnwindSafe(|| builtins::numeric::call_math(self, func, args)),
                 ),
                 "regex" => catch_builtin_panic(
                     "regex",
@@ -594,7 +599,7 @@ impl Vm {
                     }
                     let mut text = self.display_value(&args[0]);
                     text.push('\n');
-                    write_stdout(&text)?;
+                    write_stdout(self, &text)?;
                     Ok(Value::Unit)
                 }
                 "print" => {
@@ -604,7 +609,7 @@ impl Vm {
                             args.len()
                         )));
                     }
-                    write_stdout(&self.display_value(&args[0]))?;
+                    write_stdout(self, &self.display_value(&args[0]))?;
                     Ok(Value::Unit)
                 }
                 "panic" => {
@@ -614,14 +619,5 @@ impl Vm {
                 _ => Err(VmError::new(format!("unknown builtin: {name}"))),
             }
         }
-    }
-
-    /// Get current epoch milliseconds.
-    pub(crate) fn epoch_ms(&self) -> Result<i64, VmError> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let dur = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| VmError::new(format!("clock failed: {e}")))?;
-        Ok(dur.as_millis() as i64)
     }
 }

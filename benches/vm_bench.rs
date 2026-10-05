@@ -18,7 +18,7 @@ fn compile(source: &str) -> Program {
 }
 
 fn run_once(program: &Program) -> Value {
-    silt::vm::Vm::new()
+    silt::vm::Vm::new(silt::HostIo::process())
         .run_program(program)
         .expect("runtime error")
 }

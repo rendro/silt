@@ -4,12 +4,12 @@
 use regex::Regex;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::bytecode::VmClosure;
 use crate::value::{Channel, IoCompletion, TaskHandle, Value};
 
-use super::VmError;
+use super::{HostIo, VmError};
 
 // ── Call frame ────────────────────────────────────────────────────
 
@@ -143,95 +143,154 @@ pub(crate) enum TimerTarget {
     Completion(Arc<IoCompletion>),
 }
 
+/// A deadline and what to fire at it, as sent to the timer thread. The
+/// deadline is a reading of the host clock.
+type TimerRequest = (Duration, TimerTarget);
+
 /// Manages all pending timer deadlines on a single background thread.
 /// Instead of spawning one OS thread per `channel.timeout` or `time.sleep`,
 /// all deadlines are submitted here and fired from a single long-lived
 /// thread. This keeps timer cost O(1) threads regardless of how many
 /// concurrent sleepers/timeouts exist.
+///
+/// The thread is started by the first deadline, so a program without
+/// timers has none, and a platform without threads can make a VM.
 pub(crate) struct TimerManager {
-    sender: parking_lot::Mutex<std::sync::mpsc::Sender<(Instant, TimerTarget)>>,
+    io: HostIo,
+    thread: parking_lot::Mutex<Threads<TimerRequest>>,
 }
 
+/// The threads of a [`TimerManager`] or an [`IoPool`], reached through
+/// the channel they take their work from.
+enum Threads<T> {
+    /// Not started: nothing has needed them yet.
+    Idle,
+    Running(std::sync::mpsc::Sender<T>),
+    /// The VM is gone ([`Runtime::shutdown`]): they have been told to
+    /// end and are not started again.
+    Stopped,
+}
+
+impl<T> Threads<T> {
+    /// Tell the threads to end: their channel closes, and what they
+    /// still held is dropped.
+    fn stop(&mut self) {
+        *self = Threads::Stopped;
+    }
+}
+
+/// Why a timer or an I/O operation finds its threads stopped.
+const VM_GONE: &str = "the VM that ran the program has been dropped";
+
 impl TimerManager {
-    pub(super) fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<(Instant, TimerTarget)>();
-        std::thread::spawn(move || {
-            let mut deadlines: BTreeMap<Instant, Vec<TimerTarget>> = BTreeMap::new();
-            loop {
-                // Calculate how long to sleep until the next deadline.
-                let timeout = deadlines
-                    .first_key_value()
-                    .map(|(deadline, _)| deadline.saturating_duration_since(Instant::now()))
-                    .unwrap_or(Duration::from_secs(60));
+    pub(super) fn new(io: HostIo) -> Self {
+        TimerManager {
+            io,
+            thread: parking_lot::Mutex::new(Threads::Idle),
+        }
+    }
 
-                // Wait for a new timeout request or until the next deadline fires.
-                match rx.recv_timeout(timeout) {
-                    Ok((deadline, target)) => {
-                        deadlines.entry(deadline).or_default().push(target);
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+    /// End the timer thread. The deadlines that are pending are
+    /// discarded: they never fire.
+    fn stop(&self) {
+        self.thread.lock().stop();
+    }
+
+    /// The timer thread's loop: take in deadlines, and fire each when
+    /// the host clock reaches it.
+    fn run(io: HostIo, rx: std::sync::mpsc::Receiver<TimerRequest>) {
+        let mut deadlines: BTreeMap<Duration, Vec<TimerTarget>> = BTreeMap::new();
+        loop {
+            // Calculate how long to sleep until the next deadline.
+            let timeout = deadlines
+                .first_key_value()
+                .map(|(deadline, _)| io.real_wait(deadline.saturating_sub(io.monotonic())))
+                .unwrap_or(Duration::from_secs(60));
+
+            // Wait for a new timeout request or until the next deadline fires.
+            match rx.recv_timeout(timeout) {
+                Ok((deadline, target)) => {
+                    deadlines.entry(deadline).or_default().push(target);
                 }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
 
-                // Fire all expired deadlines. The timer thread owns its own
-                // BTreeMap and holds no scheduler locks here, so firing
-                // `completion.complete(...)` (which runs wakers → requeue →
-                // watchdog.remove) is safe in a disjoint lock domain.
-                let now = Instant::now();
-                let expired: Vec<Instant> = deadlines.range(..=now).map(|(k, _)| *k).collect();
-                for key in expired {
-                    if let Some(targets) = deadlines.remove(&key) {
-                        for target in targets {
-                            match target {
-                                TimerTarget::Channel(ch) => ch.close(),
-                                TimerTarget::Completion(c) => {
-                                    c.complete(Value::Unit);
-                                }
+            // Fire all expired deadlines. The timer thread owns its own
+            // BTreeMap and holds no scheduler locks here, so firing
+            // `completion.complete(...)` (which runs wakers → requeue →
+            // watchdog.remove) is safe in a disjoint lock domain.
+            // If the clock has panicked, every wait ends now: what
+            // was waiting runs into the clock's failure at its next
+            // builtin call.
+            let now = io.monotonic();
+            let now = if io.clock_failure().is_some() {
+                Duration::MAX
+            } else {
+                now
+            };
+            let expired: Vec<Duration> = deadlines.range(..=now).map(|(k, _)| *k).collect();
+            for key in expired {
+                if let Some(targets) = deadlines.remove(&key) {
+                    for target in targets {
+                        match target {
+                            TimerTarget::Channel(ch) => ch.close(),
+                            TimerTarget::Completion(c) => {
+                                c.complete(Value::Unit);
                             }
                         }
                     }
                 }
             }
-        });
-        TimerManager {
-            sender: parking_lot::Mutex::new(tx),
+        }
+    }
+
+    /// Hand `target` to the timer thread, to fire after `delay` on the
+    /// host clock. Starts the thread if this is the first deadline; an
+    /// error if it cannot be started (a platform without threads).
+    fn submit(&self, delay: Duration, target: TimerTarget) -> Result<(), VmError> {
+        let unavailable =
+            |why: &dyn std::fmt::Display| VmError::new(format!("cannot start a timer: {why}"));
+        let deadline = self
+            .io
+            .deadline_after(delay)
+            .ok_or_else(|| unavailable(&"the duration is out of range"))?;
+        if let Some(failure) = self.io.clock_failure() {
+            return Err(VmError::new(failure));
+        }
+        let mut thread = self.thread.lock();
+        if let Threads::Idle = *thread {
+            let (tx, rx) = std::sync::mpsc::channel::<TimerRequest>();
+            let io = self.io.clone();
+            std::thread::Builder::new()
+                .spawn(move || TimerManager::run(io, rx))
+                .map_err(|e| unavailable(&e))?;
+            *thread = Threads::Running(tx);
+        }
+        match &*thread {
+            Threads::Running(tx) => tx.send((deadline, target)).map_err(|e| unavailable(&e)),
+            Threads::Idle | Threads::Stopped => Err(unavailable(&VM_GONE)),
         }
     }
 
     /// Schedule a channel to be closed after `delay`.
-    pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) {
-        let deadline = Instant::now() + delay;
+    pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) -> Result<(), VmError> {
         // Tell the channel it has an incoming close so the main-thread
         // deadlock check doesn't fire while the timer is pending.
         ch.mark_pending_timer_close();
-        if let Err(e) = self
-            .sender
-            .lock()
-            .send((deadline, TimerTarget::Channel(ch)))
-        {
-            debug_assert!(false, "TimerManager worker thread is gone: {e}");
-            eprintln!(
-                "silt: TimerManager worker thread unreachable ({e}); channel.timeout will not fire"
-            );
-        }
+        self.submit(delay, TimerTarget::Channel(ch))
     }
 
     /// Schedule an `IoCompletion` to be completed with `Value::Unit` after
     /// `delay`. Used by `time.sleep` to cooperatively park a scheduled task
     /// without consuming an I/O worker thread. Multiple concurrent sleepers
     /// all share the single timer thread.
-    pub(crate) fn schedule_completion(&self, delay: Duration, completion: Arc<IoCompletion>) {
-        let deadline = Instant::now() + delay;
-        if let Err(e) = self
-            .sender
-            .lock()
-            .send((deadline, TimerTarget::Completion(completion)))
-        {
-            debug_assert!(false, "TimerManager worker thread is gone: {e}");
-            eprintln!(
-                "silt: TimerManager worker thread unreachable ({e}); time.sleep will not fire"
-            );
-        }
+    pub(crate) fn schedule_completion(
+        &self,
+        delay: Duration,
+        completion: Arc<IoCompletion>,
+    ) -> Result<(), VmError> {
+        self.submit(delay, TimerTarget::Completion(completion))
     }
 }
 
@@ -279,26 +338,42 @@ pub(crate) fn resolve_io_pool_size() -> usize {
         .unwrap_or_else(default_io_pool_size)
 }
 
+/// A blocking operation handed to the pool's workers.
+type IoJob = Box<dyn FnOnce() + Send>;
+
 pub(crate) struct IoPool {
-    sender: parking_lot::Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
-    /// Number of worker threads spawned for this pool. Retained so
-    /// test-only introspection (`worker_count`) can confirm the
-    /// `SILT_IO_POOL_SIZE` knob took effect; the production code path
-    /// does not consult it. The field is unused outside `cfg(test)` /
-    /// the `test-hooks` feature, so silence the dead-code warning on
-    /// release builds rather than gate the field itself (which would
-    /// fork the struct layout between configurations).
-    #[allow(dead_code)]
+    io: HostIo,
+    /// The workers, started by the first operation. A program that
+    /// parks no task on I/O has none, and a platform without threads
+    /// can make a VM.
+    workers: parking_lot::Mutex<Threads<IoJob>>,
+    /// Number of worker threads this pool runs.
     num_workers: usize,
 }
 
 impl IoPool {
-    pub(super) fn new(num_threads: usize) -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+    pub(super) fn new(num_threads: usize, io: HostIo) -> Self {
+        IoPool {
+            io,
+            workers: parking_lot::Mutex::new(Threads::Idle),
+            num_workers: num_threads,
+        }
+    }
+
+    /// End the workers, each when the operation it is running returns.
+    fn stop(&self) {
+        self.workers.lock().stop();
+    }
+
+    /// Start the workers. An error if not one could be started; if some
+    /// could, the pool runs with those.
+    fn start(&self) -> Result<std::sync::mpsc::Sender<IoJob>, std::io::Error> {
+        let (tx, rx) = std::sync::mpsc::channel::<IoJob>();
         let rx = Arc::new(parking_lot::Mutex::new(rx));
-        for _ in 0..num_threads {
+        let mut started = 0;
+        for _ in 0..self.num_workers {
             let rx = rx.clone();
-            std::thread::spawn(move || {
+            let spawned = std::thread::Builder::new().spawn(move || {
                 loop {
                     let task = {
                         let rx = rx.lock();
@@ -310,11 +385,13 @@ impl IoPool {
                     }
                 }
             });
+            match spawned {
+                Ok(_) => started += 1,
+                Err(e) if started == 0 => return Err(e),
+                Err(_) => break,
+            }
         }
-        IoPool {
-            sender: parking_lot::Mutex::new(tx),
-            num_workers: num_threads,
-        }
+        Ok(tx)
     }
 
     /// Number of worker threads spawned for this pool. Test-only:
@@ -337,7 +414,7 @@ impl IoPool {
         f: impl FnOnce() -> Value + Send + 'static,
     ) -> Arc<IoCompletion> {
         let completion2 = completion.clone();
-        let send_result = self.sender.lock().send(Box::new(move || {
+        let job: IoJob = Box::new(move || {
             let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
                 Ok(value) => value,
                 Err(panic) => {
@@ -368,10 +445,38 @@ impl IoPool {
                 }
             };
             completion2.complete(result);
-        }));
-        if let Err(e) = send_result {
+        });
+        // Nothing can run the operation: it fails, with the error its
+        // builtin's signature declares.
+        let fail = |why: &dyn std::fmt::Display| {
+            let err = completion.build_timeout_err(&format!("cannot run an I/O operation: {why}"));
+            completion.complete(err);
+        };
+        let mut workers = self.workers.lock();
+        if let Threads::Idle = *workers {
+            match self.start() {
+                Ok(tx) => *workers = Threads::Running(tx),
+                Err(e) => {
+                    drop(workers);
+                    fail(&e);
+                    return completion;
+                }
+            }
+        }
+        let sent = match &*workers {
+            Threads::Running(tx) => tx.send(job),
+            Threads::Idle | Threads::Stopped => {
+                drop(workers);
+                fail(&VM_GONE);
+                return completion;
+            }
+        };
+        drop(workers);
+        if let Err(e) = sent {
             debug_assert!(false, "IoPool worker threads are gone: {e}");
-            eprintln!("silt: IoPool workers unreachable ({e}); IO task will never complete");
+            self.io.err(&format!(
+                "silt: IoPool workers unreachable ({e}); IO task will never complete\n"
+            ));
         }
         completion
     }
@@ -393,6 +498,61 @@ pub struct Runtime {
     // ── I/O pool ────────────────────────────────────────────────
     /// Thread pool for async I/O operations.
     pub(crate) io_pool: IoPool,
+
+    // ── Host ────────────────────────────────────────────────────
+    /// Where the program's output goes and which clock it reads.
+    pub(crate) io: HostIo,
+
+    // ── Per-VM generators ───────────────────────────────────────
+    /// The state of `math.random`; `None` until the first call seeds it
+    /// from the host clock.
+    pub(crate) rng: parking_lot::Mutex<Option<u64>>,
+    /// The counter that keeps the `uuid.v7`s minted within one
+    /// millisecond of the host clock in order.
+    pub(crate) uuid_v7: std::sync::Mutex<uuid::ContextV7>,
+}
+
+impl Runtime {
+    /// End the threads that serve the program: the scheduler's workers
+    /// and watchdog, the timer thread and the I/O workers. Called when
+    /// the VM that was made for the program is dropped. Tasks that have
+    /// not ended never run again, and pending timers never fire.
+    ///
+    /// The threads are told to end, not waited for: a worker inside a
+    /// builtin that blocks ends when the builtin returns.
+    pub(super) fn shutdown(&self) {
+        // A scheduler is made if there was none, so that a thread that
+        // outlives the VM (a stream stage) cannot start one.
+        let scheduler = self
+            .scheduler
+            .lock()
+            .get_or_insert_with(|| Arc::new(crate::scheduler::Scheduler::new(self.io.clone())))
+            .clone();
+        scheduler.shutdown();
+        self.timer.stop();
+        self.io_pool.stop();
+    }
+
+    /// The next value of `math.random`, in `[0, 1)`.
+    pub(crate) fn random(&self) -> f64 {
+        let mut state = self.rng.lock();
+        let mut s = state.unwrap_or_else(|| {
+            // splitmix64 of the host clock's time: clocks that read
+            // close to each other, or close to zero, still start far
+            // apart. xorshift64 must not be seeded with 0.
+            let mut z = (self.io.now().as_nanos() as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            (z ^ (z >> 31)).max(1)
+        });
+        // xorshift64
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        *state = Some(s);
+        // Convert to [0.0, 1.0)
+        (s >> 11) as f64 / ((1u64 << 53) as f64)
+    }
 }
 
 // ── Regex cache ──────────────────────────────────────────────────
@@ -478,7 +638,7 @@ mod tests {
     #[test]
     fn worker_count_reports_constructor_argument() {
         for n in [1usize, 2, 4, 8, 16] {
-            let pool = IoPool::new(n);
+            let pool = IoPool::new(n, HostIo::process());
             assert_eq!(pool.worker_count(), n, "worker_count drift for n={n}");
         }
     }
