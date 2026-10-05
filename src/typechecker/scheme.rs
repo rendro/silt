@@ -64,17 +64,36 @@ impl TypeChecker {
     }
 
     /// Forget the bounds recorded in the scope `exit_level` just left,
-    /// once everything it defines is generalised, except those on a
-    /// variable that is still unresolved and belongs to an outer binding.
+    /// and the checks that wait for a variable (`finalize_deferred_checks`),
+    /// once everything the scope defines is generalised: except those on a
+    /// variable that is still unresolved and belongs to an outer binding
+    /// (a top-level `let` that is not generalised), which are owed, and
+    /// checked, when a later definition decides it.
     pub(super) fn settle_bounds(&mut self) {
         let recorded = self.bound_log.split_off(self.closed_mark);
         for (tv, trait_name) in recorded {
-            if let Type::Var(rv) = self.apply(&Type::Var(tv))
-                && !self.tables.vars.is_generalizable(rv)
-            {
+            if self.waits_for_outer(&Type::Var(tv)) {
                 self.bound_log.push((tv, trait_name));
             }
         }
+        let mut fields = std::mem::take(&mut self.pending_field_accesses);
+        fields.retain(|(obj_ty, ..)| self.waits_for_outer(obj_ty));
+        self.pending_field_accesses = fields;
+        let mut numeric = std::mem::take(&mut self.pending_numeric_checks);
+        numeric.retain(|(ty, ..)| self.waits_for_outer(ty));
+        self.pending_numeric_checks = numeric;
+        let mut questions = std::mem::take(&mut self.pending_question_marks);
+        questions.retain(|(inner_ty, ..)| self.waits_for_outer(inner_ty));
+        self.pending_question_marks = questions;
+        let mut bounds = std::mem::take(&mut self.pending_where_constraints);
+        bounds.retain(|pending| self.waits_for_outer(&Type::Var(pending.tyvar)));
+        self.pending_where_constraints = bounds;
+    }
+
+    /// Whether `ty` is a variable still unresolved that the scope
+    /// `exit_level` just left does not own.
+    fn waits_for_outer(&self, ty: &Type) -> bool {
+        matches!(self.apply(ty), Type::Var(v) if !self.tables.vars.is_generalizable(v))
     }
 
     /// Instantiate a scheme by replacing quantified variables with fresh ones.

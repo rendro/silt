@@ -264,8 +264,60 @@ impl TypeChecker {
                     tail: new_tail,
                 }
             }
+            Type::Rigid(r) if !self.rigid_alias.is_empty() => Type::Rigid(self.rigid_rep(*r)),
             _ => ty.clone(),
         }
+    }
+
+    /// The annotation variable `r` stands for, among those the group of
+    /// functions being inferred has made the same (`same_in_group`).
+    fn rigid_rep(&self, mut r: RigidId) -> RigidId {
+        while let Some(next) = self.rigid_alias.get(&r.var) {
+            r = *next;
+        }
+        r
+    }
+
+    /// The variable the annotation variable `var` stands for in a scheme.
+    pub(super) fn rigid_rep_var(&self, mut var: TyVar) -> TyVar {
+        while let Some(next) = self.rigid_alias.get(&var) {
+            var = next.var;
+        }
+        var
+    }
+
+    /// Make two annotation variables the same, if they may be: they are
+    /// variables of two different functions of the group that is being
+    /// inferred together. Inside the group each function has one type, so
+    /// `fn ev(x: a, n) { .. od(x, n) }` and `fn od(y: b, n) { .. ev(y, n) }`
+    /// say that `a` and `b` are one variable of the group; each function
+    /// stays general in it. Two variables of one function stay apart.
+    fn same_in_group(&mut self, r1: RigidId, r2: RigidId) -> bool {
+        let (Some(owners1), Some(owners2)) = (
+            self.group_rigid.get(&r1.var).cloned(),
+            self.group_rigid.get(&r2.var).cloned(),
+        ) else {
+            return false;
+        };
+        if owners1.iter().any(|owner| owners2.contains(owner)) {
+            return false;
+        }
+        self.rigid_alias.insert(r2.var, r1);
+        let owners = self.group_rigid.entry(r1.var).or_default();
+        owners.extend(owners2);
+        // What either's `where` clauses declare holds of the one variable.
+        if let Some(traits) = self.active_constraints.get(&r2.var).cloned() {
+            let merged = self.active_constraints.entry(r1.var).or_default();
+            for t in traits {
+                if !merged.contains(&t) {
+                    merged.push(t);
+                }
+                if let Some(args) = self.trait_arg_bindings.get(&(r2.var, t)).cloned() {
+                    self.trait_arg_bindings.entry((r1.var, t)).or_insert(args);
+                }
+            }
+        }
+        true
     }
 
     // ── Unification ─────────────────────────────────────────────────
@@ -667,8 +719,9 @@ impl TypeChecker {
 
             (Type::Var(v1), Type::Var(v2)) if v1 == v2 => {}
 
-            // An annotation variable is itself only.
-            (Type::Rigid(r1), Type::Rigid(r2)) if r1 == r2 => {}
+            // An annotation variable is itself only, or a variable the
+            // group being inferred has made the same.
+            (Type::Rigid(r1), Type::Rigid(r2)) if r1 == r2 || self.same_in_group(*r1, *r2) => {}
 
             (Type::Var(v), t) | (t, Type::Var(v)) => {
                 if occurs_in(*v, t) {

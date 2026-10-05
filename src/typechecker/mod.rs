@@ -167,6 +167,14 @@ pub struct TypeChecker {
     /// (a function alone, or a group that is mutually recursive): inside
     /// the group each has one type.
     pub(super) inferred_together: std::collections::HashSet<Symbol>,
+    /// The annotation variables of the functions of the group being
+    /// inferred together, when it has several: each with the functions
+    /// (by declaration) it is a variable of. Two of different functions
+    /// may turn out to be one variable of the group
+    /// (`same_in_group`); `rigid_alias` then says which one each stands
+    /// for.
+    pub(super) group_rigid: HashMap<TyVar, Vec<usize>>,
+    pub(super) rigid_alias: HashMap<TyVar, RigidId>,
     /// The declaration of each top-level `let` of the module, by the
     /// names it binds, and the one whose value is being checked: its
     /// value may not read a `let` declared after it, which has not run
@@ -275,6 +283,8 @@ impl TypeChecker {
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
             inferred_together: std::collections::HashSet::new(),
+            group_rigid: HashMap::new(),
+            rigid_alias: HashMap::new(),
             let_index: HashMap::new(),
             checking_let: None,
             impl_sigs: HashMap::new(),
@@ -710,6 +720,14 @@ impl TypeChecker {
     ) {
         // Inside the group each definition has one type.
         self.inferred_together.clear();
+        self.group_rigid.clear();
+        if component.members.len() > 1 {
+            for &i in &component.members {
+                for r in sigs[i].iter().flat_map(|sig| &sig.rigid) {
+                    self.group_rigid.insert(r.var, vec![i]);
+                }
+            }
+        }
         let mut awaited: Vec<(Symbol, Type)> = Vec::new();
         for &i in &component.members {
             match (&decls[i], &sigs[i]) {
@@ -780,9 +798,10 @@ impl TypeChecker {
                 let Some(bound) = env.lookup(*name).cloned() else {
                     continue;
                 };
-                if !is_value {
-                    self.keep_monomorphic(&bound.ty);
+                if *is_value {
+                    continue;
                 }
+                self.keep_monomorphic(&bound.ty);
                 // A function of the group gave it the type of one of
                 // its annotation variables (see `TypeChecker::bind`).
                 if let Some(r) = rigid_in(&self.apply(&bound.ty)) {
@@ -800,13 +819,15 @@ impl TypeChecker {
                 }
             }
         }
-        // A function's type may mention an annotation variable of another
-        // function of the group: the bounds are the group's.
+        // A definition's type may mention an annotation variable of
+        // another function of the group: the bounds are the group's, each
+        // on the variable its own stands for.
         let bounds: Vec<(TyVar, TraitKey)> = component
             .members
             .iter()
             .filter_map(|&i| sigs[i].as_ref())
             .flat_map(|sig| sig.bounds.iter().copied())
+            .map(|(var, bound)| (self.rigid_rep_var(var), bound))
             .collect();
         for &i in &component.members {
             if let (Decl::Fn(f), Some(sig)) = (&decls[i], &sigs[i])
@@ -824,12 +845,13 @@ impl TypeChecker {
                     if let Some(bound) = env.lookup(*name).cloned()
                         && bound.vars.is_empty()
                     {
-                        let scheme = self.generalize(&bound.ty);
+                        let scheme = self.generalize_fn(&bound.ty, &bounds);
                         env.define(*name, scheme);
                     }
                 }
             }
         }
+        self.group_rigid.clear();
         self.settle_bounds();
         self.inferred_together.clear();
         self.enter_level();
@@ -912,9 +934,9 @@ impl TypeChecker {
     /// use what those promise and nothing an impl's type happens to
     /// have.
     pub(super) fn check_decl_bodies(&mut self, decls: &mut [Decl], env: &mut TypeEnv) {
-        // One level deep, as every body: its variables are a
-        // declaration's, not an outer value's.
-        self.enter_level();
+        // Each body one level deep: its variables are a declaration's,
+        // not an outer value's, and what waits for one of them is dropped
+        // with it.
         for decl in decls.iter_mut() {
             match decl {
                 Decl::TraitImpl(ti) => {
@@ -928,8 +950,7 @@ impl TypeChecker {
                         else {
                             continue;
                         };
-                        self.check_body(method, &sig, env);
-                        self.finalize_deferred_checks();
+                        self.check_method_body(method, &sig, env);
                     }
                 }
                 Decl::Trait(t) => {
@@ -937,14 +958,20 @@ impl TypeChecker {
                         let Some(sig) = self.default_method_sig(t.name, method.name) else {
                             continue;
                         };
-                        self.check_body(method, &sig, env);
-                        self.finalize_deferred_checks();
+                        self.check_method_body(method, &sig, env);
                     }
                 }
                 _ => {}
             }
         }
+    }
+
+    fn check_method_body(&mut self, method: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
+        self.enter_level();
+        self.check_body(method, sig, env);
+        self.finalize_deferred_checks();
         self.exit_level();
+        self.settle_bounds();
     }
 }
 
