@@ -64,7 +64,7 @@ impl BuiltinEnv {
                 if let Some(target) = checker.impl_target(ti) {
                     checker.tables.builtin_derived.insert(target);
                 }
-                checker.register_trait_impl(ti, &mut scope);
+                checker.register_trait_impl(ti);
             }
         }
         checker.check_decl_bodies(&mut impls, &mut scope);

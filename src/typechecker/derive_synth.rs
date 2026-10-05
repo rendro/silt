@@ -444,32 +444,6 @@ impl TypeChecker {
         }
         decls.extend(synthesized);
     }
-
-    pub(super) fn synthesize_default_methods(&self, decls: &mut [Decl]) {
-        for decl in decls.iter_mut() {
-            let Decl::TraitImpl(ti) = decl else {
-                continue;
-            };
-            let Some(trait_info) = self.impl_trait(ti).and_then(|t| self.tables.traits.get(&t))
-            else {
-                // Unknown trait — let validate_trait_impls / dispatch
-                // surface the diagnostic; nothing to synthesize here.
-                continue;
-            };
-            let impl_method_names: std::collections::HashSet<Symbol> =
-                ti.methods.iter().map(|m| m.name).collect();
-            // Walk methods in the order they appear on the trait so the
-            // synthesized FnDecls land in a deterministic order.
-            for (method_name, _ty) in &trait_info.methods {
-                if impl_method_names.contains(method_name) {
-                    continue;
-                }
-                if let Some(default_fn) = trait_info.default_method_bodies.get(method_name) {
-                    ti.methods.push(default_fn.clone());
-                }
-            }
-        }
-    }
 }
 
 /// Synthesize `TraitDecl` AST nodes for the five built-in traits.
@@ -485,15 +459,14 @@ impl TypeChecker {
 ///
 /// The five built-ins:
 /// - `Display`: `fn display(self) -> String` (signature only).
-/// - `Compare`: `fn compare(self, other) -> Int` (signature only). The
-///   second parameter is left untyped so `register_trait_decl_inner`
-///   allocates a fresh TyVar — matching the pre-unification shape that
-///   used `Type::Fun([fresh, fresh], Int)`.
-/// - `Equal`:   `fn equal(self, other) -> Bool` (signature only).
+/// - `Compare`: `fn compare(self, other: Self) -> Int` (signature only).
+/// - `Equal`:   `fn equal(self, other: Self) -> Bool` (signature only).
 /// - `Hash`:    `fn hash(self) -> Int` (signature only).
 /// - `Error: Display { fn message(self) -> String { self.display() } }`.
-///   Carries a real default body so `synthesize_default_methods` can
-///   clone `self.display()` into impls that omit `message`.
+///   Carries a real default body, which an impl that omits `message`
+///   gets (`share_default_methods`). No program declares the trait, so
+///   no check resolves the body: the call is written resolved, to
+///   `Display`'s method.
 fn builtin_trait_decls() -> Vec<TraitDecl> {
     let dummy_span = Span::BUILTIN;
     let self_sym = intern("self");
@@ -507,13 +480,11 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         }
     }
     fn other_param(other_sym: Symbol, span: Span) -> Param {
-        // Leave `other`'s type as None so register_trait_decl_inner
-        // allocates a fresh TyVar — matches the pre-unification
-        // `Type::Fun([fresh_var(), fresh_var()], ret)` shape exactly.
+        // `other: Self`
         Param {
             kind: ParamKind::Data,
             pattern: Pattern::new(PatternKind::Ident(other_sym), span),
-            ty: None,
+            ty: Some(TypeExpr::new(TypeExprKind::SelfType, span)),
         }
     }
     fn unit_body(span: Span) -> Expr {
@@ -549,10 +520,12 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
     // Error.message default body: `self.display()`
     let error_default_body = {
         let self_ident = Expr::new(ExprKind::Ident(self_sym), dummy_span);
-        let field_access = Expr::new(
+        let mut field_access = Expr::new(
             ExprKind::FieldAccess(Box::new(self_ident), intern("display"), dummy_span),
             dummy_span,
         );
+        field_access.res =
+            crate::defs::builtin_trait_id("Display").map(|t| crate::defs::Res::Def(t.0));
         Expr::new(
             ExprKind::Call(Box::new(field_access), Vec::new()),
             dummy_span,
@@ -592,7 +565,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             span: dummy_span,
             doc: None,
         },
-        // trait Compare { fn compare(self, other) -> Int }
+        // trait Compare { fn compare(self, other: Self) -> Int }
         TraitDecl {
             name: intern("Compare"),
             name_span: dummy_span,
@@ -613,7 +586,7 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             span: dummy_span,
             doc: None,
         },
-        // trait Equal { fn equal(self, other) -> Bool }
+        // trait Equal { fn equal(self, other: Self) -> Bool }
         TraitDecl {
             name: intern("Equal"),
             name_span: dummy_span,

@@ -4,7 +4,7 @@
 -- stderr-contains: 'Channel'
 -- stderr-not-contains: required for string interpolation
 import channel
-fn show(x: a) -> String { x.display() }
+fn show(x) { x.display() }
 fn main() {
   let c = channel.new(1)
   println(show(c))

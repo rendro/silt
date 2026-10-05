@@ -610,6 +610,7 @@ impl TypeChecker {
             | Type::String
             | Type::Unit
             | Type::Var(_)
+            | Type::Rigid(_)
             | Type::Error
             | Type::Never => None,
         }

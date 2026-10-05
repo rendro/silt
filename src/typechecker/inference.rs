@@ -1,7 +1,7 @@
 //! Type inference for expressions, statements, and patterns.
 //!
 //! This module contains the core inference logic: infer_expr, infer_stmt,
-//! bind_pattern, check_pattern, and check_fn_body.
+//! and check_body.
 
 use super::infer::pattern::*;
 use super::suggest::suggest_similar;
@@ -182,44 +182,106 @@ pub(super) fn format_unknown_method_message(
 }
 
 impl TypeChecker {
-    /// B4 helper: does the enclosing function's active where-clause
-    /// constraints cover `trait_name` for the type variable at the
-    /// resolved call-site tyvar? We can't simply walk `apply` from the
-    /// callee's tyvar, because `unify` may bind the enclosing fn's
-    /// constraint-var to the callee's fresh var (giving a chain
-    /// `enclosing_tv → callee_tv`); `apply` on the callee side returns
-    /// `callee_tv` and active_constraints is keyed on `enclosing_tv`.
-    /// So we iterate the active constraints and, for each `(tv, traits)`,
-    /// check whether `apply(Type::Var(tv))` lands on the same resolved
-    /// tyvar as `resolved`, on either side of the chain.
-    fn covered_by_active_constraint(&self, resolved: &Type, trait_name: TraitKey) -> bool {
-        let resolved = self.apply(resolved);
-        let resolved_var = match &resolved {
-            Type::Var(v) => *v,
-            _ => return false,
-        };
-        for (tv, traits) in &self.active_constraints {
-            if !traits.contains(&trait_name) {
-                continue;
+    /// Whether the bounds in scope say that the annotation variable `r`
+    /// implements `trait_name`: a `where` clause of the declaration being
+    /// checked, or a supertrait of one.
+    pub(super) fn bound_in_scope(&self, r: RigidId, trait_name: TraitKey) -> bool {
+        self.active_constraints
+            .get(&r.var)
+            .is_some_and(|traits| traits.contains(&trait_name))
+    }
+
+    /// A use of a scheme or of an impl owes `tyvar: trait_name`, with
+    /// the trait arguments `bound_args`. A type that is known is checked
+    /// now. An annotation variable must have the bound declared. A
+    /// variable still unknown is checked when the definitions being
+    /// checked are done (`finalize_deferred_checks`): by then it is
+    /// known, or it is generalised and the bound is its scheme's.
+    pub(super) fn owe_bound(
+        &mut self,
+        tyvar: TyVar,
+        trait_name: TraitKey,
+        bound_args: Vec<Type>,
+        callee_fn_name: Option<Symbol>,
+        span: Span,
+    ) {
+        let resolved = self.apply(&Type::Var(tyvar));
+        match &resolved {
+            Type::Error | Type::Never => {}
+            Type::Var(v) => {
+                self.pending_where_constraints.push(PendingWhereConstraint {
+                    tyvar: *v,
+                    trait_name,
+                    callee_fn_name,
+                    span,
+                    bound_trait_args: bound_args,
+                });
             }
-            // Direct match: the enclosing fn's constraint tyvar is
-            // itself the resolved tyvar.
-            if *tv == resolved_var {
-                return true;
-            }
-            // Transitive: apply the enclosing constraint's tyvar and
-            // see if it lands on the same resolved tyvar as the call
-            // site. This handles the common unify direction where
-            // the enclosing tyvar gets bound to the callee's fresh
-            // var.
-            let applied = self.apply(&Type::Var(*tv));
-            if let Type::Var(v) = applied
-                && v == resolved_var
-            {
-                return true;
-            }
+            Type::Rigid(r) => self.require_declared_bound(*r, trait_name, callee_fn_name, span),
+            // Recursively walk the matched impl's where clauses against
+            // the resolved type's arguments.
+            _ => self.verify_trait_obligation(trait_name, &bound_args, &resolved, span),
         }
-        false
+    }
+
+    /// Report that the declaration being checked does not declare
+    /// `r: trait_name`, which a call in it needs, unless it does.
+    pub(super) fn require_declared_bound(
+        &mut self,
+        r: RigidId,
+        trait_name: TraitKey,
+        callee_fn_name: Option<Symbol>,
+        span: Span,
+    ) {
+        if self.bound_in_scope(r, trait_name) {
+            return;
+        }
+        let fn_label = callee_fn_name
+            .map(|s| format!("'{}'", resolve(s)))
+            .unwrap_or_else(|| "<callee>".to_string());
+        self.error(
+            Code::MissingConstraint,
+            format!(
+                "enclosing function does not declare constraint required by call to {fn_label}: `{}: {trait_name}`",
+                r.name
+            ),
+            span,
+        );
+    }
+
+    /// The methods named `field` that the bounds in scope give the
+    /// annotation variable `r`, each with its trait and its type: `Self`
+    /// is `r`, and the trait's parameters are what the bound says
+    /// (`where a: TryInto(Int)`).
+    pub(super) fn bound_methods(&mut self, r: RigidId, field: Symbol) -> Vec<(TraitKey, Type)> {
+        let trait_names = self
+            .active_constraints
+            .get(&r.var)
+            .cloned()
+            .unwrap_or_default();
+        let mut matches: Vec<(TraitKey, Type)> = Vec::new();
+        for trait_name in trait_names {
+            let Some(info) = self.tables.traits.get(&trait_name) else {
+                continue;
+            };
+            let Some((_, method_ty)) = info.methods.iter().find(|(n, _)| *n == field) else {
+                continue;
+            };
+            let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+            mapping.insert(info.self_var, Type::Rigid(r));
+            if let Some(bound_args) = self.trait_arg_bindings.get(&(r.var, trait_name))
+                && bound_args.len() == info.param_var_ids.len()
+            {
+                for (&tv, arg) in info.param_var_ids.iter().zip(bound_args) {
+                    mapping.insert(tv, substitute_vars(arg, &self.rigid_of));
+                }
+            }
+            matches.push((trait_name, substitute_vars(method_ty, &mapping)));
+        }
+        if let Some(t) = self.forced_trait {
+            matches.retain(|(n, _)| *n == t);
+        }
+        matches
     }
 
     /// Report a call of `method`, of the trait `trait_name` another module
@@ -389,32 +451,16 @@ impl TypeChecker {
                     })
                     .unwrap_or_default()
             };
-            match &resolved {
-                Type::Error | Type::Never => {}
-                Type::Var(v) => {
-                    // Still a fresh tyvar — either the caller will unify
-                    // it with a concrete receiver (handled by finalize)
-                    // or the enclosing fn already declared the same
-                    // constraint via its own where clause (handled now).
-                    if !self.covered_by_active_constraint(&resolved, trait_name) {
-                        self.pending_where_constraints.push(PendingWhereConstraint {
-                            tyvar: *v,
-                            trait_name,
-                            callee_fn_name: Some(method_name),
-                            span,
-                            active_snapshot: self.active_constraints.clone(),
-                            param_tyvars: self.current_fn_param_tyvars.clone(),
-                            bound_trait_args: bound_args,
-                        });
-                    }
-                }
-                _ => {
-                    // Concrete receiver — check trait impl exists now,
-                    // recursively walking the impl's own where clauses
-                    // against the receiver's type arguments.
-                    self.verify_trait_obligation(trait_name, &bound_args, &resolved, span);
+            // A receiver still unknown may be generalised with the
+            // definition being checked: the bound is then its scheme's.
+            if let Type::Var(v) = &resolved {
+                self.bound_log.push((*v, trait_name));
+                if !bound_args.is_empty() {
+                    self.trait_arg_bindings
+                        .insert((*v, trait_name), bound_args.clone());
                 }
             }
+            self.owe_bound(tv, trait_name, bound_args, Some(method_name), span);
         }
         self.apply(&instantiated_ty)
     }
@@ -438,12 +484,24 @@ impl TypeChecker {
     ) -> Option<Type> {
         let inner = self.apply(inner);
         match &inner {
-            Type::Var(v) => {
-                // Look up trait methods via the constraints on `v`. The
-                // where-clause guarantees at least one impl exists at
-                // every call site; dispatch happens at runtime via the
-                // descriptor's carried type name.
-                let Some(trait_names) = self.active_constraints.get(v).cloned() else {
+            // A type still unknown has no methods to look up.
+            Type::Var(_) => {
+                self.error(
+                    Code::UnknownMethod,
+                    format!(
+                        "no method '{field}' on `type {inner}` — \
+                         the type variable has no trait constraints. \
+                         Add a `where` clause such as `where {inner}: SomeTrait`."
+                    ),
+                    span,
+                );
+                None
+            }
+            Type::Rigid(r) => {
+                // The methods of the variable's bounds. The `where`
+                // clause promises an impl at every call; the call finds
+                // it at run time by the type the descriptor carries.
+                let Some(trait_names) = self.active_constraints.get(&r.var).cloned() else {
                     self.error(
                         Code::UnknownMethod,
                         format!(
@@ -455,35 +513,7 @@ impl TypeChecker {
                     );
                     return None;
                 };
-                let mut matches: Vec<(TraitKey, Type)> = Vec::new();
-                for trait_name in &trait_names {
-                    if let Some(trait_info) = self.tables.traits.get(trait_name).cloned()
-                        && let Some((_, method_ty)) =
-                            trait_info.methods.iter().find(|(n, _)| *n == field)
-                    {
-                        // Substitute trait-level parameters with the
-                        // concrete args supplied by the enclosing where
-                        // clause (`where v: Trait(X)`). Without this,
-                        // `a.try_into()` on `a: TryInto(Int)` would
-                        // return the trait's template `b` TyVar instead
-                        // of `Int`.
-                        let substituted = if let Some(bound_args) =
-                            self.trait_arg_bindings.get(&(*v, *trait_name))
-                            && bound_args.len() == trait_info.param_var_ids.len()
-                        {
-                            let mapping: HashMap<TyVar, Type> = trait_info
-                                .param_var_ids
-                                .iter()
-                                .zip(bound_args.iter())
-                                .map(|(&tv, arg)| (tv, arg.clone()))
-                                .collect();
-                            substitute_vars(method_ty, &mapping)
-                        } else {
-                            method_ty.clone()
-                        };
-                        matches.push((*trait_name, substituted));
-                    }
-                }
+                let matches = self.bound_methods(*r, field);
                 if matches.is_empty() {
                     let traits_str = trait_names
                         .iter()
@@ -499,9 +529,6 @@ impl TypeChecker {
                         span,
                     );
                     return None;
-                }
-                if let Some(t) = self.forced_trait {
-                    matches.retain(|(n, _)| *n == t);
                 }
                 if matches.len() > 1 {
                     let trait_list = matches
@@ -519,15 +546,11 @@ impl TypeChecker {
                     );
                     return None;
                 }
-                // Instantiate the trait-method template with fresh vars,
-                // then rebind `Self` to the descriptor's inner type.
-                // TraitInfo.methods stores bare Types whose TyVars were
-                // allocated once at register_trait_decl; instantiate so
-                // repeated call sites don't share bindings.
+                // What the method leaves general (its own type
+                // variables) is fresh at each call.
                 self.method_trait = Some(matches[0].0);
                 let instantiated = self.instantiate_method_type(&matches[0].1);
-                let resolved = self.apply(&instantiated);
-                Some(resolved)
+                Some(self.apply(&instantiated))
             }
             _ => {
                 // Concrete inner — look up via the method table, keyed on
@@ -601,22 +624,11 @@ impl TypeChecker {
 
     // ── Check function body ─────────────────────────────────────────
 
-    pub(super) fn check_fn_body(&mut self, f: &mut FnDecl, env: &mut TypeEnv) {
-        let _ = self.check_fn_body_with_name(f, env, f.name);
-    }
-
-    /// Like `check_fn_body`, but looks up the registered scheme under an
-    /// explicit name. Used for trait impl methods, which are registered in
-    /// the environment under `TargetType.method_name` rather than the bare
-    /// `method_name`. Returns the body-constrained function type (with all
-    /// substitutions applied) so callers can write it back into derived
-    /// tables like `method_table`.
-    pub(super) fn check_fn_body_with_name(
-        &mut self,
-        f: &mut FnDecl,
-        env: &mut TypeEnv,
-        lookup_name: Symbol,
-    ) -> Option<Type> {
+    /// Check the body of `f` against `sig`, its signature as the body
+    /// sees it: the parameters are bound to the signature's types, the
+    /// annotation variables are rigid and bounded as the `where` clauses
+    /// say, and the body's type is the signature's result.
+    pub(super) fn check_body(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
         // Validate where clauses
         for wc in &f.where_clauses {
             // A bound the resolver resolved to nothing: it reported why.
@@ -659,18 +671,12 @@ impl TypeChecker {
             self.check_where_bound_arity(trait_name, trait_args.len(), f.span);
         }
 
-        // Look up the function's registered type and instantiate it.
-        // A failed lookup has already been reported by an earlier
-        // pass, so no diagnostic is added here; `?` hands `None`
-        // back to the caller.
-        let fn_scheme = env.lookup(lookup_name)?.clone();
-        let (fn_type, constraints) = self.instantiate_with_constraints(&fn_scheme);
-        let fn_type = self.apply(&fn_type);
-
-        let (param_types, ret_type) = match &fn_type {
-            Type::Fun(params, ret) => (params.clone(), *ret.clone()),
-            _ => return None,
-        };
+        let param_types = sig.params.clone();
+        let ret_type = sig.ret.clone();
+        for r in &sig.rigid {
+            self.rigid_of.insert(r.var, Type::Rigid(*r));
+        }
+        let prev_names = std::mem::replace(&mut self.sig_names, sig.names.clone());
 
         // Populate active constraints so method resolution on type variables
         // can check trait methods during body inference. Each declared
@@ -685,8 +691,7 @@ impl TypeChecker {
         // supertrait reference's arg-list through Sub's param → arg map
         // and stash the result in `trait_arg_bindings` so later
         // descriptor method resolution sees Super's concrete args.
-        let prev_constraints = std::mem::take(&mut self.active_constraints);
-        for (tv, trait_name) in &constraints {
+        for (tv, trait_name) in &sig.bounds {
             for expanded in self.expand_with_supertraits(&[*trait_name]) {
                 let entry = self.active_constraints.entry(*tv).or_default();
                 if !entry.contains(&expanded) {
@@ -729,37 +734,6 @@ impl TypeChecker {
             }
         }
 
-        // Round 64 item 6B: record the fn name we're checking so the
-        // Call arm can detect recursive call sites and attach the
-        // polymorphic-recursion-hint note when an unannotated fn's
-        // body recurses with a different concrete type. We track the
-        // bare AST decl name (`f.name`) — recursive references inside
-        // the body always use that name, not the method-table-style
-        // `Type.method` lookup key used for trait impls.
-        let prev_fn_name = self.current_fn_name.replace(f.name);
-
-        // B4: capture the instantiated param tyvars so call-site where-
-        // clause checks can determine whether a pending obligation
-        // touches the enclosing fn's own polymorphism (vs. an unrelated
-        // top-level or downstream Var that will resolve via pass-3
-        // narrowing). We store just the Var IDs — concrete params are
-        // not of interest here.
-        let prev_fn_param_tyvars = std::mem::take(&mut self.current_fn_param_tyvars);
-        for pt in &param_types {
-            let applied = self.apply(pt);
-            match &applied {
-                Type::Var(v) => self.current_fn_param_tyvars.push(*v),
-                Type::Generic(name, args)
-                    if name.is_builtin(crate::defs::TYPE_OF) && args.len() == 1 =>
-                {
-                    if let Type::Var(v) = self.apply(&args[0]) {
-                        self.current_fn_param_tyvars.push(v);
-                    }
-                }
-                _ => {}
-            }
-        }
-
         // Bind parameters
         // Soundness: reject duplicate binding names across the whole fn
         // param list before we start defining them in the env. Without
@@ -795,21 +769,9 @@ impl TypeChecker {
         self.retarget_ok_wrap_fixes(ret_unify_err_count, &f.body);
         self.note_qmark_requirement_on_ret_mismatch(ret_unify_err_count, &ret_type);
 
-        // Record the body-constrained function type for scheme narrowing
-        let constrained_params: Vec<Type> = param_types.iter().map(|t| self.apply(t)).collect();
-        let constrained_ret = self.apply(&ret_type);
-        let constrained_fn = Type::Fun(constrained_params, Box::new(constrained_ret));
-        self.fn_body_types
-            .insert(lookup_name, constrained_fn.clone());
-
-        // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
-        self.active_constraints = prev_constraints;
-        self.current_fn_param_tyvars = prev_fn_param_tyvars;
-        self.current_fn_name = prev_fn_name;
-
-        Some(constrained_fn)
+        self.sig_names = prev_names;
     }
 
     /// The Ok-wrap fixes of the diagnostics from `from` on that are about
@@ -965,6 +927,23 @@ impl TypeChecker {
             && !matches!(callee.res, Some(crate::defs::Res::Error))
     }
 
+    /// The name a callee is written with, for a message about a call of
+    /// it: `f`, or `m.f` for a member of a module.
+    fn callee_label(callee: &Expr) -> Option<Symbol> {
+        match &callee.kind {
+            ExprKind::Ident(name) => Some(*name),
+            ExprKind::FieldAccess(obj, field, _)
+                if matches!(obj.res, Some(crate::defs::Res::Module(_))) =>
+            {
+                match &obj.kind {
+                    ExprKind::Ident(module) => Some(intern(&format!("{module}.{field}"))),
+                    _ => Some(*field),
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Whether the function that `callee` names declares its last
     /// parameter optional (see `Scheme::optional_last_param`).
     ///
@@ -996,6 +975,19 @@ impl TypeChecker {
             }
             _ => None,
         }
+    }
+
+    /// Whether a name in the value of the top-level `let` being checked
+    /// names a top-level `let` of the module declared after it.
+    fn reads_later_let(&self, res: Option<crate::defs::Res>, name: Symbol) -> bool {
+        let Some(current) = self.checking_let else {
+            return false;
+        };
+        self.res_def(res).is_some_and(|def| {
+            def.module == self.module
+                && def.kind == crate::defs::DefKind::Let
+                && self.let_index.get(&name).is_some_and(|i| *i > current)
+        })
     }
 
     // ── Expression type inference ───────────────────────────────────
@@ -1232,6 +1224,22 @@ impl TypeChecker {
                     // The resolver reported the name, or it comes from a
                     // module that failed to load.
                     Type::Error
+                } else if self.reads_later_let(expr.res, name) {
+                    // A top-level `let` runs before the ones declared
+                    // after it: the value of a later one is not there
+                    // yet.
+                    self.errors.push(
+                        Diagnostic::error(
+                            Code::UndefinedVariable,
+                            span,
+                            format!("undefined variable '{name}'"),
+                        )
+                        .with_help(format!(
+                            "`{name}` is a top-level `let` declared after this one, and \
+                             top-level `let`s run in the order they are written"
+                        )),
+                    );
+                    Type::Error
                 } else if let Some(scheme) = self
                     .def_scheme(expr.res, env)
                     .or_else(|| env.lookup(name).cloned())
@@ -1374,7 +1382,7 @@ impl TypeChecker {
                     // A concrete type with no such method (a type
                     // variable's case is reported above).
                     let inner = self.apply(&gargs[0]);
-                    if !matches!(inner, Type::Var(_) | Type::Error) {
+                    if !matches!(inner, Type::Var(_) | Type::Rigid(_) | Type::Error) {
                         self.no_type_method(&format!("{inner}"), field, span);
                     }
                     return Type::Error;
@@ -1661,134 +1669,133 @@ impl TypeChecker {
                         );
                         Type::Error
                     }
-                    Type::Var(v) => {
-                        // Check if this type variable has trait constraints
-                        if let Some(trait_names) = self.active_constraints.get(v).cloned() {
-                            // Collect all traits that provide this method
-                            let mut matches: Vec<(TraitKey, Type)> = Vec::new();
-                            for trait_name in &trait_names {
-                                if let Some(trait_info) =
-                                    self.tables.traits.get(trait_name).cloned()
-                                    && let Some((_, method_ty)) =
-                                        trait_info.methods.iter().find(|(n, _)| *n == field)
-                                {
-                                    matches.push((*trait_name, method_ty.clone()));
-                                }
-                            }
-                            if let Some(t) = self.forced_trait {
-                                matches.retain(|(n, _)| *n == t);
-                            }
-                            if matches.len() > 1 {
-                                let trait_list = matches
-                                    .iter()
-                                    .map(|(name, _)| self.show_trait(*name))
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                self.error(Code::AmbiguousMethod,
-                                    format!(
-                                        "ambiguous method '{field}': provided by multiple traits ({trait_list})"
-                                    ),
-                                    span,
-                                );
-                                Type::Error
-                            } else if let Some((trait_name, method_ty)) = matches.first() {
-                                self.last_field_access_was_method = true;
-                                self.method_trait = Some(*trait_name);
-                                // Instantiate with fresh TyVars rather than
-                                // returning the trait declaration's template
-                                // type directly. TraitInfo.methods stores
-                                // bare Type values whose TyVars were allocated
-                                // once at register_trait_decl time and shared
-                                // across all call sites. Without instantiation,
-                                // unification at the downstream Call arm binds
-                                // those shared template TyVars in self.tables.vars.subst,
-                                // so a second constrained call site on a
-                                // different concrete type sees the first
-                                // site's bindings instead of polymorphic vars.
-                                // This surfaces observably when trait methods
-                                // have polymorphic return types (beyond Self):
-                                // first site binds the return TyVar to one
-                                // concrete type, second site inherits it and
-                                // produces spurious "type mismatch" errors.
-                                let instantiated = self.instantiate_method_type(method_ty);
-                                let resolved = self.apply(&instantiated);
-                                expr.ty = Some(resolved.clone());
-                                return resolved;
-                            } else {
-                                // Method not found on any constrained trait — error
-                                let traits_str = trait_names
-                                    .iter()
-                                    .map(|s| format!("{s}"))
-                                    .collect::<Vec<_>>()
-                                    .join(" + ");
-                                self.error(Code::UnknownMethod,
-                                    format!(
-                                        "no method '{field}' found in trait constraints ({traits_str})"
-                                    ),
-                                    span,
-                                );
-                                Type::Error
-                            }
-                        } else {
-                            // B3 (row polymorphism): unconstrained type
-                            // variable + field access — if the field name
-                            // is not a known method (registered impl OR
-                            // declared on any trait), generate an open
-                            // anon-record constraint so
-                            // `fn first_name(p) { p.name }` infers
-                            // `p: {name: a, ...r} -> a`. When the field
-                            // is a method name, fall back to the legacy
-                            // deferred-check path so trait dispatch keeps
-                            // working unchanged.
-                            // A method only another module's private trait
-                            // provides cannot be called here, whatever the
-                            // receiver turns out to be.
-                            if let Some(trait_name) = self.only_private_provider(field) {
-                                self.private_method(trait_name, field, span);
-                                expr.ty = Some(Type::Error);
-                                return Type::Error;
-                            }
-                            // A call that stays polymorphic names the one
-                            // trait the module sees with a method of the
-                            // name, when there is one: the VM looks the
-                            // method up in that trait's impls.
-                            let mut seen = self
-                                .tables
-                                .traits
+                    Type::Rigid(r) => {
+                        // An annotation variable has the methods of its
+                        // bounds, and nothing else: no field, no method
+                        // of a trait the declaration does not promise.
+                        let trait_names = self
+                            .active_constraints
+                            .get(&r.var)
+                            .cloned()
+                            .unwrap_or_default();
+                        let matches = self.bound_methods(*r, field);
+                        if matches.len() > 1 {
+                            let trait_list = matches
                                 .iter()
-                                .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
-                                .map(|(t, _)| *t)
-                                .filter(|t| self.sees_trait(*t));
-                            if let (Some(t), None) = (seen.next(), seen.next()) {
-                                self.method_trait = Some(t);
-                            }
-                            let result_ty = self.fresh_var();
-                            let is_known_impl_method =
-                                self.tables.method_table.keys().any(|(_, m)| *m == field);
-                            let is_declared_trait_method = self
-                                .tables
-                                .traits
-                                .values()
-                                .any(|info| info.methods.iter().any(|(n, _)| *n == field));
-                            if !is_known_impl_method && !is_declared_trait_method {
-                                let row_var = self.fresh_tyvar_id();
-                                use std::collections::BTreeMap;
-                                let mut fmap = BTreeMap::new();
-                                fmap.insert(field, result_ty.clone());
-                                let row_ty = Type::AnonRecord {
-                                    fields: fmap,
-                                    tail: RowTail::Var(row_var),
-                                };
-                                self.unify(&obj_ty, &row_ty, span);
-                            }
-                            self.pending_field_accesses.push((
-                                obj_ty.clone(),
-                                field,
-                                result_ty.clone(),
+                                .map(|(name, _)| self.show_trait(*name))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            self.error(
+                                Code::AmbiguousMethod,
+                                format!(
+                                    "ambiguous method '{field}': provided by multiple traits ({trait_list})"
+                                ),
                                 span,
-                            ));
-                            result_ty
+                            );
+                            Type::Error
+                        } else if let Some((trait_name, method_ty)) = matches.first() {
+                            self.last_field_access_was_method = true;
+                            self.method_trait = Some(*trait_name);
+                            // What the method leaves general (its own
+                            // type variables) is fresh at each call.
+                            let instantiated = self.instantiate_method_type(method_ty);
+                            let resolved = self.apply(&instantiated);
+                            expr.ty = Some(resolved.clone());
+                            return resolved;
+                        } else if trait_names.is_empty() {
+                            self.errors.push(
+                                Diagnostic::error(
+                                    Code::UnknownMethod,
+                                    span,
+                                    format!(
+                                        "no field or method '{field}' on a value of type `{}`: \
+                                         the type variable has no trait bound",
+                                        r.name
+                                    ),
+                                )
+                                .with_help(format!(
+                                    "a value of type `{0}` has only the methods its bounds \
+                                     promise: add `where {0}: SomeTrait`",
+                                    r.name
+                                )),
+                            );
+                            Type::Error
+                        } else {
+                            // Method not found on any constrained trait — error
+                            let traits_str = trait_names
+                                .iter()
+                                .map(|s| format!("{s}"))
+                                .collect::<Vec<_>>()
+                                .join(" + ");
+                            self.error(
+                                Code::UnknownMethod,
+                                format!(
+                                    "no method '{field}' found in trait constraints ({traits_str})"
+                                ),
+                                span,
+                            );
+                            Type::Error
                         }
+                    }
+                    Type::Var(_) => {
+                        // B3 (row polymorphism): unconstrained type
+                        // variable + field access — if the field name
+                        // is not a known method (registered impl OR
+                        // declared on any trait), generate an open
+                        // anon-record constraint so
+                        // `fn first_name(p) { p.name }` infers
+                        // `p: {name: a, ...r} -> a`. When the field
+                        // is a method name, fall back to the legacy
+                        // deferred-check path so trait dispatch keeps
+                        // working unchanged.
+                        // A method only another module's private trait
+                        // provides cannot be called here, whatever the
+                        // receiver turns out to be.
+                        if let Some(trait_name) = self.only_private_provider(field) {
+                            self.private_method(trait_name, field, span);
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
+                        // A call that stays polymorphic names the one
+                        // trait the module sees with a method of the
+                        // name, when there is one: the VM looks the
+                        // method up in that trait's impls.
+                        let mut seen = self
+                            .tables
+                            .traits
+                            .iter()
+                            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
+                            .map(|(t, _)| *t)
+                            .filter(|t| self.sees_trait(*t));
+                        if let (Some(t), None) = (seen.next(), seen.next()) {
+                            self.method_trait = Some(t);
+                        }
+                        let result_ty = self.fresh_var();
+                        let is_known_impl_method =
+                            self.tables.method_table.keys().any(|(_, m)| *m == field);
+                        let is_declared_trait_method = self
+                            .tables
+                            .traits
+                            .values()
+                            .any(|info| info.methods.iter().any(|(n, _)| *n == field));
+                        if !is_known_impl_method && !is_declared_trait_method {
+                            let row_var = self.fresh_tyvar_id();
+                            use std::collections::BTreeMap;
+                            let mut fmap = BTreeMap::new();
+                            fmap.insert(field, result_ty.clone());
+                            let row_ty = Type::AnonRecord {
+                                fields: fmap,
+                                tail: RowTail::Var(row_var),
+                            };
+                            self.unify(&obj_ty, &row_ty, span);
+                        }
+                        self.pending_field_accesses.push((
+                            obj_ty.clone(),
+                            field,
+                            result_ty.clone(),
+                            span,
+                        ));
+                        result_ty
                     }
                     Type::Error => {
                         // Prior error — propagate to prevent cascading false positives
@@ -2041,7 +2048,7 @@ impl TypeChecker {
                         let resolved = self.apply(&t);
                         match &resolved {
                             Type::Int | Type::Float => {}
-                            Type::Error | Type::Never => {}
+                            Type::Error | Type::Never | Type::Rigid(_) => {}
                             Type::Var(_) => {
                                 // B5: unresolved — defer until after all bodies are
                                 // inferred. If still a Var at that point, it's an
@@ -2087,6 +2094,7 @@ impl TypeChecker {
                         } else {
                             None
                         };
+                        let callee_label = Self::callee_label(callee);
                         // Capture arg spans before mutable inference
                         let arg_spans: Vec<Span> = call_args.iter().map(|a| a.span).collect();
                         // Same signature fact the Call arm reads: may the
@@ -2162,44 +2170,14 @@ impl TypeChecker {
                             _ => self.fresh_var(),
                         };
 
-                        // Check where clause constraints using instantiated TyVars
+                        // The callee's bounds, on its instantiated variables.
                         for (tyvar, trait_name) in &where_constraints {
-                            let resolved = self.apply(&Type::Var(*tyvar));
                             let bound_args = self
                                 .trait_arg_bindings
                                 .get(&(*tyvar, *trait_name))
                                 .cloned()
                                 .unwrap_or_default();
-                            if self.type_name_for_impl(&resolved).is_some() {
-                                // Recursively walk the matched impl's where
-                                // clauses against the resolved type's args.
-                                self.verify_trait_obligation(
-                                    *trait_name,
-                                    &bound_args,
-                                    &resolved,
-                                    span,
-                                );
-                            } else if matches!(&resolved, Type::Var(_))
-                                && !self.covered_by_active_constraint(&resolved, *trait_name)
-                            {
-                                // B4: defer — the tyvar may still resolve
-                                // to a concrete type in a later body
-                                // (e.g. a lambda's param pinned after
-                                // the enclosing function body unifies
-                                // it at the top-level call site). We
-                                // re-check in `finalize_deferred_checks`.
-                                if let Type::Var(v) = resolved {
-                                    self.pending_where_constraints.push(PendingWhereConstraint {
-                                        tyvar: v,
-                                        trait_name: *trait_name,
-                                        callee_fn_name,
-                                        span,
-                                        active_snapshot: self.active_constraints.clone(),
-                                        param_tyvars: self.current_fn_param_tyvars.clone(),
-                                        bound_trait_args: bound_args,
-                                    });
-                                }
-                            }
+                            self.owe_bound(*tyvar, *trait_name, bound_args, callee_label, span);
                         }
 
                         result_ty
@@ -2353,7 +2331,7 @@ impl TypeChecker {
                 // B2: annotation arity errors should carry the annotation's
                 // own span, not a zero-span sentinel.
                 let prev_type_span = self.current_type_anno_span.replace(type_expr.span);
-                let declared = self.resolve_type_expr(type_expr, &mut HashMap::new());
+                let declared = self.resolve_type_expr(type_expr, &mut self.sig_names.clone());
                 self.current_type_anno_span = prev_type_span;
                 self.unify(&inner_ty, &declared, span);
                 declared
@@ -2366,6 +2344,7 @@ impl TypeChecker {
                 } else {
                     None
                 };
+                let callee_label = Self::callee_label(callee);
                 // Whether the named callee's signature lets the call leave
                 // out the last argument. Read before the callee is
                 // inferred, which needs the callee mutably.
@@ -2451,20 +2430,14 @@ impl TypeChecker {
                 let arg_types: Vec<Type> =
                     args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
 
-                // Round 64 item 6B: detect a recursive call to the
-                // enclosing fn so we can (1) attach a polymorphic-
-                // recursion hint if the unify below fails AND the
-                // enclosing fn is not fully annotated, and (2) flag
-                // the enclosing fn as "recursive" so the narrowing
-                // pass in `check_program` knows to lock its scheme
-                // when it's also fully annotated.
-                let is_recursive_call = match (callee_fn_name, self.current_fn_name) {
-                    (Some(c), Some(cur)) => c == cur,
-                    _ => false,
-                };
-                if is_recursive_call && let Some(cur) = self.current_fn_name {
-                    self.recursive_fn_names.insert(cur);
-                }
+                // A call of a definition whose type is being inferred with
+                // the caller's (itself, or one it is mutually recursive
+                // with): inside the group the callee has one type, so a
+                // mismatch here may be a use at a second type.
+                let recursive_callee = callee_fn_name.filter(|name| {
+                    matches!(callee.res, Some(crate::defs::Res::Def(_)))
+                        && self.inferred_together.contains(name)
+                });
                 let recursion_hint_span = span;
                 let pre_call_error_count = self.errors.len();
 
@@ -2540,50 +2513,18 @@ impl TypeChecker {
                     }
                 };
 
-                // Check where clause constraints using instantiated TyVars
+                // The callee's bounds, on its instantiated variables.
                 for (tyvar, trait_name) in &where_constraints {
-                    let resolved = self.apply(&Type::Var(*tyvar));
                     let bound_args = self
                         .trait_arg_bindings
                         .get(&(*tyvar, *trait_name))
                         .cloned()
                         .unwrap_or_default();
-                    if self.type_name_for_impl(&resolved).is_some() {
-                        // Recursively walk the matched impl's where clauses
-                        // against the resolved type's arguments.
-                        self.verify_trait_obligation(*trait_name, &bound_args, &resolved, span);
-                    } else if matches!(&resolved, Type::Var(_))
-                        && !self.covered_by_active_constraint(&resolved, *trait_name)
-                    {
-                        // B4: defer — the tyvar may still resolve to a
-                        // concrete type in a later body. See the pipe
-                        // arm for details; both sites push to the same
-                        // pending list re-examined by finalize.
-                        if let Type::Var(v) = resolved {
-                            self.pending_where_constraints.push(PendingWhereConstraint {
-                                tyvar: v,
-                                trait_name: *trait_name,
-                                callee_fn_name,
-                                span,
-                                active_snapshot: self.active_constraints.clone(),
-                                param_tyvars: self.current_fn_param_tyvars.clone(),
-                                bound_trait_args: bound_args,
-                            });
-                        }
-                    }
+                    self.owe_bound(*tyvar, *trait_name, bound_args, callee_label, span);
                 }
 
-                // Round 64 item 6B: if this Call recursed into the
-                // enclosing fn (callee == current_fn_name) and produced
-                // a fresh diagnostic, AND the enclosing fn isn't fully
-                // annotated, attach a help note pointing the user at
-                // the polymorphic-recursion escape hatch. The note is
-                // only emitted once per recursive call site, after the
-                // mismatch error is in place.
-                if is_recursive_call
+                if let Some(callee_name) = recursive_callee
                     && self.errors.len() > pre_call_error_count
-                    && let Some(cur) = self.current_fn_name
-                    && !self.fully_annotated_fn_names.contains(&cur)
                 {
                     self.errors.push(
                         Diagnostic::warning(
@@ -2592,7 +2533,7 @@ impl TypeChecker {
                             format!(
                                 "'{}' is recursing with arguments of a different type \
                                  than its inferred signature",
-                                resolve(cur)
+                                resolve(callee_name)
                             ),
                         )
                         .with_help("add explicit type annotations to enable polymorphic recursion"),
@@ -2615,7 +2556,7 @@ impl TypeChecker {
                             // B2: annotation arity errors carry the
                             // annotation's own span.
                             let prev_type_span = self.current_type_anno_span.replace(te.span);
-                            let resolved = self.resolve_type_expr(te, &mut HashMap::new());
+                            let resolved = self.resolve_type_expr(te, &mut self.sig_names.clone());
                             self.current_type_anno_span = prev_type_span;
                             resolved
                         } else {
@@ -2637,7 +2578,7 @@ impl TypeChecker {
                 // frame (the lambda's), so `?` inside a lambda must
                 // validate against the LAMBDA's return type, not the
                 // enclosing named fn's. Establish a fresh return-type
-                // context for the body, mirroring check_fn_body_with_name.
+                // context for the body, mirroring check_body.
                 // Without this, `{ x -> x? + 1 }` was checked against the
                 // outer fn's return type and a Variant escaped into a
                 // List(Int) at runtime.
@@ -2922,15 +2863,15 @@ impl TypeChecker {
                     // Two-pronged fix:
                     //  a) Push each (base, field_name) pair to the B4
                     //     `pending_field_accesses` pool so that when the
-                    //     base DOES narrow to a concrete record (e.g. via
-                    //     scheme narrowing or re-check), the standard
-                    //     finalize path validates the field.
+                    //     base DOES resolve to a concrete record by the
+                    //     time the definitions being checked are done,
+                    //     the standard finalize path validates the field.
                     //  b) Eagerly reject field names that aren't declared
                     //     on ANY record type in the program. For truly
                     //     polymorphic bases this is the only compile-time
                     //     signal we get — if the field name is a typo
                     //     that doesn't match any declared record field,
-                    //     no call-site narrowing can rescue it. This is
+                    //     no call can rescue it. This is
                     //     narrow enough to avoid false positives on
                     //     valid polymorphic updates like `r.{ age: n }`
                     //     (age IS declared on at least one record).
@@ -3521,7 +3462,13 @@ impl TypeChecker {
         match stmt {
             Stmt::Let { pattern, ty, value } => {
                 let value_span = value.span;
-                let is_value = is_syntactic_value(&value.kind);
+                // A `let` generalises only a syntactic value: its value is
+                // then checked one level deeper, and the variables left
+                // at that level are the ones to quantify.
+                let is_value = self.is_syntactic_value(value);
+                if is_value {
+                    self.enter_level();
+                }
                 let mut val_ty = self.infer_expr(value, env);
 
                 if let Some(te) = &ty {
@@ -3529,7 +3476,7 @@ impl TypeChecker {
                     // annotation's own span so the duplicate span-less
                     // diagnostic in `let x: Box(Int) = ...` goes away.
                     let prev_type_span = self.current_type_anno_span.replace(te.span);
-                    let declared = self.resolve_type_expr(te, &mut HashMap::new());
+                    let declared = self.resolve_type_expr(te, &mut self.sig_names.clone());
                     self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, value_span);
                     // A value of unknown type (from a module that failed
@@ -3540,21 +3487,17 @@ impl TypeChecker {
                     }
                 }
 
-                // Generalize for let-polymorphism, but apply the value
-                // restriction: only generalize syntactic values (literals,
-                // lambdas, identifiers). Function calls may return types
-                // with mutable state (e.g. channels) that must remain
-                // monomorphic so that the element type is shared across
-                // all uses.
-                let scheme = if is_value {
-                    self.generalize(env, &val_ty)
-                } else {
-                    Scheme::mono(self.apply(&val_ty))
-                };
-                // Bind names in the pattern
-                // For let-polymorphism we need to bind with the generalized scheme
+                // A call may return a type with shared mutable state (a
+                // channel), which must stay monomorphic so that the
+                // element type is shared across all uses.
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
+                        let scheme = if is_value {
+                            self.exit_level();
+                            self.generalize(&val_ty)
+                        } else {
+                            Scheme::mono(self.apply(&val_ty))
+                        };
                         env.define(*name, scheme);
                     }
                     _ => {
@@ -3571,6 +3514,17 @@ impl TypeChecker {
                             value_span,
                             BindingSite::Let,
                         );
+                        // Each name the pattern binds to a part of a value
+                        // is general as the part is.
+                        if is_value {
+                            self.exit_level();
+                            for name in collect_pattern_vars(pattern) {
+                                if let Some(bound) = env.lookup(name).cloned() {
+                                    let scheme = self.generalize(&bound.ty);
+                                    env.define(name, scheme);
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -3931,7 +3885,9 @@ pub(super) fn resolve_supertrait_arg(
 pub(super) fn is_valid_arith_operand(ty: &Type) -> bool {
     match ty {
         Type::Int | Type::Float | Type::Error | Type::Never => true,
-        Type::Var(_) => true,
+        // An annotation variable is "maybe valid", as an unknown type is,
+        // until operators are bounds a `where` clause can declare.
+        Type::Var(_) | Type::Rigid(_) => true,
         // Round 92: an abstract associated-type projection (`<a as T>::Item`
         // with the receiver still a where-bound type variable) is "maybe
         // valid" exactly like Type::Var — the concrete type is only known
@@ -3986,7 +3942,7 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         | Type::Generic(..)
         | Type::Error
         | Type::Never => true,
-        Type::Var(_) => true,
+        Type::Var(_) | Type::Rigid(_) => true,
         // Round 92: abstract associated-type projections are "maybe valid"
         // like Type::Var — see is_valid_arith_operand above for rationale.
         Type::AssocProj { .. } => true,
@@ -4017,29 +3973,46 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
     }
 }
 
-/// Returns true if an expression is a syntactic value for the purpose of the
-/// value restriction on let-generalization. Syntactic values (literals,
-/// lambdas, identifiers, constructors of values) are safe to generalize;
-/// function applications are not, because they may produce types with
-/// shared mutable state (e.g. channels) that must remain monomorphic.
-pub(super) fn is_syntactic_value(kind: &ExprKind) -> bool {
-    match kind {
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::StringLit(..)
-        | ExprKind::Unit
-        | ExprKind::Ident(_)
-        | ExprKind::Lambda { .. } => true,
-        ExprKind::Tuple(elems) => elems.iter().all(|e| is_syntactic_value(&e.kind)),
-        ExprKind::List(elems) => elems.iter().all(|e| match e {
-            ListElem::Single(expr) => is_syntactic_value(&expr.kind),
-            ListElem::Spread(_) => false,
-        }),
-        ExprKind::RecordCreate { fields, .. } => {
-            fields.iter().all(|(_, e)| is_syntactic_value(&e.kind))
+impl TypeChecker {
+    /// Whether an expression is a syntactic value, for the value
+    /// restriction on let-generalization: a literal, a name, a closure,
+    /// or a tuple, list, record or constructor application of syntactic
+    /// values. Those are safe to generalize; any other call is not,
+    /// because it may produce a type with shared mutable state (a
+    /// channel) that must remain monomorphic.
+    pub(super) fn is_syntactic_value(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::StringLit(..)
+            | ExprKind::Unit
+            | ExprKind::Ident(_)
+            | ExprKind::Lambda { .. } => true,
+            // A name through its module or its enum: `m.f`, `Color.Red`.
+            ExprKind::FieldAccess(..) => matches!(expr.res, Some(crate::defs::Res::Def(_))),
+            ExprKind::Tuple(elems) => elems.iter().all(|e| self.is_syntactic_value(e)),
+            ExprKind::List(elems) => elems.iter().all(|e| match e {
+                ListElem::Single(expr) => self.is_syntactic_value(expr),
+                ListElem::Spread(_) => false,
+            }),
+            ExprKind::RecordCreate { fields, .. } => {
+                fields.iter().all(|(_, e)| self.is_syntactic_value(e))
+            }
+            ExprKind::AnonRecord {
+                spread: None,
+                fields,
+            } => fields.iter().all(|(_, e)| self.is_syntactic_value(e)),
+            // A variant applied to values: `Some(1)`, `Err("x")`. (The
+            // builtin environment, which the builtin definitions are
+            // made from, cannot ask what a name resolves to.)
+            ExprKind::Call(callee, args) => {
+                self.defs.is_some()
+                    && self.res_variant_enum(callee.res).is_some()
+                    && args.iter().all(|e| self.is_syntactic_value(e))
+            }
+            _ => false,
         }
-        _ => false,
     }
 }
 

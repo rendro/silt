@@ -1,8 +1,8 @@
 use super::*;
 
-/// A deferred where-clause obligation captured at a call site whose
-/// type argument was still an unresolved type variable. Resolved at
-/// the end of inference in `finalize_deferred_checks`.
+/// A bound owed for a type variable that was unknown where it was owed
+/// (`TypeChecker::owe_bound`). Resolved in `finalize_deferred_checks`,
+/// when the definitions being checked are done.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingWhereConstraint {
     /// The tyvar at the call site that carries the obligation.
@@ -13,19 +13,9 @@ pub(crate) struct PendingWhereConstraint {
     pub(super) callee_fn_name: Option<Symbol>,
     /// Span of the call site.
     pub(super) span: Span,
-    /// Snapshot of the enclosing fn's active constraints at the
-    /// time of the call (used to decide whether the obligation is
-    /// already covered).
-    pub(super) active_snapshot: HashMap<TyVar, Vec<TraitKey>>,
-    /// Snapshot of the enclosing fn's param tyvars at the time of
-    /// the call (used to decide whether the obligation touches the
-    /// enclosing fn's own polymorphism).
-    pub(super) param_tyvars: Vec<TyVar>,
-    /// Snapshot of the enclosing fn's trait arg bindings for this
-    /// `(tyvar, trait_name)` pair at the time of the call, e.g.
-    /// `[Int]` for `where a: TryInto(Int)`. Empty for parameterless
-    /// traits. Used during finalize so parameterized-trait verification
-    /// can compare bound args against the matched impl's args.
+    /// The trait arguments of the bound, e.g. `[Int]` for
+    /// `where a: TryInto(Int)`; empty for a trait without parameters.
+    /// The matched impl's arguments are compared against them.
     pub(super) bound_trait_args: Vec<Type>,
 }
 
@@ -132,6 +122,24 @@ impl TypeChecker {
     ) {
         let resolved = self.apply(ty);
         if matches!(resolved, Type::Error | Type::Never) {
+            return;
+        }
+        // An annotation variable implements what its bounds say.
+        if let Type::Rigid(r) = resolved {
+            if !self.bound_in_scope(r, trait_name) {
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::MissingConstraint,
+                        span,
+                        format!(
+                            "type variable `{}` is not known to implement trait '{}'",
+                            r.name,
+                            self.show_trait(trait_name)
+                        ),
+                    )
+                    .with_help(format!("add `where {}: {}`", r.name, trait_name.name)),
+                );
+            }
             return;
         }
         let Some(type_name) = self.type_name_for_impl(&resolved) else {

@@ -51,7 +51,6 @@ mod round73_value_descriptor_arm_dedup_tests;
 mod round74_modules_doc_lists_all_builtins_tests;
 mod round75_builtin_canonical_wording_tests;
 mod round75_dead_code_locks_tests;
-mod round75_typechecker_remap_and_dedup_tests;
 mod round76_value_type_name_parity_tests;
 mod round79_doc_frontmatter_parity_tests;
 mod round80_dead_code_tests;

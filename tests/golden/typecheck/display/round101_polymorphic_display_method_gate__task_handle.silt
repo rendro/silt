@@ -4,7 +4,7 @@
 -- stderr-contains: 'Handle'
 -- stderr-not-contains: required for string interpolation
 import task
-fn show(x: a) -> String { x.display() }
+fn show(x) { x.display() }
 fn main() {
   let h = task.spawn({ -> 42 })
   println(show(h))

@@ -3,10 +3,22 @@ use super::*;
 /// One session's type-variable supply: the substitution and the next
 /// variable. Every module's check allocates from it, so a scheme one
 /// module exports is valid in the next as it is.
+///
+/// Each variable has a level: how deep in generalisation scopes it was
+/// made. The check of a `let`'s value, or of a group of top-level
+/// definitions, runs one level deeper than what surrounds it, and the
+/// variables still at the deeper level when it ends are the ones no
+/// outer binding mentions: those are generalised. Binding a variable to
+/// a type lowers the variables of the type to its own level, so a
+/// variable an outer binding has reached is never generalised.
 #[derive(Clone, Default)]
 pub struct TyVarSupply {
     /// The substitution: maps type variables to their resolved types.
     pub(super) subst: Vec<Option<Type>>,
+    /// The level of each variable.
+    levels: Vec<u32>,
+    /// The level new variables are made at.
+    level: u32,
     /// Counter for generating fresh type variables.
     pub(super) next: TyVar,
     /// The first variable of the module being checked.
@@ -25,11 +37,41 @@ impl TyVarSupply {
         if v < self.base {
             self.trail.push(v);
         }
+        self.lower(&t, self.levels[v]);
         self.subst[v] = Some(t);
+    }
+
+    /// A new variable, at the current level.
+    fn fresh(&mut self) -> TyVar {
+        let v = self.next;
+        self.next += 1;
+        self.subst.push(None);
+        self.levels.push(self.level);
+        v
+    }
+
+    /// Lower the unresolved variables of `t` to `level`, those above it.
+    pub(super) fn lower(&mut self, t: &Type, level: u32) {
+        for v in free_vars_in(t) {
+            match self.subst[v].take() {
+                Some(resolved) => {
+                    self.lower(&resolved, level);
+                    self.subst[v] = Some(resolved);
+                }
+                None => self.levels[v] = self.levels[v].min(level),
+            }
+        }
+    }
+
+    /// Whether the unresolved variable `v` is above the current level:
+    /// nothing outside the scope that just ended mentions it.
+    pub(super) fn is_generalizable(&self, v: TyVar) -> bool {
+        self.levels[v] > self.level
     }
 
     /// Start the check of `module`: its variables come next.
     pub(super) fn begin(&mut self, module: crate::session::ModuleId) {
+        self.level = 0;
         self.base = self.next;
         self.trail.clear();
         self.ranges.push((module, self.next, false));
@@ -51,6 +93,7 @@ impl TyVarSupply {
         while let Some(&(_, start, true)) = self.ranges.last() {
             self.ranges.pop();
             self.subst.truncate(start);
+            self.levels.truncate(start);
             self.next = start;
         }
     }
@@ -86,20 +129,36 @@ impl TypeChecker {
     // ── Fresh variables ─────────────────────────────────────────────
 
     pub(super) fn fresh_var(&mut self) -> Type {
-        let v = self.tables.vars.next;
-        self.tables.vars.next += 1;
-        self.tables.vars.subst.push(None);
-        Type::Var(v)
+        Type::Var(self.tables.vars.fresh())
+    }
+
+    /// Enter a generalisation scope: the variables made in it, and not
+    /// reached from outside it by the time `exit_level` is called, are
+    /// what `generalize` quantifies.
+    pub(super) fn enter_level(&mut self) {
+        self.tables.vars.level += 1;
+        self.bound_marks.push(self.bound_log.len());
+    }
+
+    /// Leave the scope `enter_level` entered.
+    pub(super) fn exit_level(&mut self) {
+        self.tables.vars.level -= 1;
+        self.closed_mark = self.bound_marks.pop().expect("a level is open");
+    }
+
+    /// Keep the unresolved variables of `ty` out of every later
+    /// generalisation at this level: `ty` is the type of a binding that
+    /// is not generalised.
+    pub(super) fn keep_monomorphic(&mut self, ty: &Type) {
+        let level = self.tables.vars.level;
+        self.tables.vars.lower(ty, level);
     }
 
     /// Allocate a fresh `TyVar` id without wrapping it in `Type::Var`.
     /// Used by row polymorphism for `RowTail::Var(id)` where the id is
     /// the binding target rather than a type position.
     pub(super) fn fresh_tyvar_id(&mut self) -> TyVar {
-        let v = self.tables.vars.next;
-        self.tables.vars.next += 1;
-        self.tables.vars.subst.push(None);
-        v
+        self.tables.vars.fresh()
     }
 
     // ── Substitution / apply ────────────────────────────────────────
@@ -579,6 +638,9 @@ impl TypeChecker {
 
             (Type::Var(v1), Type::Var(v2)) if v1 == v2 => {}
 
+            // An annotation variable is itself only.
+            (Type::Rigid(r1), Type::Rigid(r2)) if r1 == r2 => {}
+
             (Type::Var(v), t) | (t, Type::Var(v)) => {
                 if occurs_in(*v, t) {
                     // Special case: trying to unify a type var `a` with
@@ -1041,6 +1103,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         | Type::Bool
         | Type::String
         | Type::Unit
+        | Type::Rigid(_)
         | Type::Error
         | Type::Never => false,
     }
