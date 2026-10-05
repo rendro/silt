@@ -195,7 +195,7 @@ impl Vm {
                     return Some(Err(VmError::new("display() takes no arguments".into())));
                 }
                 // Runtime Display gate — the .display() twin of the
-                // round-95 `Op::DisplayValue` gate (src/vm/execute.rs
+                // round-95 `Op::DisplayValue` gate (src/vm/run.rs
                 // ~:1457). For a *concrete* receiver the typechecker
                 // already rejects `.display()` on no-Display types
                 // ("unknown method 'display' on type Fn"), but silt
@@ -236,7 +236,7 @@ impl Vm {
                     return Some(Err(VmError::new("equal() takes 1 argument".into())));
                 }
                 // Execution-site backstop mirroring the `Op::Eq` gate
-                // (`equality_operand_violation`, src/vm/execute.rs): an
+                // (`equality_operand_violation`, src/vm/run.rs): an
                 // operand that is, or transitively contains, a
                 // function-shaped leaf has no Equal impl. A polymorphic
                 // wrapper (`fn eq(a: x, b: x) -> Bool { a.equal(b) }`)
@@ -252,7 +252,7 @@ impl Vm {
                 // that passes the round-93 field-aware auto-derive gate
                 // (`compute_auto_derive_field_negatives`), a synth-emitted
                 // `equal` impl method is produced and `Op::CallMethod`
-                // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                // (src/vm/run.rs) resolves it FIRST, so a
                 // Variant/Record receiver never reaches this arm. Types
                 // with non-supportable fields (e.g. Channel/Map/Tuple/
                 // Function/Bytes/Handle) are now statically REJECTED by
@@ -304,7 +304,7 @@ impl Vm {
                     // that passes the round-93 field-aware auto-derive gate
                     // (`compute_auto_derive_field_negatives`), a synth-emitted
                     // `compare` impl method is produced and `Op::CallMethod`
-                    // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                    // (src/vm/run.rs) resolves it FIRST, so a
                     // Variant/Record receiver never reaches this arm. Types
                     // with non-supportable fields (e.g. Channel/Map/Tuple/
                     // Function/Bytes/Handle) are now statically REJECTED by
@@ -375,7 +375,7 @@ impl Vm {
                 // the round-93 field-aware auto-derive gate
                 // (`compute_auto_derive_field_negatives`), a synth-emitted
                 // `hash` impl method is produced and `Op::CallMethod`
-                // (src/vm/execute.rs ~:2250) resolves it FIRST, so a
+                // (src/vm/run.rs) resolves it FIRST, so a
                 // Variant/Record receiver never reaches this arm. Types
                 // with non-supportable fields (e.g. Channel/Map/Tuple/
                 // Function/Bytes/Handle) are now statically REJECTED by

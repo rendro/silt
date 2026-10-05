@@ -115,7 +115,7 @@ fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
 /// builtins: error with the canonical operator-gate wording ("type 'Fn'
 /// does not implement Compare/Equal") if any of `vals` transitively
 /// contains a function-shaped value. Mirrors the `Op::Eq` gate in
-/// src/vm/execute.rs; deliberately NOT enforced as a static `where`
+/// src/vm/run.rs; deliberately NOT enforced as a static `where`
 /// bound on the builtin signatures because that would reject currently
 /// working programs (e.g. sorting tuples via `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
 ///

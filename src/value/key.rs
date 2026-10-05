@@ -366,7 +366,7 @@ impl Hash for Value {
             //     (`tag 5, len, Int(lo) .. Int(hi)`), so List ↔ Range equal
             //     pairs still hash equal;
             //   - over the cap: every list-producing site enforces
-            //     `MAX_RANGE_MATERIALIZE` (vm/execute.rs, builtins/*), so no
+            //     `MAX_RANGE_MATERIALIZE` (vm/iter.rs, builtins/*), so no
             //     `Value::List` can ever have > cap elements and no List can
             //     compare equal to an over-cap Range. The only values equal
             //     to such a Range are Ranges, and non-empty equal Ranges have

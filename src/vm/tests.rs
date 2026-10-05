@@ -2685,7 +2685,7 @@ fn test_make_closure_rejects_non_closure_constant() {
     // Round-59 audit LATENT fix: the MakeClosure guard error no longer
     // leaks the raw `MakeClosure` / `VmClosure` Rust/opcode identifiers
     // to user-facing output. The assertion now matches the user-facing
-    // phrasing used at `src/vm/execute.rs` (`closure construction
+    // phrasing used at `src/vm/run.rs` (`closure construction
     // constant is not a closure`).
     assert!(
         msg.contains("closure construction") && msg.contains("not a closure"),
@@ -2933,7 +2933,7 @@ mod error_identifier_leak {
     // `"frame underflow in invoke_callable"` — the bare `invoke_callable`
     // identifier is a Rust method name, not anything a silt user could
     // meaningfully interpret. Several internal-invariant sites in
-    // `src/vm/execute.rs` leaked similar raw opcode names (`SetLocal`,
+    // `src/vm/run.rs` leaked similar raw opcode names (`SetLocal`,
     // `MakeClosure`, `MakeTuple`, `MakeList`, `MakeMap`, `MakeSet`).
     //
     // These invariant paths are not reachable from valid typed silt, so the
