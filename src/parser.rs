@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
-use crate::lexer::{SpannedToken, Token};
+use crate::lexer::{Lexed, Tok, Token};
 use crate::source::Span;
 
 type Result<T> = std::result::Result<T, Diagnostic>;
@@ -623,7 +623,7 @@ struct BlockHeader {
 }
 
 pub struct Parser<'src> {
-    tokens: Vec<SpannedToken>,
+    tokens: Vec<Tok>,
     /// The text the tokens came from, for the line numbers some messages
     /// name and for doc comments. Borrowed: the source map that holds the
     /// file owns the text and its line table.
@@ -678,11 +678,11 @@ pub struct Parser<'src> {
 }
 
 /// Delimiter depth before each token; see `Parser::delim_depth`.
-fn delimiter_depths(tokens: &[SpannedToken]) -> Vec<i32> {
+fn delimiter_depths(tokens: &[Tok]) -> Vec<i32> {
     let mut depths = Vec::with_capacity(tokens.len());
     let mut depth: i32 = 0;
-    for (tok, _) in tokens {
-        match tok {
+    for tok in tokens {
+        match tok.kind {
             Token::LParen
             | Token::LBracket
             | Token::LBrace
@@ -703,8 +703,9 @@ fn delimiter_depths(tokens: &[SpannedToken]) -> Vec<i32> {
 }
 
 impl<'src> Parser<'src> {
-    /// A parser for `tokens`, the tokens of `source`.
-    pub fn new(tokens: Vec<SpannedToken>, source: &'src str) -> Self {
+    /// A parser for `lexed`, the tokens of `source`.
+    pub fn new(lexed: Lexed, source: &'src str) -> Self {
+        let tokens = lexed.tokens;
         let delim_depth = delimiter_depths(&tokens);
         Self {
             tokens,
@@ -843,7 +844,7 @@ impl<'src> Parser<'src> {
     // ── helpers ──────────────────────────────────────────────────────
 
     fn span(&self) -> Span {
-        self.tokens[self.pos].1
+        self.tokens[self.pos].span
     }
 
     /// The 1-based line `span` starts on, for messages that name a line.
@@ -863,8 +864,8 @@ impl<'src> Parser<'src> {
         self.tokens[..self.pos]
             .iter()
             .rev()
-            .find(|(tok, _)| !matches!(tok, Token::Newline))
-            .map_or(0, |(_, span)| span.end)
+            .find(|tok| !matches!(tok.kind, Token::Newline))
+            .map_or(0, |tok| tok.span.end)
     }
 
     /// The extent of a construct that starts at `start` and whose last
@@ -889,12 +890,12 @@ impl<'src> Parser<'src> {
     }
 
     fn peek(&self) -> &Token {
-        &self.tokens[self.pos].0
+        &self.tokens[self.pos].kind
     }
 
     /// The token `n` places after the current one, if any.
     fn peek_at(&self, n: usize) -> Option<&Token> {
-        self.tokens.get(self.pos + n).map(|(t, _)| t)
+        self.tokens.get(self.pos + n).map(|t| &t.kind)
     }
 
     fn at(&self, tok: &Token) -> bool {
@@ -905,7 +906,7 @@ impl<'src> Parser<'src> {
         matches!(self.peek(), Token::Newline)
     }
 
-    fn advance(&mut self) -> SpannedToken {
+    fn advance(&mut self) -> Tok {
         let tok = self.tokens[self.pos].clone();
         if self.pos + 1 < self.tokens.len() {
             self.pos += 1;
@@ -923,7 +924,7 @@ impl<'src> Parser<'src> {
     /// back to just after the last real token, so the newline that ends a
     /// body-less declaration is seen by the same-line check.
     fn unskip_nl(&mut self) {
-        while self.pos > 0 && matches!(self.tokens[self.pos - 1].0, Token::Newline) {
+        while self.pos > 0 && matches!(self.tokens[self.pos - 1].kind, Token::Newline) {
             self.pos -= 1;
         }
     }
@@ -931,7 +932,13 @@ impl<'src> Parser<'src> {
     /// Returns true if there is a newline token right at self.pos
     /// (i.e., between the previous real token and the next real token).
     fn has_newline_before(&self) -> bool {
-        matches!(self.tokens.get(self.pos), Some((Token::Newline, _)))
+        matches!(
+            self.tokens.get(self.pos),
+            Some(Tok {
+                kind: Token::Newline,
+                ..
+            })
+        )
     }
 
     /// Round-93 hint guard: true when the current token is a `/` that
@@ -950,20 +957,25 @@ impl<'src> Parser<'src> {
     /// a comment attempt — on the generic message, mirroring how the
     /// G1 foreign-keyword hints only fire on the precise mistake shape.
     fn at_double_slash(&self) -> bool {
-        let Some((Token::Slash, cur)) = self.tokens.get(self.pos) else {
+        let Some(Tok {
+            kind: Token::Slash,
+            span: cur,
+            ..
+        }) = self.tokens.get(self.pos)
+        else {
             return false;
         };
         let adjacent = |a: &Span, b: &Span| b.start == a.start + 1;
         if matches!(
             self.tokens.get(self.pos + 1),
-            Some((Token::Slash, next)) if adjacent(cur, next)
+            Some(Tok { kind: Token::Slash, span: next, .. }) if adjacent(cur, next)
         ) {
             return true;
         }
         self.pos > 0
             && matches!(
                 self.tokens.get(self.pos - 1),
-                Some((Token::Slash, prev)) if adjacent(prev, cur)
+                Some(Tok { kind: Token::Slash, span: prev, .. }) if adjacent(prev, cur)
             )
     }
 
@@ -972,7 +984,7 @@ impl<'src> Parser<'src> {
     const DOUBLE_SLASH_HINT: &'static str =
         "silt line comments use '--', not '//' (block comments are '{- ... -}')";
 
-    fn expect(&mut self, expected: &Token) -> Result<SpannedToken> {
+    fn expect(&mut self, expected: &Token) -> Result<Tok> {
         self.skip_nl();
         if self.at(expected) {
             Ok(self.advance())
@@ -1294,7 +1306,7 @@ impl<'src> Parser<'src> {
         );
         let after_foreign_keyword = matches!(
             self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
-            Some((Token::Ident(prev), _)) if Self::foreign_keyword_hint(&intern::resolve(*prev)).is_some()
+            Some(Tok { kind: Token::Ident(prev), .. }) if Self::foreign_keyword_hint(&intern::resolve(*prev)).is_some()
         );
         (starts_decl || after_foreign_keyword && Self::starts_statement(self.peek()))
             .then(|| self.same_line_err(self.top_level_item))
@@ -1828,10 +1840,10 @@ impl<'src> Parser<'src> {
         // Record field names start lowercase, enum variant names start uppercase.
         let mut i = self.pos;
         // skip newlines
-        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
             i += 1;
         }
-        if let Token::Ident(ref name) = self.tokens[i].0 {
+        if let Token::Ident(ref name) = self.tokens[i].kind {
             // lowercase first char → likely record field
             intern::resolve(*name).starts_with(|c: char| c.is_lowercase())
         } else {
@@ -2286,7 +2298,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_import(&mut self) -> Result<Decl> {
-        let (_, import_span) = self.expect(&Token::Import)?;
+        let import_span = self.expect(&Token::Import)?.span;
         let (name, _) = self.expect_ident()?;
 
         // `.{ ... }` and `as` may continue the import on the next line;
@@ -2458,14 +2470,21 @@ impl<'src> Parser<'src> {
             && self
                 .tokens
                 .get(self.pos + 1)
-                .map(|(t, _)| matches!(t, Token::LParen))
+                .map(|t| matches!(t.kind, Token::LParen))
                 .unwrap_or(false)
         {
             self.advance();
             return self.parse_fn_type_rest(start);
         }
         // `fn(Int) -> Int` in a type: the keyword spelling of `Fn`.
-        if self.at(&Token::Fn) && matches!(self.tokens.get(self.pos + 1), Some((Token::LParen, _)))
+        if self.at(&Token::Fn)
+            && matches!(
+                self.tokens.get(self.pos + 1),
+                Some(Tok {
+                    kind: Token::LParen,
+                    ..
+                })
+            )
         {
             self.advance();
             let hint = match self.parse_fn_type_rest(start) {
@@ -2631,7 +2650,10 @@ impl<'src> Parser<'src> {
         self.at(&Token::LBrace)
             && matches!(
                 self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
-                Some((Token::Ident(_), _))
+                Some(Tok {
+                    kind: Token::Ident(_),
+                    ..
+                })
             )
     }
 
@@ -2676,8 +2698,11 @@ impl<'src> Parser<'src> {
     fn same_line_err(&self, what: &str) -> Diagnostic {
         // `let r = if x { ... }`: the statement ended at a foreign keyword
         // read as an identifier, so point at the silt equivalent instead.
-        if let Some((Token::Ident(prev), prev_span)) =
-            self.pos.checked_sub(1).and_then(|i| self.tokens.get(i))
+        if let Some(Tok {
+            kind: Token::Ident(prev),
+            span: prev_span,
+            ..
+        }) = self.pos.checked_sub(1).and_then(|i| self.tokens.get(i))
             && let Some(hint) = Self::foreign_keyword_hint(&intern::resolve(*prev))
         {
             return Diagnostic::error(Code::UnsupportedSyntax, *prev_span, hint);
@@ -2745,7 +2770,7 @@ impl<'src> Parser<'src> {
             let next = self
                 .tokens
                 .get(self.pos + 1)
-                .map(|t| t.0.clone())
+                .map(|t| t.kind.clone())
                 .unwrap_or(Token::Eof);
             let span = self.span();
 
@@ -3068,7 +3093,7 @@ impl<'src> Parser<'src> {
                         // `t.0`: parsed so that the checker can say tuple
                         // indexing is not supported.
                         let field = intern::intern(&n.to_string());
-                        let (_, field_span) = self.advance();
+                        let field_span = self.advance().span;
                         let span = left.span;
                         left = self.mk_expr(
                             ExprKind::FieldAccess(Box::new(left), field, field_span),
@@ -3705,7 +3730,7 @@ impl<'src> Parser<'src> {
         let mut close = self.pos + 1;
         while close < self.tokens.len() {
             let is_closer = matches!(
-                self.tokens[close].0,
+                self.tokens[close].kind,
                 Token::RBrace | Token::RParen | Token::RBracket | Token::StringEnd(_)
             );
             if is_closer && self.delim_depth_at(close) == inside {
@@ -3719,11 +3744,17 @@ impl<'src> Parser<'src> {
         }
         let mut next = close + 1;
         let mut crossed_newline = false;
-        while matches!(self.tokens.get(next), Some((Token::Newline, _))) {
+        while matches!(
+            self.tokens.get(next),
+            Some(Tok {
+                kind: Token::Newline,
+                ..
+            })
+        ) {
             crossed_newline = true;
             next += 1;
         }
-        match self.tokens.get(next).map(|t| &t.0) {
+        match self.tokens.get(next).map(|t| &t.kind) {
             // A further block: the match body, or another closure.
             Some(Token::LBrace) => true,
             // Infix operators continue an expression across a line break.
@@ -3771,7 +3802,7 @@ impl<'src> Parser<'src> {
         let inside = self.delim_depth_at(self.pos) + 1;
         let mut i = self.pos + 1; // skip `{`
         // Skip leading newlines to find the first real token
-        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
             i += 1;
         }
         // If the first real token is a literal, this is a match body
@@ -3781,7 +3812,7 @@ impl<'src> Parser<'src> {
         // are consumed directly by parse_match_expr via expect(LBrace),
         // so they never reach this heuristic.
         if i < self.tokens.len() {
-            match &self.tokens[i].0 {
+            match &self.tokens[i].kind {
                 Token::Int(_) | Token::Float(_) | Token::Bool(_) => return false,
                 _ => {}
             }
@@ -3791,7 +3822,7 @@ impl<'src> Parser<'src> {
                 i += 1;
                 continue;
             }
-            match &self.tokens[i].0 {
+            match &self.tokens[i].kind {
                 Token::Arrow => return true,
                 Token::Newline
                 | Token::Ident(_)
@@ -3827,17 +3858,17 @@ impl<'src> Parser<'src> {
             return false;
         }
         let mut i = self.pos + 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
             i += 1;
         }
-        if !matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Ident(_))) {
+        if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_))) {
             return false;
         }
         i += 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
             i += 1;
         }
-        matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Colon))
+        matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Colon))
     }
 
     /// Render an `Ident` / dotted `FieldAccess` chain (`util`,
@@ -4128,22 +4159,22 @@ impl<'src> Parser<'src> {
             return false;
         }
         let mut i = self.pos + 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
             i += 1;
         }
         // Spread head is unambiguous.
-        if matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::DotDotDot)) {
+        if matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::DotDotDot)) {
             return true;
         }
         // `Ident COLON` (with possible newlines between) — anon record.
-        if !matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Ident(_))) {
+        if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_))) {
             return false;
         }
         i += 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
             i += 1;
         }
-        matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Colon))
+        matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Colon))
     }
 
     /// Parse `{name: expr, ...}` or `{...spread, name: expr, ...}` after
@@ -4448,7 +4479,7 @@ impl<'src> Parser<'src> {
                 Ok(mk(PatternKind::Wildcard))
             }
             Token::Ident(name) => {
-                let (_, name_span) = self.advance();
+                let name_span = self.advance().span;
                 // A lowercase name not followed by `.` binds a variable.
                 if !is_constructor(name) && !self.at(&Token::Dot) {
                     return Ok(mk(PatternKind::Ident(name)));

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::Range;
 
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
@@ -157,21 +158,65 @@ impl fmt::Display for Token {
     }
 }
 
-pub type SpannedToken = (Token, Span);
-
-/// A comment the lexer skipped, as recorded by
-/// [`Lexer::tokenize_with_comments`]. Comments never reach the token
-/// stream; this side table is how a caller that must account for every
-/// comment (the formatter's self-check) sees them through the lexer's own
-/// string / interpolation / nesting rules instead of re-scanning the text.
+/// A token with its place in the source and the trivia in front of it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SourceComment {
-    /// The comment exactly as written, delimiters included: `-- ...` up to
-    /// (not including) the line break, or `{- ... -}` with any nesting.
-    pub text: String,
-    /// The comment's extent, delimiters included.
+pub struct Tok {
+    pub kind: Token,
     pub span: Span,
+    /// Line breaks between the previous token or comment and this token,
+    /// saturating at 2 (0 = same line, 1 = next line, 2 = a blank line).
+    /// A `Token::Newline` carries no trivia: its count is 0 and the token
+    /// after it has the count of the gap.
+    pub newlines_before: u8,
+    /// Comments between the previous token and this one: a range of
+    /// `Lexed::comments`. The end-of-file token carries the last comments
+    /// of the file.
+    pub comments: Range<u32>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentKind {
+    /// `-- ...` up to (not including) the line break.
+    Line,
+    /// `{- ... -}` with any nesting.
+    Block,
+}
+
+/// A comment. Its text is `&source[span]`, delimiters included.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Comment {
+    pub kind: CommentKind,
+    pub span: Span,
+    /// Line breaks between the previous token or comment and this
+    /// comment, saturating at 2. A comment is trailing when this is 0 and
+    /// a token precedes it; otherwise it leads the next token.
+    pub newlines_before: u8,
+}
+
+impl Comment {
+    /// The comment as written in `source`, the text it was lexed from.
+    pub fn text<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.span.start as usize..self.span.end as usize]
+    }
+}
+
+/// What the lexer makes of a file: its tokens, and its comments in
+/// source order. Each token names the comments in front of it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Lexed {
+    pub tokens: Vec<Tok>,
+    pub comments: Vec<Comment>,
+}
+
+impl Lexed {
+    /// The comments between the token before `tok` and `tok`.
+    pub fn comments_before(&self, tok: &Tok) -> &[Comment] {
+        &self.comments[tok.comments.start as usize..tok.comments.end as usize]
+    }
+}
+
+/// A token and where it starts, as the scanners hand it to `tokenize`.
+type Scanned = (Token, Span);
 
 /// Authoritative keyword list. Reserved words a user cannot bind as an
 /// identifier; each name corresponds to a non-`Bool` match arm in
@@ -209,9 +254,12 @@ pub struct Lexer {
     /// we resume scanning a string instead of emitting RBrace.
     interp_stack: Vec<usize>,
     brace_depth: usize,
-    /// Side table of skipped comments, in source order. `None` (the
-    /// default) records nothing; `tokenize_with_comments` switches it on.
-    comments: Option<Vec<SourceComment>>,
+    /// Every comment read so far, in source order.
+    comments: Vec<Comment>,
+    /// Line breaks since the previous token or comment, saturating at 2.
+    gap_newlines: u8,
+    /// The first comment in `comments` that no token has taken yet.
+    gap_comments: u32,
 }
 
 impl Lexer {
@@ -224,7 +272,9 @@ impl Lexer {
             byte_offset: 0,
             interp_stack: Vec::new(),
             brace_depth: 0,
-            comments: None,
+            comments: Vec::new(),
+            gap_newlines: 0,
+            gap_comments: 0,
         };
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
         // (Notepad, PowerShell `>` redirects) prepend one by default,
@@ -240,49 +290,51 @@ impl Lexer {
         lexer
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, Diagnostic> {
+    pub fn tokenize(&mut self) -> Result<Lexed, Diagnostic> {
         let mut tokens = Vec::new();
         loop {
-            let (tok, start) = self.next_token()?;
+            let (kind, start) = self.next_token()?;
             // Every scan stops right after its token, so the token ends
             // where the lexer stands now.
             let span = Span {
                 end: self.byte_offset as u32,
                 ..start
             };
-            let is_eof = tok == Token::Eof;
-            tokens.push((tok, span));
+            let is_eof = kind == Token::Eof;
+            // A newline token stands for the gap itself; the trivia of
+            // the gap goes to the token after it.
+            let (newlines_before, comments) = if kind == Token::Newline {
+                (0, self.gap_comments..self.gap_comments)
+            } else {
+                let end = self.comments.len() as u32;
+                let comments = self.gap_comments..end;
+                self.gap_comments = end;
+                (std::mem::take(&mut self.gap_newlines), comments)
+            };
+            tokens.push(Tok {
+                kind,
+                span,
+                newlines_before,
+                comments,
+            });
             if is_eof {
                 break;
             }
         }
-        Ok(tokens)
+        Ok(Lexed {
+            tokens,
+            comments: std::mem::take(&mut self.comments),
+        })
     }
 
-    /// Like [`Lexer::tokenize`], and additionally returns every comment
-    /// that was skipped, in source order. The token stream is identical
-    /// to the one `tokenize` produces.
-    pub fn tokenize_with_comments(
-        &mut self,
-    ) -> Result<(Vec<SpannedToken>, Vec<SourceComment>), Diagnostic> {
-        self.comments = Some(Vec::new());
-        let tokens = self.tokenize()?;
-        let comments = self.comments.take().unwrap_or_default();
-        Ok((tokens, comments))
-    }
-
-    /// Record the comment that spans `self.source[start_pos..self.pos]`
-    /// when comment recording is on. `span` is the position of the
-    /// comment's first character.
-    fn record_comment(&mut self, start_pos: usize, span: Span) {
-        if let Some(comments) = self.comments.as_mut() {
-            let text: String = self.source[start_pos..self.pos].iter().collect();
-            let span = Span {
-                end: self.byte_offset as u32,
-                ..span
-            };
-            comments.push(SourceComment { text, span });
-        }
+    /// Record the comment that starts at `start` and ends at the current
+    /// position.
+    fn record_comment(&mut self, kind: CommentKind, start: Span) {
+        self.comments.push(Comment {
+            kind,
+            span: self.since(start),
+            newlines_before: std::mem::take(&mut self.gap_newlines),
+        });
     }
 
     /// The span from the start of `start` to the current position: a
@@ -323,6 +375,7 @@ impl Lexer {
                 }
                 '\n' => {
                     found_newline = true;
+                    self.gap_newlines = (self.gap_newlines + 1).min(2);
                     self.advance_char();
                 }
                 _ => break,
@@ -367,11 +420,7 @@ impl Lexer {
         Ok(())
     }
 
-    fn scan_string(
-        &mut self,
-        is_continuation: bool,
-        start: Span,
-    ) -> Result<SpannedToken, Diagnostic> {
+    fn scan_string(&mut self, is_continuation: bool, start: Span) -> Result<Scanned, Diagnostic> {
         let mut text = String::new();
 
         loop {
@@ -456,7 +505,7 @@ impl Lexer {
         }
     }
 
-    fn scan_triple_string(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
+    fn scan_triple_string(&mut self, start: Span) -> Result<Scanned, Diagnostic> {
         // We've already consumed the opening `"""`.
         // Read raw content until closing `"""`.
         // No escape processing, no interpolation.
@@ -549,7 +598,7 @@ impl Lexer {
         result_lines.join("\n")
     }
 
-    fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, Diagnostic> {
+    fn scan_number(&mut self, first: char, start: Span) -> Result<Scanned, Diagnostic> {
         // Handle hex (0x) and binary (0b) prefixes
         if first == '0'
             && let Some(prefix) = self.peek()
@@ -660,7 +709,7 @@ impl Lexer {
         }
     }
 
-    fn scan_hex_int(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
+    fn scan_hex_int(&mut self, start: Span) -> Result<Scanned, Diagnostic> {
         let mut digits = String::new();
         while let Some(ch) = self.peek() {
             if ch.is_ascii_hexdigit() || ch == '_' {
@@ -689,7 +738,7 @@ impl Lexer {
         Ok((Token::Int(val), start))
     }
 
-    fn scan_binary_int(&mut self, start: Span) -> Result<SpannedToken, Diagnostic> {
+    fn scan_binary_int(&mut self, start: Span) -> Result<Scanned, Diagnostic> {
         let mut digits = String::new();
         while let Some(ch) = self.peek() {
             if ch == '0' || ch == '1' || ch == '_' {
@@ -718,7 +767,7 @@ impl Lexer {
         Ok((Token::Int(val), start))
     }
 
-    fn scan_ident_or_keyword(&mut self, first: char, start: Span) -> SpannedToken {
+    fn scan_ident_or_keyword(&mut self, first: char, start: Span) -> Scanned {
         let mut name = String::new();
         name.push(first);
 
@@ -754,7 +803,7 @@ impl Lexer {
         (tok, start)
     }
 
-    fn next_token(&mut self) -> Result<SpannedToken, Diagnostic> {
+    fn next_token(&mut self) -> Result<Scanned, Diagnostic> {
         // Skip whitespace, tracking newlines
         let mut had_newline = self.skip_whitespace();
 
@@ -762,20 +811,18 @@ impl Lexer {
         loop {
             match (self.peek(), self.peek_ahead(1)) {
                 (Some('-'), Some('-')) => {
-                    let comment_pos = self.pos;
                     let comment_span = self.span();
                     self.skip_line_comment();
-                    self.record_comment(comment_pos, comment_span);
+                    self.record_comment(CommentKind::Line, comment_span);
                     had_newline |= self.skip_whitespace();
                     continue;
                 }
                 (Some('{'), Some('-')) => {
-                    let comment_pos = self.pos;
                     let comment_span = self.span();
                     self.advance_char();
                     self.advance_char();
                     self.skip_block_comment()?;
-                    self.record_comment(comment_pos, comment_span);
+                    self.record_comment(CommentKind::Block, comment_span);
                     had_newline |= self.skip_whitespace();
                     continue;
                 }
@@ -877,9 +924,8 @@ impl Lexer {
                 } else if self.peek() == Some('-') {
                     // Line comment — shouldn't happen here since we skip comments above,
                     // but handle it just in case
-                    let comment_pos = self.pos - 1;
                     self.skip_line_comment();
-                    self.record_comment(comment_pos, start);
+                    self.record_comment(CommentKind::Line, start);
                     self.next_token()
                 } else {
                     Ok((Token::Minus, start))
@@ -1039,10 +1085,98 @@ mod tests {
         Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
             .unwrap()
+            .tokens
             .into_iter()
-            .map(|(tok, _)| tok)
+            .map(|tok| tok.kind)
             .filter(|tok| !matches!(tok, Token::Newline | Token::Eof))
             .collect()
+    }
+
+    /// The trivia of `input`, one item per token that is not a newline:
+    /// its comments as `<text>^n`, then the token as `text^n`, where `n`
+    /// is `newlines_before`.
+    fn trivia(input: &str) -> String {
+        let lexed = Lexer::new(crate::source::FileId::default(), input)
+            .tokenize()
+            .unwrap();
+        let mut seen = 0;
+        let mut out = Vec::new();
+        for tok in &lexed.tokens {
+            if tok.kind == Token::Newline {
+                assert_eq!((tok.newlines_before, tok.comments.len()), (0, 0));
+                continue;
+            }
+            // The ranges follow each other and leave no comment out.
+            assert_eq!(tok.comments.start, seen);
+            seen = tok.comments.end;
+            for comment in lexed.comments_before(tok) {
+                let text = comment.text(input);
+                match comment.kind {
+                    CommentKind::Line => assert!(text.starts_with("--") && !text.contains('\n')),
+                    CommentKind::Block => assert!(text.starts_with("{-") && text.ends_with("-}")),
+                }
+                out.push(format!("<{text}>^{}", comment.newlines_before));
+            }
+            let text = match tok.kind {
+                Token::Eof => "EOF",
+                _ => &input[tok.span.start as usize..tok.span.end as usize],
+            };
+            out.push(format!("{text}^{}", tok.newlines_before));
+        }
+        assert_eq!(seen as usize, lexed.comments.len());
+        out.join(" ")
+    }
+
+    #[test]
+    fn test_trivia() {
+        let cases: &[(&str, &str)] = &[
+            ("", "EOF^0"),
+            ("a", "a^0 EOF^0"),
+            ("a b", "a^0 b^0 EOF^0"),
+            ("a\nb", "a^0 b^1 EOF^0"),
+            ("a\n\nb", "a^0 b^2 EOF^0"),
+            // The count saturates at 2.
+            ("a\n\n\n\nb", "a^0 b^2 EOF^0"),
+            ("a\r\n\r\nb", "a^0 b^2 EOF^0"),
+            ("\n\na", "a^2 EOF^0"),
+            ("a\n", "a^0 EOF^1"),
+            ("a\n\n", "a^0 EOF^2"),
+            // The end-of-file token carries the last comments.
+            ("-- c", "<-- c>^0 EOF^0"),
+            ("-- c\na", "<-- c>^0 a^1 EOF^0"),
+            ("a -- c", "a^0 <-- c>^0 EOF^0"),
+            ("a -- c\n", "a^0 <-- c>^0 EOF^1"),
+            ("a\n\n-- c\n{- d -}", "a^0 <-- c>^2 <{- d -}>^1 EOF^0"),
+            // Trailing (0 after a token) and leading comments; a token
+            // counts its line breaks from the comment before it.
+            ("a -- c\nb", "a^0 <-- c>^0 b^1 EOF^0"),
+            ("a\n-- c\nb", "a^0 <-- c>^1 b^1 EOF^0"),
+            ("a\n\n-- c\n\nb", "a^0 <-- c>^2 b^2 EOF^0"),
+            (
+                "a -- c\n  -- d\n\n  -- e\nb",
+                "a^0 <-- c>^0 <-- d>^1 <-- e>^2 b^1 EOF^0",
+            ),
+            ("a {- c -} b", "a^0 <{- c -}>^0 b^0 EOF^0"),
+            // A line break inside a block comment is not a line break
+            // between tokens.
+            ("a {- c\n d -} b", "a^0 <{- c\n d -}>^0 b^0 EOF^0"),
+            ("a\n{- c {- d -} -}\nb", "a^0 <{- c {- d -} -}>^1 b^1 EOF^0"),
+            (
+                "f({- c -}x, -- d\n  y)",
+                "f^0 (^0 <{- c -}>^0 x^0 ,^0 <-- d>^0 y^1 )^0 EOF^0",
+            ),
+            // Comment markers in a string are text; in an interpolation
+            // hole they are comments.
+            (
+                "\"s -- no \\{- no -\\}\" -- c",
+                "\"s -- no \\{- no -\\}\"^0 <-- c>^0 EOF^0",
+            ),
+            ("\"a{ x -- c\n }b\"", "\"a{^0 x^0 <-- c>^0 b\"^1 EOF^0"),
+            ("\u{FEFF}-- c\na", "<-- c>^0 a^1 EOF^0"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(trivia(input), *expected, "input: {input:?}");
+        }
     }
 
     #[test]

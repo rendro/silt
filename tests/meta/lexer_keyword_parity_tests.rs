@@ -15,7 +15,7 @@ fn first_token(src: &str) -> Token {
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .expect("lexer error");
-    tokens.into_iter().next().expect("no token").0
+    tokens.tokens.into_iter().next().expect("no token").kind
 }
 
 #[test]
