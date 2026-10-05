@@ -13,22 +13,22 @@ communication between tasks spawned with `task.spawn`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `close` | `(Channel) -> ()` | Close the channel |
-| `each` | `(Channel, (a) -> b) -> ()` | Iterate until channel closes |
-| `new` | `(Int?) -> Channel` | Create a channel (0 = rendezvous, N = buffered) |
-| `receive` | `(Channel) -> ChannelResult(a)` | Blocking receive |
+| `close` | `(Channel(a)) -> ()` | Close the channel |
+| `each` | `(Channel(a), Fn(a) -> b) -> ()` | Iterate until channel closes |
+| `new` | `(Int?) -> Channel(a)` | Create a channel (0 = rendezvous, N = buffered) |
+| `receive` | `(Channel(a)) -> ChannelResult(a)` | Blocking receive |
 | `recv_timeout` | `(Channel(a), Duration) -> Result(a, ChannelError)` | Blocking receive with a timeout |
 | `select` | `(List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`) |
-| `send` | `(Channel, a) -> ()` | Blocking send |
-| `timeout` | `(Int) -> Channel` | Create a channel that closes after N ms |
-| `try_receive` | `(Channel) -> ChannelResult(a)` | Non-blocking receive |
-| `try_send` | `(Channel, a) -> Bool` | Non-blocking send |
+| `send` | `(Channel(a), a) -> ()` | Blocking send |
+| `timeout` | `(Int) -> Channel(a)` | Create a channel that closes after N ms |
+| `try_receive` | `(Channel(a)) -> ChannelResult(a)` | Non-blocking receive |
+| `try_send` | `(Channel(a), a) -> Bool` | Non-blocking send |
 
 
 ## `channel.close`
 
 ```
-channel.close(ch: Channel) -> ()
+channel.close(ch: Channel(a)) -> ()
 ```
 
 Closes the channel. Subsequent sends will fail. Receivers will see `Closed`
@@ -47,7 +47,7 @@ fn main() {
 ## `channel.each`
 
 ```
-channel.each(ch: Channel, f: (a) -> b) -> ()
+channel.each(ch: Channel(a), f: Fn(a) -> b) -> ()
 ```
 
 Receives messages from the channel and calls `f` with each one, until the
@@ -72,8 +72,8 @@ fn main() {
 ## `channel.new`
 
 ```
-channel.new() -> Channel
-channel.new(capacity: Int) -> Channel
+channel.new() -> Channel(a)
+channel.new(capacity: Int) -> Channel(a)
 ```
 
 Creates a new channel. With no argument, creates a rendezvous channel
@@ -93,7 +93,7 @@ fn main() {
 ## `channel.receive`
 
 ```
-channel.receive(ch: Channel) -> ChannelResult(a)
+channel.receive(ch: Channel(a)) -> ChannelResult(a)
 ```
 
 Receives a value from the channel. Returns `Message(value)` when a value is
@@ -225,7 +225,7 @@ fn main() {
 ## `channel.send`
 
 ```
-channel.send(ch: Channel, value: a) -> ()
+channel.send(ch: Channel(a), value: a) -> ()
 ```
 
 Sends a value into the channel. Parks the task if the buffer is full, allowing
@@ -243,7 +243,7 @@ fn main() {
 ## `channel.timeout`
 
 ```
-channel.timeout(ms: Int) -> Channel
+channel.timeout(ms: Int) -> Channel(a)
 ```
 
 Creates a channel that automatically closes after the given number of
@@ -267,7 +267,7 @@ fn main() {
 ## `channel.try_receive`
 
 ```
-channel.try_receive(ch: Channel) -> ChannelResult(a)
+channel.try_receive(ch: Channel(a)) -> ChannelResult(a)
 ```
 
 Non-blocking receive. Returns `Message(value)` if a value is immediately
@@ -291,7 +291,7 @@ fn main() {
 ## `channel.try_send`
 
 ```
-channel.try_send(ch: Channel, value: a) -> Bool
+channel.try_send(ch: Channel(a), value: a) -> Bool
 ```
 
 Non-blocking send. Returns `true` if the value was successfully buffered,
@@ -318,17 +318,17 @@ fixed thread pool and run in parallel. They communicate through channels.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `cancel` | `(Handle) -> ()` | Request cancellation of a task (cooperative; see details below) |
-| `deadline` | `(Duration, () -> a) -> a` | Run a callback with a scoped I/O deadline |
-| `join` | `(Handle) -> a` | Wait for a task to complete |
-| `spawn` | `(() -> a) -> Handle` | Spawn a new lightweight task |
-| `spawn_until` | `(Duration, () -> a) -> Handle(a)` | Spawn a task scoped by a deadline |
+| `cancel` | `(Handle(a)) -> ()` | Request cancellation of a task (cooperative; see details below) |
+| `deadline` | `(Duration, Fn() -> a) -> a` | Run a callback with a scoped I/O deadline |
+| `join` | `(Handle(a)) -> a` | Wait for a task to complete |
+| `spawn` | `(Fn() -> a) -> Handle(a)` | Spawn a new lightweight task |
+| `spawn_until` | `(Duration, Fn() -> a) -> Handle(a)` | Spawn a task scoped by a deadline |
 
 
 ## `task.cancel`
 
 ```
-task.cancel(handle: Handle) -> ()
+task.cancel(handle: Handle(a)) -> ()
 ```
 
 Flips the handle's result slot to `Err("cancelled")` using first-writer-wins
@@ -386,7 +386,7 @@ fn main() {
 ## `task.join`
 
 ```
-task.join(handle: Handle) -> a  -- raises on failure
+task.join(handle: Handle(a)) -> a
 ```
 
 Blocks until the task completes and returns its result. Parks the calling task
@@ -414,7 +414,7 @@ fn main() {
 ## `task.spawn`
 
 ```
-task.spawn(f: () -> a) -> Handle
+task.spawn(f: Fn() -> a) -> Handle(a)
 ```
 
 Spawns a zero-argument function as a lightweight task on the thread pool.
@@ -437,7 +437,7 @@ fn main() {
 ## `task.deadline`
 
 ```
-task.deadline(dur: Duration, f: () -> a) -> a
+task.deadline(dur: Duration, f: Fn() -> a) -> a
 ```
 
 Runs `f` with a scoped I/O deadline. If any blocking I/O builtin inside `f`
@@ -483,7 +483,7 @@ fn main() {
 ## `task.spawn_until`
 
 ```
-task.spawn_until(dur: Duration, f: () -> a) -> Handle(a)
+task.spawn_until(dur: Duration, f: Fn() -> a) -> Handle(a)
 ```
 
 Spawns `f` as a task with a bounded wall-clock deadline. Equivalent to

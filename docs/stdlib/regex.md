@@ -27,7 +27,7 @@ types, but no stdlib function produces it.
 | `is_match` | `(String, String) -> Bool` | Test if pattern matches |
 | `replace` | `(String, String, String) -> String` | Replace first match |
 | `replace_all` | `(String, String, String) -> String` | Replace all matches |
-| `replace_all_with` | `(String, String, (String) -> String) -> String` | Replace all with callback |
+| `replace_all_with` | `(String, String, Fn(String) -> String) -> String` | Replace all with callback |
 | `split` | `(String, String) -> List(String)` | Split on pattern |
 
 
@@ -192,7 +192,7 @@ fn main() {
 ## `regex.replace_all_with`
 
 ```
-regex.replace_all_with(pattern: String, text: String, f: (String) -> String) -> String
+regex.replace_all_with(pattern: String, text: String, f: Fn(String) -> String) -> String
 ```
 
 Replaces all matches by calling `f` with each matched text. The callback must

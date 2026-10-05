@@ -83,7 +83,7 @@ fn main() {
 ## `string.contains`
 
 ```
-string.contains(s: String, sub: String) -> Bool
+string.contains(s: String, needle: String) -> Bool
 ```
 
 Returns `true` if `sub` appears anywhere in `s`.
@@ -115,7 +115,7 @@ fn main() {
 ## `string.from`
 
 ```
-string.from(value: a) -> String
+string.from(x: a) -> String
 ```
 
 Converts any value to its display string representation. This is the
@@ -319,7 +319,7 @@ fn main() {
 ## `string.join`
 
 ```
-string.join(parts: List(String), separator: String) -> String
+string.join(xs: List(String), sep: String) -> String
 ```
 
 Joins a list of strings with a separator between each pair.
@@ -481,7 +481,7 @@ fn main() {
 ## `string.split`
 
 ```
-string.split(s: String, separator: String) -> List(String)
+string.split(s: String, sep: String) -> List(String)
 ```
 
 Splits the string on every occurrence of `separator`.
@@ -498,7 +498,7 @@ fn main() {
 ## `string.split_at`
 
 ```
-string.split_at(s: String, idx: Int) -> (String, String)
+string.split_at(s: String, i: Int) -> (String, String)
 ```
 
 Splits `s` into `(left, right)` at character index `idx`. `idx == 0` yields
@@ -535,7 +535,7 @@ fn main() {
 ## `string.starts_with_at`
 
 ```
-string.starts_with_at(s: String, offset: Int, prefix: String) -> Bool
+string.starts_with_at(s: String, i: Int, prefix: String) -> Bool
 ```
 
 Returns `true` if `prefix` appears in `s` starting at character `offset`.

@@ -17,45 +17,45 @@ channel-backed lazy pipelines over the same combinator names.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `all` | `(List(a), (a) -> Bool) -> Bool` | True if predicate holds for every element |
-| `any` | `(List(a), (a) -> Bool) -> Bool` | True if predicate holds for at least one element |
+| `all` | `(List(a), Fn(a) -> Bool) -> Bool` | True if predicate holds for every element |
+| `any` | `(List(a), Fn(a) -> Bool) -> Bool` | True if predicate holds for at least one element |
 | `append` | `(List(a), a) -> List(a)` | Add an element to the end |
 | `concat` | `(List(a), List(a)) -> List(a)` | Concatenate two lists |
 | `contains` | `(List(a), a) -> Bool` | Check if element is in list |
 | `drop` | `(List(a), Int) -> List(a)` | Remove first n elements |
-| `each` | `(List(a), (a) -> ()) -> ()` | Call function for each element (side effects) |
+| `each` | `(List(a), Fn(a) -> ()) -> ()` | Call function for each element (side effects) |
 | `enumerate` | `(List(a)) -> List((Int, a))` | Pair each element with its index |
-| `filter` | `(List(a), (a) -> Bool) -> List(a)` | Keep elements matching predicate |
-| `filter_map` | `(List(a), (a) -> Option(b)) -> List(b)` | Filter and transform in one pass |
-| `find` | `(List(a), (a) -> Bool) -> Option(a)` | First element matching predicate |
-| `flat_map` | `(List(a), (a) -> List(b)) -> List(b)` | Map then flatten |
+| `filter` | `(List(a), Fn(a) -> Bool) -> List(a)` | Keep elements matching predicate |
+| `filter_map` | `(List(a), Fn(a) -> Option(b)) -> List(b)` | Filter and transform in one pass |
+| `find` | `(List(a), Fn(a) -> Bool) -> Option(a)` | First element matching predicate |
+| `flat_map` | `(List(a), Fn(a) -> List(b)) -> List(b)` | Map then flatten |
 | `flatten` | `(List(List(a))) -> List(a)` | Flatten one level of nesting |
-| `fold` | `(List(a), b, (b, a) -> b) -> b` | Reduce to a single value |
-| `fold_until` | `(List(a), b, (b, a) -> Step(b)) -> b` | Fold with early termination |
+| `fold` | `(List(a), b, Fn(b, a) -> b) -> b` | Reduce to a single value |
+| `fold_until` | `(List(a), b, Fn(b, a) -> Step(b)) -> b` | Fold with early termination |
 | `get` | `(List(a), Int) -> Option(a)` | Element at index, or None |
-| `group_by` | `(List(a), (a) -> k) -> Map(k, List(a))` | Group elements by key function |
+| `group_by` | `(List(a), Fn(a) -> b) -> Map(b, List(a))` | Group elements by key function |
 | `head` | `(List(a)) -> Option(a)` | First element, or None |
 | `index_of` | `(List(a), a) -> Option(Int)` | Index of first matching element, or None |
 | `intersperse` | `(List(a), a) -> List(a)` | Insert separator between elements |
 | `last` | `(List(a)) -> Option(a)` | Last element, or None |
 | `length` | `(List(a)) -> Int` | Number of elements |
-| `map` | `(List(a), (a) -> b) -> List(b)` | Transform each element |
-| `max_by` | `(List(a), (a) -> b) -> Option(a)` | Element with largest key, or None |
-| `min_by` | `(List(a), (a) -> b) -> Option(a)` | Element with smallest key, or None |
+| `map` | `(List(a), Fn(a) -> b) -> List(b)` | Transform each element |
+| `max_by` | `(List(a), Fn(a) -> b) -> Option(a)` | Element with largest key, or None |
+| `min_by` | `(List(a), Fn(a) -> b) -> Option(a)` | Element with smallest key, or None |
 | `prepend` | `(List(a), a) -> List(a)` | Add an element to the front |
 | `product` | `(List(Int)) -> Int` | Product of a list of ints (1 on empty) |
 | `product_float` | `(List(Float)) -> Float` | Product of a list of floats (1.0 on empty) |
 | `remove_at` | `(List(a), Int) -> List(a)` | Remove element at index (panics if out of range) |
 | `reverse` | `(List(a)) -> List(a)` | Reverse element order |
-| `scan` | `(List(a), b, (b, a) -> b) -> List(b)` | Prefix fold; returns all intermediate accumulators |
+| `scan` | `(List(a), b, Fn(b, a) -> b) -> List(b)` | Prefix fold; returns all intermediate accumulators |
 | `set` | `(List(a), Int, a) -> List(a)` | Return new list with element at index replaced |
 | `sort` | `(List(a)) -> List(a)` | Sort in natural order |
-| `sort_by` | `(List(a), (a) -> b) -> List(a)` | Sort by key function |
+| `sort_by` | `(List(a), Fn(a) -> b) -> List(a)` | Sort by key function |
 | `sum` | `(List(Int)) -> Int` | Sum a list of ints (0 on empty) |
 | `sum_float` | `(List(Float)) -> Float` | Sum a list of floats (0.0 on empty) |
 | `tail` | `(List(a)) -> List(a)` | All elements except the first |
 | `take` | `(List(a), Int) -> List(a)` | Keep first n elements |
-| `unfold` | `(a, (a) -> Option((b, a))) -> List(b)` | Build a list from a seed |
+| `unfold` | `(a, Fn(a) -> Option((b, a))) -> List(b)` | Build a list from a seed |
 | `unique` | `(List(a)) -> List(a)` | Remove duplicates, preserving first occurrence |
 | `zip` | `(List(a), List(b)) -> List((a, b))` | Pair elements from two lists |
 
@@ -63,7 +63,7 @@ channel-backed lazy pipelines over the same combinator names.
 ## `list.all`
 
 ```
-list.all(xs: List(a), f: (a) -> Bool) -> Bool
+list.all(xs: List(a), pred: Fn(a) -> Bool) -> Bool
 ```
 
 Returns `true` if `f` returns `true` for every element. Short-circuits on the
@@ -81,7 +81,7 @@ fn main() {
 ## `list.any`
 
 ```
-list.any(xs: List(a), f: (a) -> Bool) -> Bool
+list.any(xs: List(a), pred: Fn(a) -> Bool) -> Bool
 ```
 
 Returns `true` if `f` returns `true` for at least one element. Short-circuits on
@@ -99,7 +99,7 @@ fn main() {
 ## `list.append`
 
 ```
-list.append(xs: List(a), elem: a) -> List(a)
+list.append(xs: List(a), x: a) -> List(a)
 ```
 
 Returns a new list with `elem` added at the end.
@@ -133,7 +133,7 @@ fn main() {
 ## `list.contains`
 
 ```
-list.contains(xs: List(a), elem: a) -> Bool
+list.contains(xs: List(a), x: a) -> Bool
 ```
 
 Returns `true` if `elem` is in the list (by value equality).
@@ -168,7 +168,7 @@ fn main() {
 ## `list.each`
 
 ```
-list.each(xs: List(a), f: (a) -> ()) -> ()
+list.each(xs: List(a), f: Fn(a) -> ()) -> ()
 ```
 
 Calls `f` for every element in the list. Used for side effects. Returns unit.
@@ -202,7 +202,7 @@ fn main() {
 ## `list.filter`
 
 ```
-list.filter(xs: List(a), f: (a) -> Bool) -> List(a)
+list.filter(xs: List(a), pred: Fn(a) -> Bool) -> List(a)
 ```
 
 Returns a list containing only the elements for which `f` returns `true`.
@@ -219,7 +219,7 @@ fn main() {
 ## `list.filter_map`
 
 ```
-list.filter_map(xs: List(a), f: (a) -> Option(b)) -> List(b)
+list.filter_map(xs: List(a), f: Fn(a) -> Option(b)) -> List(b)
 ```
 
 Applies `f` to each element. Keeps the inner values from `Some` results and
@@ -244,7 +244,7 @@ fn main() {
 ## `list.find`
 
 ```
-list.find(xs: List(a), f: (a) -> Bool) -> Option(a)
+list.find(xs: List(a), pred: Fn(a) -> Bool) -> Option(a)
 ```
 
 Returns `Some(element)` for the first element where `f` returns `true`, or
@@ -262,7 +262,7 @@ fn main() {
 ## `list.flat_map`
 
 ```
-list.flat_map(xs: List(a), f: (a) -> List(b)) -> List(b)
+list.flat_map(xs: List(a), f: Fn(a) -> List(b)) -> List(b)
 ```
 
 Maps each element to a list, then flattens the results into a single list.
@@ -296,7 +296,7 @@ fn main() {
 ## `list.fold`
 
 ```
-list.fold(xs: List(a), init: b, f: (b, a) -> b) -> b
+list.fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b
 ```
 
 Reduces a list to a single value. Starts with `init`, then calls `f(acc, elem)`
@@ -314,7 +314,7 @@ fn main() {
 ## `list.fold_until`
 
 ```
-list.fold_until(xs: List(a), init: b, f: (b, a) -> Step(b)) -> b
+list.fold_until(xs: List(a), init: b, f: Fn(b, a) -> Step(b)) -> b
 ```
 
 Like `fold`, but the callback returns `Continue(acc)` to keep going or
@@ -339,7 +339,7 @@ fn main() {
 ## `list.get`
 
 ```
-list.get(xs: List(a), index: Int) -> Option(a)
+list.get(xs: List(a), i: Int) -> Option(a)
 ```
 
 Returns `Some(element)` at the given index, or `None` if out of bounds.
@@ -359,7 +359,7 @@ fn main() {
 ## `list.group_by`
 
 ```
-list.group_by(xs: List(a), f: (a) -> k) -> Map(k, List(a))
+list.group_by(xs: List(a), key: Fn(a) -> b) -> Map(b, List(a))
 ```
 
 Groups elements by the result of applying `f`. Returns a map from keys to lists
@@ -394,7 +394,7 @@ fn main() {
 ## `list.index_of`
 
 ```
-list.index_of(xs: List(a), target: a) -> Option(Int)
+list.index_of(xs: List(a), x: a) -> Option(Int)
 ```
 
 Returns `Some(index)` of the first element equal to `target` (by value
@@ -465,7 +465,7 @@ fn main() {
 ## `list.map`
 
 ```
-list.map(xs: List(a), f: (a) -> b) -> List(b)
+list.map(xs: List(a), f: Fn(a) -> b) -> List(b)
 ```
 
 Returns a new list with `f` applied to each element.
@@ -482,7 +482,7 @@ fn main() {
 ## `list.max_by`
 
 ```
-list.max_by(xs: List(a), key: (a) -> b) -> Option(a)
+list.max_by(xs: List(a), key: Fn(a) -> b) -> Option(a)
 ```
 
 Returns `Some(element)` whose `key` result is largest, or `None` if the list
@@ -504,7 +504,7 @@ fn main() {
 ## `list.min_by`
 
 ```
-list.min_by(xs: List(a), key: (a) -> b) -> Option(a)
+list.min_by(xs: List(a), key: Fn(a) -> b) -> Option(a)
 ```
 
 Returns `Some(element)` whose `key` result is smallest, or `None` if the list
@@ -526,7 +526,7 @@ fn main() {
 ## `list.prepend`
 
 ```
-list.prepend(xs: List(a), elem: a) -> List(a)
+list.prepend(xs: List(a), x: a) -> List(a)
 ```
 
 Returns a new list with `elem` added at the front.
@@ -579,7 +579,7 @@ fn main() {
 ## `list.remove_at`
 
 ```
-list.remove_at(xs: List(a), index: Int) -> List(a)
+list.remove_at(xs: List(a), i: Int) -> List(a)
 ```
 
 Returns a new list with the element at `index` removed. Panics if the index is
@@ -613,7 +613,7 @@ fn main() {
 ## `list.set`
 
 ```
-list.set(xs: List(a), index: Int, value: a) -> List(a)
+list.set(xs: List(a), i: Int, x: a) -> List(a)
 ```
 
 Returns a new list with the element at `index` replaced by `value`. Panics if
@@ -647,7 +647,7 @@ fn main() {
 ## `list.scan`
 
 ```
-list.scan(xs: List(a), init: b, f: (b, a) -> b) -> List(b)
+list.scan(xs: List(a), init: b, f: Fn(b, a) -> b) -> List(b)
 ```
 
 Like `fold`, but returns every intermediate accumulator rather than just the
@@ -670,7 +670,7 @@ fn main() {
 ## `list.sort_by`
 
 ```
-list.sort_by(xs: List(a), key: (a) -> b) -> List(a)
+list.sort_by(xs: List(a), key: Fn(a) -> b) -> List(a)
 ```
 
 Returns a new list sorted by the result of applying the key function to each
@@ -761,7 +761,7 @@ fn main() {
 ## `list.unfold`
 
 ```
-list.unfold(seed: a, f: (a) -> Option((b, a))) -> List(b)
+list.unfold(seed: a, f: Fn(a) -> Option((b, a))) -> List(b)
 ```
 
 Builds a list from a seed value. The function returns `Some((element, next_seed))`

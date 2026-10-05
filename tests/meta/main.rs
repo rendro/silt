@@ -42,3 +42,4 @@ mod round84_readme_keyword_parity_tests;
 mod round86_editor_grammar_operators_lexer_parity_tests;
 mod round88_formatter_precedence_dedup_lock_tests;
 mod rustdoc_warnings_lock_tests;
+mod stdlib_reference_tests;

@@ -64,7 +64,7 @@ fn main() {
 ## `io.inspect`
 
 ```
-io.inspect(value: a) -> String
+io.inspect(x: a) -> String
 ```
 
 Returns a debug-style string representation of any value, using silt syntax
@@ -451,7 +451,9 @@ fn main() {
 
 ```
 fs.stat(path: String) -> Result(FileStat, IoError)
+```
 
+```
 record FileStat {
     size: Int,                   // size in bytes
     is_file: Bool,

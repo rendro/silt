@@ -187,8 +187,7 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `parse` | `(String) -> Result(Float, ParseError)` | Parse string to float |
 | `round` | `(Float) -> Float` | Round to nearest integer (as Float) |
 | `to_int` | `(Float) -> Int` | Truncate to integer |
-| `to_string` | `(Float) -> String` | Shortest round-trippable representation |
-| `to_string` | `(Float, Int) -> String` | Format with fixed decimal places |
+| `to_string` | `(Float, Int?) -> String` | Shortest round-trippable representation; with `decimals`, that many decimal places |
 | **Constants** | | |
 | `float.max_value` | `Float` | Maximum finite value (`1.7976931348623157e+308`) |
 | `float.min_value` | `Float` | Minimum finite value (`-1.7976931348623157e+308`) |

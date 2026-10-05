@@ -14,7 +14,7 @@ Parse JSON strings into typed silt values and serialize values to JSON.
 |----------|-----------|-------------|
 | `parse` | `(String, type a) -> Result(a, JsonError)` | Parse JSON object into record |
 | `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse JSON array into record list |
-| `parse_map` | `(String, type v) -> Result(Map(String, v), JsonError)` | Parse JSON object into map |
+| `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError)` | Parse JSON object into map |
 | `pretty` | `(a) -> String` | Pretty-print value as JSON |
 | `stringify` | `(a) -> String` | Serialize value as compact JSON |
 
@@ -156,7 +156,7 @@ fn main() {
 ## `json.parse_map`
 
 ```
-json.parse_map(s: String, type v) -> Result(Map(String, v), JsonError)
+json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError)
 ```
 
 Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`

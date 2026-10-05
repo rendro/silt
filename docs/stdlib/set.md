@@ -15,15 +15,15 @@ literal syntax and contain unique values.
 |----------|-----------|-------------|
 | `contains` | `(Set(a), a) -> Bool` | Check membership |
 | `difference` | `(Set(a), Set(a)) -> Set(a)` | Elements in first but not second |
-| `each` | `(Set(a), (a) -> ()) -> ()` | Iterate over all elements |
-| `filter` | `(Set(a), (a) -> Bool) -> Set(a)` | Keep elements matching predicate |
-| `fold` | `(Set(a), b, (b, a) -> b) -> b` | Reduce to a single value |
+| `each` | `(Set(a), Fn(a) -> ()) -> ()` | Iterate over all elements |
+| `filter` | `(Set(a), Fn(a) -> Bool) -> Set(a)` | Keep elements matching predicate |
+| `fold` | `(Set(a), b, Fn(b, a) -> b) -> b` | Reduce to a single value |
 | `from_list` | `(List(a)) -> Set(a)` | Create set from list |
 | `insert` | `(Set(a), a) -> Set(a)` | Add an element |
 | `intersection` | `(Set(a), Set(a)) -> Set(a)` | Elements in both sets |
 | `is_subset` | `(Set(a), Set(a)) -> Bool` | True if first is subset of second |
 | `length` | `(Set(a)) -> Int` | Number of elements |
-| `map` | `(Set(a), (a) -> b) -> Set(b)` | Transform each element |
+| `map` | `(Set(a), Fn(a) -> b) -> Set(b)` | Transform each element |
 | `new` | `() -> Set(a)` | Create an empty set |
 | `remove` | `(Set(a), a) -> Set(a)` | Remove an element |
 | `symmetric_difference` | `(Set(a), Set(a)) -> Set(a)` | Elements in exactly one of the two sets |
@@ -34,7 +34,7 @@ literal syntax and contain unique values.
 ## `set.contains`
 
 ```
-set.contains(s: Set(a), elem: a) -> Bool
+set.contains(s: Set(a), x: a) -> Bool
 ```
 
 Returns `true` if `elem` is in the set.
@@ -52,7 +52,7 @@ fn main() {
 ## `set.difference`
 
 ```
-set.difference(a: Set(a), b: Set(a)) -> Set(a)
+set.difference(s: Set(a), other: Set(a)) -> Set(a)
 ```
 
 Returns elements that are in `a` but not in `b`.
@@ -69,7 +69,7 @@ fn main() {
 ## `set.each`
 
 ```
-set.each(s: Set(a), f: (a) -> ()) -> ()
+set.each(s: Set(a), f: Fn(a) -> ()) -> ()
 ```
 
 Calls `f` for every element. Used for side effects.
@@ -85,7 +85,7 @@ fn main() {
 ## `set.filter`
 
 ```
-set.filter(s: Set(a), f: (a) -> Bool) -> Set(a)
+set.filter(s: Set(a), pred: Fn(a) -> Bool) -> Set(a)
 ```
 
 Returns a new set containing only elements for which `f` returns `true`.
@@ -102,7 +102,7 @@ fn main() {
 ## `set.fold`
 
 ```
-set.fold(s: Set(a), init: b, f: (b, a) -> b) -> b
+set.fold(s: Set(a), init: b, f: Fn(b, a) -> b) -> b
 ```
 
 Reduces the set to a single value. Iteration order is sorted.
@@ -136,7 +136,7 @@ fn main() {
 ## `set.insert`
 
 ```
-set.insert(s: Set(a), elem: a) -> Set(a)
+set.insert(s: Set(a), x: a) -> Set(a)
 ```
 
 Returns a new set with `elem` added. No-op if already present.
@@ -153,7 +153,7 @@ fn main() {
 ## `set.intersection`
 
 ```
-set.intersection(a: Set(a), b: Set(a)) -> Set(a)
+set.intersection(s: Set(a), other: Set(a)) -> Set(a)
 ```
 
 Returns elements that are in both `a` and `b`.
@@ -170,7 +170,7 @@ fn main() {
 ## `set.is_subset`
 
 ```
-set.is_subset(a: Set(a), b: Set(a)) -> Bool
+set.is_subset(s: Set(a), other: Set(a)) -> Bool
 ```
 
 Returns `true` if every element of `a` is also in `b`.
@@ -203,7 +203,7 @@ fn main() {
 ## `set.map`
 
 ```
-set.map(s: Set(a), f: (a) -> b) -> Set(b)
+set.map(s: Set(a), f: Fn(a) -> b) -> Set(b)
 ```
 
 Returns a new set with `f` applied to each element. The result set may be
@@ -239,7 +239,7 @@ fn main() {
 ## `set.remove`
 
 ```
-set.remove(s: Set(a), elem: a) -> Set(a)
+set.remove(s: Set(a), x: a) -> Set(a)
 ```
 
 Returns a new set with `elem` removed. No-op if not present.
@@ -256,7 +256,7 @@ fn main() {
 ## `set.symmetric_difference`
 
 ```
-set.symmetric_difference(a: Set(a), b: Set(a)) -> Set(a)
+set.symmetric_difference(s: Set(a), other: Set(a)) -> Set(a)
 ```
 
 Returns elements that are in exactly one of `a` or `b` — equivalent to
@@ -291,7 +291,7 @@ fn main() {
 ## `set.union`
 
 ```
-set.union(a: Set(a), b: Set(a)) -> Set(a)
+set.union(s: Set(a), other: Set(a)) -> Set(a)
 ```
 
 Returns a set containing all elements from both `a` and `b`.

@@ -13,19 +13,19 @@ matching.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `flat_map` | `(Result(a, e), (a) -> Result(b, e)) -> Result(b, e)` | Chain fallible operations |
-| `flatten` | `(Result(Result(a, e), e)) -> Result(a, e)` | Remove one nesting level |
-| `is_err` | `(Result(a, e)) -> Bool` | True if Err |
-| `is_ok` | `(Result(a, e)) -> Bool` | True if Ok |
-| `map_err` | `(Result(a, e), (e) -> f) -> Result(a, f)` | Transform the error |
-| `map_ok` | `(Result(a, e), (a) -> b) -> Result(b, e)` | Transform the success value |
-| `unwrap_or` | `(Result(a, e), a) -> a` | Extract value or use default |
+| `flat_map` | `(Result(a, b), Fn(a) -> Result(c, b)) -> Result(c, b)` | Chain fallible operations |
+| `flatten` | `(Result(Result(a, b), b)) -> Result(a, b)` | Remove one nesting level |
+| `is_err` | `(Result(a, b)) -> Bool` | True if Err |
+| `is_ok` | `(Result(a, b)) -> Bool` | True if Ok |
+| `map_err` | `(Result(a, b), Fn(b) -> c) -> Result(a, c)` | Transform the error |
+| `map_ok` | `(Result(a, b), Fn(a) -> c) -> Result(c, b)` | Transform the success value |
+| `unwrap_or` | `(Result(a, b), a) -> a` | Extract value or use default |
 
 
 ## `result.flat_map`
 
 ```
-result.flat_map(r: Result(a, e), f: (a) -> Result(b, e)) -> Result(b, e)
+result.flat_map(r: Result(a, b), f: Fn(a) -> Result(c, b)) -> Result(c, b)
 ```
 
 If `r` is `Ok(v)`, calls `f(v)` and returns its result. If `r` is `Err`,
@@ -46,7 +46,7 @@ fn main() {
 ## `result.flatten`
 
 ```
-result.flatten(r: Result(Result(a, e), e)) -> Result(a, e)
+result.flatten(r: Result(Result(a, b), b)) -> Result(a, b)
 ```
 
 Collapses a nested Result. `Ok(Ok(v))` becomes `Ok(v)`, `Ok(Err(e))` becomes
@@ -64,7 +64,7 @@ fn main() {
 ## `result.is_err`
 
 ```
-result.is_err(r: Result(a, e)) -> Bool
+result.is_err(r: Result(a, b)) -> Bool
 ```
 
 Returns `true` if the result is an `Err`.
@@ -81,7 +81,7 @@ fn main() {
 ## `result.is_ok`
 
 ```
-result.is_ok(r: Result(a, e)) -> Bool
+result.is_ok(r: Result(a, b)) -> Bool
 ```
 
 Returns `true` if the result is an `Ok`.
@@ -98,7 +98,7 @@ fn main() {
 ## `result.map_err`
 
 ```
-result.map_err(r: Result(a, e), f: (e) -> f) -> Result(a, f)
+result.map_err(r: Result(a, b), f: Fn(b) -> c) -> Result(a, c)
 ```
 
 If `r` is `Err(e)`, returns `Err(f(e))`. If `r` is `Ok`, returns it unchanged.
@@ -143,7 +143,7 @@ fn main() {
 ## `result.map_ok`
 
 ```
-result.map_ok(r: Result(a, e), f: (a) -> b) -> Result(b, e)
+result.map_ok(r: Result(a, b), f: Fn(a) -> c) -> Result(c, b)
 ```
 
 If `r` is `Ok(v)`, returns `Ok(f(v))`. If `r` is `Err`, returns it unchanged.
@@ -160,7 +160,7 @@ fn main() {
 ## `result.unwrap_or`
 
 ```
-result.unwrap_or(r: Result(a, e), default: a) -> a
+result.unwrap_or(r: Result(a, b), default: a) -> a
 ```
 
 Returns the `Ok` value, or `default` if the result is `Err`.
@@ -185,18 +185,18 @@ matching.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `flat_map` | `(Option(a), (a) -> Option(b)) -> Option(b)` | Chain optional operations |
+| `flat_map` | `(Option(a), Fn(a) -> Option(b)) -> Option(b)` | Chain optional operations |
 | `is_none` | `(Option(a)) -> Bool` | True if None |
 | `is_some` | `(Option(a)) -> Bool` | True if Some |
-| `map` | `(Option(a), (a) -> b) -> Option(b)` | Transform the inner value |
-| `to_result` | `(Option(a), e) -> Result(a, e)` | Convert to Result with error value |
+| `map` | `(Option(a), Fn(a) -> b) -> Option(b)` | Transform the inner value |
+| `to_result` | `(Option(a), b) -> Result(a, b)` | Convert to Result with error value |
 | `unwrap_or` | `(Option(a), a) -> a` | Extract value or use default |
 
 
 ## `option.flat_map`
 
 ```
-option.flat_map(opt: Option(a), f: (a) -> Option(b)) -> Option(b)
+option.flat_map(opt: Option(a), f: Fn(a) -> Option(b)) -> Option(b)
 ```
 
 If `opt` is `Some(v)`, calls `f(v)` and returns its result. If `opt` is `None`,
@@ -253,7 +253,7 @@ fn main() {
 ## `option.map`
 
 ```
-option.map(opt: Option(a), f: (a) -> b) -> Option(b)
+option.map(opt: Option(a), f: Fn(a) -> b) -> Option(b)
 ```
 
 If `opt` is `Some(v)`, returns `Some(f(v))`. If `opt` is `None`, returns `None`.
@@ -270,7 +270,7 @@ fn main() {
 ## `option.to_result`
 
 ```
-option.to_result(opt: Option(a), error: e) -> Result(a, e)
+option.to_result(opt: Option(a), error: b) -> Result(a, b)
 ```
 
 Converts `Some(v)` to `Ok(v)` and `None` to `Err(error)`.

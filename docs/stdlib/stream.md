@@ -32,7 +32,7 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 | `from_list` | `(List(a)) -> Channel(a)` | Emit list elements then close |
 | `from_range` | `(Int, Int) -> Channel(Int)` | Emit `lo..=hi` then close |
 | `repeat` | `(a) -> Channel(a)` | Infinite — pair with `take` |
-| `unfold` | `(a, (a) -> Option((b, a))) -> Channel(b)` | Generator (closes on `None`) |
+| `unfold` | `(a, Fn(a) -> Option((b, a))) -> Channel(b)` | Generator (closes on `None`) |
 | `file_chunks` | `(String, Int) -> Channel(Result(Bytes, IoError))` | Read file in chunks |
 | `file_lines` | `(String) -> Channel(Result(String, IoError))` | Read file line-by-line |
 | `tcp_chunks` | `(TcpStream, Int) -> Channel(Result(Bytes, TcpError))` | Read TCP in chunks |
@@ -42,17 +42,17 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 
 | Function | Signature |
 |----------|-----------|
-| `map` | `(Channel(a), (a) -> b) -> Channel(b)` |
-| `map_ok` | `(Channel(Result(a, e)), (a) -> b) -> Channel(Result(b, e))` |
-| `filter` | `(Channel(a), (a) -> Bool) -> Channel(a)` |
-| `filter_ok` | `(Channel(Result(a, e)), (a) -> Bool) -> Channel(Result(a, e))` |
-| `flat_map` | `(Channel(a), (a) -> List(b)) -> Channel(b)` |
+| `map` | `(Channel(a), Fn(a) -> b) -> Channel(b)` |
+| `map_ok` | `(Channel(Result(a, b)), Fn(a) -> c) -> Channel(Result(c, b))` |
+| `filter` | `(Channel(a), Fn(a) -> Bool) -> Channel(a)` |
+| `filter_ok` | `(Channel(Result(a, b)), Fn(a) -> Bool) -> Channel(Result(a, b))` |
+| `flat_map` | `(Channel(a), Fn(a) -> List(b)) -> Channel(b)` |
 | `take` | `(Channel(a), Int) -> Channel(a)` |
 | `drop` | `(Channel(a), Int) -> Channel(a)` |
-| `take_while` | `(Channel(a), (a) -> Bool) -> Channel(a)` |
-| `drop_while` | `(Channel(a), (a) -> Bool) -> Channel(a)` |
+| `take_while` | `(Channel(a), Fn(a) -> Bool) -> Channel(a)` |
+| `drop_while` | `(Channel(a), Fn(a) -> Bool) -> Channel(a)` |
 | `chunks` | `(Channel(a), Int) -> Channel(List(a))` |
-| `scan` | `(Channel(a), b, (b, a) -> b) -> Channel(b)` |
+| `scan` | `(Channel(a), b, Fn(b, a) -> b) -> Channel(b)` |
 | `dedup` | `(Channel(a)) -> Channel(a)` |
 | `buffered` | `(Channel(a), Int) -> Channel(a)` |
 
@@ -69,8 +69,8 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 | Function | Signature |
 |----------|-----------|
 | `collect` | `(Channel(a)) -> List(a)` |
-| `fold` | `(Channel(a), b, (b, a) -> b) -> b` |
-| `each` | `(Channel(a), (a) -> ()) -> ()` |
+| `fold` | `(Channel(a), b, Fn(b, a) -> b) -> b` |
+| `each` | `(Channel(a), Fn(a) -> ()) -> ()` |
 | `count` | `(Channel(a)) -> Int` |
 | `first` | `(Channel(a)) -> Option(a)` |
 | `last` | `(Channel(a)) -> Option(a)` |

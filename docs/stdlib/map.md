@@ -13,26 +13,26 @@ Functions for working with immutable, ordered maps (`Map(k, v)`). Maps use
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `contains` | `(Map(k, v), k) -> Bool` | Check if key exists |
-| `delete` | `(Map(k, v), k) -> Map(k, v)` | Remove a key |
-| `each` | `(Map(k, v), (k, v) -> ()) -> ()` | Iterate over all entries |
-| `entries` | `(Map(k, v)) -> List((k, v))` | All key-value pairs as tuples |
-| `filter` | `(Map(k, v), (k, v) -> Bool) -> Map(k, v)` | Keep entries matching predicate |
-| `from_entries` | `(List((k, v))) -> Map(k, v)` | Build map from tuple list |
-| `get` | `(Map(k, v), k) -> Option(v)` | Look up value by key |
-| `keys` | `(Map(k, v)) -> List(k)` | All keys as a list |
-| `length` | `(Map(k, v)) -> Int` | Number of entries |
-| `map` | `(Map(k, v), (k, v) -> (k2, v2)) -> Map(k2, v2)` | Transform all entries |
-| `merge` | `(Map(k, v), Map(k, v)) -> Map(k, v)` | Merge two maps (right wins) |
-| `set` | `(Map(k, v), k, v) -> Map(k, v)` | Insert or update a key |
-| `update` | `(Map(k, v), k, v, (v) -> v) -> Map(k, v)` | Update existing or insert default |
-| `values` | `(Map(k, v)) -> List(v)` | All values as a list |
+| `contains` | `(Map(a, b), a) -> Bool where a: Hash` | Check if key exists |
+| `delete` | `(Map(a, b), a) -> Map(a, b) where a: Hash` | Remove a key |
+| `each` | `(Map(a, b), Fn(a, b) -> ()) -> ()` | Iterate over all entries |
+| `entries` | `(Map(a, b)) -> List((a, b))` | All key-value pairs as tuples |
+| `filter` | `(Map(a, b), Fn(a, b) -> Bool) -> Map(a, b)` | Keep entries matching predicate |
+| `from_entries` | `(List((a, b))) -> Map(a, b)` | Build map from tuple list |
+| `get` | `(Map(a, b), a) -> Option(b) where a: Hash` | Look up value by key |
+| `keys` | `(Map(a, b)) -> List(a) where a: Hash` | All keys as a list |
+| `length` | `(Map(a, b)) -> Int where a: Hash` | Number of entries |
+| `map` | `(Map(a, b), Fn(a, b) -> (c, d)) -> Map(c, d)` | Transform all entries |
+| `merge` | `(Map(a, b), Map(a, b)) -> Map(a, b) where a: Hash` | Merge two maps (right wins) |
+| `set` | `(Map(a, b), a, b) -> Map(a, b) where a: Hash` | Insert or update a key |
+| `update` | `(Map(a, b), a, b, Fn(b) -> b) -> Map(a, b)` | Update existing or insert default |
+| `values` | `(Map(a, b)) -> List(b) where a: Hash` | All values as a list |
 
 
 ## `map.contains`
 
 ```
-map.contains(m: Map(k, v), key: k) -> Bool
+map.contains(m: Map(a, b), k: a) -> Bool where a: Hash
 ```
 
 Returns `true` if the map has an entry for `key`.
@@ -50,7 +50,7 @@ fn main() {
 ## `map.delete`
 
 ```
-map.delete(m: Map(k, v), key: k) -> Map(k, v)
+map.delete(m: Map(a, b), k: a) -> Map(a, b) where a: Hash
 ```
 
 Returns a new map with `key` removed. No-op if key does not exist.
@@ -68,7 +68,7 @@ fn main() {
 ## `map.each`
 
 ```
-map.each(m: Map(k, v), f: (k, v) -> ()) -> ()
+map.each(m: Map(a, b), f: Fn(a, b) -> ()) -> ()
 ```
 
 Calls `f` with each key-value pair. Used for side effects.
@@ -85,7 +85,7 @@ fn main() {
 ## `map.entries`
 
 ```
-map.entries(m: Map(k, v)) -> List((k, v))
+map.entries(m: Map(a, b)) -> List((a, b))
 ```
 
 Returns all key-value pairs as a list of tuples.
@@ -103,7 +103,7 @@ fn main() {
 ## `map.filter`
 
 ```
-map.filter(m: Map(k, v), f: (k, v) -> Bool) -> Map(k, v)
+map.filter(m: Map(a, b), pred: Fn(a, b) -> Bool) -> Map(a, b)
 ```
 
 Returns a new map containing only entries where `f` returns `true`.
@@ -121,7 +121,7 @@ fn main() {
 ## `map.from_entries`
 
 ```
-map.from_entries(entries: List((k, v))) -> Map(k, v)
+map.from_entries(entries: List((a, b))) -> Map(a, b)
 ```
 
 Builds a map from a list of `(key, value)` tuples. Later entries overwrite
@@ -139,7 +139,7 @@ fn main() {
 ## `map.get`
 
 ```
-map.get(m: Map(k, v), key: k) -> Option(v)
+map.get(m: Map(a, b), k: a) -> Option(b) where a: Hash
 ```
 
 Returns `Some(value)` if the key exists, or `None` otherwise.
@@ -159,7 +159,7 @@ fn main() {
 ## `map.keys`
 
 ```
-map.keys(m: Map(k, v)) -> List(k)
+map.keys(m: Map(a, b)) -> List(a) where a: Hash
 ```
 
 Returns all keys as a list, in sorted order.
@@ -176,7 +176,7 @@ fn main() {
 ## `map.length`
 
 ```
-map.length(m: Map(k, v)) -> Int
+map.length(m: Map(a, b)) -> Int where a: Hash
 ```
 
 Returns the number of entries in the map.
@@ -192,7 +192,7 @@ fn main() {
 ## `map.map`
 
 ```
-map.map(m: Map(k, v), f: (k, v) -> (k2, v2)) -> Map(k2, v2)
+map.map(m: Map(a, b), f: Fn(a, b) -> (c, d)) -> Map(c, d)
 ```
 
 Transforms each entry. The callback must return a `(key, value)` tuple.
@@ -210,7 +210,7 @@ fn main() {
 ## `map.merge`
 
 ```
-map.merge(m1: Map(k, v), m2: Map(k, v)) -> Map(k, v)
+map.merge(m: Map(a, b), other: Map(a, b)) -> Map(a, b) where a: Hash
 ```
 
 Merges two maps. When both have the same key, the value from `m2` wins.
@@ -229,7 +229,7 @@ fn main() {
 ## `map.set`
 
 ```
-map.set(m: Map(k, v), key: k, value: v) -> Map(k, v)
+map.set(m: Map(a, b), k: a, v: b) -> Map(a, b) where a: Hash
 ```
 
 Returns a new map with the key set to value. Inserts if new, overwrites if
@@ -248,7 +248,7 @@ fn main() {
 ## `map.update`
 
 ```
-map.update(m: Map(k, v), key: k, default: v, f: (v) -> v) -> Map(k, v)
+map.update(m: Map(a, b), k: a, default: b, f: Fn(b) -> b) -> Map(a, b)
 ```
 
 If `key` exists, applies `f` to the current value. If `key` does not exist,
@@ -269,7 +269,7 @@ fn main() {
 ## `map.values`
 
 ```
-map.values(m: Map(k, v)) -> List(v)
+map.values(m: Map(a, b)) -> List(b) where a: Hash
 ```
 
 Returns all values as a list, in key-sorted order.

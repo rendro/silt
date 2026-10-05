@@ -14,7 +14,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 |----------|-----------|-------------|
 | `parse` | `(String, type a) -> Result(a, TomlError)` | Parse a TOML document (top-level table) into a record |
 | `parse_list` | `(String, type a) -> Result(List(a), TomlError)` | Parse a single `[[items]]` section into a list of records |
-| `parse_map` | `(String, type v) -> Result(Map(String, v), TomlError)` | Parse a top-level table into a map |
+| `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError)` | Parse a top-level table into a map |
 | `pretty` | `(a) -> Result(String, TomlError)` | Pretty-print a value as TOML |
 | `stringify` | `(a) -> Result(String, TomlError)` | Serialize a value as TOML |
 
@@ -143,7 +143,7 @@ top-level array-of-tables key works.
 ## `toml.parse_map`
 
 ```
-toml.parse_map(s: String, type v) -> Result(Map(String, v), TomlError)
+toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError)
 ```
 
 Parses a top-level TOML table into a `Map(String, v)`. The type is passed as

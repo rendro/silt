@@ -109,7 +109,7 @@ pub(super) fn modules() -> Vec<Module> {
                 u("fn parse(s: String) -> Result(Float, ParseError)", "Parse string to float"),
                 u("fn round(f: Float) -> Float", "Round to nearest integer (as Float)"),
                 u("fn to_int(f: Float) -> Int", "Truncate to integer"),
-                u("fn to_string(f: Float, decimals: Int) -> String", "Shortest round-trippable representation").optional_last(),
+                u("fn to_string(f: Float, decimals: Int) -> String", "Shortest round-trippable representation; with `decimals`, that many decimal places").optional_last(),
                 k("max_value: Float", "Maximum finite value (`1.7976931348623157e+308`)", f64::MAX),
                 k("min_value: Float", "Minimum finite value (`-1.7976931348623157e+308`)", f64::MIN),
                 k("epsilon: Float", "Machine epsilon (`2.220446049250313e-16`)", f64::EPSILON),

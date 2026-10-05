@@ -3,8 +3,9 @@
 //! A page is prose with two generated parts, which [`render_page`]
 //! writes from the rows of the builtin registry:
 //!
-//! - in a module's `## Summary` tables, the signature and description
-//!   cells of each row that names a function or constant of the module;
+//! - in a module's tables of functions (the tables whose second column
+//!   is headed `Signature`), the signature cell and, in a table of three
+//!   columns or more, the last cell (the description) of each row;
 //! - the signature block that opens a function's own section
 //!   (`## \`list.map\``).
 //!
@@ -233,7 +234,8 @@ fn trim_blank_edges(lines: &[&str]) -> String {
 // ── The generated parts of a page ───────────────────────────────────
 
 /// A row's signature without its parameter names, as a summary table
-/// shows it: `(List(a), Fn(a) -> b) -> List(b)`; a constant's type.
+/// shows it: `(List(a), Fn(a) -> b) -> List(b)`; a constant's type. A
+/// last parameter that may be left out is marked `?`.
 fn summary_signature(row: &Row) -> String {
     let Some((label, ranges)) = row.qualified_signature("") else {
         return row
@@ -242,13 +244,21 @@ fn summary_signature(row: &Row) -> String {
             .map_or(row.signature, |(_, ty)| ty)
             .to_string();
     };
-    let types: Vec<&str> = ranges
+    let mut types: Vec<String> = ranges
         .iter()
         .map(|[start, end]| {
             let param = &label[*start as usize..*end as usize];
-            param.split_once(": ").map_or(param, |(_, ty)| ty)
+            param
+                .split_once(": ")
+                .map_or(param, |(_, ty)| ty)
+                .to_string()
         })
         .collect();
+    if row.optional_last
+        && let Some(last) = types.last_mut()
+    {
+        last.push('?');
+    }
     let close = ranges.last().map_or_else(
         || label.find(')').unwrap_or(label.len()),
         |[_, end]| *end as usize,
@@ -257,11 +267,23 @@ fn summary_signature(row: &Row) -> String {
 }
 
 /// The signature block of a function's section: `list.map(xs: List(a),
-/// f: Fn(a) -> b) -> List(b)`; `math.pi: Float` for a constant.
+/// f: Fn(a) -> b) -> List(b)`; `math.pi: Float` for a constant. A
+/// function whose last parameter may be left out has two lines, the
+/// call without it first.
 fn section_signature(module: &Module, row: &Row) -> String {
-    match row.qualified_signature(module.name) {
-        Some((label, _)) => label["fn ".len()..].to_string(),
-        None => format!("{}.{}", module.name, row.signature),
+    let Some((label, ranges)) = row.qualified_signature(module.name) else {
+        return format!("{}.{}", module.name, row.signature);
+    };
+    let full = &label["fn ".len()..];
+    match ranges.as_slice() {
+        [.., [last, end]] if row.optional_last => {
+            // The text before the last parameter, without the comma
+            // that ends the parameter before it.
+            let before = label[..*last as usize].trim_end_matches(", ");
+            let short = format!("{before}{}", &label[*end as usize..]);
+            format!("{}\n{full}", &short["fn ".len()..])
+        }
+        _ => full.to_string(),
     }
 }
 
@@ -294,13 +316,16 @@ fn table_cells(line: &str) -> Option<Vec<String>> {
 }
 
 /// The page `page` with its generated parts written from the registry:
-/// see the module documentation. `Err` names each function a summary
-/// table lists that the registry does not have, and each row of a
-/// module that no summary table of its page lists.
+/// see the module documentation. `Err` names each function a table of
+/// functions lists that the registry does not have, and each row of a
+/// module that no table of its page lists.
 pub fn render_page(page: &str) -> Result<String, Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     let mut problems: Vec<String> = Vec::new();
     let mut module: Option<&'static Module> = None;
+    // Whether the line is in a table whose second column is headed
+    // `Signature`: a table of the module's functions.
+    let mut in_table = false;
     let mut in_summary = false;
     let mut in_fence = false;
     let mut listed: HashSet<(&str, &str)> = HashSet::new();
@@ -338,10 +363,15 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
         if line.starts_with("# ") {
             module = heading_module(line);
             modules.extend(module);
-            in_summary = false;
             pending = None;
-        } else if line.starts_with("## ") {
-            in_summary = line.trim() == "## Summary";
+        }
+        match table_cells(line) {
+            Some(cells) if !in_table => {
+                in_table = true;
+                in_summary = cells.get(1).is_some_and(|cell| cell == "Signature");
+            }
+            Some(_) => {}
+            None => (in_table, in_summary) = (false, false),
         }
         if is_section_break(line) {
             pending = parse_heading_keys(line).and_then(|keys| {
@@ -377,7 +407,7 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
                     continue;
                 }
                 None => problems.push(format!(
-                    "the summary of `{}` lists `{name}`, which is not a row of the module",
+                    "a table of `{}` lists `{name}`, which is not a row of the module",
                     m.name
                 )),
             }
@@ -388,7 +418,7 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
         for row in &m.rows {
             if !listed.contains(&(m.name, row.name)) {
                 problems.push(format!(
-                    "no summary table of the page lists `{}.{}`",
+                    "no table of functions of the page lists `{}.{}`",
                     m.name, row.name
                 ));
             }

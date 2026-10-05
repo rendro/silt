@@ -124,7 +124,7 @@ fn main() {
 ## `math.e`
 
 ```
-math.e : Float
+math.e: Float
 ```
 
 Euler's number, approximately 2.718281828459045. This is a constant, not a
@@ -195,7 +195,7 @@ fn main() {
 ## `math.pi`
 
 ```
-math.pi : Float
+math.pi: Float
 ```
 
 Pi, approximately 3.141592653589793. This is a constant, not a function.

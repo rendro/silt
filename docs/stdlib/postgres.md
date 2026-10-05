@@ -31,16 +31,16 @@ unifies them against whatever your `pg.silt` library defines.
 |----------|-----------|-------------|
 | `connect` | `(String) -> Result(PgPool, PgError)` | Open a connection pool from a `postgresql://` URL (uses r2d2 defaults) |
 | `connect_with` | `(String, Map(String, Int)) -> Result(PgPool, PgError)` | Like `connect` with a tunable options bag (see [Connect options](#connect-options)) |
-| `query` | `(PgPool \| PgTx, String, List(Value)) -> Result(QueryResult, PgError)` | Run a SELECT-style statement and materialize rows |
-| `execute` | `(PgPool \| PgTx, String, List(Value)) -> Result(ExecResult, PgError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
+| `query` | `(a, String, List(Value)) -> Result(QueryResult, PgError)` | Run a SELECT-style statement and materialize rows |
+| `execute` | `(a, String, List(Value)) -> Result(ExecResult, PgError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
 | `transact` | `(PgPool, Fn(PgTx) -> Result(a, PgError)) -> Result(a, PgError)` | Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT |
 | `close` | `(PgPool) -> ()` | Drop the pool; future ops on it error |
-| `stream` | `(PgPool \| PgTx, String, List(Value)) -> Result(Channel(Row), PgError)` | Stream rows through a bounded channel (backpressured) |
+| `stream` | `(a, String, List(Value)) -> Result(Channel(b), PgError)` | Stream rows through a bounded channel (backpressured) |
 | `cursor` | `(PgTx, String, List(Value), Int) -> Result(PgCursor, PgError)` | Declare a server-side cursor with batch size |
 | `cursor_next` | `(PgCursor) -> Result(List(Map(String, Value)), PgError)` | Fetch the next batch of rows from a cursor |
 | `cursor_close` | `(PgCursor) -> Result((), PgError)` | Release a cursor and its underlying connection |
-| `listen` | `(PgPool, String) -> Result(Channel(Notification), PgError)` | LISTEN on a channel; delivers async notifications |
-| `notify` | `(PgPool \| PgTx, String, String) -> Result((), PgError)` | NOTIFY a channel with a payload |
+| `listen` | `(PgPool, String) -> Result(Channel(a), PgError)` | LISTEN on a channel; delivers async notifications |
+| `notify` | `(a, String, String) -> Result((), PgError)` | NOTIFY a channel with a payload |
 | `uuidv7` | `() -> String` | Generate a time-ordered UUIDv7 (RFC 9562) |
 
 ## Cooperative I/O
