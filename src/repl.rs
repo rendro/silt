@@ -295,7 +295,7 @@ impl Repl {
                 lock: LockPolicy::Update,
                 host: Vec::new(),
             }),
-            vm: Vm::new(),
+            vm: Vm::new(crate::HostIo::process()),
             cwd,
         }
     }

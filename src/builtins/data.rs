@@ -1364,10 +1364,13 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if !args.is_empty() {
                 return Err(VmError::new("time.now takes 0 arguments".into()));
             }
-            let epoch_ms = vm.epoch_ms()?;
-            let epoch_ns = epoch_ms.checked_mul(1_000_000).ok_or_else(|| {
-                VmError::new("time.now: epoch milliseconds * 1_000_000 overflows i64".into())
-            })?;
+            // Millisecond resolution.
+            let epoch_ns = i64::try_from(vm.runtime.io.now().as_millis())
+                .ok()
+                .and_then(|ms| ms.checked_mul(1_000_000))
+                .ok_or_else(|| {
+                    VmError::new("time.now: epoch milliseconds * 1_000_000 overflows i64".into())
+                })?;
             Ok(make_instant(epoch_ns))
         }
 
@@ -1375,17 +1378,24 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if !args.is_empty() {
                 return Err(VmError::new("time.today takes 0 arguments".into()));
             }
+            let out_of_range = || VmError::new("time.today: date out of range".into());
+            let now = vm.runtime.io.now();
+            let secs = i64::try_from(now.as_secs()).map_err(|_| out_of_range())?;
+            // The date of the host clock's time: in the local time zone
+            // where the build knows it, in UTC otherwise.
             #[cfg(feature = "local-clock")]
             {
-                let today = chrono::Local::now().date_naive();
-                Ok(make_date(today))
+                use chrono::TimeZone;
+                let local = chrono::Local
+                    .timestamp_opt(secs, now.subsec_nanos())
+                    .single()
+                    .ok_or_else(out_of_range)?;
+                Ok(make_date(local.date_naive()))
             }
             #[cfg(not(feature = "local-clock"))]
             {
-                let secs = vm.epoch_ms()? / 1000;
                 let (y, m, d) = civil_from_epoch_secs(secs);
-                let date = NaiveDate::from_ymd_opt(y, m, d)
-                    .ok_or_else(|| VmError::new("time.today: date out of range".into()))?;
+                let date = NaiveDate::from_ymd_opt(y, m, d).ok_or_else(out_of_range)?;
                 Ok(make_date(date))
             }
         }
@@ -1865,8 +1875,9 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // semantics on the main thread, and keeps tests/examples that
             // use `time.sleep` outside of a spawned task working.
             if !vm.is_scheduled_task {
-                #[cfg(not(target_arch = "wasm32"))]
-                std::thread::sleep(std::time::Duration::from_nanos(dur_ns as u64));
+                vm.runtime
+                    .io
+                    .sleep(std::time::Duration::from_nanos(dur_ns as u64));
                 return Ok(Value::Unit);
             }
             // Resume path: if we previously parked on a sleep completion,
@@ -1885,7 +1896,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             if vm
                 .current_deadline
-                .is_some_and(|d| std::time::Instant::now() >= d)
+                .is_some_and(|d| vm.runtime.io.monotonic() >= d)
             {
                 return Ok(Value::Unit); // deadline already past; nothing to sleep for
             }
@@ -1896,7 +1907,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             vm.runtime.timer.schedule_completion(
                 std::time::Duration::from_nanos(dur_ns as u64),
                 completion.clone(),
-            );
+            )?;
             Err(vm.park_on_completion(args, completion))
         }
 
@@ -2011,7 +2022,7 @@ const HTTP_SERVE_MAX_CONCURRENT_HANDLERS: usize = 128;
 /// Extract a silt Response record and send it as an HTTP response.
 /// Used by the per-request handler threads in `http.serve`.
 #[cfg(feature = "http")]
-fn send_http_response(response_val: &Value, req: tiny_http::Request) {
+fn send_http_response(io: &crate::vm::HostIo, response_val: &Value, req: tiny_http::Request) {
     match extract_http_response(response_val) {
         Ok((status, resp_body, resp_fields)) => {
             let mut response = tiny_http::Response::from_string(&resp_body)
@@ -2035,7 +2046,9 @@ fn send_http_response(response_val: &Value, req: tiny_http::Request) {
             // numbers, internal function names, possibly-sensitive panic
             // payloads) over the HTTP wire (MED-1). Log internally,
             // respond generically.
-            eprintln!("http.serve: handler returned malformed Response: {e}");
+            io.err(&format!(
+                "http.serve: handler returned malformed Response: {e}\n"
+            ));
             let resp = tiny_http::Response::from_string("Internal Server Error")
                 .with_status_code(tiny_http::StatusCode(500));
             let _ = req.respond(resp);
@@ -2465,7 +2478,7 @@ fn do_http_serve_inner(
                 // Run the user's handler on the per-request child VM
                 match request_vm.invoke_callable(&handler, &[request_val]) {
                     Ok(response_val) => {
-                        send_http_response(&response_val, req);
+                        send_http_response(&request_vm.runtime.io, &response_val, req);
                     }
                     Err(e) => {
                         // Security: do NOT include VmError details
@@ -2473,8 +2486,11 @@ fn do_http_serve_inner(
                         // in the response body — that leaks
                         // implementation details and potentially
                         // sensitive values across the security
-                        // boundary (MED-1). Log to stderr instead.
-                        eprintln!("http.serve: handler error: {e}");
+                        // boundary (MED-1). Log to the host's stderr instead.
+                        request_vm
+                            .runtime
+                            .io
+                            .err(&format!("http.serve: handler error: {e}\n"));
                         let resp = tiny_http::Response::from_string("Internal Server Error")
                             .with_status_code(tiny_http::StatusCode(500));
                         let _ = req.respond(resp);

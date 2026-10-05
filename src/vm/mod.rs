@@ -6,10 +6,12 @@ mod arithmetic;
 pub(crate) mod dispatch;
 pub mod error;
 mod execute;
+mod io;
 mod runtime;
 
 pub use error::VmError;
 pub(crate) use execute::BuiltinIterKind;
+pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub use runtime::Runtime;
 pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind, SuspendedBuiltin};
 
@@ -71,7 +73,7 @@ use regex::Regex;
 use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::Duration;
 
 use crate::bytecode::{Function, Globals, VmClosure};
 use crate::scheduler::Scheduler;
@@ -314,14 +316,15 @@ pub struct Vm {
     pub(crate) is_scheduled_task: bool,
     /// Pending I/O completion handle (persists across yield/re-execute).
     pub(crate) pending_io: Option<Arc<IoCompletion>>,
-    /// Scoped wall-clock deadline in effect for this task. Set by
+    /// Scoped deadline in effect for this task, as a reading of the
+    /// host clock ([`Clock::monotonic`]). Set by
     /// `task.deadline(dur, fn)` for the duration of the callback; the
     /// scheduler's I/O watchdog consults this when the task parks on
     /// I/O, and I/O builtins check it at entry so a call made past the
     /// deadline returns `Err(...)` immediately without submitting to
     /// the I/O pool. Nested `task.deadline` calls use the earlier
     /// deadline (monotonic tightening).
-    pub(crate) current_deadline: Option<Instant>,
+    pub(crate) current_deadline: Option<Duration>,
     /// LIFO stack of outer deadlines, pushed by each task.deadline call
     /// on its first entry and popped on non-yield return. Lets nested
     /// synchronous `task.deadline` scopes correctly restore the outer
@@ -329,7 +332,7 @@ pub struct Vm {
     /// preserved (not touched on yield return), so the first-entry
     /// check `suspended_invoke.is_none()` distinguishes fresh entry
     /// from a resume.
-    pub(crate) deadline_stack: Vec<Option<Instant>>,
+    pub(crate) deadline_stack: Vec<Option<Duration>>,
     /// Saved state from an `invoke_callable` that was interrupted by a yield.
     ///
     /// Invariant: this Option is the TOP of a LIFO stack of suspended invokes.
@@ -380,12 +383,6 @@ pub struct Vm {
     pub(crate) regex_cache: RegexCache,
 }
 
-impl Default for Vm {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Create a finite float Value, returning an error if the result is NaN or Infinity.
 /// Also canonicalizes -0.0 to 0.0.
 fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
@@ -419,7 +416,7 @@ impl Vm {
         timeout_err: &(dyn Fn(&str) -> Value + Sync),
     ) -> Option<Value> {
         let deadline = self.current_deadline?;
-        if Instant::now() >= deadline {
+        if self.runtime.io.monotonic() >= deadline {
             Some(timeout_err(
                 crate::scheduler::DeadlineSource::Task.message(),
             ))
@@ -584,12 +581,15 @@ impl Vm {
         Ok(op())
     }
 
-    pub fn new() -> Self {
+    /// A VM whose programs write to the output of `io` and read its
+    /// clock.
+    pub fn new(io: HostIo) -> Self {
         Vm {
             runtime: Arc::new(Runtime {
                 scheduler: parking_lot::Mutex::new(None),
-                timer: TimerManager::new(),
-                io_pool: IoPool::new(runtime::resolve_io_pool_size()),
+                timer: TimerManager::new(io.clone()),
+                io_pool: IoPool::new(runtime::resolve_io_pool_size(), io.clone()),
+                io,
             }),
             frames: Vec::new(),
             stack: Vec::new(),
@@ -691,7 +691,7 @@ impl Vm {
         if let Some(ref sched) = *guard {
             sched.clone()
         } else {
-            let sched = Arc::new(Scheduler::new());
+            let sched = Arc::new(Scheduler::new(self.runtime.io.clone()));
             *guard = Some(sched.clone());
             sched
         }

@@ -7,16 +7,15 @@
 use parking_lot::{Condvar, Mutex};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
-use std::io::Write;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::value::{IoCompletion, TaskHandle, Value, WakerRegistration};
-use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
+use crate::vm::{BlockReason, HostIo, SelectOpKind, Vm, VmError};
 
 // `test_hooks` and `test_support` are public so integration tests in
 // `tests/` (separate crate, no `cfg(test)`) can `use` them. The
@@ -201,7 +200,8 @@ impl DeadlineSource {
 struct WatchdogEntry {
     task_id: usize,
     completion: Weak<IoCompletion>,
-    deadline: Instant,
+    /// A reading of the host clock.
+    deadline: Duration,
     source: DeadlineSource,
 }
 
@@ -229,7 +229,7 @@ impl WatchdogRegistry {
         &self,
         task_id: usize,
         completion: &Arc<IoCompletion>,
-        deadline: Instant,
+        deadline: Duration,
         source: DeadlineSource,
     ) {
         self.entries.lock().push(WatchdogEntry {
@@ -251,7 +251,8 @@ impl WatchdogRegistry {
         }
     }
 
-    /// Scan the registry for overdue entries. For each one, fire an
+    /// Scan the registry for entries overdue at `now`, a reading of the
+    /// host clock. For each one, fire an
     /// `Err("...")` into the completion (no-op if the real I/O already
     /// wrote a result — `IoCompletion::complete` is first-writer-wins).
     /// Returns the number of timeouts fired for test introspection.
@@ -263,10 +264,9 @@ impl WatchdogRegistry {
     /// deadlock the watchdog thread on the same parking_lot mutex. So we
     /// drain overdue entries into a local vec under the lock, release the
     /// lock, then fire completions.
-    fn scan_and_fire(&self) -> usize {
+    fn scan_and_fire(&self, now: Duration) -> usize {
         let to_fire: Vec<(Weak<IoCompletion>, &'static str)> = {
             let mut entries = self.entries.lock();
-            let now = Instant::now();
             let mut drained = Vec::new();
             entries.retain(|entry| {
                 if now < entry.deadline {
@@ -298,15 +298,16 @@ impl WatchdogRegistry {
     }
 }
 
-/// Watchdog worker loop. Wakes every `interval`, scans registry, fires
-/// timeouts on overdue entries. Exits cleanly on shutdown signal.
-fn watchdog_loop(registry: Arc<WatchdogRegistry>) {
+/// Watchdog worker loop. Wakes every `interval` (of real time), scans
+/// registry, fires timeouts on the entries overdue on the host clock.
+/// Exits cleanly on shutdown signal.
+fn watchdog_loop(registry: Arc<WatchdogRegistry>, io: HostIo) {
     while !registry.shutdown.load(Ordering::SeqCst) {
         thread::sleep(registry.interval);
         if registry.shutdown.load(Ordering::SeqCst) {
             return;
         }
-        registry.scan_and_fire();
+        registry.scan_and_fire(io.monotonic());
     }
 }
 
@@ -409,6 +410,8 @@ struct SchedulerInner {
     /// Tasks that ended with an error, kept for the report of failures
     /// that nobody joined. See `report_unjoined_failures`.
     failed_tasks: Mutex<FailedTasks>,
+    /// The host's clock and stderr.
+    io: HostIo,
 }
 
 /// Failed tasks kept for the report of failures that nobody joined, up
@@ -457,15 +460,11 @@ impl FailedTasks {
     }
 }
 
-impl Default for Scheduler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Scheduler {
-    /// Create a new scheduler (does NOT start worker threads yet).
-    pub fn new() -> Self {
+    /// Create a new scheduler (does NOT start worker threads yet). Its
+    /// deadlines are read on the clock of `io`, and its reports go to
+    /// the stderr of `io`.
+    pub fn new(io: HostIo) -> Self {
         let global_io_timeout = std::env::var("SILT_IO_TIMEOUT")
             .ok()
             .and_then(|s| parse_duration(&s));
@@ -498,6 +497,7 @@ impl Scheduler {
                 main_waiters: Mutex::new(Vec::new()),
                 next_main_waiter_id: AtomicU64::new(0),
                 failed_tasks: Mutex::new(FailedTasks::default()),
+                io,
             }),
             workers: Mutex::new(None),
         }
@@ -554,8 +554,9 @@ impl Scheduler {
         // a deadline on I/O block — the scan loop is a cheap
         // `thread::sleep(interval)` in steady state.
         let registry = self.inner.watchdog.clone();
+        let io = self.inner.io.clone();
         handles.push(thread::spawn(move || {
-            watchdog_loop(registry);
+            watchdog_loop(registry, io);
         }));
         *guard = Some(handles);
         drop(guard);
@@ -571,7 +572,7 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Report on stderr every task of this scheduler that failed and
+    /// Report on the host's stderr every task of this scheduler that failed and
     /// whose error no `task.join` has received and no `task.cancel` has
     /// dismissed. Each failure is reported once, so the call can be
     /// repeated. Returns the number of failures that this call reported.
@@ -1345,7 +1346,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         // deadline wins. If neither applies, the I/O
                         // waits indefinitely — no registration, no
                         // scan overhead.
-                        let now = Instant::now();
+                        let now = inner.io.monotonic();
                         let global_deadline = inner
                             .global_io_timeout
                             .and_then(|t| now.checked_add(t))
@@ -1719,8 +1720,7 @@ fn report_unjoined_failures(inner: &SchedulerInner) -> usize {
         report.push('\n');
     }
     if !report.is_empty() {
-        // A write error is ignored: there is nowhere left to report it.
-        let _ = std::io::stderr().lock().write_all(report.as_bytes());
+        inner.io.err(&report);
     }
     reported
 }
@@ -1962,11 +1962,12 @@ mod tests {
     use crate::bytecode::VmClosure;
     use crate::typeinfo::bv;
     use crate::vm::CallFrame;
+    use std::time::Instant;
 
     /// Compile a Silt snippet and return a VM ready for execute_slice.
     fn make_vm(src: &str) -> Vm {
         let program = crate::session::testing::compile_str(src).expect("compile error");
-        let mut vm = Vm::new();
+        let mut vm = Vm::new(crate::HostIo::process());
         vm.load(&program);
         vm.is_scheduled_task = true;
         let closure = Arc::new(VmClosure {
@@ -1998,7 +1999,7 @@ mod tests {
 
     #[test]
     fn test_submit_and_join_single_task() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let (task, handle) = make_task(1, "fn main() { 42 }");
         scheduler.submit(task).unwrap();
         let result = handle.join();
@@ -2007,7 +2008,7 @@ mod tests {
 
     #[test]
     fn test_submit_multiple_tasks_all_complete() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let mut handles = Vec::new();
         for i in 0..10 {
             let src = format!("fn main() {{ {} }}", i);
@@ -2022,7 +2023,7 @@ mod tests {
 
     #[test]
     fn test_failed_task_reports_error() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
         scheduler.submit(task).unwrap();
         let result = handle.join();
@@ -2037,7 +2038,7 @@ mod tests {
 
     #[test]
     fn test_live_tasks_counter_reaches_zero() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let mut handles = Vec::new();
         for i in 0..5 {
             let (task, handle) = make_task(i, "fn main() { 1 }");
@@ -2058,7 +2059,7 @@ mod tests {
 
     #[test]
     fn test_failed_task_decrements_live_counter() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
         scheduler.submit(task).unwrap();
         let _ = handle.join();
@@ -2091,7 +2092,7 @@ mod tests {
     /// waker registration completes), cancel it, and assert
     /// `live_tasks` returns to 0.
     fn cancel_parked_task_and_assert_live_drained(family: &str, src: &str) {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let (task, handle) = make_task(1, src);
         scheduler.submit(task).unwrap();
         // Wait for the park: `unsettled_tasks` is decremented at the
@@ -2290,7 +2291,7 @@ fn main() {
 
     #[test]
     fn test_failed_task_without_join_is_kept_for_the_report() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
         scheduler.submit(task).unwrap();
         wait_until_failure_recorded(&scheduler, &handle);
@@ -2311,7 +2312,7 @@ fn main() {
 
     #[test]
     fn test_joined_failure_is_not_kept_for_the_report() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
         scheduler.submit(task).unwrap();
         assert!(handle.join().is_err());
@@ -2332,7 +2333,7 @@ fn main() {
 
     #[test]
     fn test_recorded_failures_are_bounded() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         for id in 0..(MAX_RECORDED_FAILURES + 5) {
             let handle = Arc::new(TaskHandle::new(id));
             assert!(handle.fail(VmError::new(format!("failure {id}"))));
@@ -2362,7 +2363,7 @@ fn main() {
     /// spawns it, whatever owner the program has set meanwhile.
     #[test]
     fn test_task_spawned_by_a_task_gets_the_spawning_task_owner() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let handle = Arc::new(TaskHandle::with_owner(1, 77));
         let vm = make_vm(
             r#"
@@ -2393,7 +2394,7 @@ fn main() {
 
     #[test]
     fn test_drop_joins_workers_cleanly() {
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         let (task, handle) = make_task(1, "fn main() { 1 }");
         scheduler.submit(task).unwrap();
         let _ = handle.join();
@@ -2404,7 +2405,7 @@ fn main() {
     #[test]
     fn test_drop_empty_scheduler_is_noop() {
         // No tasks submitted — drop should be immediate.
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         drop(scheduler);
     }
 
@@ -2417,7 +2418,7 @@ fn main() {
         // must NOT have marked the session as deadlocked during the I/O
         // park window. Tests the I/O path end-to-end through the wake
         // graph (which models I/O parks as `ParkEdge::Io`, always-fuel).
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         // Write a fixture file (small, completes fast).
         let path = std::env::temp_dir().join("silt_sched_io_block_test.txt");
         std::fs::write(&path, "hello").unwrap();
@@ -2467,14 +2468,17 @@ fn main() {{
         assert_eq!(parse_duration("abc"), None);
     }
 
+    /// The clock reading the watchdog tests scan at.
+    const WATCHDOG_TEST_NOW: Duration = Duration::from_secs(100);
+
     #[test]
     fn test_watchdog_fires_timeout_on_overdue_entry() {
         let registry = WatchdogRegistry::new(Duration::from_millis(10));
         let completion = IoCompletion::new();
         // Add an entry whose deadline is already in the past.
-        let past = Instant::now() - Duration::from_secs(1);
+        let past = WATCHDOG_TEST_NOW - Duration::from_secs(1);
         registry.add(1, &completion, past, DeadlineSource::Global);
-        let fired = registry.scan_and_fire();
+        let fired = registry.scan_and_fire(WATCHDOG_TEST_NOW);
         assert_eq!(fired, 1, "one timeout should fire");
         let result = completion.try_get().expect("completion should be set");
         // Phase 1 of the stdlib error redesign: watchdog now emits
@@ -2503,9 +2507,9 @@ fn main() {{
     fn test_watchdog_fires_with_task_source_message() {
         let registry = WatchdogRegistry::new(Duration::from_millis(10));
         let completion = IoCompletion::new();
-        let past = Instant::now() - Duration::from_secs(1);
+        let past = WATCHDOG_TEST_NOW - Duration::from_secs(1);
         registry.add(1, &completion, past, DeadlineSource::Task);
-        registry.scan_and_fire();
+        registry.scan_and_fire(WATCHDOG_TEST_NOW);
         let Value::Variant(_, fields) = completion.try_get().unwrap() else {
             panic!("expected variant");
         };
@@ -2523,9 +2527,9 @@ fn main() {{
     fn test_watchdog_does_not_fire_on_fresh_entry() {
         let registry = WatchdogRegistry::new(Duration::from_millis(10));
         let completion = IoCompletion::new();
-        let future = Instant::now() + Duration::from_secs(60);
+        let future = WATCHDOG_TEST_NOW + Duration::from_secs(60);
         registry.add(1, &completion, future, DeadlineSource::Global);
-        let fired = registry.scan_and_fire();
+        let fired = registry.scan_and_fire(WATCHDOG_TEST_NOW);
         assert_eq!(fired, 0);
         assert!(completion.try_get().is_none());
         assert_eq!(registry.entries.lock().len(), 1);
@@ -2535,11 +2539,11 @@ fn main() {{
     fn test_watchdog_does_not_clobber_completed_io() {
         let registry = WatchdogRegistry::new(Duration::from_millis(10));
         let completion = IoCompletion::new();
-        let past = Instant::now() - Duration::from_secs(1);
+        let past = WATCHDOG_TEST_NOW - Duration::from_secs(1);
         registry.add(1, &completion, past, DeadlineSource::Global);
         let ok_val = Value::variant(bv::OK, vec![Value::String("real".into())]);
         assert!(completion.complete(ok_val));
-        let fired = registry.scan_and_fire();
+        let fired = registry.scan_and_fire(WATCHDOG_TEST_NOW);
         assert_eq!(fired, 0, "no timeout should fire — I/O already completed");
         let result = completion.try_get().expect("should still have Ok");
         match result {
@@ -2558,7 +2562,7 @@ fn main() {{
         // concurrent env readers. Required because Scheduler::new reads
         // the env once at construction time.
         unsafe { std::env::remove_var("SILT_IO_TIMEOUT") };
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new(HostIo::process());
         assert!(
             scheduler.inner.global_io_timeout.is_none(),
             "global_io_timeout should be None when SILT_IO_TIMEOUT unset"
@@ -2570,7 +2574,7 @@ fn main() {{
         let registry = WatchdogRegistry::new(Duration::from_secs(1));
         let c1 = IoCompletion::new();
         let c2 = IoCompletion::new();
-        let d = Instant::now() + Duration::from_secs(30);
+        let d = WATCHDOG_TEST_NOW + Duration::from_secs(30);
         registry.add(1, &c1, d, DeadlineSource::Global);
         registry.add(2, &c2, d, DeadlineSource::Global);
         assert_eq!(registry.entries.lock().len(), 2);

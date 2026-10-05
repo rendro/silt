@@ -210,7 +210,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // reported here, against the program's files, instead of by the
     // scheduler.
     silt::scheduler::collect_unjoined_failures();
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(silt::HostIo::process());
     let run_result = vm.run_program(&program);
     // The program has ended. The tasks that failed by now and that
     // nobody joined or cancelled are reported, and make the run fail. A

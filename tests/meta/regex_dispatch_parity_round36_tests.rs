@@ -35,14 +35,14 @@ use silt::vm::Vm;
 // ── tiny harness ─────────────────────────────────────────────────────
 
 fn ok(name: &str, args: Vec<Value>) -> Value {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(silt::HostIo::process());
     call_regex(&mut vm, name, &args).unwrap_or_else(|e| {
         panic!("regex.{name} unexpected error: {}", e.message);
     })
 }
 
 fn err_msg(name: &str, args: Vec<Value>) -> String {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(silt::HostIo::process());
     match call_regex(&mut vm, name, &args) {
         Ok(v) => panic!("regex.{name} expected error, got Ok({v:?})"),
         Err(e) => e.message,

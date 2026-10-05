@@ -278,7 +278,7 @@ proptest! {
                 ));
             }
         };
-        let vm_result = silt::vm::Vm::new().run_program(&program);
+        let vm_result = silt::vm::Vm::new(silt::HostIo::process()).run_program(&program);
 
         // Reference semantics via Rust's checked arithmetic.
         let expected = match op {

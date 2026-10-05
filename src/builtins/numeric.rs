@@ -3,6 +3,7 @@
 use super::common::{require_int, require_string, value_kind};
 use crate::typeinfo::bv;
 use crate::value::Value;
+use crate::vm::Vm;
 use crate::vm::VmError;
 
 /// Locate the byte offset of the first character in `s` that could not
@@ -417,7 +418,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Dispatch `math.<name>(args)`.
-pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub fn call_math(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "sqrt" => {
             if args.len() != 1 {
@@ -544,17 +545,17 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("math.random takes 0 arguments".into()));
             }
             use std::cell::Cell;
-            use std::time::SystemTime;
             thread_local! {
-                static RNG_STATE: Cell<u64> = Cell::new({
-                    SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map(|d| d.as_nanos() as u64)
-                        .unwrap_or(0x12345678_9abcdef0)
-                });
+                // 0 until the first call on the thread seeds it.
+                static RNG_STATE: Cell<u64> = const { Cell::new(0) };
             }
             let val = RNG_STATE.with(|state| {
                 let mut s = state.get();
+                if s == 0 {
+                    // Seeded from the host clock; xorshift64 must not
+                    // be seeded with 0.
+                    s = vm.runtime.io.now().as_nanos() as u64 | 1;
+                }
                 // xorshift64
                 s ^= s << 13;
                 s ^= s >> 7;

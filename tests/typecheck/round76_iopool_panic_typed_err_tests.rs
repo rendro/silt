@@ -73,7 +73,7 @@ fn synthetic_typed_factory(msg: &str) -> Value {
 
 #[test]
 fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     let completion = IoCompletion::with_timeout_err(Arc::new(synthetic_typed_factory));
     let result = submit_panicking_io_for_test(&vm, completion);
 
@@ -132,7 +132,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
 /// would silently break user code that pattern-matches `Err(IoUnknown)`.
 #[test]
 fn iopool_worker_panic_with_default_completion_produces_io_unknown() {
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     let completion = IoCompletion::new();
     let result = submit_panicking_io_for_test(&vm, completion);
 

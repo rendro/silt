@@ -57,4 +57,4 @@ pub mod watch;
 
 // Re-export the value and conversion types embedders use.
 pub use value::{FromValue, IntoValue, Value};
-pub use vm::{Vm, VmError};
+pub use vm::{Buffer, Clock, HostIo, Output, SystemClock, Vm, VmError};

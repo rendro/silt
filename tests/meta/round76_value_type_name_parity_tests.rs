@@ -256,7 +256,7 @@ fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) 
 #[test]
 fn from_value_error_messages_use_canonical_kind_for_all_variants() {
     let av = build_all_variants();
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
 
     // Each FromValue impl's expected target name. We skip the variant
     // whose name matches (it would succeed), and for the variants the
@@ -483,7 +483,7 @@ fn value_type_name_via_ffi(v: &Value) -> String {
 #[test]
 fn three_way_kind_parity_holds_for_every_value_variant() {
     let av = build_all_variants();
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
 
     let mut covered = 0usize;
     for_each_variant(&av, |v, expected_kind| {

@@ -224,7 +224,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let setup_owner = owners.add_owner(file_index, None);
         silt::scheduler::set_task_owner(setup_owner);
 
-        let mut vm = Vm::new();
+        let mut vm = Vm::new(silt::HostIo::process());
         if let Err(e) = vm.run_program(&program) {
             owners.mark_failed(setup_owner);
             // G2 (audit round 21): frame and error-header paths follow

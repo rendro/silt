@@ -19,6 +19,7 @@ mod fs_walk_stat_tests;
 mod fuzz_corpus_presence_tests;
 mod fuzz_target_invariants_tests;
 mod hardening;
+mod host_io_tests;
 mod host_module_tests;
 mod http_bind_default_tests;
 mod http_hardening_tests;

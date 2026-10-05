@@ -23,7 +23,7 @@ fn err_msg(result: Result<Value, silt::vm::VmError>) -> String {
 
 #[test]
 fn io_read_file_non_string_path_says_canonical_form() {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(silt::HostIo::process());
     let msg = err_msg(silt::builtins::io::call(
         &mut vm,
         "read_file",
@@ -34,7 +34,7 @@ fn io_read_file_non_string_path_says_canonical_form() {
 
 #[test]
 fn fs_exists_non_string_path_says_canonical_form() {
-    let vm = Vm::new();
+    let vm = Vm::new(silt::HostIo::process());
     let msg = err_msg(silt::builtins::io::call_fs(
         &vm,
         "exists",
@@ -46,7 +46,7 @@ fn fs_exists_non_string_path_says_canonical_form() {
 #[test]
 fn extract_date_non_record_says_canonical_form() {
     // `time.add_days` reads its Date argument through `extract_date`.
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(silt::HostIo::process());
     let msg = err_msg(silt::builtins::data::call_time(
         &mut vm,
         "add_days",

@@ -22,7 +22,7 @@ fn run_vm(source: &str) -> Value {
 /// Helper: compile a silt program through a session and run it.
 fn run_vm_result(source: &str) -> Result<Value, VmError> {
     let program = crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
-    Vm::new().run_program(&program)
+    Vm::new(crate::HostIo::process()).run_program(&program)
 }
 
 // ── Phase 1 bytecode-level tests ──────────────────────────────
@@ -35,7 +35,7 @@ fn test_constant_and_return() {
         chunk.emit_u16(idx, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(42));
 }
@@ -52,7 +52,7 @@ fn test_arithmetic_add_int() {
         chunk.emit_op(Op::Add, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(5));
 }
@@ -73,7 +73,7 @@ fn test_arithmetic_expression() {
         chunk.emit_op(Op::Add, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(14));
 }
@@ -90,7 +90,7 @@ fn test_float_arithmetic() {
         chunk.emit_op(Op::Add, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Float(4.0));
 }
@@ -104,7 +104,7 @@ fn test_negate() {
         chunk.emit_op(Op::Negate, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(-10));
 }
@@ -121,7 +121,7 @@ fn test_comparison() {
         chunk.emit_op(Op::Lt, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
@@ -133,7 +133,7 @@ fn test_boolean_not() {
         chunk.emit_op(Op::Not, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(false));
 }
@@ -150,7 +150,7 @@ fn test_globals() {
         chunk.emit_u16(0, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     vm.globals.push(None);
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(42));
@@ -170,7 +170,7 @@ fn test_locals() {
         chunk.emit_u16(0, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(10));
 }
@@ -195,7 +195,7 @@ fn test_string_concat() {
         chunk.emit_u8(3, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::String("hello world".to_string()));
 }
@@ -209,7 +209,7 @@ fn test_display_value() {
         chunk.emit_op(Op::DisplayValue, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::String("42".to_string()));
 }
@@ -230,7 +230,7 @@ fn test_jump_if_false() {
         let _ = chunk.patch_jump(skip_else);
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(2));
 }
@@ -249,7 +249,7 @@ fn test_builtin_println() {
         chunk.emit_u8(1, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Unit);
 }
@@ -267,7 +267,7 @@ fn test_make_tuple() {
         chunk.emit_u8(2, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Tuple(vec![Value::Int(1), Value::Int(2)]));
 }
@@ -285,7 +285,7 @@ fn test_make_list() {
         chunk.emit_u16(2, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(
         result,
@@ -305,7 +305,7 @@ fn test_division_by_zero() {
         chunk.emit_op(Op::Div, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script);
     assert!(result.is_err());
     assert!(result.unwrap_err().message.contains("division by zero"));
@@ -321,7 +321,7 @@ fn test_unit_and_pop() {
         chunk.emit_u16(val, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(99));
 }
@@ -336,7 +336,7 @@ fn test_dup() {
         chunk.emit_op(Op::Add, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(10));
 }
@@ -352,7 +352,7 @@ fn test_eq_neq() {
         chunk.emit_op(Op::Eq, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     assert_eq!(vm.run(script).unwrap(), Value::Bool(true));
 
     let script2 = make_function(|chunk| {
@@ -365,7 +365,7 @@ fn test_eq_neq() {
         chunk.emit_op(Op::Neq, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm2 = Vm::new();
+    let mut vm2 = Vm::new(crate::HostIo::process());
     assert_eq!(vm2.run(script2).unwrap(), Value::Bool(true));
 }
 
@@ -385,7 +385,7 @@ fn test_popn() {
         chunk.emit_u8(2, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(1));
 }
@@ -402,7 +402,7 @@ fn test_sub_int() {
         chunk.emit_op(Op::Sub, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(7));
 }
@@ -419,7 +419,7 @@ fn test_sub_int_underflow() {
         chunk.emit_op(Op::Sub, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script);
     assert!(result.is_err());
     assert!(result.unwrap_err().message.contains("integer overflow"));
@@ -437,7 +437,7 @@ fn test_sub_float() {
         chunk.emit_op(Op::Sub, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Float(3.25));
 }
@@ -454,7 +454,7 @@ fn test_mod_int() {
         chunk.emit_op(Op::Mod, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(1));
 }
@@ -471,7 +471,7 @@ fn test_mod_int_by_zero() {
         chunk.emit_op(Op::Mod, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script);
     assert!(result.is_err());
     assert!(result.unwrap_err().message.contains("modulo by zero"));
@@ -489,7 +489,7 @@ fn test_mod_float() {
         chunk.emit_op(Op::Mod, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Float(1.5));
 }
@@ -506,7 +506,7 @@ fn test_gt_int() {
         chunk.emit_op(Op::Gt, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
@@ -523,7 +523,7 @@ fn test_gt_float() {
         chunk.emit_op(Op::Gt, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(false));
 }
@@ -540,7 +540,7 @@ fn test_geq_int() {
         chunk.emit_op(Op::Geq, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
@@ -557,7 +557,7 @@ fn test_geq_float() {
         chunk.emit_op(Op::Geq, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(false));
 }
@@ -574,7 +574,7 @@ fn test_leq_int() {
         chunk.emit_op(Op::Leq, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
@@ -591,7 +591,7 @@ fn test_leq_float() {
         chunk.emit_op(Op::Leq, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Bool(false));
 }
@@ -612,7 +612,7 @@ fn test_and_op_is_unreachable() {
         chunk.emit_op(Op::And, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let _ = vm.run(script);
 }
 
@@ -631,7 +631,7 @@ fn test_or_op_is_unreachable() {
         chunk.emit_op(Op::Or, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let _ = vm.run(script);
 }
 
@@ -644,7 +644,7 @@ fn test_negate_float() {
         chunk.emit_op(Op::Negate, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Float(-3.5));
 }
@@ -658,7 +658,7 @@ fn test_negate_int_overflow() {
         chunk.emit_op(Op::Negate, span());
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script);
     assert!(result.is_err());
     assert!(result.unwrap_err().message.contains("integer overflow"));
@@ -2477,7 +2477,7 @@ fn test_tail_call_rejects_arity_mismatch() {
         chunk.emit_op(Op::Return, span());
     });
 
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let err = vm.run(script).expect_err("expected arity-mismatch error");
     let msg = format!("{err}");
     assert!(
@@ -2496,7 +2496,7 @@ fn test_spawn_child_shares_channel_id_counter() {
     // own `AtomicU64`, so a channel created in a spawned task could
     // collide with a channel created in the parent, leading to
     // scheduler confusion.
-    let mut parent = Vm::new();
+    let mut parent = Vm::new(crate::HostIo::process());
     let id0 = parent.next_channel_id();
     assert_eq!(id0, 0);
 
@@ -2515,7 +2515,7 @@ fn test_spawn_child_shares_channel_id_counter() {
 #[test]
 fn test_spawn_child_shares_task_id_counter() {
     // Companion to the channel test: same invariant for task IDs.
-    let mut parent = Vm::new();
+    let mut parent = Vm::new(crate::HostIo::process());
     let id0 = parent.next_task_id();
     assert_eq!(id0, 0);
 
@@ -2585,7 +2585,7 @@ fn test_builtin_panic_converted_to_vm_error() {
     // panics. If the wrapper is removed, this test unwinds and fails
     // the whole test process; with the wrapper, it returns a VmError
     // naming the module and the panic payload.
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let err = vm
         .dispatch_builtin("__test_panic_builtin.boom", &[])
         .expect_err("expected VmError from panicking builtin");
@@ -2616,7 +2616,7 @@ fn test_println_rejects_wrong_arity() {
     //
     // A silent revert of either `args.len() != 1` check would otherwise
     // slip through unnoticed.
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
 
     // println with 0 args
     let err = vm
@@ -2677,7 +2677,7 @@ fn test_make_closure_rejects_non_closure_constant() {
         chunk.emit_u8(0, span()); // zero upvalues, keep it simple
         chunk.emit_op(Op::Return, span());
     });
-    let mut vm = Vm::new();
+    let mut vm = Vm::new(crate::HostIo::process());
     let err = vm
         .run(script)
         .expect_err("expected MakeClosure to reject non-VmClosure constant");
@@ -2798,7 +2798,7 @@ mod round80_dispatch_bounds {
             chunk.emit_op(Op::Return, span());
         });
 
-        let mut vm = Vm::new();
+        let mut vm = Vm::new(crate::HostIo::process());
         let result = vm.run(script);
         let err = result.expect_err(
             "Op::CallMethod with argc=0 must surface as VmError, not Rust \
@@ -2838,7 +2838,7 @@ mod round80_dispatch_bounds {
             chunk.emit_op(Op::Return, span());
         });
 
-        let mut vm = Vm::new();
+        let mut vm = Vm::new(crate::HostIo::process());
         let result = vm.run(script);
         let err =
             result.expect_err("Op::CallMethod with argc > stack.len() must surface as VmError");
@@ -2876,7 +2876,7 @@ mod round80_dispatch_bounds {
             chunk.emit_op(Op::Return, span());
         });
 
-        let mut vm = Vm::new();
+        let mut vm = Vm::new(crate::HostIo::process());
         let result = vm.run(script);
         let err = result.expect_err(
             "Op::PopN with count > stack.len() must surface as VmError, not \
@@ -2914,7 +2914,7 @@ mod round80_dispatch_bounds {
             chunk.emit_op(Op::Return, span());
         });
 
-        let mut vm = Vm::new();
+        let mut vm = Vm::new(crate::HostIo::process());
         let result = vm.run(script).expect(
             "Op::PopN with count == stack.len() must succeed — guards \
              against an over-eager `>=` regression of the strict-underflow \
@@ -2962,7 +2962,7 @@ mod error_identifier_leak {
     /// Run `script`, expect a `VmError`, and check that its message carries
     /// `phrase` and does not name the opcode `op_name`.
     fn assert_clean_error(script: Arc<Function>, phrase: &str, op_name: &str) {
-        let mut vm = Vm::new();
+        let mut vm = Vm::new(crate::HostIo::process());
         let err = vm
             .run(script)
             .expect_err("corrupt bytecode must surface as a VmError");

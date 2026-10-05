@@ -67,5 +67,5 @@ fn dead7_registry_count_matches_sum_of_two_registries() {
     // exercising the merged loop end-to-end. Pre-collapse had the same
     // behaviour; a regression that breaks the chain merge (e.g. wrong
     // type bound) would surface here as a panic / mis-compile.
-    let _vm = silt::vm::Vm::new();
+    let _vm = silt::vm::Vm::new(silt::HostIo::process());
 }
