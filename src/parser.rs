@@ -675,6 +675,9 @@ pub struct Parser<'src> {
     /// "declaration" in a file, a "statement" in the REPL, whose entries
     /// are statements (see `parse_cell`).
     top_level_item: &'static str,
+    /// The offset each line of the source after the first starts at, in
+    /// order: `line_of` finds a line without reading the source again.
+    line_starts: Vec<usize>,
 }
 
 /// Delimiter depth before each token; see `Parser::delim_depth`.
@@ -720,6 +723,12 @@ impl<'src> Parser<'src> {
             doc_index: None,
             current_trait_name: None,
             top_level_item: "declaration",
+            line_starts: source
+                .bytes()
+                .enumerate()
+                .filter(|(_, b)| *b == b'\n')
+                .map(|(at, _)| at + 1)
+                .collect(),
         }
     }
 
@@ -850,11 +859,7 @@ impl<'src> Parser<'src> {
     /// The 1-based line `span` starts on, for messages that name a line.
     fn line_of(&self, span: Span) -> u32 {
         let at = span.start_offset().min(self.source.len());
-        self.source.as_bytes()[..at]
-            .iter()
-            .filter(|&&b| b == b'\n')
-            .count() as u32
-            + 1
+        self.line_starts.partition_point(|start| *start <= at) as u32 + 1
     }
 
     /// End of the last token consumed: the token before `pos`, newlines
