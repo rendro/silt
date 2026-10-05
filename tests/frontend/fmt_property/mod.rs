@@ -58,6 +58,16 @@ pub fn current_formatter(source: &str) -> Formatted {
     }
 }
 
+/// The printer of `src/format/`, which `silt fmt` runs from stage 8 step
+/// A3 on.
+pub fn next_formatter(source: &str) -> Formatted {
+    match silt::format::format(FileId::default(), source) {
+        Ok(text) => Formatted::Ok(text),
+        Err(silt::format::Error::Syntax(_)) => Formatted::Unparseable,
+        Err(silt::format::Error::Refused(e)) => Formatted::Refused(e.message),
+    }
+}
+
 /// A text to format, and where it came from.
 pub struct Input {
     /// What the report calls it: a path relative to the repository, with
@@ -197,7 +207,8 @@ pub fn fuzz_corpus() -> Vec<Input> {
 }
 
 /// The `.silt` files under the directory `SILT_FMT_CORPUS` names, if it
-/// is set.
+/// is set; with `SILT_FMT_CORPUS_ALL=1`, every file under it, whatever
+/// its name (a fuzz corpus names its files by their hash).
 pub fn extra_corpus() -> Vec<Input> {
     match std::env::var_os("SILT_FMT_CORPUS") {
         Some(dir) if !dir.is_empty() => {
@@ -207,7 +218,9 @@ pub fn extra_corpus() -> Vec<Input> {
                 "SILT_FMT_CORPUS is not a directory: {}",
                 dir.display()
             );
-            inputs_under(&dir, &dir, "corpus", &is_silt)
+            let all = std::env::var_os("SILT_FMT_CORPUS_ALL").is_some_and(|v| v != "0");
+            let keep: &dyn Fn(&Path) -> bool = if all { &|_| true } else { &is_silt };
+            inputs_under(&dir, &dir, "corpus", keep)
         }
         _ => Vec::new(),
     }
@@ -444,7 +457,14 @@ pub fn run(jobs: &[Job<'_>], format: Formatter, workers: usize) -> Report {
             let worker = std::thread::Builder::new().stack_size(STACK);
             worker
                 .spawn_scoped(scope, || {
-                    while let Some(job) = jobs.get(next.fetch_add(1, Ordering::SeqCst)) {
+                    loop {
+                        let index = next.fetch_add(1, Ordering::SeqCst);
+                        let Some(job) = jobs.get(index) else { break };
+                        // A long run says where it is (visible with
+                        // `--no-capture`).
+                        if index > 0 && index.is_multiple_of(50_000) {
+                            eprintln!("fmt property: {index} of {} jobs", jobs.len());
+                        }
                         // The interner is per thread; keep it small.
                         silt::intern::reset();
                         let text = job.text();

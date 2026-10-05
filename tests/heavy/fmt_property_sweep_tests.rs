@@ -15,8 +15,8 @@
 //! ```
 
 use crate::fmt_property::{
-    Expect, SUITE_WORKERS, conclude, current_formatter, doc_snippets, examples, extra_corpus,
-    fuzz_corpus, golden_files, mutants, plain, run,
+    Expect, Formatter, SUITE_WORKERS, conclude, current_formatter, doc_snippets, examples,
+    extra_corpus, fuzz_corpus, golden_files, mutants, next_formatter, plain, run,
 };
 
 /// Without `SILT_FMT_FULL`, every n-th gap of a doc snippet and of a
@@ -29,6 +29,16 @@ const GOLDEN_GAPS: usize = 41;
 /// that passes all of them and changes the mark to `Expect::Clean`.
 #[test]
 fn every_input_and_its_comment_mutants() {
+    sweep("sweep", current_formatter, Expect::KnownFailing);
+}
+
+/// The printer of `src/format/` passes all of them.
+#[test]
+fn new_printer_on_every_input_and_its_comment_mutants() {
+    sweep("sweep, new printer", next_formatter, Expect::Clean);
+}
+
+fn sweep(what: &str, format: Formatter, expect: Expect) {
     let full = std::env::var_os("SILT_FMT_FULL").is_some_and(|v| v != "0");
     let examples = examples();
     let docs = doc_snippets();
@@ -49,13 +59,18 @@ fn every_input_and_its_comment_mutants() {
         jobs.extend(mutants(&docs, DOC_GAPS));
         jobs.extend(mutants(&golden, GOLDEN_GAPS));
     }
-    // The full sweep is run on its own and takes every CPU.
-    let workers = if full {
-        std::thread::available_parallelism().map_or(4, |n| n.get())
-    } else {
-        SUITE_WORKERS
+    // The full sweep is run on its own and takes every CPU, unless
+    // `SILT_FMT_WORKERS` says how many threads to use.
+    let workers = match std::env::var("SILT_FMT_WORKERS") {
+        Ok(n) => n.parse().expect("SILT_FMT_WORKERS is a number"),
+        Err(_) if full => std::thread::available_parallelism().map_or(4, |n| n.get()),
+        Err(_) => SUITE_WORKERS,
     };
-    let report = run(&jobs, current_formatter, workers);
-    let what = if full { "full sweep" } else { "sweep" };
-    conclude(what, &report, Expect::KnownFailing);
+    let report = run(&jobs, format, workers);
+    let what = if full {
+        format!("full {what}")
+    } else {
+        what.to_string()
+    };
+    conclude(&what, &report, expect);
 }

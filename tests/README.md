@@ -46,14 +46,26 @@ cargo nextest run --all-features --test heavy -E 'test(fmt_property)'      # eve
 |---|---|
 | `SILT_FMT_FULL=1` | (`heavy`) a mutant for every gap of every example, snippet and golden case |
 | `SILT_FMT_CORPUS=<dir>` | (`heavy`) also every `.silt` file under the directory |
+| `SILT_FMT_CORPUS_ALL=1` | (`heavy`) every file under that directory, whatever its name (a fuzz corpus) |
+| `SILT_FMT_WORKERS=<n>` | (`heavy`) the number of threads (default: 2, and every CPU for the full sweep) |
 | `SILT_FMT_REPORT=<file>` | append the counts and every failure to the file |
 
 A passing test prints nothing under nextest; add `--success-output
 immediate` to see the counts, or read the report file.
 
-Both runs are marked `Expect::KnownFailing`: today's `silt fmt` refuses
-many of the mutants, so the tests report the count and pass. The step
-that replaces the formatter changes the marks to `Expect::Clean`.
+Each run exists twice. The tests named `new_printer_*` run the printer
+of `src/format/` and are marked `Expect::Clean`: no input may fail. The
+other two run today's `silt fmt` and are marked `Expect::KnownFailing`:
+it refuses many of the mutants, so those tests report the count and
+pass; they go when the old formatter goes (stage 8 step A3).
+
+The exit test of the stage is the full sweep of the new printer, with
+the audit's mutants and the fuzz corpora added from outside the tree:
+
+```
+SILT_FMT_FULL=1 SILT_FMT_CORPUS=<dir> SILT_FMT_REPORT=/tmp/fmt.txt \
+  cargo nextest run --all-features --test heavy -E 'test(new_printer)'
+```
 
 ## A faster local build
 
