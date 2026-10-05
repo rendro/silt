@@ -70,11 +70,41 @@ pub fn format(file: FileId, source: &str) -> Result<String, Error> {
     format_with(file, source, |text| text)
 }
 
+/// The stack `format` works on. The printer and the oracle recurse over
+/// the syntax tree, as the checker and the compiler do, and the tree of
+/// a chain of 2,000 operators is 2,000 levels deep: `format` runs on a
+/// thread of its own with the reserve `silt` gives its main thread, so
+/// that it does not depend on the stack of its caller (a language
+/// server's request thread, a test thread of 1 MiB on Windows). The
+/// reserve is address space; only the pages that are touched are
+/// committed.
+const STACK: usize = 256 << 20;
+
 /// `format`, with `tamper` applied to the printer's result before the
 /// oracle sees it: the way to test that a wrong result is refused and
 /// not returned.
 #[doc(hidden)]
 pub fn format_with(
+    file: FileId,
+    source: &str,
+    tamper: impl FnOnce(String) -> String + Send,
+) -> Result<String, Error> {
+    // The tree and its symbols stay on the thread (the interner is per
+    // thread); text and diagnostics, which hold none, come back.
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new()
+            .name("silt-format".into())
+            .stack_size(STACK)
+            .spawn_scoped(scope, || format_here(file, source, tamper))
+            .expect("spawning the formatter's thread");
+        match worker.join() {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
+}
+
+fn format_here(
     file: FileId,
     source: &str,
     tamper: impl FnOnce(String) -> String,
@@ -186,13 +216,18 @@ mod tests {
     }
 
     #[test]
-    fn a_long_chain_of_field_accesses_and_calls_is_printed() {
-        // The printer recurses over the tree, as the checker and the
-        // compiler do: on the stack that `silt` gives its main thread,
-        // the deepest chain the parser accepts is printed.
-        let on_main_stack = std::thread::Builder::new().stack_size(256 << 20);
-        on_main_stack
+    fn the_deepest_chains_are_printed_whatever_the_caller_s_stack() {
+        // `format` brings its own stack: the deepest chains the parser
+        // accepts are printed from a thread with 1 MiB, which is what a
+        // test thread has on Windows.
+        let small = std::thread::Builder::new().stack_size(1 << 20);
+        small
             .spawn(|| {
+                let chain = vec!["x"; 2000].join(" + ");
+                let source = format!("fn main() {{\n  {chain}\n}}\n");
+                let once = fmt(&source);
+                assert!(once.lines().count() > 20);
+                assert_eq!(fmt(&once), once);
                 for link in [".f", "()", "?"] {
                     let chain = format!("x{}", link.repeat(2000));
                     let source = format!("fn main() {{\n  {chain}\n}}\n");
