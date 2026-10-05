@@ -249,6 +249,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "task",
             page: "channel-task.md",
+            opaque: [("Handle", 1)],
             call: concurrency::call_task,
             rows: [
                 u("fn cancel(handle: Handle(a)) -> ()", "Request cancellation of a task (cooperative; see details below)"),
@@ -413,10 +414,10 @@ pub(super) fn modules() -> Vec<Module> {
             error: "HttpError",
             call: http::call_http,
             rows: [
-                u("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request"),
-                u("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers"),
-                u("fn serve(port: Int, handler: Fn(Request) -> Response) -> ()", "Start a concurrent HTTP server bound to `127.0.0.1` (loopback only)"),
-                u("fn serve_all(port: Int, handler: Fn(Request) -> Response) -> ()", "Start a concurrent HTTP server bound to `0.0.0.0` (all interfaces)"),
+                u("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request").feature("http", cfg!(feature = "http")),
+                u("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers").feature("http", cfg!(feature = "http")),
+                u("fn serve(port: Int, handler: Fn(Request) -> Response) -> ()", "Start a concurrent HTTP server bound to `127.0.0.1` (loopback only)").feature("http", cfg!(feature = "http")),
+                u("fn serve_all(port: Int, handler: Fn(Request) -> Response) -> ()", "Start a concurrent HTTP server bound to `0.0.0.0` (all interfaces)").feature("http", cfg!(feature = "http")),
                 u("fn segments(path: String) -> List(String)", "Split URL path into segments"),
                 u("fn parse_query(query: String) -> Map(String, List(String))", "Parse a URL query string into a multi-value map"),
             ],
@@ -462,6 +463,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type PgError { PgConnect(String), PgTls(String), PgAuthFailed(String), PgQuery(String, String), PgTypeMismatch(String, String, String), PgNoSuchColumn(String), PgClosed, PgTimeout, PgTxnAborted, PgUnknown(String) }\n\
             ",
+            opaque: [("PgPool", 0), ("PgTx", 0), ("PgCursor", 0), ("QueryResult", 0), ("ExecResult", 0), ("Value", 0)],
             error: "PgError",
             call: postgres::call,
             rows: [
@@ -545,6 +547,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type TcpError { TcpConnect(String), TcpTls(String), TcpClosed, TcpTimeout, TcpUnknown(String) }\n\
             ",
+            opaque: [("TcpListener", 0), ("TcpStream", 0)],
             error: "TcpError",
             call: tcp::call,
             rows: [

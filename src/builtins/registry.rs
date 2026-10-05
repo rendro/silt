@@ -227,6 +227,11 @@ pub struct Module {
     pub types: &'static str,
     /// Those types, read from the text.
     pub type_decls: Vec<TypeDecl>,
+    /// The module's opaque types, each with the number of its type
+    /// arguments (`("Handle", 1)` for `task.Handle(a)`): handles a
+    /// program names in a type but that have no fields or variants to
+    /// declare.
+    pub opaque: &'static [(&'static str, usize)],
     /// The module's error enum, which implements `Error`.
     pub error: Option<&'static str>,
     /// Types of other modules the module offers too, with their
@@ -267,6 +272,7 @@ macro_rules! module {
         $(feature: $feature:literal,)?
         page: $page:literal,
         $(types: $types:expr,)?
+        $(opaque: $opaque:expr,)?
         $(error: $error:literal,)?
         $(shares: $shares:expr,)?
         call: $call:expr,
@@ -282,6 +288,9 @@ macro_rules! module {
         let mut types: &'static str = "";
         $(types = $types;)?
         #[allow(unused_mut, unused_assignments)]
+        let mut opaque: &'static [(&'static str, usize)] = &[];
+        $(opaque = &$opaque;)?
+        #[allow(unused_mut, unused_assignments)]
         let mut error: Option<&'static str> = None;
         $(error = Some($error);)?
         #[allow(unused_mut, unused_assignments)]
@@ -292,7 +301,7 @@ macro_rules! module {
             feature,
             call,
             ($page, include_str!(concat!("../../../docs/stdlib/", $page))),
-            types,
+            (types, opaque),
             error,
             shares,
             vec![$($row),*],
@@ -364,7 +373,7 @@ fn build_module(
     feature: Option<&'static str>,
     call: Option<UntypedCall>,
     (page_file, page): (&'static str, &'static str),
-    types: &'static str,
+    (types, opaque): (&'static str, &'static [(&'static str, usize)]),
     error: Option<&'static str>,
     shares: &'static [(&'static str, &'static str)],
     specs: Vec<RowSpec>,
@@ -424,11 +433,16 @@ fn build_module(
         page,
         types,
         type_decls: type_decls(types),
+        opaque,
         error,
         shares,
         rows,
     }
 }
+
+/// The prelude's opaque types: `Bytes`, and `TypeOf(a)`, the type of a
+/// type used as a value (`Int`, a `type a` parameter).
+pub const PRELUDE_OPAQUE: &[(&str, usize)] = &[("Bytes", 0), (crate::defs::TYPE_OF, 1)];
 
 /// The enums of the prelude, declared like a module's types.
 pub const PRELUDE_TYPES: &str = "\
@@ -454,6 +468,16 @@ impl Registry {
     /// The row `module.function`, if its features are built.
     pub fn row(&self, module: &str, function: &str) -> Option<&Row> {
         self.module(module)?.row(function)
+    }
+
+    /// The number of type arguments of the opaque type `name` (of the
+    /// prelude or of a module, built or not); `None` for any other name.
+    pub fn opaque_arity(&self, name: &str) -> Option<usize> {
+        PRELUDE_OPAQUE
+            .iter()
+            .chain(self.modules.iter().flat_map(|m| m.opaque))
+            .find(|(opaque, _)| *opaque == name)
+            .map(|(_, arity)| *arity)
     }
 
     /// The modules whose feature is built.

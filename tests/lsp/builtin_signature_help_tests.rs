@@ -139,3 +139,32 @@ fn completion_detail_names_a_builtin_record_by_its_name() {
     assert_eq!(detail("sleep"), "Fn(Duration) -> ()");
     assert_eq!(detail("datetime"), "Fn(Date, Time) -> DateTime");
 }
+
+/// `postgres.` on a build without the postgres feature offers nothing:
+/// the module's import is the error, and the methods of every type are
+/// not its members.
+#[cfg(not(feature = "postgres"))]
+#[test]
+fn completion_after_a_module_that_is_not_built_offers_nothing() {
+    let source = "import postgres\nfn main() {\n  postgres.\n}\n";
+    let mut client = LspClient::spawn();
+    let uri = format!(
+        "file:///tmp/silt_builtin_completion_off_{}.silt",
+        std::process::id()
+    );
+    client.did_open_and_wait(&uri, source);
+    let resp = client.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 11 }
+        }),
+    );
+    client.shutdown();
+    let result = &resp["result"];
+    let items = result
+        .as_array()
+        .or_else(|| result["items"].as_array())
+        .expect("completion items");
+    assert!(items.is_empty(), "{items:?}");
+}

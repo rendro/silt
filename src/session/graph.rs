@@ -484,10 +484,7 @@ impl ModuleGraph {
                     Diagnostic::error(
                         Code::ModuleNotFound,
                         span,
-                        format!(
-                            "the builtin module '{name}' is not part of this build of silt: it \
-                             needs the cargo feature `{feature}`"
-                        ),
+                        module::needs_feature(&format!("the builtin module '{name}'"), feature),
                     )
                     .with_help(format!("rebuild silt with `--features {feature}`")),
                 )

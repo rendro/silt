@@ -323,6 +323,12 @@ impl Server {
         // and the method path falls back to every method the module
         // knows — "narrow when safe, never silently lose completions".
         let locals = locals_at_offset(program, cursor);
+        // A builtin module this build lacks (`postgres.` without the
+        // postgres feature): its import is the error, and it has nothing
+        // to offer; the methods of every type are not its members.
+        if module::missing_feature(prefix).is_some() && !locals.iter().any(|l| l.name == prefix) {
+            return items;
+        }
         let receiver_ty: Option<Type> = locals
             .iter()
             .rev()

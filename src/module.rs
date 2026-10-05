@@ -26,6 +26,23 @@ pub fn missing_feature(name: &str) -> Option<&'static str> {
     if module.enabled { None } else { module.feature }
 }
 
+/// The cargo feature the member `name` of the builtin module `module`
+/// needs and this build lacks, when the module itself is built
+/// (`tcp-tls` for `tcp.connect_tls`); `None` for a member that is built
+/// and for any other name.
+pub fn member_missing_feature(module: &str, name: &str) -> Option<&'static str> {
+    let module = registry().module(module).filter(|m| m.enabled)?;
+    let row = module.rows.iter().find(|row| row.name == name)?;
+    if row.enabled { None } else { row.feature }
+}
+
+/// What to say of a builtin module or member that needs the cargo
+/// feature `feature`, which this build lacks: `what` "is not part of
+/// this build of silt: ...".
+pub fn needs_feature(what: &str, feature: &str) -> String {
+    format!("{what} is not part of this build of silt: it needs the cargo feature `{feature}`")
+}
+
 /// Names of the built-in primitive type descriptors (uppercase) usable
 /// as `type a` arguments and for static-style trait dispatch
 /// (`Int.parse(...)`, etc.). The compiler emits each one, used as a
@@ -74,14 +91,6 @@ pub fn builtin_type_module(name: &str) -> Option<&'static str> {
         .iter()
         .find(|m| m.type_decls.iter().any(|ty| ty.name == name))
         .map(|m| m.name)
-}
-
-/// The record and enum types the builtin module `module` declares.
-pub fn builtin_module_type_names(module: &str) -> impl Iterator<Item = &'static str> + '_ {
-    registry()
-        .module(module)
-        .into_iter()
-        .flat_map(|m| m.type_decls.iter().map(|ty| ty.name))
 }
 
 /// The builtin module whose enum declares the variant `name`, which is
