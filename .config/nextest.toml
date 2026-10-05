@@ -11,3 +11,9 @@ concurrency = { max-threads = 4 }
 [[profile.default.overrides]]
 filter = 'binary(=concurrency)'
 test-group = 'concurrency'
+
+# The formatter's property runs (tests/frontend/fmt_property/mod.rs)
+# format thousands of inputs on two threads each.
+[[profile.default.overrides]]
+filter = 'test(fmt_property)'
+threads-required = 2
