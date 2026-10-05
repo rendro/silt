@@ -76,9 +76,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::bytecode::{Function, Globals, VmClosure};
+use crate::runtime::completion::IoCompletion;
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
-use crate::value::{IoCompletion, Value};
+use crate::value::Value;
 use runtime::{IoPool, RegexCache, TimerManager};
 
 // ── Native stack budget ───────────────────────────────────────────
@@ -1115,7 +1116,7 @@ impl Vm {
     /// called with lists of lambdas) still launders a container of
     /// functions past the typechecker. Without a runtime backstop such
     /// values fell into `Value::cmp` / `PartialEq for Value`, which order
-    /// closures by `Arc::as_ptr` (src/value.rs) — an ASLR-nondeterministic
+    /// closures by `Arc::as_ptr` (src/value/key.rs) — an ASLR-nondeterministic
     /// Bool for ordering and a silent identity-equality Bool for `==`.
     ///
     /// Consulted by the container arms of `compare()`

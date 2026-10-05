@@ -3,14 +3,14 @@
 //! ── REGRESSION(2f4aa6a): Eq/Hash/Ord contract violation ──────────────
 //!
 //! Round 84 patched `Value::PartialEq` for `Value::Record` to treat
-//! `type_name == "<anon>"` as a wildcard (src/value.rs ~1729): when
+//! `type_name == "<anon>"` as a wildcard (src/value/key.rs): when
 //! either side carries `<anon>`, compare fields-only. That fixed
 //! `==` for anon-typed nominals (the `unify_anon_nominal` widening
 //! at type-check time without runtime rebrand).
 //!
 //! But `Value::Ord` and `Value::Hash` were NOT updated. The Rust
 //! contracts require:
-//!   - `a == b ⇒ cmp(a, b) == Ordering::Equal` (src/value.rs ~1751-56,
+//!   - `a == b ⇒ cmp(a, b) == Ordering::Equal` (src/value/key.rs,
 //!      ~1921-28 comment blocks reaffirm this).
 //!   - `a == b ⇒ hash(a) == hash(b)` (standard `Hash`/`Eq` contract).
 //!

@@ -49,7 +49,9 @@ use std::sync::Arc;
 
 use silt::builtins::value_kind;
 use silt::bytecode::{Function, VmClosure};
-use silt::value::{Channel, TaskHandle, Value};
+use silt::runtime::channel::Channel;
+use silt::runtime::handle::TaskHandle;
+use silt::value::Value;
 use silt::vm::Vm;
 
 // ── Test helpers ─────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ fn point_type() -> Arc<silt::typeinfo::TypeInfo> {
 }
 
 fn build_all_variants() -> AllVariants {
-    use silt::value::{TcpListenerHandle, TcpStreamHandle};
+    use silt::runtime::handle::{TcpListenerHandle, TcpStreamHandle};
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
     let port = listener.local_addr().unwrap().port();

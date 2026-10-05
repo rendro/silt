@@ -20,8 +20,9 @@
 use std::sync::Arc;
 
 use silt::bytecode::{Function, VmClosure};
+use silt::runtime::handle::TaskHandle;
 use silt::typeinfo::bv;
-use silt::value::{TaskHandle, Value};
+use silt::value::Value;
 
 // ── Rust-level unit tests ──────────────────────────────────────────
 

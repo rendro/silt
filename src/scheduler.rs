@@ -14,7 +14,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use crate::value::{IoCompletion, TaskHandle, Value, WakerRegistration};
+use crate::runtime::channel::WakerRegistration;
+use crate::runtime::completion::IoCompletion;
+use crate::runtime::handle::TaskHandle;
+use crate::value::Value;
 use crate::vm::{BlockReason, HostIo, SelectOpKind, Vm, VmError};
 
 // `test_hooks` and `test_support` are public so integration tests in

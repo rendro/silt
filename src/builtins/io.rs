@@ -72,7 +72,7 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
 
 /// Maximum number of entries that may be materialized into a single
 /// `fs.walk` / `fs.glob` result list. Mirrors the philosophy of
-/// `MAX_RANGE_MATERIALIZE` in `src/value.rs`: keep recursive traversal
+/// `MAX_RANGE_MATERIALIZE` in `src/value/mod.rs`: keep recursive traversal
 /// bounded so a sprawling filesystem (or an accidental symlink cycle that
 /// the `glob` crate follows) cannot silently OOM the VM. Hitting the cap
 /// surfaces as `Err("fs.walk: exceeded N entries (cap)")` so users can
@@ -180,8 +180,8 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let path = path.clone();
             vm.submit_io_or_run(
                 args,
-                crate::value::IoCompletion::new(),
-                &crate::value::io_unknown_timeout_err,
+                crate::runtime::completion::IoCompletion::new(),
+                &crate::runtime::completion::io_unknown_timeout_err,
                 move || match std::fs::read_to_string(&path) {
                     Ok(content) => Value::variant(bv::OK, vec![Value::String(content)]),
                     Err(e) => io_result_err(&e, &path),
@@ -203,8 +203,8 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let content = content.clone();
             vm.submit_io_or_run(
                 args,
-                crate::value::IoCompletion::new(),
-                &crate::value::io_unknown_timeout_err,
+                crate::runtime::completion::IoCompletion::new(),
+                &crate::runtime::completion::io_unknown_timeout_err,
                 move || match std::fs::write(&path, &content) {
                     Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
                     Err(e) => io_result_err(&e, &path),
@@ -213,8 +213,8 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
         }
         "read_line" => vm.submit_io_or_run(
             args,
-            crate::value::IoCompletion::new(),
-            &crate::value::io_unknown_timeout_err,
+            crate::runtime::completion::IoCompletion::new(),
+            &crate::runtime::completion::io_unknown_timeout_err,
             move || {
                 let mut line = String::new();
                 match std::io::stdin().read_line(&mut line) {

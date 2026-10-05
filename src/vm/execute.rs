@@ -85,7 +85,7 @@ enum BuiltinValueCall {
 /// the lone bypass: a polymorphic `fn eq(x: a, y: a) -> Bool { x == y }`
 /// called with two functions used to silently return a `Bool` — `PartialEq
 /// for Value` does `Arc::ptr_eq` on closures and name-equality on builtins
-/// (src/value.rs) — instead of erroring like the concrete `f == g`, which
+/// (src/value/key.rs) — instead of erroring like the concrete `f == g`, which
 /// `is_valid_compare_operand` rejects at compile time (`Type::Fun` falls in
 /// its `_ => false` arm).
 ///

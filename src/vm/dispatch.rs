@@ -259,7 +259,7 @@ impl Vm {
                 // that gate (`type 'X' does not implement trait`), so the
                 // old "such fields are laundered through here" path no
                 // longer exists, and no valid program reaches it. `impl PartialEq for Value` (in
-                // src/value.rs) compares records and variants structurally,
+                // src/value/key.rs) compares records and variants structurally,
                 // so this arm stays sound even on that malformed input.
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
             }
@@ -310,7 +310,7 @@ impl Vm {
                     // Function/Bytes/Handle) are now statically REJECTED by
                     // that gate (`type 'X' does not implement trait`), so the
                     // old "such fields are laundered through here" path no
-                    // longer exists, and no valid program reaches it. `fn cmp` (in src/value.rs)
+                    // longer exists, and no valid program reaches it. `fn cmp` (in src/value/key.rs)
                     // orders records and variants structurally, so this arm
                     // stays sound even on that malformed input.
                     (Value::Variant(..), Value::Variant(..))
@@ -342,7 +342,7 @@ impl Vm {
                 // auto-derived primitives fall through to here.
                 //
                 // `Value` already implements `std::hash::Hash` with a
-                // canonical bit-hash for floats (see `impl Hash for Value` in src/value.rs).
+                // canonical bit-hash for floats (see `impl Hash for Value` in src/value/key.rs).
                 // We reuse that impl via `DefaultHasher` so the result
                 // matches `HashMap<Value, Value>` keying.
                 if !extra_args.is_empty() {
@@ -360,7 +360,7 @@ impl Vm {
                 // so `[{ y -> y }].hash()` reaches this arm — and the
                 // std `Hash` impl on `Value` hashes every closure as a
                 // constant discriminant tag ("not meaningfully
-                // hashable", src/value.rs), so two distinct closures
+                // hashable", src/value/key.rs), so two distinct closures
                 // would hash identically and collide silently.
                 if Self::value_contains_fn(receiver) {
                     return Some(Err(VmError::new(
@@ -382,7 +382,7 @@ impl Vm {
                 // that gate (`type 'X' does not implement trait`), so the
                 // old "such fields are laundered through here" path no
                 // longer exists, and no valid program reaches it. `impl Hash for Value` (in
-                // src/value.rs) hashes records and variants structurally, so
+                // src/value/key.rs) hashes records and variants structurally, so
                 // this arm stays sound even on that malformed input.
                 match receiver {
                     Value::Int(_)
@@ -391,7 +391,7 @@ impl Vm {
                     | Value::String(_)
                     | Value::List(_)
                     // Range hashes via the same `impl Hash for Value`
-                    // (in src/value.rs); typechecker registers Hash for
+                    // (in src/value/key.rs); typechecker registers Hash for
                     // every `List(T)` that flows through a `Hash` bound,
                     // and `1..5` reaches dispatch as `Value::Range`.
                     | Value::Range(..)

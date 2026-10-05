@@ -13,10 +13,11 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, 
 use super::common::value_kind;
 use crate::bytecode::record_type_matches;
 use crate::defs::TypeId;
-use crate::typeinfo::{BuiltinVariant, FieldType, Shape, TypeInfo, bv, ty};
+use crate::runtime::completion::IoCompletion;
 #[cfg(feature = "http")]
-use crate::value::TaskHandle;
-use crate::value::{IoCompletion, Value, checked_range_len};
+use crate::runtime::handle::TaskHandle;
+use crate::typeinfo::{BuiltinVariant, FieldType, Shape, TypeInfo, bv, ty};
+use crate::value::{Value, checked_range_len};
 use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 
 // ── Field types for JSON / TOML parsing ──────────────────────────────
@@ -2159,8 +2160,10 @@ fn http_timeout_err(_msg: &str) -> Value {
 
 /// Build a fresh `IoCompletion` configured with `http_timeout_err`.
 #[cfg(feature = "http")]
-fn http_completion() -> std::sync::Arc<crate::value::IoCompletion> {
-    crate::value::IoCompletion::with_timeout_err(std::sync::Arc::new(http_timeout_err))
+fn http_completion() -> std::sync::Arc<crate::runtime::completion::IoCompletion> {
+    crate::runtime::completion::IoCompletion::with_timeout_err(std::sync::Arc::new(
+        http_timeout_err,
+    ))
 }
 
 #[cfg(feature = "http")]

@@ -5,7 +5,7 @@
 //! materialization site is guarded by `checked_range_len`; Hash was the
 //! single unguarded walk.
 //!
-//! Fix (src/value.rs, `Value::Range` arm of `impl Hash`): cap the
+//! Fix (src/value/key.rs, `Value::Range` arm of `impl Hash`): cap the
 //! element-by-element walk at `MAX_RANGE_MATERIALIZE` (10_000_000) and hash
 //! over-cap ranges in closed form (`tag, len, lo, hi`). Contract reasoning:
 //!   - within the cap the byte stream is identical to the equal `List`'s,
