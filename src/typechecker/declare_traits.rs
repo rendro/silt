@@ -1483,9 +1483,8 @@ impl TypeChecker {
         // trait's parameters. What the impl writes (annotations, or
         // none) must agree with it; the body is checked against it.
         //
-        // In the bodies the type variables the impl's header names are
-        // rigid. (Those of a bare target, `trait T for Box`, have no
-        // name: they stay holes the bodies decide.)
+        // In the bodies the type variables of the impl's header are
+        // rigid.
         let mut rigid: Vec<RigidId> = Vec::new();
         let mut impl_names: HashMap<Symbol, Type> = HashMap::new();
         for (name, ty) in &impl_param_map {

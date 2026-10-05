@@ -777,35 +777,43 @@ impl TypeChecker {
         // stays unknown for everything that mentions it.
         self.exit_level();
         for (names, is_value, span) in &lets {
-            if !is_value {
-                for name in names {
-                    let Some(bound) = env.lookup(*name).cloned() else {
-                        continue;
-                    };
+            for name in names {
+                let Some(bound) = env.lookup(*name).cloned() else {
+                    continue;
+                };
+                if !is_value {
                     self.keep_monomorphic(&bound.ty);
-                    // A function of the group gave it the type of one of
-                    // its annotation variables (see `TypeChecker::bind`).
-                    if let Some(r) = rigid_in(&self.apply(&bound.ty)) {
-                        self.error(
-                            Code::TypeMismatch,
-                            format!(
-                                "the type variable `{0}` would escape its declaration: \
-                                 `{name}` is defined outside it and cannot have a type that \
-                                 mentions `{0}`",
-                                r.name
-                            ),
-                            *span,
-                        );
-                        env.define(*name, Scheme::mono(Type::Error));
-                    }
+                }
+                // A function of the group gave it the type of one of
+                // its annotation variables (see `TypeChecker::bind`).
+                if let Some(r) = rigid_in(&self.apply(&bound.ty)) {
+                    self.error(
+                        Code::TypeMismatch,
+                        format!(
+                            "the type variable `{0}` would escape its declaration: \
+                             `{name}` is defined outside it and cannot have a type that \
+                             mentions `{0}`",
+                            r.name
+                        ),
+                        *span,
+                    );
+                    env.define(*name, Scheme::mono(Type::Error));
                 }
             }
         }
+        // A function's type may mention an annotation variable of another
+        // function of the group: the bounds are the group's.
+        let bounds: Vec<(TyVar, TraitKey)> = component
+            .members
+            .iter()
+            .filter_map(|&i| sigs[i].as_ref())
+            .flat_map(|sig| sig.bounds.iter().copied())
+            .collect();
         for &i in &component.members {
             if let (Decl::Fn(f), Some(sig)) = (&decls[i], &sigs[i])
                 && !sig.complete
             {
-                let scheme = self.generalize_fn(&sig.ty(), &sig.bounds);
+                let scheme = self.generalize_fn(&sig.ty(), &bounds);
                 env.define(f.name, scheme);
             }
         }
