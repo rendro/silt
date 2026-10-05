@@ -546,6 +546,9 @@ impl TypeChecker {
                 if !written.contains(method_name)
                     && let Some(default_fn) = trait_info.default_method_bodies.get(method_name)
                 {
+                    // (Stage 6 step 4b compiles a default method once,
+                    // and removes this copy and `share_default_methods`'
+                    // second loop.)
                     // The copy is for the compiler, which reads what
                     // each name resolves to. The types are the trait
                     // body's to show (hover, inlay hints): a second
