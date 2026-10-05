@@ -49,6 +49,9 @@ cargo nextest run --all-features --test heavy -E 'test(fmt_property)'      # eve
 | `SILT_FMT_CORPUS_ALL=1` | (`heavy`) every file under that directory, whatever its name (a fuzz corpus) |
 | `SILT_FMT_WORKERS=<n>` | (`heavy`) the number of threads (default: 2, and every CPU for the full sweep) |
 | `SILT_FMT_REPORT=<file>` | append the counts and every failure to the file |
+| `SILT_FMT_FAILED=<dir>` | keep each input that failed as a file in the directory |
+| `SILT_FMT_STRESS=<count>` | (`heavy`) run `new_printer_on_random_comments`: that many inputs with 2 to 12 comments each at random sites |
+| `SILT_FMT_SEED=<n>` | (`heavy`) the seed of those random sites (default 1) |
 
 A passing test prints nothing under nextest; add `--success-output
 immediate` to see the counts, or read the report file.
@@ -59,12 +62,17 @@ other two run today's `silt fmt` and are marked `Expect::KnownFailing`:
 it refuses many of the mutants, so those tests report the count and
 pass; they go when the old formatter goes (stage 8 step A3).
 
+The runner also checks that the comment lines that start a file stay
+its first lines: the golden harness reads a case's directives there.
+
 The exit test of the stage is the full sweep of the new printer, with
-the audit's mutants and the fuzz corpora added from outside the tree:
+the audit's mutants and the fuzz corpora added from outside the tree,
+and the random comments:
 
 ```
 SILT_FMT_FULL=1 SILT_FMT_CORPUS=<dir> SILT_FMT_REPORT=/tmp/fmt.txt \
   cargo nextest run --all-features --test heavy -E 'test(new_printer)'
+SILT_FMT_STRESS=200000 cargo test --release --all-features --test heavy new_printer_on_random -- --nocapture
 ```
 
 ## A faster local build
