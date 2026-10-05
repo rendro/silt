@@ -730,7 +730,7 @@ impl TypeChecker {
         }
 
         // The `let`s of the group, with whether each is generalised.
-        let mut lets: Vec<(Vec<Symbol>, bool)> = Vec::new();
+        let mut lets: Vec<(Vec<Symbol>, bool, Span)> = Vec::new();
         for &i in &component.members {
             match (&mut decls[i], &sigs[i]) {
                 // Parser-recovery stubs are skipped: their empty body is
@@ -763,7 +763,7 @@ impl TypeChecker {
                             self.unify(&bound.ty, awaited_ty, *span);
                         }
                     }
-                    lets.push((names, is_value));
+                    lets.push((names, is_value, *span));
                 }
                 _ => {}
             }
@@ -775,11 +775,27 @@ impl TypeChecker {
         // Generalise. What a `let` that is not a value leaves unknown
         // stays unknown for everything that mentions it.
         self.exit_level();
-        for (names, is_value) in &lets {
+        for (names, is_value, span) in &lets {
             if !is_value {
                 for name in names {
-                    if let Some(bound) = env.lookup(*name).cloned() {
-                        self.keep_monomorphic(&bound.ty);
+                    let Some(bound) = env.lookup(*name).cloned() else {
+                        continue;
+                    };
+                    self.keep_monomorphic(&bound.ty);
+                    // A function of the group gave it the type of one of
+                    // its annotation variables (see `TypeChecker::bind`).
+                    if let Some(r) = rigid_in(&self.apply(&bound.ty)) {
+                        self.error(
+                            Code::TypeMismatch,
+                            format!(
+                                "the type variable `{0}` would escape its declaration: \
+                                 `{name}` is defined outside it and cannot have a type that \
+                                 mentions `{0}`",
+                                r.name
+                            ),
+                            *span,
+                        );
+                        env.define(*name, Scheme::mono(Type::Error));
                     }
                 }
             }
@@ -792,7 +808,7 @@ impl TypeChecker {
                 env.define(f.name, scheme);
             }
         }
-        for (names, is_value) in &lets {
+        for (names, is_value, _) in &lets {
             if *is_value {
                 for name in names {
                     // (A name the pattern failed to bind may be bound
@@ -888,6 +904,9 @@ impl TypeChecker {
     /// use what those promise and nothing an impl's type happens to
     /// have.
     pub(super) fn check_decl_bodies(&mut self, decls: &mut [Decl], env: &mut TypeEnv) {
+        // One level deep, as every body: its variables are a
+        // declaration's, not an outer value's.
+        self.enter_level();
         for decl in decls.iter_mut() {
             match decl {
                 Decl::TraitImpl(ti) => {
@@ -920,6 +939,7 @@ impl TypeChecker {
                 _ => {}
             }
         }
+        self.exit_level();
     }
 }
 

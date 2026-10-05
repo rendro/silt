@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- A type variable of the signature written in the body is the same
+-- variable: `pick` is an `a`, and `n: a` cannot be given an Int.
+-- stderr-contains: rigid__annotation_in_body_means_signature_variable.silt:16:14
+-- stderr-contains: type mismatch: expected a, got Int
+-- stderr-not-contains: silt:9:
+fn first(xs: List(a), fallback: a) -> a {
+  let pick: a = match xs {
+    [x, ..rest] -> x
+    [] -> fallback
+  }
+  pick
+}
+fn bad(x: a) -> Int {
+  let n: a = 1
+  n
+}
+fn main() { println(first([1], 0)) }

@@ -1,0 +1,11 @@
+-- Two unannotated wrappers of a bounded function check and run.
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Greet for Bool { fn greet(self) -> String { "bool" } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+fn wrap(x) { hello(x) }
+fn wrap2(x) { wrap(x) }
+fn main() {
+  println(wrap2(1))
+  println(wrap2(true))
+}

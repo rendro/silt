@@ -710,7 +710,17 @@ impl TypeChecker {
         false
     }
 
+    /// Register the impl `ti`: its methods for its type, with the types
+    /// its trait declares, and what its bodies are checked against. (One
+    /// level deep, as every declaration: its variables are a
+    /// declaration's, not an outer value's.)
     pub(super) fn register_trait_impl(&mut self, ti: &TraitImpl) {
+        self.enter_level();
+        self.declare_trait_impl(ti);
+        self.exit_level();
+    }
+
+    fn declare_trait_impl(&mut self, ti: &TraitImpl) {
         // An impl of a trait or for a type the resolver resolved to
         // nothing: it reported why.
         if ti.trait_res == Some(crate::defs::Res::Error)

@@ -63,6 +63,12 @@ impl TyVarSupply {
         }
     }
 
+    /// Whether the unresolved variable `v` is outside every declaration:
+    /// a declaration and its body are checked at least one level deep.
+    pub(super) fn is_outermost(&self, v: TyVar) -> bool {
+        self.levels[v] == 0
+    }
+
     /// Whether the unresolved variable `v` is above the current level:
     /// nothing outside the scope that just ended mentions it.
     pub(super) fn is_generalizable(&self, v: TyVar) -> bool {
@@ -314,6 +320,29 @@ impl TypeChecker {
         format!("infinite type: the type variable appears inside {t}")
     }
 
+    /// Resolve the variable `v` to `t`, unless that would take an
+    /// annotation variable out of its declaration: a variable of
+    /// something defined outside every declaration being checked (a
+    /// top-level `let` that is not generalised, an earlier module's
+    /// value) cannot stand for a type only one declaration's body knows.
+    fn bind(&mut self, v: TyVar, t: Type, out: &mut Vec<Fault>) {
+        if self.tables.vars.is_outermost(v)
+            && let Some(r) = rigid_in(&self.apply(&t))
+        {
+            out.push(Fault::new(
+                Code::TypeMismatch,
+                format!(
+                    "the type variable `{0}` would escape its declaration: inside it `{0}` \
+                     stands for any type, but here it would become the type of a value \
+                     defined outside",
+                    r.name
+                ),
+            ));
+            return;
+        }
+        self.tables.vars.bind(v, t);
+    }
+
     /// Unify two anon records. See module-level row-poly notes.
     fn unify_anon_anon(
         &mut self,
@@ -420,13 +449,13 @@ impl TypeChecker {
                     tail: new_tail,
                 };
                 if !occurs_in(v1, &to_v1) {
-                    self.tables.vars.bind(v1, to_v1);
+                    self.bind(v1, to_v1, out);
                 } else {
                     let msg = Self::infinite_type_message(&to_v1);
                     out.push(Fault::new(Code::InfiniteType, msg));
                 }
                 if !occurs_in(v2, &to_v2) {
-                    self.tables.vars.bind(v2, to_v2);
+                    self.bind(v2, to_v2, out);
                 } else {
                     let msg = Self::infinite_type_message(&to_v2);
                     out.push(Fault::new(Code::InfiniteType, msg));
@@ -475,7 +504,7 @@ impl TypeChecker {
             tail: RowTail::Closed,
         };
         if !occurs_in(v, &leftover) {
-            self.tables.vars.bind(v, leftover);
+            self.bind(v, leftover, out);
         } else {
             out.push(Fault::new(
                 Code::InfiniteType,
@@ -551,7 +580,7 @@ impl TypeChecker {
                     tail: RowTail::Closed,
                 };
                 if !occurs_in(v, &leftover) {
-                    self.tables.vars.bind(v, leftover);
+                    self.bind(v, leftover, out);
                 } else {
                     out.push(Fault::new(
                         Code::InfiniteType,
@@ -667,7 +696,7 @@ impl TypeChecker {
                         ));
                     }
                 } else {
-                    self.tables.vars.bind(*v, t.clone());
+                    self.bind(*v, t.clone(), out);
                 }
             }
 
@@ -1077,6 +1106,31 @@ impl TypeChecker {
             _ => unreachable!(),
         };
         (t, v)
+    }
+}
+
+/// A rigid variable of `ty`, if it has one.
+pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
+    match ty {
+        Type::Rigid(r) => Some(*r),
+        Type::Fun(params, ret) => params.iter().find_map(rigid_in).or_else(|| rigid_in(ret)),
+        Type::List(inner) | Type::Range(inner) | Type::Set(inner) | Type::Channel(inner) => {
+            rigid_in(inner)
+        }
+        Type::Tuple(elems) => elems.iter().find_map(rigid_in),
+        Type::Record(_, fields) => fields.iter().find_map(|(_, t)| rigid_in(t)),
+        Type::Generic(_, args) => args.iter().find_map(rigid_in),
+        Type::Map(k, v) => rigid_in(k).or_else(|| rigid_in(v)),
+        Type::AssocProj { receiver, .. } => rigid_in(receiver),
+        Type::AnonRecord { fields, .. } => fields.values().find_map(rigid_in),
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Var(_)
+        | Type::Error
+        | Type::Never => None,
     }
 }
 
