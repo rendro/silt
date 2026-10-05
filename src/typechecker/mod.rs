@@ -516,19 +516,30 @@ impl TypeChecker {
         }
     }
 
-    /// Report each `pub let` whose type the module's check leaves partly
-    /// unknown (`pub let ch = channel.new(1)` before anything sends on
-    /// it): an importer would fix the rest, and two importers could fix it
-    /// two ways. The declaration is where it is reported, whichever
-    /// module is checked first.
-    fn report_unknown_pub_let_types(&mut self, program: &Program, env: &TypeEnv) {
+    /// Report each top-level `let` whose type the module's check leaves
+    /// partly unknown (`let ch = channel.new(1)` when nothing in the
+    /// module sends on it). A module's check is where its types are
+    /// decided: an importer would fix the rest of a `pub let`, and two
+    /// importers could fix it two ways; a private one is reached through
+    /// the module's public functions just the same. The declaration is
+    /// where it is reported. A REPL cell is exempt: the next cell may
+    /// decide it.
+    fn report_unknown_let_types(&mut self, program: &Program, env: &TypeEnv) {
         if self.is_cell {
             return;
         }
         for decl in &program.decls {
-            if !matches!(decl, Decl::Let { is_pub: true, .. }) {
+            let Decl::Let { is_pub, .. } = decl else {
                 continue;
-            }
+            };
+            let (what, keyword, why) = match is_pub {
+                true => (
+                    "public let",
+                    "pub let",
+                    "a module that imports it cannot decide it",
+                ),
+                false => ("top-level let", "let", "nothing in the module decides it"),
+            };
             for (name, span, _) in crate::parser::top_level_binders(decl) {
                 let Some(scheme) = env.lookup(name).cloned() else {
                     continue;
@@ -542,13 +553,12 @@ impl TypeChecker {
                         Code::AmbiguousType,
                         span,
                         format!(
-                            "the type of public let '{name}' is not fully known here: {}",
+                            "the type of {what} '{name}' is not fully known here: {}",
                             self.show_type(&ty)
                         ),
                     )
                     .with_help(format!(
-                        "annotate it, e.g. `pub let {name}: <type> = ...`: a module that \
-                         imports it cannot decide it"
+                        "annotate it, e.g. `{keyword} {name}: <type> = ...`: {why}"
                     )),
                 );
             }
@@ -1187,7 +1197,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     }
     let env = checker.check_program_in(program, env);
     checker.report_private_in_schemes(program, &env);
-    checker.report_unknown_pub_let_types(program, &env);
+    checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);
     // The type of each top-level value: the module's own, by name; an
     // imported item, by its definition.

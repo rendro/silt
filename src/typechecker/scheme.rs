@@ -235,7 +235,7 @@ impl TypeChecker {
             if let Some(scheme) = env.lookup(def.name) {
                 let mut scheme = scheme.clone();
                 // A `pub let` whose type is partly unknown is reported at
-                // its declaration (`report_unknown_pub_let_types`); its
+                // its declaration (`report_unknown_let_types`); its
                 // importers see the unknown part as an error type, so no
                 // importer fixes it.
                 if def.kind == crate::defs::DefKind::Let

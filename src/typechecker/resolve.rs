@@ -177,76 +177,8 @@ impl TypeChecker {
     /// block.  If the binding IS used later, the polymorphic type is acceptable
     /// because the use site will instantiate it concretely.
     pub(super) fn check_unresolved_let_types(&mut self, program: &Program) {
-        // Top-level Decl::Let
-        //
-        // Mirror the in-block heuristic: if the bound name is referenced by any
-        // subsequent top-level decl (subsequent `let` value, or any function /
-        // trait impl method body in the program, since those are hoisted at
-        // module scope), the downstream use will pin the type and we skip the
-        // error. Only flag bindings whose type is still ambiguous AND that
-        // nothing else references.
-        for (i, decl) in program.decls.iter().enumerate() {
-            if let Decl::Let {
-                pattern,
-                value,
-                ty,
-                span,
-                ..
-            } = decl
-                && ty.is_none()
-                && value
-                    .ty
-                    .as_ref()
-                    .map(|t| self.is_bare_type_var(t))
-                    .unwrap_or(false)
-            {
-                // Skip the cascade if the value expression itself already
-                // produced an error — fixing that root cause would also
-                // resolve the inference failure, so the "cannot infer"
-                // follow-up is misleading (round 62 G4).
-                if self.value_already_errored(value) {
-                    continue;
-                }
-
-                let bound_names = collect_pattern_vars(pattern);
-                if bound_names.is_empty() {
-                    self.error(
-                        Code::AmbiguousType,
-                        "cannot infer the type of this expression — \
-                         add an annotation, e.g. `let x: SomeType = ...`"
-                            .to_string(),
-                        *span,
-                    );
-                    continue;
-                }
-
-                // Check whether any later decl references any bound name.
-                // Subsequent `Decl::Let` values are checked in source order,
-                // while function / trait impl method bodies are always checked
-                // because they are hoisted — a function defined before this
-                // let may still reference it at runtime.
-                let used_elsewhere = bound_names.iter().any(|name| {
-                    program
-                        .decls
-                        .iter()
-                        .enumerate()
-                        .any(|(j, other)| Self::decl_references_name(other, *name, i, j))
-                });
-
-                if !used_elsewhere {
-                    let first = resolve(bound_names[0]);
-                    self.error(
-                        Code::AmbiguousType,
-                        format!(
-                            "cannot infer the type of `{first}` — \
-                             add an annotation, e.g. `let {first}: SomeType = ...`"
-                        ),
-                        *span,
-                    );
-                }
-            }
-        }
-
+        // (A top-level `let` whose type stays unknown is reported by
+        // `report_unknown_let_types`.)
         // Function bodies and trait impl method bodies
         for decl in &program.decls {
             match decl {
@@ -561,29 +493,6 @@ impl TypeChecker {
             ExprKind::Recur(args) => args.iter().any(|a| Self::expr_references_name(a, name)),
             ExprKind::Return(None) => false,
             _ => false, // Int, Float, Bool, StringLit, Unit
-        }
-    }
-
-    /// Check whether a top-level decl references `name`, relative to a
-    /// self-referential `Decl::Let` at index `self_idx`. `other_idx` is the
-    /// index of the decl being inspected.
-    ///
-    /// Function bodies (including trait impl methods) are always inspected
-    /// because functions are module-scoped and effectively hoisted — a
-    /// function defined before the let can still reference it at runtime.
-    /// Other top-level `Decl::Let` bindings only count when they come *after*
-    /// the self decl, matching the in-block "subsequent statements" rule.
-    fn decl_references_name(decl: &Decl, name: Symbol, self_idx: usize, other_idx: usize) -> bool {
-        match decl {
-            Decl::Fn(f) => Self::expr_references_name(&f.body, name),
-            Decl::TraitImpl(ti) => ti
-                .methods
-                .iter()
-                .any(|m| Self::expr_references_name(&m.body, name)),
-            Decl::Let { value, .. } => {
-                other_idx > self_idx && Self::expr_references_name(value, name)
-            }
-            Decl::Trait(_) | Decl::Type(_) | Decl::Import(..) => false,
         }
     }
 
