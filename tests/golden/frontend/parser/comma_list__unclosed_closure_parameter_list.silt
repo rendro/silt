@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A closure parameter list with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn main() {
+  let add = { a b -> a + b }
+}

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A loop binding list with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn main() {
+  loop i = 0 n = 3 {
+    i
+  }
+}

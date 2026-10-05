@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue anon record type, found y
+ --> comma_list__unclosed_anon_record_type.silt:5:20
+   |
+ 5 | fn x_of(p: {x: Int y: Int}) -> Int { p.x }
+   |                    ^ expected '}' or ',' to continue anon record type, found y
+ ::: comma_list__unclosed_anon_record_type.silt:5:12
+   |
+ 5 | fn x_of(p: {x: Int y: Int}) -> Int { p.x }
+   |            - the anon record type starts here

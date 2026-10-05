@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue selective import list, found filter
+ --> comma_list__unclosed_selective_import_list.silt:5:19
+   |
+ 5 | import list.{ map filter }
+   |                   ^^^^^^ expected '}' or ',' to continue selective import list, found filter
+ ::: comma_list__unclosed_selective_import_list.silt:5:13
+   |
+ 5 | import list.{ map filter }
+   |             - the selective import list starts here

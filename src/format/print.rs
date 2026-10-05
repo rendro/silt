@@ -266,15 +266,11 @@ struct ListStyle {
     spaced: bool,
     /// One item per line, whatever the width.
     always_break: bool,
-    /// A comma behind the last item when the list is broken. Off where
-    /// the grammar does not take one.
-    trailing_comma: bool,
 }
 
 const TIGHT: ListStyle = ListStyle {
     spaced: false,
     always_break: false,
-    trailing_comma: true,
 };
 const SPACED: ListStyle = ListStyle {
     spaced: true,
@@ -368,15 +364,14 @@ impl Printer<'_> {
         }
     }
 
-    /// The comma behind the last item of a list: the printer's, by the
-    /// style; the source's is skipped and its comments stay here.
+    /// The comma behind the last item of a list, written when the list
+    /// is broken (every list of the grammar takes one); the source's is
+    /// skipped and its comments stay here.
     fn last_comma(&mut self, style: ListStyle, required: bool) -> Doc {
-        let comma = if required || (style.trailing_comma && style.always_break) {
+        let comma = if required || style.always_break {
             Doc::text(",")
-        } else if style.trailing_comma {
-            Doc::if_break(Doc::text(","), Doc::Nil)
         } else {
-            Doc::Nil
+            Doc::if_break(Doc::text(","), Doc::Nil)
         };
         Doc::concat(vec![comma, self.cur.skip(&Token::Comma)])
     }
@@ -1597,20 +1592,16 @@ impl Printer<'_> {
         rest: Option<Token>,
         named_rest: bool,
     ) -> Doc {
-        // The rest is the last item of the list, and takes no comma.
+        // The rest is the last item of the list.
         let mut items: Vec<Option<&Option<Pattern>>> =
             fields.iter().map(|(_, _, sub)| Some(sub)).collect();
         if rest.is_some() {
             items.push(None);
         }
-        let style = ListStyle {
-            trailing_comma: rest.is_none(),
-            ..SPACED
-        };
         self.delimited(
             Token::LBrace,
             Token::RBrace,
-            style,
+            SPACED,
             &items,
             |p, item| match (item, &rest) {
                 (Some(sub), _) => {
@@ -1688,15 +1679,10 @@ impl Printer<'_> {
                 if rest.is_some() {
                     items.push(None);
                 }
-                // A list pattern takes no trailing comma.
-                let style = ListStyle {
-                    trailing_comma: false,
-                    ..TIGHT
-                };
                 self.delimited(
                     Token::LBracket,
                     Token::RBracket,
-                    style,
+                    TIGHT,
                     &items,
                     |p, item| match (item, rest) {
                         (Some(elem), _) => p.pattern(elem),
@@ -1815,14 +1801,10 @@ impl Printer<'_> {
                 if tail.is_some() {
                     items.push(None);
                 }
-                let style = ListStyle {
-                    trailing_comma: tail.is_none(),
-                    ..SPACED
-                };
                 self.delimited(
                     Token::LBrace,
                     Token::RBrace,
-                    style,
+                    SPACED,
                     &items,
                     |p, item| match item {
                         Some(ty) => Doc::concat(vec![

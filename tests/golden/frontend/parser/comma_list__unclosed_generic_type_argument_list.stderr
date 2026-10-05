@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue generic type argument list, found Int
+ --> comma_list__unclosed_generic_type_argument_list.silt:5:23
+   |
+ 5 | fn size(m: Map(String Int)) -> Int { 0 }
+   |                       ^^^ expected ')' or ',' to continue generic type argument list, found Int
+ ::: comma_list__unclosed_generic_type_argument_list.silt:5:15
+   |
+ 5 | fn size(m: Map(String Int)) -> Int { 0 }
+   |               - the generic type argument list starts here

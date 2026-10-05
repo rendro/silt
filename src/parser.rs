@@ -1834,36 +1834,31 @@ impl<'src> Parser<'src> {
     /// `{` in front of them.
     fn parse_record_body(&mut self, open: Span) -> Result<TypeBody> {
         let mut first = true;
-        let fields = self.comma_list(
-            "record type fields",
-            open,
-            ListEnd::Close(&Token::RBrace),
-            |p| {
-                let (name, name_span) = p.expect_ident()?;
-                // The body was taken for a record because its first name is
-                // lower case. A first name without `:` that looks like an
-                // enum variant may be a variant spelled in lower case.
-                if std::mem::take(&mut first) && p.peek_skip_nl() != &Token::Colon {
-                    let text = intern::resolve(name);
-                    return Err(Diagnostic::error(
-                        Code::ExpectedToken,
-                        name_span,
-                        format!(
-                            "expected `:` after record field '{text}'; if '{text}' is meant as an \
-                             enum variant, variant names start with an uppercase letter, e.g. `{}`",
-                            capitalized(&text)
-                        ),
-                    ));
-                }
-                p.expect(&Token::Colon)?;
-                let ty = p.parse_type_expr()?;
-                Ok(RecordField {
-                    name,
+        let fields = self.comma_list("record type", open, ListEnd::Close(&Token::RBrace), |p| {
+            let (name, name_span) = p.expect_ident()?;
+            // The body was taken for a record because its first name is
+            // lower case. A first name without `:` that looks like an
+            // enum variant may be a variant spelled in lower case.
+            if std::mem::take(&mut first) && p.peek_skip_nl() != &Token::Colon {
+                let text = intern::resolve(name);
+                return Err(Diagnostic::error(
+                    Code::ExpectedToken,
                     name_span,
-                    ty,
-                })
-            },
-        )?;
+                    format!(
+                        "expected `:` after record field '{text}'; if '{text}' is meant as an \
+                             enum variant, variant names start with an uppercase letter, e.g. `{}`",
+                        capitalized(&text)
+                    ),
+                ));
+            }
+            p.expect(&Token::Colon)?;
+            let ty = p.parse_type_expr()?;
+            Ok(RecordField {
+                name,
+                name_span,
+                ty,
+            })
+        })?;
         Ok(TypeBody::Record(fields))
     }
 
@@ -1879,7 +1874,7 @@ impl<'src> Parser<'src> {
                 let fields = if p.peek() == &Token::LParen {
                     let open = p.advance().span;
                     p.comma_list(
-                        "enum variant fields",
+                        "enum variant field list",
                         open,
                         ListEnd::Close(&Token::RParen),
                         Self::parse_type_expr,
@@ -2491,11 +2486,11 @@ impl<'src> Parser<'src> {
             let mut tail: Option<Symbol> = None;
             let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
             let fields = self.comma_list(
-                "anon record type fields",
+                "anon record type",
                 start,
                 ListEnd::Close(&Token::RBrace),
                 |p| {
-                    p.nothing_after_rest(tail.is_some(), "...", "an anon record type")?;
+                    p.nothing_after_rest(tail.is_some(), "...", '}', "an anon record type")?;
                     if p.at(&Token::DotDotDot) {
                         p.advance();
                         // Row variable name (e.g. `r` in `...r`). Required.
@@ -3399,7 +3394,7 @@ impl<'src> Parser<'src> {
                     self.advance();
                     let mut elems = vec![first];
                     elems.extend(self.comma_list(
-                        "tuple",
+                        "tuple literal",
                         span,
                         ListEnd::Close(&Token::RParen),
                         Self::parse_expr,
@@ -3967,7 +3962,7 @@ impl<'src> Parser<'src> {
 
         // Binding variant: `loop x = init, y = init { body }`
         let end = ListEnd::Before(&Token::LBrace);
-        let bindings = self.comma_list("loop bindings", span, end, |p| {
+        let bindings = self.comma_list("loop binding list", span, end, |p| {
             let (name, name_span) = p.expect_ident()?;
             p.expect(&Token::Eq)?;
             p.skip_nl();
@@ -4031,7 +4026,7 @@ impl<'src> Parser<'src> {
         let mut first = true;
         let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
         let fields = self.comma_list(
-            "anon record literal fields",
+            "anon record literal",
             span,
             ListEnd::Close(&Token::RBrace),
             |p| {
@@ -4070,7 +4065,7 @@ impl<'src> Parser<'src> {
     fn parse_record_fields(&mut self) -> Result<Vec<(Symbol, Expr)>> {
         let open = self.expect(&Token::LBrace)?.span;
         self.comma_list(
-            "record literal fields",
+            "record literal",
             open,
             ListEnd::Close(&Token::RBrace),
             |p| {
@@ -4091,14 +4086,17 @@ impl<'src> Parser<'src> {
     /// The error for an element behind the rest of a pattern (`..`,
     /// `..tail`, `...rest`) or the row variable of a record type, when
     /// `seen` says there was one: the rest stands last.
-    fn nothing_after_rest(&self, seen: bool, rest: &str, list: &str) -> Result<()> {
+    fn nothing_after_rest(&self, seen: bool, rest: &str, close: char, list: &str) -> Result<()> {
         if !seen {
             return Ok(());
         }
         Err(Diagnostic::error(
             Code::ExpectedToken,
             self.span(),
-            format!("`{rest}` comes last in {list}, found {}", self.peek()),
+            format!(
+                "expected '{close}' after `{rest}` in {list}, found {}",
+                self.peek()
+            ),
         ))
     }
 
@@ -4258,11 +4256,11 @@ impl<'src> Parser<'src> {
             let open = self.advance().span;
             let mut has_rest = false;
             let fields = self.comma_list(
-                "record pattern fields",
+                "record pattern",
                 open,
                 ListEnd::Close(&Token::RBrace),
                 |p| {
-                    p.nothing_after_rest(has_rest, "..", "a record pattern")?;
+                    p.nothing_after_rest(has_rest, "..", '}', "a record pattern")?;
                     if p.at(&Token::DotDot) {
                         p.advance();
                         has_rest = true;
@@ -4444,11 +4442,11 @@ impl<'src> Parser<'src> {
                 self.advance();
                 let mut rest: Option<(Symbol, Span)> = None;
                 let fields = self.comma_list(
-                    "anon record pattern fields",
+                    "anon record pattern",
                     start,
                     ListEnd::Close(&Token::RBrace),
                     |p| {
-                        p.nothing_after_rest(rest.is_some(), "...", "an anon record pattern")?;
+                        p.nothing_after_rest(rest.is_some(), "...", '}', "an anon record pattern")?;
                         if p.at(&Token::DotDotDot) {
                             p.advance();
                             // Named rest binding required (B6: no unnamed rest).
@@ -4469,7 +4467,7 @@ impl<'src> Parser<'src> {
                     start,
                     ListEnd::Close(&Token::RBracket),
                     |p| {
-                        p.nothing_after_rest(rest.is_some(), "..", "a list pattern")?;
+                        p.nothing_after_rest(rest.is_some(), "..", ']', "a list pattern")?;
                         if p.at(&Token::DotDot) {
                             p.advance(); // consume ..
                             rest = Some(Box::new(p.parse_pattern()?));

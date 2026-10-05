@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue map literal, found "b"
+ --> comma_list__unclosed_map_literal.silt:6:20
+   |
+ 6 |   let m = #{"a": 1 "b": 2}
+   |                    ^^^ expected '}' or ',' to continue map literal, found "b"
+ ::: comma_list__unclosed_map_literal.silt:6:11
+   |
+ 6 |   let m = #{"a": 1 "b": 2}
+   |           -- the map literal starts here

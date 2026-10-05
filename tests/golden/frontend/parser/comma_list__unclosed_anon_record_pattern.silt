@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A anon record pattern with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn main() {
+  let r = {x: 1, y: 2}
+  match r {
+    {x: a y: b} -> a
+  }
+}
