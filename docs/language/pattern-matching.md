@@ -157,6 +157,17 @@ match n {
 }
 ```
 
+A long list of alternatives may continue on the next line, which then
+starts with its `|`:
+
+```silt
+match day {
+  "Saturday"
+  | "Sunday" -> "weekend"
+  _ -> "weekday"
+}
+```
+
 All alternatives must bind the **same** variables (and, as in any match,
 all alternatives must have the same type — you can't mix `Some(x)` with
 `Ok(x)` in one or-pattern):

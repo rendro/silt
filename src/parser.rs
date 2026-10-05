@@ -4093,10 +4093,11 @@ impl<'src> Parser<'src> {
     fn parse_pattern_inner(&mut self) -> Result<Pattern> {
         let first = self.parse_primary_pattern()?;
         // Check for or-pattern: pat1 | pat2 | ...
-        if self.at(&Token::Bar) {
+        // An alternative may start the next line with its `|`.
+        if self.at_bar_skip_nl() {
             let or_span = first.span;
             let mut alts = vec![first];
-            while self.at(&Token::Bar) {
+            while self.at_bar_skip_nl() {
                 self.advance();
                 alts.push(self.parse_primary_pattern()?);
             }
@@ -4524,6 +4525,20 @@ impl<'src> Parser<'src> {
     }
 
     // ── Utility ──────────────────────────────────────────────────────
+
+    /// Is the next token, past any line breaks, a `|`? Skips the line
+    /// breaks only if so.
+    fn at_bar_skip_nl(&mut self) -> bool {
+        let mut n = 0;
+        while matches!(self.peek_at(n), Some(Token::Newline)) {
+            n += 1;
+        }
+        let bar = matches!(self.peek_at(n), Some(Token::Bar));
+        if bar {
+            self.pos += n;
+        }
+        bar
+    }
 
     fn peek_skip_nl(&mut self) -> &Token {
         self.skip_nl();
