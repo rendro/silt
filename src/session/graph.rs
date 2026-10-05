@@ -835,8 +835,9 @@ fn is_module_name(name: &str) -> bool {
         return false;
     };
     let mut tokens = tokens
+        .tokens
         .iter()
-        .map(|(token, _)| token)
+        .map(|tok| &tok.kind)
         .filter(|t| !matches!(t, Token::Eof | Token::Newline));
     matches!(
         (tokens.next(), tokens.next()),
