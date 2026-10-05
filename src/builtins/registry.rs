@@ -189,7 +189,14 @@ pub struct TypeDecl {
     /// The number of its type parameters.
     pub params: usize,
     pub shape: TypeShape,
+    /// The builtin traits the type derives: all four ([`DERIVED`]) unless
+    /// its module says otherwise (`derives:`).
+    pub derives: &'static [&'static str],
 }
+
+/// The builtin traits a declared type derives when its module says
+/// nothing else.
+pub const DERIVED: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
 pub enum TypeShape {
     /// The variants in declaration order, each with its number of
@@ -227,6 +234,11 @@ pub struct Module {
     pub types: &'static str,
     /// Those types, read from the text.
     pub type_decls: Vec<TypeDecl>,
+    /// The declared types that do not derive all four builtin traits,
+    /// each with the traits it does derive: `http.Response` holds a
+    /// `Map`, which has no order, so it derives no `Compare`;
+    /// `channel.ChannelOp` holds a channel and derives nothing.
+    pub derives: &'static [(&'static str, &'static [&'static str])],
     /// The module's opaque types, each with the number of its type
     /// arguments (`("Handle", 1)` for `task.Handle(a)`): handles a
     /// program names in a type but that have no fields or variants to
@@ -272,6 +284,7 @@ macro_rules! module {
         $(feature: $feature:literal,)?
         page: $page:literal,
         $(types: $types:expr,)?
+        $(derives: $derives:expr,)?
         $(opaque: $opaque:expr,)?
         $(error: $error:literal,)?
         $(shares: $shares:expr,)?
@@ -288,6 +301,9 @@ macro_rules! module {
         let mut types: &'static str = "";
         $(types = $types;)?
         #[allow(unused_mut, unused_assignments)]
+        let mut derives: &'static [(&'static str, &'static [&'static str])] = &[];
+        $(derives = &$derives;)?
+        #[allow(unused_mut, unused_assignments)]
         let mut opaque: &'static [(&'static str, usize)] = &[];
         $(opaque = &$opaque;)?
         #[allow(unused_mut, unused_assignments)]
@@ -301,7 +317,7 @@ macro_rules! module {
             feature,
             call,
             ($page, include_str!(concat!("../../../docs/stdlib/", $page))),
-            (types, opaque),
+            (types, derives, opaque),
             error,
             shares,
             vec![$($row),*],
@@ -336,7 +352,16 @@ fn leak(name: String) -> &'static str {
 }
 
 /// The types `text` declares.
-fn type_decls(text: &str) -> Vec<TypeDecl> {
+fn type_decls(
+    text: &str,
+    derives: &'static [(&'static str, &'static [&'static str])],
+) -> Vec<TypeDecl> {
+    for (name, _) in derives {
+        assert!(
+            text.contains(&format!("pub type {name}")),
+            "`derives` names {name}, which the module does not declare"
+        );
+    }
     parse(text)
         .decls
         .iter()
@@ -358,10 +383,15 @@ fn type_decls(text: &str) -> Vec<TypeDecl> {
                     panic!("the builtin registry declares the alias {}", td.name)
                 }
             };
+            let name = leak(resolve(td.name));
             TypeDecl {
-                name: leak(resolve(td.name)),
+                name,
                 params: td.params.len(),
                 shape,
+                derives: derives
+                    .iter()
+                    .find(|(ty, _)| *ty == name)
+                    .map_or(DERIVED, |(_, traits)| traits),
             }
         })
         .collect()
@@ -373,7 +403,11 @@ fn build_module(
     feature: Option<&'static str>,
     call: Option<UntypedCall>,
     (page_file, page): (&'static str, &'static str),
-    (types, opaque): (&'static str, &'static [(&'static str, usize)]),
+    (types, derives, opaque): (
+        &'static str,
+        &'static [(&'static str, &'static [&'static str])],
+        &'static [(&'static str, usize)],
+    ),
     error: Option<&'static str>,
     shares: &'static [(&'static str, &'static str)],
     specs: Vec<RowSpec>,
@@ -432,7 +466,8 @@ fn build_module(
         page_file,
         page,
         types,
-        type_decls: type_decls(types),
+        type_decls: type_decls(types, derives),
+        derives,
         opaque,
         error,
         shares,
@@ -443,6 +478,12 @@ fn build_module(
 /// The prelude's opaque types: `Bytes`, and `TypeOf(a)`, the type of a
 /// type used as a value (`Int`, a `type a` parameter).
 pub const PRELUDE_OPAQUE: &[(&str, usize)] = &[("Bytes", 0), (crate::defs::TYPE_OF, 1)];
+
+/// `Option` and `Result` derive no `Compare`.
+const PRELUDE_DERIVES: &[(&str, &[&str])] = &[
+    ("Result", &["Equal", "Hash", "Display"]),
+    ("Option", &["Equal", "Hash", "Display"]),
+];
 
 /// The enums of the prelude, declared like a module's types.
 pub const PRELUDE_TYPES: &str = "\
@@ -508,7 +549,7 @@ pub fn registry() -> &'static Registry {
             .collect();
         Registry {
             modules,
-            prelude_types: type_decls(PRELUDE_TYPES),
+            prelude_types: type_decls(PRELUDE_TYPES, PRELUDE_DERIVES),
             by_name,
         }
     })

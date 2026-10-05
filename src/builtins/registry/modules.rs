@@ -231,6 +231,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }\n\
                 pub type ChannelError { ChannelTimeout, ChannelClosed }\n\
             ",
+            derives: [("ChannelOp", &[])],
             error: "ChannelError",
             call: concurrency::call_channel,
             rows: [
@@ -411,6 +412,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type Request { method: Method, path: String, query: String, headers: Map(String, String), body: String }\n\
                 pub type HttpError { HttpConnect(String), HttpTls(String), HttpTimeout, HttpInvalidUrl(String), HttpInvalidResponse(String), HttpClosedEarly, HttpStatusCode(Int, String), HttpUnknown(String) }\n\
             ",
+            derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
             error: "HttpError",
             call: http::call_http,
             rows: [

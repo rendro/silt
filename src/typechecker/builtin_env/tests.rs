@@ -17,6 +17,44 @@ fn the_builtin_scope_binds_the_prelude_and_the_registry_s_rows() {
     assert!(env.root.lookup(intern("Duration")).is_none());
 }
 
+/// Each declared type of the registry has exactly the builtin traits its
+/// declaration derives: all four unless its module names fewer, so a new
+/// type cannot end up with none by being left off a list.
+#[test]
+fn a_registry_type_derives_what_its_declaration_says() {
+    use crate::builtins::registry::{DERIVED, registry};
+    let env = builtin_env();
+    let mut fewer = Vec::new();
+    for (module, ty) in registry().types() {
+        let built = module.is_none_or(|m| crate::module::missing_feature(m).is_none());
+        if !built {
+            continue;
+        }
+        let of = TypeRef::builtin(ty.name);
+        let mut stamped: Vec<&str> = DERIVED
+            .iter()
+            .copied()
+            .filter(|t| {
+                env.tables
+                    .trait_impl_set
+                    .contains(&(TraitKey::builtin(t), of))
+            })
+            .collect();
+        stamped.sort();
+        let mut declared = ty.derives.to_vec();
+        declared.sort();
+        assert_eq!(stamped, declared, "the traits of {}", ty.name);
+        if ty.derives.len() < DERIVED.len() {
+            fewer.push(ty.name);
+        }
+    }
+    fewer.sort();
+    assert_eq!(
+        fewer,
+        ["ChannelOp", "Option", "Request", "Response", "Result"]
+    );
+}
+
 /// Each row's scheme is what its signature says.
 #[test]
 fn a_row_s_scheme_is_its_signature() {
