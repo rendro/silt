@@ -879,13 +879,6 @@ impl Compiler {
             }
 
             PatternKind::List(elements, rest) => {
-                if elements.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "list pattern cannot have more than 255 elements",
-                    ));
-                }
                 let mut items: Vec<(BindDestructKind, Pattern)> = elements
                     .iter()
                     .enumerate()
