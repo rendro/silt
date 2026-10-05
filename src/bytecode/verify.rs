@@ -429,17 +429,34 @@ mod tests {
 
     #[test]
     fn bad_09_jump_into_the_middle_of_an_instruction() {
-        // 0000 Jump -> 0004, which is the operand of the Constant at 0003.
-        let code = vec![op(Op::Jump), 1, 0, op(Op::Constant), 0, 0, op(Op::Return)];
+        // 0000 Jump -> 0006, which is the operand of the Constant at 0005.
+        let code = vec![
+            op(Op::Jump),
+            1,
+            0,
+            0,
+            0,
+            op(Op::Constant),
+            0,
+            0,
+            op(Op::Return),
+        ];
         assert_eq!(
             rejected(code, vec![Value::Int(1)]),
-            "at offset 0: control goes to 4, where no instruction starts"
+            "at offset 0: control goes to 6, where no instruction starts"
         );
         // And past the end of the code.
-        let code = vec![op(Op::Jump), 9, 0, op(Op::Unit), op(Op::Return)];
+        let code = vec![op(Op::Jump), 9, 0, 0, 0, op(Op::Unit), op(Op::Return)];
         assert_eq!(
             rejected(code, vec![]),
-            "at offset 0: control goes to 12, where no instruction starts"
+            "at offset 0: control goes to 14, where no instruction starts"
+        );
+        // And back into the operand of the jump itself.
+        let [a, b, c, d] = (-2i32).to_le_bytes();
+        let code = vec![op(Op::Unit), op(Op::Jump), a, b, c, d];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 1: control goes to 4, where no instruction starts"
         );
     }
 
@@ -566,7 +583,8 @@ mod tests {
 
     #[test]
     fn bad_15_jump_back_before_the_start_of_the_code() {
-        let code = vec![op(Op::Unit), op(Op::JumpBack), 9, 0];
+        let [a, b, c, d] = (-9i32).to_le_bytes();
+        let code = vec![op(Op::Unit), op(Op::Jump), a, b, c, d];
         assert_eq!(
             rejected(code, vec![]),
             "at offset 1: no instruction is encoded here"

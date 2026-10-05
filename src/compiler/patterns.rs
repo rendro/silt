@@ -60,12 +60,8 @@ impl Compiler {
             }
 
             PatternKind::Bool(b) => {
-                self.emit(
-                    Asm::TestBool {
-                        value: usize::from(*b),
-                    },
-                    span,
-                )?;
+                let idx = self.add_constant(Value::Bool(*b), span)?;
+                self.emit(Asm::TestEqual { k: idx }, span)?;
                 let jump = self.jump_if_false(span)?;
                 Ok(vec![jump])
             }
@@ -426,12 +422,8 @@ impl Compiler {
             }
 
             PatternKind::Bool(b) => {
-                self.emit(
-                    Asm::TestBool {
-                        value: usize::from(*b),
-                    },
-                    span,
-                )?;
+                let idx = self.add_constant(Value::Bool(*b), span)?;
+                self.emit(Asm::TestEqual { k: idx }, span)?;
                 let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
             }

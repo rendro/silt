@@ -38,10 +38,12 @@
 //!
 //! # Jumps
 //!
-//! A jump names a [`Label`]. A forward jump (`Jump`, `JumpIfFalse`,
-//! `JumpIfTrue`) is emitted before its label is bound; `JumpBack` after.
-//! The emitter remembers the height each jump arrives with, and `bind`
-//! sets the height to it. Where jumps arrive at one label with different
+//! A jump names a [`Label`]. `JumpIfFalse` and `JumpIfTrue` go forward:
+//! they are emitted before their label is bound. `Jump` goes either
+//! way: to a label bound later, or back to one bound already (a loop),
+//! which it must reach with the height the label was bound at. The
+//! emitter remembers the height each forward jump arrives with, and
+//! `bind` sets the height to it. Where jumps arrive at one label with different
 //! heights (a failed pattern test leaves the sub-values it was looking
 //! at in the frame, an arm leaves its bindings under its result), the
 //! height after `bind` is the smallest of them: the values every path
@@ -51,7 +53,7 @@
 //!
 //! # Unreachable code
 //!
-//! After `Return`, `Panic`, `Jump` and `JumpBack` the next instruction
+//! After `Return`, `Panic` and `Jump` the next instruction
 //! is unreachable until a label that a reachable jump goes to is bound.
 //! The compiler may keep emitting (`1 + return 2` has an `Add` nobody
 //! runs). In unreachable code nothing is checked, and the height is a
@@ -75,8 +77,10 @@ struct LabelState {
     bound: Option<(usize, usize)>,
     /// The smallest height a reachable jump arrives with.
     arriving: Option<usize>,
-    /// The offsets of the operands of the jumps waiting for it.
-    waiting: Vec<usize>,
+    /// The offsets of the operands of the jumps waiting for it, and
+    /// whether the operand is the four bytes of a `Jump` (or the two of
+    /// a conditional jump).
+    waiting: Vec<(usize, bool)>,
 }
 
 /// See the [module documentation](self).
@@ -195,15 +199,16 @@ impl Emitter {
             return Err(self.bug(span, "a label is bound twice".into()));
         }
         let state = &mut self.labels[label.0];
-        for operand in std::mem::take(&mut state.waiting) {
-            let distance = u16::try_from(here - (operand + 2)).map_err(|_| {
-                Diagnostic::error(
-                    Code::CompileLimit,
-                    span,
-                    "jump offset overflow: function body too large",
-                )
-            })?;
-            self.function.chunk.code[operand..operand + 2].copy_from_slice(&distance.to_le_bytes());
+        let code = &mut self.function.chunk.code;
+        let too_far = || limit_diagnostic(Limit::JumpTooFar, span);
+        for (operand, wide) in std::mem::take(&mut state.waiting) {
+            if wide {
+                let distance = i32::try_from(here - (operand + 4)).map_err(|_| too_far())?;
+                code[operand..operand + 4].copy_from_slice(&distance.to_le_bytes());
+            } else {
+                let distance = u16::try_from(here - (operand + 2)).map_err(|_| too_far())?;
+                code[operand..operand + 2].copy_from_slice(&distance.to_le_bytes());
+            }
         }
         if let Some(arriving) = state.arriving {
             self.height = match self.reachable {
@@ -273,25 +278,38 @@ impl Writer for Out<'_> {
         if state.bound.is_some() {
             self.bug = Some("jumps forward to a label that is behind it");
         }
-        state.waiting.push(self.chunk.len());
+        state.waiting.push((self.chunk.len(), false));
         if let Some(arriving) = self.arriving {
             state.arriving = Some(state.arriving.map_or(arriving, |known| known.min(arriving)));
         }
         self.u16(u16::MAX);
     }
 
-    fn back(&mut self, to: Label) -> Result<(), Limit> {
-        let Some((target, height)) = self.labels[to.0].bound else {
-            self.bug = Some("jumps back to a label that is not bound yet");
-            self.u16(0);
-            return Ok(());
+    fn rel(&mut self, to: Label) -> Result<(), Limit> {
+        let state = &mut self.labels[to.0];
+        let distance = match state.bound {
+            // Forward: the label's `bind` writes the distance.
+            None => {
+                state.waiting.push((self.chunk.len(), true));
+                if let Some(arriving) = self.arriving {
+                    state.arriving =
+                        Some(state.arriving.map_or(arriving, |known| known.min(arriving)));
+                }
+                0
+            }
+            // Back, from the end of this operand.
+            Some((target, height)) => {
+                if self.arriving.is_some_and(|arriving| arriving != height) {
+                    self.bug = Some("jumps back with a height the loop did not start with");
+                }
+                let back =
+                    i32::try_from(self.chunk.len() + 4 - target).map_err(|_| Limit::JumpTooFar)?;
+                -back
+            }
         };
-        if self.arriving.is_some_and(|arriving| arriving != height) {
-            self.bug = Some("jumps back with a height the loop did not start with");
+        for byte in distance.to_le_bytes() {
+            self.u8(byte);
         }
-        let distance =
-            u16::try_from(self.chunk.len() + 2 - target).map_err(|_| Limit::LoopTooLarge)?;
-        self.u16(distance);
         Ok(())
     }
 }
@@ -309,7 +327,7 @@ fn limit_diagnostic(limit: Limit, span: Span) -> Diagnostic {
              expression into smaller parts",
             u16::MAX
         ),
-        Limit::LoopTooLarge => "loop body too large (exceeds 65535 bytes of bytecode)".to_string(),
+        Limit::JumpTooFar => "jump offset overflow: function body too large".to_string(),
     };
     Diagnostic::error(Code::CompileLimit, span, message)
 }
@@ -408,7 +426,7 @@ mod tests {
         let start = e.label();
         e.bind(start, span()).unwrap();
         e.emit(Asm::Unit, span()).unwrap();
-        let err = e.emit(Asm::JumpBack { to: start }, span()).unwrap_err();
+        let err = e.emit(Asm::Jump { to: start }, span()).unwrap_err();
         assert_eq!(err.code, Code::CompilerBug);
     }
 

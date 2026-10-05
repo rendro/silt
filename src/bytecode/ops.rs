@@ -34,7 +34,7 @@
 //! | `Const` | `u16` | [`Const`] | [`Const`] | in the pool |
 //! | `Str`, `Tag`, `Type`, `Func`, `Int`, `Float` | `u16` | [`Const`] | [`Const`] | in the pool, of that kind |
 //! | `Fwd` | `u16` distance forward from the next instruction | [`Label`] | target offset | an instruction starts there |
-//! | `Back` | `u16` distance back from the next instruction | [`Label`] | target offset | an instruction starts there |
+//! | `Rel` | `i32` distance from the next instruction, forward or back | [`Label`] | target offset | an instruction starts there |
 //! | `Strs` | `u8` count, then `u16` each | `&[Const]` | [`Operands<Const>`] | each a string in the pool |
 //! | `Captures` | `u8` count, then `u8 is_local, u8 index` each | `&[UpvalueDesc]` | [`Operands<UpvalueDesc>`] | each names a slot below the height or an upvalue of the function |
 //!
@@ -175,8 +175,8 @@ pub enum Limit {
     },
     /// A frame slot past the last one an operand can name.
     Slots,
-    /// A jump back over more code than its operand can say.
-    LoopTooLarge,
+    /// A jump over more code than its operand can say.
+    JumpTooFar,
 }
 
 /// What an encoder writes to: the emitter, which knows where labels are.
@@ -187,10 +187,10 @@ pub(super) trait Writer {
         self.u8(lo);
         self.u8(hi);
     }
-    /// The operand of a jump forward to `to`.
+    /// The operand of a jump forward to `to`, which is not bound yet.
     fn fwd(&mut self, to: Label);
-    /// The operand of a jump back to `to`.
-    fn back(&mut self, to: Label) -> Result<(), Limit>;
+    /// The operand of a jump to `to`, forward or back.
+    fn rel(&mut self, to: Label) -> Result<(), Limit>;
 }
 
 fn narrow<T: TryFrom<usize>>(count: usize, what: &'static str, max: usize) -> Result<T, Limit> {
@@ -238,9 +238,11 @@ impl Reader<'_> {
     }
 
     #[inline(always)]
-    fn back(&mut self) -> Option<usize> {
-        let distance = usize::from(self.u16()?);
-        self.at.checked_sub(distance)
+    fn rel(&mut self) -> Option<usize> {
+        let bytes = self.code.get(self.at..self.at + 4)?;
+        self.at += 4;
+        let distance = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        self.at.checked_add_signed(isize::try_from(distance).ok()?)
     }
 
     #[inline(always)]
@@ -305,7 +307,7 @@ macro_rules! asm_ty {
     (Fwd, $lt:lifetime) => {
         Label
     };
-    (Back, $lt:lifetime) => {
+    (Rel, $lt:lifetime) => {
         Label
     };
     (Strs, $lt:lifetime) => {
@@ -333,7 +335,7 @@ macro_rules! instr_ty {
     (Int) => { Const };
     (Float) => { Const };
     (Fwd) => { usize };
-    (Back) => { usize };
+    (Rel) => { usize };
     (Strs) => { Operands<Const> };
     (Captures) => { Operands<UpvalueDesc> };
 }
@@ -385,8 +387,8 @@ macro_rules! encode_operand {
     (Fwd, $v:expr, $what:expr, $w:expr) => {
         $w.fwd($v)
     };
-    (Back, $v:expr, $what:expr, $w:expr) => {
-        $w.back($v)?
+    (Rel, $v:expr, $what:expr, $w:expr) => {
+        $w.rel($v)?
     };
     (Strs, $v:expr, $what:expr, $w:expr) => {{
         $w.u8(narrow_u8($v.len(), $what)?);
@@ -450,8 +452,8 @@ macro_rules! decode_operand {
     (Fwd, $r:expr) => {
         $r.fwd()?
     };
-    (Back, $r:expr) => {
-        $r.back()?
+    (Rel, $r:expr) => {
+        $r.rel()?
     };
     (Strs, $r:expr) => {
         $r.list::<Const>()?
@@ -508,7 +510,7 @@ macro_rules! checked_operand {
     (Fwd, $v:expr) => {
         Operand::Target($v)
     };
-    (Back, $v:expr) => {
+    (Rel, $v:expr) => {
         Operand::Target($v)
     };
     (Strs, $v:expr) => {
@@ -777,10 +779,8 @@ ops! {
     GetField { name: Str } => pops 1, pushes 1;
 
     // ── Control flow ───────────────────────────────────────────
-    /// Jump forward.
-    Jump { to: Fwd } => pops 0, pushes 0, jump;
-    /// Jump backward.
-    JumpBack { to: Back } => pops 0, pushes 0, jump;
+    /// Jump, forward or back.
+    Jump { to: Rel } => pops 0, pushes 0, jump;
     /// Pop TOS; jump forward if falsy.
     JumpIfFalse { to: Fwd } => pops 1, pushes 0, branch;
     /// Pop TOS; jump forward if truthy.
@@ -806,9 +806,6 @@ ops! {
     TestIntRange { lo: Int, hi: Int } => pops 1, pushes 2;
     /// Test if TOS float is in range. Peek, push bool.
     TestFloatRange { lo: Float, hi: Float } => pops 1, pushes 2;
-    /// Test if TOS is a specific bool value (0 = false, 1 = true). Peek,
-    /// push bool.
-    TestBool { value: U8("values of a Bool") } => pops 1, pushes 2;
     /// Extract the tuple element at `index`. Peek tuple, push element.
     DestructTuple { index: U8("elements of a tuple pattern") } => pops 1, pushes 2;
     /// Extract the variant field at `index`. Peek variant, push field.
@@ -886,7 +883,9 @@ mod tests {
         assert!(decode(&[255], 0).is_none());
         assert!(decode(&[Op::Constant as u8, 0], 0).is_none());
         assert!(decode(&[Op::MakeRecord as u8, 0, 0, 2, 0, 0], 0).is_none());
-        assert!(decode(&[Op::JumpBack as u8, 9, 0], 0).is_none());
+        // A jump to before the start of the code.
+        let [a, b, c, d] = (-9i32).to_le_bytes();
+        assert!(decode(&[Op::Jump as u8, a, b, c, d], 0).is_none());
         assert!(decode(&[], 0).is_none());
     }
 }

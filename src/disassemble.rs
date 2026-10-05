@@ -32,18 +32,24 @@ fn name_lines(chunk: &Chunk, names: impl Iterator<Item = Const>, label: &str) ->
 
 // ── Instruction disassembly ───────────────────────────────────────
 
-/// Disassemble the instruction `instr`, decoded at `offset`.
+/// Disassemble the instruction `instr`, decoded at `offset`; the one
+/// after it is at `next`.
 fn disassemble_instruction(
     chunk: &Chunk,
     globals: &Globals,
     offset: usize,
     instr: Instr,
+    next: usize,
 ) -> String {
     let code = chunk.code();
     let name = instr.op().name();
-    // The operand of a jump is its distance from the next instruction.
+    // The operand of a jump is its distance from the next instruction,
+    // negative for a jump back.
     let jump = |target: usize| {
-        let distance = target.abs_diff(offset + 3);
+        let distance = match target >= next {
+            true => (target - next).to_string(),
+            false => format!("-{}", next - target),
+        };
         format!("{offset:04}  {name:<20} {distance:<5} -> {target:04}")
     };
     // An instruction whose one operand is a constant.
@@ -113,11 +119,6 @@ fn disassemble_instruction(
             format!("{offset:04}  {name:<20} {argc}  slot {first}")
         }
 
-        Instr::TestBool { value } => {
-            let val = if value == 0 { "false" } else { "true" };
-            format!("{offset:04}  {name:<20} {value}    ; {val}")
-        }
-
         // ── A constant ────────────────────────────────────────
         // TestTag: the variant the test is for (its operand is the
         // variant's tag, kept as a constructor constant).
@@ -151,10 +152,7 @@ fn disassemble_instruction(
         }
 
         // ── Jumps: the distance and the target offset ─────────
-        Instr::Jump { to }
-        | Instr::JumpBack { to }
-        | Instr::JumpIfFalse { to }
-        | Instr::JumpIfTrue { to } => jump(to),
+        Instr::Jump { to } | Instr::JumpIfFalse { to } | Instr::JumpIfTrue { to } => jump(to),
 
         Instr::CallBuiltin { name, argc } => with_constant_and_count(name, argc),
         // CallMethod: the method name, argc, and the trait whose method
@@ -203,7 +201,9 @@ fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
     let mut output = format!("== {name} ==\n");
     let mut offset = 0;
     while let Some((instr, next)) = decode(chunk.code(), offset) {
-        output.push_str(&disassemble_instruction(chunk, globals, offset, instr));
+        output.push_str(&disassemble_instruction(
+            chunk, globals, offset, instr, next,
+        ));
         output.push('\n');
         offset = next;
     }
@@ -292,19 +292,19 @@ mod tests {
             e.bind(start, span()).unwrap(); // 0000
             e.emit(Asm::True, span()).unwrap(); // 0000
             e.emit(Asm::JumpIfTrue { to: end }, span()).unwrap(); // 0001
-            e.emit(Asm::JumpBack { to: start }, span()).unwrap(); // 0004
-            e.bind(end, span()).unwrap(); // 0007
+            e.emit(Asm::Jump { to: start }, span()).unwrap(); // 0004
+            e.bind(end, span()).unwrap(); // 0009
             e.emit(Asm::Unit, span()).unwrap();
             e.emit(Asm::Return, span()).unwrap();
         });
         // A jump shows its distance from the next instruction, then its
         // target.
         assert!(
-            output.contains("0001  JumpIfTrue           3     -> 0007"),
+            output.contains("0001  JumpIfTrue           5     -> 0009"),
             "{output}"
         );
         assert!(
-            output.contains("0004  JumpBack             7     -> 0000"),
+            output.contains("0004  Jump                 -9    -> 0000"),
             "{output}"
         );
     }

@@ -1708,7 +1708,7 @@ impl Compiler {
                     },
                     span,
                 )?;
-                self.emit(Asm::JumpBack { to: start }, span)?;
+                self.emit(Asm::Jump { to: start }, span)?;
             } // All expression kinds are handled above. If new ones are added,
               // the match will become non-exhaustive and the compiler will error.
         }
@@ -1990,7 +1990,7 @@ impl Compiler {
             self.emit(Asm::SetLocal { slot }, span)?;
         }
 
-        // Record the loop start for JumpBack.
+        // Record the loop start, where `loop(...)` jumps back to.
         let start = self.label();
         self.bind(start, span)?;
 
@@ -3505,7 +3505,7 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(f.chunk(), Op::TestBool));
+        assert!(has_op(f.chunk(), Op::TestEqual));
     }
 
     #[test]
@@ -3666,7 +3666,8 @@ fn main() {
         );
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::Recur));
-        assert!(has_op(main.chunk(), Op::JumpBack));
+        // The jump back to the start of the loop.
+        assert!(has_op(main.chunk(), Op::Jump));
     }
 
     // ── Question mark ──────────────────────────────────────────────
@@ -4059,16 +4060,6 @@ fn f(expected, actual) {
         assert!(has_op(f.chunk(), Op::Eq));
     }
 
-    // ── Audit regression: JumpBack operand bounds check (V4) ───────
-    //
-    // The `JumpBack` operand is a `u16`, so a loop body larger than
-    // 65_535 bytes of bytecode would wrap and branch to a garbage
-    // offset. `Chunk::patch_jump` already checks this for forward
-    // jumps; the matching `Recur` emitter used to cast blindly with
-    // `as u16`. The fix threads the distance through
-    // `jumpback_fits_u16`; this test exercises that helper directly so
-    // the bounds-check is locked without having to synthesize a
-    // >64KB loop body.
     /// A program with more top-level definitions than a `u16` slot can
     /// name is a compile error at the first definition that does not
     /// fit. Checking 65,537 definitions takes minutes, so the program

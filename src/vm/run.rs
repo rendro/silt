@@ -648,7 +648,7 @@ impl Vm {
                     }
                 }
             }
-            Instr::Jump { to } | Instr::JumpBack { to } => {
+            Instr::Jump { to } => {
                 self.frame_mut().ip = to;
             }
             Instr::JumpIfFalse { to } => {
@@ -708,12 +708,6 @@ impl Vm {
                     (Value::Float(n), Value::Float(lo), Value::Float(hi)) => *n >= *lo && *n <= *hi,
                     _ => false,
                 };
-                self.push(Value::Bool(result));
-            }
-            Instr::TestBool { value } => {
-                let expected = value != 0;
-                let val = self.peek();
-                let result = matches!(val, Value::Bool(b) if *b == expected);
                 self.push(Value::Bool(result));
             }
             Instr::DestructTuple { index } => {
