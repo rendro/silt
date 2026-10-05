@@ -1,0 +1,20 @@
+-- cmd: fmt --next
+-- Imports stand at the top, sorted, without empty lines; each takes
+-- the comments above it and behind it along. The comments above the
+-- last empty line before the first declaration are the file's header
+-- and stay on top.
+
+-- about string
+import string
+import list -- for map
+
+fn main() {
+  println(string.length("{list.map([1], { x -> x })} {option.is_some(Some(1))}"))
+}
+
+-- about option
+
+-- (a second paragraph)
+import option
+import int.{ to_string, parse }
+import float as f

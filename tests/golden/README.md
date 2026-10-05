@@ -90,6 +90,12 @@ looks at the file as well as at the output:
 - A case with another exit status (a syntax error, a refusal) has no
   `.formatted` file: the copy must be unchanged.
 
+`-- cmd: fmt --next` is the same with the printer of `src/format/`,
+which `silt fmt` runs behind that flag until it is the only one (stage 8
+step A3 then turns these directives into `-- cmd: fmt`). The
+`printer__*` cases under `frontend/fmt/` use it: each holds a layout or
+a comment position that the old formatter gets wrong or refuses.
+
 Stdout, stderr and the exit status are compared as for every case. To
 write the expected file, format a copy and CHECK the result by eye:
 

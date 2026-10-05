@@ -1,0 +1,27 @@
+-- cmd: fmt --next
+-- A comment at the end of a line never comments out the closing brace
+-- or the comma that the printer writes behind what the comment follows
+-- (FRONTEND-3 a and b; FRONTEND-4 f).
+import list
+import map
+import option
+
+fn add(a, b) { a + b }
+
+fn main() {
+  let found = [1, 2] |> list.find { w -> match w {
+    1 -> true
+    _ -> false
+  } } -- note
+  println("{found}")
+  let m = #{ "a": 1 }
+  let v = option.unwrap_or(map.get(m, "a") -- look up
+    |> option.map { x -> x + 1 }, 0) -- default
+  println("{v}")
+  println(add(1, -- first
+    2))
+  let xs = [1 -- one
+    , 2 -- two
+  ]
+  println(xs)
+}

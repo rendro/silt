@@ -1,0 +1,19 @@
+-- cmd: fmt --next
+-- A comment between two statements stays between them, whatever the
+-- statement above it looks like, and a second pass leaves it there
+-- (FIX-PLAN row 88: the comment was moved into the call arguments of
+-- the earlier statement).
+import list
+import string
+
+fn main() {
+  let parts = string.split("a,b", ",")
+  -- about the lengths
+  let lengths = parts |> list.map { p -> string.length(p) }
+  -- about the total
+  let total = list.fold(lengths, 0) { acc, n -> acc + n } -- the sum
+  -- about the output
+  println(string.join(parts, "-"))
+  -- the last line
+  println("{total}")
+}

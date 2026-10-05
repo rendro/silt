@@ -1,0 +1,23 @@
+-- cmd: fmt --next
+-- A comment behind a pattern: in a match arm, a `let`, a parameter and
+-- a closure parameter; and behind a function's parameter list
+-- (FRONTEND-4 b and c).
+import list
+
+fn first(
+  pair, -- the pair
+  fallback,
+) { -- entry point
+  match pair {
+    (0, _) -> fallback -- zero first
+    (a, _) {- inline -} -> a
+  }
+}
+
+fn main() {
+  let (a, b) = (1, 2) -- destructured
+  let ys = list.map([a, b]) { x -> -- each item
+    x + 1
+  }
+  println("{first((a, b), 0)} {ys}")
+}

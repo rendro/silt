@@ -1,0 +1,51 @@
+-- cmd: fmt --next
+-- A comment behind an opening brace or bracket: of a function body, a
+-- type, a trait, a match, a closure, a record literal, a list and a
+-- call (FRONTEND-4 b: the position was lost at all 28 sites).
+import list
+
+type P { -- a point
+  x: Int,
+  y: Int,
+}
+
+type Color { -- the colours
+  Red,
+  Green,
+}
+
+trait Named { -- things with a name
+  fn name(self) -> String
+}
+
+trait Named for P { -- points have one
+  fn name(self) -> String { -- always the same
+    "point"
+  }
+}
+
+fn main() { -- entry point
+  let p = P { -- the origin
+    x: 0, y: 0 }
+  let xs = [ -- some numbers
+    1, 2]
+  let c = match p.x { -- by x
+    0 -> Red
+    _ -> Green
+  }
+  let ys = list.map(xs) { x -> -- doubled
+    x * 2
+  }
+  println( -- everything
+    "{p.name()} {xs} {ys}")
+  let empty = [ -- nothing in it
+  ]
+  let block = { -- a block
+    1
+  }
+  println("{empty} {block}")
+  match c {
+    Red -> println("red")
+    Green -> println("green")
+  }
+}

@@ -1,0 +1,28 @@
+-- cmd: fmt --next
+-- A list is on one line if it fits 100 columns; if not, each item has
+-- its line and the last one a comma. A comma behind the last item of a
+-- list that fits is dropped; a tuple of one keeps its comma.
+type Tx { date: String, category: String, amount: Float, description: String }
+
+fn sample() {
+  [Tx { date: "2026-03-01", category: "income", amount: 4500.0, description: "Monthly salary" }, Tx { date: "2026-03-15", category: "income", amount: 500.0, description: "Freelance project" }, Tx { date: "2026-03-28", category: "income", amount: 150.0, description: "Dividend payment" }, Tx { date: "2026-03-02", category: "food", amount: -45.5, description: "Grocery store" }, Tx { date: "2026-03-05", category: "food", amount: -32.0, description: "Restaurant dinner" }, Tx { date: "2026-03-10", category: "food", amount: -28.75, description: "Weekly groceries" }]
+}
+
+fn main() {
+  let pair = (1, 2,)
+  let one = (1,)
+  let short = [
+    1,
+    2,
+    3,
+  ]
+  let limits = #{ "food": 200.0, "transport": 150.0, "entertainment": 80.0, "utilities": 350.0, "health": 150.0 }
+  let call = string.pad_right(string.pad_left(string.repeat("a rather long piece of text", 3), 120, " "), 140, ".")
+  let sum = first_long_operand_name + second_long_operand_name * third_long_operand_name - fourth_long_operand_name + fifth
+  let both = first_long_condition_name && second_long_condition_name || third_long_condition_name && fourth_long_condition
+  println("{pair} {one} {short} {limits} {call} {sum} {both} {sample()}")
+}
+
+fn with_many_parameters(first_parameter: Int, second_parameter: String, third_parameter: Float, fourth: Bool) -> Int {
+  first_parameter
+}

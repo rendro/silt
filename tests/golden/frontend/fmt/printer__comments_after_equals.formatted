@@ -1,0 +1,29 @@
+-- cmd: fmt --next
+-- A comment behind `=`, at the end of the line or on a line of its own
+-- (FRONTEND-4 b): in a `let`, a top-level `let`, a `when let`, a loop
+-- binding, a type alias and an associated type.
+type Id = Int -- an alias
+
+trait Box for Int {
+  type Item = Int -- the item
+}
+
+let limit = 10 -- the limit
+
+fn main() {
+  let x = 1 -- why one
+  let y =
+    -- on its own line
+    2
+  let z = {- inline -} 3
+  when let Some(v) = Some(x) else { -- the option
+    return
+  }
+  loop i = 0 { -- the counter
+    match i {
+      3 -> return
+      _ -> loop(i + 1)
+    }
+  }
+  println("{x} {y} {z} {v} {limit}")
+}

@@ -1,0 +1,26 @@
+-- cmd: fmt --next
+-- Numbers and strings are written as the source spells them. A string
+-- with a line break in it is not touched at all; in any other, each
+-- interpolation is formatted on its line.
+fn main() {
+  let a = 0xFF
+  let b = 1_000_000
+  let c = 1e10
+  let d = 0b1010_1010
+  let e = 1.50
+  let s = "first line
+second line"
+  let t = "tab\there, brace \{ and quote \""
+  let u = """
+    raw text: "quoted", {not a hole}
+      indented
+    """
+  let v = "holes: {a + b} and {c}"
+  let w = "a hole with a line break: {
+    a+b }"
+  match a {
+    0x10..0x1F -> println("low")
+    -0x01 -> println("minus one")
+    _ -> println("{b} {c} {d} {e} {s} {t} {u} {v} {w}")
+  }
+}

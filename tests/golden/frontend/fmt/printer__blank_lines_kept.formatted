@@ -1,0 +1,42 @@
+-- cmd: fmt --next
+-- One empty line is kept where the source has one or more: between
+-- statements, match arms, fields, variants, list items and the members
+-- of a trait. None is kept at the start or the end of a block.
+type Shape {
+  Circle(Float),
+
+  Rect(Float, Float),
+}
+
+type Point {
+  x: Int,
+
+  y: Int,
+}
+
+trait Describe {
+  fn name(self) -> String
+
+  fn size(self) -> Int
+}
+
+fn main() {
+  let a = 1
+  let b = 2
+
+  let c = 3
+
+  match a {
+    1 -> println("one")
+
+    _ -> println("other")
+  }
+
+  let long = [
+    "the first item of a list that is too long for one line of a hundred columns",
+
+    "the second item, behind an empty line",
+  ]
+  let short = [1, 2]
+  println("{a} {b} {c} {long} {short}")
+}

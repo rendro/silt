@@ -1,0 +1,29 @@
+-- cmd: fmt --next
+-- A closure argument in a `match` scrutinee stays between the call's
+-- parentheses, where a `{` cannot be taken for the block of the match
+-- (FRONTEND-3 d, FIX-PLAN row 89); elsewhere it goes behind them.
+import list
+
+fn main() {
+  match list.map([1], { x -> x + 1 }) {
+    [2] -> println("two")
+    _ -> println("other")
+  }
+  match (list.map([1]) { x -> x + 1 }) {
+    _ -> println("any")
+  }
+  let n = match [1, 2] |> list.filter { x -> x > 1 } |> list.length {
+    1 -> "one"
+    _ -> "more"
+  }
+  println(n)
+  let m = match 7 |> dbl {
+    14 -> 1
+    _ -> 0
+  } + 1
+  println(m)
+  let ys = list.map([1], { x -> x + 1 })
+  println(ys)
+}
+
+fn dbl(n) { n * 2 }

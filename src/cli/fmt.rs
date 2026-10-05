@@ -14,10 +14,15 @@ use crate::cli::paths::find_silt_files;
 /// Dispatch `silt fmt [--check] [files...]`.
 pub(crate) fn dispatch(args: &[String]) {
     let mut check_mode = false;
+    let mut next = false;
     let mut files: Vec<String> = Vec::new();
     for arg in &args[2..] {
         if arg == "--check" {
             check_mode = true;
+        } else if arg == "--next" {
+            // Not in the help: the printer of `src/format/`, until it is
+            // the only one (stage 8 step A3).
+            next = true;
         } else if arg == "--help" || arg == "-h" {
             println!("Usage: silt fmt [--check] [files-or-dirs...]");
             println!();
@@ -137,7 +142,7 @@ pub(crate) fn dispatch(args: &[String]) {
         let mut any_unformatted = false;
         let mut any_infra_error = false;
         for file in &files {
-            match check_format(file) {
+            match check_format(file, next) {
                 CheckOutcome::Formatted => {}
                 CheckOutcome::Unformatted => any_unformatted = true,
                 CheckOutcome::InfraError => any_infra_error = true,
@@ -152,7 +157,7 @@ pub(crate) fn dispatch(args: &[String]) {
     } else {
         let mut any_failed = false;
         for file in &files {
-            if let Err(e) = format_file(file) {
+            if let Err(e) = format_file(file, next) {
                 eprintln!("{e}");
                 any_failed = true;
             }
@@ -163,7 +168,23 @@ pub(crate) fn dispatch(args: &[String]) {
     }
 }
 
-fn format_file(path: &str) -> Result<(), String> {
+/// Format `source` with the printer of `src/format/` if `next`, else
+/// with `src/formatter.rs`.
+fn format_source(source: &str, next: bool) -> Result<String, silt::formatter::FmtError> {
+    use silt::formatter::{FmtError, InternalError};
+    if !next {
+        return silt::formatter::format(source);
+    }
+    silt::format::format(silt::source::FileId::default(), source).map_err(|e| match e {
+        silt::format::Error::Syntax(e) => FmtError::Syntax(e),
+        silt::format::Error::Refused(e) => FmtError::Internal(InternalError {
+            message: e.message,
+            span: e.span,
+        }),
+    })
+}
+
+fn format_file(path: &str, next: bool) -> Result<(), String> {
     let source = fs::read_to_string(path).map_err(|e| {
         format!(
             "error reading {path}: {}",
@@ -171,7 +192,7 @@ fn format_file(path: &str) -> Result<(), String> {
         )
     })?;
     let formatted =
-        silt::formatter::format(&source).map_err(|e| render_fmt_error(&e, &source, path))?;
+        format_source(&source, next).map_err(|e| render_fmt_error(&e, &source, path))?;
     // Skip the write when the file is already formatted. An
     // unconditional `fs::write` bumps the file's mtime even though the
     // bytes are identical, which spuriously retriggers `--watch` loops
@@ -236,7 +257,7 @@ enum CheckOutcome {
 
 /// Check if a file is already formatted. Prints a diagnostic on any
 /// non-`Formatted` outcome (same stderr messages as before).
-fn check_format(path: &str) -> CheckOutcome {
+fn check_format(path: &str, next: bool) -> CheckOutcome {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -247,7 +268,7 @@ fn check_format(path: &str) -> CheckOutcome {
             return CheckOutcome::InfraError;
         }
     };
-    match silt::formatter::format(&source) {
+    match format_source(&source, next) {
         Ok(formatted) => {
             if source == formatted {
                 CheckOutcome::Formatted

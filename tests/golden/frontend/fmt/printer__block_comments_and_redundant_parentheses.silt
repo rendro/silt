@@ -1,0 +1,18 @@
+-- cmd: fmt --next
+-- Redundant parentheses are dropped and needed ones kept; a `{- -}`
+-- comment stays between its tokens whatever is dropped elsewhere
+-- (FRONTEND-4 a). Parentheses with a comment at their inside stay.
+fn add(a, b) { a + b }
+
+fn main() {
+  let x = add(1, {- second -} 2)
+  let y = (x + 1)
+  let z = ((x + 1)) * (y)
+  let w = (x {- inner -} + 1) * 2
+  let v = -(-x)
+  let u = (x, y).0
+  let t = ( -- kept
+    x + y)
+  let s = {- leading -} (x) {- trailing -}
+  println("{x} {y} {z} {w} {v} {u} {t} {s}")
+}
