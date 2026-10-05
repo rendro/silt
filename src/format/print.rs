@@ -1663,7 +1663,7 @@ impl Printer<'_> {
     fn arm(&mut self, arm: &MatchArm, guardless: bool) -> Doc {
         let mut docs = Vec::new();
         if guardless {
-            // `match { condition -> ..., _ -> ... }`.
+            // A `match` without a scrutinee: each arm is a condition.
             docs.push(match &arm.guard {
                 // `_` as a condition is the name `_` in parentheses;
                 // without them it is the arm that takes the rest.

@@ -113,7 +113,9 @@ pub(super) fn format_undefined_variable_message(
         // `while` / `for` as bare identifiers and we land here with an
         // "undefined variable" diagnostic. Wording is copied verbatim
         // from parser.rs so both paths give the user identical advice.
-        "if" => Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'"),
+        "if" => Some(
+            "silt has no 'if' keyword — use 'match cond { ... }' with a 'true -> ...' and a 'false -> ...' arm",
+        ),
         "while" | "for" => Some(
             "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
         ),
@@ -3124,7 +3126,7 @@ impl TypeChecker {
 
                         // GAP (round 93): every arm checks its pattern
                         // against the SAME scrutinee, so a wrong-scrutinee
-                        // match (`match 42 { Ok(v) -> ..., Err(e) -> ... }`)
+                        // match (`match 42` with an `Ok(v)` and an `Err(e)` arm)
                         // used to print the identical "expected Result(_, _),
                         // got Int" once per arm, plus a non-exhaustive
                         // cascade. Dedup identical (message, span, severity)

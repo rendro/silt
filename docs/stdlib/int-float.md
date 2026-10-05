@@ -169,7 +169,8 @@ Functions for parsing, rounding, converting, and comparing floats.
 > zero", `+`, `-` and `*` raise "float overflow", and `math.sqrt` of a
 > negative number, `math.log` of a number that is not positive, and
 > `math.pow` overflow raise too. Guard the input when it can be out of
-> range: `match b { 0.0 -> 0.0, _ -> a / b }`.
+> range, for example with a `match` on the divisor that has an arm for
+> `0.0`.
 
 > **Note:** `round`, `ceil`, and `floor` return `Float`, not `Int`. Use
 > `float.to_int` to convert the result to an integer.
