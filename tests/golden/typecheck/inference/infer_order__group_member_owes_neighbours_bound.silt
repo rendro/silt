@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- `relay` is inferred together with `shout`, and its parameter is
+-- `shout`'s `a`: its callers owe `a: Loud` too.
+-- stderr-contains: type 'String' does not implement trait 'Loud'
+-- stderr-contains: infer_order__group_member_owes_neighbours_bound.silt:18:
+trait Loud { fn loud(self) -> String }
+trait Loud for Int { fn loud(self) -> String { "int!" } }
+fn shout(x: a, n) where a: Loud {
+  match n {
+    0 -> x.loud()
+    _ -> relay(x, n - 1)
+  }
+}
+fn relay(u, n) { shout(u, n) }
+fn main() {
+  println(relay(1, 2))
+  println(relay("s", 1))
+}
