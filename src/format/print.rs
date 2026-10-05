@@ -945,6 +945,8 @@ impl Printer<'_> {
 
     fn bare_expr(&mut self, expr: &Expr, ctx: Ctx) -> Doc {
         match &expr.kind {
+            // The smallest Int: the minus sign belongs to the literal.
+            ExprKind::Int(i64::MIN) => self.number_pattern(Token::Int(0), false),
             ExprKind::Int(_) => self.tok(Token::Int(0)),
             ExprKind::Float(_) => self.tok(Token::Float(0.0)),
             ExprKind::Bool(_) => self.tok(Token::Bool(true)),
