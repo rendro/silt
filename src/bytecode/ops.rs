@@ -1,6 +1,6 @@
 //! The instruction table.
 //!
-//! [`ops!`] is invoked once, at the end of this file, with one row per
+//! `ops!` is invoked once, at the end of this file, with one row per
 //! instruction: its name, its operands, and what it does to the frame.
 //! Everything that has to agree about an instruction is generated from
 //! its row:

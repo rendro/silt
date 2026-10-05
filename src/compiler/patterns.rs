@@ -761,7 +761,6 @@ impl Compiler {
 
         // Bind from a copy of the value, which is on TOS again.
         self.emit(Asm::GetLocal { slot: value_slot }, span)?;
-        self.add_local(intern("__bind_src__"), span)?;
         self.compile_pattern_bind(pattern, span)?;
 
         // The destructuring went through. Stop if the test had failed.
@@ -806,11 +805,10 @@ impl Compiler {
     //
     // Emit binding opcodes for a pattern after test has succeeded.
     //
-    // Contract: the value to bind from is on TOS and is counted in the
-    // frame height (it is a local, usually a hidden one). After this
-    // call the value is still in its slot, and every value pushed here
-    // is a local above it: the named ones the pattern binds, and hidden
-    // ones for the copies and sub-values the destructuring went through.
+    // Contract: the value to bind from is on TOS. After this call the
+    // value is still in its slot, and every value pushed here stays in
+    // the frame above it: the named locals the pattern binds, and the
+    // copies and sub-values the destructuring went through.
     //
     // Stack layout for a compound pattern like (a, b):
     //   Before: [..., tuple]
@@ -1123,8 +1121,8 @@ impl Compiler {
     /// Compile bindings for a compound pattern (tuple, constructor, list, record, map).
     ///
     /// The parent value is on TOS. For each sub-pattern that has bindings,
-    /// we GetLocal the parent, Destruct the sub-value, register both
-    /// values as hidden locals, and recurse.
+    /// we GetLocal the parent, Destruct the sub-value, leave both in the
+    /// frame, and recurse.
     ///
     /// This approach "wastes" stack slots for intermediate copies but ensures
     /// local slot numbers always match actual stack positions.

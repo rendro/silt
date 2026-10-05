@@ -5,7 +5,7 @@
 //!
 //! The instructions are one table ([`ops`]). The compiler writes them
 //! through the [`Emitter`] and nothing else writes them; every function
-//! the emitter gives has passed the verifier ([`verify`]).
+//! the emitter gives has passed the verifier ([`verify`](mod@verify)).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,9 +15,9 @@ use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
 
-mod emit;
+pub mod emit;
 pub mod ops;
-mod verify;
+pub mod verify;
 
 pub use emit::Emitter;
 pub use ops::{Asm, Instr, Op, Operands, decode};
@@ -400,7 +400,7 @@ impl Chunk {
 // ── Function ───────────────────────────────────────────────────────
 
 /// A compiled function (or the top-level script). Every `Function` has
-/// passed the verifier ([`verify`]): [`Emitter::finish`] is the one way
+/// passed the verifier ([`verify`](mod@verify)): [`Emitter::finish`] is the one way
 /// to make one, so the VM runs verified code only.
 #[derive(Debug, Clone)]
 pub struct Function {

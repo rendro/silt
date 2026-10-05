@@ -16,6 +16,33 @@
 //! | [`Emitter::assume_height`]`(height)` | In unreachable code, what the height would be. |
 //! | [`Emitter::finish`]`(upvalues)` | Verify the code and give the function, which captures `upvalues` values. |
 //!
+//! `if x { 1 } else { 2 }` for a function of one parameter `x`:
+//!
+//! ```
+//! use silt::bytecode::{Asm, Emitter};
+//! use silt::source::Span;
+//! use silt::value::Value;
+//!
+//! let span = Span::BUILTIN;
+//! let mut e = Emitter::new("pick".to_string(), 1);
+//! let one = e.constant(Value::Int(1), span)?;
+//! let two = e.constant(Value::Int(2), span)?;
+//! let otherwise = e.label();
+//! let end = e.label();
+//! e.emit(Asm::GetLocal { slot: 0 }, span)?; // height 2
+//! e.emit(Asm::JumpIfFalse { to: otherwise }, span)?; // height 1
+//! e.emit(Asm::Constant { k: one }, span)?; // height 2
+//! e.emit(Asm::Jump { to: end }, span)?; // the next instruction is unreachable
+//! e.bind(otherwise, span)?; // reachable again, height 1
+//! e.emit(Asm::Constant { k: two }, span)?;
+//! e.bind(end, span)?;
+//! assert_eq!(e.height(), 2);
+//! e.emit(Asm::Return, span)?;
+//! let function = e.finish(0)?;
+//! assert_eq!(function.arity(), 1);
+//! # Ok::<(), silt::diagnostic::Diagnostic>(())
+//! ```
+//!
 //! # Operands
 //!
 //! An [`Asm`] carries its operands at full width (`usize` counts and
@@ -43,19 +70,19 @@
 //! way: to a label bound later, or back to one bound already (a loop),
 //! which it must reach with the height the label was bound at. The
 //! emitter remembers the height each forward jump arrives with, and
-//! `bind` sets the height to it. Where jumps arrive at one label with different
-//! heights (a failed pattern test leaves the sub-values it was looking
-//! at in the frame, an arm leaves its bindings under its result), the
-//! height after `bind` is the smallest of them: the values every path
-//! has. The verifier lets such a place be followed only by the
-//! instructions that put the frame right again or leave it (see
-//! [`verify`]); the compiler emits `Slide` there.
+//! `bind` sets the height to it. Where jumps arrive at one label with
+//! different heights (a failed pattern test leaves the sub-values it
+//! was looking at in the frame, an arm leaves its bindings under its
+//! result), the height after `bind` is the smallest of them: the values
+//! every path has. The verifier lets such a place be followed only by
+//! the instructions that put the frame right again or leave it (see
+//! [`verify`](mod@super::verify)); the compiler emits `Slide` there.
 //!
 //! # Unreachable code
 //!
-//! After `Return`, `Panic` and `Jump` the next instruction
-//! is unreachable until a label that a reachable jump goes to is bound.
-//! The compiler may keep emitting (`1 + return 2` has an `Add` nobody
+//! After `Return`, `Panic` and `Jump` the next instruction is
+//! unreachable until a label that a reachable jump goes to is bound. The
+//! compiler may keep emitting (`1 + return 2` has an `Add` nobody
 //! runs). In unreachable code nothing is checked, and the height is a
 //! nominal one: instructions still move it by their effects, and the
 //! compiler says what it would be with [`Emitter::assume_height`] where
