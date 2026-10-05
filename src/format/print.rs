@@ -984,24 +984,11 @@ impl Printer<'_> {
             ExprKind::Tuple(elems) => self.tuple(elems, |p, e| p.expr(e, Ctx::top())),
             ExprKind::Unit => Doc::concat(vec![self.tok(Token::LParen), self.tok(Token::RParen)]),
             ExprKind::Ident(_) => self.name(),
-            ExprKind::FieldAccess(base, field, _) => {
-                // `(t.0).1`: without the parentheses, `0.1` is a number.
-                let numbered = |name: intern::Symbol| {
-                    intern::resolve(name).starts_with(|c: char| c.is_ascii_digit())
-                };
+            ExprKind::FieldAccess(base, _, _) => {
                 let base_kind = &base.kind;
                 let base_wrapped = self.cur.wrappers(base.span.end) > 0;
-                let after_number = numbered(*field)
-                    && matches!(&base.kind, ExprKind::FieldAccess(_, inner, _) if numbered(*inner));
-                let base = if after_number && self.cur.wrappers(base.span.end) > 0 {
-                    let open = self.tok(Token::LParen);
-                    let inner = self.expr(base, Ctx::top());
-                    let close = self.tok(Token::RParen);
-                    Doc::concat(vec![open, inner, close])
-                } else {
-                    self.expr(base, ctx.left(prec::FIELD))
-                };
-                // `1 .0` is a field of `1`; `1.0` is a number. And behind
+                let base = self.expr(base, ctx.left(prec::FIELD));
+                // `1 .x` is a field of `1`; `1.` starts a number. And behind
                 // `x as T` without parentheses, only a line break keeps
                 // the `.` from being part of the type.
                 let gap = match base_kind {
@@ -1010,12 +997,7 @@ impl Printer<'_> {
                     _ => Doc::Nil,
                 };
                 let dot = self.tok(Token::Dot);
-                // `t.0`: the parser takes a number for a field name.
-                let field = if self.cur.at(&Token::Int(0)) {
-                    self.tok(Token::Int(0))
-                } else {
-                    self.name()
-                };
+                let field = self.name();
                 Doc::concat(vec![base, gap, dot, field])
             }
             ExprKind::Binary(_, op, _) => self.binary(expr, binop_bp(*op), ctx),
