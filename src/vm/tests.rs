@@ -5,7 +5,7 @@ use crate::typeinfo::bv;
 
 /// Helper: build a function of `arity` parameters with the emitter.
 fn make_function_of(arity: u8, build: impl FnOnce(&mut Emitter)) -> Arc<Function> {
-    let mut emitter = Emitter::new("<test>".to_string(), arity);
+    let mut emitter = Emitter::new("<test>".to_string(), usize::from(arity), span()).unwrap();
     build(&mut emitter);
     Arc::new(emitter.finish(0).unwrap_or_else(|e| panic!("{e:?}")))
 }

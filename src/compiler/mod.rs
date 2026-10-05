@@ -19,6 +19,8 @@ use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
     Stmt, StringPart, TypeBody, UnaryOp,
 };
+use crate::bytecode::emit::limit_diagnostic;
+use crate::bytecode::ops::Limit;
 use crate::bytecode::{Asm, Const, Emitter, Function, Globals, Label, UpvalueDesc, VmClosure};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
@@ -139,19 +141,6 @@ struct LoopInfo {
     /// Where a `loop(...)` jumps back to.
     start: Label,
     binding_count: usize,
-}
-
-impl CompileContext {
-    fn new(name: String, arity: u8) -> Self {
-        Self {
-            emitter: Emitter::new(name, arity),
-            locals: Vec::new(),
-            scope_depth: 0,
-            scope_starts: Vec::new(),
-            upvalues: Vec::new(),
-            loop_stack: Vec::new(),
-        }
-    }
 }
 
 struct Local {
@@ -295,18 +284,19 @@ fn program_type_clashes(units: &ProgramUnits) -> HashSet<Symbol> {
     clashing
 }
 
+/// What a `match` has too much of when a failed test or guard cannot
+/// jump over an arm.
+const MATCH_ARM: &str = "bytes of code in a match arm";
+
 /// A program needs more global slots than the instruction operand can
-/// name.
-fn too_many_globals(span: Span) -> Diagnostic {
-    Diagnostic::error(
-        Code::CompileLimit,
-        span,
-        format!(
-            "this program has more than {} top-level definitions (functions, `let`s and \
-             trait methods); split it into fewer, larger definitions",
-            u16::MAX as usize + 1
-        ),
-    )
+/// name: the definition at `span` would be its `count`th.
+fn too_many_globals(count: usize, span: Span) -> Diagnostic {
+    let limit = Limit {
+        what: "top-level definitions of a program (functions, `let`s and trait methods)",
+        count,
+        max: usize::from(u16::MAX) + 1,
+    };
+    limit_diagnostic(limit, span)
 }
 
 impl Compiler {
@@ -373,7 +363,7 @@ impl Compiler {
                 };
                 let slot = globals
                     .add_def(id, name)
-                    .ok_or_else(|| too_many_globals(def.span))?;
+                    .ok_or_else(|| too_many_globals(globals.len() + 1, def.span))?;
                 own.insert((unit.id, def.name), slot);
             }
             for decl in &unit.program.decls {
@@ -403,7 +393,7 @@ impl Compiler {
                     &resolve(method.name),
                     format!("{type_name}.{}", method.name),
                 )
-                .ok_or_else(|| too_many_globals(method.span))?;
+                .ok_or_else(|| too_many_globals(globals.len() + 1, method.span))?;
         }
         Ok(())
     }
@@ -556,23 +546,6 @@ impl Compiler {
         match decl {
             Decl::Fn(fn_decl) => {
                 let span = fn_decl.span;
-                // Arity is encoded as a `u8` in bytecode. Silently
-                // wrapping via `.len() as u8` used to let functions
-                // with 256 parameters compile with arity=0; at the
-                // call site the VM then treated a stack value as the
-                // callee and blew up with "cannot call value of type
-                // Int". Reject at compile time instead.
-                if fn_decl.params.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "function '{}' has {} parameters; silt functions are limited to 255",
-                            resolve(fn_decl.name),
-                            fn_decl.params.len()
-                        ),
-                    ));
-                }
                 // Push a new context for the function body.
                 self.begin_function(resolve(fn_decl.name), fn_decl.params.len(), span)?;
 
@@ -664,18 +637,6 @@ impl Compiler {
 
                 for method in &trait_impl.methods {
                     let span = method.span;
-                    if method.params.len() > u8::MAX as usize {
-                        return Err(Diagnostic::error(
-                            Code::CompileLimit,
-                            span,
-                            format!(
-                                "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
-                                trait_impl.target_type,
-                                method.name,
-                                method.params.len()
-                            ),
-                        ));
-                    }
                     let qualified_name = format!("{type_name}.{}", method.name);
 
                     self.begin_function(qualified_name, method.params.len(), span)?;
@@ -1065,7 +1026,7 @@ impl Compiler {
                         // Left was truthy, discard it and evaluate right
                         self.emit(Asm::Pop, span)?;
                         self.compile_expr(right)?;
-                        self.bind(jump, span)?;
+                        self.bind_over(jump, "bytes of code in the right operand of `&&`", span)?;
                     }
                     BinOp::Or => {
                         // Short-circuit: if left is true, skip right
@@ -1076,7 +1037,7 @@ impl Compiler {
                         // Left was falsy, discard it and evaluate right
                         self.emit(Asm::Pop, span)?;
                         self.compile_expr(right)?;
-                        self.bind(jump, span)?;
+                        self.bind_over(jump, "bytes of code in the right operand of `||`", span)?;
                     }
                     _ => {
                         self.compile_operands([&**left, &**right])?;
@@ -1145,38 +1106,14 @@ impl Compiler {
             ExprKind::Ident(name) => {
                 if let Some(slot) = self.resolve_local(*name) {
                     self.emit(Asm::GetLocal { slot }, span)?;
-                } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
-                    self.emit(
-                        Asm::GetUpvalue {
-                            index: usize::from(idx),
-                        },
-                        span,
-                    )?;
+                } else if let Some(idx) = self.resolve_upvalue(*name) {
+                    self.emit(Asm::GetUpvalue { index: idx }, span)?;
                 } else {
                     return Err(name_without_binding(span, *name));
                 }
             }
 
             ExprKind::Call(callee, args) => {
-                // Argument count is encoded as a `u8` in all four
-                // call emission paths below (CallBuiltin, CallMethod,
-                // a global's Call, plain Call). Wrapping via
-                // `.len() as u8` used to let a 256-argument call
-                // compile with argc=0, and the VM would then
-                // misinterpret an unrelated stack value as the
-                // callee. Reject at compile time here — the method-
-                // call path adds the receiver so the limit is 254
-                // explicit arguments in that case.
-                if args.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "call has {} arguments; silt calls are limited to 255",
-                            args.len()
-                        ),
-                    ));
-                }
                 if let Some(variant) = self.variant_value(callee) {
                     // A variant's constructor: `Circle(r)`,
                     // `Shape.Circle(r)`, `channel.Message(v)`,
@@ -1221,19 +1158,7 @@ impl Compiler {
                         self.emit_call(argc, tail, span)?;
                     } else {
                         // Method call on a value: expr.method(args)
-                        // Compile receiver as first argument. The
-                        // receiver takes one slot of the 255-argument
-                        // budget so the explicit-arg cap is 254 here.
-                        if args.len() >= u8::MAX as usize {
-                            return Err(Diagnostic::error(
-                                Code::CompileLimit,
-                                span,
-                                format!(
-                                    "method call has {} arguments (plus receiver); silt calls are limited to 255",
-                                    args.len()
-                                ),
-                            ));
-                        }
+                        // Compile receiver as first argument.
                         self.compile_operands(std::iter::once(&**receiver).chain(args))?;
                         let argc = args.len() + 1; // receiver + args
                         self.emit_call_method(*method, argc, callee.res, span)?;
@@ -1321,23 +1246,6 @@ impl Compiler {
             }
 
             ExprKind::StringInterp(parts) => {
-                // The StringConcat part count is encoded as a `u8` in
-                // bytecode. Silently wrapping via the `u8` counter used
-                // to let a 300-segment interpolation compile with
-                // count=44 (and panic the compiler outright in debug
-                // builds); the VM then popped the wrong number of stack
-                // values and produced garbled output. Reject at compile
-                // time instead, mirroring the call/tuple/record guards.
-                if parts.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "string interpolation has {} segments; silt string interpolations are limited to 255",
-                            parts.len()
-                        ),
-                    ));
-                }
                 // Every part stays on the stack until `StringConcat`.
                 for part in parts {
                     match part {
@@ -1370,16 +1278,6 @@ impl Compiler {
             }
 
             ExprKind::Lambda { params, body, .. } => {
-                if params.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "closure has {} parameters; silt functions are limited to 255",
-                            params.len()
-                        ),
-                    ));
-                }
                 // Push a new context for the lambda body.
                 self.begin_function("<lambda>".into(), params.len(), span)?;
 
@@ -1416,36 +1314,11 @@ impl Compiler {
             }
 
             ExprKind::Tuple(elems) => {
-                if elems.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "tuple cannot have more than 255 elements",
-                    ));
-                }
                 self.compile_operands(elems)?;
                 self.emit(Asm::MakeTuple { count: elems.len() }, span)?;
             }
 
             ExprKind::List(elems) => {
-                // The MakeList / MakeMap / MakeSet opcodes encode their
-                // element count in a u16 operand. Anything larger would
-                // silently wrap and the VM would `truncate` the stack by a
-                // completely wrong number, leaving orphaned values that
-                // corrupt every subsequent operation (B2). Reject oversized
-                // literals at compile time with a clear error — the same
-                // shape as the `u8`-bounded tuple/record checks above.
-                if elems.len() > u16::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "list literal too large: {} elements (max {})",
-                            elems.len(),
-                            u16::MAX
-                        ),
-                    ));
-                }
                 let has_spread = elems.iter().any(|e| matches!(e, ListElem::Spread(_)));
                 if !has_spread {
                     // Fast path: no spreads, just compile all singles
@@ -1457,11 +1330,6 @@ impl Compiler {
                 } else {
                     // Spread path: group consecutive singles into segments,
                     // compile each spread, and ListConcat them together.
-                    // `single_count` is a u16 and could wrap on >65535
-                    // consecutive singles between spreads even when the
-                    // outer `elems.len()` bound above catches the overall
-                    // literal. Use a usize accumulator and check the bound
-                    // on every increment.
                     //
                     // While an element is compiled the stack holds the list
                     // accumulated so far (if any) and the singles not yet
@@ -1474,17 +1342,6 @@ impl Compiler {
                             ListElem::Single(e) => {
                                 self.compile_expr(e)?;
                                 single_count += 1;
-                                if single_count > u16::MAX as usize {
-                                    return Err(Diagnostic::error(
-                                        Code::CompileLimit,
-                                        span,
-                                        format!(
-                                            "list literal too large: more than {} consecutive \
-                                             singleton elements between spreads",
-                                            u16::MAX
-                                        ),
-                                    ));
-                                }
                             }
                             ListElem::Spread(e) => {
                                 // Flush any pending singles as a MakeList
@@ -1530,38 +1387,11 @@ impl Compiler {
             }
 
             ExprKind::Map(pairs) => {
-                // MakeMap pair count is emitted as u16 — reject oversized
-                // literals at compile time so the VM never sees a wrapped
-                // count. See the B2 comment on the list path above.
-                if pairs.len() > u16::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "map literal too large: {} pairs (max {})",
-                            pairs.len(),
-                            u16::MAX
-                        ),
-                    ));
-                }
                 self.compile_operands(pairs.iter().flat_map(|(k, v)| [k, v]))?;
                 self.emit(Asm::MakeMap { pairs: pairs.len() }, span)?;
             }
 
             ExprKind::SetLit(elems) => {
-                // MakeSet count is emitted as u16 — reject oversized
-                // literals at compile time (B2).
-                if elems.len() > u16::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "set literal too large: {} elements (max {})",
-                            elems.len(),
-                            u16::MAX
-                        ),
-                    ));
-                }
                 self.compile_operands(elems)?;
                 self.emit(Asm::MakeSet { count: elems.len() }, span)?;
             }
@@ -1594,13 +1424,6 @@ impl Compiler {
                 name,
                 fields,
             } => {
-                if fields.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "record cannot have more than 255 fields",
-                    ));
-                }
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(fields.iter().map(|(_, val)| val))?;
@@ -1617,13 +1440,6 @@ impl Compiler {
             }
 
             ExprKind::RecordUpdate { expr, fields } => {
-                if fields.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "record update cannot have more than 255 fields",
-                    ));
-                }
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(
                     std::iter::once(&**expr).chain(fields.iter().map(|(_, val)| val)),
@@ -1633,13 +1449,6 @@ impl Compiler {
             }
 
             ExprKind::AnonRecord { spread, fields } => {
-                if fields.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "anon record literal cannot have more than 255 fields",
-                    ));
-                }
                 if let Some(base) = spread {
                     // Extend op: compile base, then RecordUpdate-style merge
                     // (RecordUpdate already supports adding new fields too).
@@ -1807,10 +1616,10 @@ impl Compiler {
 
             // 9. Patch failure / guard jumps to here (next arm)
             if let Some(gj) = guard_jump {
-                self.bind(gj, span)?;
+                self.bind_over(gj, MATCH_ARM, span)?;
             }
             for fj in fail_jumps {
-                self.bind(fj, span)?;
+                self.bind_over(fj, MATCH_ARM, span)?;
             }
         }
 
@@ -1859,7 +1668,7 @@ impl Compiler {
                 let end_jump = self.jump(span)?;
                 end_jumps.push(end_jump);
 
-                self.bind(fail_jump, span)?;
+                self.bind_over(fail_jump, MATCH_ARM, span)?;
             } else {
                 // Wildcard / default arm — always matches
                 self.in_tail_position = tail;
@@ -1907,18 +1716,6 @@ impl Compiler {
         // ghost stack slot and corrupted record field assignments.
         match &right.kind {
             ExprKind::Call(callee, args) => {
-                // The piped value takes one slot, so the explicit-arg
-                // cap is 254 here. Reject before the `+1` can wrap.
-                if args.len() >= u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "pipe call has {} arguments (plus piped value); silt calls are limited to 255",
-                            args.len()
-                        ),
-                    ));
-                }
                 if let Some(builtin_name) = self.builtin_module_function(callee) {
                     // With a piped value the type argument of a decoding
                     // builtin is still the last explicit argument.
@@ -1961,20 +1758,6 @@ impl Compiler {
         body: &Expr,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        // `binding_count` is stored in `LoopInfo` as a `u8`, so more
-        // than 255 bindings would silently wrap and cause `recur`
-        // arity mismatches to be misreported. Reject up front.
-        if bindings.len() > u8::MAX as usize {
-            return Err(Diagnostic::error(
-                Code::CompileLimit,
-                span,
-                format!(
-                    "loop has {} bindings; silt loops are limited to 255",
-                    bindings.len()
-                ),
-            ));
-        }
-
         self.begin_scope();
 
         // The bindings occupy the slots from the current frame height on;
@@ -2323,9 +2106,14 @@ impl Compiler {
         let trait_operand = match self.res_trait(res) {
             Some(t) => {
                 let name = self.units.defs.get(t.0).name;
-                self.globals
-                    .trait_index(t, resolve(name))
-                    .ok_or_else(|| too_many_globals(span))?
+                self.globals.trait_index(t, resolve(name)).ok_or_else(|| {
+                    let limit = Limit {
+                        what: "traits whose methods a program calls",
+                        count: usize::from(u16::MAX) + 1,
+                        max: usize::from(u16::MAX),
+                    };
+                    limit_diagnostic(limit, span)
+                })?
             }
             None => crate::bytecode::NO_TRAIT,
         };
@@ -2697,9 +2485,14 @@ impl Compiler {
         params: usize,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let arity = u8::try_from(params)
-            .map_err(|_| checker_missed(span, "a function with more than 255 parameters"))?;
-        self.contexts.push(CompileContext::new(name, arity));
+        self.contexts.push(CompileContext {
+            emitter: Emitter::new(name, params, span)?,
+            locals: Vec::new(),
+            scope_depth: 0,
+            scope_starts: Vec::new(),
+            upvalues: Vec::new(),
+            loop_stack: Vec::new(),
+        });
         Ok(())
     }
 
@@ -2711,9 +2504,7 @@ impl Compiler {
             span,
             "compiler bug: missing function context",
         ))?;
-        let upvalue_count = u8::try_from(ctx.upvalues.len())
-            .map_err(|_| checker_missed(span, "a closure with more than 255 upvalues"))?;
-        let function = ctx.emitter.finish(upvalue_count)?;
+        let function = ctx.emitter.finish(ctx.upvalues.len())?;
         Ok((function, ctx.upvalues))
     }
 
@@ -2730,6 +2521,17 @@ impl Compiler {
     /// Place `label` at the next instruction.
     fn bind(&mut self, label: Label, span: Span) -> Result<(), Diagnostic> {
         self.emitter().bind(label, span)
+    }
+
+    /// Place `label` at the next instruction, saying what the
+    /// conditional jumps to it go over (see [`Emitter::bind_over`]).
+    fn bind_over(
+        &mut self,
+        label: Label,
+        over: &'static str,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        self.emitter().bind_over(label, over, span)
     }
 
     /// Emit a jump to a new label, which the caller binds.
@@ -2892,22 +2694,14 @@ impl Compiler {
     /// If the variable is found as a local in an enclosing scope, it is captured
     /// as an upvalue (is_local = true). If the enclosing scope already has it as
     /// an upvalue, it is chained through (is_local = false, transitive capture).
-    fn resolve_upvalue(&mut self, name: Symbol, span: Span) -> Result<Option<u8>, Diagnostic> {
+    fn resolve_upvalue(&mut self, name: Symbol) -> Option<usize> {
         let current_idx = self.contexts.len() - 1;
-        if current_idx == 0 {
-            return Ok(None); // Top-level script has no enclosing scope.
-        }
-        self.resolve_upvalue_in(name, current_idx, span)
+        self.resolve_upvalue_in(name, current_idx)
     }
 
-    fn resolve_upvalue_in(
-        &mut self,
-        name: Symbol,
-        context_index: usize,
-        span: Span,
-    ) -> Result<Option<u8>, Diagnostic> {
+    fn resolve_upvalue_in(&mut self, name: Symbol, context_index: usize) -> Option<usize> {
         if context_index == 0 {
-            return Ok(None); // No more enclosing scopes.
+            return None; // The top-level script has no enclosing scope.
         }
         let enclosing_idx = context_index - 1;
 
@@ -2921,86 +2715,37 @@ impl Compiler {
             )
         };
 
-        if let Some(slot) = local_slot {
-            // Upvalues are captured by value (Silt is immutable); the
-            // local itself needs no open/closed tracking — see
-            // VmClosure doc in src/bytecode.rs.
-            let index = u8::try_from(slot).map_err(|_| {
-                Diagnostic::error(
-                    Code::CompileLimit,
-                    span,
-                    format!("cannot capture local in slot {slot} as upvalue (max slot 255)"),
-                )
-            })?;
-            // Add an upvalue descriptor to the current context.
-            return Ok(Some(self.add_upvalue(
-                context_index,
-                UpvalueDesc {
-                    is_local: true,
-                    index,
-                },
-                span,
-            )?));
-        }
-
-        // Not a local in the enclosing scope -- try recursively as an upvalue.
-        if let Some(parent_upvalue_idx) = self.resolve_upvalue_in(name, enclosing_idx, span)? {
-            // The enclosing scope has it as an upvalue. Chain it.
-            return Ok(Some(self.add_upvalue(
-                context_index,
-                UpvalueDesc {
-                    is_local: false,
-                    index: parent_upvalue_idx,
-                },
-                span,
-            )?));
-        }
-
-        Ok(None)
+        // Upvalues are captured by value (Silt is immutable); the local
+        // itself needs no open/closed tracking — see the `VmClosure` doc
+        // in src/bytecode/mod.rs.
+        let desc = match local_slot {
+            Some(index) => UpvalueDesc {
+                is_local: true,
+                index,
+            },
+            // Not a local in the enclosing scope: an upvalue of it,
+            // chained through.
+            None => UpvalueDesc {
+                is_local: false,
+                index: self.resolve_upvalue_in(name, enclosing_idx)?,
+            },
+        };
+        Some(self.add_upvalue(context_index, desc))
     }
 
-    /// Add an upvalue descriptor to a context, deduplicating. Returns
-    /// `Err` if the context already holds the maximum of 255 upvalues;
-    /// the bytecode format addresses upvalues with a single byte *and*
-    /// stores the count as a `u8`, so the last legal index is 254 and
-    /// the max count is 255. Anything beyond would either truncate the
-    /// index to zero (`256 as u8 == 0`) or wrap `upvalue_count` (and
-    /// the emitted `MakeClosure` count byte) to zero while still
-    /// writing 2N operand bytes after it — those bytes would then be
-    /// reinterpreted as bytecode at runtime. Mirrors the sibling
-    /// bounds-check in `resolve_upvalue_in`'s "captured slot > 255"
-    /// path so both hard limits surface as `Diagnostic` rather than
-    /// panics or silent miscompiles.
-    fn add_upvalue(
-        &mut self,
-        context_index: usize,
-        desc: UpvalueDesc,
-        span: Span,
-    ) -> Result<u8, Diagnostic> {
+    /// Add an upvalue descriptor to a context, deduplicating, and give
+    /// its index. How many a closure can capture, and from how high in
+    /// the frame, is the emitter's to say (`MakeClosure`, `GetUpvalue`,
+    /// `Emitter::finish`).
+    fn add_upvalue(&mut self, context_index: usize, desc: UpvalueDesc) -> usize {
         let ctx = &mut self.contexts[context_index];
-        // Check if we already have this exact upvalue.
-        let index = match ctx.upvalues.iter().position(|existing| *existing == desc) {
+        match ctx.upvalues.iter().position(|existing| *existing == desc) {
             Some(index) => index,
-            None => ctx.upvalues.len(),
-        };
-        // The last legal index is 254: the count is a `u8` too.
-        let narrowed = u8::try_from(index)
-            .ok()
-            .filter(|index| *index < u8::MAX)
-            .ok_or_else(|| {
-                Diagnostic::error(
-                    Code::CompileLimit,
-                    span,
-                    format!(
-                        "too many upvalues: closure captures more than {} values (max)",
-                        u8::MAX
-                    ),
-                )
-            })?;
-        if index == ctx.upvalues.len() {
-            ctx.upvalues.push(desc);
+            None => {
+                ctx.upvalues.push(desc);
+                ctx.upvalues.len() - 1
+            }
         }
-        Ok(narrowed)
     }
 }
 
@@ -3010,19 +2755,6 @@ impl Compiler {
 mod tests {
     use super::*;
     use crate::bytecode::{Chunk, Op};
-
-    /// The units of a program with no modules, for a compiler that
-    /// compiles nothing.
-    fn no_modules() -> ProgramUnits {
-        ProgramUnits {
-            modules: Vec::new(),
-            entry: 0,
-            defs: Arc::new(crate::typechecker::names::new_def_table()),
-            earlier: EarlierCells::default(),
-            resolver: Arc::new(Resolver::new()),
-            record_fields: Arc::new(HashMap::new()),
-        }
-    }
 
     /// Compile declarations (no main call) through a session and return
     /// all functions.
@@ -4083,133 +3815,15 @@ fn f(expected, actual) {
             Err(err) => err,
         };
         assert_eq!(err.code, Code::CompileLimit, "{}", err.message);
-        assert!(
-            err.message
-                .contains("more than 65536 top-level definitions")
+        assert_eq!(
+            err.message,
+            "too many top-level definitions of a program (functions, `let`s and trait methods): \
+             65537 (the limit is 65536)"
         );
         // `main` took the last slot; `helper` does not fit.
         assert_eq!(
             &source[err.span.start as usize..err.span.end as usize],
             "helper"
-        );
-    }
-
-    // ── Audit regression: add_upvalue >255 upvalues (B5) ────────────
-    //
-    // The bytecode addresses upvalues with a single byte AND stores
-    // `function.upvalue_count()` as `u8`, AND the `MakeClosure` opcode
-    // emits a single-byte count followed by 2N descriptor operand
-    // bytes. Together these mean the hard limit is 255 (not 256):
-    // pushing a 256th upvalue would leave `ctx.upvalues.len() == 256`,
-    // which truncates to `0u8` both in `upvalue_count` and in the
-    // count byte emitted before the descriptor operands. Those
-    // descriptor bytes would then be interpreted as bytecode at
-    // runtime — a silent miscompile worse than a panic.
-    //
-    // This test locks the bounds check by pre-filling a compile
-    // context with 255 upvalues and verifying that the 256th attempt
-    // returns `Err`, NOT `Ok(0u8)`.
-    #[test]
-    fn test_add_upvalue_rejects_over_255() {
-        use crate::bytecode::UpvalueDesc;
-        use crate::source::Span;
-
-        let mut compiler = Compiler::for_program(no_modules()).unwrap();
-        // Push an outer (script) context plus the function context we'll
-        // be adding upvalues into; `add_upvalue` expects `context_index`
-        // to be valid.
-        compiler
-            .contexts
-            .push(CompileContext::new("<script>".into(), 0));
-        compiler
-            .contexts
-            .push(CompileContext::new("inner".into(), 0));
-        let inner_idx = 1usize;
-
-        // Register exactly 255 distinct upvalues (indices 0..=254) as
-        // locals captured from the enclosing scope. These must all
-        // succeed.
-        for i in 0..u8::MAX {
-            let desc = UpvalueDesc {
-                is_local: true,
-                index: i,
-            };
-            let result = compiler.add_upvalue(inner_idx, desc, Span::BUILTIN);
-            assert!(
-                result.is_ok(),
-                "upvalue {i} (of 255) should be accepted; got {result:?}"
-            );
-        }
-
-        // A 256th distinct upvalue must now be rejected — not panic,
-        // and critically not silently accepted with a wrapped index.
-        // Use `is_local: false` so the dedup check in `add_upvalue`
-        // can't collapse it with an existing local-captured entry.
-        let overflowing = UpvalueDesc {
-            is_local: false,
-            index: 0,
-        };
-        let err = compiler
-            .add_upvalue(inner_idx, overflowing, Span::BUILTIN)
-            .expect_err("expected 256th upvalue to return Diagnostic");
-        assert!(
-            err.message.contains("too many upvalues"),
-            "expected too-many-upvalues error, got: {}",
-            err.message
-        );
-
-        // And the context must still hold exactly 255 upvalues — the
-        // rejected 256th must NOT have been pushed into ctx.upvalues.
-        let ctx = &compiler.contexts[inner_idx];
-        assert_eq!(
-            ctx.upvalues.len(),
-            255,
-            "rejected upvalue must not be pushed into ctx.upvalues"
-        );
-    }
-
-    // ── Audit regression: add_upvalue accepts exactly 255 (B5) ──────
-    //
-    // The complementary positive-direction lock for
-    // test_add_upvalue_rejects_over_255: fill a context with exactly
-    // 255 upvalues and verify `ctx.upvalues.len() == 255`. This pins
-    // the upper bound so a future refactor can't silently drop it below
-    // 255.
-    #[test]
-    fn test_add_upvalue_accepts_exactly_255_upvalues() {
-        use crate::bytecode::UpvalueDesc;
-        use crate::source::Span;
-
-        let mut compiler = Compiler::for_program(no_modules()).unwrap();
-        compiler
-            .contexts
-            .push(CompileContext::new("<script>".into(), 0));
-        compiler
-            .contexts
-            .push(CompileContext::new("inner".into(), 0));
-        let inner_idx = 1usize;
-
-        for i in 0..u8::MAX {
-            let desc = UpvalueDesc {
-                is_local: true,
-                index: i,
-            };
-            let returned = compiler
-                .add_upvalue(inner_idx, desc, Span::BUILTIN)
-                .unwrap_or_else(|e| {
-                    panic!("upvalue {i} (of 255) must be accepted; got {}", e.message)
-                });
-            assert_eq!(
-                returned, i,
-                "add_upvalue must return the index at which it stored the desc"
-            );
-        }
-
-        let ctx = &compiler.contexts[inner_idx];
-        assert_eq!(
-            ctx.upvalues.len(),
-            255,
-            "context must hold exactly 255 upvalues"
         );
     }
 }

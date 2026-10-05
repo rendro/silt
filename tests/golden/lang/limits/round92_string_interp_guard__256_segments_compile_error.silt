@@ -1,6 +1,5 @@
 -- exit: 1
--- stderr-contains: string interpolation has 256 segments
--- stderr-contains: limited to 255
+-- stderr-contains: too many segments of a string interpolation: 256 (the limit is 255)
 -- stderr-not-contains: panicked
 fn main() {
   let x = 7

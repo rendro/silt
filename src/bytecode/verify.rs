@@ -231,7 +231,7 @@ fn check(
                 .iter(chunk.code())
                 .try_for_each(|k| constant(k, ConstKind::Str)),
             Operand::Captures(captures) => captures.iter(chunk.code()).try_for_each(|capture| {
-                let index = usize::from(capture.index);
+                let index = capture.index;
                 match capture.is_local {
                     true if index >= frame.height => Err(format!(
                         "`{op}` captures slot {index} of a frame of {}",
@@ -318,7 +318,7 @@ mod tests {
 
     /// A verified function with one upvalue, as a constant.
     fn capturing_function() -> Value {
-        let mut e = Emitter::new("inner".into(), 0);
+        let mut e = Emitter::new("inner".into(), 0, Span::BUILTIN).unwrap();
         e.emit(Asm::GetUpvalue { index: 0 }, Span::BUILTIN).unwrap();
         e.emit(Asm::Return, Span::BUILTIN).unwrap();
         Value::VmClosure(Arc::new(VmClosure {
