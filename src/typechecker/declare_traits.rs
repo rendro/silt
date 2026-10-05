@@ -1767,9 +1767,7 @@ impl TypeChecker {
                 }
                 let mut mapping = seed.clone();
                 for v in free_vars_in(ty) {
-                    if !mapping.contains_key(&v) {
-                        mapping.insert(v, self.fresh_var());
-                    }
+                    mapping.entry(v).or_insert_with(|| self.fresh_var());
                 }
                 self.register_method_entry(
                     target_type,
