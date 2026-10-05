@@ -1022,6 +1022,48 @@ impl TypeChecker {
         }
     }
 
+    /// The type a `let`'s annotation writes, and the type variables it
+    /// introduces. A variable of the enclosing signature is that
+    /// variable; any other is the `let`'s own, and rigid: the value must
+    /// have the annotated type whatever the variable stands for, and a
+    /// `let` that generalises is general in it.
+    pub(super) fn resolve_let_annotation(&mut self, te: &TypeExpr) -> (Type, Vec<RigidId>) {
+        // B2: the arity-error span hint is the annotation's own span, so
+        // diagnostics from `resolve_type_expr` point at the user-written
+        // type.
+        let prev_type_span = self.current_type_anno_span.replace(te.span);
+        let mut names = self.sig_names.clone();
+        let declared = self.resolve_type_expr(te, &mut names);
+        self.current_type_anno_span = prev_type_span;
+        let mut own: Vec<RigidId> = names
+            .iter()
+            .filter(|(name, _)| {
+                !self.sig_names.contains_key(name) && !resolve(**name).starts_with("__row__")
+            })
+            .filter_map(|(name, ty)| match ty {
+                Type::Var(var) => Some(RigidId {
+                    var: *var,
+                    name: *name,
+                }),
+                _ => None,
+            })
+            .collect();
+        own.sort_by_key(|r| r.var);
+        (rigidify(&declared, &own), own)
+    }
+
+    /// The scheme of a `let` that generalises: `generalize`, and general
+    /// in the type variables its annotation introduced (`own`).
+    fn generalize_let(&mut self, ty: &Type, own: &[RigidId]) -> Scheme {
+        let mut scheme = self.generalize(ty);
+        if !own.is_empty() {
+            let (ty, vars) = release_rigid(&scheme.ty, own);
+            scheme.ty = ty;
+            scheme.vars.extend(vars);
+        }
+        scheme
+    }
+
     /// Whether a name in the value of the top-level `let` being checked
     /// names a top-level `let` of the module declared after it.
     fn reads_later_let(&self, res: Option<crate::defs::Res>, name: Symbol) -> bool {
@@ -3515,13 +3557,11 @@ impl TypeChecker {
                 }
                 let mut val_ty = self.infer_expr(value, env);
 
+                // The type variables the annotation introduces.
+                let mut own: Vec<RigidId> = Vec::new();
                 if let Some(te) = &ty {
-                    // B2: populate the arity-error span hint with the
-                    // annotation's own span so the duplicate span-less
-                    // diagnostic in `let x: Box(Int) = ...` goes away.
-                    let prev_type_span = self.current_type_anno_span.replace(te.span);
-                    let declared = self.resolve_type_expr(te, &mut self.sig_names.clone());
-                    self.current_type_anno_span = prev_type_span;
+                    let (declared, introduced) = self.resolve_let_annotation(te);
+                    own = introduced;
                     self.unify(&val_ty, &declared, value_span);
                     // A value of unknown type (from a module that failed
                     // to load) takes the declared type: `let y: Int = x`
@@ -3538,7 +3578,7 @@ impl TypeChecker {
                     PatternKind::Ident(name) => {
                         let scheme = if is_value {
                             self.exit_level();
-                            self.generalize(&val_ty)
+                            self.generalize_let(&val_ty, &own)
                         } else {
                             Scheme::mono(self.apply(&val_ty))
                         };
@@ -3564,7 +3604,7 @@ impl TypeChecker {
                             self.exit_level();
                             for name in collect_pattern_vars(pattern) {
                                 if let Some(bound) = env.lookup(name).cloned() {
-                                    let scheme = self.generalize(&bound.ty);
+                                    let scheme = self.generalize_let(&bound.ty, &own);
                                     env.define(name, scheme);
                                 }
                             }

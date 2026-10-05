@@ -872,16 +872,10 @@ impl TypeChecker {
         let is_value = self.is_syntactic_value(value);
         let mut val_ty = self.infer_expr(value, env);
         if let Some(te) = ty {
-            // B2: populate the arity-error span hint with the
-            // annotation's own span so diagnostics from
-            // `resolve_type_expr` point at the user-written type,
-            // not a zero-span sentinel. Without this, errors in
-            // `let x: Box(Int) = ...` where `Box` is parameterized
-            // emitted a span-less first error followed by a
-            // duplicate from the subsequent unify.
-            let prev_type_span = self.current_type_anno_span.replace(te.span);
-            let declared = self.resolve_type_expr(te, &mut std::collections::HashMap::new());
-            self.current_type_anno_span = prev_type_span;
+            // (A type variable the annotation introduces is rigid; a
+            // `let` that generalises is general in it, like a function
+            // in its signature's.)
+            let (declared, _) = self.resolve_let_annotation(te);
             self.unify(&val_ty, &declared, span);
             // A value of unknown type (from a module that failed to
             // load) takes the declared type.

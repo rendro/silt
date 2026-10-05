@@ -1,0 +1,18 @@
+-- A `let` that generalises is general in the type variables its
+-- annotation introduces; one inside a function may also name the
+-- function's own variable.
+let id: Fn(a) -> a = { y -> y }
+fn pair_up(x: t) -> (t, t) {
+  let same: t = x
+  let dup: Fn(u) -> (u, u) = { v -> (v, v) }
+  let (first, _) = dup(same)
+  dup(first)
+}
+fn main() {
+  let wrap: Fn(a) -> List(a) = { y -> [y] }
+  println(wrap(1))
+  println(wrap("s"))
+  println(id(2))
+  println(id("t"))
+  println(pair_up(true))
+}
