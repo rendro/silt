@@ -280,8 +280,6 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
 /// variants; this helper now delegates to that canonical source so a
 /// single edit to one match arm propagates to every conversion error message.
 /// Per the project's "one way to do things" convention.
-///
-/// Locked by `tests/meta/round76_value_type_name_parity_tests.rs`.
 fn value_type_name(v: &Value) -> &'static str {
     crate::builtins::value_kind(v)
 }

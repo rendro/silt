@@ -1,13 +1,18 @@
 use super::*;
-use crate::bytecode::{Chunk, Function, Op};
+use crate::bytecode::{Asm, Emitter, Function};
 use crate::source::Span;
 use crate::typeinfo::bv;
 
-/// Helper: build a Function from raw bytecode construction.
-fn make_function(build: impl FnOnce(&mut Chunk)) -> Arc<Function> {
-    let mut func = Function::new("<test>".to_string(), 0);
-    build(&mut func.chunk);
-    Arc::new(func)
+/// Helper: build a function of `arity` parameters with the emitter.
+fn make_function_of(arity: u8, build: impl FnOnce(&mut Emitter)) -> Arc<Function> {
+    let mut emitter = Emitter::new("<test>".to_string(), arity);
+    build(&mut emitter);
+    Arc::new(emitter.finish(0).unwrap_or_else(|e| panic!("{e:?}")))
+}
+
+/// Helper: build a script with the emitter.
+fn make_function(build: impl FnOnce(&mut Emitter)) -> Arc<Function> {
+    make_function_of(0, build)
 }
 
 fn span() -> Span {
@@ -29,11 +34,10 @@ fn run_vm_result(source: &str) -> Result<Value, VmError> {
 
 #[test]
 fn test_constant_and_return() {
-    let script = make_function(|chunk| {
-        let idx = chunk.add_constant(Value::Int(42)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(idx, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let idx = e.constant(Value::Int(42), span()).unwrap();
+        e.emit(Asm::Constant { k: idx }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -42,15 +46,13 @@ fn test_constant_and_return() {
 
 #[test]
 fn test_arithmetic_add_int() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(2)).unwrap();
-        let b = chunk.add_constant(Value::Int(3)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Add, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(2), span()).unwrap();
+        let b = e.constant(Value::Int(3), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Add, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -59,19 +61,16 @@ fn test_arithmetic_add_int() {
 
 #[test]
 fn test_arithmetic_expression() {
-    let script = make_function(|chunk| {
-        let two = chunk.add_constant(Value::Int(2)).unwrap();
-        let three = chunk.add_constant(Value::Int(3)).unwrap();
-        let four = chunk.add_constant(Value::Int(4)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(two, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(three, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(four, span());
-        chunk.emit_op(Op::Mul, span());
-        chunk.emit_op(Op::Add, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let two = e.constant(Value::Int(2), span()).unwrap();
+        let three = e.constant(Value::Int(3), span()).unwrap();
+        let four = e.constant(Value::Int(4), span()).unwrap();
+        e.emit(Asm::Constant { k: two }, span()).unwrap();
+        e.emit(Asm::Constant { k: three }, span()).unwrap();
+        e.emit(Asm::Constant { k: four }, span()).unwrap();
+        e.emit(Asm::Mul, span()).unwrap();
+        e.emit(Asm::Add, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -80,15 +79,13 @@ fn test_arithmetic_expression() {
 
 #[test]
 fn test_float_arithmetic() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Float(1.5)).unwrap();
-        let b = chunk.add_constant(Value::Float(2.5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Add, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Float(1.5), span()).unwrap();
+        let b = e.constant(Value::Float(2.5), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Add, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -97,12 +94,11 @@ fn test_float_arithmetic() {
 
 #[test]
 fn test_negate() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Negate, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(10), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Negate, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -111,15 +107,13 @@ fn test_negate() {
 
 #[test]
 fn test_comparison() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(3)).unwrap();
-        let b = chunk.add_constant(Value::Int(5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Lt, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(3), span()).unwrap();
+        let b = e.constant(Value::Int(5), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Lt, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -128,10 +122,10 @@ fn test_comparison() {
 
 #[test]
 fn test_boolean_not() {
-    let script = make_function(|chunk| {
-        chunk.emit_op(Op::True, span());
-        chunk.emit_op(Op::Not, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        e.emit(Asm::True, span()).unwrap();
+        e.emit(Asm::Not, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -140,15 +134,12 @@ fn test_boolean_not() {
 
 #[test]
 fn test_globals() {
-    let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(42)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(val, span());
-        chunk.emit_op(Op::SetGlobal, span());
-        chunk.emit_u16(0, span());
-        chunk.emit_op(Op::GetGlobal, span());
-        chunk.emit_u16(0, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let val = e.constant(Value::Int(42), span()).unwrap();
+        e.emit(Asm::Constant { k: val }, span()).unwrap();
+        e.emit(Asm::SetGlobal { slot: 0 }, span()).unwrap();
+        e.emit(Asm::GetGlobal { slot: 0 }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     vm.globals.push(None);
@@ -158,17 +149,14 @@ fn test_globals() {
 
 #[test]
 fn test_locals() {
-    let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(10)).unwrap();
-        chunk.emit_op(Op::Unit, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(val, span());
-        chunk.emit_op(Op::SetLocal, span());
-        chunk.emit_u16(0, span());
-        chunk.emit_op(Op::Pop, span());
-        chunk.emit_op(Op::GetLocal, span());
-        chunk.emit_u16(0, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let val = e.constant(Value::Int(10), span()).unwrap();
+        e.emit(Asm::Unit, span()).unwrap();
+        e.emit(Asm::Constant { k: val }, span()).unwrap();
+        e.emit(Asm::SetLocal { slot: 0 }, span()).unwrap();
+        e.emit(Asm::Pop, span()).unwrap();
+        e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -177,23 +165,19 @@ fn test_locals() {
 
 #[test]
 fn test_string_concat() {
-    let script = make_function(|chunk| {
-        let a = chunk
-            .add_constant(Value::String("hello".to_string()))
+    let script = make_function(|e| {
+        let a = e
+            .constant(Value::String("hello".to_string()), span())
             .unwrap();
-        let b = chunk.add_constant(Value::String(" ".to_string())).unwrap();
-        let c = chunk
-            .add_constant(Value::String("world".to_string()))
+        let b = e.constant(Value::String(" ".to_string()), span()).unwrap();
+        let c = e
+            .constant(Value::String("world".to_string()), span())
             .unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(c, span());
-        chunk.emit_op(Op::StringConcat, span());
-        chunk.emit_u8(3, span());
-        chunk.emit_op(Op::Return, span());
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Constant { k: c }, span()).unwrap();
+        e.emit(Asm::StringConcat { count: 3 }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -202,12 +186,11 @@ fn test_string_concat() {
 
 #[test]
 fn test_display_value() {
-    let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(42)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(val, span());
-        chunk.emit_op(Op::DisplayValue, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let val = e.constant(Value::Int(42), span()).unwrap();
+        e.emit(Asm::Constant { k: val }, span()).unwrap();
+        e.emit(Asm::DisplayValue, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -216,19 +199,19 @@ fn test_display_value() {
 
 #[test]
 fn test_jump_if_false() {
-    let script = make_function(|chunk| {
-        let one = chunk.add_constant(Value::Int(1)).unwrap();
-        let two = chunk.add_constant(Value::Int(2)).unwrap();
-        chunk.emit_op(Op::False, span());
-        let patch = chunk.emit_jump(Op::JumpIfFalse, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(one, span());
-        let skip_else = chunk.emit_jump(Op::Jump, span());
-        let _ = chunk.patch_jump(patch);
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(two, span());
-        let _ = chunk.patch_jump(skip_else);
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let one = e.constant(Value::Int(1), span()).unwrap();
+        let two = e.constant(Value::Int(2), span()).unwrap();
+        e.emit(Asm::False, span()).unwrap();
+        let other = e.label();
+        let end = e.label();
+        e.emit(Asm::JumpIfFalse { to: other }, span()).unwrap();
+        e.emit(Asm::Constant { k: one }, span()).unwrap();
+        e.emit(Asm::Jump { to: end }, span()).unwrap();
+        e.bind(other, span()).unwrap();
+        e.emit(Asm::Constant { k: two }, span()).unwrap();
+        e.bind(end, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -237,17 +220,14 @@ fn test_jump_if_false() {
 
 #[test]
 fn test_builtin_println() {
-    let script = make_function(|chunk| {
-        let name = chunk
-            .add_constant(Value::String("println".to_string()))
+    let script = make_function(|e| {
+        let name = e
+            .constant(Value::String("println".to_string()), span())
             .unwrap();
-        let val = chunk.add_constant(Value::Int(42)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(val, span());
-        chunk.emit_op(Op::CallBuiltin, span());
-        chunk.emit_u16(name, span());
-        chunk.emit_u8(1, span());
-        chunk.emit_op(Op::Return, span());
+        let val = e.constant(Value::Int(42), span()).unwrap();
+        e.emit(Asm::Constant { k: val }, span()).unwrap();
+        e.emit(Asm::CallBuiltin { name, argc: 1 }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -256,16 +236,13 @@ fn test_builtin_println() {
 
 #[test]
 fn test_make_tuple() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(1)).unwrap();
-        let b = chunk.add_constant(Value::Int(2)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::MakeTuple, span());
-        chunk.emit_u8(2, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(1), span()).unwrap();
+        let b = e.constant(Value::Int(2), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -274,16 +251,13 @@ fn test_make_tuple() {
 
 #[test]
 fn test_make_list() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10)).unwrap();
-        let b = chunk.add_constant(Value::Int(20)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::MakeList, span());
-        chunk.emit_u16(2, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(10), span()).unwrap();
+        let b = e.constant(Value::Int(20), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -295,15 +269,13 @@ fn test_make_list() {
 
 #[test]
 fn test_division_by_zero() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10)).unwrap();
-        let b = chunk.add_constant(Value::Int(0)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Div, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(10), span()).unwrap();
+        let b = e.constant(Value::Int(0), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Div, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script);
@@ -313,13 +285,12 @@ fn test_division_by_zero() {
 
 #[test]
 fn test_unit_and_pop() {
-    let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(99)).unwrap();
-        chunk.emit_op(Op::Unit, span());
-        chunk.emit_op(Op::Pop, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(val, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let val = e.constant(Value::Int(99), span()).unwrap();
+        e.emit(Asm::Unit, span()).unwrap();
+        e.emit(Asm::Pop, span()).unwrap();
+        e.emit(Asm::Constant { k: val }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -328,13 +299,12 @@ fn test_unit_and_pop() {
 
 #[test]
 fn test_dup() {
-    let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(val, span());
-        chunk.emit_op(Op::Dup, span());
-        chunk.emit_op(Op::Add, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let val = e.constant(Value::Int(5), span()).unwrap();
+        e.emit(Asm::Constant { k: val }, span()).unwrap();
+        e.emit(Asm::Dup, span()).unwrap();
+        e.emit(Asm::Add, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -343,27 +313,23 @@ fn test_dup() {
 
 #[test]
 fn test_eq_neq() {
-    let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(val, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(val, span());
-        chunk.emit_op(Op::Eq, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let val = e.constant(Value::Int(5), span()).unwrap();
+        e.emit(Asm::Constant { k: val }, span()).unwrap();
+        e.emit(Asm::Constant { k: val }, span()).unwrap();
+        e.emit(Asm::Eq, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     assert_eq!(vm.run(script).unwrap(), Value::Bool(true));
 
-    let script2 = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(5)).unwrap();
-        let b = chunk.add_constant(Value::Int(3)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Neq, span());
-        chunk.emit_op(Op::Return, span());
+    let script2 = make_function(|e| {
+        let a = e.constant(Value::Int(5), span()).unwrap();
+        let b = e.constant(Value::Int(3), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Neq, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm2 = Vm::new(crate::HostIo::process());
     assert_eq!(vm2.run(script2).unwrap(), Value::Bool(true));
@@ -371,15 +337,13 @@ fn test_eq_neq() {
 
 #[test]
 fn test_sub_int() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10)).unwrap();
-        let b = chunk.add_constant(Value::Int(3)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Sub, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(10), span()).unwrap();
+        let b = e.constant(Value::Int(3), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Sub, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -388,15 +352,13 @@ fn test_sub_int() {
 
 #[test]
 fn test_sub_int_underflow() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(i64::MIN)).unwrap();
-        let b = chunk.add_constant(Value::Int(1)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Sub, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(i64::MIN), span()).unwrap();
+        let b = e.constant(Value::Int(1), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Sub, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script);
@@ -406,15 +368,13 @@ fn test_sub_int_underflow() {
 
 #[test]
 fn test_sub_float() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Float(5.5)).unwrap();
-        let b = chunk.add_constant(Value::Float(2.25)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Sub, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Float(5.5), span()).unwrap();
+        let b = e.constant(Value::Float(2.25), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Sub, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -423,15 +383,13 @@ fn test_sub_float() {
 
 #[test]
 fn test_mod_int() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10)).unwrap();
-        let b = chunk.add_constant(Value::Int(3)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Mod, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(10), span()).unwrap();
+        let b = e.constant(Value::Int(3), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Mod, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -440,15 +398,13 @@ fn test_mod_int() {
 
 #[test]
 fn test_mod_int_by_zero() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10)).unwrap();
-        let b = chunk.add_constant(Value::Int(0)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Mod, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(10), span()).unwrap();
+        let b = e.constant(Value::Int(0), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Mod, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script);
@@ -458,15 +414,13 @@ fn test_mod_int_by_zero() {
 
 #[test]
 fn test_mod_float() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Float(5.5)).unwrap();
-        let b = chunk.add_constant(Value::Float(2.0)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Mod, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Float(5.5), span()).unwrap();
+        let b = e.constant(Value::Float(2.0), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Mod, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -475,15 +429,13 @@ fn test_mod_float() {
 
 #[test]
 fn test_gt_int() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(7)).unwrap();
-        let b = chunk.add_constant(Value::Int(3)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Gt, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(7), span()).unwrap();
+        let b = e.constant(Value::Int(3), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Gt, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -492,15 +444,13 @@ fn test_gt_int() {
 
 #[test]
 fn test_gt_float() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Float(1.5)).unwrap();
-        let b = chunk.add_constant(Value::Float(2.5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Gt, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Float(1.5), span()).unwrap();
+        let b = e.constant(Value::Float(2.5), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Gt, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -509,15 +459,13 @@ fn test_gt_float() {
 
 #[test]
 fn test_geq_int() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(5)).unwrap();
-        let b = chunk.add_constant(Value::Int(5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Geq, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(5), span()).unwrap();
+        let b = e.constant(Value::Int(5), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Geq, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -526,15 +474,13 @@ fn test_geq_int() {
 
 #[test]
 fn test_geq_float() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Float(4.0)).unwrap();
-        let b = chunk.add_constant(Value::Float(4.5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Geq, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Float(4.0), span()).unwrap();
+        let b = e.constant(Value::Float(4.5), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Geq, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -543,15 +489,13 @@ fn test_geq_float() {
 
 #[test]
 fn test_leq_int() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(3)).unwrap();
-        let b = chunk.add_constant(Value::Int(3)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Leq, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(3), span()).unwrap();
+        let b = e.constant(Value::Int(3), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Leq, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -560,15 +504,13 @@ fn test_leq_int() {
 
 #[test]
 fn test_leq_float() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Float(2.5)).unwrap();
-        let b = chunk.add_constant(Value::Float(1.5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(b, span());
-        chunk.emit_op(Op::Leq, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Float(2.5), span()).unwrap();
+        let b = e.constant(Value::Float(1.5), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: b }, span()).unwrap();
+        e.emit(Asm::Leq, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -577,12 +519,11 @@ fn test_leq_float() {
 
 #[test]
 fn test_negate_float() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Float(3.5)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Negate, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Float(3.5), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Negate, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
@@ -591,12 +532,11 @@ fn test_negate_float() {
 
 #[test]
 fn test_negate_int_overflow() {
-    let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(i64::MIN)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(a, span());
-        chunk.emit_op(Op::Negate, span());
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let a = e.constant(Value::Int(i64::MIN), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Negate, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script);
@@ -2381,44 +2321,38 @@ fn test_scheduler_list_filter_with_yielding_predicate() {
 
 #[test]
 fn test_tail_call_rejects_arity_mismatch() {
-    // Locks in 3a4edd6 L1: `Op::TailCall` must verify that the caller
+    // Locks in 3a4edd6 L1: `TailCall` must verify that the caller
     // pushed exactly `arity` arguments before mutating the current
     // frame. In well-typed silt programs the type checker always
-    // matches arity, so this is defense-in-depth — a compiler or
-    // bytecode-emitter bug could otherwise corrupt the call frame by
-    // stomping parameters with a wrong-sized argument window.
+    // matches arity, so this is reachable only when the checker is
+    // wrong: a type-confusion error.
     //
-    // The test bypasses the compiler by building a `Function` with
+    // The test bypasses the compiler by building a function with
     // arity 2 and a script that pushes only ONE argument before
-    // emitting `TailCall 1`. The fix turns this into a clean runtime
-    // error; the pre-fix path silently proceeded with corrupted state.
+    // emitting `TailCall 1`.
     use crate::bytecode::VmClosure;
 
-    // Callee: expects 2 arguments, body is just `Return`.
-    let mut callee = Function::new("two_arg".to_string(), 2);
-    callee.chunk.emit_op(Op::Return, span());
+    // Callee: expects 2 arguments.
     let closure = Arc::new(VmClosure {
-        function: Arc::new(callee),
+        function: Arc::new(Function::returning_unit("two_arg".to_string(), 2)),
         upvalues: vec![],
     });
 
     // Script: push the closure, push ONE int, then TailCall argc=1.
     // This simulates a buggy emitter sending the wrong argc for a
     // known 2-arg function.
-    let script = make_function(|chunk| {
-        let closure_idx = chunk.add_constant(Value::VmClosure(closure)).unwrap();
-        let arg_idx = chunk.add_constant(Value::Int(1)).unwrap();
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(closure_idx, span());
-        chunk.emit_op(Op::Constant, span());
-        chunk.emit_u16(arg_idx, span());
-        chunk.emit_op(Op::TailCall, span());
-        chunk.emit_u8(1, span()); // wrong argc
-        chunk.emit_op(Op::Return, span());
+    let script = make_function(|e| {
+        let closure_idx = e.constant(Value::VmClosure(closure), span()).unwrap();
+        let arg_idx = e.constant(Value::Int(1), span()).unwrap();
+        e.emit(Asm::Constant { k: closure_idx }, span()).unwrap();
+        e.emit(Asm::Constant { k: arg_idx }, span()).unwrap();
+        e.emit(Asm::TailCall { argc: 1 }, span()).unwrap(); // wrong argc
+        e.emit(Asm::Return, span()).unwrap();
     });
 
     let mut vm = Vm::new(crate::HostIo::process());
     let err = vm.run(script).expect_err("expected arity-mismatch error");
+    assert!(err.type_confusion);
     let msg = format!("{err}");
     assert!(
         msg.contains("two_arg") && msg.contains("expects 2") && msg.contains("got 1"),
@@ -2546,7 +2480,7 @@ fn test_builtin_panic_converted_to_vm_error() {
 fn test_println_rejects_wrong_arity() {
     // Locks the defence-in-depth arity checks in `dispatch_builtin` for
     // the built-in `println` and `print` functions. In well-typed silt
-    // programs the type checker (see `src/typechecker/builtins.rs`)
+    // programs the type checker (see `typechecker/builtin_env.rs`)
     // rejects wrong-arity calls to both with arity 1, so these runtime
     // guards exist purely to catch a hypothetical compiler or emitter
     // bug that mis-emits argc. Mirrors `test_tail_call_rejects_arity_mismatch`
@@ -2599,328 +2533,382 @@ fn test_println_rejects_wrong_arity() {
     );
 }
 
-// ── Audit regression: MakeClosure constant must be a VmClosure (R3) ──
+// ── Type confusion: one test per guard family ───────────────────────
+//
+// The code a VM runs is verified, so an instruction always finds its
+// operands; what the verifier cannot know is their kind. The typechecker
+// claims it, and where the claim is wrong the instruction stops with a
+// `VmError::type_confusion` error (code E0704). No well-typed program
+// reaches these once the checker is sound, so each test hands the VM
+// code no compiler emits for a checked program: well-formed, built with
+// the emitter, and wrong about a value.
+mod type_confusion {
+    use std::collections::BTreeMap;
 
-#[test]
-fn test_make_closure_rejects_non_closure_constant() {
-    // Locks R3: if the compiler (or a buggy embedder) emits
-    // `Op::MakeClosure` pointing at a constant that is NOT a
-    // `Value::VmClosure`, the VM must return a clean `VmError` rather
-    // than silently producing garbage. Mirrors
-    // `test_tail_call_rejects_arity_mismatch` — bypass the compiler and
-    // hand-craft a function that emits the bad MakeClosure.
-    let script = make_function(|chunk| {
-        // Constant is a plain Int, not a VmClosure.
-        let bad_const_idx = chunk.add_constant(Value::Int(42)).unwrap();
-        chunk.emit_op(Op::MakeClosure, span());
-        chunk.emit_u16(bad_const_idx, span());
-        chunk.emit_u8(0, span()); // zero upvalues, keep it simple
-        chunk.emit_op(Op::Return, span());
-    });
-    let mut vm = Vm::new(crate::HostIo::process());
-    let err = vm
-        .run(script)
-        .expect_err("expected MakeClosure to reject non-VmClosure constant");
-    let msg = format!("{err}");
-    // Round-59 audit LATENT fix: the MakeClosure guard error no longer
-    // leaks the raw `MakeClosure` / `VmClosure` Rust/opcode identifiers
-    // to user-facing output. The assertion now matches the user-facing
-    // phrasing used at `src/vm/run.rs` (`closure construction
-    // constant is not a closure`).
-    assert!(
-        msg.contains("closure construction") && msg.contains("not a closure"),
-        "expected closure-construction guard error, got: {msg}"
-    );
-}
+    use super::*;
+    use crate::bytecode::{NO_TRAIT, VmClosure};
+    use crate::diagnostic::Code;
 
-/// Defence-in-depth: `Op::TailCall` now checks that `base + argc` is within
-/// the stack before copying arguments.  This condition cannot be triggered from
-/// valid silt source (the compiler guarantees correctness), so instead we
-/// verify that the check does not *over-reject* — a normal tail-recursive
-/// program must still succeed.
-#[test]
-fn test_tail_call_bounds_check_does_not_reject_valid_tail_call() {
-    let result = run_vm(
-        r#"
-        fn countdown(n) {
-            match n {
-                0 -> 0
-                _ -> countdown(n - 1)
-            }
-        }
-        fn main() { countdown(100) }
-        "#,
-    );
-    assert_eq!(result, Value::Int(0));
-}
-
-// Bytecode a compiler never emits, run directly.
-mod round80_dispatch_bounds {
-    // Round-80 VM dispatch-bounds defense-in-depth lock tests.
-    //
-    // One finding, unreachable from the legitimate compiler today
-    // but trivially reachable from corrupt bytecode (e.g. a future
-    // refactor that mis-emits `argc`, or a fuzz harness that exercises
-    // the dispatch loop with hand-built chunks). Without the gate, the
-    // VM panics with a Rust `index out of bounds` instead of returning a
-    // `VmError` — which violates the project-wide invariant that every
-    // VM-internal invariant breach surfaces as `internal VM error: ...`.
-    //
-    // ## L6 — `Op::CallMethod` argc==0 sanity gate
-    //
-    // `Op::CallMethod` reads a u8 `argc`, computes
-    // `receiver_slot = stack.len() - argc`, then indexes
-    // `self.stack[receiver_slot]`. The pre-fix gate only checked the
-    // upper bound (`argc > stack.len()`), so `argc == 0` produced
-    // `receiver_slot == stack.len()` and the very next access OOB-
-    // panicked. The compiler always emits `argc = (args.len() + 1) as u8`
-    // at `src/compiler/mod.rs:2250` so it's not user-reachable, but the
-    // gate is cheap defense-in-depth that locks the invariant.
-    //
-    // ## Why integration tests, not unit tests
-    //
-    // `src/vm/tests.rs` already exposes the raw-bytecode-injection
-    // pattern (`Function::new(...)` + `chunk.emit_op(...)` + `Vm::run`).
-    // Rather than add to the unit module, we replicate the same shape
-    // here against the public API (`crate::bytecode::*`, `crate::Vm`,
-    // `crate::Value`) so the lock survives any future privacy tightening
-    // of the unit module.
-
-    use std::sync::Arc;
-
-    use crate::bytecode::{Chunk, Function, Op};
-    use crate::source::Span;
-    use crate::value::Value;
-    use crate::vm::Vm;
-
-    fn span() -> Span {
-        Span::BUILTIN
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
     }
 
-    /// Helper mirroring `src/vm/tests.rs::make_function`: build a
-    /// `Function` from raw bytecode construction.
-    fn make_function(build: impl FnOnce(&mut Chunk)) -> Arc<Function> {
-        let mut func = Function::new("<round80-test>".to_string(), 0);
-        build(&mut func.chunk);
-        Arc::new(func)
+    fn string(s: &str) -> Value {
+        Value::String(s.to_string())
     }
 
-    // ── L6: Op::CallMethod argc==0 gate ──────────────────────────────────
+    fn name(e: &mut Emitter, s: &str) -> crate::bytecode::Const {
+        e.constant(string(s), span()).unwrap()
+    }
 
-    /// Hand-build a chunk that runs `Op::CallMethod` with `argc = 0`.
-    /// Pre-fix this would panic with `index out of bounds` because
-    /// `receiver_slot = stack.len() - 0 = stack.len()` and the very next
-    /// `self.stack[receiver_slot].clone()` reads past the end.
-    /// Post-fix it must surface as a `VmError` carrying the canonical
-    /// `internal VM error:` prefix.
-    #[test]
-    fn l6_callmethod_argc_zero_returns_internal_vm_error() {
-        let script = make_function(|chunk| {
-            let method_idx = chunk
-                .add_constant(Value::String("foo".to_string()))
-                .unwrap();
-            // No receiver pushed — empty stack.
-            chunk.emit_op(Op::CallMethod, span());
-            chunk.emit_u16(method_idx, span());
-            chunk.emit_u8(0, span()); // argc = 0 (corrupt — receiver missing)
-            chunk.emit_u16(crate::bytecode::NO_TRAIT, span());
-            chunk.emit_op(Op::Return, span());
+    fn record(fields: &[(&str, Value)]) -> Value {
+        let fields: BTreeMap<String, Value> = fields
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect();
+        Value::builtin_record(crate::typeinfo::ty::ANON_RECORD, fields)
+    }
+
+    fn function(arity: u8) -> Value {
+        Value::VmClosure(Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit("f".to_string(), arity)),
+            upvalues: vec![],
+        }))
+    }
+
+    /// Run the script `build` emits (followed by a `Return`), which
+    /// must stop with a type-confusion error whose message contains
+    /// `phrase`.
+    fn confused(phrase: &str, build: impl FnOnce(&mut Emitter)) {
+        let script = make_function(|e| {
+            build(e);
+            e.emit(Asm::Return, span()).unwrap();
         });
-
-        let mut vm = Vm::new(crate::HostIo::process());
-        let result = vm.run(script);
-        let err = result.expect_err(
-            "Op::CallMethod with argc=0 must surface as VmError, not Rust \
-             panic — round-80 L6 defense-in-depth gate",
-        );
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("internal VM error:"),
-            "round-80 L6: argc==0 error must use the canonical \
-             `internal VM error:` prefix; got: {msg}"
-        );
-        assert!(
-            msg.contains("argc"),
-            "round-80 L6: error message should mention `argc` so the failure \
-             points at the offending bytecode field; got: {msg}"
-        );
-    }
-
-    /// Sibling check for the upper-bound gate: `argc` larger than the
-    /// stack must also produce a `VmError` (this path was already gated
-    /// pre-fix; we lock it in alongside the new lower-bound gate so a
-    /// future edit can't accidentally relax both).
-    #[test]
-    fn l6_callmethod_argc_exceeds_stack_returns_vm_error() {
-        let script = make_function(|chunk| {
-            let method_idx = chunk
-                .add_constant(Value::String("foo".to_string()))
-                .unwrap();
-            // Push a single Int as receiver, then claim argc=5 — only one
-            // value on the stack, so 5 > 1 must trip the gate.
-            let one = chunk.add_constant(Value::Int(1)).unwrap();
-            chunk.emit_op(Op::Constant, span());
-            chunk.emit_u16(one, span());
-            chunk.emit_op(Op::CallMethod, span());
-            chunk.emit_u16(method_idx, span());
-            chunk.emit_u8(5, span()); // argc=5, stack has 1
-            chunk.emit_op(Op::Return, span());
-        });
-
-        let mut vm = Vm::new(crate::HostIo::process());
-        let result = vm.run(script);
-        let err =
-            result.expect_err("Op::CallMethod with argc > stack.len() must surface as VmError");
-        let msg = format!("{err}");
-        // Either the original "exceeds stack size" wording or the new
-        // unified `internal VM error:` wording is acceptable here — the
-        // post-fix path collapses both bounds into the same gate.
-        assert!(
-            msg.contains("internal VM error:") || msg.contains("exceeds stack"),
-            "round-80 L6 sibling: argc>stack error wording unexpected; got: {msg}"
-        );
-    }
-}
-
-// Bytecode a compiler never emits, run directly.
-mod error_identifier_leak {
-    // Locks that raw opcode names do not leak into user-facing `VmError`
-    // messages.
-    //
-    // Background: round-58 fixed one site where the VM emitted
-    // `"frame underflow in invoke_callable"` — the bare `invoke_callable`
-    // identifier is a Rust method name, not anything a silt user could
-    // meaningfully interpret. Several internal-invariant sites in
-    // `src/vm/run.rs` leaked similar raw opcode names (`SetLocal`,
-    // `MakeClosure`, `MakeTuple`, `MakeList`, `MakeMap`, `MakeSet`).
-    //
-    // These invariant paths are not reachable from valid typed silt, so the
-    // tests hand-build corrupt bytecode (the pattern in
-    // the `round80_dispatch_bounds` module above) and assert on the
-    // message the VM actually returns: the canonical `internal VM error:`
-    // phrasing, with no opcode name in it.
-
-    use std::sync::Arc;
-
-    use crate::bytecode::{Chunk, Function, Op};
-    use crate::source::Span;
-    use crate::value::Value;
-    use crate::vm::Vm;
-
-    fn span() -> Span {
-        Span::BUILTIN
-    }
-
-    fn make_function(build: impl FnOnce(&mut Chunk)) -> Arc<Function> {
-        let mut func = Function::new("<leak-test>".to_string(), 0);
-        build(&mut func.chunk);
-        Arc::new(func)
-    }
-
-    /// Run `script`, expect a `VmError`, and check that its message carries
-    /// `phrase` and does not name the opcode `op_name`.
-    fn assert_clean_error(script: Arc<Function>, phrase: &str, op_name: &str) {
-        let mut vm = Vm::new(crate::HostIo::process());
-        let err = vm
+        let err = Vm::new(crate::HostIo::process())
             .run(script)
-            .expect_err("corrupt bytecode must surface as a VmError");
-        let msg = format!("{err}");
+            .expect_err("an instruction that meets a value of the wrong kind stops");
         assert!(
-            msg.contains(phrase),
-            "expected the user-facing phrase {phrase:?}; got: {msg}"
+            err.message.contains(phrase),
+            "expected {phrase:?} in: {}",
+            err.message
         );
-        assert!(
-            !msg.contains(op_name),
-            "the raw opcode name `{op_name}` leaked into the error: {msg}"
+        assert!(err.type_confusion, "not a type-confusion error: {err}");
+        assert_eq!(err.to_diagnostic().code, Code::TypeConfusion);
+    }
+
+    #[test]
+    fn arithmetic_on_a_value_that_is_no_number() {
+        confused("cannot apply '+' to String and Int", |e| {
+            push(e, string("a"));
+            push(e, Value::Int(1));
+            e.emit(Asm::Add, span()).unwrap();
+        });
+        confused("cannot apply '*' to Bool and Bool", |e| {
+            e.emit(Asm::True, span()).unwrap();
+            e.emit(Asm::False, span()).unwrap();
+            e.emit(Asm::Mul, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn arithmetic_on_an_int_and_a_float() {
+        confused("cannot mix Int and Float", |e| {
+            push(e, Value::Int(1));
+            push(e, Value::Float(2.5));
+            e.emit(Asm::Sub, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn negation_of_a_value_that_is_no_number() {
+        confused("cannot negate String", |e| {
+            push(e, string("a"));
+            e.emit(Asm::Negate, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn not_of_a_value_that_is_no_bool() {
+        confused("cannot apply 'not' to Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::Not, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn ordering_of_values_of_different_types() {
+        confused("cannot compare Int and String", |e| {
+            push(e, Value::Int(1));
+            push(e, string("a"));
+            e.emit(Asm::Lt, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn ordering_of_functions() {
+        confused("type 'Fn' does not implement Compare", |e| {
+            push(e, Value::List(Arc::new(vec![function(0)])));
+            push(e, Value::List(Arc::new(vec![function(0)])));
+            e.emit(Asm::Geq, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn equality_of_values_of_different_types() {
+        confused("cannot compare Int and String", |e| {
+            push(e, Value::Int(1));
+            push(e, string("a"));
+            e.emit(Asm::Eq, span()).unwrap();
+        });
+        confused("cannot compare Bool and Unit", |e| {
+            e.emit(Asm::True, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Neq, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn equality_of_functions() {
+        confused("type 'Fn' does not implement Equal", |e| {
+            push(e, function(0));
+            push(e, function(0));
+            e.emit(Asm::Eq, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn interpolation_of_a_part_that_is_no_string() {
+        confused(
+            "string interpolation requires string values, got Int",
+            |e| {
+                push(e, string("a"));
+                push(e, Value::Int(1));
+                e.emit(Asm::StringConcat { count: 2 }, span()).unwrap();
+            },
         );
     }
 
     #[test]
-    fn set_local_out_of_range_names_local_binding() {
-        let script = make_function(|chunk| {
-            let one = chunk.add_constant(Value::Int(1)).unwrap();
-            chunk.emit_op(Op::Constant, span());
-            chunk.emit_u16(one, span());
-            chunk.emit_op(Op::SetLocal, span());
-            chunk.emit_u16(100, span()); // slot far past the stack
-            chunk.emit_op(Op::Return, span());
+    fn display_of_a_value_without_display() {
+        confused("type 'Fn' does not implement Display", |e| {
+            push(e, function(0));
+            e.emit(Asm::DisplayValue, span()).unwrap();
         });
-        assert_clean_error(
-            script,
-            "internal VM error: local binding slot out of range",
-            "SetLocal",
+    }
+
+    #[test]
+    fn call_of_a_value_that_is_no_function() {
+        confused("cannot call value of type Int", |e| {
+            push(e, Value::Int(1));
+            push(e, Value::Int(2));
+            e.emit(Asm::Call { argc: 1 }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn call_with_the_wrong_number_of_arguments() {
+        confused("function 'f' expects 2 arguments, got 1", |e| {
+            push(e, function(2));
+            push(e, Value::Int(1));
+            e.emit(Asm::Call { argc: 1 }, span()).unwrap();
+        });
+        confused("function 'f' expects 2 arguments, got 0", |e| {
+            push(e, function(2));
+            e.emit(Asm::TailCall { argc: 0 }, span()).unwrap();
+        });
+        confused(
+            "variant constructor 'Some' expects 1 arguments, got 2",
+            |e| {
+                push(e, Value::VariantConstructor(bv::SOME.tag()));
+                push(e, Value::Int(1));
+                push(e, Value::Int(2));
+                e.emit(Asm::Call { argc: 2 }, span()).unwrap();
+            },
         );
     }
 
     #[test]
-    fn make_closure_on_non_closure_names_closure_construction() {
-        let script = make_function(|chunk| {
-            let not_a_closure = chunk.add_constant(Value::Int(7)).unwrap();
-            chunk.emit_op(Op::MakeClosure, span());
-            chunk.emit_u16(not_a_closure, span());
-            chunk.emit_u8(0, span()); // no upvalues
-            chunk.emit_op(Op::Return, span());
+    fn method_call_on_a_type_without_the_method() {
+        confused("no method 'nope' for type 'Int'", |e| {
+            push(e, Value::Int(1));
+            let method = name(e, "nope");
+            e.emit(
+                Asm::CallMethod {
+                    method,
+                    argc: 1,
+                    of: NO_TRAIT,
+                },
+                span(),
+            )
+            .unwrap();
         });
-        assert_clean_error(
-            script,
-            "internal VM error: closure construction constant is not a closure",
-            "MakeClosure",
+    }
+
+    #[test]
+    fn record_update_of_a_value_that_is_no_record() {
+        confused("requires a record, got Int", |e| {
+            push(e, Value::Int(1));
+            push(e, Value::Int(2));
+            let x = name(e, "x");
+            e.emit(Asm::RecordUpdate { fields: &[x] }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn range_of_values_that_are_no_ints() {
+        confused("requires two Int operands, got String and Int", |e| {
+            push(e, string("a"));
+            push(e, Value::Int(2));
+            e.emit(Asm::MakeRange, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn spread_of_a_value_that_is_no_list() {
+        confused("left operand is not a list or range", |e| {
+            push(e, Value::Int(1));
+            push(e, Value::List(Arc::new(vec![])));
+            e.emit(Asm::ListConcat, span()).unwrap();
+        });
+        confused("right operand is not a list or range", |e| {
+            push(e, Value::List(Arc::new(vec![])));
+            push(e, Value::Int(1));
+            e.emit(Asm::ListConcat, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn field_of_a_value_without_it() {
+        confused("cannot access field 'x' on Int", |e| {
+            push(e, Value::Int(1));
+            let x = name(e, "x");
+            e.emit(Asm::GetField { name: x }, span()).unwrap();
+        });
+        confused("record has no field 'x'", |e| {
+            push(e, record(&[("y", Value::Int(1))]));
+            let x = name(e, "x");
+            e.emit(Asm::GetField { name: x }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn tuple_pattern_on_a_value_of_another_shape() {
+        confused("tuple destructure: expected tuple, got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructTuple { index: 0 }, span()).unwrap();
+        });
+        confused(
+            "tuple destructure: expected at least 3 elements, got 1",
+            |e| {
+                push(e, Value::Tuple(vec![Value::Int(1)]));
+                e.emit(Asm::DestructTuple { index: 2 }, span()).unwrap();
+            },
         );
     }
 
     #[test]
-    fn make_tuple_over_count_names_tuple_construction() {
-        let script = make_function(|chunk| {
-            chunk.emit_op(Op::MakeTuple, span());
-            chunk.emit_u8(5, span()); // empty stack
-            chunk.emit_op(Op::Return, span());
+    fn variant_pattern_on_a_value_of_another_shape() {
+        confused("variant destructure: expected variant, got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
         });
-        assert_clean_error(
-            script,
-            "internal VM error: tuple construction count 5",
-            "MakeTuple",
-        );
+        confused("variant destructure: field index 1 out of bounds", |e| {
+            push(e, Value::variant(bv::SOME, vec![Value::Int(1)]));
+            e.emit(Asm::DestructVariant { index: 1 }, span()).unwrap();
+        });
     }
 
     #[test]
-    fn make_list_over_count_names_list_construction() {
-        let script = make_function(|chunk| {
-            chunk.emit_op(Op::MakeList, span());
-            chunk.emit_u16(5, span());
-            chunk.emit_op(Op::Return, span());
+    fn list_pattern_on_a_value_of_another_shape() {
+        confused("list destructure: expected list, got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructList { index: 0 }, span()).unwrap();
         });
-        assert_clean_error(
-            script,
-            "internal VM error: list construction count 5",
-            "MakeList",
+        confused(
+            "list destructure: expected at least 2 elements, got 1",
+            |e| {
+                push(e, Value::List(Arc::new(vec![Value::Int(1)])));
+                e.emit(Asm::DestructList { index: 1 }, span()).unwrap();
+            },
         );
+        confused("range index out of bounds", |e| {
+            push(e, Value::Range(1, 2));
+            e.emit(Asm::DestructList { index: 5 }, span()).unwrap();
+        });
+        confused("list destructure: expected list, got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructListRest { start: 0 }, span()).unwrap();
+        });
+        confused("rest pattern start 3 exceeds list length 1", |e| {
+            push(e, Value::List(Arc::new(vec![Value::Int(1)])));
+            e.emit(Asm::DestructListRest { start: 3 }, span()).unwrap();
+        });
     }
 
     #[test]
-    fn make_map_over_count_names_map_construction() {
-        let script = make_function(|chunk| {
-            chunk.emit_op(Op::MakeMap, span());
-            chunk.emit_u16(3, span()); // three pairs, empty stack
-            chunk.emit_op(Op::Return, span());
+    fn record_pattern_on_a_value_of_another_shape() {
+        confused("record destructure: expected record, got Int", |e| {
+            push(e, Value::Int(1));
+            let x = name(e, "x");
+            e.emit(Asm::DestructRecordField { name: x }, span())
+                .unwrap();
         });
-        assert_clean_error(
-            script,
-            "internal VM error: map construction needs 6 values",
-            "MakeMap",
-        );
+        confused("record has no field 'x'", |e| {
+            push(e, record(&[("y", Value::Int(1))]));
+            let x = name(e, "x");
+            e.emit(Asm::DestructRecordField { name: x }, span())
+                .unwrap();
+        });
+        confused("record rest destructure: expected record, got Int", |e| {
+            push(e, Value::Int(1));
+            let x = name(e, "x");
+            e.emit(Asm::DestructRecordRest { excluded: &[x] }, span())
+                .unwrap();
+        });
     }
 
     #[test]
-    fn make_set_over_count_names_set_construction() {
-        let script = make_function(|chunk| {
-            chunk.emit_op(Op::MakeSet, span());
-            chunk.emit_u16(5, span());
-            chunk.emit_op(Op::Return, span());
+    fn map_pattern_on_a_value_of_another_shape() {
+        confused("map destructure: expected map, got Int", |e| {
+            push(e, Value::Int(1));
+            let k = name(e, "k");
+            e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
         });
-        assert_clean_error(
-            script,
-            "internal VM error: set construction count 5",
-            "MakeSet",
-        );
+        confused("map has no key 'k'", |e| {
+            push(e, Value::Map(Arc::new(BTreeMap::new())));
+            let k = name(e, "k");
+            e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
+        });
+    }
+
+    #[test]
+    fn question_mark_on_a_value_that_is_no_result_or_option() {
+        confused("`?` applies only to Result or Option; got Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::QuestionMark, span()).unwrap();
+        });
+        confused("`?` applies only to Result or Option; got variant", |e| {
+            push(e, Value::variant(bv::MESSAGE, vec![Value::Int(1)]));
+            e.emit(Asm::QuestionMark, span()).unwrap();
+        });
+    }
+
+    /// The other kind of runtime error keeps its code: a program can
+    /// reach it with every value of the type the checker gave it.
+    #[test]
+    fn an_error_a_well_typed_program_reaches_is_no_type_confusion() {
+        let script = make_function(|e| {
+            push(e, Value::Int(1));
+            push(e, Value::Int(0));
+            e.emit(Asm::Div, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let err = Vm::new(crate::HostIo::process())
+            .run(script)
+            .expect_err("division by zero stops the program");
+        assert!(!err.type_confusion);
+        assert_eq!(err.to_diagnostic().code, Code::RuntimeError);
     }
 }

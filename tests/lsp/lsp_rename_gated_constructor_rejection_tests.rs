@@ -1,12 +1,8 @@
 //! Round-60 L5 regression: behavioural LSP test that rename on a
 //! gated builtin constructor (e.g. `IoNotFound`) is rejected.
 //!
-//! `tests/meta/builtin_constructor_parity_tests.rs::lsp_rename_covers_every_gated_constructor`
-//! already enforces, at the source-grep level, that `rename.rs`
-//! consults `module::all_builtin_constructor_names`. This test locks
-//! the same property end-to-end through the LSP transport so that
-//! future refactors to the rename pipeline can't silently regress
-//! the rejection behaviour.
+//! `rename.rs` consults `module::all_builtin_constructor_names`; this
+//! test locks the rejection end-to-end through the LSP transport.
 //!
 //! Uses the shared LSP client in `support.rs`.
 

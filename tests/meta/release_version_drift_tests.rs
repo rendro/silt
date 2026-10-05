@@ -192,11 +192,7 @@ fn no_stale_bare_version_pins_in_reference_docs() {
     let current_mm = (current.0, current.1);
 
     let mut md_files = Vec::new();
-    // Round 62 phase-2 deleted `docs/stdlib/`; the per-module markdown
-    // moved into `super::docs::*_MD` constants in
-    // `src/typechecker/builtins/docs.rs`. This walker scans the
-    // remaining markdown in the docs/ tree (concurrency.md, ffi.md,
-    // language/*.md, etc.).
+    // This walker scans the language guide (`docs/language/*.md`).
     collect_md_files(Path::new("docs/language"), &mut md_files);
 
     let mut offenders: Vec<String> = Vec::new();

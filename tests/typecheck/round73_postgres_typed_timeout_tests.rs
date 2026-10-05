@@ -3,7 +3,7 @@
 //! shape.
 //!
 //! Background: every fallible `postgres.*` call is typechecked as
-//! `Result(_, PgError)` (see `src/typechecker/builtins/postgres.rs`).
+//! `Result(_, PgError)` (see the module's rows in the builtin registry).
 //! Pre-fix, the runtime used the default `Vm::io_entry_guard(args)` and
 //! `IoPool::submit(...)` paths, both of which fall through to the
 //! generic `io_unknown_timeout_err` factory. The fix supplies a

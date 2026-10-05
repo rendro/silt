@@ -1,0 +1,13 @@
+error[type]: `tcp.accept_tls` is not part of this build of silt: it needs the cargo feature `tcp-tls`
+ --> feature__member_whose_feature_is_not_built.silt:9:14
+   |
+ 9 | import tcp.{ accept_tls }
+   |              ^^^^^^^^^^ `tcp.accept_tls` is not part of this build of silt: it needs the cargo feature `tcp-tls`
+  = help: rebuild silt with `--features tcp-tls`
+
+error[type]: `tcp.connect_tls` is not part of this build of silt: it needs the cargo feature `tcp-tls`
+ --> feature__member_whose_feature_is_not_built.silt:12:17
+    |
+ 12 |   let connect = tcp.connect_tls
+    |                 ^^^^^^^^^^^^^^^ `tcp.connect_tls` is not part of this build of silt: it needs the cargo feature `tcp-tls`
+  = help: rebuild silt with `--features tcp-tls`

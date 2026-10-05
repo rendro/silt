@@ -1,0 +1,11 @@
+-- cmd: run
+-- exit: 1
+-- without-feature: postgres
+-- The items of a module that is not built are not reported one by one,
+-- and the program does not start.
+import postgres.{ PgTimeout, connect }
+
+fn main() {
+  println(PgTimeout)
+  println(connect("postgres://localhost/app"))
+}

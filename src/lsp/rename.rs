@@ -213,8 +213,8 @@ fn is_symbol_user_renameable_at_cursor(
 /// helper falls back to this one only when the symbol has no user
 /// binding in scope.
 ///
-/// `pub` so integration tests (see `tests/meta/builtin_constructor_parity_tests.rs`)
-/// can assert every gated constructor is protected from rename.
+/// `pub` so integration tests (see `tests/meta/lexer_keyword_parity_tests.rs`)
+/// can call the guard.
 pub fn is_user_renameable(name: &str) -> bool {
     if name.is_empty() {
         return false;
@@ -269,37 +269,23 @@ fn is_silt_keyword(name: &str) -> bool {
 
 // Builtin constructor rejection consults `module::all_builtin_constructor_names`
 // so new gated variants (e.g. `IoNotFound`, `PgConnect`, `Recv`/`Send`) are
-// picked up automatically. Parity-lock test in
-// `tests/meta/builtin_constructor_parity_tests.rs` guards the coupling.
+// picked up automatically.
 
 /// Combined list of every reserved global identifier — built-in
 /// free functions plus every name in [`builtin_types::BUILTIN_TYPES`]
-/// plus every stdlib record/enum name in
-/// [`module::BUILTIN_STDLIB_TYPE_NAMES`].
-/// Computed once on first access via [`OnceLock`]; the `&[&str]`
-/// surface mirrors the previous hand-rolled constant so existing
-/// callers keep working unchanged.
-///
-/// Free-function entries (`print`/`println`/`panic`) come from
-/// `module::builtin_free_function_names()` so adding a new global
-/// free function in the typechecker registers everywhere. Type-name
-/// entries are derived from `crate::types::builtins::iter_all()` so
-/// additions to that authoritative table propagate here automatically.
-/// Stdlib record/enum type-name entries (e.g. `FileStat`, `Date`,
-/// `Response`) come from `module::BUILTIN_STDLIB_TYPE_NAMES` so the
-/// LSP cannot silently rewrite a stdlib type when the user renames a
-/// like-named binding — see DX-GAP-1 (round 82) for background. The
-/// feature-gated entries (`PgError`, `TcpError`) are always rejected
-/// regardless of the active feature set: a build without `postgres`
-/// still rejects renaming `PgError` since the user may flip features.
-/// Parity lock: `tests/typecheck/round82_stdlib_types_registry_tests.rs`.
+/// plus every record and enum the builtin modules declare
+/// ([`module::builtin_module_types`]: `FileStat`, `Date`, `Response`,
+/// ...), so the LSP cannot rewrite a stdlib type when the user renames
+/// a like-named binding. The types of a module whose cargo feature is
+/// not built (`PgError`) are rejected too: the user may flip features.
+/// Computed once on first access.
 pub(crate) fn builtin_globals() -> &'static [&'static str] {
     static GLOBALS: OnceLock<Vec<&'static str>> = OnceLock::new();
     GLOBALS
         .get_or_init(|| {
             let mut v: Vec<&'static str> = module::builtin_free_function_names().to_vec();
             v.extend(builtin_types::iter_all().map(|b| b.name));
-            v.extend(module::BUILTIN_STDLIB_TYPE_NAMES.iter().copied());
+            v.extend(module::builtin_module_types().iter().copied());
             v
         })
         .as_slice()

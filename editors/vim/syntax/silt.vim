@@ -16,9 +16,9 @@ syntax keyword siltBoolean true false
 " type-annotation position. Keep in sync with the lock test at
 " tests/editor_grammar_primitives_tests.rs.
 syntax keyword siltType Int Float Bool String Unit List Range Map Set Channel Tuple Fn Fun Handle Bytes TcpListener TcpStream
-" Stdlib record / enum nominal types (round 82 DX-GAP-1). Sourced from
-" `src/module.rs::BUILTIN_STDLIB_TYPE_NAMES`. Parity lock at
-" tests/round82_stdlib_types_registry_tests.rs.
+" The record and enum types the builtin modules declare
+" (`silt::module::builtin_module_types`). Lock test at
+" tests/meta/editor_grammar_primitives_tests.rs.
 syntax keyword siltType FileStat Instant Date Time DateTime Duration Weekday Method Response Request
 syntax keyword siltType IoError JsonError TomlError ParseError HttpError RegexError TimeError BytesError ChannelError PgError TcpError
 

@@ -5,7 +5,7 @@
 //! (match arms, let-destructuring, function parameters, etc.).
 
 use crate::ast::{Pattern, PatternKind};
-use crate::bytecode::Op;
+use crate::bytecode::{Asm, Label};
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::Span;
 use crate::value::Value;
@@ -18,15 +18,14 @@ impl Compiler {
     /// value on TOS and return the failure jump. The pattern `()` has no
     /// elements and matches the unit value, which is not a tuple at run
     /// time. Shared by both pattern-test compilers below.
-    fn emit_tuple_shape_test(&mut self, len: usize, span: Span) -> Result<usize, Diagnostic> {
+    fn emit_tuple_shape_test(&mut self, len: usize, span: Span) -> Result<Label, Diagnostic> {
         if len == 0 {
             let unit = self.add_constant(Value::Unit, span)?;
-            self.current_chunk().emit_op_u16(Op::TestEqual, unit, span);
+            self.emit(Asm::TestEqual { k: unit }, span)?;
         } else {
-            self.current_chunk().emit_op(Op::TestTupleLen, span);
-            self.current_chunk().emit_u8(len as u8, span);
+            self.emit(Asm::TestTupleLen { len }, span)?;
         }
-        Ok(self.current_chunk().emit_jump(Op::JumpIfFalse, span))
+        self.jump_if_false(span)
     }
 
     // ── Recursive pattern test ───────────────────────────────────
@@ -39,7 +38,7 @@ impl Compiler {
         &mut self,
         pattern: &Pattern,
         span: Span,
-    ) -> Result<Vec<usize>, Diagnostic> {
+    ) -> Result<Vec<Label>, Diagnostic> {
         match &pattern.kind {
             PatternKind::Wildcard | PatternKind::Ident(_) => {
                 // Always matches, no test needed
@@ -48,29 +47,29 @@ impl Compiler {
 
             PatternKind::Int(n) => {
                 let idx = self.add_constant(Value::Int(*n), span)?;
-                self.current_chunk().emit_op_u16(Op::TestEqual, idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::TestEqual { k: idx }, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![jump])
             }
 
             PatternKind::Float(n) => {
                 let idx = self.add_constant(Value::Float(*n), span)?;
-                self.current_chunk().emit_op_u16(Op::TestEqual, idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::TestEqual { k: idx }, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![jump])
             }
 
             PatternKind::Bool(b) => {
-                self.current_chunk().emit_op(Op::TestBool, span);
-                self.current_chunk().emit_u8(if *b { 1 } else { 0 }, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let idx = self.add_constant(Value::Bool(*b), span)?;
+                self.emit(Asm::TestEqual { k: idx }, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![jump])
             }
 
             PatternKind::StringLit(s, _) => {
                 let idx = self.add_constant(Value::String(s.clone()), span)?;
-                self.current_chunk().emit_op_u16(Op::TestEqual, idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::TestEqual { k: idx }, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![jump])
             }
 
@@ -80,18 +79,17 @@ impl Compiler {
                 // Test: is it this variant?
                 let tag = self.pattern_tag(pattern.res, *name, span)?;
                 let idx = self.add_constant(Value::VariantConstructor(tag), span)?;
-                self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
-                let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::TestTag { tag: idx }, span)?;
+                let tag_jump = self.jump_if_false(span)?;
                 let mut all_jumps = vec![tag_jump];
 
                 // Test nested field patterns
                 for (i, field_pat) in fields.iter().enumerate() {
                     if !self.pattern_is_irrefutable(field_pat) {
                         // Destructure to get sub-value, test it, then pop
-                        self.current_chunk().emit_op(Op::DestructVariant, span);
-                        self.current_chunk().emit_u8(i as u8, span);
+                        self.emit(Asm::DestructVariant { index: i }, span)?;
                         let sub_fails = self.compile_pattern_test(field_pat, span)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -114,10 +112,9 @@ impl Compiler {
                 // Test nested element patterns
                 for (i, pat) in pats.iter().enumerate() {
                     if !self.pattern_is_irrefutable(pat) {
-                        self.current_chunk().emit_op(Op::DestructTuple, span);
-                        self.current_chunk().emit_u8(i as u8, span);
+                        self.emit(Asm::DestructTuple { index: i }, span)?;
                         let sub_fails = self.compile_pattern_test(pat, span)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -126,27 +123,24 @@ impl Compiler {
             }
 
             PatternKind::List(elements, rest) => {
-                let elem_count = elements.len() as u8;
+                let elem_count = elements.len();
 
                 if rest.is_some() {
                     // [h, ..t] — at least elem_count elements
-                    self.current_chunk().emit_op(Op::TestListMin, span);
-                    self.current_chunk().emit_u8(elem_count, span);
+                    self.emit(Asm::TestListMin { len: elem_count }, span)?;
                 } else {
                     // [a, b, c] — exactly elem_count elements
-                    self.current_chunk().emit_op(Op::TestListExact, span);
-                    self.current_chunk().emit_u8(elem_count, span);
+                    self.emit(Asm::TestListExact { len: elem_count }, span)?;
                 }
-                let len_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let len_jump = self.jump_if_false(span)?;
                 let mut all_jumps = vec![len_jump];
 
                 // Test nested element patterns
                 for (i, pat) in elements.iter().enumerate() {
                     if !self.pattern_is_irrefutable(pat) {
-                        self.current_chunk().emit_op(Op::DestructList, span);
-                        self.current_chunk().emit_u8(i as u8, span);
+                        self.emit(Asm::DestructList { index: i }, span)?;
                         let sub_fails = self.compile_pattern_test(pat, span)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -155,10 +149,9 @@ impl Compiler {
                 if let Some(rest_pat) = rest
                     && !self.pattern_is_irrefutable(rest_pat)
                 {
-                    self.current_chunk().emit_op(Op::DestructListRest, span);
-                    self.current_chunk().emit_u8(elem_count, span);
+                    self.emit(Asm::DestructListRest { start: elem_count }, span)?;
                     let sub_fails = self.compile_pattern_test(rest_pat, span)?;
-                    self.current_chunk().emit_op(Op::Pop, span);
+                    self.emit(Asm::Pop, span)?;
                     all_jumps.extend(sub_fails);
                 }
 
@@ -172,9 +165,8 @@ impl Compiler {
                 if let Some(type_name) = name {
                     let ty = self.record_type(pattern.res, *type_name, span)?;
                     let idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::TestRecordTag, idx, span);
-                    let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                    self.emit(Asm::TestRecordTag { ty: idx }, span)?;
+                    let tag_jump = self.jump_if_false(span)?;
                     all_jumps.push(tag_jump);
                 }
 
@@ -187,10 +179,9 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::DestructRecordField, field_idx, span);
+                        self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
                         let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -209,10 +200,9 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::DestructRecordField, field_idx, span);
+                        self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
                         let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -222,20 +212,28 @@ impl Compiler {
             PatternKind::Range(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Int(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Int(*hi), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::TestIntRange, lo_idx, span);
-                self.current_chunk().emit_u16(hi_idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(
+                    Asm::TestIntRange {
+                        lo: lo_idx,
+                        hi: hi_idx,
+                    },
+                    span,
+                )?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![jump])
             }
 
             PatternKind::FloatRange(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Float(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Float(*hi), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::TestFloatRange, lo_idx, span);
-                self.current_chunk().emit_u16(hi_idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(
+                    Asm::TestFloatRange {
+                        lo: lo_idx,
+                        hi: hi_idx,
+                    },
+                    span,
+                )?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![jump])
             }
 
@@ -266,7 +264,7 @@ impl Compiler {
 
                     if i < alternatives.len() - 1 {
                         // Not the last alt: if it matched, jump to success
-                        let success = self.current_chunk().emit_jump(Op::Jump, span);
+                        let success = self.jump(span)?;
                         success_jumps.push(success);
 
                         // Emit cleanup trampolines for each distinct
@@ -279,43 +277,11 @@ impl Compiler {
                         //   depth-2 trampoline: Pop     ; falls through
                         //   depth-1 trampoline: Pop     ; falls through
                         //   depth-0 target:     <next alt code>
-                        let max_depth = sub_fails.iter().map(|&(_, d)| d).max().unwrap_or(0);
-
-                        // Build trampolines from highest depth down to 1.
-                        // trampoline_starts[d] = code offset where the
-                        // depth-d trampoline begins.
-                        let mut trampoline_starts: Vec<(usize, usize)> = Vec::new();
-                        for d in (1..=max_depth).rev() {
-                            let start = self.current_chunk().emit_op(Op::Pop, span);
-                            trampoline_starts.push((d, start));
-                        }
-                        // Depth-0 failures (and the end of trampolines)
-                        // land here — right at the next alternative's test
-                        // code.
-                        let next_alt_offset = self.current_chunk().len();
-
-                        // Patch each failure jump to its trampoline (or
-                        // directly to the next alt for depth 0).
-                        for (fj, depth) in sub_fails {
-                            if depth == 0 {
-                                self.current_chunk()
-                                    .patch_jump_to(fj, next_alt_offset)
-                                    .map_err(|msg| {
-                                        Diagnostic::error(Code::CompileLimit, span, msg)
-                                    })?;
-                            } else {
-                                let target = trampoline_starts
-                                    .iter()
-                                    .find(|&&(d, _)| d == depth)
-                                    .unwrap()
-                                    .1;
-                                self.current_chunk()
-                                    .patch_jump_to(fj, target)
-                                    .map_err(|msg| {
-                                        Diagnostic::error(Code::CompileLimit, span, msg)
-                                    })?;
-                            }
-                        }
+                        // Each failure jump lands on the trampoline of
+                        // its depth; depth-0 failures (and the end of the
+                        // trampolines) land right at the next
+                        // alternative's test code.
+                        self.emit_trampolines(&sub_fails, 0, span)?;
                     } else {
                         // Last alt: its failures are the overall failures.
                         // Need the same cleanup treatment so the caller's
@@ -330,39 +296,25 @@ impl Compiler {
                             // the success path.  Without this, success
                             // falls through the trampoline Pops and
                             // corrupts the stack.
-                            let success_skip = self.current_chunk().emit_jump(Op::Jump, span);
+                            let success_skip = self.jump(span)?;
 
                             // Emit cleanup trampolines, then a single
                             // Jump that becomes the returned fail_jump.
-                            let mut trampoline_starts: Vec<(usize, usize)> = Vec::new();
-                            for d in (1..=max_depth).rev() {
-                                let start = self.current_chunk().emit_op(Op::Pop, span);
-                                trampoline_starts.push((d, start));
-                            }
-                            let exit_jump = self.current_chunk().emit_jump(Op::Jump, span);
+                            let deep: Vec<(Label, usize)> =
+                                sub_fails.iter().copied().filter(|(_, d)| *d > 0).collect();
+                            self.emit_trampolines(&deep, 0, span)?;
+                            let exit_jump = self.jump(span)?;
 
                             // Patch success_skip to land here (after the
                             // trampolines), so the success path resumes
                             // normally.
-                            self.patch_jump(success_skip, span)?;
+                            self.bind(success_skip, span)?;
 
-                            let mut depth0_jumps = Vec::new();
-                            for (fj, depth) in sub_fails {
-                                if depth == 0 {
-                                    depth0_jumps.push(fj);
-                                } else {
-                                    let target = trampoline_starts
-                                        .iter()
-                                        .find(|&&(d, _)| d == depth)
-                                        .unwrap()
-                                        .1;
-                                    self.current_chunk().patch_jump_to(fj, target).map_err(
-                                        |msg| Diagnostic::error(Code::CompileLimit, span, msg),
-                                    )?;
-                                }
-                            }
-
-                            fail_jumps = depth0_jumps;
+                            fail_jumps = sub_fails
+                                .into_iter()
+                                .filter(|(_, d)| *d == 0)
+                                .map(|(j, _)| j)
+                                .collect();
                             fail_jumps.push(exit_jump);
                         }
                     }
@@ -370,7 +322,7 @@ impl Compiler {
 
                 // Patch all success jumps to here
                 for sj in success_jumps {
-                    self.patch_jump(sj, span)?;
+                    self.bind(sj, span)?;
                 }
 
                 Ok(fail_jumps)
@@ -383,14 +335,18 @@ impl Compiler {
                 // After: scrutinee remains on stack below the bool result.
 
                 // Dup the scrutinee
-                self.current_chunk().emit_op(Op::Dup, span);
+                self.emit(Asm::Dup, span)?;
 
                 // Push the pin value
                 if let Some(slot) = self.resolve_local(*name) {
-                    self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
+                    self.emit(Asm::GetLocal { slot }, span)?;
                 } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
-                    self.current_chunk().emit_op(Op::GetUpvalue, span);
-                    self.current_chunk().emit_u8(idx, span);
+                    self.emit(
+                        Asm::GetUpvalue {
+                            index: usize::from(idx),
+                        },
+                        span,
+                    )?;
                 } else if let Some(def) = self.value_def(pattern.res) {
                     self.emit_global_value(def, span)?;
                 } else {
@@ -398,9 +354,9 @@ impl Compiler {
                 }
 
                 // Stack: [... scrutinee, scrutinee_copy, pin_value]
-                self.current_chunk().emit_op(Op::Eq, span);
+                self.emit(Asm::Eq, span)?;
                 // Stack: [... scrutinee, bool_result]
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![jump])
             }
 
@@ -410,18 +366,16 @@ impl Compiler {
                 for (key, sub_pat) in entries {
                     // Test if key exists
                     let key_idx = self.add_constant(Value::String(key.clone()), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::TestMapHasKey, key_idx, span);
-                    let key_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                    self.emit(Asm::TestMapHasKey { key: key_idx }, span)?;
+                    let key_jump = self.jump_if_false(span)?;
                     all_jumps.push(key_jump);
 
                     // Test sub-pattern if refutable
                     if !self.pattern_is_irrefutable(sub_pat) {
                         let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::DestructMapValue, key_idx2, span);
+                        self.emit(Asm::DestructMapValue { key: key_idx2 }, span)?;
                         let sub_fails = self.compile_pattern_test(sub_pat, span)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -446,7 +400,7 @@ impl Compiler {
         pattern: &Pattern,
         span: Span,
         base_depth: usize,
-    ) -> Result<Vec<(usize, usize)>, Diagnostic> {
+    ) -> Result<Vec<(Label, usize)>, Diagnostic> {
         match &pattern.kind {
             // ── Simple (leaf) patterns ──────────────────────────
             // These never push intermediate Destruct values, so the
@@ -455,66 +409,78 @@ impl Compiler {
 
             PatternKind::Int(n) => {
                 let idx = self.add_constant(Value::Int(*n), span)?;
-                self.current_chunk().emit_op_u16(Op::TestEqual, idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::TestEqual { k: idx }, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
             }
 
             PatternKind::Float(n) => {
                 let idx = self.add_constant(Value::Float(*n), span)?;
-                self.current_chunk().emit_op_u16(Op::TestEqual, idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::TestEqual { k: idx }, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
             }
 
             PatternKind::Bool(b) => {
-                self.current_chunk().emit_op(Op::TestBool, span);
-                self.current_chunk().emit_u8(if *b { 1 } else { 0 }, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let idx = self.add_constant(Value::Bool(*b), span)?;
+                self.emit(Asm::TestEqual { k: idx }, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
             }
 
             PatternKind::StringLit(s, _) => {
                 let idx = self.add_constant(Value::String(s.clone()), span)?;
-                self.current_chunk().emit_op_u16(Op::TestEqual, idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::TestEqual { k: idx }, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
             }
 
             PatternKind::Range(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Int(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Int(*hi), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::TestIntRange, lo_idx, span);
-                self.current_chunk().emit_u16(hi_idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(
+                    Asm::TestIntRange {
+                        lo: lo_idx,
+                        hi: hi_idx,
+                    },
+                    span,
+                )?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
             }
 
             PatternKind::FloatRange(lo, hi) => {
                 let lo_idx = self.add_constant(Value::Float(*lo), span)?;
                 let hi_idx = self.add_constant(Value::Float(*hi), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::TestFloatRange, lo_idx, span);
-                self.current_chunk().emit_u16(hi_idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(
+                    Asm::TestFloatRange {
+                        lo: lo_idx,
+                        hi: hi_idx,
+                    },
+                    span,
+                )?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
             }
 
             PatternKind::Pin(name) => {
-                self.current_chunk().emit_op(Op::Dup, span);
+                self.emit(Asm::Dup, span)?;
                 if let Some(slot) = self.resolve_local(*name) {
-                    self.current_chunk().emit_op_u16(Op::GetLocal, slot, span);
+                    self.emit(Asm::GetLocal { slot }, span)?;
                 } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
-                    self.current_chunk().emit_op(Op::GetUpvalue, span);
-                    self.current_chunk().emit_u8(idx, span);
+                    self.emit(
+                        Asm::GetUpvalue {
+                            index: usize::from(idx),
+                        },
+                        span,
+                    )?;
                 } else if let Some(def) = self.value_def(pattern.res) {
                     self.emit_global_value(def, span)?;
                 } else {
                     return Err(name_without_binding(span, *name));
                 }
-                self.current_chunk().emit_op(Op::Eq, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::Eq, span)?;
+                let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
             }
 
@@ -525,17 +491,16 @@ impl Compiler {
             } => {
                 let tag = self.pattern_tag(pattern.res, *name, span)?;
                 let idx = self.add_constant(Value::VariantConstructor(tag), span)?;
-                self.current_chunk().emit_op_u16(Op::TestTag, idx, span);
-                let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                self.emit(Asm::TestTag { tag: idx }, span)?;
+                let tag_jump = self.jump_if_false(span)?;
                 let mut all_jumps = vec![(tag_jump, base_depth)];
 
                 for (i, field_pat) in fields.iter().enumerate() {
                     if !self.pattern_is_irrefutable(field_pat) {
-                        self.current_chunk().emit_op(Op::DestructVariant, span);
-                        self.current_chunk().emit_u8(i as u8, span);
+                        self.emit(Asm::DestructVariant { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(field_pat, span, base_depth + 1)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -556,11 +521,10 @@ impl Compiler {
 
                 for (i, pat) in pats.iter().enumerate() {
                     if !self.pattern_is_irrefutable(pat) {
-                        self.current_chunk().emit_op(Op::DestructTuple, span);
-                        self.current_chunk().emit_u8(i as u8, span);
+                        self.emit(Asm::DestructTuple { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(pat, span, base_depth + 1)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -569,24 +533,21 @@ impl Compiler {
             }
 
             PatternKind::List(elements, rest) => {
-                let elem_count = elements.len() as u8;
+                let elem_count = elements.len();
                 if rest.is_some() {
-                    self.current_chunk().emit_op(Op::TestListMin, span);
-                    self.current_chunk().emit_u8(elem_count, span);
+                    self.emit(Asm::TestListMin { len: elem_count }, span)?;
                 } else {
-                    self.current_chunk().emit_op(Op::TestListExact, span);
-                    self.current_chunk().emit_u8(elem_count, span);
+                    self.emit(Asm::TestListExact { len: elem_count }, span)?;
                 }
-                let len_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let len_jump = self.jump_if_false(span)?;
                 let mut all_jumps = vec![(len_jump, base_depth)];
 
                 for (i, pat) in elements.iter().enumerate() {
                     if !self.pattern_is_irrefutable(pat) {
-                        self.current_chunk().emit_op(Op::DestructList, span);
-                        self.current_chunk().emit_u8(i as u8, span);
+                        self.emit(Asm::DestructList { index: i }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(pat, span, base_depth + 1)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -594,11 +555,10 @@ impl Compiler {
                 if let Some(rest_pat) = rest
                     && !self.pattern_is_irrefutable(rest_pat)
                 {
-                    self.current_chunk().emit_op(Op::DestructListRest, span);
-                    self.current_chunk().emit_u8(elem_count, span);
+                    self.emit(Asm::DestructListRest { start: elem_count }, span)?;
                     let sub_fails =
                         self.compile_pattern_test_tracked(rest_pat, span, base_depth + 1)?;
-                    self.current_chunk().emit_op(Op::Pop, span);
+                    self.emit(Asm::Pop, span)?;
                     all_jumps.extend(sub_fails);
                 }
 
@@ -611,9 +571,8 @@ impl Compiler {
                 if let Some(type_name) = name {
                     let ty = self.record_type(pattern.res, *type_name, span)?;
                     let idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::TestRecordTag, idx, span);
-                    let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                    self.emit(Asm::TestRecordTag { ty: idx }, span)?;
+                    let tag_jump = self.jump_if_false(span)?;
                     all_jumps.push((tag_jump, base_depth));
                 }
 
@@ -625,11 +584,10 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::DestructRecordField, field_idx, span);
+                        self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -647,11 +605,10 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(sub_pattern) {
                         let field_idx =
                             self.add_constant(Value::String(resolve(*field_name)), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::DestructRecordField, field_idx, span);
+                        self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -663,18 +620,16 @@ impl Compiler {
 
                 for (key, sub_pat) in entries {
                     let key_idx = self.add_constant(Value::String(key.clone()), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::TestMapHasKey, key_idx, span);
-                    let key_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                    self.emit(Asm::TestMapHasKey { key: key_idx }, span)?;
+                    let key_jump = self.jump_if_false(span)?;
                     all_jumps.push((key_jump, base_depth));
 
                     if !self.pattern_is_irrefutable(sub_pat) {
                         let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
-                        self.current_chunk()
-                            .emit_op_u16(Op::DestructMapValue, key_idx2, span);
+                        self.emit(Asm::DestructMapValue { key: key_idx2 }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pat, span, base_depth + 1)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                         all_jumps.extend(sub_fails);
                     }
                 }
@@ -691,42 +646,10 @@ impl Compiler {
                     let sub_fails = self.compile_pattern_test_tracked(alt, span, base_depth)?;
 
                     if i < alternatives.len() - 1 {
-                        let success = self.current_chunk().emit_jump(Op::Jump, span);
+                        let success = self.jump(span)?;
                         success_jumps.push(success);
 
-                        let max_depth = sub_fails
-                            .iter()
-                            .map(|&(_, d)| d)
-                            .max()
-                            .unwrap_or(base_depth);
-
-                        let mut trampoline_starts: Vec<(usize, usize)> = Vec::new();
-                        for d in (base_depth + 1..=max_depth).rev() {
-                            let start = self.current_chunk().emit_op(Op::Pop, span);
-                            trampoline_starts.push((d, start));
-                        }
-                        let next_alt_offset = self.current_chunk().len();
-
-                        for (fj, depth) in sub_fails {
-                            if depth <= base_depth {
-                                self.current_chunk()
-                                    .patch_jump_to(fj, next_alt_offset)
-                                    .map_err(|msg| {
-                                        Diagnostic::error(Code::CompileLimit, span, msg)
-                                    })?;
-                            } else {
-                                let target = trampoline_starts
-                                    .iter()
-                                    .find(|&&(d, _)| d == depth)
-                                    .unwrap()
-                                    .1;
-                                self.current_chunk()
-                                    .patch_jump_to(fj, target)
-                                    .map_err(|msg| {
-                                        Diagnostic::error(Code::CompileLimit, span, msg)
-                                    })?;
-                            }
-                        }
+                        self.emit_trampolines(&sub_fails, base_depth, span)?;
                     } else {
                         // Last alternative
                         let max_depth = sub_fails
@@ -739,47 +662,62 @@ impl Compiler {
                             fail_jumps = sub_fails;
                         } else {
                             // Skip over trampolines on success path.
-                            let success_skip = self.current_chunk().emit_jump(Op::Jump, span);
+                            let success_skip = self.jump(span)?;
 
-                            let mut trampoline_starts: Vec<(usize, usize)> = Vec::new();
-                            for d in (base_depth + 1..=max_depth).rev() {
-                                let start = self.current_chunk().emit_op(Op::Pop, span);
-                                trampoline_starts.push((d, start));
-                            }
-                            let exit_jump = self.current_chunk().emit_jump(Op::Jump, span);
+                            let deep: Vec<(Label, usize)> = sub_fails
+                                .iter()
+                                .copied()
+                                .filter(|(_, d)| *d > base_depth)
+                                .collect();
+                            self.emit_trampolines(&deep, base_depth, span)?;
+                            let exit_jump = self.jump(span)?;
 
                             // Patch success_skip to land after trampolines.
-                            self.patch_jump(success_skip, span)?;
+                            self.bind(success_skip, span)?;
 
-                            let mut base_jumps: Vec<(usize, usize)> = Vec::new();
-                            for (fj, depth) in sub_fails {
-                                if depth <= base_depth {
-                                    base_jumps.push((fj, depth));
-                                } else {
-                                    let target = trampoline_starts
-                                        .iter()
-                                        .find(|&&(d, _)| d == depth)
-                                        .unwrap()
-                                        .1;
-                                    self.current_chunk().patch_jump_to(fj, target).map_err(
-                                        |msg| Diagnostic::error(Code::CompileLimit, span, msg),
-                                    )?;
-                                }
-                            }
-
-                            fail_jumps = base_jumps;
+                            fail_jumps = sub_fails
+                                .into_iter()
+                                .filter(|(_, d)| *d <= base_depth)
+                                .collect();
                             fail_jumps.push((exit_jump, base_depth));
                         }
                     }
                 }
 
                 for sj in success_jumps {
-                    self.patch_jump(sj, span)?;
+                    self.bind(sj, span)?;
                 }
 
                 Ok(fail_jumps)
             }
         }
+    }
+
+    /// Emit the cleanup trampolines of the failure jumps `fails` of a
+    /// pattern test, each with the number of sub-values its failed test
+    /// leaves above the value under test, of which `base_depth` were
+    /// there before the test: one `Pop` per depth above `base_depth`,
+    /// from the deepest down. A jump lands on the `Pop` of its depth
+    /// and runs the ones after it too, so every failure arrives after
+    /// the trampolines with only the `base_depth` sub-values left. A
+    /// jump no deeper than `base_depth` lands after them.
+    fn emit_trampolines(
+        &mut self,
+        fails: &[(Label, usize)],
+        base_depth: usize,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let max_depth = fails.iter().map(|&(_, d)| d).max().unwrap_or(base_depth);
+        for depth in (base_depth + 1..=max_depth).rev() {
+            for (jump, _) in fails.iter().filter(|(_, d)| *d == depth) {
+                self.bind(*jump, span)?;
+            }
+            self.emit(Asm::Pop, span)?;
+        }
+        for (jump, _) in fails.iter().filter(|(_, d)| *d <= base_depth) {
+            self.bind(*jump, span)?;
+        }
+        Ok(())
     }
 
     // ── Pattern bind in a position without an alternative ───────
@@ -804,43 +742,37 @@ impl Compiler {
             return self.compile_pattern_bind(pattern, span);
         }
         // The value is the local on top of the frame.
-        let value_slot = super::frame_slot(self.ctx().height.saturating_sub(1), span)?;
+        let value_slot = self.emitter().height().saturating_sub(1);
 
         // Test the pattern and keep the outcome as a hidden local.
         let fail_jumps = self.compile_pattern_test(pattern, span)?;
-        self.current_chunk().emit_op(Op::True, span);
-        let tested = self.current_chunk().emit_jump(Op::Jump, span);
+        self.emit(Asm::True, span)?;
+        let tested = self.jump(span)?;
         for fail_jump in fail_jumps {
-            self.patch_jump(fail_jump, span)?;
+            self.bind(fail_jump, span)?;
         }
         // A failed test of a nested pattern leaves the sub-values it was
         // looking at above the value; drop them.
-        self.current_chunk()
-            .emit_op_u16(Op::GetLocal, value_slot, span);
-        self.current_chunk()
-            .emit_op_u16(Op::Slide, value_slot, span);
-        self.current_chunk().emit_op(Op::False, span);
-        self.patch_jump(tested, span)?;
+        self.emit(Asm::GetLocal { slot: value_slot }, span)?;
+        self.emit(Asm::Slide { slot: value_slot }, span)?;
+        self.emit(Asm::False, span)?;
+        self.bind(tested, span)?;
         let matched_slot = self.add_local(intern("__bind_matched__"), span)?;
 
         // Bind from a copy of the value, which is on TOS again.
-        self.current_chunk()
-            .emit_op_u16(Op::GetLocal, value_slot, span);
-        self.add_local(intern("__bind_src__"), span)?;
+        self.emit(Asm::GetLocal { slot: value_slot }, span)?;
         self.compile_pattern_bind(pattern, span)?;
 
         // The destructuring went through. Stop if the test had failed.
-        self.current_chunk()
-            .emit_op_u16(Op::GetLocal, matched_slot, span);
-        let matched = self.current_chunk().emit_jump(Op::JumpIfTrue, span);
+        self.emit(Asm::GetLocal { slot: matched_slot }, span)?;
+        let matched = self.jump_if_true(span)?;
         let message = self.add_constant(
             Value::String("the value does not match the pattern it is bound to".into()),
             span,
         )?;
-        self.current_chunk()
-            .emit_op_u16(Op::Constant, message, span);
-        self.current_chunk().emit_op(Op::Panic, span);
-        self.patch_jump(matched, span)?;
+        self.emit(Asm::Constant { k: message }, span)?;
+        self.emit(Asm::Panic, span)?;
+        self.bind(matched, span)?;
         Ok(())
     }
 
@@ -873,11 +805,10 @@ impl Compiler {
     //
     // Emit binding opcodes for a pattern after test has succeeded.
     //
-    // Contract: the value to bind from is on TOS and is counted in the
-    // frame height (it is a local, usually a hidden one). After this
-    // call the value is still in its slot, and every value pushed here
-    // is a local above it: the named ones the pattern binds, and hidden
-    // ones for the copies and sub-values the destructuring went through.
+    // Contract: the value to bind from is on TOS. After this call the
+    // value is still in its slot, and every value pushed here stays in
+    // the frame above it: the named locals the pattern binds, and the
+    // copies and sub-values the destructuring went through.
     //
     // Stack layout for a compound pattern like (a, b):
     //   Before: [..., tuple]
@@ -892,9 +823,9 @@ impl Compiler {
         match &pattern.kind {
             PatternKind::Ident(name) => {
                 // Dup the value, the dup'd copy becomes the local's stack slot.
-                self.current_chunk().emit_op(Op::Dup, span);
+                self.emit(Asm::Dup, span)?;
                 let slot = self.add_local(*name, span)?;
-                self.current_chunk().emit_op_u16(Op::SetLocal, slot, span);
+                self.emit(Asm::SetLocal { slot }, span)?;
             }
 
             PatternKind::Constructor { args: fields, .. } => {
@@ -904,7 +835,7 @@ impl Compiler {
                         .enumerate()
                         .filter_map(|(i, pat)| {
                             if self.pattern_has_bindings(pat) {
-                                Some((BindDestructKind::Variant(i as u8), pat.clone()))
+                                Some((BindDestructKind::Variant(i), pat.clone()))
                             } else {
                                 None
                             }
@@ -927,7 +858,7 @@ impl Compiler {
                         .enumerate()
                         .filter_map(|(i, pat)| {
                             if self.pattern_has_bindings(pat) {
-                                Some((BindDestructKind::Tuple(i as u8), pat.clone()))
+                                Some((BindDestructKind::Tuple(i), pat.clone()))
                             } else {
                                 None
                             }
@@ -938,19 +869,12 @@ impl Compiler {
             }
 
             PatternKind::List(elements, rest) => {
-                if elements.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        "list pattern cannot have more than 255 elements",
-                    ));
-                }
                 let mut items: Vec<(BindDestructKind, Pattern)> = elements
                     .iter()
                     .enumerate()
                     .filter_map(|(i, pat)| {
                         if self.pattern_has_bindings(pat) {
-                            Some((BindDestructKind::List(i as u8), pat.clone()))
+                            Some((BindDestructKind::List(i), pat.clone()))
                         } else {
                             None
                         }
@@ -960,7 +884,7 @@ impl Compiler {
                     && self.pattern_has_bindings(rest_pat)
                 {
                     items.push((
-                        BindDestructKind::ListRest(elements.len() as u8),
+                        BindDestructKind::ListRest(elements.len()),
                         (**rest_pat).clone(),
                     ));
                 }
@@ -1091,10 +1015,9 @@ impl Compiler {
                 //
                 // TOS = scrutinee on entry. Save it to a hidden local so each
                 // alternative can fetch a fresh copy for its test+bind.
-                self.current_chunk().emit_op(Op::Dup, span);
+                self.emit(Asm::Dup, span)?;
                 let scrut_slot = self.add_local(intern("__or_bind_scrut__"), span)?;
-                self.current_chunk()
-                    .emit_op_u16(Op::SetLocal, scrut_slot, span);
+                self.emit(Asm::SetLocal { slot: scrut_slot }, span)?;
 
                 // Reserve one result slot per bound name (deterministic
                 // order from the BTreeSet). Each alternative writes the value
@@ -1104,7 +1027,7 @@ impl Compiler {
                 let names: Vec<Symbol> = expected.iter().copied().collect();
                 let mut result_slots = Vec::with_capacity(names.len());
                 for name in &names {
-                    self.current_chunk().emit_op(Op::Unit, span);
+                    self.emit(Asm::Unit, span)?;
                     let slot = self.add_local(*name, span)?;
                     result_slots.push(slot);
                 }
@@ -1112,15 +1035,13 @@ impl Compiler {
                 // Baseline: everything pushed past this point by an
                 // alternative's test/bind is a temporary to be cleaned up.
                 let baseline_locals = self.ctx().locals.len();
-                let baseline_height = self.ctx().height;
+                let baseline_height = self.emitter().height();
 
                 let mut end_jumps = Vec::new();
                 let last = alternatives.len() - 1;
                 for (i, alt) in alternatives.iter().enumerate() {
                     // Fetch a fresh scrutinee copy for this alternative.
-                    self.current_chunk()
-                        .emit_op_u16(Op::GetLocal, scrut_slot, span);
-                    self.add_local(intern("__or_alt_src__"), span)?;
+                    self.emit(Asm::GetLocal { slot: scrut_slot }, span)?;
 
                     // Non-last alternatives re-test; the last is the
                     // guaranteed-matching fallthrough.
@@ -1137,61 +1058,48 @@ impl Compiler {
                         let temp = self.resolve_local(*name).expect(
                             "or-pattern alternative must bind every shared name (validated above)",
                         );
-                        self.current_chunk().emit_op_u16(Op::GetLocal, temp, span);
-                        self.current_chunk()
-                            .emit_op_u16(Op::SetLocal, result_slots[ni], span);
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::GetLocal { slot: temp }, span)?;
+                        self.emit(
+                            Asm::SetLocal {
+                                slot: result_slots[ni],
+                            },
+                            span,
+                        )?;
+                        self.emit(Asm::Pop, span)?;
                     }
 
                     // Pop every temporary this alternative pushed (the
                     // scrutinee copy plus all bind intermediates), restoring
-                    // the stack to the baseline. Every value pushed is
-                    // counted in the frame height, so the temp count is
-                    // the growth of the height.
-                    let temps = self.ctx().height - baseline_height;
+                    // the stack to the baseline: the temp count is the
+                    // growth of the frame's height.
+                    let temps = self.emitter().height().saturating_sub(baseline_height);
                     for _ in 0..temps {
-                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.emit(Asm::Pop, span)?;
                     }
                     // Unregister the temporaries so the next alternative
                     // reuses the same slots and the final local state holds
                     // only the result slots.
                     self.ctx_mut().locals.truncate(baseline_locals);
-                    self.ctx_mut().height = baseline_height;
 
                     if i < last {
                         // Success path: skip the remaining alternatives.
-                        let done = self.current_chunk().emit_jump(Op::Jump, span);
+                        let done = self.jump(span)?;
                         end_jumps.push(done);
 
                         // Failure path: clean up any destructure
                         // intermediates (per-depth trampolines), then the
                         // leftover scrutinee copy, before falling through to
                         // the next alternative.
-                        let max_depth = fails.iter().map(|&(_, d)| d).max().unwrap_or(0);
-                        let mut tramp: Vec<(usize, usize)> = Vec::new();
-                        for d in (1..=max_depth).rev() {
-                            let start = self.current_chunk().emit_op(Op::Pop, span);
-                            tramp.push((d, start));
-                        }
+                        self.emit_trampolines(&fails, 0, span)?;
                         // Depth-0 landing: pop the leftover scrutinee copy
                         // that the test peeked but did not consume. The next
                         // alternative's GetLocal follows immediately.
-                        let depth0_pop = self.current_chunk().emit_op(Op::Pop, span);
-                        for (fj, depth) in fails {
-                            let target = if depth == 0 {
-                                depth0_pop
-                            } else {
-                                tramp.iter().find(|&&(d, _)| d == depth).unwrap().1
-                            };
-                            self.current_chunk()
-                                .patch_jump_to(fj, target)
-                                .map_err(|msg| Diagnostic::error(Code::CompileLimit, span, msg))?;
-                        }
+                        self.emit(Asm::Pop, span)?;
                     }
                 }
 
                 for j in end_jumps {
-                    self.patch_jump(j, span)?;
+                    self.bind(j, span)?;
                 }
             }
 
@@ -1213,8 +1121,8 @@ impl Compiler {
     /// Compile bindings for a compound pattern (tuple, constructor, list, record, map).
     ///
     /// The parent value is on TOS. For each sub-pattern that has bindings,
-    /// we GetLocal the parent, Destruct the sub-value, register both
-    /// values as hidden locals, and recurse.
+    /// we GetLocal the parent, Destruct the sub-value, leave both in the
+    /// frame, and recurse.
     ///
     /// This approach "wastes" stack slots for intermediate copies but ensures
     /// local slot numbers always match actual stack positions.
@@ -1229,38 +1137,31 @@ impl Compiler {
 
         // The parent is on TOS. A copy of it becomes a hidden local, read
         // once for every sub-pattern.
-        self.current_chunk().emit_op(Op::Dup, span);
+        self.emit(Asm::Dup, span)?;
         let parent_slot = self.add_local(intern("__bind_parent__"), span)?;
-        self.current_chunk()
-            .emit_op_u16(Op::SetLocal, parent_slot, span);
+        self.emit(Asm::SetLocal { slot: parent_slot }, span)?;
 
         for (kind, sub_pat) in &items {
             // Push the parent value from the known slot
-            self.current_chunk()
-                .emit_op_u16(Op::GetLocal, parent_slot, span);
+            self.emit(Asm::GetLocal { slot: parent_slot }, span)?;
 
             // Destruct to get the sub-value
             match kind {
                 BindDestructKind::Variant(i) => {
-                    self.current_chunk().emit_op(Op::DestructVariant, span);
-                    self.current_chunk().emit_u8(*i, span);
+                    self.emit(Asm::DestructVariant { index: *i }, span)?;
                 }
                 BindDestructKind::Tuple(i) => {
-                    self.current_chunk().emit_op(Op::DestructTuple, span);
-                    self.current_chunk().emit_u8(*i, span);
+                    self.emit(Asm::DestructTuple { index: *i }, span)?;
                 }
                 BindDestructKind::List(i) => {
-                    self.current_chunk().emit_op(Op::DestructList, span);
-                    self.current_chunk().emit_u8(*i, span);
+                    self.emit(Asm::DestructList { index: *i }, span)?;
                 }
                 BindDestructKind::ListRest(start) => {
-                    self.current_chunk().emit_op(Op::DestructListRest, span);
-                    self.current_chunk().emit_u8(*start, span);
+                    self.emit(Asm::DestructListRest { start: *start }, span)?;
                 }
                 BindDestructKind::RecordField(name) => {
                     let field_idx = self.add_constant(Value::String(resolve(*name)), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::DestructRecordField, field_idx, span);
+                    self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
                 }
                 BindDestructKind::RecordRest(names) => {
                     // `Op::DestructRecordRest` pops its input and pushes the
@@ -1268,26 +1169,24 @@ impl Compiler {
                     // destruct opcode to peek+push so that
                     // `[parent_copy, sub_value]` is on the stack afterwards.
                     // Dup the parent_copy first to bridge the contract gap.
-                    self.current_chunk().emit_op(Op::Dup, span);
-                    self.current_chunk().emit_op(Op::DestructRecordRest, span);
-                    self.current_chunk().emit_u8(names.len() as u8, span);
-                    for n in names {
-                        let idx = self.add_constant(Value::String(resolve(*n)), span)?;
-                        self.current_chunk().emit_u16(idx, span);
-                    }
+                    self.emit(Asm::Dup, span)?;
+                    let excluded = self.name_constants(names, span)?;
+                    self.emit(
+                        Asm::DestructRecordRest {
+                            excluded: &excluded,
+                        },
+                        span,
+                    )?;
                 }
                 BindDestructKind::MapValue(key) => {
                     let key_idx = self.add_constant(Value::String(key.clone()), span)?;
-                    self.current_chunk()
-                        .emit_op_u16(Op::DestructMapValue, key_idx, span);
+                    self.emit(Asm::DestructMapValue { key: key_idx }, span)?;
                 }
             }
 
             // Stack: [..., parent_copy_from_GetLocal, sub_value]
-            // Both stay in the frame as hidden locals; the sub-value is
-            // on TOS, as the nested pattern's bind expects.
-            self.add_local(intern("__destruct_copy__"), span)?;
-            self.add_local(intern("__destruct_sub__"), span)?;
+            // Both stay in the frame; the sub-value is on TOS, as the
+            // nested pattern's bind expects.
 
             // Recurse into the sub-pattern for binding
             self.compile_pattern_bind(sub_pat, span)?;

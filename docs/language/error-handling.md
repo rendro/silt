@@ -27,11 +27,8 @@ returns a typed error enum — `IoError`, `JsonError`, `TomlError`,
 and `ChannelError`. Each is a member of its module (`io.IoError`), and
 so are its variants: `io.IoNotFound`, `json.JsonSyntax`,
 `http.HttpTimeout`, and so on. The full
-catalog is registered alongside the builtin signatures in the compiler;
-hover over an error type in your editor (the LSP surfaces the variants
-inline), or consult the per-module reference under `docs/language/`
-and `src/typechecker/builtins/*.rs` for the full list of variants each
-module raises.
+catalog is in [`docs/stdlib/errors.md`](../stdlib/errors.md); hovering
+over an error type in your editor shows the same table.
 
 You can either pattern-match on a specific variant, or fall back to
 `.message()` for a rendered string:

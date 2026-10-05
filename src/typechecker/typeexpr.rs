@@ -585,8 +585,5 @@ impl TypeChecker {
 /// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
 /// has no variants and no fields. `None` for any other builtin type.
 fn opaque_arity(name: &str) -> Option<usize> {
-    crate::defs::OPAQUE_TYPE_ARITY
-        .iter()
-        .find(|(opaque, _)| *opaque == name)
-        .map(|(_, arity)| *arity)
+    crate::defs::opaque_type_arity(name)
 }

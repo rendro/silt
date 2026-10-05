@@ -1,0 +1,76 @@
+error[type]: unknown type 'PgPool'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:8:12
+   |
+ 8 | fn pool(p: PgPool, tx: PgTx, c: PgCursor) -> Int {
+   |            ^^^^^^ unknown type 'PgPool'
+  = help: `PgPool` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: unknown type 'PgTx'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:8:24
+   |
+ 8 | fn pool(p: PgPool, tx: PgTx, c: PgCursor) -> Int {
+   |                        ^^^^ unknown type 'PgTx'
+  = help: `PgTx` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: unknown type 'PgCursor'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:8:33
+   |
+ 8 | fn pool(p: PgPool, tx: PgTx, c: PgCursor) -> Int {
+   |                                 ^^^^^^^^ unknown type 'PgCursor'
+  = help: `PgCursor` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: unknown type 'Value'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:12:12
+    |
+ 12 | fn rows(v: Value, q: QueryResult, e: ExecResult) -> Int {
+    |            ^^^^^ unknown type 'Value'
+  = help: `Value` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: unknown type 'QueryResult'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:12:22
+    |
+ 12 | fn rows(v: Value, q: QueryResult, e: ExecResult) -> Int {
+    |                      ^^^^^^^^^^^ unknown type 'QueryResult'
+  = help: `QueryResult` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: unknown type 'ExecResult'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:12:38
+    |
+ 12 | fn rows(v: Value, q: QueryResult, e: ExecResult) -> Int {
+    |                                      ^^^^^^^^^^ unknown type 'ExecResult'
+  = help: `ExecResult` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: unknown type 'PgPool'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:16:21
+    |
+ 16 | type Holder { pool: PgPool, values: List(Value) }
+    |                     ^^^^^^ unknown type 'PgPool'
+  = help: `PgPool` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: unknown type 'Value'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:16:42
+    |
+ 16 | type Holder { pool: PgPool, values: List(Value) }
+    |                                          ^^^^^ unknown type 'Value'
+  = help: `Value` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: module 'postgres' is not imported
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:19:11
+    |
+ 19 |   println(postgres.uuidv7())
+    |           ^^^^^^^^^^^^^^^ module 'postgres' is not imported
+  = help: module `postgres` is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: unknown type 'PgError'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:20:10
+    |
+ 20 |   let e: PgError = PgClosed
+    |          ^^^^^^^ unknown type 'PgError'
+  = help: `PgError` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+
+error[type]: undefined variable 'PgClosed'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:20:20
+    |
+ 20 |   let e: PgError = PgClosed
+    |                    ^^^^^^^^ undefined variable 'PgClosed'
+  = help: `PgClosed` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`

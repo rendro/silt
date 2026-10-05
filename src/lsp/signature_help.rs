@@ -63,35 +63,42 @@ impl Server {
                 let (label, params_info) = build_signature_from_def(&fn_name, def);
                 (label, params_info, def.doc.clone())
             } else {
-                let sig = self.builtin_sigs.get(&fn_name)?;
-                // Show builtin type signature with per-parameter info when
-                // the registry covers this builtin. Round-71 DX-4 fix: the
-                // pre-round implementation always emitted `vec![]` here,
-                // breaking active-arg highlighting across the entire
-                // stdlib surface. The names come from
-                // `typechecker::builtin_param_names()` — see that registry
-                // for which builtins have coverage. Builtins not in the
-                // registry continue to emit `vec![]` (sigless behavior).
-                //
-                // Phase-2 builtin docs: surface stdlib markdown alongside
-                // the signature so signature-help is a real documentation
-                // surface for builtins, not just a type.
+                // A builtin: the signature of its row in the builtin
+                // registry, with each parameter where the signature
+                // writes it, and the stdlib markdown alongside.
+                let (module, function) = fn_name.split_once('.')?;
+                let (label, ranges) = crate::builtins::registry::registry()
+                    .row(module, function)?
+                    .qualified_signature(module)?;
                 let doc_text = self.builtin_docs.get(&fn_name).cloned();
-                let params_info = self
-                    .builtin_param_names
-                    .get(fn_name.as_str())
-                    .map(|names| {
-                        names
-                            .iter()
-                            .map(|n| ParameterInformation {
-                                label: ParameterLabel::Simple((*n).to_string()),
-                                documentation: None,
-                            })
-                            .collect::<Vec<_>>()
+                let params_info = ranges
+                    .into_iter()
+                    .map(|range| ParameterInformation {
+                        label: ParameterLabel::LabelOffsets(range),
+                        documentation: None,
                     })
-                    .unwrap_or_default();
-                (format!("{fn_name}: {sig}"), params_info, doc_text)
+                    .collect::<Vec<_>>();
+                (label, params_info, doc_text)
             };
+
+        // A client that does not read label offsets gets each
+        // parameter as its text, a substring of the label.
+        let params_info = if self.label_offsets {
+            params_info
+        } else {
+            params_info
+                .into_iter()
+                .map(|p| match p.label {
+                    ParameterLabel::LabelOffsets([start, end]) => ParameterInformation {
+                        label: ParameterLabel::Simple(
+                            label[start as usize..end as usize].to_string(),
+                        ),
+                        documentation: p.documentation,
+                    },
+                    ParameterLabel::Simple(_) => p,
+                })
+                .collect()
+        };
 
         let documentation = doc_text.map(|d| {
             Documentation::MarkupContent(MarkupContent {

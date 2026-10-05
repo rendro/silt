@@ -75,7 +75,7 @@ fn btreemap_keyed_by_distinct_handles_retains_all() {
 
 fn mk_closure(name: &str) -> Value {
     Value::VmClosure(Arc::new(VmClosure {
-        function: Arc::new(Function::new(name.to_string(), 0)),
+        function: Arc::new(Function::returning_unit(name.to_string(), 0)),
         upvalues: Vec::new(),
     }))
 }
@@ -114,7 +114,7 @@ fn btreeset_of_distinct_closures_retains_all() {
 #[test]
 fn ord_vmclosure_same_arc_equal() {
     let f = Arc::new(VmClosure {
-        function: Arc::new(Function::new("id".into(), 0)),
+        function: Arc::new(Function::returning_unit("id".into(), 0)),
         upvalues: Vec::new(),
     });
     let a = Value::VmClosure(f.clone());

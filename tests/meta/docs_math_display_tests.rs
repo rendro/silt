@@ -1,7 +1,5 @@
 //! Regression lock for the `math.acos(1.0)` doc snippet output that
-//! lives in the `math.acos` doc string registered by
-//! `src/typechecker/builtins/math.rs` (round 62 phase-2 LSP doc
-//! inlining moved this prose out of the deleted `docs/stdlib/math.md`).
+//! lives in the `math.acos` section of `docs/stdlib/math.md`.
 //!
 //! Round 60 audit L11: the doc snippet's comment claimed the program
 //! prints `0.0`, but silt's Float Display drops the trailing `.0` for

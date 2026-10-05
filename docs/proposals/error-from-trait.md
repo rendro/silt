@@ -350,10 +350,8 @@ the per-target-trait pattern above.
 
 ## Related work
 
-- `super::docs::ERRORS_MD` (in `src/typechecker/builtins/docs.rs`) —
-  the module-local typed-error system this proposal layers on top of.
-  Round 62 phase-2 inlined the former `docs/stdlib/errors.md` into
-  the typechecker so it surfaces through LSP hover.
+- [`docs/stdlib/errors.md`](../stdlib/errors.md) — the module-local
+  typed-error system this proposal layers on top of.
 - [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt) —
   canonical example of the current `result.map_err`-based idiom.
   Unchanged by this proposal's deferred status.

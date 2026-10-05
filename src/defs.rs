@@ -92,7 +92,7 @@ pub enum Res {
 
 /// The first id of the builtin pseudo-modules: the prelude is
 /// `ModuleId(BUILTIN_MODULE_BASE)`, the `k`th builtin module of
-/// [`crate::module::BUILTIN_MODULES`] is `ModuleId(BUILTIN_MODULE_BASE +
+/// [`crate::module::builtin_modules`] is `ModuleId(BUILTIN_MODULE_BASE +
 /// 1 + k)`. A module graph never has that many modules.
 const BUILTIN_MODULE_BASE: u32 = 0xFFFF_0000;
 
@@ -102,7 +102,7 @@ impl ModuleId {
 
     /// The pseudo-module of the builtin module `name` (`list`, ...).
     pub fn builtin(name: &str) -> Option<ModuleId> {
-        crate::module::BUILTIN_MODULES
+        crate::module::builtin_modules()
             .iter()
             .position(|m| *m == name)
             .map(|k| ModuleId(BUILTIN_MODULE_BASE + 1 + k as u32))
@@ -117,44 +117,17 @@ impl ModuleId {
     /// for a module of the graph.
     pub fn builtin_name(self) -> Option<&'static str> {
         let k = self.0.checked_sub(BUILTIN_MODULE_BASE + 1)?;
-        crate::module::BUILTIN_MODULES.get(k as usize).copied()
+        crate::module::builtin_modules().get(k as usize).copied()
     }
 }
 
-/// The builtin types that are reached through a builtin module but have
-/// no record or enum declaration (opaque handles).
-pub const OPAQUE_MODULE_TYPES: &[(&str, &str)] = &[
-    ("TcpListener", "tcp"),
-    ("TcpStream", "tcp"),
-    ("Handle", "task"),
-    ("PgPool", "postgres"),
-    ("PgTx", "postgres"),
-    ("PgCursor", "postgres"),
-    ("QueryResult", "postgres"),
-    ("ExecResult", "postgres"),
-    ("Value", "postgres"),
-];
-
-/// The builtin types with no declaration of their own, each with the
-/// number of its type arguments: the opaque handles of the builtin
-/// modules, `Bytes`, and the prelude's `TypeOf`, the type of a type used
-/// as a value (`Int`, a `type a` parameter).
-pub const OPAQUE_TYPE_ARITY: &[(&str, usize)] = &[
-    ("Bytes", 0),
-    ("TcpListener", 0),
-    ("TcpStream", 0),
-    ("Handle", 1),
-    (TYPE_OF, 1),
-    ("PgPool", 0),
-    ("PgTx", 0),
-    ("PgCursor", 0),
-    ("QueryResult", 0),
-    ("ExecResult", 0),
-    ("Value", 0),
-];
-
-/// The enums of the prelude.
-pub const PRELUDE_ENUMS: &[&str] = &["Option", "Result"];
+/// The number of type arguments of the builtin type `name` when it is
+/// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
+/// has no variants and no fields, and the builtin registry lists it with
+/// its module. `None` for any other name.
+pub fn opaque_type_arity(name: &str) -> Option<usize> {
+    crate::builtins::registry::registry().opaque_arity(name)
+}
 
 /// The type of a type written as a value (`json.parse(s, Pt)`, a `type a`
 /// parameter): `TypeOf(Pt)`, a prelude type.
@@ -170,37 +143,53 @@ pub const ANON_RECORD: &str = "<anon>";
 /// `TypeId(DefId(k))`. The builtin definitions begin with them, so their
 /// ids are known before anything else of the builtins is built. The
 /// first are [`crate::typeinfo::RUNTIME_BUILTIN_TYPES`], whose ids are
-/// the constants of [`crate::typeinfo::ty`].
+/// the constants of [`crate::typeinfo::ty`]; then the prelude's, then
+/// each module's: the records and enums the builtin registry declares
+/// for it and its opaque handles.
 pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
     static TYPES: OnceLock<Vec<(&'static str, Option<&'static str>)>> = OnceLock::new();
     TYPES.get_or_init(|| {
+        let registry = crate::builtins::registry::registry();
+        // A module's types: the declared ones, then the opaque ones.
+        let of_module = |m: &'static crate::builtins::registry::Module| {
+            m.type_decls
+                .iter()
+                .map(|ty| ty.name)
+                .chain(m.opaque.iter().map(|(name, _)| *name))
+        };
+        let module_of = |name: &str| {
+            registry
+                .modules
+                .iter()
+                .find(|m| of_module(m).any(|ty| ty == name))
+                .map(|m| m.name)
+        };
         let mut types: Vec<(&'static str, Option<&'static str>)> =
-            crate::typeinfo::RUNTIME_BUILTIN_TYPES.to_vec();
+            crate::typeinfo::RUNTIME_BUILTIN_TYPES
+                .iter()
+                .map(|name| (*name, module_of(name)))
+                .collect();
         let mut add = |name: &'static str, module: Option<&'static str>| {
             if !types.iter().any(|(known, _)| *known == name) {
                 types.push((name, module));
             }
         };
         for ty in crate::types::builtins::BUILTIN_TYPES {
-            if ty.name == "()" || OPAQUE_MODULE_TYPES.iter().any(|(name, _)| *name == ty.name) {
+            if ty.name == "()" || module_of(ty.name).is_some() {
                 continue;
             }
             add(ty.name, None);
         }
-        for name in PRELUDE_ENUMS {
+        for ty in &registry.prelude_types {
+            add(ty.name, None);
+        }
+        for (name, _) in crate::builtins::registry::PRELUDE_OPAQUE {
             add(name, None);
         }
-        add(TYPE_OF, None);
         add(ANON_RECORD, None);
-        for module in crate::module::BUILTIN_MODULES {
-            let declared = crate::module::builtin_module_type_names(module).chain(
-                OPAQUE_MODULE_TYPES
-                    .iter()
-                    .filter(|(_, m)| m == module)
-                    .map(|(name, _)| *name),
-            );
-            for name in declared {
-                add(name, Some(*module));
+        for module in &registry.modules {
+            for name in of_module(module) {
+                add(name, Some(module.name));
             }
         }
         types
