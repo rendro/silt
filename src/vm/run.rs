@@ -423,7 +423,7 @@ impl Vm {
                     // stack for runtime errors. The caller's name comes
                     // from its closure's function name; the caller's span
                     // points at the tail-call site (the op just before
-                    // `frame.ip`, which is pre-advanced by `read_u8`).
+                    // `frame.ip`, which `fetch` has stepped past it).
                     // Bounded by TCO_ELIDED_CAP entries per depth — on
                     // overflow we drop the oldest caller at this depth.
                     // The existing `render_call_stack` head/tail truncation

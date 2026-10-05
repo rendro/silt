@@ -431,6 +431,40 @@ mod tests {
     }
 
     #[test]
+    fn a_conditional_jump_over_more_than_65535_bytes_is_a_compile_limit() {
+        let mut e = Emitter::new("f".into(), 0);
+        let far = e.label();
+        let end = e.label();
+        e.emit(Asm::True, span()).unwrap();
+        e.emit(Asm::JumpIfFalse { to: far }, span()).unwrap();
+        for _ in 0..40_000 {
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+        }
+        // The unconditional jump reaches as far as code goes.
+        e.emit(Asm::Jump { to: end }, span()).unwrap();
+        let err = e.bind(far, span()).unwrap_err();
+        assert_eq!(err.code, Code::CompileLimit);
+        assert_eq!(err.message, "jump offset overflow: function body too large");
+    }
+
+    #[test]
+    fn a_jump_reaches_back_over_more_than_65535_bytes() {
+        let mut e = Emitter::new("f".into(), 0);
+        let start = e.label();
+        e.bind(start, span()).unwrap();
+        for _ in 0..40_000 {
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+        }
+        e.emit(Asm::Jump { to: start }, span()).unwrap();
+        let f = e.finish(0).unwrap();
+        let (at, last) = f.chunk().instrs().last().unwrap();
+        assert_eq!(at, 80_000);
+        assert!(matches!(last, crate::bytecode::Instr::Jump { to: 0 }));
+    }
+
+    #[test]
     fn a_jump_to_a_label_never_bound_is_a_compiler_bug() {
         let mut e = Emitter::new("f".into(), 0);
         let nowhere = e.label();

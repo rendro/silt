@@ -769,6 +769,7 @@ impl Vm {
         let saved_frames_len = self.frames.len();
         let saved_stack_len = self.stack.len();
         let saved_tco_len = self.tco_elided.len();
+        assert_eq!(script.upvalue_count(), 0, "a script captures nothing");
         let closure = Arc::new(VmClosure {
             function: script,
             upvalues: vec![],
