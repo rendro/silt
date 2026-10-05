@@ -17,6 +17,7 @@ mod derive_gates;
 mod derive_synth;
 mod env;
 mod exhaustiveness;
+mod infer;
 mod inference;
 pub mod names;
 mod resolve;
@@ -733,7 +734,7 @@ impl TypeChecker {
                         &val_ty,
                         &mut env,
                         span,
-                        inference::BindingSite::Let,
+                        infer::pattern::BindingSite::Let,
                     );
                 }
             }
