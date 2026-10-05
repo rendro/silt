@@ -13,6 +13,7 @@ mod builtins;
 mod declare_fns;
 mod declare_traits;
 mod declare_types;
+mod deferred;
 mod derive_gates;
 mod derive_synth;
 mod env;
