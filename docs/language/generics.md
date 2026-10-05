@@ -40,10 +40,25 @@ fn map(xs: List(a), f: Fn(a) -> b) -> List(b)
 Type parameters are declared in parentheses after the type name:
 
 ```silt
-type Option(a) { Some(a), None }
-type Result(a, e) { Ok(a), Err(e) }
-type Pair(a, b) { first: a, second: b }
-type Tree(a) { Leaf, Node(Tree(a), a, Tree(a)) }
+type Option(a) {
+  Some(a),
+  None,
+}
+
+type Result(a, e) {
+  Ok(a),
+  Err(e),
+}
+
+type Pair(a, b) {
+  first: a,
+  second: b,
+}
+
+type Tree(a) {
+  Leaf,
+  Node(Tree(a), a, Tree(a)),
+}
 ```
 
 Parameters are lowercase. They are in scope throughout the declaration
@@ -67,7 +82,9 @@ Write functions without declaring type parameters — the compiler infers
 them from parameter annotations:
 
 ```silt
-fn identity(x: a) -> a { x }
+fn identity(x: a) -> a {
+  x
+}
 
 fn swap(pair: (a, b)) -> (b, a) {
   let (x, y) = pair
@@ -165,7 +182,9 @@ fn default(type a) -> a where a: Default {
   a.default()
 }
 
-type DecodeError { Malformed(String) }
+type DecodeError {
+  Malformed(String),
+}
 
 fn parse(body: String, type a) -> Result(a, DecodeError) where a: Decode {
   a.decode(body)
@@ -218,9 +237,10 @@ of pipelines:
 
 ```silt
 let resp = http.get(url)?
-resp.body                       -- extract the response body (a String)
-|> json.parse(Todo)             -- works: parse(body, Todo)
-|> result.map_ok(process)
+resp.body -- extract the response body (a String)
+
+  |> json.parse(Todo) -- works: parse(body, Todo)
+  |> result.map_ok(process)
 ```
 
 `http.get` returns `Result(Response, HttpError)`, and `?` unwraps it to
@@ -337,7 +357,9 @@ constraints on the parameters. See the [Traits](traits.md) guide for
 the full specification:
 
 ```silt
-type Box(T) { Box(T) }
+type Box(T) {
+  Box(T),
+}
 
 trait Display for Box(a) where a: Display {
   fn display(self) -> String {
@@ -359,7 +381,9 @@ trait Convertible(b) {
 }
 
 trait Convertible(Int) for String {
-  fn convert(self) -> Int { 0 }
+  fn convert(self) -> Int {
+    0
+  }
 }
 
 -- Adding a second impl on the same source type with a different
@@ -396,7 +420,7 @@ trait Child(a): Parent(a) {
 }
 
 fn use_parent(x: b, type a) -> a where b: Child(a) {
-  x.parent_method()     -- returns a, bound by Child's arg
+  x.parent_method() -- returns a, bound by Child's arg
 }
 ```
 
@@ -479,16 +503,18 @@ trait Default {
 }
 
 trait Default for Int {
-  fn default() -> Self { 0 }
+  fn default() -> Self {
+    0
+  }
 }
 
 fn default(type a) -> a where a: Default {
-  a.default()                -- dispatches to Int.default at the call site
+  a.default() -- dispatches to Int.default at the call site
 }
 
 fn main() {
-  let n = default(Int)       -- 0 — generic path
-  let m = Int.default()      -- 0 — concrete path
+  let n = default(Int) -- 0 — generic path
+  let m = Int.default() -- 0 — concrete path
 }
 ```
 
@@ -530,7 +556,9 @@ trait Stream {
   fn first(self) -> Self::Item
 }
 
-type Wrap { v: Int }
+type Wrap {
+  v: Int,
+}
 
 trait Stream for Wrap {
   type Item = Int
@@ -555,14 +583,21 @@ trait Pair {
   fn second(self) -> Self::Second
 }
 
-type IntStringPair { a: Int, b: String }
+type IntStringPair {
+  a: Int,
+  b: String,
+}
 
 trait Pair for IntStringPair {
   type First = Int
   type Second = String
 
-  fn first(self) -> Int { self.a }
-  fn second(self) -> String { self.b }
+  fn first(self) -> Int {
+    self.a
+  }
+  fn second(self) -> String {
+    self.b
+  }
 }
 ```
 
@@ -577,11 +612,15 @@ trait Container {
   fn first(self) -> Self::Item
 }
 
-type Box { v: Int }
+type Box {
+  v: Int,
+}
 
 trait Container for Box {
-  type Item = Int           -- OK: Int auto-derives Compare
-  fn first(self) -> Int { self.v }
+  type Item = Int -- OK: Int auto-derives Compare
+  fn first(self) -> Int {
+    self.v
+  }
 }
 ```
 
@@ -617,18 +656,24 @@ trait Super {
 }
 
 trait Sub: Super {
-  fn first(self) -> Self::Item       -- Self::Item comes from Super
+  fn first(self) -> Self::Item -- Self::Item comes from Super
 }
 
-type Wrap { v: Int }
+type Wrap {
+  v: Int,
+}
 
 trait Super for Wrap {
   type Item = Int
-  fn one(self) -> Int { self.v }
+  fn one(self) -> Int {
+    self.v
+  }
 }
 
 trait Sub for Wrap {
-  fn first(self) -> Int { self.v + 1 }
+  fn first(self) -> Int {
+    self.v + 1
+  }
 }
 ```
 
@@ -657,18 +702,23 @@ trait Sub for Wrap {
 
 ```silt
 fn map(xs: List(a), f: Fn(a) -> b) -> List(b)
+
 fn filter(xs: List(a), f: Fn(a) -> Bool) -> List(a)
+
 fn fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b
-fn group_by(xs: List(a), key: Fn(a) -> k) -> Map(k, List(a))
-  where k: Hash + Equal
+
+fn group_by(xs: List(a), key: Fn(a) -> k) -> Map(k, List(a)) where k: Hash + Equal
 ```
 
 ### Option and Result combinators
 
 ```silt
 fn map(opt: Option(a), f: Fn(a) -> b) -> Option(b)
+
 fn and_then(opt: Option(a), f: Fn(a) -> Option(b)) -> Option(b)
+
 fn map_ok(r: Result(a, e), f: Fn(a) -> b) -> Result(b, e)
+
 fn map_err(r: Result(a, e), f: Fn(e) -> f) -> Result(a, f)
 ```
 
@@ -698,7 +748,9 @@ trait Convert(b) {
 }
 
 trait Convert(Int) for String {
-  fn convert(self) -> Int { 0 }
+  fn convert(self) -> Int {
+    0
+  }
 }
 
 fn into(x: a, type b) -> b where a: Convert(b) {
@@ -725,9 +777,7 @@ fn get(c: Cache(k, v), key: k) -> Option(v) where k: Hash + Equal {
   map.get(c.store, key)
 }
 
-fn put(c: Cache(k, v), key: k, value: v) -> Cache(k, v)
-  where k: Hash + Equal
-{
+fn put(c: Cache(k, v), key: k, value: v) -> Cache(k, v) where k: Hash + Equal {
   c.{ store: map.set(c.store, key, value) }
 }
 ```

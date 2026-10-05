@@ -94,17 +94,18 @@ stored as UTC:
 
 ```silt
 import json
+
 type User {
-    name: String,
-    age: Int,
+  name: String,
+  age: Int,
 }
 
 fn main() {
-    let input = """{"name": "Alice", "age": 30}"""
-    match json.parse(input, User) {
-        Ok(user) -> println(user.name)
-        Err(e) -> println("Error: {e.message()}")
-    }
+  let input = """{"name": "Alice", "age": 30}"""
+  match json.parse(input, User) {
+    Ok(user) -> println(user.name)
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -115,14 +116,14 @@ import json
 import time
 
 type Event {
-    name: String,
-    date: time.Date,
+  name: String,
+  date: time.Date,
 }
 
 fn main() -> Result(Unit, json.JsonError) {
-    let e = json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event)?
-    println(e.date |> time.weekday)  -- Friday
-    Ok(())
+  let e = json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event)?
+  println(e.date |> time.weekday) -- Friday
+  Ok(())
 }
 ```
 
@@ -138,17 +139,18 @@ Parses a JSON array where each element is a record of type `a`.
 ```silt
 import json
 import list
+
 type Point {
-    x: Int,
-    y: Int,
+  x: Int,
+  y: Int,
 }
 
 fn main() {
-    let input = """[{"x": 1, "y": 2}, {"x": 3, "y": 4}]"""
-    match json.parse_list(input, Point) {
-        Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
-        Err(e) -> println("Error: {e.message()}")
-    }
+  let input = """[{"x": 1, "y": 2}, {"x": 3, "y": 4}]"""
+  match json.parse_list(input, Point) {
+    Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -165,12 +167,13 @@ parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
 ```silt
 import json
 import map
+
 fn main() {
-    let input = """{"x": 10, "y": 20}"""
-    match json.parse_map(input, Int) {
-        Ok(m) -> println(map.get(m, "x"))  -- Some(10)
-        Err(e) -> println("Error: {e.message()}")
-    }
+  let input = """{"x": 10, "y": 20}"""
+  match json.parse_map(input, Int) {
+    Ok(m) -> println(map.get(m, "x")) -- Some(10)
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -186,9 +189,10 @@ newlines).
 
 ```silt
 import json
+
 fn main() {
-    let data = #{"name": "silt", "version": "1.0"}
-    println(json.pretty(data))
+  let data = #{ "name": "silt", "version": "1.0" }
+  println(json.pretty(data))
 }
 ```
 
@@ -203,9 +207,10 @@ Serializes any value to a compact JSON string.
 
 ```silt
 import json
+
 fn main() {
-    let data = #{"key": [1, 2, 3]}
-    println(json.stringify(data))
-    -- {"key":[1,2,3]}
+  let data = #{ "key": [1, 2, 3] }
+  println(json.stringify(data))
+  -- {"key":[1,2,3]}
 }
 ```

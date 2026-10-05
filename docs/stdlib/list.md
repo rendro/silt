@@ -71,9 +71,10 @@ first `false`.
 
 ```silt
 import list
+
 fn main() {
-    let all_even = list.all([2, 4, 6]) { x -> x % 2 == 0 }
-    println(all_even)  -- true
+  let all_even = list.all([2, 4, 6]) { x -> x % 2 == 0 }
+  println(all_even) -- true
 }
 ```
 
@@ -89,9 +90,10 @@ the first `true`.
 
 ```silt
 import list
+
 fn main() {
-    let has_even = list.any([1, 3, 4]) { x -> x % 2 == 0 }
-    println(has_even)  -- true
+  let has_even = list.any([1, 3, 4]) { x -> x % 2 == 0 }
+  println(has_even) -- true
 }
 ```
 
@@ -106,9 +108,10 @@ Returns a new list with `elem` added at the end.
 
 ```silt
 import list
+
 fn main() {
-    let xs = [1, 2, 3] |> list.append(4)
-    println(xs)  -- [1, 2, 3, 4]
+  let xs = [1, 2, 3] |> list.append(4)
+  println(xs) -- [1, 2, 3, 4]
 }
 ```
 
@@ -123,9 +126,10 @@ Concatenates two lists into a single list.
 
 ```silt
 import list
+
 fn main() {
-    let joined = list.concat([1, 2], [3, 4])
-    println(joined)  -- [1, 2, 3, 4]
+  let joined = list.concat([1, 2], [3, 4])
+  println(joined) -- [1, 2, 3, 4]
 }
 ```
 
@@ -140,9 +144,10 @@ Returns `true` if `elem` is in the list (by value equality).
 
 ```silt
 import list
+
 fn main() {
-    println(list.contains([1, 2, 3], 2))  -- true
-    println(list.contains([1, 2, 3], 5))  -- false
+  println(list.contains([1, 2, 3], 2)) -- true
+  println(list.contains([1, 2, 3], 5)) -- false
 }
 ```
 
@@ -158,9 +163,10 @@ empty list. Negative `n` is a runtime error.
 
 ```silt
 import list
+
 fn main() {
-    let tail = list.drop([1, 2, 3, 4, 5], 2)
-    println(tail)  -- [3, 4, 5]
+  let tail = list.drop([1, 2, 3, 4, 5], 2)
+  println(tail) -- [3, 4, 5]
 }
 ```
 
@@ -175,8 +181,9 @@ Calls `f` for every element in the list. Used for side effects. Returns unit.
 
 ```silt
 import list
+
 fn main() {
-    [1, 2, 3] |> list.each { x -> println(x) }
+  [1, 2, 3] |> list.each { x -> println(x) }
 }
 ```
 
@@ -191,10 +198,11 @@ Returns a list of `(index, element)` tuples, with indices starting at 0.
 
 ```silt
 import list
+
 fn main() {
-    let pairs = list.enumerate(["a", "b", "c"])
-    -- [(0, "a"), (1, "b"), (2, "c")]
-    list.each(pairs) { (i, v) -> println("{i}: {v}") }
+  let pairs = list.enumerate(["a", "b", "c"])
+  -- [(0, "a"), (1, "b"), (2, "c")]
+  list.each(pairs) { (i, v) -> println("{i}: {v}") }
 }
 ```
 
@@ -209,9 +217,10 @@ Returns a list containing only the elements for which `f` returns `true`.
 
 ```silt
 import list
+
 fn main() {
-    let evens = [1, 2, 3, 4, 5] |> list.filter { x -> x % 2 == 0 }
-    println(evens)  -- [2, 4]
+  let evens = [1, 2, 3, 4, 5] |> list.filter { x -> x % 2 == 0 }
+  println(evens) -- [2, 4]
 }
 ```
 
@@ -227,16 +236,17 @@ discards `None` results. Combines filtering and mapping in one pass.
 
 ```silt
 import int
-
 import list
+
 fn main() {
-    let results = ["1", "abc", "3"] |> list.filter_map { s ->
-        match int.parse(s) {
-            Ok(n) -> Some(n * 10)
-            Err(_) -> None
-        }
+  let results = ["1", "abc", "3"]
+    |> list.filter_map { s ->
+      match int.parse(s) {
+        Ok(n) -> Some(n * 10)
+        Err(_) -> None
+      }
     }
-    println(results)  -- [10, 30]
+  println(results) -- [10, 30]
 }
 ```
 
@@ -252,9 +262,10 @@ Returns `Some(element)` for the first element where `f` returns `true`, or
 
 ```silt
 import list
+
 fn main() {
-    let first_gt_2 = list.find([1, 2, 3, 4]) { x -> x > 2 }
-    println(first_gt_2)  -- Some(3)
+  let first_gt_2 = list.find([1, 2, 3, 4]) { x -> x > 2 }
+  println(first_gt_2) -- Some(3)
 }
 ```
 
@@ -269,9 +280,10 @@ Maps each element to a list, then flattens the results into a single list.
 
 ```silt
 import list
+
 fn main() {
-    let expanded = [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
-    println(expanded)  -- [1, 10, 2, 20, 3, 30]
+  let expanded = [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
+  println(expanded) -- [1, 10, 2, 20, 3, 30]
 }
 ```
 
@@ -286,9 +298,10 @@ Flattens one level of nesting. Non-list elements are kept as-is.
 
 ```silt
 import list
+
 fn main() {
-    let flat = list.flatten([[1, 2], [3], [4, 5]])
-    println(flat)  -- [1, 2, 3, 4, 5]
+  let flat = list.flatten([[1, 2], [3], [4, 5]])
+  println(flat) -- [1, 2, 3, 4, 5]
 }
 ```
 
@@ -304,9 +317,10 @@ for each element.
 
 ```silt
 import list
+
 fn main() {
-    let sum = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
-    println(sum)  -- 6
+  let sum = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
+  println(sum) -- 6
 }
 ```
 
@@ -322,16 +336,17 @@ Like `fold`, but the callback returns `Continue(acc)` to keep going or
 
 ```silt
 import list
+
 fn main() {
-    -- Sum until we exceed 5
-    let partial_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
-        let next = acc + x
-        match {
-            next > 5 -> list.Stop(acc)
-            _ -> list.Continue(next)
-        }
+  -- Sum until we exceed 5
+  let partial_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
+    let next = acc + x
+    match {
+      next > 5 -> list.Stop(acc)
+      _ -> list.Continue(next)
     }
-    println(partial_sum)  -- 3
+  }
+  println(partial_sum) -- 3
 }
 ```
 
@@ -347,11 +362,12 @@ Negative indices are a runtime error -- use `list.last` for end access.
 
 ```silt
 import list
+
 fn main() {
-    let xs = [10, 20, 30]
-    println(list.get(xs, 1))   -- Some(20)
-    println(list.get(xs, 10))  -- None
-    -- list.get(xs, -1)        -- runtime error: negative index
+  let xs = [10, 20, 30]
+  println(list.get(xs, 1)) -- Some(20)
+  println(list.get(xs, 10)) -- None
+  -- list.get(xs, -1)        -- runtime error: negative index
 }
 ```
 
@@ -367,9 +383,10 @@ of elements that produced that key.
 
 ```silt
 import list
+
 fn main() {
-    let groups = [1, 2, 3, 4, 5, 6] |> list.group_by { x -> x % 2 }
-    -- #{0: [2, 4, 6], 1: [1, 3, 5]}
+  let groups = [1, 2, 3, 4, 5, 6] |> list.group_by { x -> x % 2 }
+  -- #{0: [2, 4, 6], 1: [1, 3, 5]}
 }
 ```
 
@@ -384,9 +401,10 @@ Returns `Some(first_element)` or `None` if the list is empty.
 
 ```silt
 import list
+
 fn main() {
-    println(list.head([1, 2, 3]))  -- Some(1)
-    println(list.head([]))         -- None
+  println(list.head([1, 2, 3])) -- Some(1)
+  println(list.head([])) -- None
 }
 ```
 
@@ -402,9 +420,10 @@ equality), or `None` if no element matches.
 
 ```silt
 import list
+
 fn main() {
-    println(list.index_of([10, 20, 30, 20], 20))  -- Some(1)
-    println(list.index_of([10, 20, 30], 99))      -- None
+  println(list.index_of([10, 20, 30, 20], 20)) -- Some(1)
+  println(list.index_of([10, 20, 30], 99)) -- None
 }
 ```
 
@@ -420,10 +439,11 @@ single-element inputs are returned unchanged.
 
 ```silt
 import list
+
 fn main() {
-    println(list.intersperse([1, 2, 3], 0))  -- [1, 0, 2, 0, 3]
-    println(list.intersperse([42], 0))       -- [42]
-    println(list.intersperse([], 0))         -- []
+  println(list.intersperse([1, 2, 3], 0)) -- [1, 0, 2, 0, 3]
+  println(list.intersperse([42], 0)) -- [42]
+  println(list.intersperse([], 0)) -- []
 }
 ```
 
@@ -438,9 +458,10 @@ Returns `Some(last_element)` or `None` if the list is empty.
 
 ```silt
 import list
+
 fn main() {
-    println(list.last([1, 2, 3]))  -- Some(3)
-    println(list.last([]))         -- None
+  println(list.last([1, 2, 3])) -- Some(3)
+  println(list.last([])) -- None
 }
 ```
 
@@ -455,9 +476,10 @@ Returns the number of elements in the list.
 
 ```silt
 import list
+
 fn main() {
-    println(list.length([1, 2, 3]))  -- 3
-    println(list.length([]))         -- 0
+  println(list.length([1, 2, 3])) -- 3
+  println(list.length([])) -- 0
 }
 ```
 
@@ -472,9 +494,10 @@ Returns a new list with `f` applied to each element.
 
 ```silt
 import list
+
 fn main() {
-    let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
-    println(doubled)  -- [2, 4, 6]
+  let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
+  println(doubled) -- [2, 4, 6]
 }
 ```
 
@@ -492,11 +515,12 @@ is empty. On ties, returns the first element with the maximum key. Requires
 ```silt
 import list
 import string
+
 fn main() {
-    let words = ["fig", "banana", "apple"]
-    let longest = list.max_by(words) { w -> string.length(w) }
-    println(longest)  -- Some(banana)
-    println(list.max_by([], { x -> x }))  -- None
+  let words = ["fig", "banana", "apple"]
+  let longest = list.max_by(words) { w -> string.length(w) }
+  println(longest) -- Some(banana)
+  println(list.max_by([]) { x -> x }) -- None
 }
 ```
 
@@ -514,11 +538,12 @@ is empty. On ties, returns the first element with the minimum key. Requires
 ```silt
 import list
 import string
+
 fn main() {
-    let words = ["banana", "fig", "apple"]
-    let shortest = list.min_by(words) { w -> string.length(w) }
-    println(shortest)  -- Some(fig)
-    println(list.min_by([], { x -> x }))  -- None
+  let words = ["banana", "fig", "apple"]
+  let shortest = list.min_by(words) { w -> string.length(w) }
+  println(shortest) -- Some(fig)
+  println(list.min_by([]) { x -> x }) -- None
 }
 ```
 
@@ -533,9 +558,10 @@ Returns a new list with `elem` added at the front.
 
 ```silt
 import list
+
 fn main() {
-    let xs = [2, 3] |> list.prepend(1)
-    println(xs)  -- [1, 2, 3]
+  let xs = [2, 3] |> list.prepend(1)
+  println(xs) -- [1, 2, 3]
 }
 ```
 
@@ -551,9 +577,10 @@ is a runtime error.
 
 ```silt
 import list
+
 fn main() {
-    println(list.product([1, 2, 3, 4]))  -- 24
-    println(list.product([]))            -- 1
+  println(list.product([1, 2, 3, 4])) -- 24
+  println(list.product([])) -- 1
 }
 ```
 
@@ -569,9 +596,10 @@ Raises a runtime error when the product is too large for a `Float`.
 
 ```silt
 import list
+
 fn main() {
-    println(list.product_float([1.5, 2.0, 4.0]))  -- 12
-    println(list.product_float([]))               -- 1
+  println(list.product_float([1.5, 2.0, 4.0])) -- 12
+  println(list.product_float([])) -- 1
 }
 ```
 
@@ -587,9 +615,10 @@ out of bounds (matching `list.set`). Negative indices are a runtime error.
 
 ```silt
 import list
+
 fn main() {
-    println(list.remove_at([10, 20, 30, 40], 1))  -- [10, 30, 40]
-    -- list.remove_at([1, 2], 5)                   -- runtime error: out of bounds
+  println(list.remove_at([10, 20, 30, 40], 1)) -- [10, 30, 40]
+  -- list.remove_at([1, 2], 5)                   -- runtime error: out of bounds
 }
 ```
 
@@ -604,8 +633,9 @@ Returns a new list with elements in reverse order.
 
 ```silt
 import list
+
 fn main() {
-    println(list.reverse([1, 2, 3]))  -- [3, 2, 1]
+  println(list.reverse([1, 2, 3])) -- [3, 2, 1]
 }
 ```
 
@@ -621,9 +651,10 @@ the index is out of bounds. Negative indices are a runtime error.
 
 ```silt
 import list
+
 fn main() {
-    let xs = list.set([10, 20, 30], 1, 99)
-    println(xs)  -- [10, 99, 30]
+  let xs = list.set([10, 20, 30], 1, 99)
+  println(xs) -- [10, 99, 30]
 }
 ```
 
@@ -638,8 +669,9 @@ Returns a new list sorted in natural (ascending) order.
 
 ```silt
 import list
+
 fn main() {
-    println(list.sort([3, 1, 2]))  -- [1, 2, 3]
+  println(list.sort([3, 1, 2])) -- [1, 2, 3]
 }
 ```
 
@@ -658,11 +690,12 @@ input. This matches Haskell's `scanl` and Rust's `std::iter::successors`
 
 ```silt
 import list
+
 fn main() {
-    -- Prefix sums: [0, 1, 3, 6, 10]
-    let sums = list.scan([1, 2, 3, 4], 0) { acc, x -> acc + x }
-    println(sums)
-    println(list.scan([], 0) { acc, x -> acc + x })  -- [0]
+  -- Prefix sums: [0, 1, 3, 6, 10]
+  let sums = list.scan([1, 2, 3, 4], 0) { acc, x -> acc + x }
+  println(sums)
+  println(list.scan([], 0) { acc, x -> acc + x }) -- [0]
 }
 ```
 
@@ -679,10 +712,11 @@ element.
 ```silt
 import list
 import string
+
 fn main() {
-    let words = ["banana", "fig", "apple"]
-    let sorted = words |> list.sort_by { w -> string.length(w) }
-    println(sorted)  -- [fig, apple, banana]
+  let words = ["banana", "fig", "apple"]
+  let sorted = words |> list.sort_by { w -> string.length(w) }
+  println(sorted) -- [fig, apple, banana]
 }
 ```
 
@@ -698,9 +732,10 @@ is a runtime error.
 
 ```silt
 import list
+
 fn main() {
-    println(list.sum([1, 2, 3, 4]))  -- 10
-    println(list.sum([]))            -- 0
+  println(list.sum([1, 2, 3, 4])) -- 10
+  println(list.sum([])) -- 0
 }
 ```
 
@@ -716,9 +751,10 @@ Raises a runtime error when the sum is too large for a `Float`.
 
 ```silt
 import list
+
 fn main() {
-    println(list.sum_float([0.5, 1.5, 2.0]))  -- 4
-    println(list.sum_float([]))               -- 0
+  println(list.sum_float([0.5, 1.5, 2.0])) -- 4
+  println(list.sum_float([])) -- 0
 }
 ```
 
@@ -734,9 +770,10 @@ empty.
 
 ```silt
 import list
+
 fn main() {
-    println(list.tail([1, 2, 3]))  -- [2, 3]
-    println(list.tail([]))         -- []
+  println(list.tail([1, 2, 3])) -- [2, 3]
+  println(list.tail([])) -- []
 }
 ```
 
@@ -752,8 +789,9 @@ Negative `n` is a runtime error.
 
 ```silt
 import list
+
 fn main() {
-    println(list.take([1, 2, 3, 4, 5], 3))  -- [1, 2, 3]
+  println(list.take([1, 2, 3, 4, 5], 3)) -- [1, 2, 3]
 }
 ```
 
@@ -769,14 +807,15 @@ to emit an element and continue, or `None` to stop.
 
 ```silt
 import list
+
 fn main() {
-    let countdown = list.unfold(5) { n ->
-        match {
-            n <= 0 -> None
-            _ -> Some((n, n - 1))
-        }
+  let countdown = list.unfold(5) { n ->
+    match {
+      n <= 0 -> None
+      _ -> Some((n, n - 1))
     }
-    println(countdown)  -- [5, 4, 3, 2, 1]
+  }
+  println(countdown) -- [5, 4, 3, 2, 1]
 }
 ```
 
@@ -791,8 +830,9 @@ Removes duplicate elements, preserving the order of first occurrences.
 
 ```silt
 import list
+
 fn main() {
-    println(list.unique([1, 2, 1, 3, 2]))  -- [1, 2, 3]
+  println(list.unique([1, 2, 1, 3, 2])) -- [1, 2, 3]
 }
 ```
 
@@ -807,8 +847,9 @@ Pairs up elements from two lists. Stops at the shorter list.
 
 ```silt
 import list
+
 fn main() {
-    let pairs = list.zip([1, 2, 3], ["a", "b", "c"])
-    println(pairs)  -- [(1, a), (2, b), (3, c)]
+  let pairs = list.zip([1, 2, 3], ["a", "b", "c"])
+  println(pairs) -- [(1, a), (2, b), (3, c)]
 }
 ```

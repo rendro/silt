@@ -94,18 +94,19 @@ that `json.parse` accepts for each of those field types:
 
 ```silt
 import toml
+
 type User {
-    name: String,
-    age: Int,
-    active: Bool,
+  name: String,
+  age: Int,
+  active: Bool,
 }
 
 fn main() {
-    let input = "name = \"Alice\"\nage = 30\nactive = true\n"
-    match toml.parse(input, User) {
-        Ok(user) -> println(user.name)
-        Err(e) -> println("Error: {e.message()}")
-    }
+  let input = "name = \"Alice\"\nage = 30\nactive = true\n"
+  match toml.parse(input, User) {
+    Ok(user) -> println(user.name)
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -123,16 +124,20 @@ tables — and returns the list of records under that key. This is the natural
 shape of `[[items]]` sections:
 
 ```silt
-import toml
 import list
-type Point { x: Int, y: Int }
+import toml
+
+type Point {
+  x: Int,
+  y: Int,
+}
 
 fn main() {
-    let input = "[[points]]\nx = 1\ny = 2\n\n[[points]]\nx = 3\ny = 4\n"
-    match toml.parse_list(input, Point) {
-        Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
-        Err(e) -> println("Error: {e.message()}")
-    }
+  let input = "[[points]]\nx = 1\ny = 2\n\n[[points]]\nx = 3\ny = 4\n"
+  match toml.parse_list(input, Point) {
+    Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -150,14 +155,15 @@ Parses a top-level TOML table into a `Map(String, v)`. The type is passed as
 a `type` parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
 
 ```silt
-import toml
 import map
+import toml
+
 fn main() {
-    let input = "x = 10\ny = 20\n"
-    match toml.parse_map(input, Int) {
-        Ok(m) -> println(map.get(m, "x"))  -- Some(10)
-        Err(e) -> println("Error: {e.message()}")
-    }
+  let input = "x = 10\ny = 20\n"
+  match toml.parse_map(input, Int) {
+    Ok(m) -> println(map.get(m, "x")) -- Some(10)
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -179,12 +185,13 @@ bare scalar or array at top level.
 
 ```silt
 import toml
+
 fn main() {
-    let data = #{"name": "silt", "version": "1.0"}
-    match toml.pretty(data) {
-        Ok(s) -> println(s)
-        Err(e) -> println("Error: {e.message()}")
-    }
+  let data = #{ "name": "silt", "version": "1.0" }
+  match toml.pretty(data) {
+    Ok(s) -> println(s)
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -200,12 +207,17 @@ top-level value must be table-shaped.
 
 ```silt
 import toml
-type Package { name: String, version: String }
+
+type Package {
+  name: String,
+  version: String,
+}
+
 fn main() {
-    let data = Package { name: "silt", version: "1.0" }
-    match toml.stringify(data) {
-        Ok(s) -> println(s)
-        Err(e) -> println("Error: {e.message()}")
-    }
+  let data = Package { name: "silt", version: "1.0" }
+  match toml.stringify(data) {
+    Ok(s) -> println(s)
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```

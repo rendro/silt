@@ -39,10 +39,11 @@ Returns `true` if the map has an entry for `key`.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"a": 1, "b": 2}
-    println(map.contains(m, "a"))  -- true
-    println(map.contains(m, "z"))  -- false
+  let m = #{ "a": 1, "b": 2 }
+  println(map.contains(m, "a")) -- true
+  println(map.contains(m, "z")) -- false
 }
 ```
 
@@ -57,10 +58,11 @@ Returns a new map with `key` removed. No-op if key does not exist.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"a": 1, "b": 2}
-    let m2 = map.delete(m, "a")
-    println(map.length(m2))  -- 1
+  let m = #{ "a": 1, "b": 2 }
+  let m2 = map.delete(m, "a")
+  println(map.length(m2)) -- 1
 }
 ```
 
@@ -75,9 +77,10 @@ Calls `f` with each key-value pair. Used for side effects.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"x": 10, "y": 20}
-    map.each(m) { k, v -> println("{k} = {v}") }
+  let m = #{ "x": 10, "y": 20 }
+  map.each(m) { k, v -> println("{k} = {v}") }
 }
 ```
 
@@ -92,10 +95,11 @@ Returns all key-value pairs as a list of tuples.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"a": 1, "b": 2}
-    let pairs = map.entries(m)
-    -- [("a", 1), ("b", 2)]
+  let m = #{ "a": 1, "b": 2 }
+  let pairs = map.entries(m)
+  -- [("a", 1), ("b", 2)]
 }
 ```
 
@@ -110,10 +114,11 @@ Returns a new map containing only entries where `f` returns `true`.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"a": 1, "b": 2, "c": 3}
-    let big = map.filter(m) { k, v -> v > 1 }
-    -- #{"b": 2, "c": 3}
+  let m = #{ "a": 1, "b": 2, "c": 3 }
+  let big = map.filter(m) { k, v -> v > 1 }
+  -- #{"b": 2, "c": 3}
 }
 ```
 
@@ -129,9 +134,10 @@ earlier ones with the same key.
 
 ```silt
 import map
+
 fn main() {
-    let m = map.from_entries([("a", 1), ("b", 2)])
-    println(m)  -- #{"a": 1, "b": 2}
+  let m = map.from_entries([("a", 1), ("b", 2)])
+  println(m) -- #{"a": 1, "b": 2}
 }
 ```
 
@@ -146,12 +152,13 @@ Returns `Some(value)` if the key exists, or `None` otherwise.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"name": "silt"}
-    match map.get(m, "name") {
-        Some(v) -> println(v)
-        None -> println("not found")
-    }
+  let m = #{ "name": "silt" }
+  match map.get(m, "name") {
+    Some(v) -> println(v)
+    None -> println("not found")
+  }
 }
 ```
 
@@ -166,9 +173,10 @@ Returns all keys as a list, in sorted order.
 
 ```silt
 import map
+
 fn main() {
-    let ks = map.keys(#{"b": 2, "a": 1})
-    println(ks)  -- [a, b]
+  let ks = map.keys(#{ "b": 2, "a": 1 })
+  println(ks) -- [a, b]
 }
 ```
 
@@ -183,8 +191,9 @@ Returns the number of entries in the map.
 
 ```silt
 import map
+
 fn main() {
-    println(map.length(#{"a": 1, "b": 2}))  -- 2
+  println(map.length(#{ "a": 1, "b": 2 })) -- 2
 }
 ```
 
@@ -199,10 +208,11 @@ Transforms each entry. The callback must return a `(key, value)` tuple.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"a": 1, "b": 2}
-    let doubled = map.map(m) { k, v -> (k, v * 2) }
-    -- #{"a": 2, "b": 4}
+  let m = #{ "a": 1, "b": 2 }
+  let doubled = map.map(m) { k, v -> (k, v * 2) }
+  -- #{"a": 2, "b": 4}
 }
 ```
 
@@ -217,11 +227,12 @@ Merges two maps. When both have the same key, the value from `m2` wins.
 
 ```silt
 import map
+
 fn main() {
-    let a = #{"x": 1, "y": 2}
-    let b = #{"y": 99, "z": 3}
-    let merged = map.merge(a, b)
-    -- #{"x": 1, "y": 99, "z": 3}
+  let a = #{ "x": 1, "y": 2 }
+  let b = #{ "y": 99, "z": 3 }
+  let merged = map.merge(a, b)
+  -- #{"x": 1, "y": 99, "z": 3}
 }
 ```
 
@@ -237,10 +248,11 @@ existing.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"a": 1}
-    let m2 = map.set(m, "b", 2)
-    println(m2)  -- #{"a": 1, "b": 2}
+  let m = #{ "a": 1 }
+  let m2 = map.set(m, "b", 2)
+  println(m2) -- #{"a": 1, "b": 2}
 }
 ```
 
@@ -256,12 +268,13 @@ applies `f` to `default`. Inserts the result.
 
 ```silt
 import map
+
 fn main() {
-    let m = #{"a": 1}
-    let m2 = map.update(m, "a", 0) { v -> v + 10 }
-    let m3 = map.update(m2, "b", 0) { v -> v + 10 }
-    -- m2 == #{"a": 11}
-    -- m3 == #{"a": 11, "b": 10}
+  let m = #{ "a": 1 }
+  let m2 = map.update(m, "a", 0) { v -> v + 10 }
+  let m3 = map.update(m2, "b", 0) { v -> v + 10 }
+  -- m2 == #{"a": 11}
+  -- m3 == #{"a": 11, "b": 10}
 }
 ```
 
@@ -276,8 +289,9 @@ Returns all values as a list, in key-sorted order.
 
 ```silt
 import map
+
 fn main() {
-    let vs = map.values(#{"a": 1, "b": 2})
-    println(vs)  -- [1, 2]
+  let vs = map.values(#{ "a": 1, "b": 2 })
+  println(vs) -- [1, 2]
 }
 ```

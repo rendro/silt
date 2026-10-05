@@ -51,13 +51,13 @@ Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So 
 `?` binds tightly, like a call: it applies to the operand right before it. The one exception is a pipeline: a `?` that ends a pipeline applies to the whole pipeline.
 
 ```silt
-int.parse(a)? + int.parse(b)?   -- (int.parse(a)?) + (int.parse(b)?)
--x?                             -- -(x?)
-a == b?                         -- a == (b?)
-x |> f |> g?                    -- (x |> f |> g)?   -- the whole pipeline
-x |> f? |> g                    -- (x |> f)? |> g   -- the pipeline so far
-x |> f? + 1                     -- (x |> f)? + 1    -- infix after ? uses the unwrapped value
-a |> (f?)                       -- parentheses keep ? on the stage
+int.parse(a)? + int.parse(b)? -- (int.parse(a)?) + (int.parse(b)?)
+-x? -- -(x?)
+a == b? -- a == (b?)
+x |> f |> g? -- (x |> f |> g)?   -- the whole pipeline
+x |> f? |> g -- (x |> f)? |> g   -- the pipeline so far
+x |> f? + 1 -- (x |> f)? + 1    -- infix after ? uses the unwrapped value
+a |> (f?) -- parentheses keep ? on the stage
 ```
 
 An infix operator after a `?` that ends a pipeline applies to the unwrapped

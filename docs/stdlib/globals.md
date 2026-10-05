@@ -41,13 +41,13 @@ import list
 import list.{ Stop }
 
 fn main() {
-    let ch = channel.new(1)
-    channel.send(ch, 1)
-    match channel.receive(ch) {
-        channel.Message(v) -> println(v)
-        _ -> println("no value")
-    }
-    println(list.fold_until([1, 2, 3], 0) { acc, x -> Stop(acc + x) })
+  let ch = channel.new(1)
+  channel.send(ch, 1)
+  match channel.receive(ch) {
+    channel.Message(v) -> println(v)
+    _ -> println("no value")
+  }
+  println(list.fold_until([1, 2, 3], 0) { acc, x -> Stop(acc + x) })
 }
 ```
 
@@ -80,9 +80,9 @@ implements `Display`.
 
 ```silt
 fn main() {
-    print("hello ")
-    print("world")
-    -- output: hello world
+  print("hello ")
+  print("world")
+  -- output: hello world
 }
 ```
 
@@ -98,8 +98,8 @@ implements `Display`.
 
 ```silt
 fn main() {
-    println("hello, world")
-    -- output: hello, world\n
+  println("hello, world")
+  -- output: hello, world\n
 }
 ```
 
@@ -117,8 +117,8 @@ can appear anywhere a value is expected.
 ```silt
 -- noexec
 fn main() {
-    panic("something went wrong")
-    panic(42)  -- also valid
+  panic("something went wrong")
+  panic(42) -- also valid
 }
 ```
 
@@ -133,8 +133,8 @@ Constructs a success variant of `Result`.
 
 ```silt
 fn main() {
-    let r = Ok(42)
-    -- r is Result(Int, e)
+  let r = Ok(42)
+  -- r is Result(Int, e)
 }
 ```
 
@@ -149,8 +149,8 @@ Constructs an error variant of `Result`.
 
 ```silt
 fn main() {
-    let r = Err("not found")
-    -- r is Result(a, String)
+  let r = Err("not found")
+  -- r is Result(a, String)
 }
 ```
 
@@ -165,11 +165,11 @@ Constructs a present variant of `Option`.
 
 ```silt
 fn main() {
-    let x = Some(42)
-    match x {
-        Some(n) -> println(n)
-        None -> println("nothing")
-    }
+  let x = Some(42)
+  match x {
+    Some(n) -> println(n)
+    None -> println("nothing")
+  }
 }
 ```
 
@@ -184,9 +184,10 @@ The absent variant of `Option`. This is a value, not a function.
 
 ```silt
 import option
+
 fn main() {
-    let x = None
-    println(option.is_none(x))  -- true
+  let x = None
+  println(option.is_none(x)) -- true
 }
 ```
 
@@ -203,14 +204,15 @@ accumulator result.
 
 ```silt
 import list
+
 fn main() {
-    let capped_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
-        match {
-            acc + x > 6 -> list.Stop(acc)
-            _ -> list.Continue(acc + x)
-        }
+  let capped_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
+    match {
+      acc + x > 6 -> list.Stop(acc)
+      _ -> list.Continue(acc + x)
     }
-    println(capped_sum)  -- 6
+  }
+  println(capped_sum) -- 6
 }
 ```
 
@@ -238,11 +240,14 @@ A variant of `channel`: write `channel.Message(v)`, or
 
 ```silt
 import channel
+
 fn main() {
-    let ch = channel.new(1)
-    channel.send(ch, 42)
-    when let channel.Message(v) = channel.receive(ch) else { return }
-    println(v)  -- 42
+  let ch = channel.new(1)
+  channel.send(ch, 42)
+  when let channel.Message(v) = channel.receive(ch) else {
+    return
+  }
+  println(v) -- 42
 }
 ```
 

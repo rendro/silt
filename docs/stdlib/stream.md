@@ -86,8 +86,8 @@ import stream
 
 fn main() {
   let squares = stream.from_range(1, 100)
-    |> stream.filter({ n -> n % 2 == 1 })
-    |> stream.map({ n -> n * n })
+    |> stream.filter { n -> n % 2 == 1 }
+    |> stream.map { n -> n * n }
     |> stream.take(5)
     |> stream.collect
   println(squares)
@@ -101,12 +101,14 @@ import stream
 
 fn main() {
   -- Generate 1, 2, 3, 4, 5 then None.
-  let xs = stream.collect(stream.unfold(1, { n ->
-    match n > 5 {
-      true -> None
-      false -> Some((n, n + 1))
-    }
-  }))
+  let xs = stream.collect(
+    stream.unfold(1) { n ->
+      match n > 5 {
+        true -> None
+        false -> Some((n, n + 1))
+      }
+    },
+  )
   println(xs)
 }
 ```

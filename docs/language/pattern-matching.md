@@ -31,8 +31,8 @@ Omit the scrutinee for boolean conditions:
 fn classify(n) {
   match {
     n == 0 -> "zero"
-    n > 0  -> "positive"
-    _      -> "negative"
+    n > 0 -> "positive"
+    _ -> "negative"
   }
 }
 ```
@@ -101,7 +101,7 @@ fn fizzbuzz(n) {
     (0, 0) -> "FizzBuzz"
     (0, _) -> "Fizz"
     (_, 0) -> "Buzz"
-    _      -> "{n}"
+    _ -> "{n}"
   }
 }
 ```
@@ -162,8 +162,7 @@ starts with its `|`:
 
 ```silt
 match day {
-  "Saturday"
-  | "Sunday" -> "weekend"
+  "Saturday" | "Sunday" -> "weekend"
   _ -> "weekday"
 }
 ```
@@ -181,7 +180,7 @@ fn unwrap_either(r: Result(Int, Int)) -> Int {
 }
 
 fn main() {
-  println("{unwrap_either(Ok(7))}")   -- 7
+  println("{unwrap_either(Ok(7))}") -- 7
 }
 ```
 
@@ -211,9 +210,9 @@ Inclusive numeric ranges:
 ```silt
 match score {
   90..100 -> "A"
-  80..89  -> "B"
-  70..79  -> "C"
-  _       -> "F"
+  80..89 -> "B"
+  70..79 -> "C"
+  _ -> "F"
 }
 ```
 
@@ -248,8 +247,12 @@ Asserts a pattern match and binds on success, or diverges on failure:
 
 ```silt
 fn process(input) {
-  when let Ok(value) = parse(input) else { return Err("parse failed") }
-  when let Admin(perms) = user.role else { return Err("unauthorized") }
+  when let Ok(value) = parse(input) else {
+    return Err("parse failed")
+  }
+  when let Admin(perms) = user.role else {
+    return Err("unauthorized")
+  }
   do_admin_thing(value, perms)
 }
 ```

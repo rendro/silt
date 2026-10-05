@@ -41,10 +41,11 @@ Returns `true` if `elem` is in the set.
 
 ```silt
 import set
+
 fn main() {
-    let s = #[1, 2, 3]
-    println(set.contains(s, 2))  -- true
-    println(set.contains(s, 5))  -- false
+  let s = #[1, 2, 3]
+  println(set.contains(s, 2)) -- true
+  println(set.contains(s, 5)) -- false
 }
 ```
 
@@ -59,9 +60,10 @@ Returns elements that are in `a` but not in `b`.
 
 ```silt
 import set
+
 fn main() {
-    let diff = set.difference(#[1, 2, 3], #[2, 3, 4])
-    println(set.to_list(diff))  -- [1]
+  let diff = set.difference(#[1, 2, 3], #[2, 3, 4])
+  println(set.to_list(diff)) -- [1]
 }
 ```
 
@@ -76,8 +78,9 @@ Calls `f` for every element. Used for side effects.
 
 ```silt
 import set
+
 fn main() {
-    set.each(#[1, 2, 3]) { x -> println(x) }
+  set.each(#[1, 2, 3]) { x -> println(x) }
 }
 ```
 
@@ -92,9 +95,10 @@ Returns a new set containing only elements for which `f` returns `true`.
 
 ```silt
 import set
+
 fn main() {
-    let evens = set.filter(#[1, 2, 3, 4]) { x -> x % 2 == 0 }
-    println(set.to_list(evens))  -- [2, 4]
+  let evens = set.filter(#[1, 2, 3, 4]) { x -> x % 2 == 0 }
+  println(set.to_list(evens)) -- [2, 4]
 }
 ```
 
@@ -109,9 +113,10 @@ Reduces the set to a single value. Iteration order is sorted.
 
 ```silt
 import set
+
 fn main() {
-    let sum = set.fold(#[1, 2, 3], 0) { acc, x -> acc + x }
-    println(sum)  -- 6
+  let sum = set.fold(#[1, 2, 3], 0) { acc, x -> acc + x }
+  println(sum) -- 6
 }
 ```
 
@@ -126,9 +131,10 @@ Creates a set from a list, removing duplicates.
 
 ```silt
 import set
+
 fn main() {
-    let s = set.from_list([1, 2, 2, 3])
-    println(set.length(s))  -- 3
+  let s = set.from_list([1, 2, 2, 3])
+  println(set.length(s)) -- 3
 }
 ```
 
@@ -143,9 +149,10 @@ Returns a new set with `elem` added. No-op if already present.
 
 ```silt
 import set
+
 fn main() {
-    let s = set.insert(#[1, 2], 3)
-    println(set.to_list(s))  -- [1, 2, 3]
+  let s = set.insert(#[1, 2], 3)
+  println(set.to_list(s)) -- [1, 2, 3]
 }
 ```
 
@@ -160,9 +167,10 @@ Returns elements that are in both `a` and `b`.
 
 ```silt
 import set
+
 fn main() {
-    let common = set.intersection(#[1, 2, 3], #[2, 3, 4])
-    println(set.to_list(common))  -- [2, 3]
+  let common = set.intersection(#[1, 2, 3], #[2, 3, 4])
+  println(set.to_list(common)) -- [2, 3]
 }
 ```
 
@@ -177,9 +185,10 @@ Returns `true` if every element of `a` is also in `b`.
 
 ```silt
 import set
+
 fn main() {
-    println(set.is_subset(#[1, 2], #[1, 2, 3]))  -- true
-    println(set.is_subset(#[1, 4], #[1, 2, 3]))  -- false
+  println(set.is_subset(#[1, 2], #[1, 2, 3])) -- true
+  println(set.is_subset(#[1, 4], #[1, 2, 3])) -- false
 }
 ```
 
@@ -194,8 +203,9 @@ Returns the number of elements in the set.
 
 ```silt
 import set
+
 fn main() {
-    println(set.length(#[1, 2, 3]))  -- 3
+  println(set.length(#[1, 2, 3])) -- 3
 }
 ```
 
@@ -211,9 +221,10 @@ smaller if `f` maps distinct elements to the same value.
 
 ```silt
 import set
+
 fn main() {
-    let scaled = set.map(#[1, 2, 3]) { x -> x * 10 }
-    println(set.to_list(scaled))  -- [10, 20, 30]
+  let scaled = set.map(#[1, 2, 3]) { x -> x * 10 }
+  println(set.to_list(scaled)) -- [10, 20, 30]
 }
 ```
 
@@ -228,10 +239,11 @@ Creates a new empty set.
 
 ```silt
 import set
+
 fn main() {
-    let s = set.new()
-    let s = set.insert(s, 42)
-    println(set.length(s))  -- 1
+  let s = set.new()
+  let s = set.insert(s, 42)
+  println(set.length(s)) -- 1
 }
 ```
 
@@ -246,9 +258,10 @@ Returns a new set with `elem` removed. No-op if not present.
 
 ```silt
 import set
+
 fn main() {
-    let s = set.remove(#[1, 2, 3], 2)
-    println(set.to_list(s))  -- [1, 3]
+  let s = set.remove(#[1, 2, 3], 2)
+  println(set.to_list(s)) -- [1, 3]
 }
 ```
 
@@ -264,9 +277,10 @@ Returns elements that are in exactly one of `a` or `b` — equivalent to
 
 ```silt
 import set
+
 fn main() {
-    let diff = set.symmetric_difference(#[1, 2, 3], #[2, 3, 4])
-    println(set.to_list(diff))  -- [1, 4]
+  let diff = set.symmetric_difference(#[1, 2, 3], #[2, 3, 4])
+  println(set.to_list(diff)) -- [1, 4]
 }
 ```
 
@@ -281,9 +295,10 @@ Converts the set to a sorted list.
 
 ```silt
 import set
+
 fn main() {
-    let xs = set.to_list(#[3, 1, 2])
-    println(xs)  -- [1, 2, 3]
+  let xs = set.to_list(#[3, 1, 2])
+  println(xs) -- [1, 2, 3]
 }
 ```
 
@@ -298,8 +313,9 @@ Returns a set containing all elements from both `a` and `b`.
 
 ```silt
 import set
+
 fn main() {
-    let combined = set.union(#[1, 2], #[2, 3])
-    println(set.to_list(combined))  -- [1, 2, 3]
+  let combined = set.union(#[1, 2], #[2, 3])
+  println(set.to_list(combined)) -- [1, 2, 3]
 }
 ```

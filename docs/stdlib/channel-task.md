@@ -36,10 +36,11 @@ after all buffered messages are consumed.
 
 ```silt
 import channel
+
 fn main() {
-    let ch = channel.new(10)
-    channel.send(ch, 1)
-    channel.close(ch)
+  let ch = channel.new(10)
+  channel.send(ch, 1)
+  channel.close(ch)
 }
 ```
 
@@ -56,15 +57,16 @@ channel is closed. This is the idiomatic way to consume all messages.
 ```silt
 import channel
 import task
+
 fn main() {
-    let ch = channel.new(10)
-    task.spawn({ ->
-        channel.send(ch, 1)
-        channel.send(ch, 2)
-        channel.close(ch)
-    })
-    channel.each(ch) { msg -> println(msg) }
-    -- prints 1, then 2
+  let ch = channel.new(10)
+  task.spawn { ->
+    channel.send(ch, 1)
+    channel.send(ch, 2)
+    channel.close(ch)
+  }
+  channel.each(ch) { msg -> println(msg) }
+  -- prints 1, then 2
 }
 ```
 
@@ -83,9 +85,10 @@ sends block when the buffer is full, receives block when the buffer is empty.
 
 ```silt
 import channel
+
 fn main() {
-    let rendezvous = channel.new()    -- true rendezvous (capacity 0)
-    let buffered = channel.new(10)    -- buffered (capacity 10)
+  let rendezvous = channel.new() -- true rendezvous (capacity 0)
+  let buffered = channel.new(10) -- buffered (capacity 10)
 }
 ```
 
@@ -102,14 +105,15 @@ while waiting, allowing other tasks to run on the same thread.
 
 ```silt
 import channel
+
 fn main() {
-    let ch = channel.new(1)
-    channel.send(ch, 42)
-    match channel.receive(ch) {
-        channel.Message(v) -> println(v)
-        channel.Closed -> println("done")
-        _ -> ()
-    }
+  let ch = channel.new(1)
+  channel.send(ch, 42)
+  match channel.receive(ch) {
+    channel.Message(v) -> println(v)
+    channel.Closed -> println("done")
+    _ -> ()
+  }
 }
 ```
 
@@ -151,16 +155,16 @@ import task
 import time
 
 fn main() {
-    let ch = channel.new(0)
-    task.spawn({ ->
-        time.sleep(time.ms(50))
-        channel.send(ch, 42)
-    })
-    match channel.recv_timeout(ch, time.ms(500)) {
-        Ok(v) -> println(v)                   -- 42
-        Err(channel.ChannelTimeout) -> println("timed out")
-        Err(channel.ChannelClosed) -> println("channel closed")
-    }
+  let ch = channel.new(0)
+  task.spawn { ->
+    time.sleep(time.ms(50))
+    channel.send(ch, 42)
+  }
+  match channel.recv_timeout(ch, time.ms(500)) {
+    Ok(v) -> println(v) -- 42
+    Err(channel.ChannelTimeout) -> println("timed out")
+    Err(channel.ChannelClosed) -> println("channel closed")
+  }
 }
 ```
 
@@ -193,15 +197,16 @@ Receive-only form:
 ```silt
 import channel
 import task
+
 fn main() {
-    let ch1 = channel.new(1)
-    let ch2 = channel.new(1)
-    task.spawn({ -> channel.send(ch2, "hello") })
-    match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-        (^ch2, channel.Message(val)) -> println(val)  -- hello
-        (_, channel.Closed) -> println("closed")
-        _ -> ()
-    }
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+  task.spawn { -> channel.send(ch2, "hello") }
+  match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
+    (^ch2, channel.Message(val)) -> println(val) -- hello
+    (_, channel.Closed) -> println("closed")
+    _ -> ()
+  }
 }
 ```
 
@@ -209,15 +214,16 @@ Mixed send and receive — race a pending send against an incoming receive:
 
 ```silt
 import channel
+
 fn main() {
-    let inbox = channel.new(1)
-    let outbox = channel.new(1)
-    channel.send(inbox, 7)
-    match channel.select([channel.Recv(inbox), channel.Send(outbox, 99)]) {
-        (^inbox, channel.Message(v)) -> println(v)
-        (^outbox, channel.Sent) -> println("sent")
-        _ -> ()
-    }
+  let inbox = channel.new(1)
+  let outbox = channel.new(1)
+  channel.send(inbox, 7)
+  match channel.select([channel.Recv(inbox), channel.Send(outbox, 99)]) {
+    (^inbox, channel.Message(v)) -> println(v)
+    (^outbox, channel.Sent) -> println("sent")
+    _ -> ()
+  }
 }
 ```
 
@@ -233,9 +239,10 @@ other tasks to run until space opens up.
 
 ```silt
 import channel
+
 fn main() {
-    let ch = channel.new(1)
-    channel.send(ch, "hello")
+  let ch = channel.new(1)
+  channel.send(ch, "hello")
 }
 ```
 
@@ -252,14 +259,15 @@ the duration elapses. This is useful for adding deadlines to `channel.select`.
 
 ```silt
 import channel
+
 fn main() {
-    let ch = channel.new(10)
-    let timer = channel.timeout(1000)  -- closes after 1 second
-    match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
-        (^ch, channel.Message(val)) -> println("got: {val}")
-        (^timer, channel.Closed) -> println("timed out")
-        _ -> ()
-    }
+  let ch = channel.new(10)
+  let timer = channel.timeout(1000) -- closes after 1 second
+  match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
+    (^ch, channel.Message(val)) -> println("got: {val}")
+    (^timer, channel.Closed) -> println("timed out")
+    _ -> ()
+  }
 }
 ```
 
@@ -276,14 +284,15 @@ channel is closed and empty.
 
 ```silt
 import channel
+
 fn main() {
-    let ch = channel.new(1)
-    match channel.try_receive(ch) {
-        channel.Message(v) -> println(v)
-        channel.Empty -> println("nothing yet")
-        channel.Closed -> println("done")
-        _ -> ()
-    }
+  let ch = channel.new(1)
+  match channel.try_receive(ch) {
+    channel.Message(v) -> println(v)
+    channel.Empty -> println("nothing yet")
+    channel.Closed -> println("done")
+    _ -> ()
+  }
 }
 ```
 
@@ -299,10 +308,11 @@ Non-blocking send. Returns `true` if the value was successfully buffered,
 
 ```silt
 import channel
+
 fn main() {
-    let ch = channel.new(1)
-    let ok = channel.try_send(ch, 42)
-    println(ok)  -- true
+  let ch = channel.new(1)
+  let ok = channel.try_send(ch, 42)
+  println(ok) -- true
 }
 ```
 
@@ -369,16 +379,17 @@ the canonical treatment.
 -- noexec
 import channel
 import task
+
 fn main() {
-    let done = channel.new(1)
-    let h = task.spawn({ ->
-        -- long-running work
-        channel.send(done, 42)
-    })
-    task.cancel(h)
-    -- `task.join(h)` here would raise `joined task failed: cancelled`.
-    -- Use the sentinel channel for a non-raising "settled" signal, or
-    -- only call `task.join` at a boundary that tolerates the raise.
+  let done = channel.new(1)
+  let h = task.spawn { ->
+    -- long-running work
+    channel.send(done, 42)
+  }
+  task.cancel(h)
+  -- `task.join(h)` here would raise `joined task failed: cancelled`.
+  -- Use the sentinel channel for a non-raising "settled" signal, or
+  -- only call `task.join` at a boundary that tolerates the raise.
 }
 ```
 
@@ -403,10 +414,11 @@ instead of relying on `task.join` for the signal.
 
 ```silt
 import task
+
 fn main() {
-    let h = task.spawn({ -> 1 + 2 })
-    let sum = task.join(h)
-    println(sum)  -- 3
+  let h = task.spawn { -> 1 + 2 }
+  let sum = task.join(h)
+  println(sum) -- 3
 }
 ```
 
@@ -423,13 +435,14 @@ that can be used with `task.join` or `task.cancel`.
 
 ```silt
 import task
+
 fn main() {
-    let h = task.spawn({ ->
-        println("running in a task")
-        42
-    })
-    let answer = task.join(h)
-    println(answer)  -- 42
+  let h = task.spawn { ->
+    println("running in a task")
+    42
+  }
+  let answer = task.join(h)
+  println(answer) -- 42
 }
 ```
 
@@ -468,14 +481,12 @@ import task
 import time
 
 fn main() {
-    let outcome = task.deadline(time.ms(200), { ->
-        io.read_file("/var/log/slow.log")
-    })
-    match outcome {
-        Ok(contents) -> println(contents)
-        Err(io.IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
-        Err(_) -> println("other io error")
-    }
+  let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
+  match outcome {
+    Ok(contents) -> println(contents)
+    Err(io.IoUnknown(msg)) -> println(msg) -- I/O timeout (task.deadline exceeded)
+    Err(_) -> println("other io error")
+  }
 }
 ```
 
@@ -502,12 +513,10 @@ import task
 import time
 
 fn main() {
-    let h = task.spawn_until(time.seconds(2), { ->
-        io.read_file("/tmp/maybe_slow.txt")
-    })
-    match task.join(h) {
-        Ok(contents) -> println(contents)
-        Err(msg) -> println(msg)
-    }
+  let h = task.spawn_until(time.seconds(2)) { -> io.read_file("/tmp/maybe_slow.txt") }
+  match task.join(h) {
+    Ok(contents) -> println(contents)
+    Err(msg) -> println(msg)
+  }
 }
 ```

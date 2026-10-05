@@ -34,7 +34,7 @@ let flags = 0b1010_0001
 -- Scientific notation (always Float)
 let avogadro = 6.022e23
 let tiny = 1e-9
-let hundred = 1e2       -- Float(100.0), not Int
+let hundred = 1e2 -- Float(100.0), not Int
 ```
 
 Scientific notation always produces a `Float`, even when the value is a whole number.
@@ -49,9 +49,9 @@ silt treats silent wrong answers as worse than crashes. The numeric types are de
 `Int` is 64-bit signed. Arithmetic that would overflow is a **runtime error**, not silent wrapping:
 
 ```silt
-9223372036854775807 + 1      -- runtime error: integer overflow
-let min = -9223372036854775808      -- the smallest Int
-int.abs(min)                  -- runtime error: integer overflow: abs(-9223372036854775808)
+9223372036854775807 + 1 -- runtime error: integer overflow
+let min = -9223372036854775808 -- the smallest Int
+int.abs(min) -- runtime error: integer overflow: abs(-9223372036854775808)
 ```
 
 The smallest `Int` is written `-9223372036854775808`: the minus sign and
@@ -64,10 +64,10 @@ the digits are one literal there. Without the minus sign,
 A `Float` is always finite: never `NaN`, never infinite. An operation whose result would be `NaN` or infinite is a **runtime error** that names the operation, matching the integer rule:
 
 ```silt
-1.0 / 2.0                -- 0.5
-1.0 / 0.0                -- runtime error: float division by zero
-float.max_value * 2.0    -- runtime error: float overflow
-math.sqrt(-4.0)          -- runtime error: math.sqrt of a negative number: -4
+1.0 / 2.0 -- 0.5
+1.0 / 0.0 -- runtime error: float division by zero
+float.max_value * 2.0 -- runtime error: float overflow
+math.sqrt(-4.0) -- runtime error: math.sqrt of a negative number: -4
 ```
 
 The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum_float` / `list.product_float` overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.
@@ -95,7 +95,11 @@ type Shape {
   Rect(Float, Float),
 }
 
-type Color { Red, Green, Blue }
+type Color {
+  Red,
+  Green,
+  Blue,
+}
 ```
 
 Constructors create values: `Circle(5.0)`, `Rect(3.0, 4.0)`. The compiler
@@ -104,8 +108,15 @@ checks exhaustiveness when you match on them.
 ## Generic Types
 
 ```silt
-type Option(a) { Some(a), None }
-type Result(a, e) { Ok(a), Err(e) }
+type Option(a) {
+  Some(a),
+  None,
+}
+
+type Result(a, e) {
+  Ok(a),
+  Err(e),
+}
 ```
 
 Type parameters are filled in at use: `Option(Int)`, `Result(String, String)`.
@@ -155,15 +166,15 @@ type — there is no `type Foo { ... }` declaration to anchor identity.
 
 ```silt
 let alice = { name: "Alice", age: 30 }
-let bob   = { name: "Bob",   age: 25 }   -- same type as alice
-alice.name   -- "Alice"
+let bob = { name: "Bob", age: 25 } -- same type as alice
+alice.name -- "Alice"
 ```
 
 The type of `alice` is the structural type `{name: String, age: Int}`,
 which can also appear in any annotation:
 
 ```silt
-fn full_name(p: {first: String, last: String}) -> String {
+fn full_name(p: { first: String, last: String }) -> String {
   "{p.first} {p.last}"
 }
 ```
@@ -176,11 +187,13 @@ fields you happen to have." The function only commits to the fields it
 names; the row variable absorbs whatever else the caller passes:
 
 ```silt
-fn first_name(p: {name: String, ...r}) -> String { p.name }
+fn first_name(p: { name: String, ...r }) -> String {
+  p.name
+}
 
 fn main() {
-  println(first_name({name: "Alice", age: 30}))
-  println(first_name({name: "Bob"}))
+  println(first_name({ name: "Alice", age: 30 }))
+  println(first_name({ name: "Bob" }))
 }
 ```
 
@@ -192,12 +205,14 @@ A row variable can be threaded into the return type so the caller's
 extra fields survive the round trip:
 
 ```silt
-fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
+fn id_name(p: { name: String, ...r }) -> { name: String, ...r } {
+  p
+}
 
 fn main() {
-  let q = id_name({name: "Alice", age: 30})
+  let q = id_name({ name: "Alice", age: 30 })
   -- `age` came along with the row
-  println(q.age)       -- 30
+  println(q.age) -- 30
 }
 ```
 
@@ -213,12 +228,17 @@ Nominal records widen to open rows automatically, so a fn taking a
 `name: String` field:
 
 ```silt
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 
-fn name(p: {name: String, ...r}) -> String { p.name }
+fn name(p: { name: String, ...r }) -> String {
+  p.name
+}
 
 fn main() {
-  println(name(Person { name: "Bob", age: 42 }))   -- Bob
+  println(name(Person { name: "Bob", age: 42 })) -- Bob
 }
 ```
 
@@ -247,10 +267,10 @@ attempting to overwrite a field that already exists is rejected:
 
 ```silt
 fn main() {
-  let p = {name: "Alice"}
-  let q = {...p, age: 30}        -- {name: String, age: Int}
-  println(q.name)                -- Alice
-  println(q.age)                 -- 30
+  let p = { name: "Alice" }
+  let q = { ...p, age: 30 } -- {name: String, age: Int}
+  println(q.name) -- Alice
+  println(q.age) -- 30
 }
 ```
 
@@ -266,9 +286,9 @@ capture the rest of the type, the same way `..rest` works on lists:
 
 ```silt
 fn main() {
-  let p = {name: "A", age: 30}
+  let p = { name: "A", age: 30 }
   match p {
-    {name: nm} -> println(nm)      -- "A"
+    { name: nm } -> println(nm) -- "A"
   }
 }
 ```
