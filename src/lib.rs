@@ -25,6 +25,8 @@ pub mod diagnostic;
 pub mod disassemble;
 pub mod feature_stub;
 pub mod file_discovery;
+#[doc(hidden)]
+pub mod format;
 pub mod formatter;
 pub mod fuzz_invariants;
 pub mod git;
