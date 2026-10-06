@@ -46,8 +46,11 @@ fn references_finds_all_uses_across_files() {
     let mut client = LspClient::spawn();
     let file_a = "file:///tmp/silt_wspace_ref_a.silt";
     let file_b = "file:///tmp/silt_wspace_ref_b.silt";
-    client.did_open_and_wait(file_a, "fn pinger(x) { x }\nfn main() { pinger(1) }\n");
-    client.did_open_and_wait(file_b, "fn other() { pinger(2) }\n");
+    client.did_open_and_wait(file_a, "pub fn pinger(x) { x }\nfn main() { pinger(1) }\n");
+    client.did_open_and_wait(
+        file_b,
+        "import silt_wspace_ref_a\nfn other() { silt_wspace_ref_a.pinger(2) }\n",
+    );
 
     // Click on the `pinger` call at line 1 (inside main's body).
     let resp = client.request(
@@ -84,9 +87,12 @@ fn rename_returns_workspace_edit() {
     let file_b = "file:///tmp/silt_wspace_rn_b.silt";
     client.did_open_and_wait(
         file_a,
-        "fn renamed_target() { 0 }\nfn main() { renamed_target() }\n",
+        "pub fn renamed_target() { 0 }\nfn main() { renamed_target() }\n",
     );
-    client.did_open_and_wait(file_b, "fn caller() { renamed_target() }\n");
+    client.did_open_and_wait(
+        file_b,
+        "import silt_wspace_rn_a.{ renamed_target }\nfn caller() { renamed_target() }\n",
+    );
 
     // Click on the `renamed_target` call at line 1 (inside main's body).
     let resp = client.request(

@@ -55,6 +55,8 @@ struct Directives {
     requires_features: Vec<String>,
     without_features: Vec<String>,
     verdict: Option<verdict::Mark>,
+    /// The requests of an LSP case, in order (`-- lsp: references 3:5`).
+    lsp_requests: Vec<String>,
 }
 
 /// Whether the cargo feature `name` is enabled. The golden test binary
@@ -162,6 +164,7 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
                     .parse()
                     .map_err(|_| format!("bad `-- repeat:` value {value:?}"))?
             }
+            "lsp" => d.lsp_requests.push(value),
             "verdict" => d.verdict = Some(verdict::Mark::parse(&value)?),
             // An ordinary comment that happens to contain a colon.
             _ => {}
@@ -353,7 +356,12 @@ fn run_case(case: &Case) -> Output {
 
 fn run_in(case: &Case, dir: &Path) -> Output {
     if case.directives.cmd.first().map(String::as_str) == Some("lsp") {
-        let session = lsp::session(dir, &case.entry(), case.directives.timeout);
+        let session = lsp::session(
+            dir,
+            &case.entry(),
+            case.directives.timeout,
+            &case.directives.lsp_requests,
+        );
         return Output {
             code: session.code,
             stdout: session.render(&case.entry()),

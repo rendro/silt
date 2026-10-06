@@ -1,0 +1,30 @@
+> references 21:16
+geo.silt:1:8-1:10
+geo.silt:6:3-6:5
+geo.silt:6:6-6:8
+items.silt:1:14-1:16
+items.silt:4:3-4:5
+items.silt:4:11-4:13
+main.silt:21:15-21:17
+> references 21:29
+main.silt:21:29-21:31
+other.silt:1:8-1:10
+> rename 21:16 make
+geo.silt:1:8-1:10 => make
+geo.silt:6:3-6:5 => make
+geo.silt:6:6-6:8 => make
+items.silt:1:14-1:16 => make
+items.silt:4:3-4:5 => make
+items.silt:4:11-4:13 => make
+main.silt:21:15-21:17 => make
+> highlight 20:11
+19:7-19:9
+20:11-20:13
+> references 20:3
+main.silt:20:3-20:10
+main.silt:21:3-21:10
+> rename 19:7 Size
+error: `mk` does not start with an upper-case letter, which only the name of a type, a variant or a trait does: `Size` would be a name of another kind
+> symbols mk
+geo.silt:1:8-1:10 function mk
+other.silt:1:8-1:10 function mk

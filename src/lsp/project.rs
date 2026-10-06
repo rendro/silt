@@ -120,6 +120,25 @@ impl Project {
         Some(self.session.module_of(file))
     }
 
+    /// Check the workspace file at `path`, which is not open, as an
+    /// entry, unless the session has checked it: a query needs what its
+    /// names mean. Its stamp is recorded, as for every file the session
+    /// reads from disk.
+    pub(super) fn check_file(&mut self, path: &Path) {
+        let checked = self
+            .session
+            .graph()
+            .module_at(path)
+            .is_some_and(|id| self.session.module_analysis(id).is_some());
+        if checked {
+            return;
+        }
+        if let Ok(file) = self.session.open(path) {
+            self.session.analyze(file);
+            self.disk.insert(path.to_path_buf(), stamp_of(path));
+        }
+    }
+
     /// Whether the session has a module for the file at `path`.
     pub(super) fn has_module(&self, path: &Path) -> bool {
         self.session.graph().module_at(path).is_some()
