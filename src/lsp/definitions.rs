@@ -10,6 +10,7 @@ use crate::source::Span;
 use crate::types::Type;
 
 use super::ast_walk::visit_expr_children;
+use super::fields::{RecordFields, record_field_types};
 use super::state::DefInfo;
 
 // ── Build definitions map from declarations ────────────────────────
@@ -19,6 +20,7 @@ use super::state::DefInfo;
 pub(super) fn build_definitions(
     program: &Program,
     top_level: Option<&HashMap<Symbol, Type>>,
+    records: &RecordFields,
 ) -> HashMap<Symbol, DefInfo> {
     let checked = |name: Symbol| top_level.and_then(|types| types.get(&name)).cloned();
     let mut defs = HashMap::new();
@@ -117,6 +119,7 @@ pub(super) fn build_definitions(
                     doc.as_deref(),
                     true,
                     &mut defs,
+                    records,
                 );
             }
             _ => {}
@@ -142,6 +145,7 @@ fn collect_let_pattern_defs(
     doc: Option<&str>,
     is_top: bool,
     defs: &mut HashMap<Symbol, DefInfo>,
+    records: &RecordFields,
 ) {
     match &pattern.kind {
         PatternKind::Ident(name) if resolve(*name) != "_" => {
@@ -185,12 +189,12 @@ fn collect_let_pattern_defs(
             };
             for (i, p) in pats.iter().enumerate() {
                 let inner = elem_tys.as_ref().and_then(|t| t.get(i));
-                collect_let_pattern_defs(p, None, inner, None, false, defs);
+                collect_let_pattern_defs(p, None, inner, None, false, defs, records);
             }
         }
         PatternKind::Or(pats) => {
             for p in pats {
-                collect_let_pattern_defs(p, None, value_ty, None, false, defs);
+                collect_let_pattern_defs(p, None, value_ty, None, false, defs, records);
             }
         }
         PatternKind::Constructor {
@@ -205,16 +209,11 @@ fn collect_let_pattern_defs(
                 _ => None,
             };
             for p in fields {
-                collect_let_pattern_defs(p, None, inner_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(p, None, inner_ty.as_ref(), None, false, defs, records);
             }
         }
         PatternKind::Record { fields, .. } => {
-            let field_tys: Option<Vec<(Symbol, Type)>> = match value_ty {
-                Some(Type::AnonRecord { fields, .. }) => {
-                    Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
-                }
-                _ => None,
-            };
+            let field_tys = value_ty.and_then(|ty| record_field_types(ty, records));
             let lookup_field_ty = |fname: Symbol| -> Option<Type> {
                 field_tys
                     .as_ref()
@@ -223,7 +222,7 @@ fn collect_let_pattern_defs(
             for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs);
+                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs, records);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
@@ -243,12 +242,7 @@ fn collect_let_pattern_defs(
             // Round-62 B9: anonymous-record destructure at top-level
             // (`let { x, y } = some_anon_record`). Mirrors the nominal
             // `Record` case above.
-            let field_tys: Option<Vec<(Symbol, Type)>> = match value_ty {
-                Some(Type::AnonRecord { fields, .. }) => {
-                    Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
-                }
-                _ => None,
-            };
+            let field_tys = value_ty.and_then(|ty| record_field_types(ty, records));
             let lookup_field_ty = |fname: Symbol| -> Option<Type> {
                 field_tys
                     .as_ref()
@@ -257,7 +251,7 @@ fn collect_let_pattern_defs(
             for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs);
+                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs, records);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
@@ -290,7 +284,7 @@ fn collect_let_pattern_defs(
             // Round-101: map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
-                collect_let_pattern_defs(p, None, None, None, false, defs);
+                collect_let_pattern_defs(p, None, None, None, false, defs, records);
             }
         }
         PatternKind::List(pats, rest) => {
@@ -299,10 +293,10 @@ fn collect_let_pattern_defs(
                 _ => (None, None),
             };
             for p in pats {
-                collect_let_pattern_defs(p, None, elem_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(p, None, elem_ty.as_ref(), None, false, defs, records);
             }
             if let Some(r) = rest {
-                collect_let_pattern_defs(r, None, list_ty.as_ref(), None, false, defs);
+                collect_let_pattern_defs(r, None, list_ty.as_ref(), None, false, defs, records);
             }
         }
         _ => {}
@@ -350,7 +344,7 @@ mod tests {
         let source =
             "fn add(a, b) { a + b }\ntype Color {\n  Red,\n  Green,\n  Blue,\n}\nlet x = 42";
         let (program, top_level) = crate::lsp::testing::checked(source);
-        let defs = build_definitions(&program, Some(&top_level));
+        let defs = build_definitions(&program, Some(&top_level), &RecordFields::new());
 
         assert!(defs.contains_key(&intern("add")), "should have fn 'add'");
         assert!(
@@ -379,7 +373,7 @@ mod tests {
     fn test_build_definitions_fn_has_params() {
         let source = "fn greet(name, times) { name }";
         let program = crate::lsp::testing::parsed(source);
-        let defs = build_definitions(&program, None);
+        let defs = build_definitions(&program, None, &RecordFields::new());
 
         let def = defs.get(&intern("greet")).unwrap();
         assert_eq!(def.params, vec!["name", "times"]);
@@ -391,7 +385,7 @@ mod tests {
     fn test_build_definitions_trait() {
         let source = "trait Printable {\n  fn show(self) -> String\n}\nfn main() { 0 }";
         let (program, top_level) = crate::lsp::testing::checked(source);
-        let defs = build_definitions(&program, Some(&top_level));
+        let defs = build_definitions(&program, Some(&top_level), &RecordFields::new());
 
         assert!(
             defs.contains_key(&intern("Printable")),
@@ -403,7 +397,7 @@ mod tests {
     fn test_build_definitions_let_type() {
         let source = "let x = 42\nfn main() { x }";
         let (program, top_level) = crate::lsp::testing::checked(source);
-        let defs = build_definitions(&program, Some(&top_level));
+        let defs = build_definitions(&program, Some(&top_level), &RecordFields::new());
 
         let def = defs.get(&intern("x")).expect("should have 'x'");
         assert_eq!(def.ty, Some(Type::Int));
@@ -415,7 +409,7 @@ mod tests {
     fn test_build_definitions_enum_variants() {
         let source = "type Shape {\n  Circle(Float),\n  Rect(Float, Float),\n}\nfn main() { 0 }";
         let (program, top_level) = crate::lsp::testing::checked(source);
-        let defs = build_definitions(&program, Some(&top_level));
+        let defs = build_definitions(&program, Some(&top_level), &RecordFields::new());
 
         assert!(defs.contains_key(&intern("Shape")));
         assert!(defs.contains_key(&intern("Circle")));
@@ -426,7 +420,7 @@ mod tests {
     fn test_build_definitions_multiple_functions() {
         let source = "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { 0 }";
         let (program, top_level) = crate::lsp::testing::checked(source);
-        let defs = build_definitions(&program, Some(&top_level));
+        let defs = build_definitions(&program, Some(&top_level), &RecordFields::new());
 
         assert!(defs.contains_key(&intern("add")));
         assert!(defs.contains_key(&intern("sub")));
@@ -441,7 +435,7 @@ mod tests {
     fn a_function_has_the_checker_type() {
         let source = "fn double(n) { n * 2 }";
         let (program, top_level) = crate::lsp::testing::checked(source);
-        let defs = build_definitions(&program, Some(&top_level));
+        let defs = build_definitions(&program, Some(&top_level), &RecordFields::new());
         assert_eq!(
             defs[&intern("double")].ty,
             Some(Type::Fun(vec![Type::Int], Box::new(Type::Int)))
