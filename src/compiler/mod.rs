@@ -1823,7 +1823,7 @@ impl Compiler {
                 // first argument is the receiver.
                 let t = self.builtin_method_trait(callee.res, *method, span)?;
                 self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(*method, args.len(), t, span)?;
+                self.emit_call_method(*method, args.len(), t, tail, span)?;
             } else if let Some(slot) = self.qualified_type_member(callee)? {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
@@ -1892,7 +1892,7 @@ impl Compiler {
                 Selection::Impl { tr, .. } | Selection::Native { tr } | Selection::Dynamic { tr },
             ) => {
                 self.compile_operands(with_receiver)?;
-                self.emit_call_method(method, args.len() + 1, tr, span)
+                self.emit_call_method(method, args.len() + 1, tr, tail, span)
             }
             Some(Selection::Field) | None => Err(checker_missed(
                 span,
@@ -2277,17 +2277,19 @@ impl Compiler {
     }
 
     /// Emit `CallMethod` of `method` of the trait `t` with `argc`
-    /// values (the receiver first) on the stack.
+    /// values (the receiver first) on the stack; in tail position
+    /// (`tail`), `TailCallMethod; Return`.
     fn emit_call_method(
         &mut self,
         method: Symbol,
         argc: usize,
         t: crate::defs::TraitId,
+        tail: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let method_idx = self.add_constant(Value::String(resolve(method)), span)?;
+        let method = self.add_constant(Value::String(resolve(method)), span)?;
         let name = self.units.defs.get(t.0).name;
-        let trait_operand = self.globals.trait_index(t, resolve(name)).ok_or_else(|| {
+        let of = self.globals.trait_index(t, resolve(name)).ok_or_else(|| {
             let limit = Limit {
                 what: "traits whose methods a program calls",
                 count: usize::from(u16::MAX) + 1,
@@ -2295,14 +2297,12 @@ impl Compiler {
             };
             limit_diagnostic(limit, span)
         })?;
-        self.emit(
-            Asm::CallMethod {
-                method: method_idx,
-                argc,
-                of: trait_operand,
-            },
-            span,
-        )
+        if tail {
+            self.emit(Asm::TailCallMethod { method, argc, of }, span)?;
+            self.emit(Asm::Return, span)
+        } else {
+            self.emit(Asm::CallMethod { method, argc, of }, span)
+        }
     }
 
     /// Whether `callee` is `T.method` for a builtin type (`Int`, `List`,
@@ -3723,9 +3723,10 @@ fn main() {
         assert!(!has_op(main.chunk(), Op::CallMethod));
         assert!(has_op(main.chunk(), Op::GetGlobal));
         assert!(has_op(main.chunk(), Op::TailCall));
-        // The method of a bounded variable is found where the code runs.
+        // The method of a bounded variable is found where the code runs:
+        // in tail position, to run in the caller's frame.
         let shown = find_fn(&fns, "shown");
-        assert!(has_op(shown.chunk(), Op::CallMethod));
+        assert!(has_op(shown.chunk(), Op::TailCallMethod));
         // A field that holds a function is read and called.
         let field = find_fn(&fns, "field");
         assert!(has_op(field.chunk(), Op::GetField));

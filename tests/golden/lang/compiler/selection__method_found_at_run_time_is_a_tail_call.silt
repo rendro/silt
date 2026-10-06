@@ -1,0 +1,35 @@
+-- A method call whose method is found where the code runs (the receiver
+-- is a bounded type variable, or `self` in a default method) is a tail
+-- call in tail position too: a default method that calls itself a
+-- million levels deep runs in one frame, for each impl that leaves it
+-- out. A method that is not a closure (a builtin type's `display`)
+-- returns its value.
+type C { n: Int }
+trait Walk {
+  fn base(self) -> Int
+  fn walk(self, k: Int, acc: Int) -> Int {
+    match k {
+      0 -> acc + self.base()
+      _ -> self.walk(k - 1, acc + 1)
+    }
+  }
+  fn show(self) -> String { self.base().display() }
+}
+trait Walk for C { fn base(self) -> Int { self.n } }
+trait Walk for Int { fn base(self) -> Int { self } }
+fn go(x: a, k: Int) -> Int where a: Walk {
+  match k {
+    0 -> x.base()
+    _ -> go(x, k - 1)
+  }
+}
+fn last(x: a) -> Int where a: Walk { x.walk(1000000, 0) }
+fn shown(x: a) -> String where a: Display { x.display() }
+fn main() {
+  println(C { n: 5 }.walk(1000000, 0))
+  println(last(7))
+  println(go(C { n: 3 }, 1000000))
+  println(C { n: 9 }.show())
+  println(shown([1, 2]))
+  println(shown(C { n: 1 }))
+}
