@@ -14,6 +14,7 @@
 //! | [`Emitter::bind_over`]`(label, over, span)` | The same, naming what the jumps to `label` go over, for the limit on a conditional jump's reach. |
 //! | [`Emitter::height`]`()` | The number of values in the frame where the next instruction runs. |
 //! | [`Emitter::reachable`]`()` | Whether control can reach the next instruction. |
+//! | [`Emitter::ended`]`()` | Whether the code is complete: it ends in an instruction that ends the run, and nothing reaches past it. |
 //! | [`Emitter::assume_height`]`(height)` | In unreachable code, what the height would be. |
 //! | [`Emitter::finish`]`(upvalues)` | Verify the code and give the function, which captures `upvalues` values. |
 //!
@@ -116,6 +117,9 @@ pub struct Emitter {
     function: Function,
     height: usize,
     reachable: bool,
+    /// Whether the last instruction emitted ends the function's run
+    /// (`Return`, `Panic`).
+    ended: bool,
     labels: Vec<LabelState>,
 }
 
@@ -135,6 +139,7 @@ impl Emitter {
             },
             height: arity,
             reachable: true,
+            ended: false,
             labels: Vec::new(),
         })
     }
@@ -153,6 +158,13 @@ impl Emitter {
     /// Whether control can reach the next instruction.
     pub fn reachable(&self) -> bool {
         self.reachable
+    }
+
+    /// Whether the code so far is complete as a function's: its last
+    /// instruction ends the function's run, and control cannot reach
+    /// what would come next.
+    pub fn ended(&self) -> bool {
+        self.ended && !self.reachable
     }
 
     /// In unreachable code: what the height would be here.
@@ -215,6 +227,7 @@ impl Emitter {
         if matches!(effect.flow, Flow::Jump | Flow::End) {
             self.reachable = false;
         }
+        self.ended = matches!(effect.flow, Flow::End);
         Ok(())
     }
 

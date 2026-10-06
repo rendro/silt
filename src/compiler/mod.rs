@@ -1086,10 +1086,10 @@ impl Compiler {
     }
 
     /// Emit the `Return` of a function's body, whose value is on the
-    /// stack; nothing where the body has returned on every way already
-    /// (it ends in a tail call, a `return`, a panic).
+    /// stack; nothing where the body's code ends in a `Return` that
+    /// every way through it takes (it ends in a tail call, a `return`).
     fn emit_body_return(&mut self, span: Span) -> Result<(), Diagnostic> {
-        if self.emitter().reachable() {
+        if !self.emitter().ended() {
             self.emit(Asm::Return, span)?;
         }
         Ok(())
