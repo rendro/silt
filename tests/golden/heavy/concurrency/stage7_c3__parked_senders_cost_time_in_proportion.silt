@@ -1,0 +1,39 @@
+-- repeat: 3
+-- timeout: 60
+-- Many tasks parked on one channel cost time in proportion to their
+-- number, not to its square: with four times the senders the fan-in
+-- takes about four times as long. (When leaving the channel's queue
+-- meant searching it, four times the senders took sixteen times as
+-- long; the bound here is eight.)
+import channel
+import list
+import task
+import time
+
+fn fan_in(senders) {
+  let ch = channel.new(16)
+  let start = time.now()
+  let hs = 1..senders |> list.map { i -> task.spawn({ ->
+    1..3 |> list.each { j -> channel.send(ch, i + j) }
+  }) }
+  let sum = loop left = senders * 3, acc = 0 {
+    match left {
+      0 -> acc
+      _ -> match channel.receive(ch) {
+        channel.Message(v) -> loop(left - 1, acc + v)
+        _ -> acc
+      }
+    }
+  }
+  hs |> list.each { h -> task.join(h) }
+  (sum, time.since(start, time.now()).ns)
+}
+
+fn main() {
+  -- Once to start the workers, so that neither measurement pays for it.
+  let _ = fan_in(500)
+  let (small_sum, small) = fan_in(5000)
+  let (large_sum, large) = fan_in(20000)
+  println("sums: {small_sum} {large_sum}")
+  println("in proportion: {large < small * 8}")
+}

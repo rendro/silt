@@ -2,35 +2,50 @@
 //! transforms, and sinks. The underlying primitive is `Value::Channel(_)`
 //! — there is no separate stream value type. Each transform spawns an OS
 //! thread (with its own child VM) that reads its input channel, calls
-//! the user closure via `vm.invoke_callable`, and writes results to the
+//! the user closure via `Vm::call_blocking`, and writes results to the
 //! output channel. Backpressure is provided by channel capacity: when the
-//! output is full the pump thread sleeps briefly and retries.
+//! output is full the stage's thread waits for room.
+//!
+//! A stage's thread counts as a task of the scheduler and waits where a
+//! task would (see "The scheduler of a stage" below), so a pipeline
+//! that can never go on is a deadlock like any other.
 //!
 //! Sinks (collect, fold, count, etc.) run synchronously in the caller's
-//! task. Because every source/transform pump is on an OS thread (not a
-//! scheduler worker), sinks can safely block on `receive_blocking` even
-//! when called from inside `task.spawn` — the producer side keeps making
-//! progress regardless of scheduler state.
+//! task, whose thread waits for each value.
 //!
 //! Forward-compat: the function names mirror what method-form dispatch
 //! (`s.map(f)`) would look like once silt grows a `Stream` trait. Existing
 //! silt programs will continue to compile and behave identically when that
 //! trait lands.
 
+// The loops of the stages keep their shape until the stages are tasks.
+#![allow(clippy::while_let_loop)]
+
+use std::cell::RefCell;
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::common::ok;
-use crate::runtime::channel::{Channel, TryReceiveResult, TrySendResult};
+use crate::runtime::sync::{Channel, Close};
+use crate::scheduler::Scheduler;
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{BuiltinAcc, SuspendedBuiltin, Vm, VmError};
+use crate::vm::{Native, Step, Vm, VmError};
 
 const DEFAULT_CAPACITY: usize = 16;
-const SEND_BACKOFF: Duration = Duration::from_micros(100);
 
 /// Dispatch `stream.<name>(args)`.
-pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    let _stage = InStage::of(vm);
+    match name {
+        // The sinks that call a function in the caller's task.
+        "fold" => fold(args),
+        "each" => each(args),
+        _ => plain(vm, name, args).map(Step::Done),
+    }
+}
+
+/// The `stream` functions that call no function in the caller's task.
+fn plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         // Sources
         "from_list" => from_list(vm, args),
@@ -64,8 +79,6 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
 
         // Sinks
         "collect" => collect(args),
-        "fold" => fold(vm, args),
-        "each" => each(vm, args),
         "count" => count(args),
         "first" => first(args),
         "last" => last(args),
@@ -78,43 +91,106 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-/// Create a channel that no stage feeds: the result of a call that
-/// starts no thread (`stream.take(s, 0)`, a chunk size of 0). For the
-/// output of a stage use `stage_output`.
-fn make_channel(vm: &mut Vm, capacity: usize) -> Arc<Channel> {
-    let id = vm.next_channel_id();
-    Arc::new(Channel::new(id, capacity))
+// ── The scheduler of a stage ───────────────────────────────────────────
+//
+// A stage's thread and a sink wait on channels as a task does: through
+// the scheduler of the program. A `stream.*` call notes that scheduler
+// for its thread; a stage's thread is started with it.
+
+thread_local! {
+    /// The scheduler of the `stream.*` call or the stage that runs on
+    /// this thread, and whether the thread is the program's own.
+    static STAGE: RefCell<Option<(Arc<Scheduler>, bool)>> = const { RefCell::new(None) };
 }
 
-/// Create the output channel of a stream stage and record it as
-/// stream-fed.
-///
-/// EVERY function that starts a stage thread must get the channel that
-/// thread writes to from this helper, not from `make_channel`. A stage
-/// thread is not a scheduler task, so the main-thread deadlock
-/// detection cannot see it; the record (`mark_stream_fed` in
-/// `concurrency.rs`) is what stops a main-thread `channel.receive`,
-/// `channel.each` or `channel.select` on the stage's output from being
-/// reported as a deadlock while the stage is still about to deliver.
-///
-/// In return the stage must close this channel when it ends: a receive
-/// on it waits for a value or for `Closed`, and gets no verdict.
-fn stage_output(vm: &mut Vm, capacity: usize) -> Arc<Channel> {
-    let out = make_channel(vm, capacity);
-    super::concurrency::mark_stream_fed(&out);
-    out
+/// Notes the scheduler of `vm` for the calling thread until dropped.
+struct InStage(Option<(Arc<Scheduler>, bool)>);
+
+impl InStage {
+    fn of(vm: &Vm) -> InStage {
+        let here = (vm.scheduler().clone(), vm.is_program());
+        InStage(STAGE.with(|stage| stage.replace(Some(here))))
+    }
 }
 
-/// Push a value onto an output channel with backpressure. The Channel
-/// `try_send` consumes its argument, so we clone once per attempt.
-fn push(out: &Channel, val: &Value) -> bool {
-    loop {
-        match out.try_send(val.clone()) {
-            TrySendResult::Sent => return true,
-            TrySendResult::Closed => return false,
-            TrySendResult::Full => std::thread::sleep(SEND_BACKOFF),
+impl Drop for InStage {
+    fn drop(&mut self) {
+        let outer = self.0.take();
+        let _ = STAGE.try_with(|stage| stage.replace(outer));
+    }
+}
+
+fn stage_scheduler() -> (Arc<Scheduler>, bool) {
+    STAGE
+        .with(|stage| stage.borrow().clone())
+        .expect("a stream function runs with its scheduler noted")
+}
+
+/// Start the thread of a stage. It counts as a task from now until
+/// `stage` returns.
+fn spawn_stage(stage: impl FnOnce() + Send + 'static) {
+    let (scheduler, _) = stage_scheduler();
+    let running = scheduler.enter_for_thread();
+    crate::vm::spawn_callback_thread(move || {
+        running.adopt();
+        STAGE.with(|here| here.replace(Some((scheduler, false))));
+        stage();
+        drop(running);
+    });
+}
+
+/// What a blocking receive gives.
+enum TryReceiveResult {
+    Value(Value),
+    Closed,
+}
+
+/// The channel operations of a stage's thread or a sink.
+trait StageChannel {
+    /// Wait for a value. `Closed` when the channel is closed and
+    /// empty, or the program has ended.
+    fn receive_blocking(&self) -> TryReceiveResult;
+    /// The same for a sink: if the program is deadlocked while its own
+    /// thread waits here, that is the error.
+    fn receive_in_sink(&self) -> Result<TryReceiveResult, VmError>;
+    /// Close the channel: the stage that feeds it has ended.
+    fn finish(&self);
+}
+
+impl StageChannel for Arc<Channel> {
+    fn receive_blocking(&self) -> TryReceiveResult {
+        let (scheduler, _) = stage_scheduler();
+        match scheduler.receive_wait(self, false) {
+            Ok(Some(value)) => TryReceiveResult::Value(value),
+            Ok(None) | Err(_) => TryReceiveResult::Closed,
         }
     }
+
+    fn receive_in_sink(&self) -> Result<TryReceiveResult, VmError> {
+        let (scheduler, main) = stage_scheduler();
+        Ok(match scheduler.receive_wait(self, main)? {
+            Some(value) => TryReceiveResult::Value(value),
+            None => TryReceiveResult::Closed,
+        })
+    }
+
+    fn finish(&self) {
+        let (scheduler, _) = stage_scheduler();
+        self.close(Close::default(), scheduler.wake());
+    }
+}
+
+/// Create a channel for the output of a stage, or for the result of a
+/// call that starts none (`stream.take(s, 0)`, a chunk size of 0).
+fn make_channel(vm: &mut Vm, capacity: usize) -> Arc<Channel> {
+    Channel::new(vm.next_channel_id(), capacity)
+}
+
+/// Send a value on the output channel of a stage, waiting for room.
+/// `false` when the channel is closed: nobody reads the output.
+fn push(out: &Arc<Channel>, val: &Value) -> bool {
+    let (scheduler, _) = stage_scheduler();
+    scheduler.send_wait(out, val.clone())
 }
 
 // The marker used to carry a pump-thread type error in-band. Stream
@@ -259,16 +335,16 @@ fn from_list(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let Value::List(xs) = &args[0] else {
         return Err(VmError::new("stream.from_list requires a List".into()));
     };
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let xs = xs.clone();
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         for v in xs.iter() {
             if !push(&out_clone, v) {
                 break;
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -279,15 +355,15 @@ fn from_range(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let lo = require_int(&args[0], "stream.from_range")?;
     let hi = require_int(&args[1], "stream.from_range")?;
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         for i in lo..=hi {
             if !push(&out_clone, &Value::Int(i)) {
                 break;
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -297,15 +373,15 @@ fn repeat(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.repeat takes 1 argument".into()));
     }
     let v = args[0].clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         loop {
             if !push(&out_clone, &v) {
                 break;
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -318,14 +394,14 @@ fn unfold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let init = args[0].clone();
     let fn_val = require_callable(&args[1], "stream.unfold")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         let mut state = init;
         loop {
             // Fn(state) -> Option((value, next_state))
-            let res = child_vm.invoke_callable(&fn_val, &[state.clone()]);
+            let res = child_vm.call_blocking(&fn_val, &[state.clone()]);
             let Ok(opt) = res else { break };
             match opt {
                 Value::Variant(name, fields) if name.is(bv::SOME) && fields.len() == 1 => {
@@ -344,7 +420,7 @@ fn unfold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 _ => break, // None or unexpected
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -361,9 +437,9 @@ fn file_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Channel(make_channel(vm, 1)));
     }
     let n = n as usize;
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         use std::io::Read;
         match std::fs::File::open(&path) {
             Ok(mut file) => {
@@ -388,7 +464,7 @@ fn file_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 let _ = push(&out_clone, &err_io(&e));
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -398,9 +474,9 @@ fn file_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.file_lines takes 1 argument".into()));
     }
     let path = require_string(&args[0], "stream.file_lines")?.to_string();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         use std::io::BufRead;
         match std::fs::File::open(&path) {
             Ok(file) => {
@@ -423,7 +499,7 @@ fn file_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 let _ = push(&out_clone, &err_io(&e));
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -448,9 +524,9 @@ fn tcp_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Channel(make_channel(vm, 1)));
     }
     let n = n as usize;
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         use std::io::Read;
         loop {
             let mut buf = vec![0u8; n];
@@ -472,7 +548,7 @@ fn tcp_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 }
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -493,9 +569,9 @@ fn tcp_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Value::TcpStream(s) => s.clone(),
         _ => return Err(VmError::new("stream.tcp_lines requires a TcpStream".into())),
     };
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         // We can't easily wrap the trait-object stream in a BufReader
         // because BufReader requires owning the reader (can't borrow from
         // a Mutex guard across loop iterations). Read byte-by-byte —
@@ -538,7 +614,7 @@ fn tcp_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 }
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -557,9 +633,9 @@ fn tcp_lines(_vm: &mut Vm, _args: &[Value]) -> Result<Value, VmError> {
 /// closure that decides what to do per element (transform, filter, etc.).
 fn spawn_pump<F>(in_ch: Arc<Channel>, out_ch: Arc<Channel>, mut each: F)
 where
-    F: FnMut(Value, &Channel) -> bool + Send + 'static,
+    F: FnMut(Value, &Arc<Channel>) -> bool + Send + 'static,
 {
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
@@ -575,10 +651,9 @@ where
                     }
                 }
                 TryReceiveResult::Closed => break,
-                TryReceiveResult::Empty => {} // unreachable from blocking
             }
         }
-        out_ch.close();
+        out_ch.finish();
     });
 }
 
@@ -590,10 +665,10 @@ fn map(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.map")?.clone();
     let fn_val = require_callable(&args[1], "stream.map")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| {
-        match child_vm.invoke_callable(&fn_val, &[v]) {
+        match child_vm.call_blocking(&fn_val, &[v]) {
             Ok(result) => push(out_ch, &result),
             Err(_) => false, // closure errored — close output
         }
@@ -607,12 +682,12 @@ fn map_ok(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.map_ok")?.clone();
     let fn_val = require_callable(&args[1], "stream.map_ok")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| match v {
         Value::Variant(ref name, ref fields) if name.is(bv::OK) && fields.len() == 1 => {
             let inner = fields[0].clone();
-            match child_vm.invoke_callable(&fn_val, &[inner]) {
+            match child_vm.call_blocking(&fn_val, &[inner]) {
                 Ok(result) => push(out_ch, &ok(result)),
                 Err(_) => false,
             }
@@ -628,10 +703,10 @@ fn filter(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.filter")?.clone();
     let fn_val = require_callable(&args[1], "stream.filter")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| {
-        match child_vm.invoke_callable(&fn_val, std::slice::from_ref(&v)) {
+        match child_vm.call_blocking(&fn_val, std::slice::from_ref(&v)) {
             Ok(Value::Bool(true)) => push(out_ch, &v),
             Ok(_) => true,
             Err(_) => false,
@@ -646,12 +721,12 @@ fn filter_ok(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.filter_ok")?.clone();
     let fn_val = require_callable(&args[1], "stream.filter_ok")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| match v {
         Value::Variant(ref name, ref fields) if name.is(bv::OK) && fields.len() == 1 => {
             let inner = fields[0].clone();
-            match child_vm.invoke_callable(&fn_val, &[inner]) {
+            match child_vm.call_blocking(&fn_val, &[inner]) {
                 Ok(Value::Bool(true)) => push(out_ch, &v),
                 Ok(_) => true,
                 Err(_) => false,
@@ -668,10 +743,10 @@ fn flat_map(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.flat_map")?.clone();
     let fn_val = require_callable(&args[1], "stream.flat_map")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let mut child_vm = vm.spawn_child();
     spawn_pump(in_ch, out.clone(), move |v, out_ch| {
-        match child_vm.invoke_callable(&fn_val, &[v]) {
+        match child_vm.call_blocking(&fn_val, &[v]) {
             Ok(Value::List(xs)) => {
                 for item in xs.iter() {
                     if !push(out_ch, item) {
@@ -695,13 +770,13 @@ fn take(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let n = require_int(&args[1], "stream.take")?;
     if n <= 0 {
         let out = make_channel(vm, 1);
-        out.close();
+        out.finish();
         return Ok(Value::Channel(out));
     }
     let n = n as usize;
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         let mut emitted = 0;
         while emitted < n {
             match in_ch.receive_blocking() {
@@ -712,10 +787,9 @@ fn take(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     emitted += 1;
                 }
                 TryReceiveResult::Closed => break,
-                _ => {}
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -727,18 +801,17 @@ fn drop_n(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let in_ch = require_channel(&args[0], "stream.drop")?.clone();
     let n = require_int(&args[1], "stream.drop")?;
     let n = n.max(0) as usize;
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         let mut dropped = 0;
         while dropped < n {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(_) => dropped += 1,
                 TryReceiveResult::Closed => {
-                    out_clone.close();
+                    out_clone.finish();
                     return;
                 }
-                _ => {}
             }
         }
         loop {
@@ -750,7 +823,7 @@ fn drop_n(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 _ => {}
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -761,14 +834,14 @@ fn take_while(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.take_while")?.clone();
     let fn_val = require_callable(&args[1], "stream.take_while")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
-                    match child_vm.invoke_callable(&fn_val, std::slice::from_ref(&v)) {
+                    match child_vm.call_blocking(&fn_val, std::slice::from_ref(&v)) {
                         Ok(Value::Bool(true)) => {
                             if !push(&out_clone, &v) {
                                 break;
@@ -778,10 +851,9 @@ fn take_while(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
                 TryReceiveResult::Closed => break,
-                _ => {}
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -792,16 +864,16 @@ fn drop_while(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let in_ch = require_channel(&args[0], "stream.drop_while")?.clone();
     let fn_val = require_callable(&args[1], "stream.drop_while")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         let mut dropping = true;
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
                     if dropping {
-                        match child_vm.invoke_callable(&fn_val, std::slice::from_ref(&v)) {
+                        match child_vm.call_blocking(&fn_val, std::slice::from_ref(&v)) {
                             Ok(Value::Bool(true)) => continue, // drop
                             _ => {
                                 dropping = false;
@@ -815,10 +887,9 @@ fn drop_while(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
                 TryReceiveResult::Closed => break,
-                _ => {}
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -833,9 +904,9 @@ fn chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.chunks: n must be positive".into()));
     }
     let n = n as usize;
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         let mut buffer: Vec<Value> = Vec::with_capacity(n);
         loop {
             match in_ch.receive_blocking() {
@@ -858,10 +929,9 @@ fn chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     }
                     break;
                 }
-                _ => {}
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -875,15 +945,15 @@ fn scan(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let in_ch = require_channel(&args[0], "stream.scan")?.clone();
     let init = args[1].clone();
     let fn_val = require_callable(&args[2], "stream.scan")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
     let mut child_vm = vm.spawn_child();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         let mut acc = init;
         loop {
             match in_ch.receive_blocking() {
                 TryReceiveResult::Value(v) => {
-                    match child_vm.invoke_callable(&fn_val, &[acc.clone(), v]) {
+                    match child_vm.call_blocking(&fn_val, &[acc.clone(), v]) {
                         Ok(new_acc) => {
                             acc = new_acc;
                             if !push(&out_clone, &acc) {
@@ -894,10 +964,9 @@ fn scan(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
                 TryReceiveResult::Closed => break,
-                _ => {}
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -907,9 +976,9 @@ fn dedup(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.dedup takes 1 argument".into()));
     }
     let in_ch = require_channel(&args[0], "stream.dedup")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         let mut prev: Option<Value> = None;
         loop {
             match in_ch.receive_blocking() {
@@ -943,10 +1012,9 @@ fn dedup(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
                 TryReceiveResult::Closed => break,
-                _ => {}
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -958,7 +1026,7 @@ fn buffered(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let in_ch = require_channel(&args[0], "stream.buffered")?.clone();
     let cap = require_int(&args[1], "stream.buffered")?;
     let cap = cap.max(0) as usize;
-    let out = stage_output(vm, cap);
+    let out = make_channel(vm, cap);
     spawn_pump(in_ch, out.clone(), |v, out_ch| push(out_ch, &v));
     Ok(Value::Channel(out))
 }
@@ -987,13 +1055,13 @@ fn merge(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             }
         }
     }
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let count = channels.len();
     let remaining = Arc::new(std::sync::atomic::AtomicUsize::new(count));
     for in_ch in channels {
         let out_clone = out.clone();
         let remaining = remaining.clone();
-        crate::vm::spawn_callback_thread(move || {
+        spawn_stage(move || {
             loop {
                 match in_ch.receive_blocking() {
                     TryReceiveResult::Value(v) if !push(&out_clone, &v) => {
@@ -1004,7 +1072,7 @@ fn merge(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 }
             }
             if remaining.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
-                out_clone.close();
+                out_clone.finish();
             }
         });
     }
@@ -1017,9 +1085,9 @@ fn zip(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let a = require_channel(&args[0], "stream.zip")?.clone();
     let b = require_channel(&args[1], "stream.zip")?.clone();
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         loop {
             let ra = a.receive_blocking();
             let rb = b.receive_blocking();
@@ -1033,7 +1101,7 @@ fn zip(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 _ => break,
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -1060,14 +1128,14 @@ fn concat(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             }
         }
     }
-    let out = stage_output(vm, DEFAULT_CAPACITY);
+    let out = make_channel(vm, DEFAULT_CAPACITY);
     let out_clone = out.clone();
-    crate::vm::spawn_callback_thread(move || {
+    spawn_stage(move || {
         for ch in channels {
             loop {
                 match ch.receive_blocking() {
                     TryReceiveResult::Value(v) if !push(&out_clone, &v) => {
-                        out_clone.close();
+                        out_clone.finish();
                         return;
                     }
                     TryReceiveResult::Closed => break,
@@ -1075,7 +1143,7 @@ fn concat(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 }
             }
         }
-        out_clone.close();
+        out_clone.finish();
     });
     Ok(Value::Channel(out))
 }
@@ -1089,7 +1157,7 @@ fn collect(args: &[Value]) -> Result<Value, VmError> {
     let ch = require_channel(&args[0], "stream.collect")?.clone();
     let mut out = Vec::new();
     loop {
-        match ch.receive_blocking() {
+        match ch.receive_in_sink()? {
             TryReceiveResult::Value(v) => {
                 // Translate an in-band pump-thread error marker (see
                 // `bv::STREAM_ERROR`) into the canonical VmError.
@@ -1099,168 +1167,82 @@ fn collect(args: &[Value]) -> Result<Value, VmError> {
                 out.push(v)
             }
             TryReceiveResult::Closed => break,
-            _ => {}
         }
     }
     Ok(Value::List(Arc::new(out)))
 }
 
-fn fold(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+/// `stream.fold` and `stream.each`: `f` is called with each value of
+/// the channel until it is closed.
+struct Consume {
+    name: &'static str,
+    ch: Arc<Channel>,
+    callback: Value,
+    /// The running value of a fold; `None` for `each`.
+    acc: Option<Value>,
+    /// The input is the value of a call of the callback.
+    called: bool,
+}
+
+impl Native for Consume {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        let _stage = InStage::of(vm);
+        if std::mem::take(&mut self.called)
+            && let Some(acc) = &mut self.acc
+        {
+            *acc = input;
+        }
+        loop {
+            match self.ch.receive_in_sink()? {
+                TryReceiveResult::Value(v) => {
+                    // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
+                    if let Some(e) = take_stream_type_error(&v) {
+                        return Err(e);
+                    }
+                    self.called = true;
+                    let args = self.acc.iter().cloned().chain([v]);
+                    return Ok(vm.call(self.callback.clone(), args));
+                }
+                TryReceiveResult::Closed => {
+                    return Ok(Step::Done(self.acc.take().unwrap_or(Value::Unit)));
+                }
+            }
+        }
+    }
+}
+
+fn fold(args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 3 {
         return Err(VmError::new(
             "stream.fold takes 3 arguments (channel, init, fn)".into(),
         ));
     }
-    let ch = require_channel(&args[0], "stream.fold")?.clone();
-    let fn_val = require_callable(&args[2], "stream.fold")?.clone();
-
-    // ── Restore state from a prior yield, if any ──────────────────
-    // Channels can't be materialized up front (they're potentially
-    // unbounded), so this can't ride on `iterate_builtin`. Instead we stash
-    // the running accumulator in `BuiltinAcc::Fold` and the channel value
-    // in `items` / callback in `callback`. We also pick up a half-completed
-    // callback via `suspended_invoke`.
-    let mut acc = if let Some(susp) = vm.take_suspended_builtin() {
-        if susp.name == "stream.fold" {
-            if let BuiltinAcc::Fold(v) = susp.acc {
-                v
-            } else {
-                args[1].clone()
-            }
-        } else {
-            vm.push_suspended_builtin(susp);
-            args[1].clone()
-        }
-    } else {
-        args[1].clone()
-    };
-
-    // ── Resume a mid-execution callback if needed ────────────────
-    if vm.suspended_invoke.is_some() {
-        let cb_result = match vm.resume_suspended_invoke() {
-            Ok(v) => v,
-            Err(e) if e.is_yield => {
-                vm.push_suspended_builtin(SuspendedBuiltin {
-                    name: "stream.fold".into(),
-                    items: Vec::new(),
-                    next_index: 0,
-                    callback: fn_val.clone(),
-                    acc: BuiltinAcc::Fold(acc),
-                });
-                for a in args {
-                    vm.push(a.clone());
-                }
-                return Err(e);
-            }
-            Err(e) => return Err(e),
-        };
-        acc = cb_result;
-    }
-
-    // ── Main loop ────────────────────────────────────────────────
-    loop {
-        match ch.receive_blocking() {
-            TryReceiveResult::Value(v) => {
-                // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
-                if let Some(e) = take_stream_type_error(&v) {
-                    return Err(e);
-                }
-                let invoke_result = vm.invoke_callable(&fn_val, &[acc.clone(), v]);
-                match invoke_result {
-                    Ok(r) => acc = r,
-                    Err(e) if e.is_yield => {
-                        vm.push_suspended_builtin(SuspendedBuiltin {
-                            name: "stream.fold".into(),
-                            items: Vec::new(),
-                            next_index: 0,
-                            callback: fn_val.clone(),
-                            acc: BuiltinAcc::Fold(acc),
-                        });
-                        for a in args {
-                            vm.push(a.clone());
-                        }
-                        return Err(e);
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            TryReceiveResult::Closed => break,
-            _ => {}
-        }
-    }
-    Ok(acc)
+    Ok(Step::Run(Box::new(Consume {
+        name: "stream.fold",
+        ch: require_channel(&args[0], "stream.fold")?.clone(),
+        callback: require_callable(&args[2], "stream.fold")?.clone(),
+        acc: Some(args[1].clone()),
+        called: false,
+    })))
 }
 
-fn each(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn each(args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new(
             "stream.each takes 2 arguments (channel, fn)".into(),
         ));
     }
-    let ch = require_channel(&args[0], "stream.each")?.clone();
-    let fn_val = require_callable(&args[1], "stream.each")?.clone();
-
-    // ── Resume a mid-execution callback if needed ────────────────
-    // `stream.each` carries no accumulator across yields, so a stale
-    // `suspended_invoke` is the only state to restore.  Still: drop any
-    // matching `suspended_builtin` we may have left on prior yield so
-    // unrelated builtins don't pick it up.
-    if let Some(susp) = vm.take_suspended_builtin()
-        && susp.name != "stream.each"
-    {
-        vm.push_suspended_builtin(susp);
-    }
-    if vm.suspended_invoke.is_some() {
-        match vm.resume_suspended_invoke() {
-            Ok(_) => {}
-            Err(e) if e.is_yield => {
-                vm.push_suspended_builtin(SuspendedBuiltin {
-                    name: "stream.each".into(),
-                    items: Vec::new(),
-                    next_index: 0,
-                    callback: fn_val.clone(),
-                    acc: BuiltinAcc::Unit,
-                });
-                for a in args {
-                    vm.push(a.clone());
-                }
-                return Err(e);
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    loop {
-        match ch.receive_blocking() {
-            TryReceiveResult::Value(v) => {
-                // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
-                if let Some(e) = take_stream_type_error(&v) {
-                    return Err(e);
-                }
-                let invoke_result = vm.invoke_callable(&fn_val, &[v]);
-                match invoke_result {
-                    Ok(_) => {}
-                    Err(e) if e.is_yield => {
-                        vm.push_suspended_builtin(SuspendedBuiltin {
-                            name: "stream.each".into(),
-                            items: Vec::new(),
-                            next_index: 0,
-                            callback: fn_val.clone(),
-                            acc: BuiltinAcc::Unit,
-                        });
-                        for a in args {
-                            vm.push(a.clone());
-                        }
-                        return Err(e);
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            TryReceiveResult::Closed => break,
-            _ => {}
-        }
-    }
-    Ok(Value::Unit)
+    Ok(Step::Run(Box::new(Consume {
+        name: "stream.each",
+        ch: require_channel(&args[0], "stream.each")?.clone(),
+        callback: require_callable(&args[1], "stream.each")?.clone(),
+        acc: None,
+        called: false,
+    })))
 }
 
 fn count(args: &[Value]) -> Result<Value, VmError> {
@@ -1270,7 +1252,7 @@ fn count(args: &[Value]) -> Result<Value, VmError> {
     let ch = require_channel(&args[0], "stream.count")?.clone();
     let mut n: i64 = 0;
     loop {
-        match ch.receive_blocking() {
+        match ch.receive_in_sink()? {
             TryReceiveResult::Value(v) => {
                 // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
                 if let Some(e) = take_stream_type_error(&v) {
@@ -1279,7 +1261,6 @@ fn count(args: &[Value]) -> Result<Value, VmError> {
                 n += 1
             }
             TryReceiveResult::Closed => break,
-            _ => {}
         }
     }
     Ok(Value::Int(n))
@@ -1290,7 +1271,7 @@ fn first(args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("stream.first takes 1 argument".into()));
     }
     let ch = require_channel(&args[0], "stream.first")?.clone();
-    match ch.receive_blocking() {
+    match ch.receive_in_sink()? {
         TryReceiveResult::Value(v) => {
             // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
             if let Some(e) = take_stream_type_error(&v) {
@@ -1299,7 +1280,6 @@ fn first(args: &[Value]) -> Result<Value, VmError> {
             Ok(Value::variant(bv::SOME, vec![v]))
         }
         TryReceiveResult::Closed => Ok(Value::variant(bv::NONE, vec![])),
-        _ => Ok(Value::variant(bv::NONE, vec![])),
     }
 }
 
@@ -1310,7 +1290,7 @@ fn last(args: &[Value]) -> Result<Value, VmError> {
     let ch = require_channel(&args[0], "stream.last")?.clone();
     let mut last: Option<Value> = None;
     loop {
-        match ch.receive_blocking() {
+        match ch.receive_in_sink()? {
             TryReceiveResult::Value(v) => {
                 // In-band pump-thread error marker — see `bv::STREAM_ERROR`.
                 if let Some(e) = take_stream_type_error(&v) {
@@ -1319,7 +1299,6 @@ fn last(args: &[Value]) -> Result<Value, VmError> {
                 last = Some(v)
             }
             TryReceiveResult::Closed => break,
-            _ => {}
         }
     }
     Ok(match last {
@@ -1346,7 +1325,7 @@ fn write_to_tcp(args: &[Value]) -> Result<Value, VmError> {
     };
     use std::io::Write;
     loop {
-        match ch.receive_blocking() {
+        match ch.receive_in_sink()? {
             TryReceiveResult::Value(v) => {
                 let bytes = match v {
                     Value::Bytes(b) => b,
@@ -1381,7 +1360,6 @@ fn write_to_tcp(args: &[Value]) -> Result<Value, VmError> {
                 }
             }
             TryReceiveResult::Closed => break,
-            _ => {}
         }
     }
     Ok(ok(Value::Unit))
@@ -1409,7 +1387,7 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
         Err(e) => return Ok(err_io(&e)),
     };
     loop {
-        match ch.receive_blocking() {
+        match ch.receive_in_sink()? {
             TryReceiveResult::Value(v) => {
                 let bytes = match v {
                     Value::Bytes(b) => b,
@@ -1440,7 +1418,6 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
                 }
             }
             TryReceiveResult::Closed => break,
-            _ => {}
         }
     }
     if let Err(e) = file.flush() {

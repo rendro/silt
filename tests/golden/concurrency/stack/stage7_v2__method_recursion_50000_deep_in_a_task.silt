@@ -1,0 +1,22 @@
+-- A method that calls itself 50,000 deep, in a task: a method call takes
+-- a frame of the VM like any call, and no native stack.
+import task
+
+trait Countdown {
+  fn down(self) -> Int
+}
+
+trait Countdown for Int {
+  fn down(self) -> Int {
+    match self {
+      0 -> 0
+      _ -> 1 + (self - 1).down()
+    }
+  }
+}
+
+fn main() {
+  let h = task.spawn({ -> 50000.down() })
+  println(task.join(h))
+  println(50000.down())
+}

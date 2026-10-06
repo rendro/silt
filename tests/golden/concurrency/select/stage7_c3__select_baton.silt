@@ -1,0 +1,39 @@
+-- repeat: 100
+-- stderr-not-contains: deadlock
+-- Four tasks in a ring pass a baton 250 times round; each waits for
+-- it with a select that also listens for the stop. No wake-up is lost
+-- and none is taken twice: the baton arrives after 1,000 steps.
+import channel
+import list
+import task
+
+fn runner(inbox, outbox, stop, goal) {
+  match channel.select([channel.Recv(stop), channel.Recv(inbox)]) {
+    (_, channel.Message(n)) -> match n >= 1000 {
+      true -> channel.send(goal, n)
+      false -> {
+        channel.send(outbox, n + 1)
+        runner(inbox, outbox, stop, goal)
+      }
+    }
+    _ -> ()
+  }
+}
+
+fn main() {
+  let ring = 0..3 |> list.map { _ -> channel.new(0) }
+  let stop = channel.new(0)
+  let goal = channel.new(1)
+  let pairs = [(0, 1), (1, 2), (2, 3), (3, 0)]
+  let hs = pairs |> list.map { (a, b) ->
+    when let Some(inbox) = list.get(ring, a) else { panic("no inbox") }
+    when let Some(outbox) = list.get(ring, b) else { panic("no outbox") }
+    task.spawn({ -> runner(inbox, outbox, stop, goal) })
+  }
+  when let Some(first) = list.get(ring, 0) else { panic("no first") }
+  channel.send(first, 1)
+  println(channel.receive(goal))
+  channel.close(stop)
+  hs |> list.each { h -> task.join(h) }
+  println("done")
+}

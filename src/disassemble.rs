@@ -249,8 +249,8 @@ mod tests {
 
     /// The disassembly of the function `build` emits, which takes
     /// `arity` arguments and has `upvalues` upvalues.
-    fn disassembly(arity: u8, upvalues: u8, build: impl FnOnce(&mut Emitter)) -> String {
-        let mut emitter = Emitter::new("test".into(), arity);
+    fn disassembly(arity: usize, upvalues: usize, build: impl FnOnce(&mut Emitter)) -> String {
+        let mut emitter = Emitter::new("test".into(), arity, span()).unwrap();
         build(&mut emitter);
         let function = emitter.finish(upvalues).unwrap_or_else(|e| panic!("{e:?}"));
         disassemble_function(&function, &Globals::default())
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn test_make_closure() {
         let inner = {
-            let mut e = Emitter::new("inner".into(), 0);
+            let mut e = Emitter::new("inner".into(), 0, span()).unwrap();
             e.emit(Asm::GetUpvalue { index: 1 }, span()).unwrap();
             e.emit(Asm::Return, span()).unwrap();
             e.finish(2).unwrap()

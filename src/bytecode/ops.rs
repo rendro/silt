@@ -40,7 +40,8 @@
 //!
 //! A narrowed operand (`U8`, `U16`, `Upvalue`, `Strs`, `Captures`)
 //! carries, in parentheses, what a program has too many of when the
-//! operand does not fit: the text of the compile error.
+//! operand does not fit. That is the text of the compile error, and the
+//! only one for the limit: the compiler does not check sizes itself.
 //!
 //! # Effects
 //!
@@ -138,7 +139,7 @@ impl Packed for UpvalueDesc {
     fn unpack([is_local, index]: [u8; 2]) -> Self {
         UpvalueDesc {
             is_local: is_local != 0,
-            index,
+            index: usize::from(index),
         }
     }
 }
@@ -164,20 +165,20 @@ impl<T: Packed> Operands<T> {
     }
 }
 
-/// An operand that does not fit its encoding.
+/// An operand that does not fit its encoding: more of `what` than
+/// `max`. Every limit of the bytecode is one of these, and reads
+/// `too many <what>: <count> (the limit is <max>)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Limit {
-    /// More of `what` than `max`.
-    TooMany {
-        what: &'static str,
-        count: usize,
-        max: usize,
-    },
-    /// A frame slot past the last one an operand can name.
-    Slots,
-    /// A jump over more code than its operand can say.
-    JumpTooFar,
+pub struct Limit {
+    pub what: &'static str,
+    pub count: usize,
+    pub max: usize,
 }
+
+/// What a function has too many of when a slot of its frame is past
+/// the last one an operand can name.
+pub(super) const FRAME_VALUES: &str = "values in the frame of a function \
+     (its local bindings plus the values of the expression being evaluated)";
 
 /// What an encoder writes to: the emitter, which knows where labels are.
 pub(super) trait Writer {
@@ -193,20 +194,30 @@ pub(super) trait Writer {
     fn rel(&mut self, to: Label) -> Result<(), Limit>;
 }
 
-fn narrow<T: TryFrom<usize>>(count: usize, what: &'static str, max: usize) -> Result<T, Limit> {
-    T::try_from(count).map_err(|_| Limit::TooMany { what, count, max })
-}
-
-fn narrow_u8(count: usize, what: &'static str) -> Result<u8, Limit> {
-    narrow(count, what, usize::from(u8::MAX))
+pub(super) fn narrow_u8(count: usize, what: &'static str) -> Result<u8, Limit> {
+    u8::try_from(count).map_err(|_| Limit {
+        what,
+        count,
+        max: usize::from(u8::MAX),
+    })
 }
 
 fn narrow_u16(count: usize, what: &'static str) -> Result<u16, Limit> {
-    narrow(count, what, usize::from(u16::MAX))
+    u16::try_from(count).map_err(|_| Limit {
+        what,
+        count,
+        max: usize::from(u16::MAX),
+    })
 }
 
+/// A slot of the frame: one that does not fit means the frame holds
+/// more values than slots can name.
 fn slot_u16(slot: usize) -> Result<u16, Limit> {
-    u16::try_from(slot).map_err(|_| Limit::Slots)
+    u16::try_from(slot).map_err(|_| Limit {
+        what: FRAME_VALUES,
+        count: slot + 1,
+        max: usize::from(u16::MAX) + 1,
+    })
 }
 
 /// The decoder's place in the code. Every read is checked: the verifier
@@ -400,7 +411,13 @@ macro_rules! encode_operand {
         $w.u8(narrow_u8($v.len(), $what)?);
         for capture in $v {
             $w.u8(u8::from(capture.is_local));
-            $w.u8(capture.index);
+            $w.u8(narrow_u8(
+                capture.index,
+                match capture.is_local {
+                    true => "values in the frame below a local that a closure captures",
+                    false => $what,
+                },
+            )?);
         }
     }};
 }
@@ -850,7 +867,7 @@ ops! {
     /// [`NO_TRAIT`](super::NO_TRAIT) for any trait's) for the receiver's
     /// type, else a builtin trait method or a record field holding a
     /// function; call it with the top `argc` values, the receiver first.
-    CallMethod { method: Str, argc: U8("arguments of a call"), of: Trait } => pops argc, pushes 1;
+    CallMethod { method: Str, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
 
     /// Move TOS down to the frame's slot `slot` and drop every value
     /// that was above that slot: pop TOS, cut the frame back to `slot`

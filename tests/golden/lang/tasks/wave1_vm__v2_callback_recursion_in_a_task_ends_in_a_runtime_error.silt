@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[runtime]
--- stderr-contains: stack overflow: recursion depth exceeded
+-- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
 -- stderr-not-contains: overflowed its stack
 import list
 import task
@@ -13,6 +13,6 @@ fn deep(n) {
 }
 
 fn main() {
-  let t = task.spawn { -> deep(50000) }
+  let t = task.spawn { -> deep(200000) }
   println(task.join(t))
 }

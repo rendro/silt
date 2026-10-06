@@ -1,0 +1,39 @@
+-- repeat: 100
+-- stderr-not-contains: deadlock
+-- Eight tasks send on a channel while the program closes it. Every
+-- sender that waits is woken by the close (its send fails, and the
+-- cancel dismisses the failure), what was buffered can still be
+-- received, and then the channel reads as closed.
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(4)
+  let senders = 1..8 |> list.map { s -> task.spawn({ ->
+    1..50 |> list.each { j -> channel.send(ch, 1) }
+  }) }
+  let before = loop left = 100, acc = 0 {
+    match left {
+      0 -> acc
+      _ -> match channel.receive(ch) {
+        channel.Message(v) -> loop(left - 1, acc + v)
+        channel.Closed -> acc
+        channel.Empty -> acc
+        channel.Sent -> acc
+      }
+    }
+  }
+  channel.close(ch)
+  let after = loop acc = 0 {
+    match channel.receive(ch) {
+      channel.Message(v) -> loop(acc + v)
+      channel.Closed -> acc
+      channel.Empty -> acc
+      channel.Sent -> acc
+    }
+  }
+  senders |> list.each { h -> task.cancel(h) }
+  println("before={before} after<=4: {after <= 4} closed: {channel.receive(ch)}")
+  println("send after close: {channel.try_send(ch, 1)}")
+}

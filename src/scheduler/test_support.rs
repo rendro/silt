@@ -1,85 +1,12 @@
-//! In-process scheduler test harness.
+//! In-process test harness: run a silt program on a fresh `Vm` in the
+//! calling process, on a thread of its own, with a wall-clock budget.
 //!
-//! Phase 2 of the watchdog rewrite: replaces the `cargo run` ×
-//! N-iterations subprocess shape used by
-//! `tests/concurrency/scheduler_deadlock_detector_tests.rs` and
-//! `tests/concurrency/scheduler_race_tests.rs` with a thin wrapper that drives the
-//! same invariants — exit code, stdout sum, stderr deadlock-or-not —
-//! through the public `Vm` / `Scheduler` API in the calling process.
-//!
-//! ## Why in-process matters
-//!
-//! Each subprocess trial pays:
-//!   * fork/exec + dynamic linker (~30-100ms),
-//!   * silt CLI bootstrap (parse args, locate manifest, read source),
-//!   * a fresh Rust runtime (allocator, env, panic hook).
-//!
-//! On a 16-core box those costs are amortized across `cargo test -j N`,
-//! but on a 2-core CI runner the per-trial wall clock is ~200ms even
-//! when the program itself runs in 5ms. A 50-iteration regression
-//! lock spends ~10s in fork/exec, which is the dominant signal in the
-//! test's wall-clock budget — and leaves no room to crank iterations
-//! further.
-//!
-//! In-process the trial cost collapses to "compile the source +
-//! `vm.run(script)`": ~1-5ms for the success case and <50ms for the
-//! real-deadlock case (Phase 4 wake graph fires atomically with the
-//! mutating event — no consecutive-tick threshold to clear).
-//!
-//! ## Why the harness routes through `Vm::run`, not raw `Scheduler::submit`
-//!
-//! The migrated tests assert on an end-to-end invariant: when a Silt
-//! `fn main()` performs a particular concurrency pattern, does the
-//! main-thread watchdog (in `src/builtins/concurrency.rs`) fire a
-//! false-positive `error[runtime]: deadlock on main thread`? That
-//! watchdog interacts with:
-//!
-//!   1. `Scheduler::is_main_starved` — the wake-graph BFS that
-//!      proves no scheduled task can drive `target` forward;
-//!   2. `Scheduler::install_main_waiter` — the signal callback that
-//!      pokes main's local condvar on every park / wake / spawn /
-//!      complete;
-//!   3. `Channel::has_pending_timer_close` — the external-waker
-//!      escape hatch consulted by the BFS for channel targets;
-//!   4. The waker chain that fires from
-//!      `Channel::register_recv_waker_guard`'s double-check / `wake_*` /
-//!      worker-side `requeue` and back into the main thread's local
-//!      condvar.
-//!
-//! All four interact through state that only exists once a real `Vm`
-//! is executing real bytecode that calls `channel.spawn` / `channel.
-//! receive` etc. A harness that handcrafts `Task` values and feeds
-//! them to `Scheduler::submit` would bypass `current_scheduler()`
-//! attachment, bypass the main-thread `_wait_for_*` codepaths, and
-//! end up testing a different thing than the subprocess version did.
-//!
-//! So: the harness is structured around `compile + run`, not around
-//! `Scheduler::submit`. The Silt source the harness runs is the
-//! same source the subprocess version runs — bit-for-bit identical
-//! programs — so the assertions migrate without semantic drift.
-//!
-//! ## Wall-clock bound
-//!
-//! Every `run_trial` call runs on a worker thread spawned per-call
-//! and joined under a hard wall-clock timeout. A hang in the migrated
-//! program (or in the scheduler) does not hang the test suite; it
-//! turns into a `RunOutcome::TimedOut` after the configured budget.
-//! Default budget is 15s — the same as the subprocess version's per-
-//! trial budget — but is overridable per-trial.
-//!
-//! ## What the harness does NOT do
-//!
-//! * It does not poke `Scheduler` internals. Counter manipulation
-//!   would short-circuit the very codepath under test.
-//! * It does not silence stderr. The scheduler / watchdog still
-//!   prints diagnostics; the harness captures the `VmError` (which
-//!   carries the same "deadlock on main thread: ..." message that
-//!   the CLI prints to stderr) and exposes it on the outcome.
-//! * It does not run multiple trials in parallel inside a single
-//!   harness instance. Each `run_trial` is independent — runs a
-//!   fresh `Vm`, uses a fresh `Scheduler` (one is created on first
-//!   `task.spawn`), and tears everything down before returning.
-//!   Tests that want N trials loop over `run_trial`.
+//! The tests that use it run one program many times and assert on what
+//! every run gave: its value, a `deadlock on main thread` error, or a
+//! timeout. A trial costs no `cargo run` and no process start, so a
+//! test can afford hundreds of them. A program that hangs (or a
+//! scheduler that does) does not hang the test suite: the trial is
+//! given up after its budget and reported as timed out.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -128,12 +55,7 @@ impl TrialOutcome {
         !self.timed_out && self.error_message.is_none()
     }
 
-    /// True if the trial saw a panic-shaped error. The subprocess
-    /// version detected this as `stderr.contains("panicked")`. The
-    /// in-process version surfaces any panic that propagated out of
-    /// the worker thread's `vm.run` as an `error_message` containing
-    /// `"panic"` / `"panicked"`. Used by `scheduler_race_tests` to
-    /// catch the round-27 `task_slot just initialized` shape.
+    /// True if the trial ended with an error that names a panic.
     pub fn saw_panic(&self) -> bool {
         match &self.error_message {
             Some(msg) => msg.contains("panic"),
@@ -167,18 +89,8 @@ impl InProcessRunner {
         }
     }
 
-    /// Override the per-trial wall-clock budget. Used by tests with
-    /// known-fast happy paths (fan-in 16: ~5-50ms) and tests that
-    /// must give the watchdog time to fire (real-deadlock: ~5-8s).
-    ///
-    /// Under `CI=1`, the supplied budget is multiplied by 4× to
-    /// absorb GitHub-hosted runner CPU contention. The silt watchdog
-    /// fires on a fixed 250ms streak; under heavy load worker threads
-    /// can be starved long enough to trip the watchdog without an
-    /// actual deadlock. Multiplying the budget gives the trial more
-    /// wall-clock to escape pathological scheduling, without changing
-    /// the watchdog window itself (which is what the regression-lock
-    /// asserts on). Local runs are unaffected.
+    /// Override the per-trial wall-clock budget. Under `CI=1` it is
+    /// multiplied by 4, for the CPU contention of hosted runners.
     pub fn with_budget(mut self, budget: Duration) -> Self {
         self.budget = if std::env::var("CI").is_ok() {
             budget * 4
@@ -195,9 +107,8 @@ impl InProcessRunner {
         let started = Instant::now();
         let source = self.source.clone();
         // Spawn the Vm on a dedicated thread so we can join with a
-        // wall-clock budget. Without this, a hung `vm.run` (e.g. a
-        // bug in the watchdog that re-enters the wait loop forever)
-        // would hang the test harness too.
+        // wall-clock budget. Without this, a hung `vm.run` would hang
+        // the test harness too.
         let (tx, rx) = std::sync::mpsc::channel::<(String, Result<Value, String>)>();
         let handle = std::thread::Builder::new()
             .name(format!("silt-in-process-runner-{}", trial_id()))
@@ -301,7 +212,7 @@ impl InProcessRunner {
 /// returned `Value` (when the program returns the sum directly)
 /// OR by re-shaping the source to return the sum from `main()`
 /// instead of printing it. The migrated tests in this commit take
-/// the latter approach; see `scheduler_deadlock_detector_tests.rs`.
+/// the latter approach.
 fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) {
     let stdout = String::new();
     let program = match crate::session::testing::compile_str(source) {
@@ -439,7 +350,7 @@ mod tests {
     }
 
     /// A program with a real deadlock should surface as
-    /// `saw_deadlock() == true` after the watchdog's 5s threshold.
+    /// `saw_deadlock() == true`.
     /// We give it a 10s budget; if the harness ever hangs, that
     /// turns into a `timed_out: true` instead.
     #[test]
@@ -458,7 +369,7 @@ fn main() {
         let outcome = runner.run_trial();
         assert!(
             !outcome.timed_out,
-            "watchdog must fire within budget; outcome={outcome:?}",
+            "the deadlock must be reported within the budget; outcome={outcome:?}",
         );
         assert!(
             outcome.saw_deadlock(),

@@ -2,17 +2,15 @@
 //! shared runtime state, and regex cache.
 
 use regex::Regex;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::bytecode::VmClosure;
-use crate::runtime::channel::Channel;
-use crate::runtime::completion::IoCompletion;
-use crate::runtime::handle::TaskHandle;
+use crate::runtime::sync::{Cell, Fired, Wait};
+use crate::scheduler::{External, Scheduler};
 use crate::value::Value;
 
-use super::{HostIo, VmError};
+use super::{HostIo, Vm, VmError};
 
 // ── Call frame ────────────────────────────────────────────────────
 
@@ -28,147 +26,118 @@ pub(crate) struct CallFrame {
 /// `Vm::pop_frame`, and the `Op::TailCall` dispatcher.
 pub(crate) const TCO_ELIDED_CAP: usize = 32;
 
-// ── Suspended invocation (for yield inside invoke_callable) ─────
+// ── Frames ───────────────────────────────────────────────────────
 
-/// The state of an `invoke_callable` that was interrupted by a yield (e.g.
-/// an IO builtin yielding inside a callback passed to `channel.each`).
-/// Stored on the VM so the caller can resume the callback instead of
-/// re-running it from scratch.
-///
-/// Every callable that yields inside `invoke_callable` leaves exactly one
-/// of these behind, whatever kind of callable it is. Callers rely on that:
-/// they read `suspended_invoke.is_some()` as "my callback is mid-call" and
-/// hand the state to `resume_suspended_invoke`.
-pub(crate) enum SuspendedInvoke {
-    /// A closure whose body was interrupted.
-    Closure {
-        /// The extra call frames that were pushed by invoke_callable.
-        frames: Vec<CallFrame>,
-        /// The stack values above `func_slot` (includes locals,
-        /// temporaries, and any args re-pushed by the yielding builtin).
-        stack: Vec<Value>,
-        /// The stack index where the callback's "function slot" dummy
-        /// lives.
-        func_slot: usize,
-    },
-    /// A builtin passed as a function value (`list.map(chans,
-    /// channel.receive)`) that yielded. A builtin has no frames to save:
-    /// it is resumed by calling it again.
-    Builtin {
-        /// Qualified name of the builtin (e.g. "channel.receive").
-        name: String,
-        /// The arguments to call it with on resume: the ones the builtin
-        /// re-pushed when it yielded, which it may have rewritten to
-        /// carry its own resume state.
-        args: Vec<Value>,
-    },
+/// One frame of a VM: a silt function being run, or a builtin that
+/// calls back into silt code or waits.
+pub(crate) enum Frame {
+    Code(CallFrame),
+    Native(Box<dyn Native>),
 }
 
-// ── Suspended higher-order builtin iteration ────────────────────
+/// A builtin that does not finish in one go: it calls silt functions
+/// (`list.map`), or waits (`channel.each`). It is a state machine and a
+/// frame of the VM, so a call it makes is a frame above it in the one
+/// instruction loop, never a loop of its own on the host stack.
+pub(crate) trait Native: Send {
+    /// The builtin's name, `list.map`.
+    fn name(&self) -> &str;
 
-/// Accumulator shapes for higher-order builtins that have been suspended
-/// mid-iteration because their callback yielded.
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum BuiltinAcc {
-    /// No accumulator (e.g. `each`).
-    Unit,
-    /// A growing list of values (e.g. `map`, `filter`, `flat_map`, `set.map`).
-    List(Vec<Value>),
-    /// A running fold value (e.g. `fold`, `fold_until`).
-    Fold(Value),
-    /// Sort-key/item pairs (e.g. `sort_by`).
-    SortPairs(Vec<(Value, Value)>),
-    /// Group-by accumulator.
-    Groups(std::collections::BTreeMap<Value, Vec<Value>>),
-    /// Map entries accumulator (e.g. `map.filter`, `map.map`).
-    MapEntries(std::collections::BTreeMap<Value, Value>),
-    /// Best (key, item) so far for min_by/max_by; `None` until first item.
-    Best(Option<(Value, Value)>),
-    /// Scan accumulator: running value + accumulating prefix list.
-    Scan(Value, Vec<Value>),
-    /// Generic "current state" carrier (e.g. `list.unfold`'s state seed,
-    /// `stream.fold`'s running accumulator).  Items grow into the optional
-    /// `Vec<Value>` (used by `unfold` for the result list; `stream.fold`
-    /// uses just the `Value`).
-    State(Value, Vec<Value>),
+    /// Go on. `input` is unit the first time and after the frame
+    /// parked; after a [`Step::Call`], the value the call returned.
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError>;
+
+    /// The frame is dropped because an error passes through it: undo
+    /// what the builtin did to the VM for the time of its call.
+    fn abandon(&mut self, _vm: &mut Vm) {}
 }
 
-/// State for a higher-order builtin whose callback yielded mid-iteration.
-///
-/// When a callback (e.g. `io.read_file` inside a `list.map`) yields, the
-/// builtin stashes its partial state here and re-pushes its own args so the
-/// outer `CallBuiltin` opcode will re-dispatch it on resume.  The builtin
-/// then picks up from `next_index` using `acc` as its running accumulator.
-pub(crate) struct SuspendedBuiltin {
-    /// Qualified name of the builtin (e.g. "list.map") for validation.
-    pub(crate) name: String,
-    /// The materialized list of items being iterated over.  Stored as a
-    /// `Vec<Value>` rather than re-iterating the original collection so that
-    /// Range and lazy iterators work correctly across yields.
-    pub(crate) items: Vec<Value>,
-    /// Index of the next item to process (0-indexed into `items`).
-    pub(crate) next_index: usize,
-    /// The callback value (closure or BuiltinFn).
-    pub(crate) callback: Value,
-    /// The accumulator so far.
-    pub(crate) acc: BuiltinAcc,
+/// What a builtin, or a [`Native`] frame, does next.
+pub(crate) enum Step {
+    /// It is finished, with this value.
+    Done(Value),
+    /// Call `callee` with the top `argc` values of the stack, which
+    /// are above a slot of the call's own; the value it returns is the
+    /// frame's next input. Made by [`Vm::call`].
+    Call { callee: Value, argc: usize },
+    /// Go on as this frame, whose value is the builtin's.
+    Run(Box<dyn Native>),
+    /// The task waits for this. When the wait has ended the frame is
+    /// resumed, with unit, and finds how it ended in [`Vm::woken`].
+    Park(Wait),
+    /// The task's slice ends here, to give way to the other tasks; the
+    /// frame is resumed, with unit, when the task runs again.
+    Yield,
 }
 
-// ── Block reason (for M:N scheduler) ────────────────────────────
-
-/// Describes whether a select operation is a receive or send.
-#[derive(Clone)]
-pub(crate) enum SelectOpKind {
-    Receive,
-    Send,
+/// A frame that waits once: [`Vm::park`].
+struct Await<F> {
+    name: &'static str,
+    /// The wait, until the frame has parked.
+    wait: Option<Wait>,
+    then: F,
 }
 
-pub(crate) enum BlockReason {
-    /// Blocked on channel.receive (channel was empty).
-    Receive(Arc<Channel>),
-    /// Blocked on channel.send (channel buffer was full).
-    Send(Arc<Channel>),
-    /// Blocked on channel.select — carries channels with their operation kinds.
-    Select(Vec<(Arc<Channel>, SelectOpKind)>),
-    /// Blocked on task.join (target task not yet complete).
-    Join(Arc<TaskHandle>),
-    /// Blocked on I/O completion.
-    Io(Arc<IoCompletion>),
+impl<F> Native for Await<F>
+where
+    F: FnMut(&mut Vm, Fired) -> Result<Step, VmError> + Send,
+{
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+        if let Some(wait) = self.wait.take() {
+            return Ok(Step::Park(wait));
+        }
+        let fired = vm.woken()?;
+        let step = (self.then)(vm, fired)?;
+        // A clock that has panicked ended every wait that was pending
+        // on it: the waiter fails as a builtin that reads the clock
+        // does, unless it has an error of its own.
+        match vm.runtime.io.clock_failure() {
+            Some(failure) => Err(VmError::new(failure)),
+            None => Ok(step),
+        }
+    }
 }
 
-// ── Timer manager (shared single-thread timer wheel) ────────────
+impl Vm {
+    /// The step of a builtin `name` that waits for `wait` and goes on
+    /// with `then`, which gets how the wait ended.
+    pub(crate) fn park(
+        &mut self,
+        name: &'static str,
+        wait: Wait,
+        then: impl FnMut(&mut Vm, Fired) -> Result<Step, VmError> + Send + 'static,
+    ) -> Step {
+        Step::Run(Box::new(Await {
+            name,
+            wait: Some(wait),
+            then,
+        }))
+    }
 
-/// Target to fire when a scheduled deadline expires. Channel targets are
-/// closed (used by `channel.timeout`); Completion targets are marked
-/// complete with `Value::Unit` (used by `time.sleep`).
-pub(crate) enum TimerTarget {
-    Channel(Arc<Channel>),
-    Completion(Arc<IoCompletion>),
+    /// How the wait of the frame that is resumed after a
+    /// [`Step::Park`] ended.
+    pub(crate) fn woken(&mut self) -> Result<Fired, VmError> {
+        self.woken.take().ok_or_else(|| {
+            VmError::new("internal VM error: a frame was resumed with its wait open".into())
+        })
+    }
 }
 
-/// A deadline and what to fire at it, as sent to the timer thread. The
-/// deadline is a reading of the host clock.
-type TimerRequest = (Duration, TimerTarget);
+// ── I/O thread pool ─────────────────────────────────────────────
 
-/// Manages all pending timer deadlines on a single background thread.
-/// Instead of spawning one OS thread per `channel.timeout` or `time.sleep`,
-/// all deadlines are submitted here and fired from a single long-lived
-/// thread. This keeps timer cost O(1) threads regardless of how many
-/// concurrent sleepers/timeouts exist.
-///
-/// The thread is started by the first deadline, so a program without
-/// timers has none, and a platform without threads can make a VM.
-pub(crate) struct TimerManager {
-    io: HostIo,
-    thread: parking_lot::Mutex<Threads<TimerRequest>>,
-}
-
-/// The threads of a [`TimerManager`] or an [`IoPool`], reached through
+/// The threads of an [`IoPool`], reached through
 /// the channel they take their work from.
 enum Threads<T> {
     /// Not started: nothing has needed them yet.
     Idle,
     Running(std::sync::mpsc::Sender<T>),
+    /// None could be started (a platform without threads): the work
+    /// is done by the thread that asks for it.
+    Unavailable,
     /// The VM is gone ([`Runtime::shutdown`]): they have been told to
     /// end and are not started again.
     Stopped,
@@ -184,120 +153,6 @@ impl<T> Threads<T> {
 
 /// Why a timer or an I/O operation finds its threads stopped.
 const VM_GONE: &str = "the VM that ran the program has been dropped";
-
-impl TimerManager {
-    pub(super) fn new(io: HostIo) -> Self {
-        TimerManager {
-            io,
-            thread: parking_lot::Mutex::new(Threads::Idle),
-        }
-    }
-
-    /// End the timer thread. The deadlines that are pending are
-    /// discarded: they never fire.
-    fn stop(&self) {
-        self.thread.lock().stop();
-    }
-
-    /// The timer thread's loop: take in deadlines, and fire each when
-    /// the host clock reaches it.
-    fn run(io: HostIo, rx: std::sync::mpsc::Receiver<TimerRequest>) {
-        let mut deadlines: BTreeMap<Duration, Vec<TimerTarget>> = BTreeMap::new();
-        loop {
-            // Calculate how long to sleep until the next deadline.
-            let timeout = deadlines
-                .first_key_value()
-                .map(|(deadline, _)| io.real_wait(deadline.saturating_sub(io.monotonic())))
-                .unwrap_or(Duration::from_secs(60));
-
-            // Wait for a new timeout request or until the next deadline fires.
-            match rx.recv_timeout(timeout) {
-                Ok((deadline, target)) => {
-                    deadlines.entry(deadline).or_default().push(target);
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-
-            // Fire all expired deadlines. The timer thread owns its own
-            // BTreeMap and holds no scheduler locks here, so firing
-            // `completion.complete(...)` (which runs wakers → requeue →
-            // watchdog.remove) is safe in a disjoint lock domain.
-            // If the clock has panicked, every wait ends now: what
-            // was waiting runs into the clock's failure at its next
-            // builtin call.
-            let now = io.monotonic();
-            let now = if io.clock_failure().is_some() {
-                Duration::MAX
-            } else {
-                now
-            };
-            let expired: Vec<Duration> = deadlines.range(..=now).map(|(k, _)| *k).collect();
-            for key in expired {
-                if let Some(targets) = deadlines.remove(&key) {
-                    for target in targets {
-                        match target {
-                            TimerTarget::Channel(ch) => ch.close(),
-                            TimerTarget::Completion(c) => {
-                                c.complete(Value::Unit);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Hand `target` to the timer thread, to fire after `delay` on the
-    /// host clock. Starts the thread if this is the first deadline; an
-    /// error if it cannot be started (a platform without threads).
-    fn submit(&self, delay: Duration, target: TimerTarget) -> Result<(), VmError> {
-        let unavailable =
-            |why: &dyn std::fmt::Display| VmError::new(format!("cannot start a timer: {why}"));
-        let deadline = self
-            .io
-            .deadline_after(delay)
-            .ok_or_else(|| unavailable(&"the duration is out of range"))?;
-        if let Some(failure) = self.io.clock_failure() {
-            return Err(VmError::new(failure));
-        }
-        let mut thread = self.thread.lock();
-        if let Threads::Idle = *thread {
-            let (tx, rx) = std::sync::mpsc::channel::<TimerRequest>();
-            let io = self.io.clone();
-            std::thread::Builder::new()
-                .spawn(move || TimerManager::run(io, rx))
-                .map_err(|e| unavailable(&e))?;
-            *thread = Threads::Running(tx);
-        }
-        match &*thread {
-            Threads::Running(tx) => tx.send((deadline, target)).map_err(|e| unavailable(&e)),
-            Threads::Idle | Threads::Stopped => Err(unavailable(&VM_GONE)),
-        }
-    }
-
-    /// Schedule a channel to be closed after `delay`.
-    pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) -> Result<(), VmError> {
-        // Tell the channel it has an incoming close so the main-thread
-        // deadlock check doesn't fire while the timer is pending.
-        ch.mark_pending_timer_close();
-        self.submit(delay, TimerTarget::Channel(ch))
-    }
-
-    /// Schedule an `IoCompletion` to be completed with `Value::Unit` after
-    /// `delay`. Used by `time.sleep` to cooperatively park a scheduled task
-    /// without consuming an I/O worker thread. Multiple concurrent sleepers
-    /// all share the single timer thread.
-    pub(crate) fn schedule_completion(
-        &self,
-        delay: Duration,
-        completion: Arc<IoCompletion>,
-    ) -> Result<(), VmError> {
-        self.submit(delay, TimerTarget::Completion(completion))
-    }
-}
-
-// ── I/O thread pool ─────────────────────────────────────────────
 
 /// Upper bound on the number of I/O worker threads when the
 /// `SILT_IO_POOL_SIZE` env var is set. More than this is almost
@@ -346,6 +201,7 @@ type IoJob = Box<dyn FnOnce() + Send>;
 
 pub(crate) struct IoPool {
     io: HostIo,
+    scheduler: Arc<Scheduler>,
     /// The workers, started by the first operation. A program that
     /// parks no task on I/O has none, and a platform without threads
     /// can make a VM.
@@ -355,9 +211,10 @@ pub(crate) struct IoPool {
 }
 
 impl IoPool {
-    pub(super) fn new(num_threads: usize, io: HostIo) -> Self {
+    pub(super) fn new(num_threads: usize, io: HostIo, scheduler: Arc<Scheduler>) -> Self {
         IoPool {
             io,
+            scheduler,
             workers: parking_lot::Mutex::new(Threads::Idle),
             num_workers: num_threads,
         }
@@ -371,6 +228,9 @@ impl IoPool {
     /// Start the workers. An error if not one could be started; if some
     /// could, the pool runs with those.
     fn start(&self) -> Result<std::sync::mpsc::Sender<IoJob>, std::io::Error> {
+        if self.num_workers == 0 {
+            return Err(std::io::Error::other("the pool has no threads"));
+        }
         let (tx, rx) = std::sync::mpsc::channel::<IoJob>();
         let rx = Arc::new(parking_lot::Mutex::new(rx));
         let mut started = 0;
@@ -407,16 +267,23 @@ impl IoPool {
         self.num_workers
     }
 
-    /// Submit a blocking I/O operation using a caller-supplied
-    /// completion handle. The handle's `timeout_err` factory determines
-    /// the typed variant the scheduler watchdog surfaces when the
-    /// task's deadline cancels this op.
-    pub(crate) fn submit_with(
+    /// Run the blocking operation `f` on a worker. Its value completes
+    /// the cell that is returned. Where no worker thread can be
+    /// started, `f` runs on the calling thread before this returns. If
+    /// `f` panics, or the VM is gone, the cell is completed with
+    /// `failure` of the reason: the error the builtin's signature
+    /// declares.
+    pub(crate) fn submit(
         &self,
-        completion: Arc<IoCompletion>,
+        failure: ErrFactory,
         f: impl FnOnce() -> Value + Send + 'static,
-    ) -> Arc<IoCompletion> {
-        let completion2 = completion.clone();
+    ) -> IoOp {
+        let op = IoOp {
+            cell: Cell::new(),
+            in_flight: Arc::new(parking_lot::Mutex::new(Some(self.scheduler.external()))),
+        };
+        let (cell, in_flight) = (op.cell.clone(), op.in_flight.clone());
+        let scheduler = self.scheduler.clone();
         let job: IoJob = Box::new(move || {
             let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
                 Ok(value) => value,
@@ -428,50 +295,41 @@ impl IoPool {
                     } else {
                         "IO task panicked".to_string()
                     };
-                    // Route the panic message through the completion's
-                    // typed-error factory rather than emitting the legacy
-                    // untyped `Err(String)` shape that bypassed every
-                    // caller's typed match arms (callers typecheck as
-                    // `Result(T, PgError)` / `Result(T, TcpError)` /
-                    // `Result(T, IoError)` etc — a stringly-shaped
-                    // `Err` matched no arm). Using `build_timeout_err`
-                    // here is semantically a slight bend (panic !=
-                    // timeout) but it is the right shape: each
-                    // factory's "unknown / timeout" variant is the
-                    // closest typed bucket for an unexpected internal
-                    // failure, and the "panic: " prefix preserves the
-                    // distinction in the message text. Without this,
-                    // user `match` arms over the typed error enum
-                    // never fire on the panic path.
-                    let prefixed = format!("panic: {msg}");
-                    completion2.build_timeout_err(&prefixed)
+                    failure(&format!("panic: {msg}"))
                 }
             };
-            completion2.complete(result);
+            let _ = cell.complete(result, scheduler.wake());
+            // After the wake: the operation is in flight no longer.
+            let done = in_flight.lock().take();
+            drop(done);
         });
-        // Nothing can run the operation: it fails, with the error its
-        // builtin's signature declares.
+        // The VM is gone: the operation fails.
         let fail = |why: &dyn std::fmt::Display| {
-            let err = completion.build_timeout_err(&format!("cannot run an I/O operation: {why}"));
-            completion.complete(err);
+            let err = failure(&format!("cannot run an I/O operation: {why}"));
+            let _ = op.cell.complete(err, self.scheduler.wake());
+            let done = op.in_flight.lock().take();
+            drop(done);
         };
         let mut workers = self.workers.lock();
         if let Threads::Idle = *workers {
-            match self.start() {
-                Ok(tx) => *workers = Threads::Running(tx),
-                Err(e) => {
-                    drop(workers);
-                    fail(&e);
-                    return completion;
-                }
-            }
+            *workers = match self.start() {
+                Ok(tx) => Threads::Running(tx),
+                Err(_) => Threads::Unavailable,
+            };
         }
         let sent = match &*workers {
             Threads::Running(tx) => tx.send(job),
+            // Without threads the operation runs here, and its value
+            // is there when the caller looks.
+            Threads::Unavailable => {
+                drop(workers);
+                job();
+                return op;
+            }
             Threads::Idle | Threads::Stopped => {
                 drop(workers);
                 fail(&VM_GONE);
-                return completion;
+                return op;
             }
         };
         drop(workers);
@@ -481,8 +339,23 @@ impl IoPool {
                 "silt: IoPool workers unreachable ({e}); IO task will never complete\n"
             ));
         }
-        completion
+        op
     }
+}
+
+/// The typed error of a builtin module for a reason given as text: an
+/// I/O operation timed out, panicked, or could not run.
+pub(crate) type ErrFactory = fn(&str) -> Value;
+
+/// An I/O operation on the pool.
+pub(crate) struct IoOp {
+    /// Completed with the operation's value.
+    pub(crate) cell: Arc<Cell<Value>>,
+    /// What keeps the program from being called deadlocked while the
+    /// operation is in flight. Whoever stops waiting for it first
+    /// drops it: the worker when the operation ends, or the task when
+    /// its deadline passes.
+    pub(crate) in_flight: Arc<parking_lot::Mutex<Option<External>>>,
 }
 
 // ── Runtime (shared state) ───────────────────────────────────────
@@ -491,12 +364,8 @@ impl IoPool {
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub struct Runtime {
     // ── M:N scheduler ──────────────────────────────────────────
-    /// The shared scheduler for spawned tasks (None until first task.spawn).
-    pub(super) scheduler: parking_lot::Mutex<Option<Arc<crate::scheduler::Scheduler>>>,
-
-    // ── Timer manager ──────────────────────────────────────────
-    /// Shared timer thread for `channel.timeout`.
-    pub(crate) timer: TimerManager,
+    /// The scheduler of the program's tasks.
+    pub(crate) scheduler: Arc<Scheduler>,
 
     // ── I/O pool ────────────────────────────────────────────────
     /// Thread pool for async I/O operations.
@@ -517,22 +386,14 @@ pub struct Runtime {
 
 impl Runtime {
     /// End the threads that serve the program: the scheduler's workers
-    /// and watchdog, the timer thread and the I/O workers. Called when
+    /// and timer thread and the I/O workers. Called when
     /// the VM that was made for the program is dropped. Tasks that have
     /// not ended never run again, and pending timers never fire.
     ///
     /// The threads are told to end, not waited for: a worker inside a
     /// builtin that blocks ends when the builtin returns.
     pub(super) fn shutdown(&self) {
-        // A scheduler is made if there was none, so that a thread that
-        // outlives the VM (a stream stage) cannot start one.
-        let scheduler = self
-            .scheduler
-            .lock()
-            .get_or_insert_with(|| Arc::new(crate::scheduler::Scheduler::new(self.io.clone())))
-            .clone();
-        scheduler.shutdown();
-        self.timer.stop();
+        self.scheduler.shutdown();
         self.io_pool.stop();
     }
 
@@ -638,10 +499,40 @@ mod tests {
         }
     }
 
+    /// Where no thread can be started (a pool of no workers stands in
+    /// for a platform without threads), an operation runs on the thread
+    /// that submits it: its value is there when `submit` returns, a
+    /// panic in it is the typed failure, and nothing stays pending.
+    #[test]
+    fn without_threads_an_operation_runs_on_the_caller() {
+        fn failure(msg: &str) -> Value {
+            Value::String(msg.to_string())
+        }
+        let io = HostIo::process();
+        let scheduler = Arc::new(Scheduler::new(io.clone()));
+        let pool = IoPool::new(0, io, scheduler);
+        let here = std::thread::current().id();
+
+        let op = pool.submit(failure, move || {
+            assert_eq!(std::thread::current().id(), here);
+            Value::Int(7)
+        });
+        assert!(matches!(op.cell.get(), Some(Value::Int(7))));
+        assert!(op.in_flight.lock().is_none());
+
+        let op = pool.submit(failure, || panic!("no such file"));
+        match op.cell.get() {
+            Some(Value::String(msg)) => assert_eq!(msg, "panic: no such file"),
+            other => panic!("expected the typed failure, got {other:?}"),
+        }
+        assert!(op.in_flight.lock().is_none());
+    }
+
     #[test]
     fn worker_count_reports_constructor_argument() {
         for n in [1usize, 2, 4, 8, 16] {
-            let pool = IoPool::new(n, HostIo::process());
+            let io = HostIo::process();
+            let pool = IoPool::new(n, io.clone(), Arc::new(Scheduler::new(io)));
             assert_eq!(pool.worker_count(), n, "worker_count drift for n={n}");
         }
     }

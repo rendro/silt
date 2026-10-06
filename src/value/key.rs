@@ -137,7 +137,7 @@ impl PartialEq for Value {
             }
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id == b.id,
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
-            (Value::Channel(a), Value::Channel(b)) => a.id == b.id,
+            (Value::Channel(a), Value::Channel(b)) => a.id() == b.id(),
             // Structural equality — same content, regardless of Arc identity.
             // This is the load-bearing forward-compat decision for the
             // future native `Type::Bytes`: equality semantics must already
@@ -281,7 +281,7 @@ impl Ord for Value {
             (Value::Variant(ta, fa), Value::Variant(tb, fb)) => ta.cmp(tb).then_with(|| fa.cmp(fb)),
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id.cmp(&b.id),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
-            (Value::Channel(a), Value::Channel(b)) => a.id.cmp(&b.id),
+            (Value::Channel(a), Value::Channel(b)) => a.id().cmp(&b.id()),
             // Structural lex comparison on bytes — required for Eq/Ord
             // consistency with structural PartialEq above. BTreeMap/BTreeSet
             // key contracts depend on this.
@@ -440,7 +440,7 @@ impl Hash for Value {
             }
             Value::Channel(ch) => {
                 state.write_u8(11);
-                ch.id.hash(state);
+                ch.id().hash(state);
             }
             Value::Handle(h) => {
                 state.write_u8(12);
