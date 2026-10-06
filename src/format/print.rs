@@ -26,6 +26,7 @@ use super::doc::{Doc, render};
 pub fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<Doc, Mismatch> {
     let mut printer = Printer {
         cur: Cursor::new(source, lexed),
+        closure_alternatives: false,
     };
     let doc = printer.program(program);
     match printer.cur.error {
@@ -451,6 +452,28 @@ fn space() -> Doc {
 
 struct Printer<'a> {
     cur: Cursor<'a>,
+    /// The or-pattern printed next is a closure's parameter: an
+    /// alternative that a closure's parameters cannot start with or hold
+    /// bare keeps its parentheses (see `param`).
+    closure_alternatives: bool,
+}
+
+/// Whether the parser reads `pattern`, without parentheses around it,
+/// as a parameter of a closure: it tells a closure from a block by the
+/// tokens in front of the `->`, which may be names, brackets and their
+/// punctuation, and the `|` between alternatives.
+fn closure_reads(pattern: &Pattern) -> bool {
+    match &pattern.kind {
+        PatternKind::Int(_)
+        | PatternKind::Float(_)
+        | PatternKind::Bool(_)
+        | PatternKind::StringLit(..)
+        | PatternKind::Range(..)
+        | PatternKind::FloatRange(..)
+        | PatternKind::Pin(_) => false,
+        PatternKind::Or(alts) => alts.iter().all(closure_reads),
+        _ => true,
+    }
 }
 
 impl Printer<'_> {
@@ -711,25 +734,24 @@ impl Printer<'_> {
 
     /// A parameter. `in_closure`: a closure is recognised by the tokens
     /// in front of its `->`, which may only be names, brackets and their
-    /// punctuation; any other pattern stands in parentheses there.
+    /// punctuation; any other pattern stands in parentheses there. An
+    /// or-pattern of such patterns only (`{ A(n) | B(n) -> n }`) needs
+    /// none. One with another alternative has them around itself or
+    /// around that alternative, as the source has.
     fn param(&mut self, param: &Param, in_closure: bool) -> Doc {
         let mut docs = Vec::new();
         if param.kind == ParamKind::Type {
             docs.push(self.tok(Token::Type));
             docs.push(space());
         }
-        let needs_parens = in_closure
-            && matches!(
-                param.pattern.kind,
-                PatternKind::Int(_)
-                    | PatternKind::Float(_)
-                    | PatternKind::Bool(_)
-                    | PatternKind::StringLit(..)
-                    | PatternKind::Range(..)
-                    | PatternKind::FloatRange(..)
-                    | PatternKind::Pin(_)
-                    | PatternKind::Or(_)
-            );
+        let needs_parens = in_closure && !closure_reads(&param.pattern);
+        if let (true, PatternKind::Or(alts)) = (needs_parens, &param.pattern.kind) {
+            let first_end = alts.first().map(|alt| alt.span.end);
+            let around = self
+                .cur
+                .pattern_wrappers(param.pattern.span.start, first_end);
+            self.closure_alternatives = around == 0;
+        }
         docs.push(self.pattern_in(&param.pattern, needs_parens));
         if let Some(ty) = &param.ty {
             docs.push(self.tok(Token::Colon));
@@ -1929,12 +1951,18 @@ impl Printer<'_> {
     /// the list, which is what the result is read as: one group, not a
     /// group in a group that breaks on its own. With a comment at the
     /// inside of its parentheses it stays as it is.
-    fn alternatives(&mut self, alts: &[Pattern], docs: &mut Vec<Doc>) {
+    fn alternatives(&mut self, alts: &[Pattern], in_closure: bool, docs: &mut Vec<Doc>) {
         for (i, alt) in alts.iter().enumerate() {
             if i > 0 {
                 // A line breaks in front of `|`, as in front of an
                 // operator.
                 docs.extend([Doc::Line, self.tok(Token::Bar), space()]);
+            }
+            // In a closure's parameter, where the or-pattern has no
+            // parentheses of its own.
+            if in_closure && !closure_reads(alt) {
+                docs.push(self.pattern_in(alt, true));
+                continue;
             }
             let PatternKind::Or(inner) = &alt.kind else {
                 docs.push(self.pattern(alt));
@@ -1946,7 +1974,7 @@ impl Printer<'_> {
                 docs.push(self.pattern(alt));
             } else {
                 self.cur.skip_n(&Token::LParen, wrappers);
-                self.alternatives(inner, docs);
+                self.alternatives(inner, in_closure, docs);
                 self.cur.skip_n(&Token::RParen, wrappers);
                 docs.push(self.cur.carried());
             }
@@ -2080,7 +2108,8 @@ impl Printer<'_> {
             }
             PatternKind::Or(alts) => {
                 let mut docs = Vec::new();
-                self.alternatives(alts, &mut docs);
+                let in_closure = std::mem::take(&mut self.closure_alternatives);
+                self.alternatives(alts, in_closure, &mut docs);
                 // The first alternative is not part of the group, as the
                 // first operand of a chain of operators is not: a
                 // comment above it does not break the list.

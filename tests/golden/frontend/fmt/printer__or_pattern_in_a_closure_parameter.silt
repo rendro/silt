@@ -1,5 +1,8 @@
 -- cmd: fmt
--- An or-pattern as a closure's parameter is laid out as in a match arm.
+-- An or-pattern as a closure's parameter is laid out as in a match arm,
+-- without parentheses. A number, a string or a `^pin` cannot stand bare
+-- in front of a closure's `->`: with one among the alternatives, the
+-- parentheses the source has, around it or around them all, stay.
 type Shape {
   Circle(Int),
   Square(Int),
@@ -9,5 +12,10 @@ fn main() {
   let side = { Circle(n)
     | Square(n) -> n }
   let pair = { (Circle(a)|Square(a)), Circle(b)  |  Square(b) -> a + b }
+  let whole = { (Circle(n) | (Square(n))) -> n }
+  let zero = { (0) | _ -> 1 }
+  let one = { (_ | 1) -> 1 }
+  let two = { _ | ((2) | (3)), ((x)) -> x }
+  println("{whole(Circle(1))} {zero(0)} {one(1)} {two(2, 2)}")
   println("{side(Square(4))} {pair(Circle(1), Square(2))}")
 }
