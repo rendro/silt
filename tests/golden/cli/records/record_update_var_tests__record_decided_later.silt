@@ -1,0 +1,8 @@
+-- An update whose record is decided after it (the closure's parameter by
+-- the call below) is checked then: a field the record has, of its type.
+type Rec { name: String, age: Int }
+fn apply(f, r: Rec) -> Rec { f(r) }
+fn main() {
+  let r = Rec { name: "alice", age: 30 }
+  println(apply({ x -> x.{ age: 31 } }, r).age)
+}

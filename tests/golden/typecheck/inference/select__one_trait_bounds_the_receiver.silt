@@ -1,0 +1,12 @@
+-- A method call on a parameter of unknown type means the one trait in
+-- sight that declares the method: `g` is `a -> String where a: Greet`.
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Greet for Bool { fn greet(self) -> String { "bool" } }
+fn g(x) { x.greet() }
+fn main() {
+  println(g(1))
+  println(g(true))
+  let h = { y -> "{y.greet()}!" }
+  println(h(2))
+}

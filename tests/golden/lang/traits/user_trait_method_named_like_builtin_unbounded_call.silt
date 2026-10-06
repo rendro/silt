@@ -1,8 +1,9 @@
 -- exit: 1
--- A polymorphic call with no bound names no trait. On an Int, whose
--- builtin `display` is native, a program trait's `display` for Int makes
--- it ambiguous when it runs, rather than calling the program's trait.
--- stderr-contains: error[runtime]: ambiguous method 'display' for type 'Int': two traits provide it
+-- A method call on a receiver of unknown type means the one trait in
+-- sight that declares the method: with a program trait that declares
+-- `display` beside the builtin `Display`, the receiver needs an
+-- annotation.
+-- stderr-contains: error[type]: ambiguous method 'display' on a value whose type is not known: provided by traits Describe, Display
 trait Describe { fn display(self) -> String }
 trait Describe for Int { fn display(self) -> String { "described {self}" } }
 fn main() {

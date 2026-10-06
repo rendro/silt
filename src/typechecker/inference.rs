@@ -1040,10 +1040,33 @@ impl TypeChecker {
             span,
             callee: Some(label),
         });
+        self.callee_position = true;
+        self.unknown_receiver = None;
         let callee_ty = self.infer_expr(callee, env);
+        self.callee_position = false;
         self.named_use = None;
         let callee_ty = self.apply(&callee_ty);
         let is_method_call = self.last_field_access_was_method;
+        self.last_field_access_was_method = false;
+        // `x.m(args)` where the type of `x` is unknown: the call waits
+        // for it.
+        if let Some((recv, name)) = self.unknown_receiver.take() {
+            let args: Vec<Type> = args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
+            let result = self.fresh_var();
+            self.want_goal(
+                Goal::Select {
+                    recv,
+                    name,
+                    args,
+                    result: result.clone(),
+                },
+                Origin {
+                    span: callee.span,
+                    callee: Some(name),
+                },
+            );
+            return result;
+        }
 
         let result_ty = match &callee_ty {
             Type::Fun(params, ret) => {
@@ -1170,8 +1193,32 @@ impl TypeChecker {
             expr.res = None;
         }
         let outer_forced = std::mem::replace(&mut self.forced_trait, forced);
+        let called = self.callee_position;
         let ty = self.infer_expr_kind(expr, env);
         self.forced_trait = outer_forced;
+        // A method is called, not taken: `x.m` that is not a callee is a
+        // field.
+        let ty = if self.last_field_access_was_method && !called {
+            self.last_field_access_was_method = false;
+            self.method_trait = None;
+            let ExprKind::FieldAccess(_, method, _) = &expr.kind else {
+                unreachable!()
+            };
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidMethodCall,
+                    expr.span,
+                    format!("method '{method}' is not a value: a method is called"),
+                )
+                .with_help(format!(
+                    "call it, `x.{method}(..)`, or pass a closure that does, `{{ x -> x.{method}(..) }}`"
+                )),
+            );
+            expr.ty = Some(Type::Error);
+            Type::Error
+        } else {
+            ty
+        };
         if let Some(t) = self.method_trait.take() {
             expr.res = Some(crate::defs::Res::Def(t.id.0));
         }
@@ -1182,6 +1229,7 @@ impl TypeChecker {
     fn infer_expr_kind(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
         let span = expr.span;
         self.at = span;
+        let called = std::mem::take(&mut self.callee_position);
         let ty = match &mut expr.kind {
             ExprKind::Int(_) => Type::Int,
             ExprKind::Float(_) => Type::Float,
@@ -1516,6 +1564,7 @@ impl TypeChecker {
 
                 // Could be record.field — infer the object type
                 let obj_ty = self.infer_expr(obj, env);
+                self.last_field_access_was_method = false;
                 let obj_ty = self.apply(&obj_ty);
                 // Phase B: canonicalise before dispatch so a Range
                 // receiver (from `1..n`) lands in the List arm. The
@@ -1907,64 +1956,33 @@ impl TypeChecker {
                         }
                     }
                     Type::Var(_) => {
-                        // B3 (row polymorphism): unconstrained type
-                        // variable + field access — if the field name
-                        // is not a known method (registered impl OR
-                        // declared on any trait), generate an open
-                        // anon-record constraint so
-                        // `fn first_name(p) { p.name }` infers
-                        // `p: {name: a, ...r} -> a`. When the field
-                        // is a method name, fall back to the legacy
-                        // deferred-check path so trait dispatch keeps
-                        // working unchanged.
                         // A method only another module's private trait
                         // provides cannot be called here, whatever the
                         // receiver turns out to be.
-                        if let Some(trait_name) = self.only_private_provider(field) {
+                        if called && let Some(trait_name) = self.only_private_provider(field) {
                             self.private_method(trait_name, field, span);
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
-                        // A call that stays polymorphic names the one
-                        // trait the module sees with a method of the
-                        // name, when there is one: the VM looks the
-                        // method up in that trait's impls.
-                        let mut seen = self
-                            .tables
-                            .traits
-                            .iter()
-                            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
-                            .map(|(t, _)| *t)
-                            .filter(|t| self.sees_trait(*t));
-                        if let (Some(t), None) = (seen.next(), seen.next()) {
-                            self.method_trait = Some(t);
-                        }
-                        let result_ty = self.fresh_var();
-                        let is_known_impl_method =
-                            self.tables.method_table.keys().any(|(_, m)| *m == field);
-                        let is_declared_trait_method = self
-                            .tables
-                            .traits
-                            .values()
-                            .any(|info| info.methods.iter().any(|(n, _)| *n == field));
-                        if !is_known_impl_method && !is_declared_trait_method {
-                            let row_var = self.fresh_tyvar_id();
-                            use std::collections::BTreeMap;
-                            let mut fmap = BTreeMap::new();
-                            fmap.insert(field, result_ty.clone());
+                        if called {
+                            // `x.m(..)`: what it calls is decided with
+                            // the type of `x` (`check_call`).
+                            self.unknown_receiver = Some((obj_ty.clone(), field));
+                            self.fresh_var()
+                        } else {
+                            // `x.f`: a record with the field `f`,
+                            // whatever methods traits declare.
+                            let result_ty = self.fresh_var();
                             let row_ty = Type::AnonRecord {
-                                fields: fmap,
-                                tail: RowTail::Var(row_var),
+                                fields: std::collections::BTreeMap::from([(
+                                    field,
+                                    result_ty.clone(),
+                                )]),
+                                tail: RowTail::Var(self.fresh_tyvar_id()),
                             };
                             self.unify(&obj_ty, &row_ty, span);
+                            result_ty
                         }
-                        self.pending_field_accesses.push((
-                            obj_ty.clone(),
-                            field,
-                            result_ty.clone(),
-                            span,
-                        ));
-                        result_ty
                     }
                     Type::Error => {
                         // Prior error — propagate to prevent cascading false positives
@@ -2685,62 +2703,20 @@ impl TypeChecker {
                     handled = true;
                 }
                 if !handled {
-                    // BROKEN (round 23 #2): when the receiver is still a
-                    // bare type variable (e.g. `fn f(r) { r.{ aeg: ... } }`)
-                    // we used to silently infer each field expr and drop
-                    // the field name on the floor — the typo `aeg` would
-                    // crash the VM at runtime or, worse, silently corrupt
-                    // the record.
-                    //
-                    // Two-pronged fix:
-                    //  a) Push each (base, field_name) pair to the B4
-                    //     `pending_field_accesses` pool so that when the
-                    //     base DOES resolve to a concrete record by the
-                    //     time the definitions being checked are done,
-                    //     the standard finalize path validates the field.
-                    //  b) Eagerly reject field names that aren't declared
-                    //     on ANY record type in the program. For truly
-                    //     polymorphic bases this is the only compile-time
-                    //     signal we get — if the field name is a typo
-                    //     that doesn't match any declared record field,
-                    //     no call can rescue it. This is
-                    //     narrow enough to avoid false positives on
-                    //     valid polymorphic updates like `r.{ age: n }`
-                    //     (age IS declared on at least one record).
-                    let is_var_base = matches!(resolved, Type::Var(_));
-                    // Collect the set of field names across all declared
-                    // records once so the per-field check is O(1). A
-                    // HashSet keeps this independent of record count.
-                    let known_record_fields: std::collections::HashSet<Symbol> = if is_var_base {
-                        self.tables
-                            .records
-                            .values()
-                            .flat_map(|r| r.fields.iter().map(|(n, _)| *n))
-                            .collect()
-                    } else {
-                        std::collections::HashSet::new()
-                    };
+                    // The base's type is unknown: each field waits for
+                    // it (`Goal::Update`).
+                    let waits = matches!(resolved, Type::Var(_));
                     for (field_name, field_expr) in &mut *fields {
-                        let ft = self.infer_expr(field_expr, env);
-                        if is_var_base {
-                            self.pending_field_accesses.push((
-                                base_ty.clone(),
-                                *field_name,
-                                ft,
-                                span,
-                            ));
-                            if !known_record_fields.contains(field_name) {
-                                // Typo guaranteed: no record in the
-                                // program has a field with this name,
-                                // so regardless of how `r` narrows at
-                                // call sites, this update would fail.
-                                self.error(Code::UnknownField,
-                                    format!(
-                                        "unknown field '{field_name}' — not declared on any record type in scope"
-                                    ),
-                                    span,
-                                );
-                            }
+                        let value = self.infer_expr(field_expr, env);
+                        if waits {
+                            self.want_goal(
+                                Goal::Update {
+                                    base: base_ty.clone(),
+                                    field: *field_name,
+                                    value,
+                                },
+                                Origin { span, callee: None },
+                            );
                         }
                     }
                     if !matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {

@@ -152,6 +152,27 @@ impl TypeChecker {
         self.closed_mark = self.wanted_marks.pop().expect("a level is open");
     }
 
+    /// Decide what the scope `exit_level` just left can decide: what it
+    /// owes for a type it has decided since, and the calls on receivers
+    /// that are its to generalise (`default_selects`).
+    pub(super) fn decide_closed(&mut self) {
+        self.reopen_level();
+        self.solve_wanted(self.closed_mark);
+        self.close_level();
+        self.default_selects();
+    }
+
+    /// Make variables as the scope `exit_level` just left did, until
+    /// `close_level`: what is decided for the scope after it has ended
+    /// is the scope's.
+    pub(super) fn reopen_level(&mut self) {
+        self.tables.vars.level += 1;
+    }
+
+    pub(super) fn close_level(&mut self) {
+        self.tables.vars.level -= 1;
+    }
+
     /// Keep the unresolved variables of `ty` out of every later
     /// generalisation at this level: `ty` is the type of a binding that
     /// is not generalised.

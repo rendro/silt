@@ -274,7 +274,6 @@ pub(super) struct Waiting {
     /// waits for as long as something can still run that body.
     pub(super) decls: Vec<CellDecl>,
     pub(super) wanted: Vec<super::solve::Wanted>,
-    pub(super) field_accesses: Vec<(Type, Symbol, Type, Span)>,
     pub(super) numeric_checks: Vec<(Type, &'static str, Span)>,
     pub(super) question_marks: Vec<(Type, Type, Option<Type>, Span)>,
 }
