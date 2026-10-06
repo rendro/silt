@@ -2,7 +2,7 @@
 
 use parking_lot::{Mutex, MutexGuard};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::channel::Close;
 use super::queue::Wakes;
@@ -76,14 +76,20 @@ pub struct Token {
     /// Once it is set nobody completes an arm for the task: its wait
     /// ends only by the cancel.
     cancel: Option<Arc<AtomicBool>>,
+    /// The arm that ended the wait, once one has: whoever completed it
+    /// took the token off that arm's queue. `NO_ARM` otherwise.
+    ended_by: AtomicUsize,
     state: Mutex<State>,
 }
+
+const NO_ARM: usize = usize::MAX;
 
 impl Token {
     pub(super) fn new(task: TaskId, cancel: Option<Arc<AtomicBool>>) -> Arc<Token> {
         Arc::new(Token {
             task,
             cancel,
+            ended_by: AtomicUsize::new(NO_ARM),
             state: Mutex::new(State::Armed),
         })
     }
@@ -91,6 +97,15 @@ impl Token {
     /// The task that waits.
     pub fn task(&self) -> TaskId {
         self.task
+    }
+
+    /// The arm whose queue the token is on no longer, because the one
+    /// who completed that arm took it off.
+    pub(super) fn ended_by(&self) -> Option<usize> {
+        match self.ended_by.load(Ordering::Acquire) {
+            NO_ARM => None,
+            arm => Some(arm),
+        }
     }
 
     /// Whether the wait is still open.
@@ -109,6 +124,7 @@ impl Token {
         let state = self.state.lock();
         matches!(*state, State::Armed | State::Parked).then_some(Claim {
             task: self.task,
+            ended_by: &self.ended_by,
             state,
         })
     }
@@ -180,13 +196,18 @@ pub(super) fn is_set(cancel: &Option<Arc<AtomicBool>>) -> bool {
 /// A token whose wait only the holder can end.
 pub(super) struct Claim<'a> {
     task: TaskId,
+    ended_by: &'a AtomicUsize,
     state: MutexGuard<'a, State>,
 }
 
 impl Claim<'_> {
     /// End the wait with `fired`. If the task is parked, it is added to
-    /// `wakes`.
+    /// `wakes`. For an arm, the caller has taken the token off the
+    /// queue of that arm.
     pub(super) fn fire(mut self, fired: Fired, wakes: &mut Wakes) {
+        if let Fired::Arm(arm, _) = &fired {
+            self.ended_by.store(*arm, Ordering::Release);
+        }
         if matches!(*self.state, State::Parked) {
             wakes.push(self.task);
         }

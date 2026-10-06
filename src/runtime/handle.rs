@@ -121,7 +121,7 @@ impl TaskHandle {
     pub fn with_owner(id: usize, owner: u64) -> Self {
         Self {
             id,
-            result: Cell::new(),
+            result: Cell::labelled(format!("task <handle:{id}>")),
             cancelled: Arc::new(AtomicBool::new(false)),
             unjoined_failure: AtomicBool::new(false),
             owner,

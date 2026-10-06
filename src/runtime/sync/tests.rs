@@ -713,6 +713,41 @@ fn a_clock_that_panicked_ends_every_timed_wait() {
     assert_eq!(timer.pending(), 0);
 }
 
+// ── Long queues ─────────────────────────────────────────────────────
+
+#[test]
+fn leaving_a_long_queue_costs_no_search_and_leaves_no_more_than_it_holds() {
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    const WAITERS: u64 = 1_000;
+    for task in 0..WAITERS {
+        assert!(d.block(task, recv(&ch)).is_none());
+    }
+    // A waiter that is served is off the queue with the operation.
+    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
+    assert_eq!(received(resumed(&d, 0)), (0, 1));
+    assert_eq!(ch.queued(), (WAITERS as usize - 1, 0));
+
+    // Cancelled waiters may stay for a while, but never more of them
+    // than waiters that still wait, and nobody is served through them.
+    for task in 1..WAITERS - 10 {
+        assert!(d.cancel(task));
+        d.drop_task(task);
+        let (queued, _) = ch.queued();
+        let (waiting, _) = ch.waiting();
+        assert!(
+            queued <= 2 * waiting.max(16),
+            "{queued} queued, {waiting} wait"
+        );
+    }
+    assert_eq!(ch.waiting(), (10, 0));
+    assert_eq!(ch.queued(), (10, 0));
+    d.woken();
+    assert!(matches!(ch.try_send(Value::Int(2), &d), TrySend::Sent));
+    assert_eq!(d.woken(), [WAITERS - 10]);
+    assert_eq!(received(resumed(&d, WAITERS - 10)), (0, 2));
+}
+
 // ── The cancel flag ─────────────────────────────────────────────────
 
 #[test]
@@ -1002,7 +1037,7 @@ fn tasks_are_stuck_when_all_wait_and_nothing_is_pending() {
     let d = Double::new();
     let (p, ready) = parking(&d);
     let (a, b) = (Channel::new(4, 0), Channel::new(5, 0));
-    let stuck = |live: usize, external: usize| p.stuck(|| live, || external);
+    let stuck = |live: usize, external: usize| p.stuck(|| live, || external, |task| *task);
     assert!(stuck(0, 0).is_none(), "nothing waits");
 
     assert!(rest(&p, 2, send(&b, 1)).is_none());
@@ -1020,6 +1055,7 @@ fn tasks_are_stuck_when_all_wait_and_nothing_is_pending() {
                 Source::Send(channel) => format!("send {}", channel.id()),
                 Source::Cell(_) => "cell".to_string(),
             });
+            assert_eq!(stuck.who, stuck.task.0);
             (stuck.task.0, on.collect())
         })
         .collect();
