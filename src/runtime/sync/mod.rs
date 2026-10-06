@@ -19,9 +19,12 @@
 //! - [`timer`]: deadlines on the VM's clock ([`crate::HostIo`]); an
 //!   entry fires a token or closes a channel.
 //! - [`wait`]: `Wait`, `park` and what a parked task holds.
+//! - [`parking`]: the registry of parked tasks, which does the
+//!   scheduler's part below once and is the `Wake` of a runtime.
 //!
-//! # What the scheduler must do
+//! # What the holder of a parked task must do
 //!
+//! ([`Parking`] is that holder; this is its contract with the rest.)
 //! A worker that runs a task into a wait calls [`park`]. On
 //! [`Park::Ready`] the task goes on. On [`Park::Parked`] the worker
 //! puts the task where a wake can find it, counts it as not runnable,
@@ -44,6 +47,7 @@
 
 pub mod cell;
 pub mod channel;
+pub mod parking;
 mod queue;
 pub mod timer;
 pub mod token;
@@ -56,6 +60,7 @@ mod tests;
 
 pub use cell::{Cell, Completion};
 pub use channel::{Channel, Close, TryReceive, TrySend};
+pub use parking::{Parking, Stuck};
 pub use timer::{Timer, TimerId};
 pub use token::{Fired, Outcome, Resumed, TaskId, Token, Wake};
 pub use wait::{Arm, Park, Parked, Source, Wait, park};

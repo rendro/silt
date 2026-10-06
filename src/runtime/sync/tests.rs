@@ -692,6 +692,243 @@ fn a_clock_that_panicked_ends_every_timed_wait() {
     assert_eq!(timer.pending(), 0);
 }
 
+// ── The parked tasks ────────────────────────────────────────────────
+
+/// A registry on the double's timer whose tasks are numbers, and the
+/// tasks it has handed back.
+type Ready = Arc<parking_lot::Mutex<Vec<(u64, Resumed)>>>;
+
+fn parking(d: &Double) -> (Arc<Parking<u64>>, Ready) {
+    let ready = Ready::default();
+    let sink = ready.clone();
+    let parking = Parking::new(d.timer.clone(), move |task, resumed| {
+        sink.lock().push((task, resumed));
+    });
+    (Arc::new(parking), ready)
+}
+
+/// Park task `task` with its flag clear.
+fn rest(p: &Parking<u64>, task: u64, wait: Wait) -> Option<Resumed> {
+    p.park(TaskId(task), task, wait, || false)
+        .map(|(back, resumed)| {
+            assert_eq!(back, task);
+            resumed
+        })
+}
+
+/// The one task handed back since the last call.
+fn handed_back(ready: &Ready) -> (u64, Resumed) {
+    let mut ready = std::mem::take(&mut *ready.lock());
+    assert_eq!(ready.len(), 1, "one task is handed back");
+    ready.pop().expect("one task")
+}
+
+#[test]
+fn a_parked_task_is_handed_back_with_what_its_wait_ended_on() {
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 0);
+    assert!(rest(&p, 1, recv(&ch)).is_none());
+    assert!(p.is_parked(TaskId(1)));
+    assert_eq!(p.waiting(), 1);
+
+    // The sender's wait is over at once: it keeps its task.
+    let Some(Resumed::Fired(sent)) = rest(&p, 2, send(&ch, 7)) else {
+        panic!("a receiver is parked");
+    };
+    assert!(matches!(sent, Fired::Arm(0, Outcome::Sent)));
+    let (task, Resumed::Fired(fired)) = handed_back(&ready) else {
+        panic!("task 1 was not cancelled");
+    };
+    assert_eq!((task, received(fired)), (1, (0, 7)));
+    assert_eq!((p.waiting(), ch.queued()), (0, (0, 0)));
+    assert!(!p.is_parked(TaskId(1)));
+}
+
+#[test]
+fn a_cancelled_parked_task_is_handed_back_and_takes_nothing() {
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 2);
+    let wait = recv(&ch).deadline(d.timer.deadline_after(10 * MS));
+    assert!(rest(&p, 1, wait).is_none());
+
+    assert!(p.cancel(TaskId(1)));
+    assert!(matches!(handed_back(&ready), (1, Resumed::Cancelled)));
+    // It is off the queue and out of the timer, and the values stay.
+    assert_eq!(
+        (ch.queued(), d.timer.pending(), p.waiting()),
+        ((0, 0), 0, 0)
+    );
+    assert!(matches!(ch.try_send(Value::Int(1), &*p), TrySend::Sent));
+    assert!(matches!(ch.try_send(Value::Int(2), &*p), TrySend::Sent));
+    assert_eq!(ch.len(), 2);
+    // A second cancel, and a cancel of a task that is not parked.
+    assert!(!p.cancel(TaskId(1)));
+    assert!(!p.cancel(TaskId(9)));
+    assert!(ready.lock().is_empty());
+}
+
+#[test]
+fn a_task_whose_flag_is_set_completes_no_arm() {
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 2);
+    assert!(matches!(ch.try_send(Value::Int(1), &*p), TrySend::Sent));
+
+    let back = p.park(TaskId(1), 1, recv(&ch), || true);
+    assert!(matches!(back, Some((1, Resumed::Cancelled))));
+    assert_eq!((ch.len(), ch.queued(), p.waiting()), (1, (0, 0), 0));
+    assert!(ready.lock().is_empty());
+}
+
+#[test]
+fn a_cancel_that_misses_the_registry_is_found_by_the_flag() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 0);
+    // The flag is clear when the task starts to park and set when it
+    // is in the registry: the cancel came in between and found no
+    // entry.
+    let reads = AtomicUsize::new(0);
+    let flag = || {
+        let set = reads.fetch_add(1, Ordering::SeqCst) > 0;
+        if set {
+            assert!(!p.is_parked(TaskId(1)), "not given up yet");
+        } else {
+            assert!(!p.cancel(TaskId(1)));
+        }
+        set
+    };
+    let back = p.park(TaskId(1), 1, recv(&ch), flag);
+    assert!(matches!(back, Some((1, Resumed::Cancelled))));
+    assert_eq!((ch.queued(), p.waiting()), ((0, 0), 0));
+    assert!(matches!(ch.try_send(Value::Int(1), &*p), TrySend::Full(_)));
+    assert!(ready.lock().is_empty());
+}
+
+#[test]
+fn a_wait_that_ends_while_the_task_is_parked_keeps_the_task() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 0);
+    // A sender on another thread gets in after the task is on the
+    // queue and before its worker has given it up.
+    let reads = AtomicUsize::new(0);
+    let flag = || {
+        if reads.fetch_add(1, Ordering::SeqCst) == 1 {
+            assert!(matches!(ch.try_send(Value::Int(5), &*p), TrySend::Sent));
+        }
+        false
+    };
+    let Some((1, Resumed::Fired(fired))) = p.park(TaskId(1), 1, recv(&ch), flag) else {
+        panic!("the wait ended before the task was given up");
+    };
+    assert_eq!(received(fired), (0, 5));
+    assert_eq!((ch.queued(), p.waiting()), ((0, 0), 0));
+    assert!(ready.lock().is_empty());
+}
+
+#[test]
+fn a_deadline_hands_the_task_back() {
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 0);
+    let wait = recv(&ch).deadline(d.timer.deadline_after(10 * MS));
+    assert!(rest(&p, 1, wait).is_none());
+
+    d.clock.advance(10 * MS);
+    assert_eq!(d.timer.fire_due(&*p), 1);
+    assert!(matches!(
+        handed_back(&ready),
+        (1, Resumed::Fired(Fired::Deadline))
+    ));
+    assert_eq!((ch.queued(), d.timer.pending()), ((0, 0), 0));
+}
+
+#[test]
+fn shutdown_gives_every_parked_task_and_leaves_nothing_queued() {
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let (a, b) = (Channel::new(0, 0), Channel::new(1, 0));
+    let cell = Cell::<i64>::new();
+    assert!(rest(&p, 2, send(&a, 1)).is_none());
+    let wait = Wait::new(vec![Arm::Recv(b.clone()), Arm::Cell(cell.clone())])
+        .deadline(d.timer.deadline_after(10 * MS));
+    assert!(rest(&p, 1, wait).is_none());
+
+    let tasks = p.shutdown();
+    assert_eq!(tasks, [(TaskId(1), 1), (TaskId(2), 2)]);
+    assert_eq!((a.queued(), b.queued()), ((0, 0), (0, 0)));
+    assert_eq!((cell.waiting(), d.timer.pending(), p.waiting()), (0, 0, 0));
+    // Nothing reaches a task that is gone, and nothing parks any more.
+    assert_eq!(try_value(&a, &d), None);
+    assert!(cell.complete(1, &*p).is_ok());
+    assert!(matches!(rest(&p, 3, recv(&b)), Some(Resumed::Cancelled)));
+    assert_eq!(b.queued(), (0, 0));
+    assert!(p.shutdown().is_empty());
+    assert!(ready.lock().is_empty());
+}
+
+#[test]
+fn tasks_are_stuck_when_all_wait_and_nothing_is_pending() {
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let (a, b) = (Channel::new(4, 0), Channel::new(5, 0));
+    let stuck = |live: usize, external: usize| p.stuck(|| live, || external);
+    assert!(stuck(0, 0).is_none(), "nothing waits");
+
+    assert!(rest(&p, 2, send(&b, 1)).is_none());
+    assert!(stuck(2, 0).is_none(), "task 1 runs");
+    assert!(rest(&p, 1, select_recv(&a, &a)).is_none());
+    assert!(stuck(3, 0).is_none(), "a third task runs");
+    assert!(stuck(2, 1).is_none(), "an I/O operation is in flight");
+
+    let tasks = stuck(2, 0).expect("both tasks wait on each other");
+    let on: Vec<(u64, Vec<String>)> = tasks
+        .iter()
+        .map(|stuck| {
+            let on = stuck.on.iter().map(|source| match source {
+                Source::Recv(channel) => format!("receive {}", channel.id()),
+                Source::Send(channel) => format!("send {}", channel.id()),
+                Source::Cell(_) => "cell".to_string(),
+            });
+            (stuck.task.0, on.collect())
+        })
+        .collect();
+    assert_eq!(
+        on,
+        [
+            (1, vec!["receive 4".to_string(), "receive 4".to_string()]),
+            (2, vec!["send 5".to_string()]),
+        ]
+    );
+
+    // A timer that will close a channel can still end a wait.
+    let id = d
+        .timer
+        .close_at(d.timer.deadline_after(MS).expect("in range"), a.clone());
+    assert!(stuck(2, 0).is_none(), "a timer is armed");
+    assert!(d.timer.disarm(id));
+    assert!(stuck(2, 0).is_some());
+
+    // A wait with a deadline is never stuck; when the deadline has
+    // handed its task back, the other is.
+    assert!(p.cancel(TaskId(1)));
+    assert!(matches!(handed_back(&ready), (1, Resumed::Cancelled)));
+    let wait = recv(&a).deadline(d.timer.deadline_after(MS));
+    assert!(rest(&p, 1, wait).is_none());
+    assert!(stuck(2, 0).is_none(), "task 1 has a deadline");
+    d.clock.advance(MS);
+    assert_eq!(d.timer.fire_due(&*p), 1);
+    assert!(stuck(2, 0).is_none(), "task 1 runs again");
+    assert_eq!(stuck(1, 0).expect("task 1 has ended").len(), 1);
+}
+
 // ── Threads ─────────────────────────────────────────────────────────
 
 /// Four threads cross two rendezvous channels with selects whose arms
