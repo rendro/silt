@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot spread a record of the row `r` here: a declared record may stand for the row, and a spread makes an anonymous record
+-- stderr-contains: help: only a function's own signature keeps declared records from a row its body spreads: do the spread in a function
+-- stderr-contains: 12:85
+-- stderr-contains: 14:68
+-- The row variable of a trait method's signature, or of a `let`
+-- annotation, is fixed by the annotation: what the method is given may
+-- be a declared record, and its body cannot spread it.
+type Person { name: String, age: Int }
+trait Tag { fn tag(self, p: {name: String, ...r}) -> {name: String, ...r} }
+trait Tag for Int { fn tag(self, p: {name: String, ...r}) -> {name: String, ...r} { {...p} } }
+fn main() {
+  let f: Fn({name: String, ...r}) -> {name: String, ...r} = { p -> {...p} }
+  println(1.tag(Person { name: "a", age: 1 }))
+}

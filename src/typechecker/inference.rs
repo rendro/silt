@@ -784,8 +784,13 @@ impl TypeChecker {
 
         // The declared bounds are in scope in the body: a rigid variable
         // has the methods of its bounds and of their supertraits.
-        for Pred::Trait { tr, args, subject } in &sig.bounds {
-            if let Type::Var(var) = subject {
+        for pred in &sig.bounds {
+            if let Pred::Trait {
+                tr,
+                args,
+                subject: Type::Var(var),
+            } = pred
+            {
                 self.declare_bound(*var, *tr, args.clone());
             }
         }
@@ -1175,11 +1180,11 @@ impl TypeChecker {
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
                 for k in owed_before..self.wanted.len() {
-                    let Goal::Pred(Pred::Trait {
-                        subject: Type::Var(v),
-                        ..
-                    }) = &self.wanted[k].goal
-                    else {
+                    let Type::Var(v) = (match &self.wanted[k].goal {
+                        Goal::Pred(pred) => pred.subject(),
+                        Goal::Lacks { row, .. } | Goal::Listed { row, .. } => row,
+                        _ => continue,
+                    }) else {
                         continue;
                     };
                     let at = params
@@ -2469,11 +2474,11 @@ impl TypeChecker {
                     }
                 }
                 // Three cases:
-                //  1. Concrete `Type::Record(name, fields)` — validate directly.
-                //  2. `Type::Generic(name, args)` resolving to a declared
-                //     record (happens when the base is a param annotated
-                //     with a user-defined record type). BROKEN-1.
-                //  3. Anything else — compile-time reject. BROKEN-2.
+                //  1. An anonymous record type — validate against its
+                //     fields and row.
+                //  2. `Type::Generic(name, args)`, a declared record —
+                //     validate against the declared fields.
+                //  3. Anything else — compile-time reject.
                 let mut handled = false;
                 // Anon record (row-poly) update: validate each field
                 // against the row's known fields when present; for open
@@ -2632,93 +2637,26 @@ impl TypeChecker {
                     field_map.insert(*n, t.clone());
                 }
                 if let Some(base_expr) = spread {
-                    let base_ty = self.infer_expr(base_expr, env);
-                    let base_ty = self.apply(&base_ty);
-                    let base_canon =
-                        crate::types::canonical::canonicalize(&self.tables.resolver, &base_ty);
-                    // The base's known fields and its row.
-                    let (base_fields, base_tail): (BTreeMap<Symbol, Type>, RowTail) =
-                        match &base_canon {
-                            Type::AnonRecord { fields, tail } => (fields.clone(), tail.clone()),
-                            // A base of unknown type is a record with a
-                            // row of its own.
-                            Type::Var(_) => {
-                                let row = self.fresh_tyvar_id();
-                                let open = Type::AnonRecord {
-                                    fields: BTreeMap::new(),
-                                    tail: RowTail::Var(row),
-                                };
-                                self.unify(&base_ty, &open, base_expr.span);
-                                (BTreeMap::new(), RowTail::Var(row))
-                            }
-                            // A spread over a value of a declared record
-                            // type is the conversion to an anonymous
-                            // record, written out: the result has the
-                            // record's fields, and each field written
-                            // after the spread is added or replaces the
-                            // record's by name.
-                            Type::Generic(name, args) if self.tables.records.contains_key(name) => {
-                                let mut merged: BTreeMap<Symbol, Type> = self
-                                    .instantiate_record_fields_with_args(*name, args)
-                                    .into_iter()
-                                    .collect();
-                                for (n, t) in &new_field_tys {
-                                    merged.insert(*n, t.clone());
-                                }
-                                let ty = Type::AnonRecord {
-                                    fields: merged,
-                                    tail: RowTail::Closed,
-                                };
-                                expr.ty = Some(ty.clone());
-                                return ty;
-                            }
-                            _ => {
-                                if !matches!(base_canon, Type::Error | Type::Never) {
-                                    self.error(Code::TypeMismatch,
-                                        format!(
-                                            "spread requires a record base, but '{base_canon}' is not a record type"
-                                        ),
-                                        base_expr.span,
-                                    );
-                                }
-                                expr.ty = Some(Type::Error);
-                                return Type::Error;
-                            }
-                        };
-                    // A record is extended, never overwritten: a field
-                    // the base is known to have is an error here, and
-                    // one its row may turn out to have is checked when
-                    // the row is known (`Goal::Lacks`).
-                    for (n, _) in &new_field_tys {
-                        if base_fields.contains_key(n) {
-                            self.error(Code::DuplicateRecordField,
-                                format!(
-                                    "cannot extend record with existing field '{n}'; v1 row polymorphism does not support override"
-                                ),
-                                span,
-                            );
-                        } else if let RowTail::Var(row) = &base_tail {
-                            self.want_goal(
-                                Goal::Lacks {
-                                    row: Type::Var(*row),
-                                    field: *n,
-                                },
-                                Origin {
-                                    span,
-                                    callee: None,
-                                    op: None,
-                                },
-                            );
-                        }
-                    }
-                    let mut merged: BTreeMap<Symbol, Type> = base_fields.clone();
-                    for (n, t) in &new_field_tys {
-                        merged.insert(*n, t.clone());
-                    }
-                    Type::AnonRecord {
-                        fields: merged,
-                        tail: base_tail,
-                    }
+                    // A spread makes an anonymous record of the base's
+                    // fields and the written ones, once the base's type
+                    // is decided (`Goal::Rebuild`).
+                    let base = self.infer_expr(base_expr, env);
+                    let result = self.fresh_var();
+                    self.want_goal(
+                        Goal::Rebuild {
+                            base,
+                            without: Vec::new(),
+                            with: new_field_tys,
+                            result: result.clone(),
+                            rest: false,
+                        },
+                        Origin {
+                            span,
+                            callee: None,
+                            op: None,
+                        },
+                    );
+                    self.apply(&result)
                 } else {
                     // Closed anon record literal.
                     Type::AnonRecord {

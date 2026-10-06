@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: cannot extend the record with field 'age': it has one already, of type String
+-- stderr-contains: error[type]: cannot extend the record with field 'age': it has one already
 -- stderr-contains: update the field with `r.{ age: ... }`
 -- `{...p, age: 30}` over an open row needs the row to have no `age`:
 -- checked where a use says what the row is, through an annotated

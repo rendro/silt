@@ -1,0 +1,10 @@
+-- A parameter whose field is read and that is matched with a declared
+-- record's pattern is that record: the pattern covers it.
+type Person { name: String, age: Int }
+fn f(p) {
+  let n = p.name
+  match p { Person { name, age } -> "{n} {name} {age}" }
+}
+fn main() {
+  println(f(Person { name: "Bob", age: 42 }))
+}

@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type '{name: String}' does not implement trait 'Greet': an anonymous record has the traits its fields give it, and no impl is written for one
+-- stderr-contains: 13:13
+-- stderr-contains: 14:13
+-- stderr-not-contains: <anon>
+-- A message writes an anonymous record's type, not a name for it.
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "i" } }
+fn f(x) { x.greet() }
+fn g(x: a) -> String where a: Greet { x.greet() }
+fn main() {
+  println(f({name: "a"}))
+  println(g({name: "a"}))
+}

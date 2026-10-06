@@ -1,0 +1,3 @@
+pub type Person { name: String, age: Int }
+pub fn takes(p: Person) -> String { p.name }
+pub fn mk() -> Person { Person { name: "m", age: 1 } }

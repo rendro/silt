@@ -1,0 +1,10 @@
+<anon> {name: a}
+<anon> {city: c, name: a}
+c
+<anon> {age: 42, name: Bob}
+<anon> {age: 42, city: c, name: Bob}
+c
+<anon> {k: 1, name: a, seen: true}
+Person {age: 42, name: Bob}
+Person {age: 43, name: Bob}
+<anon> {age: 42, name: Bob}

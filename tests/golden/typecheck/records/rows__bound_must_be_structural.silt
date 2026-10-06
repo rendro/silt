@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: the row variable 'r' cannot be bounded by 'Compare': it stands for the rest of a record's fields, not for a type that implements a trait
+-- stderr-contains: error[type]: the row variable 'r' cannot be bounded by 'Greet'
+-- stderr-contains: help: a row can be bounded by Display, Equal or Hash, which a record has when its fields do
+-- stderr-contains: 14:76
+-- stderr-contains: 15:53
+-- A bound on a row variable asks a trait of the rest of a record's
+-- fields: Display, Equal and Hash are decided field by field; no other
+-- trait is, and the bound is an error where it is written.
+type Person { name: String, age: Int }
+trait Greet { fn greet(self) -> String }
+trait Greet for Person { fn greet(self) -> String { "I am {self.name}" } }
+fn less(a: {name: String, ...r}, b: {name: String, ...r}) -> Bool where r: Compare { true }
+fn call(p: {name: String, ...r}) -> String where r: Greet { p.name }
+fn main() {
+  println(less({name: "a", k: 1}, {name: "a", k: 2}))
+  println(call(Person { name: "B", age: 1 }))
+}

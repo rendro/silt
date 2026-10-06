@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Person, got {age: Int}
+-- stderr-contains: help: an anonymous record is not a `Person`: write `Person { ... }`
+-- stderr-contains: 16:46
+-- stderr-contains: 18:17
+-- stderr-contains: 20:17
+-- stderr-contains: 22:53
+-- The rest of a record pattern over a declared record is an anonymous
+-- record of the fields the pattern does not name, in `match`, `let`,
+-- `when let` and a parameter alike: it is not the declared record.
+type Person { name: String, age: Int }
+fn greet(p: Person) -> String { "hi {p.name} {p.age}" }
+fn main() {
+  let p = Person { name: "a", age: 2 }
+  match p { {name, ...rest} -> println(greet(rest)) }
+  let {name, ...rest} = p
+  println(greet(rest))
+  when let {name: n, ...others} = p else { return }
+  println(greet(others))
+}
+fn param({name, ...rest}: Person) -> String { greet(rest) }
