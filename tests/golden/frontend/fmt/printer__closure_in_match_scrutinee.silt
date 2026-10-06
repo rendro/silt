@@ -33,7 +33,8 @@ fn main() {
   { x -> x } |> pick { _ -> 1 }
   let r = match (7 |> dbl) { 14 -> 1
     _ -> 0 }
-  println(p + q + r)
+  let s = (match 7 |> dbl { x -> x }) + 1
+  println(p + q + r + s)
   let m = match 7 |> dbl {
     14 -> 1
     _ -> 0

@@ -1,0 +1,24 @@
+-- cmd: fmt
+-- The smallest Int is one literal that starts with `-`. Negated, it
+-- keeps its parentheses or its space (`--` starts a comment); as the
+-- receiver of a method it needs no parentheses, as `1.abs()` needs none.
+trait Sh {
+  fn sh(self) -> Int
+}
+
+trait Sh for Int {
+  fn sh(self) -> Int { self }
+}
+
+fn main() {
+  let a = -(-9223372036854775808)
+  let b = - -9223372036854775808
+  let c = -(-(- 9223372036854775808))
+  let d = -(-0x8000000000000000)
+  let e = (-9223372036854775808).sh()
+  let f = -9223372036854775808.sh()
+  let g = (- 9223372036854775808) + 1
+  let h = (1).sh()
+  let i = (1).e5
+  println("{a} {b} {c} {d} {e} {f} {g} {h} {i}")
+}

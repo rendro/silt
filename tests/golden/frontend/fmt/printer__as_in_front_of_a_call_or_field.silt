@@ -1,0 +1,27 @@
+-- cmd: fmt
+-- A call, a field access or a `?` behind `x as (T)` applies to `x as T`.
+-- The canonical spelling has the parentheses around that, and none
+-- around the type; a line break behind the type is not needed.
+type P { x: Int }
+
+fn unwrap(r: Result(Int, String)) -> Result(Int, String) {
+  let a = r as (Result(Int, String))?
+  let b = (r as Result(Int, String))?
+  Ok(a + b)
+}
+
+fn main() {
+  let f = { a -> a + 1 }
+  let p = P { x: 3 }
+  let g = f as (Fn(Int) -> Int)(1)
+  let h = (f as Fn(Int) -> Int)(1)
+  let i = p as (P).x
+  let j = (p as P).x
+  let k = p as P
+    .x
+  let l = p as (P).{ x: 4 }
+  let m = {- the function -} f as (Fn(Int) -> Int)(1)
+  let n = -- the record
+    p as (P).x
+  println("{g} {h} {i} {j} {k} {l.x} {m} {n} {unwrap(Ok(1))}")
+}

@@ -146,13 +146,16 @@ impl<'a> Cursor<'a> {
         self.tok().span.start
     }
 
-    /// Whether the next source token starts where the token before it
-    /// ends: the source writes the two without a space, so they can be
-    /// written so.
-    pub fn joined(&self) -> bool {
-        self.pos
-            .checked_sub(1)
-            .is_some_and(|prev| self.tokens[prev].span.end == self.tok().span.start)
+    /// Whether a comment that stands at or behind byte `from` of the
+    /// source is written already.
+    pub fn written_behind(&self, from: u32) -> bool {
+        let first = self.comments.partition_point(|c| c.span.start < from);
+        (first as u32) < self.next_comment
+    }
+
+    /// The source text of `span`.
+    pub fn source(&self, span: Span) -> &'a str {
+        &self.source[span.start as usize..span.end as usize]
     }
 
     /// How many comments are written so far, to tell whether a stretch

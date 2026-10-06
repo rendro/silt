@@ -16,7 +16,7 @@
 
 use crate::ast::*;
 use crate::intern;
-use crate::lexer::{Lexed, Token};
+use crate::lexer::{Lexed, Lexer, Token};
 
 use super::cursor::{Cursor, Mismatch};
 use super::doc::{Doc, render};
@@ -97,6 +97,12 @@ struct Ctx {
     /// The source's parentheses around the expression stay, whatever
     /// the operators say (see `closure_shaped`).
     keep_parens: bool,
+    /// The expression starts a line that follows another statement or
+    /// arm. Behind a `match` whose scrutinee is a pipeline, a `{` there
+    /// would be read as the body of that match (and its body as a
+    /// closure): where the source has parentheses in front of such a
+    /// `{`, they stay.
+    line_start: bool,
 }
 
 impl Ctx {
@@ -109,6 +115,7 @@ impl Ctx {
             header: None,
             question_follows: false,
             keep_parens: false,
+            line_start: false,
         }
     }
 
@@ -129,6 +136,7 @@ impl Ctx {
             header: self.header,
             question_follows: false,
             keep_parens: false,
+            line_start: self.line_start,
         }
     }
 
@@ -141,6 +149,7 @@ impl Ctx {
             header: self.header,
             question_follows: false,
             keep_parens: false,
+            line_start: false,
         }
     }
 
@@ -216,12 +225,26 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
             header: None,
             question_follows: false,
             keep_parens: false,
+            line_start: false,
         };
         if top < follows || takes_from_unwrapped(expr, open_ctx) <= follows {
             return true;
         }
     }
     if ctx.stage && question_on_left_spine(expr, ctx) {
+        return true;
+    }
+    // `(match a |> f { x -> x }).g`: without the parentheses, the body
+    // would be a closure for `f`, since the expression goes on behind
+    // it (see where a `match` is printed).
+    if ctx.left_of.is_some()
+        && let ExprKind::Match {
+            expr: Some(scrutinee),
+            arms,
+        } = &expr.kind
+        && matches!(scrutinee.kind, ExprKind::Pipe(..))
+        && arms.first().is_some_and(closure_shaped)
+    {
         return true;
     }
     false
@@ -254,6 +277,21 @@ fn opens_brace_in_header(expr: &Expr) -> bool {
     }
 }
 
+/// Whether `digits.field`, an integer literal and a field name, is read
+/// as that by the lexer, and not as one number.
+fn int_then_field(literal: &str, field: &str) -> bool {
+    let digits = literal.trim_start_matches(|c: char| c == '-' || c.is_whitespace());
+    let text = format!("{digits}.{field}");
+    let kinds: Vec<Token> = match Lexer::new(Default::default(), &text).tokenize() {
+        Ok(lexed) => lexed.tokens.into_iter().map(|tok| tok.kind).collect(),
+        Err(_) => return false,
+    };
+    matches!(
+        kinds.as_slice(),
+        [Token::Int(_), Token::Dot, Token::Ident(_), Token::Eof]
+    )
+}
+
 /// Whether the body of a `match` that starts with `arm` could be read
 /// as a closure, `{ x -> ... }`: the parser takes braces for a closure
 /// only if they do not start with a number or a boolean.
@@ -266,6 +304,31 @@ fn closure_shaped(arm: &MatchArm) -> bool {
             | PatternKind::Range(..)
             | PatternKind::FloatRange(..)
     )
+}
+
+/// Whether `pattern`, printed without parentheses, starts with a `{`.
+fn pattern_starts_with_brace(pattern: &Pattern) -> bool {
+    match &pattern.kind {
+        PatternKind::AnonRecord { .. } => true,
+        PatternKind::Or(alts) => alts.first().is_some_and(pattern_starts_with_brace),
+        _ => false,
+    }
+}
+
+/// Whether `expr`, printed without parentheses, starts with a `{`.
+fn starts_with_brace(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Lambda { .. } | ExprKind::Block(_) | ExprKind::AnonRecord { .. } => true,
+        ExprKind::Binary(left, ..)
+        | ExprKind::Pipe(left, _)
+        | ExprKind::Range(left, _)
+        | ExprKind::QuestionMark(left)
+        | ExprKind::Ascription(left, _)
+        | ExprKind::FieldAccess(left, ..)
+        | ExprKind::RecordUpdate { expr: left, .. }
+        | ExprKind::Call(left, _) => starts_with_brace(left),
+        _ => false,
+    }
 }
 
 /// `takes_from` for an expression that is known to stand without
@@ -314,10 +377,24 @@ struct Item {
     doc: Doc,
 }
 
+/// The comments in front of an opening bracket, and the bracket: a
+/// comment on the line above a list is not in the list, and does not
+/// break it.
+fn above(open: Doc) -> (Doc, Doc) {
+    match open {
+        Doc::Concat(mut parts) if parts.len() == 3 && matches!(parts[1], Doc::Text(_)) => {
+            let leading = std::mem::replace(&mut parts[0], Doc::Nil);
+            (leading, Doc::Concat(parts))
+        }
+        open => (Doc::Nil, open),
+    }
+}
+
 fn list_layout(open: Doc, items: Vec<Item>, tail: Doc, close: Doc, style: ListStyle) -> Doc {
     if items.is_empty() && tail.is_nil() {
         return Doc::concat(vec![open, close]);
     }
+    let (leading, open) = above(open);
     let edge = || {
         if style.always_break {
             Doc::HardLine
@@ -343,22 +420,25 @@ fn list_layout(open: Doc, items: Vec<Item>, tail: Doc, close: Doc, style: ListSt
         inner.push(item.doc);
     }
     inner.push(tail);
-    Doc::group(Doc::concat(vec![
+    let list = Doc::group(Doc::concat(vec![
         open,
         Doc::nest(Doc::concat(inner)),
         edge(),
         close,
-    ]))
+    ]));
+    Doc::concat(vec![leading, list])
 }
 
 /// `(inner)`, which may break behind `(` and in front of `)`.
 fn parenthesized(open: Doc, inner: Doc, close: Doc) -> Doc {
-    Doc::group(Doc::concat(vec![
+    let (leading, open) = above(open);
+    let group = Doc::group(Doc::concat(vec![
         open,
         Doc::nest(Doc::concat(vec![Doc::SoftLine, inner])),
         Doc::SoftLine,
         close,
-    ]))
+    ]));
+    Doc::concat(vec![leading, group])
 }
 
 fn ident() -> Token {
@@ -948,11 +1028,14 @@ impl Printer<'_> {
     }
 
     fn stmts(&mut self, stmts: &[Stmt]) -> Doc {
-        let mut stmts = stmts.iter();
-        self.lines(|p| Some(p.stmt(stmts.next()?)))
+        let mut stmts = stmts.iter().enumerate();
+        self.lines(|p| {
+            let (i, stmt) = stmts.next()?;
+            Some(p.stmt(stmt, i == 0))
+        })
     }
 
-    fn stmt(&mut self, stmt: &Stmt) -> Doc {
+    fn stmt(&mut self, stmt: &Stmt, first: bool) -> Doc {
         match stmt {
             Stmt::Let { pattern, ty, value } => self.let_binding(pattern, ty.as_ref(), value),
             Stmt::When {
@@ -985,7 +1068,13 @@ impl Printer<'_> {
                 space(),
                 self.block(else_body),
             ]),
-            Stmt::Expr(expr) => self.expr(expr, Ctx::top()),
+            Stmt::Expr(expr) => self.expr(
+                expr,
+                Ctx {
+                    line_start: !first,
+                    ..Ctx::top()
+                },
+            ),
         }
     }
 
@@ -997,7 +1086,8 @@ impl Printer<'_> {
         let wrappers = self.cur.wrappers(expr.span.end);
         // In a `match` or `loop` header, parentheses that hold a `{`
         // keep it from being taken for the block of the header.
-        let shields_brace = ctx.header.is_some() && opens_brace_in_header(expr);
+        let shields_brace = (ctx.header.is_some() && opens_brace_in_header(expr))
+            || (ctx.line_start && starts_with_brace(expr));
         if wrappers > 0 && self.cur.comments_inside_parens(wrappers) {
             // A comment at the inside of a parenthesis may stand at a
             // line break that only the parenthesis allows: all stay,
@@ -1104,8 +1194,12 @@ impl Printer<'_> {
                 let op_doc = self.tok(token);
                 // `--` starts a comment: `-(-x)` keeps its parentheses,
                 // `- -x` its space.
-                let doubled =
-                    *op == UnaryOp::Neg && matches!(operand.kind, ExprKind::Unary(UnaryOp::Neg, _));
+                // The smallest Int is a literal that starts with `-`.
+                let doubled = *op == UnaryOp::Neg
+                    && matches!(
+                        operand.kind,
+                        ExprKind::Unary(UnaryOp::Neg, _) | ExprKind::Int(i64::MIN)
+                    );
                 if doubled && self.cur.wrappers(operand.span.end) > 0 {
                     let open = self.tok(Token::LParen);
                     let inner = self.expr(operand, Ctx::top());
@@ -1207,8 +1301,11 @@ impl Printer<'_> {
                 }
                 docs.push(self.tok(Token::LBrace));
                 let guardless = scrutinee.is_none();
-                let mut arms = arms.iter();
-                docs.push(self.lines(|p| Some(p.arm(arms.next()?, guardless))));
+                let mut arms = arms.iter().enumerate();
+                docs.push(self.lines(|p| {
+                    let (i, arm) = arms.next()?;
+                    Some(p.arm(arm, guardless, i == 0))
+                }));
                 docs.push(self.tok(Token::RBrace));
                 Doc::concat(docs)
             }
@@ -1471,19 +1568,31 @@ impl Printer<'_> {
             _ => prec::FIELD,
         };
         let wrapped = self.cur.wrappers(head.span.end) > 0;
-        let head_doc = self.expr(head, ctx.left(first_bp));
-        let head_doc = match &head.kind {
-            // `1.f` as the source has it; where the source has something
-            // between the two (`(1).e5`), a space: `1.e5` is a number.
-            ExprKind::Int(_) if is_dot(first) && (wrapped || !self.cur.joined()) => {
-                Doc::concat(vec![head_doc, space()])
+        let head_doc = match (&head.kind, &first.kind) {
+            // `x as (T).f`, `x as (T)(a)` and `x as (T)?` apply to
+            // `x as T`: the parentheses stand around that, and the type
+            // needs none. (The source has them around the type, or a line
+            // break behind it.) They are laid out as the source's own
+            // would be: with a comment at their inside, they can break
+            // there.
+            (ExprKind::Ascription(_, ty), _) if !wrapped => {
+                let comment_ahead = self.cur.comment_ahead();
+                let inner = self.expr(head, Ctx::top());
+                let (open, close) = (Doc::text("("), Doc::text(")"));
+                if comment_ahead || self.cur.written_behind(ty.span.end) {
+                    parenthesized(open, inner, close)
+                } else {
+                    Doc::concat(vec![open, inner, close])
+                }
             }
-            // Behind `x as T` without parentheses, only a line break
-            // keeps a `.` from being part of the type.
-            ExprKind::Ascription(..) if is_dot(first) && !wrapped => {
-                Doc::concat(vec![head_doc, Doc::nest(Doc::HardLine)])
+            // `1.f`; a space only where the lexer would read the two as
+            // one number.
+            (ExprKind::Int(_), ExprKind::FieldAccess(_, field, _))
+                if !int_then_field(self.cur.source(head.span), &intern::resolve(*field)) =>
+            {
+                Doc::concat(vec![self.expr(head, ctx.left(first_bp)), space()])
             }
-            _ => head_doc,
+            _ => self.expr(head, ctx.left(first_bp)),
         };
         // A name and its first field stay together: `list.map`, `self.x`.
         let simple_head = matches!(head.kind, ExprKind::Ident(_));
@@ -1708,7 +1817,7 @@ impl Printer<'_> {
         }
     }
 
-    fn arm(&mut self, arm: &MatchArm, guardless: bool) -> Doc {
+    fn arm(&mut self, arm: &MatchArm, guardless: bool, first: bool) -> Doc {
         let mut docs = Vec::new();
         if guardless {
             // A `match` without a scrutinee: each arm is a condition.
@@ -1724,16 +1833,28 @@ impl Printer<'_> {
                     let close = self.tok(Token::RParen);
                     Doc::concat(vec![open, inner, close])
                 }
-                Some(condition) => self.expr(condition, Ctx::top()),
+                Some(condition) => self.expr(
+                    condition,
+                    Ctx {
+                        line_start: !first,
+                        ..Ctx::top()
+                    },
+                ),
                 None => self.name(),
             });
         } else {
-            docs.push(self.pattern(&arm.pattern));
+            // As for a statement that starts with `{` (`Ctx::line_start`):
+            // the parentheses in front of a record pattern stay.
+            let braces = !first && pattern_starts_with_brace(&arm.pattern);
+            docs.push(self.pattern_in(&arm.pattern, braces));
             if let Some(guard) = &arm.guard {
                 docs.push(space());
                 docs.push(self.tok(Token::When));
                 docs.push(space());
-                docs.push(self.expr(guard, Ctx::top()));
+                // The parser finds the arm's `->` by looking along the
+                // line: braces in the guard stay in their parentheses,
+                // as in the header of the match.
+                docs.push(self.expr(guard, Ctx::in_header(Header::Match)));
             }
         }
         docs.push(space());
@@ -1948,9 +2069,12 @@ impl Printer<'_> {
             PatternKind::Or(alts) => {
                 let mut docs = Vec::new();
                 self.alternatives(alts, &mut docs);
+                // The first alternative is not part of the group, as the
+                // first operand of a chain of operators is not: a
+                // comment above it does not break the list.
                 let rest = docs.split_off(1);
-                docs.push(Doc::nest(Doc::concat(rest)));
-                Doc::group(Doc::concat(docs))
+                docs.push(Doc::group(Doc::nest(Doc::concat(rest))));
+                Doc::concat(docs)
             }
             PatternKind::Map(entries) => self.delimited(
                 Token::HashBrace,
