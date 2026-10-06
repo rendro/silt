@@ -1556,56 +1556,16 @@ impl Compiler {
                         "anon record literal cannot have more than 255 fields",
                     ));
                 }
-                if let Some(base) = spread
-                    && let Some(Type::Generic(record, _)) = &base.ty
-                    && let declared = self.record_fields(record.id)
-                    && !declared.is_empty()
-                {
-                    // A spread over a value of a declared record type
-                    // makes an anonymous record: a new record of the
-                    // anonymous type, with each field of the base the
-                    // literal does not write read from the base (kept in
-                    // a hidden local), then the written fields.
-                    self.begin_scope();
+                if let Some(base) = spread {
+                    // A spread makes a new anonymous record whatever the
+                    // base is: the base's fields as an anonymous record
+                    // (the rest of the base with no field left out),
+                    // then the written fields merged in.
                     self.in_tail_position = false;
                     self.compile_expr(base)?;
-                    let slot = self.add_local(intern("__spread_base__"), span)?;
-                    self.emit(Asm::SetLocal { slot }, span)?;
-                    let mut field_names: Vec<Symbol> = Vec::new();
-                    for (name, _) in &declared {
-                        if fields.iter().any(|(written, _)| written == name) {
-                            continue;
-                        }
-                        self.emit(Asm::GetLocal { slot }, span)?;
-                        let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
-                        self.emit(Asm::GetField { name: name_idx }, span)?;
-                        field_names.push(*name);
-                    }
-                    for (name, value) in fields {
-                        self.in_tail_position = false;
-                        self.compile_expr(value)?;
-                        field_names.push(*name);
-                    }
-                    if field_names.len() > u8::MAX as usize {
-                        return Err(Diagnostic::error(
-                            Code::CompileLimit,
-                            span,
-                            "anon record literal cannot have more than 255 fields",
-                        ));
-                    }
-                    let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
-                    let ty = self.add_constant(Value::TypeDescriptor(anon.clone()), span)?;
-                    let names = self.name_constants(&field_names, span)?;
-                    self.emit(Asm::MakeRecord { ty, fields: &names }, span)?;
-                    self.end_scope_with_result(false, span)?;
-                } else if let Some(base) = spread {
-                    // A spread over an anonymous record: compile the base,
-                    // then a RecordUpdate-style merge, which adds the new
-                    // fields and keeps the base's (anonymous) type.
+                    self.emit(Asm::DestructRecordRest { excluded: &[] }, span)?;
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                    self.compile_operands(
-                        std::iter::once(&**base).chain(fields.iter().map(|(_, val)| val)),
-                    )?;
+                    self.compile_operands(fields.iter().map(|(_, val)| val))?;
                     let fields = self.name_constants(&field_names, span)?;
                     self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
                 } else {
