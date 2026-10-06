@@ -9,7 +9,7 @@
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::queue::{Waiter, Wakes};
 use super::token::{Fired, Outcome, Token, Wake};
@@ -48,6 +48,9 @@ pub enum TryReceive {
 pub struct Channel {
     id: usize,
     capacity: usize,
+    /// What its only reader does when it gives the channel up
+    /// ([`Channel::abandon`]): tell whoever feeds it to stop.
+    on_abandon: OnceLock<Box<dyn Fn() + Send + Sync>>,
     pub(super) state: Mutex<State>,
 }
 
@@ -144,6 +147,7 @@ impl Channel {
         Arc::new(Channel {
             id,
             capacity,
+            on_abandon: OnceLock::new(),
             state: Mutex::new(State {
                 capacity,
                 buf: VecDeque::new(),
@@ -188,6 +192,24 @@ impl Channel {
         let closed = self.state.lock().close(close, &mut wakes);
         wakes.send(wake);
         closed
+    }
+
+    /// The channel is the output of something that is to stop when
+    /// nobody reads the output any more: `stop` tells it to. Set once,
+    /// when the channel is made.
+    pub fn stop_feeder_with(&self, stop: impl Fn() + Send + Sync + 'static) {
+        let _ = self.on_abandon.set(Box::new(stop));
+    }
+
+    /// The reader of the channel reads no more. If the channel is the
+    /// output of a feeder ([`Channel::stop_feeder_with`]), it is closed
+    /// and the feeder is told to stop; any other channel is left as it
+    /// is, for its other readers.
+    pub fn abandon(&self, wake: &dyn Wake) {
+        if let Some(stop) = self.on_abandon.get() {
+            self.close(Close::default(), wake);
+            stop();
+        }
     }
 
     pub fn is_closed(&self) -> bool {

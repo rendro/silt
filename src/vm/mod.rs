@@ -15,7 +15,7 @@ pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::Runtime;
-pub(crate) use runtime::{CallFrame, ErrFactory, Frame, Native, Step};
+pub(crate) use runtime::{CallFrame, ErrFactory, Frame, IoOp, Native, Step};
 
 /// Test-only: report the worker count of the I/O pool attached to this
 /// VM. Used by the `SILT_IO_POOL_SIZE` env-knob integration tests to
@@ -79,36 +79,7 @@ use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
 use crate::value::Value;
-use runtime::{IoOp, IoPool, RegexCache};
-
-/// Start an OS thread that runs silt callbacks outside the scheduler: a
-/// stream stage or an HTTP handler. It gets the stack of a scheduler
-/// worker (see [`crate::scheduler::WORKER_STACK_BYTES`]). If the system
-/// refuses a stack that large, the thread starts on the default stack.
-pub(crate) fn spawn_callback_thread<F, T>(f: F) -> std::thread::JoinHandle<T>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    let bytes = crate::scheduler::WORKER_STACK_BYTES;
-    // `Builder::spawn` drops its closure when it fails, so the body is
-    // shared with the fallback and taken by whichever thread runs.
-    let body = Arc::new(parking_lot::Mutex::new(Some(f)));
-    let for_large = body.clone();
-    let spawned = std::thread::Builder::new()
-        .stack_size(bytes)
-        .spawn(move || {
-            let f = for_large.lock().take().expect("thread body runs once");
-            f()
-        });
-    match spawned {
-        Ok(handle) => handle,
-        Err(_) => std::thread::spawn(move || {
-            let f = body.lock().take().expect("thread body runs once");
-            f()
-        }),
-    }
-}
+use runtime::{IoPool, RegexCache};
 
 // ── VM ────────────────────────────────────────────────────────────
 

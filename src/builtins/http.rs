@@ -18,6 +18,8 @@ use crate::runtime::sync::{Arm, Wait};
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
+#[cfg(feature = "http")]
+use parking_lot::Mutex;
 
 /// Dispatch the builtin `trait Error for HttpError` method table.
 /// Scaffolding lives in `super::dispatch_error_trait`; this site just
@@ -441,6 +443,211 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
     finish_http_response(result, url)
 }
 
+/// Decrements the count of requests in flight when the task of one
+/// ends, however it ends.
+#[cfg(feature = "http")]
+struct Decrement(Arc<AtomicUsize>);
+
+#[cfg(feature = "http")]
+impl Drop for Decrement {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The request of a handler's task, until it is answered.
+#[cfg(feature = "http")]
+type Pending = Arc<Mutex<Option<tiny_http::Request>>>;
+
+/// Read the request for the handler: the `Request` value it is called
+/// with. `None` when the request was turned away here (and answered):
+/// a method the server does not know, a body that is too large.
+/// Reading the body blocks, so this runs on the I/O pool.
+#[cfg(feature = "http")]
+fn read_request(pending: &Pending) -> Option<Value> {
+    let mut slot = pending.lock();
+    let mut req = slot.take()?;
+    // Parse the HTTP method
+    let method = match req.method() {
+        tiny_http::Method::Get => bv::GET,
+        tiny_http::Method::Post => bv::POST,
+        tiny_http::Method::Put => bv::PUT,
+        tiny_http::Method::Patch => bv::PATCH,
+        tiny_http::Method::Delete => bv::DELETE,
+        tiny_http::Method::Head => bv::HEAD,
+        tiny_http::Method::Options => bv::OPTIONS,
+        _ => {
+            let resp = tiny_http::Response::from_string("Method Not Allowed")
+                .with_status_code(tiny_http::StatusCode(405));
+            let _ = req.respond(resp);
+            return None;
+        }
+    };
+
+    // Parse URL into path and query
+    let url = req.url().to_string();
+    let (path, query) = match url.split_once('?') {
+        Some((p, q)) => (p.to_string(), q.to_string()),
+        None => (url, std::string::String::new()),
+    };
+
+    // Collect headers
+    let mut headers = BTreeMap::new();
+    for header in req.headers() {
+        headers.insert(
+            Value::String(header.field.as_str().to_string()),
+            Value::String(header.value.as_str().to_string()),
+        );
+    }
+
+    // Fast-reject oversized bodies based on the
+    // declared Content-Length. Prevents a client from
+    // forcing us to consume the whole body just to
+    // discover we'd reject it. (HIGH-1)
+    if let Some(declared) = req.body_length()
+        && declared as u64 > HTTP_SERVE_MAX_BODY_BYTES
+    {
+        let resp = tiny_http::Response::from_string("Payload Too Large")
+            .with_status_code(tiny_http::StatusCode(413));
+        let _ = req.respond(resp);
+        return None;
+    }
+
+    // Read body with a hard cap. `take(N+1)` + length
+    // check lets us detect overrun (e.g. chunked
+    // encoding that lies about total length). (HIGH-1)
+    let mut body_bytes: Vec<u8> = Vec::new();
+    let cap = HTTP_SERVE_MAX_BODY_BYTES;
+    let read_result = std::io::Read::read_to_end(
+        &mut std::io::Read::take(req.as_reader(), cap + 1),
+        &mut body_bytes,
+    );
+    if read_result.is_err() || body_bytes.len() as u64 > cap {
+        let resp = tiny_http::Response::from_string("Payload Too Large")
+            .with_status_code(tiny_http::StatusCode(413));
+        let _ = req.respond(resp);
+        return None;
+    }
+    // The Request API hands us body as a String; we
+    // lossy-convert so non-UTF-8 bodies don't silently
+    // drop. Handlers that need raw bytes should use
+    // a separate API (future work).
+    let body = std::string::String::from_utf8_lossy(&body_bytes).into_owned();
+
+    // Build Request record
+    let request_val = make_http_request_value(method, &path, &query, headers, body);
+    *slot = Some(req);
+    Some(request_val)
+}
+
+/// The task of one request: read it, call the handler with it, send
+/// what the handler returns. The reading and the sending block, so
+/// they run on the I/O pool and the task waits for them like for any
+/// I/O; the handler itself may wait as long as it likes (a long poll)
+/// without holding a thread.
+#[cfg(feature = "http")]
+struct Serve {
+    request: Pending,
+    handler: Value,
+    /// The task's own handle: where its failure is read when the
+    /// handler fails.
+    handle: Arc<TaskHandle>,
+    state: ServeState,
+    _inflight: Decrement,
+}
+
+#[cfg(feature = "http")]
+enum ServeState {
+    Start,
+    Reading(crate::vm::IoOp),
+    Calling,
+    Responding,
+}
+
+/// What a step of a request's task completes with when the I/O pool
+/// cannot run it.
+#[cfg(feature = "http")]
+fn not_served(_why: &str) -> Value {
+    Value::Unit
+}
+
+#[cfg(feature = "http")]
+impl crate::vm::Native for Serve {
+    fn name(&self) -> &str {
+        "http.serve"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        match std::mem::replace(&mut self.state, ServeState::Responding) {
+            ServeState::Start => {
+                let request = self.request.clone();
+                let op =
+                    vm.runtime
+                        .io_pool
+                        .submit(not_served, move || match read_request(&request) {
+                            Some(request_val) => Value::variant(bv::SOME, vec![request_val]),
+                            None => Value::variant(bv::NONE, vec![]),
+                        });
+                let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+                self.state = ServeState::Reading(op);
+                Ok(Step::Park(wait))
+            }
+            ServeState::Reading(op) => {
+                vm.woken()?;
+                match op.cell.get() {
+                    Some(Value::Variant(tag, fields)) if tag.is(bv::SOME) && fields.len() == 1 => {
+                        self.state = ServeState::Calling;
+                        Ok(vm.call(self.handler.clone(), [fields[0].clone()]))
+                    }
+                    // Answered already, or nothing can read it.
+                    _ => Ok(Step::Done(Value::Unit)),
+                }
+            }
+            ServeState::Calling => {
+                let request = self.request.clone();
+                let io = vm.runtime.io.clone();
+                let op = vm.runtime.io_pool.submit(not_served, move || {
+                    if let Some(req) = request.lock().take() {
+                        send_http_response(&io, &input, req);
+                    }
+                    Value::Unit
+                });
+                Ok(Step::Park(Wait::new(vec![Arm::Cell(op.cell)])))
+            }
+            ServeState::Responding => {
+                vm.woken()?;
+                Ok(Step::Done(Value::Unit))
+            }
+        }
+    }
+
+    fn abandon(&mut self, vm: &mut Vm) {
+        // The handler failed, or the program ended, before the request
+        // was answered.
+        let Some(req) = self.request.lock().take() else {
+            return;
+        };
+        if let Some(Err(e)) = self.handle.try_get()
+            && !self.handle.is_cancelled()
+        {
+            // The failure is handled here: it is logged, and not
+            // reported as a task that nobody joined.
+            self.handle.mark_joined();
+            // Security: do NOT include VmError details (call stack,
+            // line numbers, panic payload) in the response body — that
+            // leaks implementation details and potentially sensitive
+            // values across the security boundary (MED-1). Log to the
+            // host's stderr instead.
+            vm.runtime
+                .io
+                .err(&format!("http.serve: handler error: {e}\n"));
+        }
+        let resp = tiny_http::Response::from_string("Internal Server Error")
+            .with_status_code(tiny_http::StatusCode(500));
+        let _ = req.respond(resp);
+    }
+}
+
 /// Shared implementation of `http.serve` and `http.serve_all`.
 ///
 /// `bind_host` is the interface portion of the bind address ("127.0.0.1"
@@ -472,18 +679,15 @@ fn do_http_serve_inner(
             .map_err(|e| VmError::new(format!("{name_for_err}: failed to bind: {e}")))?,
     );
 
-    // Create a template child VM for spawning per-request handlers.
-    // spawn_child() clones globals (which include builtins) and shares
-    // runtime via Arc, so each request handler gets a fully functional VM.
-    let template_vm = vm.spawn_child();
+    // The VM that the VM of each request's task is made from.
+    let mut template_vm = vm.spawn_child();
     let task_id = vm.next_task_id();
     let handle = Arc::new(TaskHandle::new(task_id));
     let serve_handle = handle.clone();
 
-    // Counter of live per-request handler threads. Caps total
-    // concurrent handlers at HTTP_SERVE_MAX_CONCURRENT_HANDLERS
-    // so bursts / slowloris cannot force unbounded thread
-    // spawning (HIGH-2).
+    // Counter of requests in flight. Caps them at
+    // HTTP_SERVE_MAX_CONCURRENT_HANDLERS so bursts / slowloris cannot
+    // force unbounded tasks (HIGH-2).
     let inflight = Arc::new(AtomicUsize::new(0));
 
     // Spawn the accept loop on a dedicated OS thread so it doesn't
@@ -502,14 +706,14 @@ fn do_http_serve_inner(
             // expose the TcpStream to let us call
             // set_read_timeout. The concurrent-handler cap below
             // bounds the blast radius. (HIGH-2)
-            let mut req = match server.recv_timeout(HTTP_SERVE_RECV_TIMEOUT) {
+            let req = match server.recv_timeout(HTTP_SERVE_RECV_TIMEOUT) {
                 Ok(Some(req)) => req,
                 Ok(None) => continue, // timeout, re-loop
                 Err(_) => break,      // server shut down
             };
 
             // Enforce concurrency cap. If we're at the cap, fast-reject
-            // with 503 instead of spawning another thread.
+            // with 503 instead of starting another task.
             if inflight.load(Ordering::Acquire) >= HTTP_SERVE_MAX_CONCURRENT_HANDLERS {
                 let resp = tiny_http::Response::from_string("Service Unavailable")
                     .with_status_code(tiny_http::StatusCode(503));
@@ -517,116 +721,36 @@ fn do_http_serve_inner(
                 continue;
             }
 
-            // For each accepted request, spawn a handler thread
-            // with its own child VM for concurrent request handling.
-            let handler = handler.clone();
+            // Each accepted request is handled by a task of its own.
+            inflight.fetch_add(1, Ordering::AcqRel);
+            let id = template_vm.next_task_id();
+            let task_handle = Arc::new(TaskHandle::with_owner(
+                id,
+                crate::scheduler::current_task_owner(),
+            ));
+            let request = Arc::new(Mutex::new(Some(req)));
             let mut request_vm = template_vm.spawn_child();
-            let inflight_guard = inflight.clone();
-            inflight_guard.fetch_add(1, Ordering::AcqRel);
-
-            crate::vm::spawn_callback_thread(move || {
-                // Guard that decrements inflight on thread exit
-                // even if a panic or early-return path fires.
-                struct Decrement(Arc<AtomicUsize>);
-                impl Drop for Decrement {
-                    fn drop(&mut self) {
-                        self.0.fetch_sub(1, Ordering::AcqRel);
-                    }
-                }
-                let _dec = Decrement(inflight_guard);
-
-                // Parse the HTTP method
-                let method = match req.method() {
-                    tiny_http::Method::Get => bv::GET,
-                    tiny_http::Method::Post => bv::POST,
-                    tiny_http::Method::Put => bv::PUT,
-                    tiny_http::Method::Patch => bv::PATCH,
-                    tiny_http::Method::Delete => bv::DELETE,
-                    tiny_http::Method::Head => bv::HEAD,
-                    tiny_http::Method::Options => bv::OPTIONS,
-                    _ => {
-                        let resp = tiny_http::Response::from_string("Method Not Allowed")
-                            .with_status_code(tiny_http::StatusCode(405));
-                        let _ = req.respond(resp);
-                        return;
-                    }
-                };
-
-                // Parse URL into path and query
-                let url = req.url().to_string();
-                let (path, query) = match url.split_once('?') {
-                    Some((p, q)) => (p.to_string(), q.to_string()),
-                    None => (url, std::string::String::new()),
-                };
-
-                // Collect headers
-                let mut headers = BTreeMap::new();
-                for header in req.headers() {
-                    headers.insert(
-                        Value::String(header.field.as_str().to_string()),
-                        Value::String(header.value.as_str().to_string()),
-                    );
-                }
-
-                // Fast-reject oversized bodies based on the
-                // declared Content-Length. Prevents a client from
-                // forcing us to consume the whole body just to
-                // discover we'd reject it. (HIGH-1)
-                if let Some(declared) = req.body_length()
-                    && declared as u64 > HTTP_SERVE_MAX_BODY_BYTES
-                {
-                    let resp = tiny_http::Response::from_string("Payload Too Large")
-                        .with_status_code(tiny_http::StatusCode(413));
-                    let _ = req.respond(resp);
-                    return;
-                }
-
-                // Read body with a hard cap. `take(N+1)` + length
-                // check lets us detect overrun (e.g. chunked
-                // encoding that lies about total length). (HIGH-1)
-                let mut body_bytes: Vec<u8> = Vec::new();
-                let cap = HTTP_SERVE_MAX_BODY_BYTES;
-                let read_result = std::io::Read::read_to_end(
-                    &mut std::io::Read::take(req.as_reader(), cap + 1),
-                    &mut body_bytes,
-                );
-                if read_result.is_err() || body_bytes.len() as u64 > cap {
-                    let resp = tiny_http::Response::from_string("Payload Too Large")
-                        .with_status_code(tiny_http::StatusCode(413));
-                    let _ = req.respond(resp);
-                    return;
-                }
-                // The Request API hands us body as a String; we
-                // lossy-convert so non-UTF-8 bodies don't silently
-                // drop. Handlers that need raw bytes should use
-                // a separate API (future work).
-                let body = std::string::String::from_utf8_lossy(&body_bytes).into_owned();
-
-                // Build Request record
-                let request_val = make_http_request_value(method, &path, &query, headers, body);
-
-                // Run the user's handler on the per-request child VM
-                match request_vm.call_blocking(&handler, &[request_val]) {
-                    Ok(response_val) => {
-                        send_http_response(&request_vm.runtime.io, &response_val, req);
-                    }
-                    Err(e) => {
-                        // Security: do NOT include VmError details
-                        // (call stack, line numbers, panic payload)
-                        // in the response body — that leaks
-                        // implementation details and potentially
-                        // sensitive values across the security
-                        // boundary (MED-1). Log to the host's stderr instead.
-                        request_vm
-                            .runtime
-                            .io
-                            .err(&format!("http.serve: handler error: {e}\n"));
-                        let resp = tiny_http::Response::from_string("Internal Server Error")
-                            .with_status_code(tiny_http::StatusCode(500));
-                        let _ = req.respond(resp);
-                    }
-                }
+            request_vm.spawned = true;
+            request_vm.push_native_frame(Box::new(Serve {
+                request: request.clone(),
+                handler: handler.clone(),
+                handle: task_handle.clone(),
+                state: ServeState::Start,
+                _inflight: Decrement(inflight.clone()),
+            }));
+            let submitted = scheduler.submit(crate::scheduler::Task {
+                id,
+                vm: request_vm,
+                handle: task_handle,
             });
+            // The program is ending: the request is turned away.
+            if submitted.is_err()
+                && let Some(req) = request.lock().take()
+            {
+                let resp = tiny_http::Response::from_string("Service Unavailable")
+                    .with_status_code(tiny_http::StatusCode(503));
+                let _ = req.respond(resp);
+            }
         }
         // Accept loop ended (server shut down) — complete the handle.
         serve_handle.complete(Ok(Value::Unit), scheduler.wake());

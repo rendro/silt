@@ -4,10 +4,10 @@
 //! Every piece of running silt code is a task to the scheduler, whoever
 //! drives it:
 //!
-//! - a task made by `task.spawn` is run slice by slice by the workers;
-//! - the program itself (`fn main`, a test, a REPL entry), a stream
-//!   stage and an HTTP handler are run by their own thread
-//!   (`Scheduler::enter`).
+//! - a task made by `task.spawn`, a stage of a stream and the handler
+//!   of an HTTP request are run slice by slice by the workers;
+//! - the program itself (`fn main`, a test, a REPL entry) is run by
+//!   its own thread (`Scheduler::enter`).
 //!
 //! Each of them waits in the same place, the registry of parked tasks
 //! ([`Parking`]), for the same thing, a [`Wait`]: a spawned task is
@@ -277,14 +277,6 @@ pub(crate) struct Running {
     counts: bool,
 }
 
-impl Running {
-    /// The calling thread takes over a guard that another thread took
-    /// for it ([`Scheduler::enter_for_thread`]).
-    pub(crate) fn adopt(&self) {
-        COUNTED.with(|counted| counted.set(true));
-    }
-}
-
 impl Drop for Running {
     fn drop(&mut self) {
         if self.counts {
@@ -490,17 +482,6 @@ impl Scheduler {
         }
     }
 
-    /// [`Scheduler::enter`] for a thread that is about to be started:
-    /// it counts from now, so that nobody finds the program deadlocked
-    /// before the thread runs. The thread calls [`Running::adopt`].
-    pub(crate) fn enter_for_thread(&self) -> Running {
-        self.inner.live.fetch_add(1, Ordering::SeqCst);
-        Running {
-            inner: self.inner.clone(),
-            counts: true,
-        }
-    }
-
     /// See [`External`].
     pub(crate) fn external(&self) -> External {
         self.inner.external.fetch_add(1, Ordering::SeqCst);
@@ -521,27 +502,6 @@ impl Scheduler {
             self.block_thread(wait, false),
             Ok(Fired::Arm(_, sync::Outcome::Sent))
         )
-    }
-
-    /// Receive from `channel` on a thread, which waits while the
-    /// channel is empty: a value, or `None` when the channel is closed
-    /// and empty, or the program has ended. `main` as for
-    /// [`Scheduler::block_thread`], whose error is returned.
-    pub(crate) fn receive_wait(
-        &self,
-        channel: &Arc<Channel>,
-        main: bool,
-    ) -> Result<Option<Value>, VmError> {
-        match channel.try_receive(self.wake()) {
-            sync::TryReceive::Value(value) => return Ok(Some(value)),
-            sync::TryReceive::Closed(_) => return Ok(None),
-            sync::TryReceive::Empty => {}
-        }
-        let wait = Wait::new(vec![sync::Arm::Recv(channel.clone())]);
-        Ok(match self.block_thread(wait, main)? {
-            Fired::Arm(_, sync::Outcome::Received(value)) => Some(value),
-            _ => None,
-        })
     }
 
     /// The calling thread waits for `wait` and gets how it ended. It
@@ -1406,6 +1366,7 @@ mod tests {
     use crate::{HostIo, Value};
     use parking_lot::Mutex;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
     /// An output that keeps what was printed and when.
@@ -1524,6 +1485,39 @@ fn main() {
 }
 "#);
         assert_deadlock(result, "channel select with no counterparty");
+    }
+
+    /// 20 pipelines that are cut short (`repeat |> take(3)`, and a
+    /// `first` of a long range) leave no stage behind: every source is
+    /// stopped when nobody reads it any more, so no task is left to
+    /// use a processor or to keep a thread.
+    #[test]
+    fn a_truncated_pipeline_leaves_no_task() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import list
+import stream
+fn main() {
+  let all = 1..20 |> list.map { i ->
+    stream.repeat(i) |> stream.map({ x -> x + 1 }) |> stream.take(3) |> stream.collect
+  }
+  let _ = stream.from_range(1, 1000000) |> stream.map({ x -> x }) |> stream.first
+  list.length(all)
+}
+"#,
+        )
+        .expect("the program compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert!(matches!(result, Ok(Value::Int(20))), "got {result:?}");
+        // The stages end on the workers, a moment after the sinks.
+        let limit = Instant::now() + Duration::from_secs(10);
+        let spawned = || vm.scheduler().inner.spawned.load(Ordering::SeqCst);
+        while spawned() > 0 && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(spawned(), 0, "stages are left");
+        assert_eq!(vm.scheduler().inner.parking.waiting(), 0);
     }
 
     #[test]

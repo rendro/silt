@@ -1,0 +1,21 @@
+-- repeat: 20
+-- stderr-not-contains: deadlock
+-- The function of a stage waits on a channel that the program sends
+-- on later. The stage is a task like any other: while it can still be
+-- answered there is no deadlock.
+import channel
+import stream
+
+fn main() {
+  let gate = channel.new(0)
+  let opened = stream.from_list([1, 2, 3]) |> stream.map({ x ->
+    match channel.receive(gate) {
+      channel.Message(key) -> x * key
+      _ -> 0
+    }
+  })
+  channel.send(gate, 10)
+  channel.send(gate, 100)
+  channel.send(gate, 1000)
+  println(stream.collect(opened))
+}

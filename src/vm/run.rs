@@ -226,28 +226,6 @@ impl Vm {
         self.pending_input = None;
     }
 
-    /// Call `callee` with `args` and run it to its end on the calling
-    /// thread, which waits where the code parks ([`Vm::run_thread`]).
-    /// This is how a thread that serves silt code outside the
-    /// scheduler's workers (a stream stage, an HTTP handler) calls a
-    /// function; a builtin never does, it asks the loop that runs it
-    /// to ([`Step::Call`]).
-    pub(crate) fn call_blocking(
-        &mut self,
-        callee: &Value,
-        args: &[Value],
-    ) -> Result<Value, VmError> {
-        let floor = self.frames.len();
-        let stack_floor = self.stack.len();
-        let run = self.run_thread(floor, |vm| {
-            match vm.call_with(callee.clone(), args.to_vec())? {
-                Entered::Value(value) => Ok(Slice::Done(value)),
-                Entered::Code | Entered::Native => vm.run_frames(floor, usize::MAX),
-            }
-        });
-        self.finish_run(run, floor, stack_floor)
-    }
-
     /// Run the frames above the first `floor` to their end on the
     /// calling thread, starting with `start`. The thread counts as a
     /// task of the scheduler while it does; where the code parks, the

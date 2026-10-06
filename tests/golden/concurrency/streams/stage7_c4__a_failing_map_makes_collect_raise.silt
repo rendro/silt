@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: division by zero
+-- stderr-not-contains: never joined
+-- A stage whose function fails closes its output with the failure,
+-- and the sink at the end of the pipeline raises it: the program does
+-- not go on with the values that came before.
+import stream
+
+fn main() {
+  let quotients = stream.from_list([2, 1, 0, 5])
+    |> stream.map({ x -> 10 / x })
+    |> stream.filter({ x -> x > 0 })
+    |> stream.collect
+  println(quotients)
+}

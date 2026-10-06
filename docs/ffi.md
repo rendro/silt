@@ -334,13 +334,12 @@ source of randomness of its own, so the embedder supplies them:
   and `performance.now()`): the system clock panics there. `sleep`
   cannot block a browser's main thread; it can return at once, or move
   a simulated clock on as above.
-- **Tasks.** `task.spawn` runs the task to its end before it returns,
-  on the caller's stack. A task that waits for something only later
-  code would provide (a value on a channel nobody has sent to yet)
-  fails with a deadlock error. A task that failed and that nobody
-  joined is not reported.
-- **Timers.** `channel.timeout` and `channel.recv_timeout` need the
-  timer thread: they are a runtime error (`cannot start a timer: ...`).
+- **Tasks.** There are no worker threads: the thread that runs the
+  program runs its tasks, whenever the program waits (a receive, a
+  send, a join, a sleep). A task that nobody ever waits for does not
+  run.
+- **Timers and I/O.** The same thread fires the timers while it waits,
+  and an I/O operation runs on it.
 - **Randomness.** `getrandom` and `uuid` refuse to build for the target
   until the embedder's crate picks a source: in a browser, add
   `getrandom = { version = "0.2", features = ["js"] }` and

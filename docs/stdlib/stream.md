@@ -8,16 +8,14 @@ order: 18
 
 A library of channel-backed sources, transforms, and sinks. Streams are
 simply [`Channel`](channel-task.md) values used as data flows — the
-underlying primitive is unchanged. Each transform spawns an internal pump
-thread that reads its input channel, calls the user closure, and writes to
-the output channel. Backpressure is provided by channel capacity (default
-16; configurable via `stream.buffered`).
+underlying primitive is unchanged. Each source and each transform is a
+*stage*: a task that reads its input channel, calls the user closure, and
+writes to the output channel. A stage waits like any task, so a pipeline
+of many stages holds no thread while it waits. Backpressure is provided by
+channel capacity (default 16; configurable via `stream.buffered`).
 
-Sinks (`collect`, `fold`, `count`, etc.) drain a channel synchronously in
-the calling task. Because every source and transform pump runs on a
-dedicated OS thread (not a scheduler worker), sinks can safely block even
-when called from a `task.spawn`'d task — producers keep making progress
-regardless of scheduler state.
+Sinks (`collect`, `fold`, `count`, etc.) drain a channel in the calling
+task, which waits for each value.
 
 See also [io / fs](io-fs.md) for the underlying file operations behind
 `file_chunks` / `file_lines`, [tcp](tcp.md) for `tcp_chunks` / `tcp_lines`,
@@ -115,16 +113,27 @@ fn main() {
 
 - **Streams are channels.** No new value type. `stream.collect(ch)` works
   on any `Channel`, not just streams produced by this module.
-- **Backpressure is automatic.** When the output channel of a transform
-  fills up, the pump thread sleeps briefly and retries — back-pressuring
-  into the input channel by not consuming further messages.
+- **Backpressure is automatic.** When the output channel of a stage is
+  full, the stage waits for room, and so consumes no further input.
+- **A failing stage fails the pipeline.** If the function of a stage
+  raises a runtime error (a division by zero, a `panic`), the stage closes
+  its output *with that failure*. The next stage fails with it in turn,
+  and the sink at the end raises it: `stream.collect` does not return the
+  values that came before the failure. `channel.each` on a stream raises
+  it too; a plain `channel.receive` sees `Closed`.
+- **A pipeline that is cut short stops.** When a stage or a sink reads no
+  further (`take`, `take_while`, `first`, a failure downstream), the stage
+  that feeds it is stopped, and so on up to the source. So
+  `stream.repeat(x) |> stream.take(3)` leaves nothing running. The output
+  of a stage is closed by this: read it with one consumer. A channel that
+  no stage feeds (one you made with `channel.new`) is left open.
 - **Errors flow through the stream.** File sources emit
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;
   consumers pattern-match. Use `map_ok` / `filter_ok` to apply
   transformations only to `Ok` values, passing `Err(_)` through unchanged.
-- **No async/await.** Everything runs on OS threads or the silt scheduler
-  via the existing cooperative-I/O machinery.
+- **No async/await.** Stages are tasks of the silt scheduler; file and
+  socket reads run on the I/O pool while the stage waits.
 - **`stream.repeat` is infinite.** Always pair it with `take`,
   `take_while`, or another bounded sink — `collect` on an unbounded
   stream will hang.
