@@ -1,0 +1,22 @@
+-- A function of another module cannot name this module's `let`s, but
+-- it can call the methods of a value it is given: a `let` that hands a
+-- `P` to another module is initialised after what the methods of `P`
+-- read. A call that hands over nothing of the module's orders nothing.
+import other
+type P { n: Int }
+trait other.Greet for P { fn greet(self) -> String { "p {self.n} {later}" } }
+let cfg = {
+  println("cfg")
+  other.load()
+}
+let v = other.run(P { n: 1 })
+let piped = P { n: 2 } |> other.run
+let later = {
+  println("later")
+  5
+}
+fn main() {
+  println(v)
+  println(piped)
+  println(cfg)
+}

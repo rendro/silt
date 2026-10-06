@@ -9,6 +9,11 @@
 //! first. A `let` that reaches itself has no order: that is an error,
 //! which names the way round.
 //!
+//! A function or method of another module cannot name this module's
+//! `let`s, but it can call the methods of a value it is given: a call
+//! of one reaches every method of the module's impls for each of the
+//! module's types its arguments' types mention.
+//!
 //! What a `let` holds may be called through it (a closure, a record of
 //! functions), so what reaches a `let` reaches what the `let`'s value
 //! mentions as well. A `let` whose value is a closure literal runs
@@ -32,7 +37,53 @@ struct Node<'a> {
     params: &'a [Param],
 }
 
+/// The named types `ty` mentions.
+fn named_types(ty: &Type, out: &mut Vec<TypeId>) {
+    match ty {
+        Type::Generic(name, args) => {
+            if !out.contains(&name.id) {
+                out.push(name.id);
+            }
+            args.iter().for_each(|t| named_types(t, out));
+        }
+        Type::AnonRecord { fields, .. } => fields.values().for_each(|t| named_types(t, out)),
+        Type::Fun(params, ret) => {
+            params.iter().for_each(|t| named_types(t, out));
+            named_types(ret, out);
+        }
+        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => named_types(t, out),
+        Type::Map(k, v) => {
+            named_types(k, out);
+            named_types(v, out);
+        }
+        Type::Tuple(ts) => ts.iter().for_each(|t| named_types(t, out)),
+        _ => {}
+    }
+}
+
 impl TypeChecker {
+    /// Whether `callee`, what a call calls, is a function, a `let` or a
+    /// method of another module (not a builtin one: those call only the
+    /// functions they are given).
+    fn calls_another_module(
+        &self,
+        callee: &Expr,
+        of_impl: &HashMap<(TraitId, TypeId, Symbol), usize>,
+    ) -> bool {
+        let foreign = |id: DefId| {
+            self.def(id)
+                .is_some_and(|def| def.module != self.module && !def.module.is_builtin())
+        };
+        match (&callee.kind, callee.sel, callee.res) {
+            // The method of an impl another module writes.
+            (ExprKind::FieldAccess(_, method, _), Some(Selection::Impl { tr, ty }), _) => {
+                !of_impl.contains_key(&(tr, ty, *method)) && (foreign(tr.0) || foreign(ty.0))
+            }
+            (_, None, Some(crate::defs::Res::Def(id))) => foreign(id),
+            _ => false,
+        }
+    }
+
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in. Reports each `let` that reaches itself.
     pub(super) fn init_order(&mut self, decls: &[Decl]) -> Vec<Span> {
@@ -43,6 +94,8 @@ impl TypeChecker {
         let mut of_impl: HashMap<(TraitId, TypeId, Symbol), usize> = HashMap::new();
         let mut of_trait: HashMap<(TraitId, Symbol), Vec<usize>> = HashMap::new();
         let mut defaults: HashMap<(TraitId, Symbol), usize> = HashMap::new();
+        // The methods of the module's impls for each type.
+        let mut of_type: HashMap<TypeId, Vec<usize>> = HashMap::new();
         for (i, decl) in decls.iter().enumerate() {
             match decl {
                 Decl::Fn(f) => {
@@ -82,6 +135,7 @@ impl TypeChecker {
                     };
                     for m in &ti.methods {
                         of_impl.insert((tr.id, ty.id, m.name), nodes.len());
+                        of_type.entry(ty.id).or_default().push(nodes.len());
                         of_trait
                             .entry((tr.id, m.name))
                             .or_default()
@@ -147,6 +201,41 @@ impl TypeChecker {
                         && let Some(&target) = by_def.get(&id)
                     {
                         add(target);
+                    }
+                    // A call of another module's function or method:
+                    // what it is given, it may call the methods of.
+                    let call = match mention.expr.map(|expr| &expr.kind) {
+                        Some(ExprKind::Call(callee, args)) => {
+                            Some((&**callee, args.iter().collect::<Vec<_>>()))
+                        }
+                        Some(ExprKind::Pipe(left, right)) => match &right.kind {
+                            ExprKind::Call(callee, args) => Some((
+                                &**callee,
+                                std::iter::once(&**left).chain(args).collect::<Vec<_>>(),
+                            )),
+                            _ => Some((&**right, vec![&**left])),
+                        },
+                        _ => None,
+                    };
+                    if let Some((callee, args)) = call
+                        && self.calls_another_module(callee, &of_impl)
+                    {
+                        let mut given: Vec<TypeId> = Vec::new();
+                        if let ExprKind::FieldAccess(recv, ..) = &callee.kind
+                            && let Some(ty) = &recv.ty
+                        {
+                            named_types(ty, &mut given);
+                        }
+                        for arg in args {
+                            if let Some(ty) = &arg.ty {
+                                named_types(ty, &mut given);
+                            }
+                        }
+                        for ty in given {
+                            for &target in of_type.get(&ty).into_iter().flatten() {
+                                add(target);
+                            }
+                        }
                     }
                     let Some(Expr {
                         kind: ExprKind::FieldAccess(recv, method, _),
