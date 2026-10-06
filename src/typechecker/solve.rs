@@ -514,7 +514,7 @@ impl TypeChecker {
                         format!("cannot extend a `{shown}` with field '{field}': it is a declared record type"),
                     )
                     .with_help(format!(
-                        "update a field it has with `r.{{ f: ... }}`, or build an anonymous record from its fields: `{{ x: r.x, ..., {field}: ... }}`"
+                        "convert the record where its type is known, with a spread: `{{...r}}` is an anonymous record with its fields"
                     )),
                 );
             }

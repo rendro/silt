@@ -330,7 +330,7 @@ impl TypeChecker {
     /// Helper: substitute record param vars with the call-site type
     /// args and return the field list. Used by anon×nominal-via-Generic
     /// unification.
-    fn instantiate_record_fields_with_args(
+    pub(super) fn instantiate_record_fields_with_args(
         &mut self,
         name: TypeRef,
         args: &[Type],
@@ -908,7 +908,7 @@ impl TypeChecker {
                                 "an anonymous record is not a `{shown}`: write `{shown} {{ ... }}`"
                             ),
                             false => format!(
-                                "a `{}` is not an anonymous record: build one from its fields, `{{ x: v.x, ... }}`, or take an open row, `{{x: T, ...r}}`",
+                                "a `{}` is not an anonymous record: convert it with a spread, `{{...v}}`, or take an open row, `{{x: T, ...r}}`",
                                 self.show_type(nominal)
                             ),
                         });

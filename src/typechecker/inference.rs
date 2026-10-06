@@ -2651,25 +2651,26 @@ impl TypeChecker {
                                 self.unify(&base_ty, &open, base_expr.span);
                                 (BTreeMap::new(), RowTail::Var(row))
                             }
-                            // A declared record type is not extended: the
-                            // value would keep its name with fields the
-                            // type does not declare.
-                            Type::Generic(name, _) if self.tables.records.contains_key(name) => {
-                                let shown = self.show_type(&base_canon);
-                                self.errors.push(
-                                    Diagnostic::error(
-                                        Code::TypeMismatch,
-                                        base_expr.span,
-                                        format!(
-                                            "cannot extend a `{shown}`: it is a declared record type, and `{{...r, f: e}}` makes an anonymous record"
-                                        ),
-                                    )
-                                    .with_help(
-                                        "update a field it has with `r.{ f: e }`, or build an anonymous record from its fields: `{ x: r.x, ..., f: e }`",
-                                    ),
-                                );
-                                expr.ty = Some(Type::Error);
-                                return Type::Error;
+                            // A spread over a value of a declared record
+                            // type is the conversion to an anonymous
+                            // record, written out: the result has the
+                            // record's fields, and each field written
+                            // after the spread is added or replaces the
+                            // record's by name.
+                            Type::Generic(name, args) if self.tables.records.contains_key(name) => {
+                                let mut merged: BTreeMap<Symbol, Type> = self
+                                    .instantiate_record_fields_with_args(*name, args)
+                                    .into_iter()
+                                    .collect();
+                                for (n, t) in &new_field_tys {
+                                    merged.insert(*n, t.clone());
+                                }
+                                let ty = Type::AnonRecord {
+                                    fields: merged,
+                                    tail: RowTail::Closed,
+                                };
+                                expr.ty = Some(ty.clone());
+                                return ty;
                             }
                             _ => {
                                 if !matches!(base_canon, Type::Error | Type::Never) {
