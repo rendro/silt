@@ -29,6 +29,27 @@
 //!    (`print`).
 //! 4. A line break is only ever written where the grammar allows one
 //!    whatever stands around it, or where the source has one.
+//!
+//! # Known layouts
+//!
+//! Where a comment stands in parentheses that would otherwise go, the
+//! result keeps what was written rather than move the comment. They are
+//! stable, and not what one would write:
+//!
+//! - `(f(a) -- c` / `) { x -> x }`: parentheses around a call in front of
+//!   its closure, with a `--` comment in front of the `)`. They stay as
+//!   written, the `)` on the line behind the comment: without them the
+//!   comment and a second one behind the closure's `->` would need the
+//!   same line, and the `{` may not start the next one.
+//! - `x as ({- c -} T).f`: the printer puts the parentheses around the
+//!   ascription, `(x as T).f`, and the type's own become those; with a
+//!   comment behind the type's opening parenthesis the type keeps its
+//!   own inside them, `(x as ({- c -} T)).f`, so that the comment stays
+//!   between `as` and the type.
+//! - `{ (0) | _ -> 1 }` and `{ (_ | 0) -> 1 }`: an alternative that a
+//!   closure's parameters cannot hold bare (a number, a string, a
+//!   range, a `^pin`) has parentheses around it or around the
+//!   or-pattern, as the source has; both stay.
 
 pub mod check;
 pub mod cursor;

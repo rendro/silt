@@ -1572,6 +1572,17 @@ impl Printer<'_> {
             }
         }
         links.reverse();
+        // Parentheses around the first links that a `--` comment keeps.
+        let kept = self.cur.keep_prefix_parens(head.span.end, expr.span.end);
+        if !kept.is_nil() {
+            let chain = self.chain(expr, head, &links, ctx);
+            return Doc::concat(vec![kept, chain]);
+        }
+        self.chain(expr, head, &links, ctx)
+    }
+
+    /// The operand and the links of `postfix`.
+    fn chain(&mut self, expr: &Expr, head: &Expr, links: &[&Expr], ctx: Ctx) -> Doc {
         let is_call = |link: &&Expr| matches!(link.kind, ExprKind::Call(..));
         let is_dot = |link: &Expr| {
             matches!(
@@ -1806,6 +1817,8 @@ impl Printer<'_> {
         if !trailing {
             return list;
         }
+        // Parentheses around the call without its closure, if they stay.
+        let list = Doc::concat(vec![list, self.cur.kept_closers_here()]);
         let closure = self.expr(&args[count - 1], Ctx::top());
         // The source's `)` behind a closure that the result has behind
         // its own.

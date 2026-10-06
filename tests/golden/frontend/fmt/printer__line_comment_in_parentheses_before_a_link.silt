@@ -1,0 +1,26 @@
+-- cmd: fmt
+-- Parentheses around the start of a chain group nothing and are
+-- dropped. With a `--` comment in front of the closing one they stay:
+-- behind the comment the line ends, and the `{`, `(`, `.` or `?` that
+-- follows may not start the next line.
+fn g(n) {
+  { f -> f(n) }
+}
+
+fn h(n, f) {
+  f(n)
+}
+
+fn main() {
+  let a = (h(2) -- the call
+  ) { x -> x + 1 }
+  let b = (h(2)
+    -- on its own line
+  ) { x -> -- behind the arrow
+    x + 1 }
+  let c = (g(2) -- the closure
+  )({ x -> x + 1 })
+  let d = (h(2) {- a block comment -}) { x -> x + 1 }
+  let e = ((h(2))) { x -> x + 1 }
+  println("{a} {b} {c} {d} {e}")
+}

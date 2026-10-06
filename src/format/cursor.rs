@@ -63,6 +63,11 @@ pub struct Cursor<'a> {
     line_ended: bool,
     /// Where the token written last ends in the source.
     last_written_end: u32,
+    /// The closing parentheses of `keep_prefix_parens`, by token: they
+    /// are written when the cursor comes to them.
+    kept_closers: Vec<usize>,
+    /// Those the cursor came to, for the next token that is written.
+    kept_written: Vec<Doc>,
     /// The first thing the printer asked for that the source does not
     /// hold. Once set, the printer's result is not used.
     pub error: Option<Mismatch>,
@@ -118,6 +123,8 @@ impl<'a> Cursor<'a> {
             next_comment: 0,
             carried: Vec::new(),
             last_written_end: 0,
+            kept_closers: Vec::new(),
+            kept_written: Vec::new(),
             error: None,
         }
     }
@@ -570,6 +577,71 @@ impl<'a> Cursor<'a> {
         self.comments.get(first).is_some_and(|c| c.span.start < end)
     }
 
+    /// Write the `(` at the cursor that keep their place: parentheses
+    /// around the first links of a chain (`(f(a)).g`, `(f(a)) { x -> x }`;
+    /// the operand ends at byte `head_end`, the chain at `chain_end`)
+    /// group nothing and are dropped, and a comment in front of their
+    /// `)` moves behind the chain's line then. A `--` comment cannot
+    /// always: behind it the line ends, and the next link (a `{`, a `(`)
+    /// may not start a line. With one there the parentheses stay as
+    /// they are written, the `)` on the line behind the comment. The
+    /// closing ones are written when the cursor comes to them.
+    pub fn keep_prefix_parens(&mut self, head_end: u32, chain_end: u32) -> Doc {
+        let last_of_head = self.tokens.partition_point(|tok| tok.span.end < head_end);
+        let keeps: Vec<bool> = self.tokens[self.pos.min(self.tokens.len())..]
+            .iter()
+            .enumerate()
+            .take_while(|(_, tok)| tok.kind == Token::LParen)
+            .map(|(i, _)| {
+                let closer = self.closers[self.pos + i];
+                let Some(close) = self.tokens.get(closer) else {
+                    return false;
+                };
+                // Around more than the operand, and inside the chain.
+                closer > last_of_head
+                    && close.span.end <= chain_end
+                    && self.tokens[last_of_head + 1..closer]
+                        .iter()
+                        .any(|tok| tok.kind != Token::RParen)
+                    && self.comments[close.comments.start as usize..close.comments.end as usize]
+                        .iter()
+                        .any(|comment| comment.kind == CommentKind::Line)
+            })
+            .collect();
+        let Some(last) = keeps.iter().rposition(|keep| *keep) else {
+            return Doc::Nil;
+        };
+        let mut docs = Vec::new();
+        for keep in &keeps[..=last] {
+            if *keep {
+                self.kept_closers.push(self.closers[self.pos]);
+                docs.push(self.token(&Token::LParen));
+            } else {
+                self.skip_one();
+            }
+        }
+        Doc::concat(docs)
+    }
+
+    /// The closing parentheses of `keep_prefix_parens` at the cursor,
+    /// for this place: in front of what the printer writes with a space
+    /// in front of it (a closure behind a call).
+    pub fn kept_closers_here(&mut self) -> Doc {
+        while self.kept_closers.contains(&self.pos) {
+            self.write_kept_closer();
+        }
+        Doc::concat(std::mem::take(&mut self.kept_written))
+    }
+
+    /// Write the `)` at the cursor on the line behind its comments.
+    fn write_kept_closer(&mut self) {
+        let leading = self.leading();
+        let text = self.bare();
+        let trailing = self.trailing();
+        self.kept_written
+            .push(Doc::concat(vec![leading, Doc::HardLine, text, trailing]));
+    }
+
     /// How many of the `(` at the cursor are parentheses around the
     /// pattern whose own first token starts at byte `start`: those in
     /// front of that token. With `inner_end`, the end of the first
@@ -652,6 +724,10 @@ impl<'a> Cursor<'a> {
     /// the error recorded, if another token is in the way.
     fn seek(&mut self, kind: &Token) -> bool {
         loop {
+            if self.kept_closers.contains(&self.pos) {
+                self.write_kept_closer();
+                continue;
+            }
             if self.at(kind) {
                 return true;
             }
@@ -673,10 +749,11 @@ impl<'a> Cursor<'a> {
         if !self.seek(kind) {
             return Doc::Nil;
         }
+        let kept = Doc::concat(std::mem::take(&mut self.kept_written));
         let leading = self.leading();
         let text = self.bare();
         let trailing = self.trailing();
-        Doc::concat(vec![leading, text, trailing])
+        Doc::concat(vec![kept, leading, text, trailing])
     }
 
     /// As `token`, in two steps: the token with the comments in front of
@@ -685,9 +762,10 @@ impl<'a> Cursor<'a> {
         if !self.seek(kind) {
             return Doc::Nil;
         }
+        let kept = Doc::concat(std::mem::take(&mut self.kept_written));
         let leading = self.leading();
         let text = self.bare();
-        Doc::concat(vec![leading, text])
+        Doc::concat(vec![kept, leading, text])
     }
 
     /// If the next source token is of the kind of `kind`, skip it and
