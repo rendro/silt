@@ -58,6 +58,10 @@ pub struct Globals {
     names: Vec<String>,
     defs: HashMap<DefId, u16>,
     methods: HashMap<(TraitId, TypeId), HashMap<String, u16>>,
+    /// The default methods of each trait: the body the trait writes,
+    /// compiled once. An impl that leaves the method out has this slot
+    /// as its method's.
+    defaults: HashMap<(TraitId, String), u16>,
     /// The methods of each type whatever their trait, for a call whose
     /// trait is not known where it is compiled (a call in a polymorphic
     /// function with no bound for the receiver), with the trait of each.
@@ -165,6 +169,40 @@ impl Globals {
         let slot = self.add(name)?;
         self.defs.insert(def, slot);
         Some(slot)
+    }
+
+    /// The slot of the default method `method` of the trait `t`.
+    pub fn default_method(&self, t: TraitId, method: &str) -> Option<u16> {
+        self.defaults.get(&(t, method.to_string())).copied()
+    }
+
+    /// The slot of the default method `method` of the trait `t`, named
+    /// `name`: a new one the first time.
+    pub fn add_default_method(&mut self, t: TraitId, method: &str, name: String) -> Option<u16> {
+        if let Some(slot) = self.default_method(t, method) {
+            return Some(slot);
+        }
+        let slot = self.add(name)?;
+        self.defaults.insert((t, method.to_string()), slot);
+        Some(slot)
+    }
+
+    /// The impl of the trait `t` for the type `ty` leaves `method` out:
+    /// its method is the trait's default, in `slot`.
+    pub fn default_for(&mut self, t: TraitId, ty: TypeId, method: &str, slot: u16) {
+        if self.method(Some(t), ty, method).is_some() {
+            return;
+        }
+        self.methods
+            .entry((t, ty))
+            .or_default()
+            .insert(method.to_string(), slot);
+        self.by_type
+            .entry(ty)
+            .or_default()
+            .entry(method.to_string())
+            .and_modify(|known| *known = None)
+            .or_insert(Some((slot, t)));
     }
 
     /// The slot of the method `method` of the impl of the trait `t` for

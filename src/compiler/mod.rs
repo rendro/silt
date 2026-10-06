@@ -200,6 +200,9 @@ pub struct ModuleUnit {
     pub id: crate::session::ModuleId,
     /// The module's declarations, after the typechecker filled them in.
     pub program: Arc<Program>,
+    /// The module's top-level `let`s, by the span of each, in the order
+    /// the checker decided they are initialised in.
+    pub let_order: Vec<Span>,
     /// The module's name in its package (`"lib"` for a dependency's
     /// library, `"util"` for `src/util.silt`).
     pub name: String,
@@ -341,19 +344,52 @@ impl Compiler {
     }
 
     /// Give a global slot to each definition the program installs: the
-    /// derived impls of the builtin types (unless an earlier REPL entry
-    /// installed them), then, module by module, each function, `let`,
-    /// host function and impl method. Gives the slots of the modules'
-    /// own functions, `let`s and host functions by module and name.
+    /// builtin traits' default methods and the derived impls of the
+    /// builtin types (unless an earlier REPL entry installed them),
+    /// then, module by module, each function, `let`, host function and
+    /// default method of a trait, and last each impl method. An impl
+    /// that leaves a default method out gets no slot for it: its method
+    /// is the trait's. Gives the slots of the modules' own functions,
+    /// `let`s and host functions by module and name.
     fn assign_slots(
         &self,
         globals: &mut Globals,
     ) -> Result<HashMap<(crate::session::ModuleId, Symbol), u16>, Diagnostic> {
         let mut own = HashMap::new();
+        // The default methods of each trait, in the trait's order.
+        let mut defaults: HashMap<crate::defs::TraitId, Vec<Symbol>> = HashMap::new();
+        let builtin_defaults = crate::typechecker::builtin_default_methods();
+        for (t, method) in &builtin_defaults {
+            defaults.entry(*t).or_default().push(method.name);
+        }
+        for unit in &self.units.modules {
+            for decl in &unit.program.decls {
+                if let Decl::Trait(t) = decl
+                    && let Some(id) = self.declared_trait(unit.id, t.name)
+                {
+                    defaults.entry(id).or_default().extend(
+                        t.methods
+                            .iter()
+                            .filter(|m| !m.is_signature_only)
+                            .map(|m| m.name),
+                    );
+                }
+            }
+        }
         if !self.builtin_impls_installed {
+            for (t, method) in &builtin_defaults {
+                let trait_name = self.units.defs.get(t.0).name;
+                globals
+                    .add_default_method(
+                        *t,
+                        &resolve(method.name),
+                        format!("{trait_name}.{}", method.name),
+                    )
+                    .ok_or_else(|| too_many_globals(method.span))?;
+            }
             for decl in crate::typechecker::builtin_derived_impls().iter() {
                 if let Decl::TraitImpl(ti) = decl {
-                    self.assign_method_slots(ti, globals)?;
+                    self.assign_method_slots(ti, &defaults, globals)?;
                 }
             }
         }
@@ -382,18 +418,43 @@ impl Compiler {
                 own.insert((unit.id, def.name), slot);
             }
             for decl in &unit.program.decls {
+                let Decl::Trait(t) = decl else {
+                    continue;
+                };
+                let Some(id) = self.declared_trait(unit.id, t.name) else {
+                    continue;
+                };
+                for method in t.methods.iter().filter(|m| !m.is_signature_only) {
+                    globals
+                        .add_default_method(
+                            id,
+                            &resolve(method.name),
+                            format!("{}.{}", t.name, method.name),
+                        )
+                        .ok_or_else(|| too_many_globals(method.span))?;
+                }
+            }
+        }
+        // (An impl may be of a trait of a module that comes later.)
+        for (index, unit) in self.units.modules.iter().enumerate() {
+            if self.units.earlier.installed.contains(&index) {
+                continue;
+            }
+            for decl in &unit.program.decls {
                 if let Decl::TraitImpl(ti) = decl {
-                    self.assign_method_slots(ti, globals)?;
+                    self.assign_method_slots(ti, &defaults, globals)?;
                 }
             }
         }
         Ok(own)
     }
 
-    /// Give a global slot to each method of the impl `ti`.
+    /// Give a global slot to each method the impl `ti` writes; a default
+    /// method of the trait (`defaults`) it leaves out is the trait's.
     fn assign_method_slots(
         &self,
         ti: &crate::ast::TraitImpl,
+        defaults: &HashMap<crate::defs::TraitId, Vec<Symbol>>,
         globals: &mut Globals,
     ) -> Result<(), Diagnostic> {
         let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti)) else {
@@ -410,7 +471,34 @@ impl Compiler {
                 )
                 .ok_or_else(|| too_many_globals(method.span))?;
         }
+        for method in defaults.get(&t).into_iter().flatten() {
+            if ti.methods.iter().any(|written| written.name == *method) {
+                continue;
+            }
+            if let Some(slot) = globals.default_method(t, &resolve(*method)) {
+                globals.default_for(t, ty, &resolve(*method), slot);
+            }
+        }
         Ok(())
+    }
+
+    /// The trait the module `module` declares as `name`.
+    fn declared_trait(
+        &self,
+        module: crate::session::ModuleId,
+        name: Symbol,
+    ) -> Option<crate::defs::TraitId> {
+        self.units
+            .defs
+            .of_module(module)
+            .iter()
+            .find_map(|&id| match self.units.defs.get(id) {
+                def if def.name == name => match def.kind {
+                    crate::defs::DefKind::Trait(t) => Some(t),
+                    _ => None,
+                },
+                _ => None,
+            })
     }
 
     /// The alias registries the program was checked with: read via
@@ -450,7 +538,8 @@ impl Compiler {
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
 
         self.compile_builtin_derived_impls()?;
-        for decl in Self::decls_in_init_order(&program.decls) {
+        let order = self.units.modules[self.units.entry].let_order.clone();
+        for decl in Self::decls_in_init_order(&program.decls, &order) {
             self.compile_decl(decl)?;
         }
 
@@ -495,7 +584,8 @@ impl Compiler {
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
 
         self.compile_builtin_derived_impls()?;
-        for decl in Self::decls_in_init_order(&program.decls) {
+        let order = self.units.modules[self.units.entry].let_order.clone();
+        for decl in Self::decls_in_init_order(&program.decls, &order) {
             self.compile_decl(decl)?;
         }
 
@@ -517,6 +607,9 @@ impl Compiler {
     fn compile_builtin_derived_impls(&mut self) -> Result<(), Diagnostic> {
         if self.builtin_impls_installed {
             return Ok(());
+        }
+        for (t, method) in crate::typechecker::builtin_default_methods() {
+            self.compile_default_method(t, &resolve(self.units.defs.get(t.0).name), &method)?;
         }
         for decl in crate::typechecker::builtin_derived_impls().iter() {
             self.compile_decl(decl)?;
@@ -545,16 +638,84 @@ impl Compiler {
         self.own_slots.get(&(module, name)).copied()
     }
 
-    /// The order in which a program's declarations are installed: first
+    /// The order in which a module's declarations are installed: first
     /// everything that only defines something (imports, types, traits,
-    /// trait impls, functions), then the top-level `let`s. Each group
-    /// keeps its source order. A top-level initialiser can therefore use
-    /// every declaration of the program, wherever it is written.
-    fn decls_in_init_order(decls: &[Decl]) -> Vec<&Decl> {
-        let (lets, definitions): (Vec<&Decl>, Vec<&Decl>) = decls
+    /// trait impls, functions), in source order; then the top-level
+    /// `let`s, in the order the checker decided (`let_order`, by the
+    /// span of each: every `let` after the ones its initialiser can
+    /// reach). A top-level initialiser can therefore use every
+    /// declaration of the program, wherever it is written.
+    fn decls_in_init_order<'d>(decls: &'d [Decl], let_order: &[Span]) -> Vec<&'d Decl> {
+        let (mut lets, definitions): (Vec<&Decl>, Vec<&Decl>) = decls
             .iter()
             .partition(|decl| matches!(**decl, Decl::Let { .. }));
+        // (A `let` the order does not name, which no checked module
+        // has, keeps its place after the ones it names.)
+        lets.sort_by_key(|decl| match decl {
+            Decl::Let { span, .. } => let_order
+                .iter()
+                .position(|at| at == span)
+                .unwrap_or(usize::MAX),
+            _ => usize::MAX,
+        });
         definitions.into_iter().chain(lets).collect()
+    }
+
+    /// Compile the method `method` (an impl's, or a trait's default) as
+    /// the function `name`, and leave it on the stack.
+    fn compile_method(
+        &mut self,
+        name: String,
+        method: &crate::ast::FnDecl,
+    ) -> Result<(), Diagnostic> {
+        let span = method.span;
+        if method.params.len() > u8::MAX as usize {
+            return Err(Diagnostic::error(
+                Code::CompileLimit,
+                span,
+                format!(
+                    "trait method '{name}' has {} parameters; silt functions are limited to 255",
+                    method.params.len()
+                ),
+            ));
+        }
+        self.begin_function(name, method.params.len(), span)?;
+
+        self.compile_params(&method.params, span)?;
+
+        // The body is in tail position, like a function's.
+        self.in_tail_position = true;
+        self.compile_expr(&method.body)?;
+        self.in_tail_position = false;
+        self.emit(Asm::Return, span)?;
+
+        let (func, _) = self.end_function(span)?;
+        let vm_closure = Arc::new(VmClosure {
+            function: Arc::new(func),
+            upvalues: vec![],
+        });
+        let closure_val = Value::VmClosure(vm_closure);
+        let fi = self.add_constant(closure_val, span)?;
+        self.emit(Asm::Constant { k: fi }, span)
+    }
+
+    /// Compile the default method `method` of the trait `t`, named
+    /// `trait_name`, once, into its global slot: the method of every
+    /// impl that leaves it out.
+    fn compile_default_method(
+        &mut self,
+        t: crate::defs::TraitId,
+        trait_name: &str,
+        method: &crate::ast::FnDecl,
+    ) -> Result<(), Diagnostic> {
+        let span = method.span;
+        self.compile_method(format!("{trait_name}.{}", method.name), method)?;
+        let slot = self
+            .globals
+            .default_method(t, &resolve(method.name))
+            .ok_or_else(|| checker_missed(span, "a default method with no slot"))?;
+        self.emit(Asm::SetGlobal { slot }, span)?;
+        self.emit(Asm::Pop, span)
     }
 
     fn compile_decl(&mut self, decl: &Decl) -> Result<(), Diagnostic> {
@@ -669,36 +830,7 @@ impl Compiler {
 
                 for method in &trait_impl.methods {
                     let span = method.span;
-                    if method.params.len() > u8::MAX as usize {
-                        return Err(Diagnostic::error(
-                            Code::CompileLimit,
-                            span,
-                            format!(
-                                "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
-                                trait_impl.target_type,
-                                method.name,
-                                method.params.len()
-                            ),
-                        ));
-                    }
-                    let qualified_name = format!("{type_name}.{}", method.name);
-
-                    self.begin_function(qualified_name, method.params.len(), span)?;
-
-                    self.compile_params(&method.params, span)?;
-
-                    self.compile_expr(&method.body)?;
-                    self.emit(Asm::Return, span)?;
-
-                    let (func, _) = self.end_function(span)?;
-                    let vm_closure = Arc::new(VmClosure {
-                        function: Arc::new(func),
-                        upvalues: vec![],
-                    });
-                    let closure_val = Value::VmClosure(vm_closure);
-                    let fi = self.add_constant(closure_val, span)?;
-                    self.emit(Asm::Constant { k: fi }, span)?;
-
+                    self.compile_method(format!("{type_name}.{}", method.name), method)?;
                     let slot = self
                         .globals
                         .method(Some(t), ty, &resolve(method.name))
@@ -709,8 +841,20 @@ impl Compiler {
                 Ok(())
             }
 
-            Decl::Trait(_) => {
-                // Trait declarations just define the interface; nothing to emit.
+            Decl::Trait(t) => {
+                // A trait declares an interface; each default method it
+                // writes is compiled, once.
+                let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+                let module = self.units.modules[current].id;
+                let Some(id) = self.declared_trait(module, t.name) else {
+                    return Err(checker_missed(
+                        t.span,
+                        &format!("the trait '{}' with no definition", t.name),
+                    ));
+                };
+                for method in t.methods.iter().filter(|m| !m.is_signature_only) {
+                    self.compile_default_method(id, &resolve(t.name), method)?;
+                }
                 Ok(())
             }
 
@@ -828,7 +972,9 @@ impl Compiler {
         let init_name = format!("<module:{written}>");
         self.begin_function(init_name, 0, span)?;
 
-        for decl in Self::decls_in_init_order(&program.decls) {
+        let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
+        let order = self.units.modules[current].let_order.clone();
+        for decl in Self::decls_in_init_order(&program.decls, &order) {
             self.compile_decl(decl)?;
         }
 
@@ -1189,12 +1335,16 @@ impl Compiler {
                     _ => &["__self__"],
                 };
                 let ident = |name: &str| Expr::new(ExprKind::Ident(intern(name)), span);
+                let mut access = Expr::new(
+                    ExprKind::FieldAccess(Box::new(ident(names[0])), *method, span),
+                    span,
+                );
+                access.sel = Some(crate::ast::Selection::Native {
+                    tr: self.builtin_method_trait(expr.res, *method, span)?,
+                });
                 let call = Expr::new(
                     ExprKind::Call(
-                        Box::new(Expr::new(
-                            ExprKind::FieldAccess(Box::new(ident(names[0])), *method, span),
-                            span,
-                        )),
+                        Box::new(access),
                         names[1..].iter().map(|n| ident(n)).collect(),
                     ),
                     span,
@@ -1849,8 +1999,9 @@ impl Compiler {
                 // `Int.display(1)`: a builtin trait's method of a
                 // builtin type, which is native, not a global; the
                 // first argument is the receiver.
+                let t = self.builtin_method_trait(callee.res, *method, span)?;
                 self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(*method, args.len(), callee.res, span)?;
+                self.emit_call_method(*method, args.len(), t, span)?;
             } else if let Some(slot) = self.qualified_type_member(callee)? {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
@@ -1879,9 +2030,7 @@ impl Compiler {
                         ),
                     ));
                 }
-                self.compile_operands(std::iter::once(&**receiver).chain(args.iter().copied()))?;
-                let argc = args.len() + 1; // receiver + args
-                self.emit_call_method(*method, argc, callee.res, span)?;
+                self.compile_method_call(callee, receiver, *method, args, span, tail)?;
             }
         } else {
             // Normal function call. A decoder imported by name
@@ -1895,6 +2044,52 @@ impl Compiler {
             self.emit_call(argc, tail, span)?;
         }
         Ok(())
+    }
+
+    /// Compile `receiver.method(args)`, a call on a value, as the
+    /// checker's `Selection` on `callee` says.
+    fn compile_method_call(
+        &mut self,
+        callee: &Expr,
+        receiver: &Expr,
+        method: Symbol,
+        args: &[&Expr],
+        span: Span,
+        tail: bool,
+    ) -> Result<(), Diagnostic> {
+        use crate::ast::Selection;
+        let with_receiver = std::iter::once(receiver).chain(args.iter().copied());
+        match callee.sel {
+            // The function a field holds: an ordinary call of it.
+            Some(Selection::FieldCall) => {
+                self.compile_expr(receiver)?;
+                let name = self.add_constant(Value::String(resolve(method)), span)?;
+                self.emit(Asm::GetField { name }, span)?;
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call(args.len(), tail, span)
+            }
+            // One impl's method: a call of its global, like a function's.
+            Some(Selection::Impl { tr, ty })
+                if let Some(slot) = self.globals.method(Some(tr), ty, &resolve(method)) =>
+            {
+                self.emit(Asm::GetGlobal { slot }, span)?;
+                self.compile_operands(with_receiver)?;
+                self.emit_call(args.len() + 1, tail, span)
+            }
+            // The method is found where the code runs, by the receiver's
+            // type. (An impl with no global is a builtin type's that the
+            // VM has natively.)
+            Some(
+                Selection::Impl { tr, .. } | Selection::Native { tr } | Selection::Dynamic { tr },
+            ) => {
+                self.compile_operands(with_receiver)?;
+                self.emit_call_method(method, args.len() + 1, tr, span)
+            }
+            Some(Selection::Field) | None => Err(checker_missed(
+                span,
+                &format!("the call of '{method}' with no selection"),
+            )),
+        }
     }
 
     fn compile_pipe(
@@ -2285,26 +2480,34 @@ impl Compiler {
         }
     }
 
-    /// Emit `CallMethod` of `method` with `argc` values (the receiver
-    /// first) on the stack, for the trait the call's resolution `res`
-    /// names.
+    /// The builtin trait of `T.method` for a builtin type `T`
+    /// (`Int.display`): the one the checker resolved the access to.
+    fn builtin_method_trait(
+        &self,
+        res: Option<crate::defs::Res>,
+        method: Symbol,
+        span: Span,
+    ) -> Result<crate::defs::TraitId, Diagnostic> {
+        self.res_trait(res)
+            .or_else(|| crate::defs::builtin_trait_of_method(&resolve(method)))
+            .ok_or_else(|| checker_missed(span, &format!("the method '{method}' of no trait")))
+    }
+
+    /// Emit `CallMethod` of `method` of the trait `t` with `argc`
+    /// values (the receiver first) on the stack.
     fn emit_call_method(
         &mut self,
         method: Symbol,
         argc: usize,
-        res: Option<crate::defs::Res>,
+        t: crate::defs::TraitId,
         span: Span,
     ) -> Result<(), Diagnostic> {
         let method_idx = self.add_constant(Value::String(resolve(method)), span)?;
-        let trait_operand = match self.res_trait(res) {
-            Some(t) => {
-                let name = self.units.defs.get(t.0).name;
-                self.globals
-                    .trait_index(t, resolve(name))
-                    .ok_or_else(|| too_many_globals(span))?
-            }
-            None => crate::bytecode::NO_TRAIT,
-        };
+        let name = self.units.defs.get(t.0).name;
+        let trait_operand = self
+            .globals
+            .trait_index(t, resolve(name))
+            .ok_or_else(|| too_many_globals(span))?;
         self.emit(
             Asm::CallMethod {
                 method: method_idx,
@@ -3774,14 +3977,27 @@ type Foo { x: Int }
 trait Display for Foo {
     fn display(self) -> String { "foo" }
 }
+fn shown(x: a) -> String where a: Display { x.display() }
+fn field(r: {f: Fn(Int) -> Int}) -> Int { r.f(1) }
 fn main() {
     let f = Foo { x: 1 }
     f.display()
 }
 "#,
         );
+        // The method of an impl the checker selected: a call of its
+        // global, a tail call here.
         let main = find_fn(&fns, "main");
-        assert!(has_op(main.chunk(), Op::CallMethod));
+        assert!(!has_op(main.chunk(), Op::CallMethod));
+        assert!(has_op(main.chunk(), Op::GetGlobal));
+        assert!(has_op(main.chunk(), Op::TailCall));
+        // The method of a bounded variable is found where the code runs.
+        let shown = find_fn(&fns, "shown");
+        assert!(has_op(shown.chunk(), Op::CallMethod));
+        // A field that holds a function is read and called.
+        let field = find_fn(&fns, "field");
+        assert!(has_op(field.chunk(), Op::GetField));
+        assert!(!has_op(field.chunk(), Op::CallMethod));
     }
 
     // ── compile_program vs compile_declarations ────────────────────

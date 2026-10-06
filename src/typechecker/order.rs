@@ -67,8 +67,8 @@ impl TypeChecker {
         let mut edges: Vec<Vec<usize>> = vec![Vec::new(); decls.len()];
         for &i in &nodes {
             let mut targets: Vec<usize> = Vec::new();
-            let mut note = |res: Option<crate::defs::Res>| {
-                if let Some(crate::defs::Res::Def(id)) = res
+            let mut note = |mention: Mention| {
+                if let Some(crate::defs::Res::Def(id)) = mention.res
                     && let Some(&j) = by_def.get(&id)
                     && !has_scheme(j)
                     && !targets.contains(&j)
@@ -150,9 +150,21 @@ fn strongly_connected(nodes: &[usize], edges: &[Vec<usize>]) -> Vec<Component> {
     components
 }
 
-/// Call `note` with what each name written in `expr` resolves to.
-pub(super) fn references_in_expr(expr: &Expr, note: &mut impl FnMut(Option<crate::defs::Res>)) {
-    note(expr.res);
+/// What a definition's body mentions: what a name resolves to, and,
+/// for an expression, the expression (a field access says what method
+/// it calls).
+pub(super) struct Mention<'a> {
+    pub(super) res: Option<crate::defs::Res>,
+    pub(super) expr: Option<&'a Expr>,
+}
+
+/// Call `note` with each expression in `expr` and what each name written
+/// in it resolves to.
+pub(super) fn references_in_expr<'a>(expr: &'a Expr, note: &mut impl FnMut(Mention<'a>)) {
+    note(Mention {
+        res: expr.res,
+        expr: Some(expr),
+    });
     match &expr.kind {
         ExprKind::Int(_)
         | ExprKind::Float(_)
@@ -279,8 +291,11 @@ pub(super) fn references_in_expr(expr: &Expr, note: &mut impl FnMut(Option<crate
 
 /// Call `note` with what each name written in `pattern` resolves to: a
 /// pinned name (`^limit`) may be a top-level `let`.
-fn references_in_pattern(pattern: &Pattern, note: &mut impl FnMut(Option<crate::defs::Res>)) {
-    note(pattern.res);
+pub(super) fn references_in_pattern<'a>(pattern: &'a Pattern, note: &mut impl FnMut(Mention<'a>)) {
+    note(Mention {
+        res: pattern.res,
+        expr: None,
+    });
     match &pattern.kind {
         PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
             for p in pats {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::ast::Selection;
 
 /// Snapshot of a user type's resolved body, used only by the auto-
 /// derive synthesis pass (`synthesize_auto_derive_impls`). Captures the
@@ -469,10 +470,10 @@ impl TypeChecker {
 /// - `Hash`:    `fn hash(self) -> Int` (signature only).
 /// - `Error: Display { fn message(self) -> String { self.display() } }`.
 ///   Carries a real default body, which an impl that omits `message`
-///   gets (`share_default_methods`). No program declares the trait, so
-///   no check resolves the body: the call is written resolved, to
+///   runs (`builtin_default_methods`). No program declares the trait,
+///   so no check resolves the body: the call is written resolved, to
 ///   `Display`'s method.
-fn builtin_trait_decls() -> Vec<TraitDecl> {
+pub(super) fn builtin_trait_decls() -> Vec<TraitDecl> {
     let dummy_span = Span::BUILTIN;
     let self_sym = intern("self");
     let other_sym = intern("other");
@@ -531,6 +532,8 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
         );
         field_access.res =
             crate::defs::builtin_trait_id("Display").map(|t| crate::defs::Res::Def(t.0));
+        field_access.sel =
+            crate::defs::builtin_trait_id("Display").map(|tr| Selection::Dynamic { tr });
         Expr::new(
             ExprKind::Call(Box::new(field_access), Vec::new()),
             dummy_span,

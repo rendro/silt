@@ -1,0 +1,36 @@
+-- A call of an impl's method is a call of that method's function: in
+-- tail position it is a tail call, so a method that calls itself, or
+-- two that call each other, a million levels deep run in one frame.
+type Counter { n: Int }
+type Other { n: Int }
+trait Down { fn down(self, k: Int) -> Int }
+trait Down for Counter {
+  fn down(self, k: Int) -> Int {
+    match k {
+      0 -> self.n
+      _ -> self.down(k - 1)
+    }
+  }
+}
+trait Ping { fn ping(self, k: Int) -> String }
+trait Ping for Counter {
+  fn ping(self, k: Int) -> String {
+    match k {
+      0 -> "counter {self.n}"
+      _ -> Other { n: self.n }.ping(k - 1)
+    }
+  }
+}
+trait Ping for Other {
+  fn ping(self, k: Int) -> String {
+    match k {
+      0 -> "other {self.n}"
+      _ -> hop(Counter { n: self.n + 1 }, k - 1)
+    }
+  }
+}
+fn hop(c: Counter, k: Int) -> String { c.ping(k) }
+fn main() {
+  println(Counter { n: 7 }.down(1000000))
+  println(Counter { n: 0 }.ping(1000001))
+}

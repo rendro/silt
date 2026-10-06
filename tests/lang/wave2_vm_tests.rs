@@ -129,9 +129,12 @@ enum Shape {
     /// Every level is a `list.fold` callback, the most expensive level
     /// measured.
     Fold,
-    /// Every level is a trait method call.
+    /// Every level is a call of a trait method on a value of a bounded
+    /// type variable, which the VM finds by the value's type and runs
+    /// in a nested loop. (A method of a known impl is called like a
+    /// function: it nests nothing.)
     Method,
-    /// Levels alternate between a trait method call and a `list.fold`
+    /// Levels alternate between such a method call and a `list.fold`
     /// callback.
     Mixed,
 }
@@ -164,11 +167,12 @@ trait Deep for Int {
   fn go(self) -> Int {
     match self {
       1 -> 1
-      _ -> 1 + (self - 1).go()
+      _ -> 1 + next(self - 1)
     }
   }
 }
-fn deep(n) { n.go() }
+fn next(x: a) -> Int where a: Deep { x.go() }
+fn deep(n) { next(n) }
 "
         }
         Shape::Mixed => {
@@ -185,9 +189,10 @@ fn via_fold(n) {
 fn via_method(n) {
   match n {
     0 -> 0
-    _ -> n.go()
+    _ -> next(n)
   }
 }
+fn next(x: a) -> Int where a: Deep { x.go() }
 fn deep(n) { via_method(n) }
 "
         }
