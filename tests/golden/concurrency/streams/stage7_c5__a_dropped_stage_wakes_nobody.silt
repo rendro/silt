@@ -1,0 +1,31 @@
+-- repeat: 200
+-- stderr-not-contains: never joined
+-- At the end of the program the stage (it waits on a gate nobody
+-- feeds) and the task in `collect` (it waits on the stage's output)
+-- both wait for something nobody will give: both are dropped. The
+-- drop of the stage closes its output; the task that reads it does
+-- not run on with a list that the pipeline never produced.
+import channel
+import stream
+import task
+
+fn gated(gate) {
+  stream.from_list([1, 2, 3]) |> stream.map { x ->
+    match channel.receive(gate) {
+      channel.Message(k) -> x * k
+      _ -> 0
+    }
+  }
+}
+
+fn main() {
+  let gate = channel.new(0)
+  let s = gated(gate)
+  let _prints = task.spawn { -> println(stream.collect(s)) }
+  let t = gated(gate)
+  let _fails = task.spawn { ->
+    let xs = stream.collect(t)
+    panic("the pipeline gave {xs}")
+  }
+  println("main")
+}

@@ -605,9 +605,12 @@ impl Scheduler {
     /// for the owner it ran it for (`set_task_owner`): a test waits
     /// for its own tasks only.
     pub(crate) fn settle(&self) {
-        let group = self.wait_for(MainWaits::Settling);
-        // What still waits is dropped.
-        self.drop_waiting(&group);
+        let _ = self.wait_for(MainWaits::Settling);
+        // What still waits is dropped, in one act: dropping a task can
+        // wake another (a stage that is dropped closes its output, and
+        // whoever reads that wakes), and the program has ended, so
+        // that one runs no further either.
+        self.stop_tasks();
     }
 
     /// The program's own code has failed: its tasks are stopped where
