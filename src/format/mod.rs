@@ -36,11 +36,13 @@
 //! result keeps what was written rather than move the comment. They are
 //! stable, and not what one would write:
 //!
-//! - `(f(a) -- c` / `) { x -> x }`: parentheses around a call in front of
-//!   its closure, with a `--` comment in front of the `)`. They stay as
-//!   written, the `)` on the line behind the comment: without them the
-//!   comment and a second one behind the closure's `->` would need the
-//!   same line, and the `{` may not start the next one.
+//! - `(f(a) {- c -}) { x -> x }`: parentheses around the first links of
+//!   a chain, here around a call in front of its closure, with a
+//!   comment directly inside them. They group nothing, and stay as
+//!   parentheses around an expression with such a comment do. Without
+//!   them a `--` comment in front of the `)` and a second one behind
+//!   the closure's `->` would need the same line, and the `{` may not
+//!   start the next one.
 //! - `x as ({- c -} T).f`: the printer puts the parentheses around the
 //!   ascription, `(x as T).f`, and the type's own become those; with a
 //!   comment behind the type's opening parenthesis the type keeps its

@@ -27,6 +27,8 @@ pub fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<Doc, Mi
     let mut printer = Printer {
         cur: Cursor::new(source, lexed),
         closure_alternatives: false,
+        hold_closure: false,
+        closure_held: false,
     };
     let doc = printer.program(program);
     match printer.cur.error {
@@ -456,6 +458,11 @@ struct Printer<'a> {
     /// alternative that a closure's parameters cannot start with or hold
     /// bare keeps its parentheses (see `param`).
     closure_alternatives: bool,
+    /// `call_args` is asked to leave a closure behind the arguments to
+    /// its caller when a `)` of the source stands in front of it, and
+    /// says in `closure_held` that it did (see `chain`).
+    hold_closure: bool,
+    closure_held: bool,
 }
 
 /// Whether the parser reads `pattern`, without parentheses around it,
@@ -1572,17 +1579,43 @@ impl Printer<'_> {
             }
         }
         links.reverse();
-        // Parentheses around the first links that a `--` comment keeps.
+        // Parentheses around the first links that a comment keeps.
         let kept = self.cur.keep_prefix_parens(head.span.end, expr.span.end);
-        if !kept.is_nil() {
-            let chain = self.chain(expr, head, &links, ctx);
-            return Doc::concat(vec![kept, chain]);
-        }
-        self.chain(expr, head, &links, ctx)
+        self.chain(expr, head, &links, kept, ctx)
     }
 
-    /// The operand and the links of `postfix`.
-    fn chain(&mut self, expr: &Expr, head: &Expr, links: &[&Expr], ctx: Ctx) -> Doc {
+    /// Close the parentheses of `kept` whose `)` is next, around `docs`:
+    /// what the chain has so far. With whether one was.
+    fn close_kept(&mut self, kept: &mut Vec<(usize, Doc)>, docs: &mut Vec<Doc>) -> bool {
+        let mut closed = false;
+        while let Some((closer, _)) = kept.last() {
+            if !self.cur.kept_closer_ahead(*closer) {
+                break;
+            }
+            let Some((closer, open)) = kept.pop() else {
+                break;
+            };
+            self.cur.release_kept(closer);
+            let tail = self.dangling();
+            let close = self.tok(Token::RParen);
+            let inner = Doc::concat(std::mem::take(docs));
+            docs.push(parenthesized(open, Doc::concat(vec![inner, tail]), close));
+            closed = true;
+        }
+        closed
+    }
+
+    /// The operand and the links of `postfix`. `kept`: the parentheses
+    /// around the first links that stay (`Cursor::keep_prefix_parens`),
+    /// the outer ones first.
+    fn chain(
+        &mut self,
+        expr: &Expr,
+        head: &Expr,
+        links: &[&Expr],
+        mut kept: Vec<(usize, Doc)>,
+        ctx: Ctx,
+    ) -> Doc {
         let is_call = |link: &&Expr| matches!(link.kind, ExprKind::Call(..));
         let is_dot = |link: &Expr| {
             matches!(
@@ -1594,7 +1627,9 @@ impl Printer<'_> {
             .windows(2)
             .filter(|pair| is_dot(pair[0]) && is_call(&pair[1]))
             .count();
-        let breakable = method_calls >= 2;
+        // A chain with parentheses around a part of it is not laid out
+        // as one.
+        let breakable = method_calls >= 2 && kept.is_empty();
 
         let Some(first) = links.first() else {
             return self.bare_expr(expr, ctx);
@@ -1659,6 +1694,37 @@ impl Printer<'_> {
         };
         // A name and its first field stay together: `list.map`, `self.x`.
         let simple_head = matches!(head.kind, ExprKind::Ident(_));
+        if !kept.is_empty() {
+            let mut docs = vec![head_doc];
+            for link in links {
+                match &link.kind {
+                    ExprKind::FieldAccess(..) | ExprKind::RecordUpdate { .. } => {
+                        docs.push(self.tok(Token::Dot));
+                        match &link.kind {
+                            ExprKind::RecordUpdate { fields, .. } => docs.push(self.fields(fields)),
+                            _ => docs.push(self.name()),
+                        }
+                    }
+                    ExprKind::Call(callee, args) => {
+                        // The parentheses may close in front of the
+                        // closure behind the arguments.
+                        self.hold_closure = !kept.is_empty();
+                        docs.push(self.call_args(link, callee, args, ctx));
+                        self.hold_closure = false;
+                        if std::mem::take(&mut self.closure_held) {
+                            self.close_kept(&mut kept, &mut docs);
+                            if let Some(closure) = args.last() {
+                                docs.push(space());
+                                docs.push(self.expr(closure, Ctx::top()));
+                            }
+                        }
+                    }
+                    _ => docs.push(self.tok(Token::Question)),
+                }
+                self.close_kept(&mut kept, &mut docs);
+            }
+            return Doc::concat(docs);
+        }
         let mut docs = Vec::new();
         for (i, link) in links.iter().enumerate() {
             match &link.kind {
@@ -1718,8 +1784,16 @@ impl Printer<'_> {
             }
             _ => (false, false),
         };
-        let trailing =
-            closure_last && ctx.header.is_none() && !(count == 1 && callee_is_call) && !in_the_way;
+        // Behind parentheses of the source that stay (see `chain`), the
+        // closure stays behind them.
+        let stays_behind = self.hold_closure
+            && has_open
+            && args
+                .last()
+                .is_some_and(|last| last.span.end == call.span.end);
+        let trailing = closure_last
+            && (stays_behind
+                || (ctx.header.is_none() && !(count == 1 && callee_is_call) && !in_the_way));
         // How many arguments stand between the parentheses of the result.
         let inside = if trailing { count - 1 } else { count };
         // `f({ x -> x })` becomes `f { x -> x }`: no parentheses.
@@ -1817,8 +1891,12 @@ impl Printer<'_> {
         if !trailing {
             return list;
         }
-        // Parentheses around the call without its closure, if they stay.
-        let list = Doc::concat(vec![list, self.cur.kept_closers_here()]);
+        // Parentheses around the call without its closure, which stay:
+        // the chain closes them, and writes the closure behind them.
+        if self.hold_closure && closed && self.cur.at(&Token::RParen) {
+            self.closure_held = true;
+            return list;
+        }
         let closure = self.expr(&args[count - 1], Ctx::top());
         // The source's `)` behind a closure that the result has behind
         // its own.

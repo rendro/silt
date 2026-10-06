@@ -577,23 +577,24 @@ impl<'a> Cursor<'a> {
         self.comments.get(first).is_some_and(|c| c.span.start < end)
     }
 
-    /// Write the `(` at the cursor that keep their place: parentheses
-    /// around the first links of a chain (`(f(a)).g`, `(f(a)) { x -> x }`;
-    /// the operand ends at byte `head_end`, the chain at `chain_end`)
-    /// group nothing and are dropped, and a comment in front of their
-    /// `)` moves behind the chain's line then. A `--` comment cannot
-    /// always: behind it the line ends, and the next link (a `{`, a `(`)
-    /// may not start a line. With one there the parentheses stay as
-    /// they are written, the `)` on the line behind the comment. The
-    /// closing ones are written when the cursor comes to them.
-    pub fn keep_prefix_parens(&mut self, head_end: u32, chain_end: u32) -> Doc {
+    /// Write the `(` at the cursor that keep their place, each with the
+    /// token of its `)`. Parentheses around the first links of a chain
+    /// (`(f(a)).g`, `(f(a)) { x -> x }`; the operand ends at byte
+    /// `head_end`, the chain at `chain_end`) group nothing and are
+    /// dropped, unless a comment stands directly inside them, as for
+    /// parentheses around an expression: the comment may stand at a line
+    /// break that only they allow. The printer closes them with
+    /// `kept_closer_ahead` and `release_kept`; one it does not come to is
+    /// written when the cursor does.
+    pub fn keep_prefix_parens(&mut self, head_end: u32, chain_end: u32) -> Vec<(usize, Doc)> {
         let last_of_head = self.tokens.partition_point(|tok| tok.span.end < head_end);
         let keeps: Vec<bool> = self.tokens[self.pos.min(self.tokens.len())..]
             .iter()
             .enumerate()
             .take_while(|(_, tok)| tok.kind == Token::LParen)
             .map(|(i, _)| {
-                let closer = self.closers[self.pos + i];
+                let open = self.pos + i;
+                let closer = self.closers[open];
                 let Some(close) = self.tokens.get(closer) else {
                     return false;
                 };
@@ -603,34 +604,55 @@ impl<'a> Cursor<'a> {
                     && self.tokens[last_of_head + 1..closer]
                         .iter()
                         .any(|tok| tok.kind != Token::RParen)
-                    && self.comments[close.comments.start as usize..close.comments.end as usize]
-                        .iter()
-                        .any(|comment| comment.kind == CommentKind::Line)
+                    && (!close.comments.is_empty() || !self.tokens[open + 1].comments.is_empty())
             })
             .collect();
         let Some(last) = keeps.iter().rposition(|keep| *keep) else {
-            return Doc::Nil;
+            return Vec::new();
         };
-        let mut docs = Vec::new();
+        let mut kept = Vec::new();
         for keep in &keeps[..=last] {
             if *keep {
-                self.kept_closers.push(self.closers[self.pos]);
-                docs.push(self.token(&Token::LParen));
+                let closer = self.closers[self.pos];
+                self.kept_closers.push(closer);
+                kept.push((closer, self.token(&Token::LParen)));
             } else {
                 self.skip_one();
             }
         }
-        Doc::concat(docs)
+        kept
     }
 
-    /// The closing parentheses of `keep_prefix_parens` at the cursor,
-    /// for this place: in front of what the printer writes with a space
-    /// in front of it (a closure behind a call).
-    pub fn kept_closers_here(&mut self) -> Doc {
-        while self.kept_closers.contains(&self.pos) {
-            self.write_kept_closer();
+    /// Whether the token `closer`, a `)` of `keep_prefix_parens`, is
+    /// next, behind closing parentheses that are dropped at most: those
+    /// are skipped then.
+    pub fn kept_closer_ahead(&mut self, closer: usize) -> bool {
+        let in_run = closer >= self.pos
+            && self.tokens[self.pos..=closer]
+                .iter()
+                .all(|tok| tok.kind == Token::RParen)
+            && (self.pos..closer).all(|at| !self.kept_closers.contains(&at));
+        if in_run {
+            while self.pos < closer {
+                self.skip_one();
+            }
         }
-        Doc::concat(std::mem::take(&mut self.kept_written))
+        in_run
+    }
+
+    /// The printer writes the `)` at `closer` itself.
+    pub fn release_kept(&mut self, closer: usize) {
+        self.kept_closers.retain(|kept| *kept != closer);
+    }
+
+    /// `leading`, behind the closing parentheses that `seek` wrote.
+    fn kept_and_leading(&mut self) -> Doc {
+        if self.kept_written.is_empty() {
+            return self.leading();
+        }
+        let mut docs = std::mem::take(&mut self.kept_written);
+        docs.push(self.leading());
+        Doc::concat(docs)
     }
 
     /// Write the `)` at the cursor on the line behind its comments.
@@ -749,11 +771,10 @@ impl<'a> Cursor<'a> {
         if !self.seek(kind) {
             return Doc::Nil;
         }
-        let kept = Doc::concat(std::mem::take(&mut self.kept_written));
-        let leading = self.leading();
+        let leading = self.kept_and_leading();
         let text = self.bare();
         let trailing = self.trailing();
-        Doc::concat(vec![kept, leading, text, trailing])
+        Doc::concat(vec![leading, text, trailing])
     }
 
     /// As `token`, in two steps: the token with the comments in front of
@@ -762,10 +783,9 @@ impl<'a> Cursor<'a> {
         if !self.seek(kind) {
             return Doc::Nil;
         }
-        let kept = Doc::concat(std::mem::take(&mut self.kept_written));
-        let leading = self.leading();
+        let leading = self.kept_and_leading();
         let text = self.bare();
-        Doc::concat(vec![kept, leading, text])
+        Doc::concat(vec![leading, text])
     }
 
     /// If the next source token is of the kind of `kind`, skip it and
