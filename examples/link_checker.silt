@@ -50,6 +50,7 @@ fn main() {
       let status = classify_url(url)
       match status {
         "valid" -> {
+          -- Determine scheme
           let scheme = match {
             string.starts_with(url, "https://") -> "HTTPS"
             string.starts_with(url, "http://") -> "HTTP"
@@ -70,7 +71,6 @@ fn main() {
         }
       }
     }
-  -- Determine scheme
   let (valid, invalid) = result
   println("")
   println("=== Summary ===")

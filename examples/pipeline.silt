@@ -10,19 +10,16 @@ import string
 -- Pipeline utility functions
 -- ============================================================
 -- grep: keep lines that contain a pattern
-
 fn grep(lines, pattern) {
   lines |> list.filter { line -> string.contains(line, pattern) }
 }
 
 -- uppercase: convert all lines to uppercase
-
 fn uppercase(lines) {
   lines |> list.map { line -> string.to_upper(line) }
 }
 
 -- numbered: prepend line numbers to each line
-
 fn numbered(lines) {
   lines
     |> list.enumerate
@@ -33,14 +30,12 @@ fn numbered(lines) {
 }
 
 -- sort_by_length: sort lines by their character length
-
 fn sort_by_length(lines) {
   lines |> list.sort_by { line -> string.length(line) }
 }
 
 -- word_count: replace each line with "N words: <line>"
 -- Uses regex.split to correctly split on runs of whitespace
-
 fn word_count(lines) {
   lines
     |> list.map { line ->
@@ -51,7 +46,6 @@ fn word_count(lines) {
 }
 
 -- uniq: remove consecutive duplicate lines
-
 fn uniq(lines) {
   lines
     |> list.fold([]) { acc, line ->
@@ -66,13 +60,11 @@ fn uniq(lines) {
 }
 
 -- reject: remove lines that contain a pattern
-
 fn reject(lines, pattern) {
   lines |> list.filter { line -> !string.contains(line, pattern) }
 }
 
 -- redact: replace all matches of a regex pattern with "[REDACTED]" in each line
-
 fn redact(lines, pattern) {
   lines |> list.map { line -> regex.replace_all(pattern, line, "[REDACTED]") }
 }
@@ -81,25 +73,21 @@ fn redact(lines, pattern) {
 -- Higher-order function factories
 -- ============================================================
 -- make_grep: returns a closure that greps for a specific pattern
-
 fn make_grep(pattern) {
   { lines -> grep(lines, pattern) }
 }
 
 -- make_reject: returns a closure that rejects lines matching a pattern
-
 fn make_reject(pattern) {
   { lines -> reject(lines, pattern) }
 }
 
 -- make_prefix: returns a closure that adds a prefix to every line
-
 fn make_prefix(prefix) {
   { lines -> lines |> list.map { line -> "{prefix}{line}" } }
 }
 
 -- make_contains_any: returns a closure that keeps lines matching any of the given patterns
-
 fn make_contains_any(patterns) {
   { lines ->
     lines |> list.filter { line -> patterns |> list.any { pat -> string.contains(line, pat) } }
@@ -107,7 +95,6 @@ fn make_contains_any(patterns) {
 }
 
 -- make_truncate: returns a closure that truncates lines to max_len chars with "..."
-
 fn make_truncate(max_len) {
   { lines ->
     lines
@@ -121,7 +108,6 @@ fn make_truncate(max_len) {
 }
 
 -- make_replace: returns a closure that applies regex.replace_all_with to each line
-
 fn make_replace(pattern, transform) {
   { lines -> lines |> list.map { line -> regex.replace_all_with(pattern, line, transform) } }
 }

@@ -9,7 +9,6 @@ import string
 -- Personal budget tracker with category totals, monthly summary, running balance,
 -- budget-vs-actual comparison, and spending forecast.
 -- Transaction record type
-
 type Transaction {
   date: String,
   category: String,

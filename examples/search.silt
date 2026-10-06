@@ -9,7 +9,6 @@ import option
 -- while fold_until requires Stop and Continue to carry the same type.
 -- Breadth-first search on a graph represented as an adjacency list (Map of Int -> List(Int)).
 -- Returns Some(goal) if reachable from start, None otherwise.
-
 fn bfs(graph, start, goal) {
   loop queue = [start], visited = [start] {
     match queue {
@@ -28,7 +27,6 @@ fn bfs(graph, start, goal) {
 
 -- Depth-first search (same graph representation).
 -- Uses the queue as a stack (prepend instead of append) for DFS order.
-
 fn dfs(graph, start, goal) {
   loop stack = [start], visited = [start] {
     match stack {

@@ -64,6 +64,7 @@ fn rle_encode(text) {
   match chars {
     [] -> ""
     _ -> {
+      -- fold over chars, accumulating (current_char, count, result_string)
       let first = chars |> list.head |> option.unwrap_or("")
       let rest = list.tail(chars)
       let output = rest
@@ -78,7 +79,6 @@ fn rle_encode(text) {
       "{built}{last_count}{last_char}"
     }
   }
-  -- fold over chars, accumulating (current_char, count, result_string)
 }
 
 fn rle_decode(text) {

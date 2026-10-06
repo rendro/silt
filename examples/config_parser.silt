@@ -7,7 +7,6 @@ import string
 -- INI-style config file parser with section/key-value extraction and validation.
 -- Classifies each line as blank, comment, section header, key-value pair, or parse error.
 -- ADT for classifying each line of the config file
-
 type Line {
   Blank,
   Comment(String),
@@ -17,7 +16,6 @@ type Line {
 }
 
 -- Classify a single line of text into our Line ADT
-
 fn classify_line(line_num, raw_line) {
   let trimmed = string.trim(raw_line)
   match {
@@ -54,7 +52,6 @@ fn classify_line(line_num, raw_line) {
 
 -- Parse config text into a nested map: section -> key -> value
 -- Returns (config_map, errors_list)
-
 fn parse_config(text) {
   let lines = string.split(text, "\n")
   let numbered = list.enumerate(lines)
@@ -70,6 +67,7 @@ fn parse_config(text) {
         Blank -> state
         Comment(_) -> state
         Section(name) -> {
+          -- Ensure the section exists in the map
           let new_config = match map.contains(config, name) {
             true -> config
             _ -> map.set(config, name, #{})
@@ -79,6 +77,7 @@ fn parse_config(text) {
         KeyValue(key, value) -> {
           match string.is_empty(current_section) {
             true -> {
+              -- Key-value outside any section, put under "" key
               let section_map = map.get(config, "") |> option.unwrap_or(#{})
               let new_section = map.set(section_map, key, value)
               let new_config = map.set(config, "", new_section)
@@ -98,15 +97,12 @@ fn parse_config(text) {
         }
       }
     }
-  -- Ensure the section exists in the map
-  -- Key-value outside any section, put under "" key
   let (_, config, errors) = output
   (config, errors)
 }
 
 -- Validate that required keys exist in a given section
 -- Returns a list of error strings
-
 fn validate_required(config, section, required_keys) {
   required_keys
     |> list.filter_map { key ->
@@ -119,7 +115,6 @@ fn validate_required(config, section, required_keys) {
 }
 
 -- Pretty-print the parsed config
-
 fn print_config(config) {
   let sections = map.keys(config)
   sections

@@ -11,7 +11,6 @@ import string
 -- standard deviation), and displays score/age histograms.
 -- Linear congruential PRNG
 -- Parameters from Numerical Recipes: a=1664525, c=1013904223, m=2^32
-
 fn next_random(seed) {
   let a = 1664525
   let c = 1013904223
@@ -21,7 +20,6 @@ fn next_random(seed) {
 }
 
 -- Generate a random number in [0, max) from a seed
-
 fn rand_range(seed, max) {
   let (value, new_seed) = next_random(seed)
   let res = value % max
@@ -77,7 +75,6 @@ let last_names = [
 ]
 
 -- Student record
-
 type Student {
   name: String,
   age: Int,
@@ -85,7 +82,6 @@ type Student {
 }
 
 -- Pick a random element from a list
-
 fn pick_from(items, seed) {
   let len = list.length(items)
   let (idx, new_seed) = rand_range(seed, len)
@@ -94,7 +90,6 @@ fn pick_from(items, seed) {
 }
 
 -- Generate a single student from a seed
-
 fn gen_student(seed) {
   let (first, seed1) = pick_from(first_names, seed)
   let (last, seed2) = pick_from(last_names, seed1)
@@ -108,7 +103,6 @@ fn gen_student(seed) {
 }
 
 -- Generate N students using list.unfold
-
 fn gen_students(n, seed) {
   list.unfold((0, seed)) { state ->
     let (count, s) = state
@@ -123,7 +117,6 @@ fn gen_students(n, seed) {
 }
 
 -- Statistics functions
-
 fn sum_list(nums) {
   nums |> list.fold(0.0) { acc, x -> acc + x }
 }
@@ -167,7 +160,6 @@ fn std_deviation(nums) {
 
 -- Histogram: bucket values into ranges and display bars
 -- Uses map.update for O(n) frequency counting instead of per-bucket filtering
-
 fn histogram(label, values, bucket_size) {
   let sorted = list.sort(values)
   let min_val = list.head(sorted) |> option.unwrap_or(0.0)

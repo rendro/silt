@@ -86,6 +86,7 @@ fn main() {
     match collected >= num_files {
       true -> (successes, failures)
       _ -> {
+        -- Use channel.select to wait on both result channels
         match channel.select([channel.Recv(results_1), channel.Recv(results_2)]) {
           (_, channel.Message(result)) -> {
             let (worker_id, outcome) = result
@@ -115,7 +116,6 @@ fn main() {
       }
     }
   }
-  -- Use channel.select to wait on both result channels
   -- Wait for all workers to finish
   task.join(w1)
   task.join(w2)

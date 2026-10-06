@@ -12,7 +12,6 @@ type Pos {
 }
 
 -- Hard-coded 10x10 maze with a solvable path
-
 fn make_maze() {
   [
     "##########",
@@ -29,7 +28,6 @@ fn make_maze() {
 }
 
 -- Get the character at a given position in the maze
-
 fn get_cell(maze, pos) {
   let row_str = maze |> list.get(pos.row) |> option.unwrap_or("")
   let chars = string.chars(row_str)
@@ -37,7 +35,6 @@ fn get_cell(maze, pos) {
 }
 
 -- Find the position of a specific character in the maze
-
 fn find_char(maze, target) {
   let rows = list.length(maze)
   let positions = 0..rows
@@ -58,7 +55,6 @@ fn find_char(maze, target) {
 }
 
 -- Get valid neighboring positions (up, down, left, right)
-
 fn get_neighbors(maze, pos) {
   let candidates = [
     Pos { row: pos.row - 1, col: pos.col },
@@ -74,7 +70,6 @@ fn get_neighbors(maze, pos) {
 }
 
 -- Reconstruct path by following parent indices from goal back to start
-
 fn reconstruct_path(visited, goal_idx) {
   loop idx = goal_idx, path = [] {
     let entry = visited |> list.get(idx) |> option.unwrap_or((Pos { row: 0, col: 0 }, -1))
@@ -88,7 +83,6 @@ fn reconstruct_path(visited, goal_idx) {
 }
 
 -- BFS using loop: bind queue and visited, iterate until found or exhausted
-
 fn bfs(maze, start, goal) {
   loop queue = [(start, -1)], visited = [(start, -1)] {
     match queue {
@@ -145,7 +139,6 @@ fn bfs(maze, start, goal) {
 }
 
 -- Print the maze with solution path marked as '*'
-
 fn print_maze_with_path(maze, path) {
   let rows = list.length(maze)
   0..rows

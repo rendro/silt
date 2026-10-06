@@ -9,7 +9,6 @@ import string
 -- Build a 2D table (list of lists) for LCS lengths using bottom-up DP.
 -- table[i][j] = length of LCS of old[i..] and new[j..]
 -- We build from bottom-right to top-left.
-
 fn build_lcs_table(old_lines, new_lines) {
   let old_len = list.length(old_lines)
   let new_len = list.length(new_lines)
@@ -48,7 +47,6 @@ fn build_lcs_table(old_lines, new_lines) {
 -- Trace back through LCS table to produce diff operations.
 -- Returns a list of (String, String) tuples: (marker, line)
 -- where marker is " " (context), "-" (removed), "+" (added)
-
 fn trace_diff(table, old_lines, new_lines, i, j) {
   let old_len = list.length(old_lines)
   let new_len = list.length(new_lines)

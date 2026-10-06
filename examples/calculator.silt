@@ -219,6 +219,7 @@ fn main() {
           }
           "" -> loop(stack, history)
           _ -> {
+            -- Try to parse as a number
             match float.parse(input) {
               Ok(n) -> {
                 println("Pushed {format(n)}")
@@ -234,5 +235,4 @@ fn main() {
       }
     }
   }
-  -- Try to parse as a number
 }

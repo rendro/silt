@@ -115,6 +115,7 @@ fn main() {
       let shortest = find_shortest(normalized)
       let freq = count_frequencies(normalized)
       let top = top_frequent(freq, top_n)
+      -- Print results
       print_header("Text File Statistics")
       println("")
       print_row("File:", filename)
@@ -139,5 +140,4 @@ fn main() {
       println(string.repeat("=", 50))
     }
   }
-  -- Print results
 }

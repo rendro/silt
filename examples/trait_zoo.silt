@@ -23,7 +23,6 @@ type Styled {
 }
 
 -- Custom Display for Shape
-
 trait Display for Shape {
   fn display(self) -> String {
     match self {
@@ -39,7 +38,6 @@ trait Display for Shape {
 }
 
 -- Custom Display for Color
-
 trait Display for Color {
   fn display(self) -> String {
     match self {
@@ -52,7 +50,6 @@ trait Display for Color {
 }
 
 -- Custom Display for Styled
-
 trait Display for Styled {
   fn display(self) -> String {
     match self {
@@ -62,7 +59,6 @@ trait Display for Styled {
 }
 
 -- Custom trait: Area
-
 trait Area {
   fn area(self) -> Float
 }
@@ -73,6 +69,7 @@ trait Area for Shape {
       Circle(r) -> math.pi * r * r
       Rect(w, h) -> w * h
       Triangle(a, b, c) -> {
+        -- Heron's formula
         let s: Float = (a + b + c) / 2.0
         let inner: Float = s * (s - a) * (s - b) * (s - c)
         match {
@@ -81,12 +78,10 @@ trait Area for Shape {
         }
       }
     }
-    -- Heron's formula
   }
 }
 
 -- Custom trait: Perimeter
-
 trait Perimeter {
   fn perimeter(self) -> Float
 }
@@ -102,13 +97,11 @@ trait Perimeter for Shape {
 }
 
 -- Generic function with where clause
-
 fn describe(item: a) where a: Display {
   item.display()
 }
 
 -- Format a float to 4 decimal places
-
 fn fmt(f) {
   float.to_string(f, 4)
 }
