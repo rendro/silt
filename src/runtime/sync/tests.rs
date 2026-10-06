@@ -918,6 +918,61 @@ fn a_deadline_hands_the_task_back() {
     assert_eq!((ch.queued(), d.timer.pending()), ((0, 0), 0));
 }
 
+/// A wait with a deadline leaves no timer entry behind, whichever way
+/// its task ends before the deadline: cancelled before it parks,
+/// cancelled between the park and the registry, its wait over before
+/// it is given up, cancelled while parked, or dropped at shutdown.
+#[test]
+fn a_deadline_entry_does_not_outlive_its_wait() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 0);
+    let timed = || recv(&ch).deadline(d.timer.deadline_after(10 * MS));
+    let left = || (d.timer.pending(), ch.queued(), p.waiting());
+    let nothing = (0, (0, 0), 0);
+
+    // The flag is set when the task gets to its wait.
+    let flag = Arc::new(AtomicBool::new(true));
+    let back = p.park(TaskId(1), 1, timed().cancel(Some(flag)), || false);
+    assert!(matches!(back, Some((1, Resumed::Cancelled))));
+    assert_eq!(left(), nothing);
+
+    // The cancel comes while the task is on its way into the registry.
+    let reads = AtomicUsize::new(0);
+    let back = p.park(TaskId(2), 2, timed(), || {
+        reads.fetch_add(1, Ordering::SeqCst) > 0
+    });
+    assert!(matches!(back, Some((2, Resumed::Cancelled))));
+    assert_eq!(left(), nothing);
+
+    // The wait is over before the task is given up.
+    let reads = AtomicUsize::new(0);
+    let back = p.park(TaskId(3), 3, timed(), || {
+        if reads.fetch_add(1, Ordering::SeqCst) == 1 {
+            assert!(matches!(ch.try_send(Value::Int(5), &*p), TrySend::Sent));
+        }
+        false
+    });
+    assert!(matches!(back, Some((3, Resumed::Fired(_)))));
+    assert_eq!(left(), nothing);
+
+    // Cancelled while parked.
+    assert!(rest(&p, 4, timed()).is_none());
+    assert_eq!(d.timer.pending(), 1);
+    assert!(p.cancel(TaskId(4)));
+    assert!(matches!(handed_back(&ready), (4, Resumed::Cancelled)));
+    assert_eq!(left(), nothing);
+
+    // Dropped at shutdown.
+    assert!(rest(&p, 5, timed()).is_none());
+    assert_eq!(p.shutdown(), [(TaskId(5), 5)]);
+    assert_eq!(left(), nothing);
+    assert_eq!(d.advance(20 * MS), 0);
+    assert!(ready.lock().is_empty());
+}
+
 #[test]
 fn shutdown_gives_every_parked_task_and_leaves_nothing_queued() {
     let d = Double::new();
