@@ -1695,13 +1695,10 @@ impl TypeChecker {
             // of the call sees (`select_visible_methods`); a call that
             // sees both is ambiguous.
 
-            // Collect constraints for this method:
-            //   (a) every impl-level constraint, verbatim (they are on
-            //       the impl's variables, which the method's type
-            //       mentions);
-            //   (b) every method-level `where` clause, resolved through
-            //       the method's param_map — which sees BOTH impl-level
-            //       binders AND method-local type annos.
+            // What a use of the method owes: the bounds of the impl's
+            // header and the bounds the trait declares for the method.
+            // The method's own `where` clauses may restate these; one
+            // that adds a bound is an error below.
             let mut method_constraints = impl_level_constraints.clone();
             method_constraints.extend(declared_bounds);
             for wc in &method.where_clauses {
