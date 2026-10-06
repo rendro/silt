@@ -1739,6 +1739,63 @@ mod tests {
         assert_eq!(error.message, format!("deadlock on main thread: {what}"));
     }
 
+    /// The verdict is asked of the tasks of one owner. What another
+    /// owner left on the same scheduler (a task asleep for an hour, a
+    /// task that waits) neither delays it nor is counted in it.
+    ///
+    /// The owner tag is the process's: this test relies on having
+    /// the process to itself, as under nextest.
+    #[test]
+    fn a_deadlock_is_asked_of_the_tasks_of_one_owner() {
+        let compile = |source: &str| {
+            crate::session::testing::compile_str(source).expect("the program compiles")
+        };
+        let leaves_tasks = compile(
+            r#"
+import channel
+import task
+import time
+fn main() {
+  let never = channel.new(0)
+  let _asleep = task.spawn({ -> time.sleep(time.hours(1)) })
+  let _waits = task.spawn({ -> channel.receive(never) })
+  let ready = channel.new(0)
+  let _third = task.spawn({ -> channel.send(ready, 1) })
+  let _ = channel.receive(ready)
+}
+"#,
+        );
+        let deadlocked = compile(
+            r#"
+import channel
+import task
+fn main() {
+  let never = channel.new(0)
+  let _waits = task.spawn({ -> channel.receive(never) })
+  channel.receive(never)
+}
+"#,
+        );
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()));
+        super::set_task_owner(1);
+        let first = vm.run_program(&leaves_tasks);
+        super::set_task_owner(2);
+        let before = Instant::now();
+        let second = vm.run_program(&deadlocked);
+        let took = before.elapsed();
+        super::set_task_owner(0);
+        assert_eq!(first.map_err(|e| e.message), Ok(Value::Unit));
+        let error = second.expect_err("the second program is deadlocked");
+        assert_eq!(
+            error.message,
+            "deadlock on main thread: channel receive with no counterparty"
+        );
+        // Its own task is listed, the first owner's two are not.
+        assert_eq!(error.help.len(), 1, "{:?}", error.help);
+        assert!(took < Duration::from_secs(30), "the verdict took {took:?}");
+    }
+
     #[test]
     fn a_deadlock_is_reported_when_the_last_task_parks() {
         let (result, out, end) = run(r#"

@@ -516,7 +516,8 @@ more than one frame. The rules:
 Under `silt test`, the failure fails the test that spawned the task (see
 [Testing](language/testing.md#spawned-tasks)). In the REPL it is reported
 when the session ends, since a later input may still join or cancel the
-task.
+task; an input is not waited for beyond its own value, so the tasks it
+spawned go on while you type the next.
 
 ### Scoped deadlines: `task.deadline(dur, fn)`
 

@@ -361,9 +361,16 @@ returned; tasks that the program spawned may still be at work.
 it: until none of its tasks can do more (each has ended or waits, and
 no timer and no I/O is pending). It then drops the tasks that still
 wait, and reports on stderr the tasks that failed and that nobody
-joined. An embedder that must not wait for a program's background
-tasks (a playground with a time limit) does not call it, and drops the
-`Vm`.
+joined. An embedder that wants the exit rule of `silt run` calls it
+after a `run_program` that returned `Ok`.
+
+Without `settle`, the program's tasks go on for as long as the `Vm`
+lives: a task that waits stays where it is, and a task that fails is
+reported at the return of the next call into the `Vm`, or when the
+`Vm` is dropped, if it has failed by then; a task that has not failed
+by then leaves no report. An embedder that must not wait for a
+program's background tasks (a playground with a time limit) does not
+call `settle`, and drops the `Vm`.
 
 **Dropping a Vm** ends its program where it is. The threads that
 served it end (the scheduler's workers, the timer thread, the I/O workers; each when what
