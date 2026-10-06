@@ -148,8 +148,8 @@ pub struct Vm {
     /// The arguments a builtin that parked is called with when the task
     /// runs again (see [`Vm::park_with_reason`]).
     pub(crate) retry_args: Option<Vec<Value>>,
-    /// True when this VM is running as a scheduled task (not on the main thread).
-    pub(crate) is_scheduled_task: bool,
+    /// True for the VM of a task made by `task.spawn`.
+    pub(crate) spawned: bool,
     /// The I/O completion the builtin that parked waits for; it takes
     /// it back when it is called again.
     pub(crate) pending_io: Option<Arc<IoCompletion>>,
@@ -271,9 +271,7 @@ impl Vm {
         args: &[Value],
         timeout_err: &(dyn Fn(&str) -> Value + Sync),
     ) -> Result<Option<Value>, VmError> {
-        if self.is_scheduled_task
-            && let Some(completion) = self.pending_io.take()
-        {
+        if let Some(completion) = self.pending_io.take() {
             if let Some(result) = completion.try_get() {
                 return Ok(Some(result));
             }
@@ -386,11 +384,8 @@ impl Vm {
     where
         F: FnOnce() -> Value + Send + 'static,
     {
-        if self.is_scheduled_task {
-            let c = self.runtime.io_pool.submit_with(completion, op);
-            return Err(self.park_on_completion(args, c));
-        }
-        Ok(op())
+        let c = self.runtime.io_pool.submit_with(completion, op);
+        Err(self.park_on_completion(args, c))
     }
 
     /// A VM whose programs write to the output of `io` and read its
@@ -402,11 +397,16 @@ impl Vm {
     /// failed since the last report and that nobody joined are reported
     /// on the stderr of `io`.
     pub fn new(io: HostIo) -> Self {
+        let scheduler = Arc::new(Scheduler::new(io.clone()));
         Vm {
             runtime: Arc::new(Runtime {
-                scheduler: parking_lot::Mutex::new(None),
-                timer: TimerManager::new(io.clone()),
-                io_pool: IoPool::new(runtime::resolve_io_pool_size(), io.clone()),
+                timer: TimerManager::new(io.clone(), scheduler.clone()),
+                io_pool: IoPool::new(
+                    runtime::resolve_io_pool_size(),
+                    io.clone(),
+                    scheduler.clone(),
+                ),
+                scheduler,
                 io,
                 rng: parking_lot::Mutex::new(None),
                 uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
@@ -423,7 +423,7 @@ impl Vm {
             next_task_id: Arc::new(AtomicU64::new(0)),
             block_reason: None,
             retry_args: None,
-            is_scheduled_task: false,
+            spawned: false,
             pending_io: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
@@ -435,9 +435,7 @@ impl Vm {
     /// and that nobody joined or cancelled. Nothing while a front end
     /// collects them (`scheduler::collect_unjoined_failures`).
     fn report_unjoined_failures(&self) {
-        if let Some(scheduler) = self.current_scheduler() {
-            scheduler.report_unjoined_failures();
-        }
+        self.runtime.scheduler.report_unjoined_failures();
     }
 
     /// Run a compiled program: take in its tables, then run its script.
@@ -498,7 +496,7 @@ impl Vm {
             next_task_id: self.next_task_id.clone(),
             block_reason: None,
             retry_args: None,
-            is_scheduled_task: false,
+            spawned: false,
             pending_io: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
@@ -506,31 +504,9 @@ impl Vm {
         }
     }
 
-    /// Return a clone of the current scheduler `Arc`, if one exists.
-    ///
-    /// Unlike [`get_or_create_scheduler`], this does NOT create a scheduler
-    /// on demand — it returns `None` when no task has been spawned yet.
-    /// Used by the main-thread channel watchdog to decide whether any
-    /// scheduled task could still make progress.
-    pub(crate) fn current_scheduler(&self) -> Option<Arc<Scheduler>> {
-        self.runtime.scheduler.lock().clone()
-    }
-
-    /// Get or create the shared scheduler.
-    pub(crate) fn get_or_create_scheduler(&self) -> Arc<Scheduler> {
-        let mut guard = self.runtime.scheduler.lock();
-        if let Some(ref sched) = *guard {
-            sched.clone()
-        } else {
-            let sched = Arc::new(Scheduler::new(self.runtime.io.clone()));
-            *guard = Some(sched.clone());
-            sched
-        }
-    }
-
-    /// Take the block_reason out of this VM (consuming it).
-    pub(crate) fn take_block_reason(&mut self) -> Option<BlockReason> {
-        self.block_reason.take()
+    /// The scheduler of the program.
+    pub(crate) fn scheduler(&self) -> &Arc<Scheduler> {
+        &self.runtime.scheduler
     }
 
     /// Allocate a new unique channel ID.
@@ -572,7 +548,7 @@ impl Vm {
             ip: 0,
             base_slot: 0,
         }));
-        let run = self.run_frames(floor, usize::MAX);
+        let run = self.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
         self.finish_run(run, floor, stack_floor)
     }
 

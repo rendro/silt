@@ -239,6 +239,11 @@ impl TaskHandle {
         }
     }
 
+    /// Whether the task has its result: it ended, or was cancelled.
+    pub fn is_finished(&self) -> bool {
+        self.result.lock().is_some()
+    }
+
     /// Non-blocking poll.
     pub fn try_get(&self) -> Option<Result<Value, VmError>> {
         self.result.lock().clone()

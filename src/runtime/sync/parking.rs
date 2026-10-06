@@ -1,6 +1,6 @@
 //! The parked tasks: who holds a task while it waits.
 //!
-//! [`park`](super::park) and a [`Parked`] are the wait of a task; a
+//! [`park`] and a [`Parked`] are the wait of a task; a
 //! [`Parking`] is the scheduler's side of it, done once. It takes the
 //! task (whatever the scheduler's task is: `T`) for the time of the
 //! wait, is the [`Wake`] that every operation of this module is given,

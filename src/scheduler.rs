@@ -1,12 +1,31 @@
-//! M:N scheduler mapping lightweight tasks onto a fixed-size thread pool.
+//! The scheduler: tasks on a pool of worker threads, and the threads
+//! that run silt code of their own.
 //!
-//! Spawned tasks run cooperatively on worker threads. Channel operations
-//! park tasks instead of blocking OS threads, and wakers re-enqueue
-//! them when data arrives.
+//! Every piece of running silt code is a task to the scheduler, whoever
+//! drives it:
+//!
+//! - a task made by `task.spawn` is run slice by slice by the workers;
+//! - the program itself (`fn main`, a test, a REPL entry) and the
+//!   callbacks of a stream stage or an HTTP handler are run by their
+//!   own thread (`Scheduler::enter`).
+//!
+//! Each of them waits in the same place, the registry of parked tasks
+//! ([`Parking`]): a spawned task is taken off its worker and put back
+//! on the run queue when its wait ends; a thread waits where it is
+//! (`Scheduler::block_thread`) and, where there are no workers, runs
+//! the queued tasks while it does.
+//!
+//! # Deadlock
+//!
+//! The program is deadlocked when every task waits and nothing outside
+//! can end a wait: no timer is pending and no I/O operation is in
+//! flight (`Scheduler::external`). That is checked when a task parks,
+//! when one ends, and when something external ends; it is exact, so it
+//! is reported at once. The program's own thread gets the error.
 
 use parking_lot::{Condvar, Mutex};
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
@@ -14,50 +33,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use crate::runtime::channel::WakerRegistration;
-use crate::runtime::completion::IoCompletion;
-use crate::runtime::handle::TaskHandle;
+use crate::runtime::channel::{Channel, Waker, WakerRegistration};
+use crate::runtime::completion::{IoCompletion, IoWakerRegistration};
+use crate::runtime::handle::{JoinWakerRegistration, TaskHandle};
+use crate::runtime::sync::{self, Arm, Parking, Resumed, TaskId, Wait};
 use crate::value::Value;
 use crate::vm::{BlockReason, HostIo, SelectOpKind, Vm, VmError};
 
-// `test_hooks` and `test_support` are public so integration tests in
-// `tests/` (separate crate, no `cfg(test)`) can `use` them. The
-// fire_hook! macro that calls into `test_hooks` stays feature-gated
-// (`feature = "test-hooks"`) so the hot scheduler path pays zero cost
-// when the feature is off. Marked `#[doc(hidden)]` to discourage
-// downstream crates from depending on the test API.
-#[doc(hidden)]
-pub mod test_hooks;
 #[doc(hidden)]
 pub mod test_support;
-pub mod wake_graph;
-
-pub use wake_graph::{MainTarget, SelectEdge};
-use wake_graph::{NodeId, ParkEdge, WakeGraph};
-
-/// Callback invoked on every wake-graph state change. Type-aliased to
-/// keep `SchedulerInner::main_waiters` legible — clippy's
-/// `type_complexity` lint flags the inline form. Trait-object shape
-/// chosen so the watchdog can hold callbacks across `Vm::run` without
-/// caring about the concrete `Fn` type.
-pub type MainWaiterCallback = Arc<dyn Fn() + Send + Sync>;
-
-/// Fire a scheduler instrumentation hook. Compiles to a no-op outside
-/// `cfg(test)` / `feature = "test-hooks"`. Each call site names a
-/// stable transition point so a Phase-3 test can install a hook that
-/// blocks (e.g. on a barrier) at exactly the racy moment.
-macro_rules! fire_hook {
-    ($which:ident, $tag:expr) => {
-        #[cfg(any(test, feature = "test-hooks"))]
-        {
-            $crate::scheduler::test_hooks::$which($tag);
-        }
-        #[cfg(not(any(test, feature = "test-hooks")))]
-        {
-            let _ = $tag;
-        }
-    };
-}
 
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
 const MAX_TASKS: usize = 100_000;
@@ -93,63 +77,6 @@ pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
 /// nobody joined. A long-running program whose tasks keep failing must
 /// not grow without bound; what goes beyond the bound is counted.
 const MAX_RECORDED_FAILURES: usize = 64;
-
-/// Test-only process-wide "park-entry pause" in microseconds. When set
-/// to a non-zero value, every worker that enters the Blocked arm for a
-/// Receive / Send / Select park will sleep for this many µs AFTER the
-/// initial cancel cleanup at `:626` is installed but BEFORE the per-arm
-/// `handle.clone()` runs. This widens the F10 race window (a concurrent
-/// `task.cancel(h)` firing the cleanup mid-setup) from nanoseconds to
-/// milliseconds so the regression test in
-/// `tests/concurrency/scheduler_cancel_setup_race_tests.rs` can deterministically
-/// reproduce the panic pre-fix.
-///
-/// Gated on `cfg(any(test, feature = "test-hooks"))` along with the
-/// hook macro; the release `scheduler::worker_loop` path compiles the
-/// check out entirely.
-///
-/// Marked `#[doc(hidden)]` so downstream crates do not depend on this
-/// internal test knob.
-#[cfg(any(test, feature = "test-hooks"))]
-#[doc(hidden)]
-pub static F10_PARK_SETUP_PAUSE_US: AtomicU64 = AtomicU64::new(0);
-
-/// Process-wide instrumentation counters for `WatchdogRegistry::add` /
-/// `remove`. Tests in `tests/round75_io_watchdog_f10_race_tests.rs`
-/// observe `WATCHDOG_ADD_COUNT - WATCHDOG_REMOVE_COUNT` to detect
-/// leaks across the I/O Blocked arm's F10 race window — i.e. an
-/// add() that no remove() ever balances. Reset to zero by the test
-/// harness at the start of each scenario.
-///
-/// Gated on `cfg(any(test, feature = "test-hooks"))` along with the
-/// hook macro; the release `WatchdogRegistry::add` / `remove` paths
-/// compile the increment out entirely.
-///
-/// Marked `#[doc(hidden)]` so downstream crates do not depend on this
-/// internal test knob.
-#[cfg(any(test, feature = "test-hooks"))]
-#[doc(hidden)]
-pub static WATCHDOG_ADD_COUNT: AtomicU64 = AtomicU64::new(0);
-#[cfg(any(test, feature = "test-hooks"))]
-#[doc(hidden)]
-pub static WATCHDOG_REMOVE_COUNT: AtomicU64 = AtomicU64::new(0);
-
-/// Inline helper: sleep for `F10_PARK_SETUP_PAUSE_US` microseconds if
-/// the atomic is set. Called at the top of every Blocked-arm branch
-/// (Receive / Send / Select) before the per-arm handle clone, so the
-/// F10 regression test can deterministically widen the race window.
-/// No-op when the atomic is zero (the test default).
-#[cfg(any(test, feature = "test-hooks"))]
-#[inline]
-fn f10_park_setup_pause() {
-    let us = F10_PARK_SETUP_PAUSE_US.load(Ordering::Relaxed);
-    if us != 0 {
-        std::thread::sleep(Duration::from_micros(us));
-    }
-}
-#[cfg(not(any(test, feature = "test-hooks")))]
-#[inline(always)]
-fn f10_park_setup_pause() {}
 
 /// Parse a duration string like `"30s"`, `"500ms"`, `"5m"`, `"2h"`, or
 /// `"none"`/empty. Returns `None` for disabled/invalid input — the caller
@@ -198,7 +125,7 @@ impl DeadlineSource {
 /// error. The `Weak` reference ensures a dropped task's completion
 /// doesn't keep the watchdog holding memory.
 struct WatchdogEntry {
-    task_id: usize,
+    task: TaskId,
     completion: Weak<IoCompletion>,
     /// A reading of the host clock.
     deadline: Duration,
@@ -214,6 +141,8 @@ pub(crate) struct WatchdogRegistry {
     /// Controlled by `SILT_IO_WATCHDOG_INTERVAL`, defaulted below.
     interval: Duration,
     shutdown: AtomicBool,
+    /// Whether its thread runs.
+    started: Mutex<bool>,
 }
 
 impl WatchdogRegistry {
@@ -222,32 +151,29 @@ impl WatchdogRegistry {
             entries: Mutex::new(Vec::new()),
             interval,
             shutdown: AtomicBool::new(false),
+            started: Mutex::new(false),
         }
     }
 
     fn add(
         &self,
-        task_id: usize,
+        task: TaskId,
         completion: &Arc<IoCompletion>,
         deadline: Duration,
         source: DeadlineSource,
     ) {
         self.entries.lock().push(WatchdogEntry {
-            task_id,
+            task,
             completion: Arc::downgrade(completion),
             deadline,
             source,
         });
-        #[cfg(any(test, feature = "test-hooks"))]
-        WATCHDOG_ADD_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn remove(&self, task_id: usize) {
+    fn remove(&self, task: TaskId) {
         let mut entries = self.entries.lock();
-        if let Some(pos) = entries.iter().position(|e| e.task_id == task_id) {
+        if let Some(pos) = entries.iter().position(|e| e.task == task) {
             entries.swap_remove(pos);
-            #[cfg(any(test, feature = "test-hooks"))]
-            WATCHDOG_REMOVE_COUNT.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -320,16 +246,15 @@ fn watchdog_loop(registry: Arc<WatchdogRegistry>, io: HostIo) {
 }
 
 /// Result of running a task's VM for one time slice.
-pub enum SliceResult {
+pub(crate) enum SliceResult {
     /// Time slice expired; task is still runnable.
     Yielded,
     /// Task completed with a value.
     Completed(Value),
     /// Task failed with an error.
     Failed(VmError),
-    /// Task is blocked on a channel/join operation.
-    /// The block_reason on the VM describes what it's waiting for.
-    Blocked,
+    /// The task waits for this.
+    Blocked(BlockReason),
 }
 
 /// A lightweight task scheduled on the M:N thread pool.
@@ -339,58 +264,76 @@ pub struct Task {
     pub handle: Arc<TaskHandle>,
 }
 
-/// Shared state for the M:N scheduler.
+/// The scheduler of one program.
 pub struct Scheduler {
-    inner: Arc<SchedulerInner>,
-    /// Worker thread handles, created lazily on first submit.
+    inner: Arc<Inner>,
+    /// The worker threads and the watchdog, started by the first task.
     workers: Mutex<Option<Vec<thread::JoinHandle<()>>>>,
 }
 
-struct SchedulerInner {
-    run_queue: Mutex<VecDeque<Task>>,
-    /// The slot of each task that is parked, by the task's id: where
-    /// `shutdown` finds the tasks that wait for something and drops
-    /// them. The entry of a task is replaced when it parks again and
-    /// removed when it is requeued or cancelled.
-    parked: Mutex<HashMap<usize, std::sync::Weak<Mutex<Option<Task>>>>>,
-    condvar: Condvar,
+/// Who waits in the registry of parked tasks, with what wakes it.
+struct Sleeper {
+    who: Who,
+    /// Dropped when the wait ends, however it ends.
+    bridge: Bridge,
+}
+
+// Nearly every sleeper is a task.
+#[allow(clippy::large_enum_variant)]
+enum Who {
+    /// A spawned task: it goes back on the run queue.
+    Task(Task),
+    /// A thread that runs silt code of its own: it is told.
+    Thread(Arc<ThreadPark>),
+}
+
+/// Where a thread that waits finds how its wait ended.
+#[derive(Default)]
+struct ThreadPark {
+    resumed: Mutex<Option<Resumed>>,
+}
+
+/// The wait of the program's own thread, for the deadlock report.
+#[derive(Clone)]
+struct MainWait {
+    id: TaskId,
+    /// `channel receive with no counterparty`.
+    what: &'static str,
+}
+
+struct Inner {
+    queue: Mutex<VecDeque<Task>>,
+    /// The workers wait here for a task.
+    work: Condvar,
+    /// The threads that wait in [`Scheduler::block_thread`] wait here,
+    /// with the queue's lock.
+    threads: Condvar,
     shutdown: AtomicBool,
-    /// Number of tasks that haven't yet completed (active + blocked + queued).
-    /// Used by the wake graph as the "fuel" set: any live task NOT
-    /// currently parked on a graph edge is universal fuel — the
-    /// detector cannot fire while one exists. Also enforces `MAX_TASKS`.
-    live_tasks: AtomicUsize,
-    /// Number of tasks that are "in flight" but not yet settled. A task is
-    /// unsettled from the moment it is enqueued (submit / requeue / yield)
-    /// until it has either:
-    ///   * (a) finished executing for the current step (Completed, Failed,
-    ///     terminal error), OR
-    ///   * (b) parked successfully — the worker has run a slice that
-    ///     blocked the task and registered a waker on its blocking edge
-    ///     (channel send/recv, select, join, I/O completion). Once a
-    ///     waker is registered, an external event will requeue the task
-    ///     and `unsettled_tasks` will be re-incremented at that point.
-    ///
-    /// CRITICAL: `pop_front` does NOT decrement this counter. The window
-    /// between worker dequeue and waker registration is exactly the
-    /// region where, pre-Phase-3, the polling watchdog could observe
-    /// "no live runnable task" even though one was about to register.
-    /// Wake-graph BFS now consults `live_tasks` membership directly,
-    /// but `unsettled_tasks` is still tracked: the wake graph's
-    /// `live_tasks` mirror is updated under its own mutex on submit /
-    /// complete, so the in-flight counter pulses `signal_progress` to
-    /// keep main's local condvar woken across the dequeue → register
-    /// window.
-    unsettled_tasks: AtomicUsize,
-    /// Reserved for cross-process deadlock state. The worker-side
-    /// detector that used to flip this flag was removed because it could
-    /// not distinguish "main thread is descheduled" from "main thread is
-    /// stuck"; deadlock detection now happens exclusively on the main
-    /// thread via the wake graph (see `main_thread_wait_for_*` in
-    /// `src/builtins/concurrency.rs`). This flag is currently never
-    /// flipped, but is retained so existing accessors / tests do not
-    /// have to change shape.
-    deadlock_detected: AtomicBool,
+    /// Whether worker threads run the queue.
+    has_workers: AtomicBool,
+    /// The tasks that have not ended: spawned tasks, and threads that
+    /// are running silt code.
+    live: AtomicUsize,
+    /// The spawned tasks among them, for `MAX_TASKS`.
+    spawned: AtomicUsize,
+    /// What can end a wait from outside the tasks: timers that are
+    /// pending, I/O operations in flight. See [`External`].
+    external: AtomicUsize,
+    parking: Parking<Sleeper>,
+    /// How many parked tasks have a wait that a stream stage can end,
+    /// whose thread the scheduler does not count: a receive on the
+    /// stage's output, or a send on its input. While there is one, no
+    /// verdict is given.
+    stream_waits: AtomicUsize,
+    main_wait: Mutex<Option<MainWait>>,
+    /// The verdict, between the check that gave it and the program's
+    /// thread that raises it.
+    deadlock: Mutex<Option<VmError>>,
+    /// The names of the waits of threads.
+    next_thread_wait: AtomicU64,
+    /// Whether the thread that runs the program knows this scheduler
+    /// (`StartedSchedulers`).
+    registered: AtomicBool,
     /// Always-on I/O watchdog registry. Entries are added only when an
     /// I/O block has an effective deadline (from SILT_IO_TIMEOUT or
     /// task.deadline). If neither is in effect for a given block, no
@@ -400,31 +343,666 @@ struct SchedulerInner {
     /// block registers with `now + global_io_timeout` as its deadline
     /// unless a tighter task.deadline is in effect.
     global_io_timeout: Option<Duration>,
-    /// Phase 3 wake graph: per-task park edges + reverse listener
-    /// indices, used by [`Scheduler::is_main_starved`] for
-    /// event-driven deadlock detection. Mutated under its own internal
-    /// `Mutex` at every park / wake / spawn / complete site so the
-    /// graph stays consistent with the three counter atomics.
-    wake_graph: WakeGraph,
-    /// Per-main-thread-waiter callbacks fired on every graph mutation
-    /// (submit, requeue, complete, on_park, on_wake). The main-thread
-    /// `wait_for_*` loops in `src/builtins/concurrency.rs` install a
-    /// callback that pokes their local condvar so any state change
-    /// flips them out of `wait_for` immediately — no 100ms polling.
-    /// Stored as `(id, callback)` so the waiter can deregister on
-    /// drop without traversing the entire vec by closure identity.
-    /// Behind a `Mutex` because installs / removes are rare (one per
-    /// main-thread block) but signal_progress fires often (every
-    /// task transition).
-    main_waiters: Mutex<Vec<(u64, MainWaiterCallback)>>,
-    /// Monotonic id source for `main_waiters` entries. Used by the
-    /// `MainWaiterGuard` Drop to find its own entry on deregister.
-    next_main_waiter_id: AtomicU64,
     /// Tasks that ended with an error, kept for the report of failures
     /// that nobody joined. See `report_unjoined_failures`.
     failed_tasks: Mutex<FailedTasks>,
     /// The host's clock and stderr.
     io: HostIo,
+}
+
+/// The wakers a parked task has on the channels, handles and
+/// completions of its wait. Each completes the cell the task is parked
+/// on; the builtin that parked then runs again and takes what it
+/// finds.
+struct Bridge {
+    inner: Arc<Inner>,
+    registrations: Vec<Registration>,
+    channels: Vec<Arc<Channel>>,
+    /// Counted in `Inner::stream_waits`.
+    stream: bool,
+    /// The task's entry in the I/O watchdog.
+    watched: Option<TaskId>,
+}
+
+#[allow(dead_code)] // held for their `Drop`
+enum Registration {
+    Channel(WakerRegistration),
+    Join(JoinWakerRegistration),
+    Io(IoWakerRegistration),
+}
+
+impl Bridge {
+    /// The wait ended by a wake: the builtin runs again and takes what
+    /// it was woken for, so nothing is passed on.
+    fn woken(mut self) {
+        self.channels.clear();
+    }
+}
+
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        self.registrations.clear();
+        if self.stream {
+            self.inner.stream_waits.fetch_sub(1, Ordering::SeqCst);
+        }
+        if let Some(task) = self.watched {
+            self.inner.watchdog.remove(task);
+        }
+        // A channel wakes one waiter for each value and each free
+        // place. A task that was cancelled may have been woken for one
+        // it does not take: the next waiter is woken for it.
+        for channel in &self.channels {
+            channel.rewake_waiters();
+        }
+    }
+}
+
+/// Something outside the tasks that can end a wait, for as long as it
+/// lives: a pending timer, an I/O operation in flight, a thread that
+/// serves the program. While one exists the program is not deadlocked.
+/// It is dropped after the last thing it does for a task has returned.
+pub(crate) struct External(Arc<Inner>);
+
+impl Drop for External {
+    fn drop(&mut self) {
+        self.0.external.fetch_sub(1, Ordering::SeqCst);
+        self.0.check_stuck();
+    }
+}
+
+/// A thread that is running silt code of its own, from
+/// [`Scheduler::enter`] until it is dropped.
+pub(crate) struct Running(Arc<Inner>);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.live.fetch_sub(1, Ordering::SeqCst);
+        self.0.check_stuck();
+    }
+}
+
+impl Scheduler {
+    /// Create a new scheduler (does NOT start worker threads yet). Its
+    /// deadlines are read on the clock of `io`, and its reports go to
+    /// the stderr of `io`.
+    pub fn new(io: HostIo) -> Self {
+        let global_io_timeout = std::env::var("SILT_IO_TIMEOUT")
+            .ok()
+            .and_then(|s| parse_duration(&s));
+        // Watchdog scan interval: env override, else a reasonable default.
+        // When SILT_IO_TIMEOUT is set, scale to timeout/4 (capped at 1s).
+        // Without SILT_IO_TIMEOUT, task.deadline is the only consumer —
+        // default to 100ms so sub-second deadlines fire promptly.
+        // Floored at 10ms to avoid pathological busy-scanning.
+        let interval = std::env::var("SILT_IO_WATCHDOG_INTERVAL")
+            .ok()
+            .and_then(|s| parse_duration(&s))
+            .unwrap_or_else(|| {
+                global_io_timeout
+                    .map(|t| (t / 4).min(Duration::from_secs(1)))
+                    .unwrap_or(Duration::from_millis(100))
+            })
+            .max(Duration::from_millis(10));
+        let watchdog = Arc::new(WatchdogRegistry::new(interval));
+        let timer = sync::Timer::new(io.clone());
+        let inner = Arc::new_cyclic(|inner: &Weak<Inner>| {
+            let ready = inner.clone();
+            Inner {
+                queue: Mutex::new(VecDeque::new()),
+                work: Condvar::new(),
+                threads: Condvar::new(),
+                shutdown: AtomicBool::new(false),
+                has_workers: AtomicBool::new(false),
+                live: AtomicUsize::new(0),
+                spawned: AtomicUsize::new(0),
+                external: AtomicUsize::new(0),
+                parking: Parking::new(timer, move |sleeper, resumed| {
+                    // Without a scheduler the task is dropped.
+                    if let Some(inner) = ready.upgrade() {
+                        inner.ready(sleeper, resumed);
+                    }
+                }),
+                stream_waits: AtomicUsize::new(0),
+                main_wait: Mutex::new(None),
+                deadlock: Mutex::new(None),
+                next_thread_wait: AtomicU64::new(0),
+                registered: AtomicBool::new(false),
+                watchdog,
+                global_io_timeout,
+                failed_tasks: Mutex::new(FailedTasks::default()),
+                io,
+            }
+        });
+        Scheduler {
+            inner,
+            workers: Mutex::new(None),
+        }
+    }
+
+    /// Ensure worker threads are running.
+    ///
+    /// Returns an error if not a single worker thread could be started.
+    /// If some but not all could be started, the scheduler runs with
+    /// those.
+    fn ensure_workers(&self) -> Result<(), String> {
+        let mut guard = self.workers.lock();
+        if guard.is_some() {
+            return Ok(());
+        }
+
+        let num_workers = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .max(2); // At least 2 workers to avoid deadlocks
+
+        let mut handles = Vec::with_capacity(num_workers);
+        // Workers reserve `WORKER_STACK_BYTES`. Where the system refuses
+        // a reservation that large (an address-space limit, strict
+        // overcommit), the first worker falls back to the default stack,
+        // and the rest follow it; the program runs.
+        let mut stack_bytes = Some(WORKER_STACK_BYTES);
+        while handles.len() < num_workers {
+            let inner = self.inner.clone();
+            let mut builder = thread::Builder::new();
+            if let Some(bytes) = stack_bytes {
+                builder = builder.stack_size(bytes);
+            }
+            let spawned = builder.spawn(move || worker_loop(inner));
+            match spawned {
+                Ok(handle) => handles.push(handle),
+                Err(_) if handles.is_empty() && stack_bytes.is_some() => stack_bytes = None,
+                Err(e) if handles.is_empty() => {
+                    return Err(format!("cannot start a scheduler worker thread: {e}"));
+                }
+                // The workers started so far run the tasks.
+                Err(_) => break,
+            }
+        }
+        self.inner.has_workers.store(true, Ordering::SeqCst);
+        *guard = Some(handles);
+        drop(guard);
+        self.ensure_watchdog();
+        Ok(())
+    }
+
+    /// Start the thread that ends the I/O waits whose deadline has
+    /// passed, if it does not run yet.
+    fn ensure_watchdog(&self) {
+        static NAME: &str = "silt-io-watchdog";
+        let mut started = self.inner.watchdog.started.lock();
+        if *started || self.inner.shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+        let registry = self.inner.watchdog.clone();
+        let io = self.inner.io.clone();
+        // Without the thread a deadline does not end an I/O wait; the
+        // operation still ends by itself.
+        *started = thread::Builder::new()
+            .name(NAME.into())
+            .spawn(move || watchdog_loop(registry, io))
+            .is_ok();
+    }
+
+    /// Report on the host's stderr every task of this scheduler that failed and
+    /// whose error no `task.join` has received and no `task.cancel` has
+    /// dismissed. Each failure is reported once, so the call can be
+    /// repeated. Returns the number of failures that this call reported.
+    ///
+    /// It runs by itself when the scheduler is dropped and when the
+    /// thread that spawned the first task ends. A caller that ends the
+    /// process in another way (`std::process::exit`) calls it before
+    /// that.
+    ///
+    /// While the failures are collected (`collect_unjoined_failures`),
+    /// the scheduler keeps none, and this reports nothing: the front
+    /// end takes them with `take_unjoined_failures` and reports them.
+    pub fn report_unjoined_failures(&self) -> usize {
+        report_unjoined_failures(&self.inner)
+    }
+
+    /// Submit a runnable task to the scheduler.
+    ///
+    /// Returns an error if the live-task count has reached the
+    /// scheduler's hard task limit.
+    pub fn submit(&self, task: Task) -> Result<(), String> {
+        if self.inner.shutdown.load(Ordering::SeqCst) {
+            return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
+        }
+        // A target without threads runs the tasks on the threads that
+        // wait ([`Scheduler::block_thread`]).
+        #[cfg(not(target_arch = "wasm32"))]
+        self.ensure_workers()?;
+        let current = self.inner.spawned.load(Ordering::SeqCst);
+        if current >= MAX_TASKS {
+            return Err(format!(
+                "task limit exceeded: {} tasks running (max {MAX_TASKS})",
+                current
+            ));
+        }
+        // The thread that spawns the first task is the one that runs
+        // the program. When it ends, the program has ended: see
+        // `StartedSchedulers`.
+        if !self.inner.registered.swap(true, Ordering::SeqCst) {
+            let _ = STARTED_HERE.try_with(|started| {
+                started
+                    .schedulers
+                    .borrow_mut()
+                    .push(Arc::downgrade(&self.inner));
+            });
+        }
+        // A cancel of the task ends its wait, if it waits.
+        let inner = Arc::downgrade(&self.inner);
+        let id = TaskId(task.id as u64);
+        task.handle.set_cancel_cleanup(Box::new(move || {
+            if let Some(inner) = inner.upgrade() {
+                inner.parking.cancel(id);
+            }
+        }));
+        self.inner.spawned.fetch_add(1, Ordering::SeqCst);
+        self.inner.live.fetch_add(1, Ordering::SeqCst);
+        self.inner.enqueue(task);
+        Ok(())
+    }
+
+    /// The calling thread starts to run silt code of its own: it counts
+    /// as a task until the guard is dropped.
+    pub(crate) fn enter(&self) -> Running {
+        self.inner.live.fetch_add(1, Ordering::SeqCst);
+        Running(self.inner.clone())
+    }
+
+    /// See [`External`].
+    pub(crate) fn external(&self) -> External {
+        self.inner.external.fetch_add(1, Ordering::SeqCst);
+        External(self.inner.clone())
+    }
+
+    /// The calling thread, which runs silt code of its own
+    /// ([`Scheduler::enter`]), waits for `reason`: it returns when the
+    /// builtin that parked is to run again. `deadline` is the task
+    /// deadline in effect. `main` says that the thread is the
+    /// program's: it gets the error when the program is deadlocked.
+    pub(crate) fn block_thread(
+        &self,
+        reason: BlockReason,
+        deadline: Option<Duration>,
+        main: bool,
+    ) -> Result<(), VmError> {
+        let inner = &self.inner;
+        if matches!(reason, BlockReason::Io(_)) {
+            self.ensure_watchdog();
+        }
+        // The names of spawned tasks count up from 0.
+        let id = TaskId(u64::MAX - inner.next_thread_wait.fetch_add(1, Ordering::Relaxed));
+        if main {
+            let what = match &reason {
+                BlockReason::Receive(_) => "channel receive with no counterparty",
+                BlockReason::Send(_) => "channel send with no counterparty",
+                BlockReason::Select(_) => "channel select with no counterparty",
+                BlockReason::Join(_) | BlockReason::Io(_) => "task.join with no progress possible",
+            };
+            *inner.main_wait.lock() = Some(MainWait { id, what });
+        }
+        let (bridge, wait) = inner.bridge(id, &reason, deadline);
+        let park = Arc::new(ThreadPark::default());
+        let sleeper = Sleeper {
+            who: Who::Thread(park.clone()),
+            bridge,
+        };
+        let resumed = match inner.parking.park(id, sleeper, wait, || false) {
+            Some((sleeper, resumed)) => {
+                if let Resumed::Fired(_) = resumed {
+                    sleeper.bridge.woken();
+                }
+                resumed
+            }
+            None => {
+                inner.check_stuck();
+                inner.wait_thread(&park)
+            }
+        };
+        if main {
+            *inner.main_wait.lock() = None;
+        }
+        // The verdict is the program's thread's.
+        let verdict = if main {
+            inner.deadlock.lock().take()
+        } else {
+            None
+        };
+        match resumed {
+            Resumed::Fired(_) => Ok(()),
+            Resumed::Cancelled => Err(match verdict {
+                Some(verdict) => {
+                    // A task that failed is the usual reason why the
+                    // counterparty of the wait is missing: it is
+                    // reported before the verdict.
+                    let _ = report_unjoined_failures(inner);
+                    verdict
+                }
+                None => VmError::new("the VM that ran the program has been dropped".into()),
+            }),
+        }
+    }
+}
+
+impl Inner {
+    /// Put a task on the run queue.
+    fn enqueue(&self, task: Task) {
+        let mut queue = self.queue.lock();
+        if self.shutdown.load(Ordering::SeqCst) {
+            // It never runs: dropped with the queue unlocked.
+            drop(queue);
+            self.end_task(task);
+            return;
+        }
+        queue.push_back(task);
+        if self.has_workers.load(Ordering::SeqCst) {
+            self.work.notify_one();
+        } else {
+            self.threads.notify_all();
+        }
+    }
+
+    /// A task has ended: it completed, failed, or was cancelled.
+    fn end_task(&self, task: Task) {
+        // Its frames are abandoned before it stops counting.
+        drop(task);
+        self.spawned.fetch_sub(1, Ordering::SeqCst);
+        self.live.fetch_sub(1, Ordering::SeqCst);
+        self.check_stuck();
+    }
+
+    /// The wait of `sleeper` has ended.
+    fn ready(&self, sleeper: Sleeper, resumed: Resumed) {
+        let Sleeper { who, bridge } = sleeper;
+        match resumed {
+            Resumed::Fired(_) => bridge.woken(),
+            Resumed::Cancelled => drop(bridge),
+        }
+        match who {
+            Who::Task(task) => match resumed {
+                Resumed::Fired(_) => self.enqueue(task),
+                Resumed::Cancelled => self.end_task(task),
+            },
+            Who::Thread(park) => {
+                *park.resumed.lock() = Some(resumed);
+                // With the queue's lock, the thread is either before
+                // its look at `resumed` or waiting.
+                let _queue = self.queue.lock();
+                self.threads.notify_all();
+            }
+        }
+    }
+
+    /// Register what wakes a task that waits for `reason`, and give
+    /// the wait that those wakers end.
+    fn bridge(
+        self: &Arc<Self>,
+        id: TaskId,
+        reason: &BlockReason,
+        task_deadline: Option<Duration>,
+    ) -> (Bridge, Wait) {
+        let cell = sync::Cell::<()>::new();
+        let waker = || -> Waker {
+            let (cell, inner) = (cell.clone(), self.clone());
+            Box::new(move || {
+                let _ = cell.complete((), &inner.parking);
+            })
+        };
+        let mut bridge = Bridge {
+            inner: self.clone(),
+            registrations: Vec::new(),
+            channels: Vec::new(),
+            stream: false,
+            watched: None,
+        };
+        let stream = Cell::new(false);
+        let receive = |bridge: &mut Bridge, channel: &Arc<Channel>| {
+            if crate::builtins::concurrency::is_stream_fed(channel) {
+                stream.set(true);
+            }
+            let registration = channel.register_recv_waker_guard(waker());
+            bridge
+                .registrations
+                .push(Registration::Channel(registration));
+            bridge.channels.push(channel.clone());
+        };
+        let send = |bridge: &mut Bridge, channel: &Arc<Channel>| {
+            if channel.is_read_by_stream() {
+                stream.set(true);
+            }
+            let registration = channel.register_send_waker_guard(waker());
+            bridge
+                .registrations
+                .push(Registration::Channel(registration));
+            bridge.channels.push(channel.clone());
+        };
+        match reason {
+            BlockReason::Receive(channel) => receive(&mut bridge, channel),
+            BlockReason::Send(channel) => send(&mut bridge, channel),
+            BlockReason::Select(ops) => {
+                for (channel, kind) in ops {
+                    match kind {
+                        SelectOpKind::Receive => receive(&mut bridge, channel),
+                        SelectOpKind::Send => send(&mut bridge, channel),
+                    }
+                }
+            }
+            BlockReason::Join(handle) => {
+                let registration = handle.register_join_waker_guard(waker());
+                bridge.registrations.push(Registration::Join(registration));
+            }
+            BlockReason::Io(completion) => {
+                // The I/O wait ends at the earlier of the global and
+                // the task's deadline.
+                let now = self.io.monotonic();
+                let global = self
+                    .global_io_timeout
+                    .and_then(|t| now.checked_add(t))
+                    .map(|d| (d, DeadlineSource::Global));
+                let task = task_deadline.map(|d| (d, DeadlineSource::Task));
+                let effective = match (global, task) {
+                    (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
+                    (Some(x), None) | (None, Some(x)) => Some(x),
+                    (None, None) => None,
+                };
+                if let Some((deadline, source)) = effective {
+                    self.watchdog.add(id, completion, deadline, source);
+                    bridge.watched = Some(id);
+                }
+                let registration = completion.register_waker_guard(waker());
+                bridge.registrations.push(Registration::Io(registration));
+            }
+        }
+        if stream.get() {
+            bridge.stream = true;
+            self.stream_waits.fetch_add(1, Ordering::SeqCst);
+        }
+        (bridge, Wait::new(vec![Arm::Cell(cell)]))
+    }
+
+    /// The calling thread waits until its wait has ended. Where no
+    /// worker runs the queue, it does.
+    fn wait_thread(self: &Arc<Self>, park: &ThreadPark) -> Resumed {
+        let mut queue = self.queue.lock();
+        loop {
+            if let Some(resumed) = park.resumed.lock().take() {
+                return resumed;
+            }
+            if !self.has_workers.load(Ordering::SeqCst)
+                && let Some(task) = queue.pop_front()
+            {
+                drop(queue);
+                self.run_slice(task);
+                queue = self.queue.lock();
+                continue;
+            }
+            self.threads.wait(&mut queue);
+        }
+    }
+
+    /// Run a task for one slice, and do what its end asks for.
+    fn run_slice(self: &Arc<Self>, task: Task) {
+        let Task { id, mut vm, handle } = task;
+        // A task that was cancelled runs no further.
+        if handle.is_finished() {
+            self.end_task(Task { id, vm, handle });
+            return;
+        }
+        // The tasks that this slice spawns belong to the owner of this
+        // task. See `set_task_owner`.
+        let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(handle.owner())));
+        let result = vm.execute_slice(time_slice());
+        RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
+
+        match result {
+            SliceResult::Yielded => self.enqueue(Task { id, vm, handle }),
+            SliceResult::Completed(value) => {
+                handle.complete(Ok(value));
+                self.end_task(Task { id, vm, handle });
+            }
+            SliceResult::Failed(error) => {
+                // A failure that no join receives is reported when the
+                // program ends, so it is recorded here. `fail` returns
+                // false if the task had been cancelled before: its
+                // handle keeps the cancellation as its result then.
+                if handle.fail(vm.enrich_error(error)) {
+                    record_failed_task(self, &handle);
+                }
+                self.end_task(Task { id, vm, handle });
+            }
+            SliceResult::Blocked(reason) => {
+                let pid = TaskId(id as u64);
+                let (bridge, wait) = self.bridge(pid, &reason, vm.current_deadline);
+                let cancelled = handle.clone();
+                let sleeper = Sleeper {
+                    who: Who::Task(Task { id, vm, handle }),
+                    bridge,
+                };
+                let back = self
+                    .parking
+                    .park(pid, sleeper, wait, || cancelled.is_finished());
+                match back {
+                    Some((sleeper, resumed)) => self.ready(sleeper, resumed),
+                    None => self.check_stuck(),
+                }
+            }
+        }
+    }
+
+    /// Give the verdict if the program is deadlocked: its own thread
+    /// waits, and so does every other task, with nothing pending
+    /// outside.
+    fn check_stuck(&self) {
+        if self.external.load(Ordering::SeqCst) > 0 || self.stream_waits.load(Ordering::SeqCst) > 0
+        {
+            return;
+        }
+        // Without the program's thread waiting there is nobody to tell.
+        let Some(main) = self.main_wait.lock().clone() else {
+            return;
+        };
+        let stuck = self.parking.stuck(
+            || self.live.load(Ordering::SeqCst),
+            || self.external.load(Ordering::SeqCst) + self.stream_waits.load(Ordering::SeqCst),
+        );
+        let Some(stuck) = stuck else {
+            return;
+        };
+        if !stuck.iter().any(|stuck| stuck.task == main.id) {
+            return;
+        }
+        *self.deadlock.lock() = Some(VmError::new(format!(
+            "deadlock on main thread: {}",
+            main.what
+        )));
+        self.parking.cancel(main.id);
+    }
+}
+
+/// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).
+fn time_slice() -> usize {
+    static SLICE: OnceLock<usize> = OnceLock::new();
+    *SLICE.get_or_init(|| {
+        std::env::var("SILT_TIME_SLICE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2000)
+            .max(1)
+    })
+}
+
+impl Scheduler {
+    /// End the scheduler with the program that used it: report the
+    /// failures that nobody joined (nobody can join a task of it any
+    /// more), tell the workers and the watchdog to end, and drop the
+    /// tasks that wait for a worker or for anything else. A task
+    /// submitted later is refused.
+    ///
+    /// The threads are not waited for: each ends when the slice it is
+    /// running returns.
+    pub(crate) fn shutdown(&self) {
+        let inner = &self.inner;
+        let _ = report_unjoined_failures(inner);
+        inner.shutdown.store(true, Ordering::SeqCst);
+        inner.watchdog.shutdown.store(true, Ordering::SeqCst);
+        // Detach the workers.
+        drop(self.workers.lock().take());
+        // The tasks are dropped after the queue's lock is released.
+        let waiting: Vec<Task> = inner.queue.lock().drain(..).collect();
+        inner.work.notify_all();
+        for task in waiting {
+            inner.end_task(task);
+        }
+        // The parked tasks never run again either: each comes off
+        // every queue, and its frames are abandoned. A thread that
+        // waits is told that the program is gone.
+        for (_, sleeper) in inner.parking.shutdown() {
+            inner.ready(sleeper, Resumed::Cancelled);
+        }
+    }
+}
+
+impl Drop for Scheduler {
+    fn drop(&mut self) {
+        // Reached with its workers still attached only when no VM was
+        // dropped first (`shutdown`).
+        let workers = self.workers.lock().take();
+        self.shutdown();
+        if let Some(workers) = workers {
+            // A worker may run a task whose end drops the last
+            // reference to the runtime, and with it this scheduler: a
+            // thread cannot join itself.
+            let me = thread::current().id();
+            for w in workers {
+                if w.thread().id() == me {
+                    std::mem::forget(w);
+                } else {
+                    let _ = w.join();
+                }
+            }
+        }
+    }
+}
+
+/// A worker: take a task off the queue, run it for a slice, again.
+fn worker_loop(inner: Arc<Inner>) {
+    loop {
+        let task = {
+            let mut queue = inner.queue.lock();
+            loop {
+                if inner.shutdown.load(Ordering::SeqCst) {
+                    return;
+                }
+                if let Some(task) = queue.pop_front() {
+                    break task;
+                }
+                inner.work.wait(&mut queue);
+            }
+        };
+        inner.run_slice(task);
+    }
 }
 
 /// Failed tasks kept for the report of failures that nobody joined, up
@@ -473,1257 +1051,10 @@ impl FailedTasks {
     }
 }
 
-impl Scheduler {
-    /// Create a new scheduler (does NOT start worker threads yet). Its
-    /// deadlines are read on the clock of `io`, and its reports go to
-    /// the stderr of `io`.
-    pub fn new(io: HostIo) -> Self {
-        let global_io_timeout = std::env::var("SILT_IO_TIMEOUT")
-            .ok()
-            .and_then(|s| parse_duration(&s));
-        // Watchdog scan interval: env override, else a reasonable default.
-        // When SILT_IO_TIMEOUT is set, scale to timeout/4 (capped at 1s).
-        // Without SILT_IO_TIMEOUT, task.deadline is the only consumer —
-        // default to 100ms so sub-second deadlines fire promptly.
-        // Floored at 10ms to avoid pathological busy-scanning.
-        let interval = std::env::var("SILT_IO_WATCHDOG_INTERVAL")
-            .ok()
-            .and_then(|s| parse_duration(&s))
-            .unwrap_or_else(|| {
-                global_io_timeout
-                    .map(|t| (t / 4).min(Duration::from_secs(1)))
-                    .unwrap_or(Duration::from_millis(100))
-            })
-            .max(Duration::from_millis(10));
-        let watchdog = Arc::new(WatchdogRegistry::new(interval));
-        Scheduler {
-            inner: Arc::new(SchedulerInner {
-                run_queue: Mutex::new(VecDeque::new()),
-                parked: Mutex::new(HashMap::new()),
-                condvar: Condvar::new(),
-                shutdown: AtomicBool::new(false),
-                live_tasks: AtomicUsize::new(0),
-                unsettled_tasks: AtomicUsize::new(0),
-                deadlock_detected: AtomicBool::new(false),
-                watchdog,
-                global_io_timeout,
-                wake_graph: WakeGraph::new(),
-                main_waiters: Mutex::new(Vec::new()),
-                next_main_waiter_id: AtomicU64::new(0),
-                failed_tasks: Mutex::new(FailedTasks::default()),
-                io,
-            }),
-            workers: Mutex::new(None),
-        }
-    }
-
-    /// Ensure worker threads are running.
-    ///
-    /// Returns an error if not a single worker thread could be started.
-    /// If some but not all could be started, the scheduler runs with
-    /// those.
-    fn ensure_workers(&self) -> Result<(), String> {
-        let mut guard = self.workers.lock();
-        if guard.is_some() {
-            return Ok(());
-        }
-
-        let num_workers = thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-            .max(2); // At least 2 workers to avoid deadlocks
-
-        // Capacity: num_workers + 1 for the watchdog thread.
-        let mut handles = Vec::with_capacity(num_workers + 1);
-        // Workers reserve `WORKER_STACK_BYTES`. Where the system refuses
-        // a reservation that large (an address-space limit, strict
-        // overcommit), the first worker falls back to the default stack,
-        // and the rest follow it; the program runs.
-        let mut stack_bytes = Some(WORKER_STACK_BYTES);
-        while handles.len() < num_workers {
-            let inner = self.inner.clone();
-            let mut builder = thread::Builder::new();
-            if let Some(bytes) = stack_bytes {
-                builder = builder.stack_size(bytes);
-            }
-            let spawned = builder.spawn(move || worker_loop(inner));
-            match spawned {
-                Ok(handle) => handles.push(handle),
-                Err(_) if handles.is_empty() && stack_bytes.is_some() => stack_bytes = None,
-                Err(e) if handles.is_empty() => {
-                    return Err(format!("cannot start a scheduler worker thread: {e}"));
-                }
-                // The workers started so far run the tasks.
-                Err(_) => break,
-            }
-        }
-        // Always start the watchdog thread. The registry is empty
-        // unless something (SILT_IO_TIMEOUT or task.deadline) supplies
-        // a deadline on I/O block — the scan loop is a cheap
-        // `thread::sleep(interval)` in steady state.
-        let registry = self.inner.watchdog.clone();
-        let io = self.inner.io.clone();
-        handles.push(thread::spawn(move || {
-            watchdog_loop(registry, io);
-        }));
-        *guard = Some(handles);
-        drop(guard);
-        // The thread that starts the workers is the one that runs the
-        // program. When it ends, the program has ended: see
-        // `StartedSchedulers`.
-        let _ = STARTED_HERE.try_with(|started| {
-            started
-                .schedulers
-                .borrow_mut()
-                .push(Arc::downgrade(&self.inner));
-        });
-        Ok(())
-    }
-
-    /// Report on the host's stderr every task of this scheduler that failed and
-    /// whose error no `task.join` has received and no `task.cancel` has
-    /// dismissed. Each failure is reported once, so the call can be
-    /// repeated. Returns the number of failures that this call reported.
-    ///
-    /// It runs by itself when the scheduler is dropped and when the
-    /// thread that spawned the first task ends. A caller that ends the
-    /// process in another way (`std::process::exit`) calls it before
-    /// that.
-    ///
-    /// While the failures are collected (`collect_unjoined_failures`),
-    /// the scheduler keeps none, and this reports nothing: the front
-    /// end takes them with `take_unjoined_failures` and reports them.
-    pub fn report_unjoined_failures(&self) -> usize {
-        report_unjoined_failures(&self.inner)
-    }
-
-    /// Returns true if a deadlock has been detected.
-    pub fn deadlock_detected(&self) -> bool {
-        self.inner.deadlock_detected.load(Ordering::SeqCst)
-    }
-
-    /// Register the main thread with the wake graph. Called once by
-    /// `main_thread_wait_for_*` the first time the main thread parks
-    /// on any primitive, so the graph knows there is a main-side
-    /// caller worth proving deadlock for. Without this, the graph's
-    /// BFS short-circuits to `false` (no main → nobody to declare
-    /// deadlock for).
-    pub fn register_main_present(&self) {
-        self.inner.wake_graph.register_main_present();
-    }
-
-    /// True iff the wake graph can prove that no scheduled task could
-    /// ever drive `target` forward. The watchdog should fire
-    /// `deadlock` immediately on a `true` return — Phase 4 deleted
-    /// the polling fallback, so this is now the SOLE deadlock signal
-    /// the main-thread waiters consult.
-    pub fn is_main_starved(&self, target: &MainTarget) -> bool {
-        self.inner.wake_graph.is_main_starved(target)
-    }
-
-    /// Park the main thread on `target`. Adds an edge from
-    /// `NodeId::MAIN` into the wake graph so other tasks' BFS sees
-    /// main as a destination. Paired with `unpark_main` when the wait
-    /// loop returns.
-    pub fn park_main(&self, target: &MainTarget) {
-        let edge = match target {
-            MainTarget::Recv(ch) => ParkEdge::Recv(ch.clone()),
-            MainTarget::Send(ch) => ParkEdge::Send(ch.clone()),
-            MainTarget::Join(h) => ParkEdge::Join(*h),
-            MainTarget::Select(edges) => ParkEdge::Select(edges.clone()),
-        };
-        self.inner.wake_graph.on_park(NodeId::MAIN, edge);
-    }
-
-    /// Unpark the main thread from whatever edge it was on.
-    pub fn unpark_main(&self) {
-        self.inner.wake_graph.on_wake(NodeId::MAIN);
-    }
-
-    /// Install a callback fired by every wake-graph state change
-    /// (`signal_progress` is called at every submit / requeue /
-    /// complete / on_park / on_wake site). The callback is invoked
-    /// synchronously on whichever thread caused the state change, so
-    /// it must be cheap and non-blocking — typically a
-    /// `condvar.notify_one()` poke that flips the waiter out of
-    /// `wait_for`.
-    ///
-    /// Returns a `MainWaiterGuard` whose `Drop` deregisters the
-    /// callback. The watcher MUST keep this guard alive across the
-    /// entire wait loop and drop it on exit — otherwise a stale
-    /// callback fires into freed memory on the next graph mutation.
-    pub fn install_main_waiter(self: &Arc<Self>, callback: MainWaiterCallback) -> MainWaiterGuard {
-        let id = self
-            .inner
-            .next_main_waiter_id
-            .fetch_add(1, Ordering::Relaxed);
-        self.inner.main_waiters.lock().push((id, callback));
-        MainWaiterGuard {
-            scheduler: self.clone(),
-            id,
-        }
-    }
-
-    /// Submit a runnable task to the scheduler.
-    ///
-    /// Returns an error if the live-task count has reached the
-    /// scheduler's hard task limit.
-    pub fn submit(&self, task: Task) -> Result<(), String> {
-        if self.inner.shutdown.load(Ordering::SeqCst) {
-            return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
-        }
-        self.ensure_workers()?;
-        let current = self.inner.live_tasks.load(Ordering::SeqCst);
-        if current >= MAX_TASKS {
-            return Err(format!(
-                "task limit exceeded: {} tasks running (max {MAX_TASKS})",
-                current
-            ));
-        }
-        // Bump unsettled_tasks BEFORE live_tasks so any observer sees
-        // a "definitely progressing" counter throughout the submit
-        // window. The wake graph's BFS treats any live task absent
-        // from `edges` as universal fuel; the unsettled counter
-        // additionally pulses `signal_progress` so main waiters
-        // re-check immediately when a fresh task enters the queue.
-        self.inner.unsettled_tasks.fetch_add(1, Ordering::SeqCst);
-        self.inner.live_tasks.fetch_add(1, Ordering::SeqCst);
-        // Wake graph: register the task as live (runnable, no edge
-        // yet) BEFORE pushing it on the queue so a racing main-thread
-        // BFS that fires after the queue push sees the live entry.
-        self.inner.wake_graph.on_spawn(task.id);
-        let mut queue = self.inner.run_queue.lock();
-        queue.push_back(task);
-        self.inner.condvar.notify_one();
-        // A new fuel node is now in the graph — any main-thread
-        // watcher should re-check.
-        signal_progress(&self.inner);
-        Ok(())
-    }
-}
-
-impl Scheduler {
-    /// End the scheduler with the program that used it: report the
-    /// failures that nobody joined (nobody can join a task of it any
-    /// more), tell the workers and the watchdog to end, and drop the
-    /// tasks that wait for a worker. A task submitted later is refused.
-    ///
-    /// The threads are not waited for: each ends when the slice it is
-    /// running returns.
-    pub(crate) fn shutdown(&self) {
-        let _ = report_unjoined_failures(&self.inner);
-        self.inner.shutdown.store(true, Ordering::SeqCst);
-        self.inner.watchdog.shutdown.store(true, Ordering::SeqCst);
-        // Detach the workers.
-        drop(self.workers.lock().take());
-        // The tasks are dropped after the queue's lock is released.
-        let mut waiting: Vec<Task> = self.inner.run_queue.lock().drain(..).collect();
-        self.inner.condvar.notify_all();
-        // The parked tasks never run again either. Each is taken out of
-        // its slot, so the waker that fires later finds nothing, and
-        // its handle lets go of the cleanup that holds the slot.
-        let parked: Vec<_> = self.inner.parked.lock().drain().collect();
-        for (_, slot) in parked {
-            let task = slot.upgrade().and_then(|slot| slot.lock().take());
-            if let Some(task) = task {
-                task.handle.clear_cancel_cleanup();
-                waiting.push(task);
-            }
-        }
-        drop(waiting);
-    }
-}
-
-impl Drop for Scheduler {
-    fn drop(&mut self) {
-        // Reached with its workers still attached only when no VM was
-        // dropped first (`shutdown`).
-        let workers = self.workers.lock().take();
-        self.shutdown();
-        if let Some(workers) = workers {
-            // The runtime that owns this `Arc<Scheduler>` is itself
-            // owned by a `Vm`. A worker thread may run a task whose
-            // completion drops the LAST `Arc<Runtime>`. In that case
-            // `Scheduler::drop` runs ON a worker thread.
-            // `JoinHandle::join` on an already-finished thread is fine,
-            // but joining the CURRENT thread panics with EDEADLK
-            // (`std::sys::thread::unix::Thread::join` line 127:
-            // `assert!(ret == 0, "failed to join thread: ...")`). To
-            // avoid that we forget any handle whose thread id matches
-            // ours — the OS will clean up the (already-exited) thread.
-            let me = thread::current().id();
-            for w in workers {
-                if w.thread().id() == me {
-                    // Don't join self — the join would deadlock and
-                    // the std-side assertion would abort the process.
-                    // We're the last code that will ever run on this
-                    // thread anyway (we're inside `drop`, which is
-                    // called by the worker_loop's task drop after the
-                    // worker has returned from its inner loop body).
-                    std::mem::forget(w);
-                } else {
-                    let _ = w.join();
-                }
-            }
-        }
-    }
-}
-
-/// The worker loop: dequeue tasks, run them for a time slice, handle results.
-fn worker_loop(inner: Arc<SchedulerInner>) {
-    let time_slice: usize = std::env::var("SILT_TIME_SLICE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(2000);
-
-    loop {
-        // Dequeue a task.
-        let task = {
-            let mut queue = inner.run_queue.lock();
-            loop {
-                if inner.shutdown.load(Ordering::SeqCst) {
-                    // The tasks that were put back since the shutdown
-                    // never run: drop them, with the queue unlocked.
-                    let waiting: Vec<Task> = queue.drain(..).collect();
-                    drop(queue);
-                    drop(waiting);
-                    return;
-                }
-                if let Some(task) = queue.pop_front() {
-                    // Do NOT decrement `unsettled_tasks` here. The whole
-                    // point of the counter is to cover the dequeue →
-                    // register-waker window: between this `pop_front` and
-                    // the moment the worker has either completed the task
-                    // or parked it on a wakeable edge, no other counter
-                    // can prove the task is still going to make progress.
-                    // The two decrement sites are below in the
-                    // Completed / Failed / Blocked-with-waker arms.
-                    break task;
-                }
-                // Wake periodically to re-check the queue. The actual
-                // deadlock decision is made by the main-thread watchdog in
-                // `src/builtins/concurrency.rs::main_thread_wait_for_*`,
-                // which can distinguish a real deadlock from "main is just
-                // descheduled / busy in VM bytecode" — something a worker
-                // thread cannot prove. A worker that times out here simply
-                // resumes waiting for the condvar.
-                let _ = inner.condvar.wait_for(&mut queue, Duration::from_secs(1));
-            }
-        };
-
-        let Task { id, mut vm, handle } = task;
-
-        // The tasks that this slice spawns belong to the owner of this
-        // task. See `set_task_owner`.
-        RUNNING_TASK_OWNER.with(|owner| owner.set(Some(handle.owner())));
-        let result = vm.execute_slice(time_slice);
-        RUNNING_TASK_OWNER.with(|owner| owner.set(None));
-
-        match result {
-            SliceResult::Yielded => {
-                // Task still runnable — put it back. The task is still
-                // unsettled (it has not parked on a wakeable edge and has
-                // not completed), so `unsettled_tasks` is unchanged.
-                let mut queue = inner.run_queue.lock();
-                queue.push_back(Task { id, vm, handle });
-                inner.condvar.notify_one();
-            }
-            SliceResult::Completed(val) => {
-                handle.complete(Ok(val));
-                // Terminal step for this task: settle it before
-                // decrementing live so an observer that sees `live--`
-                // also sees `unsettled--`.
-                inner.unsettled_tasks.fetch_sub(1, Ordering::SeqCst);
-                inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                // Wake graph: drop the node + any edge so subsequent
-                // BFS does not see a phantom fuel node, and signal
-                // any main-thread waiter to re-check (the just-
-                // completed task may have been the last fuel).
-                inner.wake_graph.on_complete(id);
-                signal_progress(&inner);
-            }
-            SliceResult::Failed(err) => {
-                // A failure that no join receives is reported when the
-                // program ends, so it is recorded here. `fail` returns
-                // false if the task had been cancelled before: its
-                // handle keeps the cancellation as its result then.
-                if handle.fail(vm.enrich_error(err)) {
-                    record_failed_task(&inner, &handle);
-                }
-                inner.unsettled_tasks.fetch_sub(1, Ordering::SeqCst);
-                inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                inner.wake_graph.on_complete(id);
-                signal_progress(&inner);
-            }
-            SliceResult::Blocked => {
-                // Take the block reason from the VM.
-                let reason = vm.take_block_reason();
-                let task_slot: Arc<Mutex<Option<Task>>> =
-                    Arc::new(Mutex::new(Some(Task { id, vm, handle })));
-                if reason.is_some() {
-                    inner.parked.lock().insert(id, Arc::downgrade(&task_slot));
-                    // A program that ended while this slice ran did not
-                    // see the task parked: it is dropped here.
-                    if inner.shutdown.load(Ordering::SeqCst) {
-                        inner.parked.lock().remove(&id);
-                        let task = task_slot.lock().take();
-                        drop(task);
-                        continue;
-                    }
-                }
-
-                // Track whether this block is on external I/O. The wake
-                // graph models I/O parks as `ParkEdge::Io` (always-fuel),
-                // but the I/O *watchdog* (SILT_IO_TIMEOUT) still needs
-                // to know whether the requeue cleared an entry from
-                // `WatchdogRegistry`.
-                let was_io = matches!(reason, Some(BlockReason::Io(_)));
-                // Snapshot whether the block had a reason before the
-                // match below moves out of `reason`. Used for the final
-                // settle decrement on `unsettled_tasks` after the arm
-                // finishes registering wakers.
-                let had_block_reason = reason.is_some();
-
-                // Track that this task is now blocked (unless no block reason,
-                // which is treated as a yield and re-enqueued immediately).
-                if reason.is_some() {
-                    // SAFETY: task_slot was just created with Some(Task{..}) above.
-                    let handle_for_registry = task_slot
-                        .lock()
-                        .as_ref()
-                        .expect("task_slot just initialized")
-                        .handle
-                        .clone();
-
-                    // Register cancel cleanup: if the task is cancelled while
-                    // blocked, take it from the slot (making the waker a no-op)
-                    // and tear down the wake-graph node so the BFS doesn't
-                    // see a phantom parked task. No waker-registration guard
-                    // exists yet at this point (the per-arm code below
-                    // re-installs the cleanup with the real guard), so the
-                    // guard parameter is `()`. See `make_cancel_cleanup` for
-                    // the full ordered teardown sequence.
-                    handle_for_registry.set_cancel_cleanup(make_cancel_cleanup(
-                        task_slot.clone(),
-                        inner.clone(),
-                        id,
-                        was_io,
-                        (),
-                    ));
-                }
-
-                // Wake graph: commit the parked edge for THIS task
-                // BEFORE registering the channel waker. If the waker
-                // fires inline (rendezvous-handshake-already-pending
-                // case), `requeue` will call `wake_graph.on_wake(node)`
-                // and clear the edge again — net zero. A racing main
-                // BFS that catches the transient edge between commit
-                // and inline-fire-requeue sees a parked node with no
-                // fuel reachable from it and may report starved; the
-                // watchdog re-checks before firing, so the transient
-                // does not cause a false positive (the second check
-                // is post-requeue and the node is gone).
-                let park_edge_for_graph = match &reason {
-                    Some(BlockReason::Receive(ch)) => Some(ParkEdge::Recv(ch.clone())),
-                    Some(BlockReason::Send(ch)) => Some(ParkEdge::Send(ch.clone())),
-                    Some(BlockReason::Select(ops)) => Some(ParkEdge::Select(
-                        ops.iter()
-                            .map(|(ch, kind)| match kind {
-                                SelectOpKind::Receive => SelectEdge::Recv(ch.clone()),
-                                SelectOpKind::Send => SelectEdge::Send(ch.clone()),
-                            })
-                            .collect(),
-                    )),
-                    Some(BlockReason::Join(h)) => Some(ParkEdge::Join(h.id)),
-                    Some(BlockReason::Io(_)) => Some(ParkEdge::Io),
-                    None => None,
-                };
-                if let Some(edge) = park_edge_for_graph {
-                    inner.wake_graph.on_park(NodeId::Task(id), edge);
-                    // A new edge could be a Send on a channel that
-                    // main is waiting to recv from — pulse so main's
-                    // BFS sees the new fuel.
-                    signal_progress(&inner);
-                }
-
-                match reason {
-                    Some(BlockReason::Receive(ch)) => {
-                        fire_hook!(on_park, "blocked_arm_entry_recv");
-                        // F10 regression-test widener: sleep for a
-                        // configured microsecond count BEFORE the slot
-                        // check. Zero in production / default, non-zero
-                        // only when the regression test sets it.
-                        f10_park_setup_pause();
-                        // Capture the handle BEFORE registering the waker.
-                        // `register_recv_waker_guard` may synchronously invoke
-                        // the waker closure if a peer is already parked at the
-                        // rendezvous (e.g. a sender already waiting). That
-                        // closure takes `task_slot`, leaving it `None` — so
-                        // cloning the handle afterwards would panic on
-                        // `expect("task_slot just initialized")`. The slot was
-                        // initialized above this `match` and nothing mutates
-                        // it between there and here.
-                        //
-                        // Finding F10 (cancel-setup race): a concurrent
-                        // `task.cancel(h)` between the initial
-                        // `set_cancel_cleanup` at :626 and the handle
-                        // clone here ALSO drains `task_slot` (the initial
-                        // cleanup takes it). Previously this branch did
-                        // `.expect(...)` and panicked the worker thread.
-                        // Instead, check the slot: if the task is gone,
-                        // take the cancelled-mid-setup path (skip waker
-                        // registration + per-arm cleanup, tear down the
-                        // phantom park edge inserted at :679).
-                        let handle_for_cancel_opt =
-                            task_slot.lock().as_ref().map(|t| t.handle.clone());
-                        if let Some(handle_for_cancel) = handle_for_cancel_opt {
-                            let slot = task_slot.clone();
-                            let inner2 = inner.clone();
-                            let waker_ch = ch.clone();
-                            let reg = ch.register_recv_waker_guard(Box::new(move || {
-                                // The slot lock is released before
-                                // anything else happens: see "Lock
-                                // order" on `make_cancel_cleanup`.
-                                let parked = slot.lock().take();
-                                match parked {
-                                    Some(task) => requeue(&inner2, task, false),
-                                    // The task was cancelled after the
-                                    // channel had chosen this waker. It
-                                    // will not receive, so the wake-up
-                                    // goes on to the next waiter.
-                                    None => waker_ch.rewake_waiters(),
-                                }
-                            }));
-                            // Re-install the cancel cleanup so it ALSO owns
-                            // the `WakerRegistration` guard. The guard's
-                            // Drop deregisters the recv waker from the
-                            // channel on any path that drops the closure
-                            // (cancel → `complete` fires it, then closure
-                            // drops; or normal wake → `requeue` calls
-                            // `clear_cancel_cleanup`, closure drops).
-                            // Without this, round-27 B1/B2 leak the waker
-                            // into `recv_wakers` and permanently inflate
-                            // `waiting_receivers`: a later unrelated
-                            // `try_send` sees a phantom receiver (B1), or
-                            // a real receiver behind the dead waker in the
-                            // FIFO never wakes (B2).
-                            //
-                            // Phase 3 / round 31: only install the new
-                            // cleanup if `task_slot` is still `Some`. If
-                            // `register_*_waker_guard` inline-fired (the
-                            // common rendezvous case), the closure took the
-                            // task out of `task_slot` and `requeue` already
-                            // cleared the prior cleanup AND reset the wake-
-                            // graph edge. A subsequent `set_cancel_cleanup`
-                            // here would race with a concurrent worker that
-                            // has already picked the requeued task up,
-                            // entered a NEW Blocked arm, and installed ITS
-                            // arm-specific cleanup. Replacing that newer
-                            // cleanup drops a `WakerRegistration` whose
-                            // entry is still live in the channel — the drop
-                            // calls `remove_*_waker`, deregistering the
-                            // newer arm's waker. Result: a parked task with
-                            // no waker, the wake-graph still listing it as
-                            // a Send/Recv listener, and the deadlock
-                            // detector firing a real-looking false positive.
-                            //
-                            // Closing the check+set under the same
-                            // `task_slot` lock keeps the protocol race-free:
-                            // if the slot is empty when checked, the
-                            // inline-fire (or a concurrent wake) already
-                            // owns the task and we must not touch the
-                            // cleanup; if the slot is `Some` while we hold
-                            // the lock, no waker can fire mid-set (the
-                            // waker closure also needs `slot.lock()` to
-                            // proceed), so our `set_cancel_cleanup` cannot
-                            // clobber a newer arm's cleanup. We do the
-                            // `set_cancel_cleanup` while still holding the
-                            // lock. That is the one permitted order of
-                            // the two locks (slot, then cleanup): the
-                            // handle never runs or drops a closure while
-                            // it holds the lock on its cleanup.
-                            //
-                            // A cancel can have taken the cleanup that
-                            // was installed before this arm out of the
-                            // handle, without having run it yet. It
-                            // then finds the task in the slot, and
-                            // releases the cleanup installed here (and
-                            // with it `reg`) itself: see
-                            // `make_cancel_cleanup`, step 3.
-                            let slot_guard = task_slot.lock();
-                            if slot_guard.is_some() {
-                                handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
-                                    task_slot.clone(),
-                                    inner.clone(),
-                                    id,
-                                    was_io,
-                                    reg,
-                                ));
-                                drop(slot_guard);
-                            } else {
-                                drop(slot_guard);
-                                // Inline-fire already requeued the task and
-                                // dropped the prior cleanup; `reg` here
-                                // refers to a drained entry whose Drop is a
-                                // no-op deregister.
-                                drop(reg);
-                            }
-                        } else {
-                            // F10 cancelled-mid-setup: the initial cleanup
-                            // at :626 already took the task, decremented
-                            // `live_tasks`, and called `on_complete(id)`
-                            // (which tears down any edge in the graph).
-                            // But `on_park` at :679 may have run AFTER the
-                            // cleanup's `on_complete`, in which case the
-                            // graph retains a phantom park edge for a
-                            // dead task. Remove it now. `on_wake` is a
-                            // no-op when the edge is already gone, so it
-                            // is safe in the other ordering too. Do not
-                            // register the channel waker (would leak into
-                            // `recv_wakers` / `ch_recv_listeners` with no
-                            // owner to drain it), and do not install an
-                            // arm-specific cleanup (the task is gone).
-                            inner.wake_graph.on_wake(NodeId::Task(id));
-                            signal_progress(&inner);
-                        }
-                    }
-                    Some(BlockReason::Send(ch)) => {
-                        fire_hook!(on_park, "blocked_arm_entry_send");
-                        // F10 regression-test widener. See Receive arm.
-                        f10_park_setup_pause();
-                        // Capture the handle BEFORE registering the waker.
-                        // `register_send_waker_guard` may synchronously invoke
-                        // the waker closure if a peer is already parked at
-                        // the rendezvous (e.g. a receiver already waiting).
-                        // That closure takes `task_slot`, leaving it `None` —
-                        // so cloning the handle afterwards would panic on
-                        // `expect("task_slot just initialized")`. The slot
-                        // was initialized above this `match` and nothing
-                        // mutates it between there and here.
-                        //
-                        // Finding F10: see the Receive arm above. A
-                        // concurrent `task.cancel(h)` between :626 and
-                        // here may already have drained `task_slot`;
-                        // defend with an `if let` and take the
-                        // cancelled-mid-setup path on `None`.
-                        let handle_for_cancel_opt =
-                            task_slot.lock().as_ref().map(|t| t.handle.clone());
-                        if let Some(handle_for_cancel) = handle_for_cancel_opt {
-                            let slot = task_slot.clone();
-                            let inner2 = inner.clone();
-                            let waker_ch = ch.clone();
-                            let reg = ch.register_send_waker_guard(Box::new(move || {
-                                let parked = slot.lock().take();
-                                match parked {
-                                    Some(task) => requeue(&inner2, task, false),
-                                    // Cancelled after the channel had
-                                    // chosen this waker: the wake-up
-                                    // goes on to the next waiter. See
-                                    // the Receive arm.
-                                    None => waker_ch.rewake_waiters(),
-                                }
-                            }));
-                            // See the Receive arm: cancel cleanup owns the
-                            // guard so Drop deregisters the send waker on
-                            // cancel (round-27 B3/B4). Phase 3 / round 31:
-                            // hold the `task_slot` lock across the
-                            // is_some-check + set_cancel_cleanup so an
-                            // inline-fire-then-new-arm sequence cannot
-                            // clobber a concurrent worker's NEW arm
-                            // cleanup. See the matching explanation in the
-                            // Receive arm above.
-                            let slot_guard = task_slot.lock();
-                            if slot_guard.is_some() {
-                                handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
-                                    task_slot.clone(),
-                                    inner.clone(),
-                                    id,
-                                    was_io,
-                                    reg,
-                                ));
-                                drop(slot_guard);
-                            } else {
-                                drop(slot_guard);
-                                drop(reg);
-                            }
-                        } else {
-                            // F10 cancelled-mid-setup: the initial cleanup
-                            // at :626 already took the task. Remove any
-                            // phantom park edge and skip waker/cleanup
-                            // install. See the Receive arm for the full
-                            // rationale.
-                            inner.wake_graph.on_wake(NodeId::Task(id));
-                            signal_progress(&inner);
-                        }
-                    }
-                    Some(BlockReason::Select(ops)) => {
-                        fire_hook!(on_park, "blocked_arm_entry_select");
-                        // F10 regression-test widener. See Receive arm.
-                        f10_park_setup_pause();
-                        // Register a waker on ALL channels. The first
-                        // waker to fire wakes the task AND deregisters
-                        // the wakers of the other arms — this prevents a
-                        // leaked `waiting_receivers` increment on the
-                        // channels that did not fire. Without it a
-                        // rendezvous sender on such a channel would
-                        // later see `waiting_receivers > 0` in
-                        // `try_send`, place a value into the handoff
-                        // slot, and return `Sent` with no real receiver
-                        // waiting — a broken rendezvous handshake.
-                        //
-                        // `park` holds the registrations of all arms.
-                        // Whoever ends the park (the first waker, or a
-                        // cancel) calls `end`, which deregisters every
-                        // arm that is still registered.
-                        let park = Arc::new(SelectPark::new(ops.len()));
-                        // Replace the generic cancel_cleanup (set above)
-                        // with a select-aware version: same wake-graph
-                        // teardown, and it ends `park`. Select is never
-                        // I/O, so the watchdog-registry call is omitted.
-                        //
-                        // NOTE: this arm intentionally does NOT route
-                        // through `make_cancel_cleanup` — it owns the
-                        // registrations of several arms (ended here AND
-                        // by the first waker), not a single moved-in
-                        // guard, and the statically-false `was_io`
-                        // branch is dropped. The differences are by
-                        // design; do not "unify" this with the other
-                        // four sites.
-                        //
-                        // The closure owns `end_park`, so the park ends
-                        // when the closure has run and also when it is
-                        // dropped without having run. The second case
-                        // is the generic cleanup that was installed
-                        // before this arm: a cancel can have taken it
-                        // out of the handle before this arm replaced
-                        // it, and it takes the task without knowing the
-                        // registrations of this arm. It releases
-                        // whatever cleanup the handle holds then (see
-                        // `make_cancel_cleanup`, step 3), which is this
-                        // closure.
-                        let select_slot = task_slot.clone();
-                        let select_inner = inner.clone();
-                        let select_task_id = id;
-                        let end_park = EndSelectPark(park.clone());
-                        let select_cleanup: Box<dyn FnOnce() + Send> = Box::new(move || {
-                            let _end_park = end_park;
-                            let parked = select_slot.lock().take();
-                            let Some(task) = parked else {
-                                return;
-                            };
-                            task.handle.clear_cancel_cleanup();
-                            select_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                            select_inner.wake_graph.on_complete(select_task_id);
-                            signal_progress(&select_inner);
-                        });
-                        // The check that the task is still parked and
-                        // the install happen under one hold of the slot
-                        // lock, as in the other arms. A concurrent
-                        // `task.cancel(h)` may already have taken the
-                        // task (finding F10, see the Receive arm); the
-                        // cancelled-mid-setup path below handles that.
-                        let installed = {
-                            let slot_guard = task_slot.lock();
-                            match slot_guard.as_ref() {
-                                Some(task) => {
-                                    task.handle.set_cancel_cleanup(select_cleanup);
-                                    true
-                                }
-                                None => false,
-                            }
-                        };
-                        if installed {
-                            for (ch, kind) in ops.iter() {
-                                if park.is_over() {
-                                    // The waker of an earlier arm has
-                                    // fired, or the task was cancelled.
-                                    // Don't register further wakers
-                                    // that would leak into the channel
-                                    // queue.
-                                    break;
-                                }
-                                let slot = task_slot.clone();
-                                let inner2 = inner.clone();
-                                let waker_park = park.clone();
-                                let waker_ch = ch.clone();
-                                let waker = Box::new(move || {
-                                    let parked = if waker_park.is_over() {
-                                        None
-                                    } else {
-                                        slot.lock().take()
-                                    };
-                                    match parked {
-                                        Some(task) => {
-                                            // First to fire. `end`
-                                            // deregisters the other
-                                            // arms; the registration of
-                                            // this waker is among them,
-                                            // and removing it does
-                                            // nothing, because `wake_*`
-                                            // has taken it out of the
-                                            // queue.
-                                            waker_park.end();
-                                            requeue(&inner2, task, false);
-                                        }
-                                        // Another arm fired first, or
-                                        // the task was cancelled. The
-                                        // task will not perform this
-                                        // arm on account of this
-                                        // wake-up, so the wake-up goes
-                                        // on to the next waiter.
-                                        None => waker_ch.rewake_waiters(),
-                                    }
-                                });
-                                let reg = match kind {
-                                    SelectOpKind::Receive => ch.register_recv_waker_guard(waker),
-                                    SelectOpKind::Send => ch.register_send_waker_guard(waker),
-                                };
-                                // If the park is over (the waker fired
-                                // inline during the double-check inside
-                                // register_*_waker, or on another
-                                // thread), `add` deregisters the fresh
-                                // guard. Stop iterating then.
-                                if !park.add(reg) {
-                                    break;
-                                }
-                            }
-                        } else {
-                            // F10 cancelled-mid-setup: the cleanup that
-                            // was installed before this arm already took
-                            // the task. Remove any phantom park edge and
-                            // skip per-channel waker registration. See
-                            // the Receive arm for the full rationale.
-                            // `park` holds no registration here, so
-                            // there is nothing to deregister on the
-                            // channels.
-                            inner.wake_graph.on_wake(NodeId::Task(id));
-                            signal_progress(&inner);
-                        }
-                    }
-                    Some(BlockReason::Join(target_handle)) => {
-                        fire_hook!(on_park, "blocked_arm_entry_join");
-                        // Mirror the Receive arm: capture the handle
-                        // BEFORE registering the waker because
-                        // `register_join_waker_guard` may synchronously
-                        // invoke the waker closure if the joinee has
-                        // already completed (the inline-fire path takes
-                        // `task_slot`, leaving it `None`).
-                        //
-                        // F10 cancelled-mid-setup: a concurrent
-                        // `task.cancel(h)` between the initial
-                        // `set_cancel_cleanup` at :669 and here may
-                        // already have drained `task_slot`; defend
-                        // with an `if let` and skip waker registration
-                        // on `None`. Same shape as the Receive arm.
-                        let handle_for_cancel_opt =
-                            task_slot.lock().as_ref().map(|t| t.handle.clone());
-                        if let Some(handle_for_cancel) = handle_for_cancel_opt {
-                            let slot = task_slot.clone();
-                            let inner2 = inner.clone();
-                            let reg =
-                                target_handle.register_join_waker_guard(Box::new(move || {
-                                    // A completion wakes all of its
-                                    // waiters, so a waker that finds
-                                    // its task cancelled has nothing to
-                                    // pass on.
-                                    let parked = slot.lock().take();
-                                    if let Some(task) = parked {
-                                        requeue(&inner2, task, false);
-                                    }
-                                }));
-                            // Re-install the cancel cleanup so it ALSO
-                            // owns the `JoinWakerRegistration` guard.
-                            // The guard's Drop deregisters this task's
-                            // waker entry from the joinee's
-                            // `join_wakers` Vec on any path that drops
-                            // the closure (cancel → `complete` fires
-                            // it, then closure drops; or normal wake →
-                            // `requeue` calls `clear_cancel_cleanup`,
-                            // closure drops). Without this, a cancelled
-                            // `task.join(h)` block leaks its waker
-                            // closure into `join_wakers` until the
-                            // joinee finally completes — N cancelled
-                            // joiners on a long-running joinee means N
-                            // leaked closures, each holding
-                            // `Arc<Mutex<Option<Task>>>` plus
-                            // `Arc<SchedulerInner>`.
-                            //
-                            // Phase 3 / round 31: hold the `task_slot`
-                            // lock across the is_some-check +
-                            // set_cancel_cleanup so an inline-fire-
-                            // then-new-arm sequence cannot clobber a
-                            // concurrent worker's NEW arm cleanup. Same
-                            // rationale as the Receive arm above.
-                            let slot_guard = task_slot.lock();
-                            if slot_guard.is_some() {
-                                handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
-                                    task_slot.clone(),
-                                    inner.clone(),
-                                    id,
-                                    was_io,
-                                    reg,
-                                ));
-                                drop(slot_guard);
-                            } else {
-                                drop(slot_guard);
-                                // Inline-fire already requeued the task
-                                // and dropped the prior cleanup; `reg`
-                                // here refers to a drained entry whose
-                                // Drop is a no-op deregister.
-                                drop(reg);
-                            }
-                        } else {
-                            // F10 cancelled-mid-setup: the initial
-                            // cleanup at :669 already took the task.
-                            // Remove any phantom park edge and skip
-                            // waker/cleanup install. See the Receive
-                            // arm for the full rationale.
-                            inner.wake_graph.on_wake(NodeId::Task(id));
-                            signal_progress(&inner);
-                        }
-                    }
-                    Some(BlockReason::Io(completion)) => {
-                        fire_hook!(on_park, "blocked_arm_entry_io");
-                        // F10 regression-test widener (round-75): sleep
-                        // for `F10_PARK_SETUP_PAUSE_US` µs at the top of
-                        // the Io arm, mirroring the Recv/Send/Select arm
-                        // pause. Used by
-                        // `tests/round75_io_watchdog_f10_race_tests.rs`
-                        // to deterministically reproduce the
-                        // cancel-during-Io-arm-setup race that previously
-                        // leaked a `WatchdogRegistry` entry on the
-                        // F10-cancelled-mid-setup else branch below.
-                        // No-op when the atomic is zero.
-                        f10_park_setup_pause();
-                        // Register with the watchdog if anything imposes
-                        // a deadline: either SILT_IO_TIMEOUT (global) or
-                        // a scoped task.deadline (per-task). The earlier
-                        // deadline wins. If neither applies, the I/O
-                        // waits indefinitely — no registration, no
-                        // scan overhead.
-                        let now = inner.io.monotonic();
-                        let global_deadline = inner
-                            .global_io_timeout
-                            .and_then(|t| now.checked_add(t))
-                            .map(|d| (d, DeadlineSource::Global));
-                        let task_deadline = task_slot
-                            .lock()
-                            .as_ref()
-                            .and_then(|t| t.vm.current_deadline)
-                            .map(|d| (d, DeadlineSource::Task));
-                        let effective = match (global_deadline, task_deadline) {
-                            (Some((a, sa)), Some((b, sb))) => {
-                                if a <= b {
-                                    Some((a, sa))
-                                } else {
-                                    Some((b, sb))
-                                }
-                            }
-                            (Some(x), None) | (None, Some(x)) => Some(x),
-                            (None, None) => None,
-                        };
-                        if let Some((deadline, source)) = effective {
-                            inner.watchdog.add(id, &completion, deadline, source);
-                        }
-                        // Same shape as the Join arm: capture the
-                        // handle BEFORE registering the waker so a
-                        // synchronous inline-fire (already-complete
-                        // I/O) does not invalidate the slot we need to
-                        // clone the handle from.
-                        let handle_for_cancel_opt =
-                            task_slot.lock().as_ref().map(|t| t.handle.clone());
-                        if let Some(handle_for_cancel) = handle_for_cancel_opt {
-                            let slot = task_slot.clone();
-                            let inner2 = inner.clone();
-                            let reg = completion.register_waker_guard(Box::new(move || {
-                                let parked = slot.lock().take();
-                                if let Some(task) = parked {
-                                    requeue(&inner2, task, true);
-                                }
-                            }));
-                            // Re-install the cancel cleanup so it ALSO
-                            // owns the `IoWakerRegistration` guard.
-                            // Without this, a cancelled I/O-blocked
-                            // task (e.g. deadline elapsed, or explicit
-                            // `task.cancel(h)`) leaks its waker closure
-                            // into `IoCompletion::wakers` until the
-                            // I/O finally produces a value.
-                            let slot_guard = task_slot.lock();
-                            if slot_guard.is_some() {
-                                handle_for_cancel.set_cancel_cleanup(make_cancel_cleanup(
-                                    task_slot.clone(),
-                                    inner.clone(),
-                                    id,
-                                    was_io,
-                                    reg,
-                                ));
-                                drop(slot_guard);
-                            } else {
-                                drop(slot_guard);
-                                drop(reg);
-                            }
-                        } else {
-                            // F10 cancelled-mid-setup: see the Receive/
-                            // Join arms for the full rationale. Round-75
-                            // VM-1 fix: the comment that previously
-                            // claimed "the watchdog entry installed
-                            // above is removed by the initial cleanup
-                            // at :669" was wrong. The initial cleanup
-                            // at :669 calls `watchdog.remove(id)` —
-                            // but if the cancel races such that the
-                            // cleanup fires BEFORE this arm reaches
-                            // the `watchdog.add` above, the remove
-                            // is a no-op (registry empty), and then
-                            // the add() inserts an entry no later
-                            // remove() balances. Defend by removing
-                            // here on the F10 path — `remove` is a
-                            // no-op when the entry is absent (the
-                            // common race-A case where the cancel
-                            // fires AFTER the add and the cleanup
-                            // already drained the entry), so it is
-                            // safe in either ordering.
-                            if effective.is_some() {
-                                inner.watchdog.remove(id);
-                            }
-                            inner.wake_graph.on_wake(NodeId::Task(id));
-                            signal_progress(&inner);
-                        }
-                    }
-                    None => {
-                        // No block reason — shouldn't happen but treat as yield.
-                        // The task stays unsettled (it neither completed nor
-                        // parked with a waker), so do not touch the counter.
-                        if let Some(task) = task_slot.lock().take() {
-                            let mut queue = inner.run_queue.lock();
-                            queue.push_back(task);
-                            inner.condvar.notify_one();
-                        }
-                    }
-                }
-                // Settle: the worker has either finished registering a
-                // waker on this task's blocking edge (channel/select/
-                // join/io) or there was no block reason and it's been
-                // re-enqueued. In either case the worker is done with
-                // this task for the current step. Decrement
-                // `unsettled_tasks` exactly once per Blocked arm — the
-                // companion increment was the `submit` / `requeue` /
-                // earlier-yield that put the task on the run queue.
-                //
-                // If the waker fired inline during register and called
-                // `requeue`, that path bumped `unsettled_tasks` BEFORE
-                // pushing the task back, so the net count after this
-                // decrement is correct (queue length contribution = 1).
-                //
-                // If the cancel cleanup ran during register and
-                // destroyed the task, the task is gone and decrementing
-                // `unsettled_tasks` here drops the count to its true
-                // resting value (no compensating push).
-                if had_block_reason {
-                    inner.unsettled_tasks.fetch_sub(1, Ordering::SeqCst);
-                }
-                // else: no block reason re-enqueued the task without
-                // going through `requeue` (which would have incremented
-                // unsettled_tasks). The task stays unsettled — same
-                // semantics as Yielded above — so no decrement.
-            }
-        }
-    }
-}
-
-/// Pulse every installed `main_waiter` callback. Called at every
-/// state-change site (submit, requeue, complete, on_park, on_wake) so
-/// any parked main-thread waiter re-checks the graph promptly. Cheap
-/// in steady state: each callback is a single `Condvar::notify_one`
-/// on a private mutex, and the typical waiter count is 0 or 1.
-fn signal_progress(inner: &Arc<SchedulerInner>) {
-    // Snapshot the callbacks under the lock, then fire them outside
-    // the lock so a callback that re-enters the scheduler (e.g.
-    // future code that touches counters during notify) cannot
-    // deadlock on `main_waiters`.
-    let snapshot: Vec<MainWaiterCallback> = {
-        let waiters = inner.main_waiters.lock();
-        waiters.iter().map(|(_, cb)| cb.clone()).collect()
-    };
-    for cb in snapshot {
-        cb();
-    }
-}
-
-/// Build the cancel-cleanup closure installed on a blocked task's
-/// handle. Single source of truth for the cancel-while-blocked
-/// teardown sequence, shared by the registration-time install (no
-/// waker-registration guard exists yet — callers pass `()`) and the
-/// four park arms (Receive / Send / Join / Io, each passing its
-/// arm-specific guard: `WakerRegistration`, `JoinWakerRegistration`,
-/// or `IoWakerRegistration`).
-///
-/// The Select arm intentionally does NOT route through this helper:
-/// it ends a `SelectPark` (the registrations of several arms) instead
-/// of dropping a single owned guard, and omits the watchdog call
-/// because `was_io` is statically false for Select.
-///
-/// ORDER-SENSITIVE — do not reorder the body. The sequence is:
-///
-///   1. Move `reg` into the closure body so its Drop (the waker
-///      deregister) runs at the end of this scope on the cancel path,
-///      or when the closure itself is dropped on the normal-wake path
-///      (`requeue` calls `clear_cancel_cleanup`). Without the guard
-///      ownership the waker leaks into the channel queues (phantom
-///      rendezvous peer / starved real peer).
-///   2. Take the task from `slot` or return — the idempotency gate.
-///      An empty slot means the waker already fired and the task is
-///      either running or already accounted for; never
-///      double-decrement the counters.
-///   3. Release the cleanup that the handle holds now. `complete`
-///      takes this closure out of the handle before it runs it; in
-///      between, the park arm can have installed its own cleanup,
-///      which owns the arm's waker registration. Nothing would fire
-///      or drop that one, and its waker would stay registered for a
-///      task that no longer exists. No park arm can install a cleanup
-///      for this park after step 2: the arms install only while they
-///      hold the slot lock and see the task in the slot.
-///   4. `was_io` → remove the `WatchdogRegistry` entry (the
-///      Completed/requeue paths that normally clear it are unreachable
-///      once the task is dropped).
-///   5. Decrement `live_tasks` — the Completed/Failed decrement is
-///      likewise unreachable, so the counter would otherwise leak.
-///   6. `wake_graph.on_complete` — cancelled-while-blocked is the
-///      moral equivalent of completion: drop the edge and the live
-///      entry so a subsequent BFS does not see a phantom fuel node.
-///   7. `signal_progress` — pulse parked main waiters to re-check.
-///      Dropping this step on any one arm would bring back a
-///      starvation false positive on that arm's path only.
-///
-/// # Lock order
-///
-/// Two locks meet on the cancel path: the lock of the parked task's
-/// slot and the lock on the handle's cleanup
-/// (`TaskHandle::cancel_cleanup`). The rule:
-///
-///   * The cleanup lock is a leaf. `TaskHandle` holds it only to move
-///     a closure in or out. It runs and drops closures after it has
-///     released the lock.
-///   * The slot lock may be held while the cleanup lock is acquired
-///     (the park arms do that, to check the slot and install the
-///     cleanup in one step). The opposite order does not occur.
-///   * The slot lock is held only to look at the slot or to take the
-///     task out. This closure and the wakers release it before they do
-///     anything else, so nothing that they call (`requeue`, the wake
-///     graph, the run queue, a channel's waker queue, the callbacks of
-///     a waiting main thread) is reached with the slot lock held.
-///
-/// The park arms must keep the `task_slot` is_some-check and the
-/// `set_cancel_cleanup` call under one `task_slot` lock hold so an
-/// inline-fire-then-new-arm sequence cannot clobber a concurrent
-/// worker's newer arm cleanup.
-fn make_cancel_cleanup<G: Send + 'static>(
-    slot: Arc<Mutex<Option<Task>>>,
-    inner: Arc<SchedulerInner>,
-    task_id: usize,
-    was_io: bool,
-    reg: G,
-) -> Box<dyn FnOnce() + Send> {
-    Box::new(move || {
-        // Step 1: own the guard; Drop runs at end of scope (cancel
-        // path, including the early return below) or when the closure
-        // is dropped unfired (normal wake path).
-        let _reg = reg;
-        // Step 2: idempotency gate. The slot lock is released at the
-        // end of this statement.
-        let parked = slot.lock().take();
-        let Some(task) = parked else {
-            return;
-        };
-        inner.parked.lock().remove(&task_id);
-        // Step 3: release a cleanup that a park arm installed after
-        // `complete` had taken this closure out of the handle.
-        task.handle.clear_cancel_cleanup();
-        // Step 4: balance the I/O watchdog entry.
-        if was_io {
-            inner.watchdog.remove(task_id);
-        }
-        // Step 5: the blocked task is being dropped; the normal
-        // decrement sites are unreachable.
-        inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-        // Step 6: tear down the wake-graph node + edge.
-        inner.wake_graph.on_complete(task_id);
-        // Step 7: pulse main waiters to re-check.
-        signal_progress(&inner);
-    })
-}
-
-/// The waker registrations of one parked `channel.select`: one per arm
-/// that has been registered so far.
-///
-/// Exactly one party ends the park: the first waker that fires, or a
-/// cancel. It calls `end`, which deregisters every arm. From then on
-/// the park is over: the wakers of the other arms do nothing but pass
-/// their wake-up on, and the loop that registers the arms stops.
-struct SelectPark {
-    /// Set by `end`, under the lock of `registrations`.
-    over: AtomicBool,
-    registrations: Mutex<Vec<WakerRegistration>>,
-}
-
-impl SelectPark {
-    fn new(arms: usize) -> Self {
-        SelectPark {
-            over: AtomicBool::new(false),
-            registrations: Mutex::new(Vec::with_capacity(arms)),
-        }
-    }
-
-    fn is_over(&self) -> bool {
-        self.over.load(Ordering::Acquire)
-    }
-
-    /// Keep the registration of one more arm. Returns `false` if the
-    /// park is over; the registration is dropped then, which
-    /// deregisters the arm's waker.
-    ///
-    /// The check and the push happen under one lock hold, and `end`
-    /// sets `over` under the same lock. So a registration is either in
-    /// the list when `end` empties it, or is refused here.
-    fn add(&self, registration: WakerRegistration) -> bool {
-        let mut registrations = self.registrations.lock();
-        if self.over.load(Ordering::Acquire) {
-            drop(registrations);
-            drop(registration);
-            return false;
-        }
-        registrations.push(registration);
-        true
-    }
-
-    /// End the park and deregister every arm. Can be called more than
-    /// once.
-    fn end(&self) {
-        let registrations = {
-            let mut registrations = self.registrations.lock();
-            self.over.store(true, Ordering::Release);
-            std::mem::take(&mut *registrations)
-        };
-        // Each drop removes one waker from its channel's queue. That
-        // happens after the lock above has been released.
-        drop(registrations);
-    }
-}
-
-/// Ends a `SelectPark` when dropped. Owned by the cancel cleanup of the
-/// Select arm, so the park ends when that closure has run and also when
-/// it is dropped without having run.
-struct EndSelectPark(Arc<SelectPark>);
-
-impl Drop for EndSelectPark {
-    fn drop(&mut self) {
-        self.0.end();
-    }
-}
-
 /// Keep the handle of a task that ended with an error, for the report
 /// of failures that nobody joined: in the record of the process while
 /// the failures are collected, in the scheduler's own record otherwise.
-fn record_failed_task(inner: &SchedulerInner, handle: &Arc<TaskHandle>) {
+fn record_failed_task(inner: &Inner, handle: &Arc<TaskHandle>) {
     let handled_since = if COLLECTING.load(Ordering::SeqCst) {
         collected_failures().lock().record(handle)
     } else {
@@ -1744,7 +1075,7 @@ fn record_failed_task(inner: &SchedulerInner, handle: &Arc<TaskHandle>) {
 /// that knows the program's files collects the failures instead
 /// (`collect_unjoined_failures`) and renders them itself; the record of
 /// the scheduler stays empty then.
-fn report_unjoined_failures(inner: &SchedulerInner) -> usize {
+fn report_unjoined_failures(inner: &Inner) -> usize {
     let (handles, not_recorded) = inner.failed_tasks.lock().take();
     // The scheduler knows no files: the diagnostics show no place.
     let no_files = crate::source::SourceMap::new();
@@ -1795,7 +1126,7 @@ fn report_unjoined_failures(inner: &SchedulerInner) -> usize {
 /// the process that way calls `Scheduler::report_unjoined_failures`
 /// first.
 struct StartedSchedulers {
-    schedulers: RefCell<Vec<Weak<SchedulerInner>>>,
+    schedulers: RefCell<Vec<Weak<Inner>>>,
 }
 
 impl Drop for StartedSchedulers {
@@ -1960,700 +1291,146 @@ pub fn take_unjoined_failures() -> UnjoinedFailures {
     }
 }
 
-/// RAII guard for a callback installed via
-/// `Scheduler::install_main_waiter`. Drop deregisters the callback so
-/// it does not fire after the watcher's local condvar is gone.
-pub struct MainWaiterGuard {
-    scheduler: Arc<Scheduler>,
-    id: u64,
-}
-
-impl Drop for MainWaiterGuard {
-    fn drop(&mut self) {
-        let mut waiters = self.scheduler.inner.main_waiters.lock();
-        if let Some(pos) = waiters.iter().position(|(wid, _)| *wid == self.id) {
-            waiters.swap_remove(pos);
-        }
-    }
-}
-
-/// Re-enqueue a parked task on the scheduler's run queue.
-///
-/// `was_io` indicates whether the task was parked on external I/O —
-/// in that case the watchdog registry entry must be cleared. For
-/// internal-graph parks (channel/select/join) the waker site already
-/// knows which arm it's in.
-fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
-    // Bump unsettled_tasks BEFORE pushing the task on the queue so any
-    // observer sees a "definitely progressing" counter throughout the
-    // requeue window. The worker that next runs this task will
-    // decrement unsettled_tasks again — either when the slice
-    // completes the task, when it parks with a registered waker, or
-    // when the task yields again (in which case requeue runs a second
-    // time and the counter stays balanced).
-    inner.unsettled_tasks.fetch_add(1, Ordering::SeqCst);
-    if was_io {
-        inner.watchdog.remove(task.id);
-    }
-    inner.parked.lock().remove(&task.id);
-    // Clear the stale cancel-cleanup so it won't run when the task
-    // completes normally.
-    task.handle.clear_cancel_cleanup();
-    // The program has ended: the task never runs again.
-    if inner.shutdown.load(Ordering::SeqCst) {
-        drop(task);
-        return;
-    }
-    // Wake graph: drop the parked edge for this task. If the task was
-    // parked on Recv(ch), this clears the corresponding entry in
-    // ch_recv_listeners — important because a future BFS would
-    // otherwise treat this task as still parked-recv and walk past it.
-    inner.wake_graph.on_wake(NodeId::Task(task.id));
-    let mut queue = inner.run_queue.lock();
-    queue.push_back(task);
-    inner.condvar.notify_one();
-    // The graph just lost a parked edge — pulse main waiters so they
-    // re-check their target reachability.
-    drop(queue);
-    signal_progress(inner);
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bytecode::VmClosure;
-    use crate::typeinfo::bv;
-    use crate::vm::CallFrame;
-    use std::time::Instant;
+    use crate::vm::{Output, Vm, VmError};
+    use crate::{HostIo, Value};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
-    /// Compile a Silt snippet and return a VM ready for execute_slice.
-    fn make_vm(src: &str) -> Vm {
-        let program = crate::session::testing::compile_str(src).expect("compile error");
-        let mut vm = Vm::new(crate::HostIo::process());
-        vm.load(&program);
-        vm.is_scheduled_task = true;
-        let closure = Arc::new(VmClosure {
-            function: Arc::new(program.functions[0].clone()),
-            upvalues: vec![],
-        });
-        vm.frames.push(crate::vm::Frame::Code(CallFrame {
-            closure,
-            ip: 0,
-            base_slot: 0,
-        }));
-        vm
-    }
+    /// An output that keeps what was printed and when.
+    #[derive(Clone, Default)]
+    struct Timed(Arc<Mutex<Vec<(String, Instant)>>>);
 
-    fn make_task(id: usize, src: &str) -> (Task, Arc<TaskHandle>) {
-        let handle = Arc::new(TaskHandle::new(id));
-        let vm = make_vm(src);
-        (
-            Task {
-                id,
-                vm,
-                handle: handle.clone(),
-            },
-            handle,
-        )
-    }
-
-    // ── Basic lifecycle ────────────────────────────────────────────
-
-    #[test]
-    fn test_submit_and_join_single_task() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let (task, handle) = make_task(1, "fn main() { 42 }");
-        scheduler.submit(task).unwrap();
-        let result = handle.join();
-        assert_eq!(result.ok(), Some(Value::Int(42)));
-    }
-
-    #[test]
-    fn test_submit_multiple_tasks_all_complete() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let mut handles = Vec::new();
-        for i in 0..10 {
-            let src = format!("fn main() {{ {} }}", i);
-            let (task, handle) = make_task(i, &src);
-            scheduler.submit(task).unwrap();
-            handles.push((i as i64, handle));
-        }
-        for (expected, handle) in handles {
-            assert_eq!(handle.join().ok(), Some(Value::Int(expected)));
+    impl Output for Timed {
+        fn write(&self, text: &str) -> std::io::Result<()> {
+            self.0.lock().push((text.to_string(), Instant::now()));
+            Ok(())
         }
     }
 
-    #[test]
-    fn test_failed_task_reports_error() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
-        scheduler.submit(task).unwrap();
-        let result = handle.join();
-        assert!(result.is_err(), "expected error from division by zero");
-        assert!(
-            result.unwrap_err().message.contains("division"),
-            "error should mention division"
-        );
-    }
-
-    // ── Counter bookkeeping ────────────────────────────────────────
-
-    #[test]
-    fn test_live_tasks_counter_reaches_zero() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let mut handles = Vec::new();
-        for i in 0..5 {
-            let (task, handle) = make_task(i, "fn main() { 1 }");
-            scheduler.submit(task).unwrap();
-            handles.push(handle);
+    impl Timed {
+        /// When `line` was printed.
+        fn at(&self, line: &str) -> Instant {
+            let printed = self.0.lock();
+            let found = printed.iter().find(|(text, _)| text.trim_end() == line);
+            found.unwrap_or_else(|| panic!("`{line}` was printed")).1
         }
-        for h in &handles {
-            let _ = h.join();
-        }
-        // Give workers a moment to decrement.
-        std::thread::sleep(Duration::from_millis(50));
-        let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
-        assert_eq!(
-            live, 0,
-            "live_tasks should be 0 after all tasks complete, got {live}"
-        );
+    }
+
+    fn run(source: &str) -> (Result<Value, VmError>, Timed, Instant) {
+        let program = crate::session::testing::compile_str(source).expect("the program compiles");
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()));
+        let result = vm.run_program(&program);
+        (result, out, Instant::now())
+    }
+
+    /// How long after the last event of a deadlocked program the
+    /// verdict may come. It is given by the event itself (the last
+    /// park, the last task's end, the last timer), so the bound is
+    /// that of waking one thread.
+    const VERDICT_WITHIN: Duration = Duration::from_millis(100);
+
+    fn assert_deadlock(result: Result<Value, VmError>, what: &str) {
+        let error = result.expect_err("the program is deadlocked");
+        assert_eq!(error.message, format!("deadlock on main thread: {what}"));
     }
 
     #[test]
-    fn test_failed_task_decrements_live_counter() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
-        scheduler.submit(task).unwrap();
-        let _ = handle.join();
-        std::thread::sleep(Duration::from_millis(50));
-        let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
-        assert_eq!(
-            live, 0,
-            "live_tasks should be 0 after failed task, got {live}"
-        );
-    }
-
-    // ── Round 93: cancel-cleanup extraction — live_tasks drain ────
-    //
-    // One lock per park family routed through `make_cancel_cleanup`
-    // (Receive / Send / Join / Io): park a task on the family's edge,
-    // cancel it the same way the `task.cancel` builtin does
-    // (`handle.complete(Err("cancelled"))`, which fires the installed
-    // cancel cleanup synchronously), and assert `live_tasks` drains
-    // to zero — i.e. the extracted helper ran its take-slot gate +
-    // decrement + `on_complete` exactly once for that arm. A drift in
-    // any single arm (e.g. an arm that stopped routing through the
-    // helper and dropped the decrement) fails exactly that family's
-    // test. The Select arm keeps its intentionally-different inline
-    // cleanup and is covered end-to-end by
-    // `tests/concurrency/scheduler_cancel_setup_race_tests.rs` and
-    // `tests/concurrency/cancel_path_waker_leak_tests.rs`.
-
-    /// Submit `src`, wait until the task has parked (unsettled_tasks
-    /// drains to 0 — decremented only after the per-arm cleanup +
-    /// waker registration completes), cancel it, and assert
-    /// `live_tasks` returns to 0.
-    fn cancel_parked_task_and_assert_live_drained(family: &str, src: &str) {
-        let scheduler = Scheduler::new(HostIo::process());
-        let (task, handle) = make_task(1, src);
-        scheduler.submit(task).unwrap();
-        // Wait for the park: `unsettled_tasks` is decremented at the
-        // end of the Blocked arm, strictly AFTER the per-arm
-        // `set_cancel_cleanup`. Once it reads 0 with the task neither
-        // completed nor failed, the arm-specific cleanup is installed.
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while scheduler.inner.unsettled_tasks.load(Ordering::SeqCst) != 0 {
-            assert!(
-                Instant::now() < deadline,
-                "{family}: task never parked (unsettled_tasks stuck at {})",
-                scheduler.inner.unsettled_tasks.load(Ordering::SeqCst)
-            );
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        assert!(
-            handle.try_get().is_none(),
-            "{family}: task completed instead of parking — fixture program \
-             must block forever until cancelled"
-        );
-        assert_eq!(
-            scheduler.inner.live_tasks.load(Ordering::SeqCst),
-            1,
-            "{family}: parked task should hold live_tasks at 1"
-        );
-        // Cancel — the exact call the `task.cancel` builtin makes. It
-        // fires the installed cancel cleanup synchronously on this
-        // thread, so the counter is settled when `complete` returns.
-        handle.complete(Err(VmError::new("cancelled".to_string())));
-        let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
-        assert_eq!(
-            live, 0,
-            "{family}: live_tasks must drain to 0 after cancelling the \
-             parked task, got {live} — the {family} arm's cancel cleanup \
-             did not run (or ran without its decrement)"
-        );
-        // Idempotency gate: a second complete must not double-run the
-        // cleanup (the slot is already drained).
-        handle.complete(Err(VmError::new("cancelled".to_string())));
-        assert_eq!(
-            scheduler.inner.live_tasks.load(Ordering::SeqCst),
-            0,
-            "{family}: double-cancel must not double-decrement live_tasks"
-        );
-    }
-
-    #[test]
-    fn test_cancel_parked_receive_drains_live_tasks() {
-        cancel_parked_task_and_assert_live_drained(
-            "receive",
-            r#"
-import channel
-fn main() {
-  let ch = channel.new(0)
-  channel.receive(ch)
-  0
-}
-"#,
-        );
-    }
-
-    #[test]
-    fn test_cancel_parked_send_drains_live_tasks() {
-        cancel_parked_task_and_assert_live_drained(
-            "send",
-            r#"
-import channel
-fn main() {
-  let ch = channel.new(0)
-  channel.send(ch, 1)
-  0
-}
-"#,
-        );
-    }
-
-    #[test]
-    fn test_cancel_parked_join_drains_live_tasks() {
-        // The joinee is spawned from inside the task and parks on a
-        // private channel forever, so the outer task reliably parks
-        // on `BlockReason::Join`. The joinee lands on the Vm
-        // runtime's own lazily-created scheduler — not the one under
-        // test — so this scheduler's counters see exactly one task:
-        // the joiner.
-        cancel_parked_task_and_assert_live_drained(
-            "join",
-            r#"
+    fn a_deadlock_is_reported_when_the_last_task_parks() {
+        let (result, out, end) = run(r#"
 import channel
 import task
-fn main() {
-  let ch = channel.new(0)
-  let h = task.spawn({ -> channel.receive(ch) })
-  task.join(h)
-  0
-}
-"#,
-        );
-    }
-
-    #[test]
-    fn test_cancel_parked_io_drains_live_tasks() {
-        // `time.sleep` in a scheduled task parks on
-        // `BlockReason::Io(_)` (timer-backed completion). 600s never
-        // fires within the test; the cancel must drain the counter.
-        cancel_parked_task_and_assert_live_drained(
-            "io",
-            r#"
 import time
 fn main() {
-  time.sleep(time.ms(600000))
-  0
+  let a = channel.new(0)
+  let b = channel.new(0)
+  let _waits = task.spawn({ ->
+    time.sleep(time.ms(150))
+    println("last")
+    channel.receive(b)
+  })
+  channel.receive(a)
 }
-"#,
-        );
-    }
-
-    // ── Cancel: lock order ─────────────────────────────────────────
-
-    /// `complete` runs the cancel cleanup after it has released the
-    /// lock on the cleanup. The cleanup here uses that lock again, as
-    /// the scheduler's cleanups do (they release what a park arm
-    /// installed in the meantime). If `complete` still held the lock,
-    /// this would never return; the helper thread and the timeout turn
-    /// that into a failure instead of a hang.
-    #[test]
-    fn test_cancel_cleanup_runs_outside_the_cleanup_lock() {
-        let handle = Arc::new(TaskHandle::new(1));
-        let ran = Arc::new(AtomicBool::new(false));
-        let handle_in_cleanup = handle.clone();
-        let ran_in_cleanup = ran.clone();
-        handle.set_cancel_cleanup(Box::new(move || {
-            handle_in_cleanup.clear_cancel_cleanup();
-            ran_in_cleanup.store(true, Ordering::SeqCst);
-        }));
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let canceller = handle.clone();
-        std::thread::spawn(move || {
-            canceller.complete(Err(VmError::new("cancelled".to_string())));
-            let _ = done_tx.send(());
-        });
-        done_rx
-            .recv_timeout(Duration::from_secs(10))
-            .expect("complete() must not hold the cleanup lock while the cleanup runs");
-        assert!(ran.load(Ordering::SeqCst), "the cleanup must have run");
-    }
-
-    /// A cleanup that is replaced or cleared is dropped after the lock
-    /// on the cleanup has been released: its destructor may use the
-    /// handle. The scheduler's cleanups own waker registrations, whose
-    /// destructors take other locks.
-    #[test]
-    fn test_replaced_cleanup_is_dropped_outside_the_cleanup_lock() {
-        struct UsesHandleOnDrop(Arc<TaskHandle>);
-        impl Drop for UsesHandleOnDrop {
-            fn drop(&mut self) {
-                self.0.clear_cancel_cleanup();
-            }
-        }
-        let handle = Arc::new(TaskHandle::new(1));
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let worker = handle.clone();
-        std::thread::spawn(move || {
-            let first = UsesHandleOnDrop(worker.clone());
-            worker.set_cancel_cleanup(Box::new(move || {
-                let _owned = first;
-            }));
-            // Replacing drops `first`.
-            worker.set_cancel_cleanup(Box::new(|| {}));
-            let second = UsesHandleOnDrop(worker.clone());
-            worker.set_cancel_cleanup(Box::new(move || {
-                let _owned = second;
-            }));
-            // Clearing drops `second`.
-            worker.clear_cancel_cleanup();
-            let _ = done_tx.send(());
-        });
-        done_rx
-            .recv_timeout(Duration::from_secs(10))
-            .expect("a replaced or cleared cleanup must be dropped outside the cleanup lock");
-    }
-
-    // ── Failures that nobody joins ─────────────────────────────────
-
-    /// Wait until the task behind `handle` has ended and the worker
-    /// has recorded its failure, without joining it.
-    fn wait_until_failure_recorded(scheduler: &Scheduler, handle: &Arc<TaskHandle>) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while handle.try_get().is_none() || scheduler.inner.failed_tasks.lock().handles.is_empty() {
-            assert!(
-                Instant::now() < deadline,
-                "the failed task was not recorded in time"
-            );
-            std::thread::sleep(Duration::from_millis(2));
-        }
+"#);
+        assert_deadlock(result, "channel receive with no counterparty");
+        let after = end.duration_since(out.at("last"));
+        assert!(after < VERDICT_WITHIN, "the verdict came {after:?} late");
     }
 
     #[test]
-    fn test_failed_task_without_join_is_kept_for_the_report() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
-        scheduler.submit(task).unwrap();
-        wait_until_failure_recorded(&scheduler, &handle);
-        assert!(handle.has_unjoined_failure());
-        let error = handle
-            .take_unjoined_failure()
-            .expect("nobody joined the task");
-        assert!(
-            error.message.contains("division"),
-            "the report must carry the task's own error, got: {}",
-            error.message
-        );
-        assert!(
-            handle.take_unjoined_failure().is_none(),
-            "a failure is given out for the report once"
-        );
+    fn a_deadlock_is_reported_when_the_last_task_ends() {
+        let (result, out, end) = run(r#"
+import channel
+import task
+import time
+fn main() {
+  let ch = channel.new(0)
+  let ends = task.spawn({ ->
+    time.sleep(time.ms(150))
+    println("last")
+  })
+  channel.send(ch, 1)
+  task.join(ends)
+}
+"#);
+        assert_deadlock(result, "channel send with no counterparty");
+        let after = end.duration_since(out.at("last"));
+        assert!(after < VERDICT_WITHIN, "the verdict came {after:?} late");
     }
 
     #[test]
-    fn test_joined_failure_is_not_kept_for_the_report() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
-        scheduler.submit(task).unwrap();
-        assert!(handle.join().is_err());
-        assert!(!handle.has_unjoined_failure());
-        assert!(handle.take_unjoined_failure().is_none());
-    }
-
-    #[test]
-    fn test_cancelled_task_is_not_a_failure() {
-        let handle = TaskHandle::new(1);
-        handle.complete(Err(VmError::new("cancelled".to_string())));
-        assert!(!handle.has_unjoined_failure());
-        // The task fails later: the handle keeps the cancellation.
-        assert!(!handle.fail(VmError::new("late failure".to_string())));
-        assert!(!handle.has_unjoined_failure());
-        assert!(handle.take_unjoined_failure().is_none());
-    }
-
-    #[test]
-    fn test_recorded_failures_are_bounded() {
-        let scheduler = Scheduler::new(HostIo::process());
-        for id in 0..(MAX_RECORDED_FAILURES + 5) {
-            let handle = Arc::new(TaskHandle::new(id));
-            assert!(handle.fail(VmError::new(format!("failure {id}"))));
-            record_failed_task(&scheduler.inner, &handle);
-        }
-        {
-            let failed = scheduler.inner.failed_tasks.lock();
-            assert_eq!(failed.handles.len(), MAX_RECORDED_FAILURES);
-            assert_eq!(failed.not_recorded.get(&0), Some(&5));
-        }
-        // Joined failures make room for new ones.
-        for handle in scheduler.inner.failed_tasks.lock().handles.iter() {
-            handle.mark_joined();
-        }
-        let handle = Arc::new(TaskHandle::new(1000));
-        assert!(handle.fail(VmError::new("failure 1000".to_string())));
-        record_failed_task(&scheduler.inner, &handle);
-        let mut failed = scheduler.inner.failed_tasks.lock();
-        assert_eq!(failed.handles.len(), 1);
-        // Leave nothing for the report that runs when the scheduler is
-        // dropped: this test is about the record, not about stderr.
-        failed.handles.clear();
-        failed.not_recorded.clear();
-    }
-
-    /// A task spawned by a task belongs to the owner of the task that
-    /// spawns it, whatever owner the program has set meanwhile.
-    #[test]
-    fn test_task_spawned_by_a_task_gets_the_spawning_task_owner() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let handle = Arc::new(TaskHandle::with_owner(1, 77));
-        let vm = make_vm(
-            r#"
+    fn a_deadlock_is_reported_when_the_last_timer_has_fired() {
+        let start = Instant::now();
+        let (result, _, end) = run(r#"
+import channel
 import task
 fn main() {
-  task.spawn({ -> 1 })
+  let ch = channel.new(0)
+  let timer = channel.timeout(150)
+  let _waits = task.spawn({ -> channel.receive(timer) })
+  let other = task.spawn({ -> channel.receive(ch) })
+  task.join(other)
 }
-"#,
-        );
-        scheduler
-            .submit(Task {
-                id: 1,
-                vm,
-                handle: handle.clone(),
-            })
-            .unwrap();
-        match handle.join() {
-            Ok(Value::Handle(child)) => assert_eq!(
-                child.owner(),
-                77,
-                "the child task must carry the owner of the task that spawned it"
-            ),
-            other => panic!("expected the child's handle, got {other:?}"),
-        }
-    }
-
-    // ── Shutdown ───────────────────────────────────────────────────
-
-    #[test]
-    fn test_drop_joins_workers_cleanly() {
-        let scheduler = Scheduler::new(HostIo::process());
-        let (task, handle) = make_task(1, "fn main() { 1 }");
-        scheduler.submit(task).unwrap();
-        let _ = handle.join();
-        // Drop the scheduler — should not hang or panic.
-        drop(scheduler);
-    }
-
-    #[test]
-    fn test_drop_empty_scheduler_is_noop() {
-        // No tasks submitted — drop should be immediate.
-        let scheduler = Scheduler::new(HostIo::process());
-        drop(scheduler);
-    }
-
-    // ── Deadlock detection ─────────────────────────────────────────
-
-    #[test]
-    fn test_io_blocked_task_does_not_trigger_deadlock() {
-        // Regression lock for the channel-only deadlock split: a task that
-        // performs real I/O should complete successfully, and the scheduler
-        // must NOT have marked the session as deadlocked during the I/O
-        // park window. Tests the I/O path end-to-end through the wake
-        // graph (which models I/O parks as `ParkEdge::Io`, always-fuel).
-        let scheduler = Scheduler::new(HostIo::process());
-        // Write a fixture file (small, completes fast).
-        let path = std::env::temp_dir().join("silt_sched_io_block_test.txt");
-        std::fs::write(&path, "hello").unwrap();
-        // Forward-slash the path before embedding — Windows `temp_dir()`
-        // returns backslash paths, and the silt lexer treats `\U`, `\A`,
-        // etc. as unknown escape sequences in string literals. The
-        // filesystem APIs accept `/` on Windows too.
-        let path_str = path.display().to_string().replace('\\', "/");
-        let src = format!(
-            r#"
-import io
-fn main() {{
-  match io.read_file("{}") {{
-    Ok(s) -> s
-    Err(_) -> "fail"
-  }}
-}}
-        "#,
-            path_str
-        );
-        let (task, handle) = make_task(1, &src);
-        scheduler.submit(task).unwrap();
-        let result = handle.join();
-        assert_eq!(result.ok(), Some(Value::String("hello".into())));
+"#);
+        assert_deadlock(result, "task.join with no progress possible");
+        // Not before the timer: while it is pending, a wait can end.
+        let took = end.duration_since(start);
         assert!(
-            !scheduler.deadlock_detected(),
-            "I/O-blocked task must not trigger deadlock detection"
-        );
-        let _ = std::fs::remove_file(path);
-    }
-
-    // ── I/O watchdog (SILT_IO_TIMEOUT) ────────────────────────────
-
-    #[test]
-    fn test_parse_duration_variants() {
-        assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
-        assert_eq!(parse_duration("500ms"), Some(Duration::from_millis(500)));
-        assert_eq!(parse_duration("5m"), Some(Duration::from_secs(300)));
-        assert_eq!(parse_duration("2h"), Some(Duration::from_secs(7200)));
-        assert_eq!(parse_duration(" 30 s "), Some(Duration::from_secs(30)));
-        assert_eq!(parse_duration("100 ms"), Some(Duration::from_millis(100)));
-        assert_eq!(parse_duration("none"), None);
-        assert_eq!(parse_duration("OFF"), None);
-        assert_eq!(parse_duration(""), None);
-        assert_eq!(parse_duration("30"), None, "bare number — no unit");
-        assert_eq!(parse_duration("30x"), None, "unknown unit");
-        assert_eq!(parse_duration("abc"), None);
-    }
-
-    /// The clock reading the watchdog tests scan at.
-    const WATCHDOG_TEST_NOW: Duration = Duration::from_secs(100);
-
-    #[test]
-    fn test_watchdog_fires_timeout_on_overdue_entry() {
-        let registry = WatchdogRegistry::new(Duration::from_millis(10));
-        let completion = IoCompletion::new();
-        // Add an entry whose deadline is already in the past.
-        let past = WATCHDOG_TEST_NOW - Duration::from_secs(1);
-        registry.add(1, &completion, past, DeadlineSource::Global);
-        let fired = registry.scan_and_fire(WATCHDOG_TEST_NOW);
-        assert_eq!(fired, 1, "one timeout should fire");
-        let result = completion.try_get().expect("completion should be set");
-        // Phase 1 of the stdlib error redesign: watchdog now emits
-        // `Err(IoUnknown(msg))` so the outer `Err` payload matches
-        // io/fs's `Result(T, IoError)` shape. The message text stays
-        // accessible via the inner `IoUnknown` variant's field.
-        match result {
-            Value::Variant(name, fields) => {
-                assert_eq!(name.name(), "Err");
-                let Value::Variant(inner_name, inner_fields) = &fields[0] else {
-                    panic!("expected IoError variant in Err");
-                };
-                assert_eq!(inner_name.name(), "IoUnknown");
-                let Value::String(msg) = &inner_fields[0] else {
-                    panic!("expected String payload in IoUnknown");
-                };
-                assert!(msg.contains("I/O timeout"), "unexpected: {msg}");
-                assert!(msg.contains("SILT_IO_TIMEOUT"), "unexpected: {msg}");
-            }
-            other => panic!("expected Err variant, got {other:?}"),
-        }
-        assert!(registry.entries.lock().is_empty());
-    }
-
-    #[test]
-    fn test_watchdog_fires_with_task_source_message() {
-        let registry = WatchdogRegistry::new(Duration::from_millis(10));
-        let completion = IoCompletion::new();
-        let past = WATCHDOG_TEST_NOW - Duration::from_secs(1);
-        registry.add(1, &completion, past, DeadlineSource::Task);
-        registry.scan_and_fire(WATCHDOG_TEST_NOW);
-        let Value::Variant(_, fields) = completion.try_get().unwrap() else {
-            panic!("expected variant");
-        };
-        // Same reshape: Err(IoUnknown(msg)) post-migration.
-        let Value::Variant(_, inner_fields) = &fields[0] else {
-            panic!("expected IoError variant");
-        };
-        let Value::String(msg) = &inner_fields[0] else {
-            panic!("expected String payload");
-        };
-        assert!(msg.contains("task.deadline"), "unexpected: {msg}");
-    }
-
-    #[test]
-    fn test_watchdog_does_not_fire_on_fresh_entry() {
-        let registry = WatchdogRegistry::new(Duration::from_millis(10));
-        let completion = IoCompletion::new();
-        let future = WATCHDOG_TEST_NOW + Duration::from_secs(60);
-        registry.add(1, &completion, future, DeadlineSource::Global);
-        let fired = registry.scan_and_fire(WATCHDOG_TEST_NOW);
-        assert_eq!(fired, 0);
-        assert!(completion.try_get().is_none());
-        assert_eq!(registry.entries.lock().len(), 1);
-    }
-
-    #[test]
-    fn test_watchdog_does_not_clobber_completed_io() {
-        let registry = WatchdogRegistry::new(Duration::from_millis(10));
-        let completion = IoCompletion::new();
-        let past = WATCHDOG_TEST_NOW - Duration::from_secs(1);
-        registry.add(1, &completion, past, DeadlineSource::Global);
-        let ok_val = Value::variant(bv::OK, vec![Value::String("real".into())]);
-        assert!(completion.complete(ok_val));
-        let fired = registry.scan_and_fire(WATCHDOG_TEST_NOW);
-        assert_eq!(fired, 0, "no timeout should fire — I/O already completed");
-        let result = completion.try_get().expect("should still have Ok");
-        match result {
-            Value::Variant(name, fields) => {
-                assert_eq!(name.name(), "Ok");
-                assert_eq!(fields[0], Value::String("real".into()));
-            }
-            other => panic!("expected Ok, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_watchdog_global_timeout_none_when_env_unset() {
-        // SAFETY: env var mutation is safe in tests since Rust 1.80+
-        // uses thread-local env caches, and this test does not spawn
-        // concurrent env readers. Required because Scheduler::new reads
-        // the env once at construction time.
-        unsafe { std::env::remove_var("SILT_IO_TIMEOUT") };
-        let scheduler = Scheduler::new(HostIo::process());
-        assert!(
-            scheduler.inner.global_io_timeout.is_none(),
-            "global_io_timeout should be None when SILT_IO_TIMEOUT unset"
+            took >= Duration::from_millis(150),
+            "the verdict came after {took:?}"
         );
     }
 
     #[test]
-    fn test_watchdog_registry_removal_on_requeue() {
-        let registry = WatchdogRegistry::new(Duration::from_secs(1));
-        let c1 = IoCompletion::new();
-        let c2 = IoCompletion::new();
-        let d = WATCHDOG_TEST_NOW + Duration::from_secs(30);
-        registry.add(1, &c1, d, DeadlineSource::Global);
-        registry.add(2, &c2, d, DeadlineSource::Global);
-        assert_eq!(registry.entries.lock().len(), 2);
-        registry.remove(1);
-        let entries = registry.entries.lock();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].task_id, 2);
+    fn a_program_without_tasks_is_deadlocked_at_once() {
+        let (result, _, _) = run(r#"
+import channel
+fn main() {
+  let a = channel.new(0)
+  let b = channel.new(0)
+  channel.select([channel.Recv(a), channel.Send(b, 1)])
+}
+"#);
+        assert_deadlock(result, "channel select with no counterparty");
     }
 
-    // Note: the previous `test_deadlock_detected_flag` was removed when
-    // the worker-side deadlock detector was deleted. Deadlock detection
-    // now lives entirely on the main thread (see
-    // `main_thread_wait_for_send` / `_receive` / `_join` in
-    // `src/builtins/concurrency.rs`), so the scheduler-only API
-    // exercised by that test no longer has a way to declare a deadlock —
-    // it requires a main-thread VM that is parked on a primitive. The
-    // analogous program-level coverage lives in
-    // `tests/concurrency/scheduler_deadlock_detector_tests.rs::test_real_deadlock_*`
-    // and the integration tests in `tests/heavy/integration.rs`.
+    #[test]
+    fn a_wait_that_a_task_can_end_is_no_deadlock() {
+        // The task is busy for many slices while the program waits.
+        let (result, _, _) = run(r#"
+import channel
+import task
+fn spin(n, acc) { match n { 0 -> acc _ -> spin(n - 1, acc + 1) } }
+fn main() {
+  let ch = channel.new(0)
+  let _sends = task.spawn({ -> channel.send(ch, spin(300000, 0)) })
+  when let channel.Message(n) = channel.receive(ch) else { panic("closed") }
+  n
+}
+"#);
+        assert!(matches!(result, Ok(Value::Int(300000))), "got {result:?}");
+    }
 }

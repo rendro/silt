@@ -599,7 +599,7 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("env.set takes 2 arguments".into()));
             }
-            if vm.is_scheduled_task {
+            if vm.spawned {
                 return Err(VmError::new(
                     "env.set cannot be called from a spawned task".into(),
                 ));
@@ -619,7 +619,7 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("env.remove takes 1 argument".into()));
             }
-            if vm.is_scheduled_task {
+            if vm.spawned {
                 // Same rationale as env.set: mutating the process-wide
                 // environment from a spawned task races with any other
                 // task reading the env, and libc's setenv/unsetenv are

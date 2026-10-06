@@ -244,11 +244,12 @@ impl Vm {
         self.pending_input = None;
     }
 
-    /// Call `callee` with `args` and run it to its end, on a VM that
-    /// is not a task's: the thread waits where a task would park. This
-    /// is how a thread that serves silt code outside the scheduler (a
-    /// stream stage, an HTTP handler) calls a function; a builtin never
-    /// does, it asks the loop that runs it to ([`Step::Call`]).
+    /// Call `callee` with `args` and run it to its end on the calling
+    /// thread, which waits where the code parks ([`Vm::run_thread`]).
+    /// This is how a thread that serves silt code outside the
+    /// scheduler's workers (a stream stage, an HTTP handler) calls a
+    /// function; a builtin never does, it asks the loop that runs it
+    /// to ([`Step::Call`]).
     pub(crate) fn call_blocking(
         &mut self,
         callee: &Value,
@@ -256,13 +257,38 @@ impl Vm {
     ) -> Result<Value, VmError> {
         let floor = self.frames.len();
         let stack_floor = self.stack.len();
-        let run = match self.call_with(callee.clone(), args.to_vec()) {
-            Ok(Entered::Value(value)) => return Ok(value),
-            Ok(Entered::Code | Entered::Native) => self.run_frames(floor, usize::MAX),
-            Ok(Entered::Parked) => Ok(Slice::Parked),
-            Err(e) => Err(e),
-        };
+        let run = self.run_thread(floor, |vm| {
+            match vm.call_with(callee.clone(), args.to_vec())? {
+                Entered::Value(value) => Ok(Slice::Done(value)),
+                Entered::Code | Entered::Native => vm.run_frames(floor, usize::MAX),
+                Entered::Parked => Ok(Slice::Parked),
+            }
+        });
         self.finish_run(run, floor, stack_floor)
+    }
+
+    /// Run the frames above the first `floor` to their end on the
+    /// calling thread, starting with `start`. The thread counts as a
+    /// task of the scheduler while it does; where the code parks, the
+    /// thread waits, and the builtin that parked runs again when its
+    /// wait has ended.
+    pub(super) fn run_thread(
+        &mut self,
+        floor: usize,
+        start: impl FnOnce(&mut Vm) -> Result<Slice, VmError>,
+    ) -> Result<Slice, VmError> {
+        let scheduler = self.runtime.scheduler.clone();
+        let _running = scheduler.enter();
+        let mut run = start(self)?;
+        while let Slice::Parked = run {
+            // With no reason the frame only gave way to other tasks,
+            // which a thread of its own has no need to.
+            if let Some(reason) = self.block_reason.take() {
+                scheduler.block_thread(reason, self.current_deadline, self.owns_runtime)?;
+            }
+            run = self.run_frames(floor, usize::MAX)?;
+        }
+        Ok(run)
     }
 
     /// The value of a run to the end, or its error with the call stack
@@ -276,7 +302,7 @@ impl Vm {
         let error = match run {
             Ok(Slice::Done(value)) => return Ok(value),
             Ok(Slice::OutOfBudget | Slice::Parked) => {
-                VmError::new("internal VM error: code that is not a task's parked".into())
+                VmError::new("internal VM error: a run to the end stopped before it".into())
             }
             Err(e) => e,
         };
@@ -292,12 +318,15 @@ impl Vm {
 
     /// Run a task's frames for up to `max_steps` steps and return a
     /// `SliceResult`. Used by the M:N scheduler's worker threads.
-    pub fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
+    pub(crate) fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
         match self.run_frames(0, max_steps) {
             Ok(Slice::Done(value)) => SliceResult::Completed(value),
             Ok(Slice::OutOfBudget) => SliceResult::Yielded,
-            Ok(Slice::Parked) if self.block_reason.is_some() => SliceResult::Blocked,
-            Ok(Slice::Parked) => SliceResult::Yielded,
+            Ok(Slice::Parked) => match self.block_reason.take() {
+                Some(reason) => SliceResult::Blocked(reason),
+                // The frame only gave way to the other tasks.
+                None => SliceResult::Yielded,
+            },
             Err(e) => SliceResult::Failed(e),
         }
     }

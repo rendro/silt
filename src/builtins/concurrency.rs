@@ -1,6 +1,6 @@
 //! Concurrency builtin functions (`channel.*`, `task.*`).
 
-use parking_lot::{Condvar, Mutex};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
@@ -80,32 +80,17 @@ impl Native for Each {
     }
 
     fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
-        if std::mem::take(&mut self.called) && vm.is_scheduled_task {
+        if std::mem::take(&mut self.called) {
             // After each message, give way to the other tasks.
             return Ok(Step::Park);
         }
         match self.ch.try_receive() {
             TryReceiveResult::Value(message) => Ok(self.call(vm, message)),
             TryReceiveResult::Closed => Ok(Step::Done(Value::Unit)),
-            // Channel empty -- park via scheduler or block.
-            TryReceiveResult::Empty if vm.is_scheduled_task => {
+            TryReceiveResult::Empty => {
                 vm.block_reason = Some(BlockReason::Receive(self.ch.clone()));
                 Ok(Step::Park)
             }
-            // Main thread: wait through the same deadlock-aware
-            // protocol as `channel.receive` (no-scheduler fast
-            // path, wake-graph park/unpark, starvation BFS,
-            // confirm-stable gate): with no counterparty that could
-            // ever send, this reports "deadlock on main thread" as
-            // receive/send/select/join do. Locked by
-            // `tests/concurrency/main_thread_each_deadlock_tests.rs`.
-            TryReceiveResult::Empty => match main_thread_wait_for_receive(&self.ch, vm)? {
-                Value::Variant(tag, mut vals) if tag.is(bv::MESSAGE) => {
-                    Ok(self.call(vm, vals.pop().unwrap_or(Value::Unit)))
-                }
-                Value::Variant(tag, _) if tag.is(bv::CLOSED) => Ok(Step::Done(Value::Unit)),
-                _ => unreachable!("main_thread_wait_for_receive returns Message or Closed"),
-            },
         }
     }
 }
@@ -140,25 +125,17 @@ fn channel_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "channel.send requires a channel as first argument".into(),
                 ));
             };
-            let val = args[1].clone();
             let ch = ch.clone();
             // Try non-blocking first.
-            match ch.try_send(val.clone()) {
+            match ch.try_send(args[1].clone()) {
                 TrySendResult::Sent => return Ok(Value::Unit),
                 TrySendResult::Closed => {
                     return Err(closed_channel_send_err(ch.id));
                 }
                 TrySendResult::Full => {}
             }
-            // Buffer is full -- park via scheduler or wait with a watchdog.
-            if vm.is_scheduled_task {
-                return Err(vm.park_with_reason(args, BlockReason::Send(ch)));
-            }
-            // Main thread: wait on a condvar backed by the channel's
-            // send waker. A watchdog periodically checks whether any
-            // scheduled task could still consume from this channel; if
-            // not, we report a deadlock error rather than hanging forever.
-            main_thread_wait_for_send(&ch, val, vm)
+            // The buffer is full: the task waits.
+            Err(vm.park_with_reason(args, BlockReason::Send(ch)))
         }
         "receive" => {
             if args.len() != 1 {
@@ -182,15 +159,8 @@ fn channel_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 }
                 TryReceiveResult::Empty => {}
             }
-            // Channel is empty -- park via scheduler or wait with a watchdog.
-            if vm.is_scheduled_task {
-                return Err(vm.park_with_reason(args, BlockReason::Receive(ch)));
-            }
-            // Main thread: wait with a watchdog. The channel's receive
-            // waker pokes a local condvar when a value arrives or the
-            // channel closes, and the watchdog periodically checks
-            // whether any scheduled task could still send to us.
-            main_thread_wait_for_receive(&ch, vm)
+            // The channel is empty: the task waits.
+            Err(vm.park_with_reason(args, BlockReason::Receive(ch)))
         }
         "close" => {
             if args.len() != 1 {
@@ -267,18 +237,8 @@ fn channel_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 })
                 .collect();
 
-            // No operation succeeded — park via scheduler or run the
-            // main-thread event-driven wait (with deadlock detection).
-            if vm.is_scheduled_task {
-                return Err(vm.park_with_reason(args, BlockReason::Select(select_ops)));
-            }
-
-            // Main thread: same wake-graph-driven protocol as
-            // `channel.receive` / `channel.send`. Returns a
-            // "deadlock on main thread" error if the wake graph proves
-            // no counterparty can ever make any arm ready (previously
-            // this path spun on a 1s condvar poll forever).
-            main_thread_wait_for_select(&ops, vm)
+            // No operation is possible: the task waits.
+            Err(vm.park_with_reason(args, BlockReason::Select(select_ops)))
         }
         "recv_timeout" => {
             // channel.recv_timeout(ch, dur) -> Result(a, String)
@@ -426,71 +386,36 @@ fn channel_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if let Some(val) = try_select_sweep(&ops)? {
                 return Ok(map_recv_timeout_result(val, &timer_ch));
             }
-            if vm.is_scheduled_task {
-                let select_ops: Vec<(Arc<Channel>, SelectOpKind)> = ops
-                    .iter()
-                    .map(|op| match op {
-                        SelectOp::Receive(c) => (c.clone(), SelectOpKind::Receive),
-                        SelectOp::Send(c, _) => (c.clone(), SelectOpKind::Send),
-                    })
-                    .collect();
-                // We DO re-enter this arm on resume because the parked call
-                // is made again — but with arguments that carry the resume
-                // marker (SAME timer channel) instead of the user's
-                // Duration, so the re-entry races the ORIGINAL absolute
-                // deadline rather than arming a fresh full-length timer.
-                // Wake causes and their re-entry outcomes:
-                //   * value landed during the park → `try_receive` at entry
-                //     returns it (delivery beats an expired timer);
-                //   * user channel closed → `try_receive` maps to
-                //     Err(ChannelClosed);
-                //   * timer expired → timer_ch is closed, the
-                //     `try_select_sweep` above sees it and
-                //     `map_recv_timeout_result` yields Err(ChannelTimeout);
-                //   * spurious wake (e.g. a racing sibling consumed the
-                //     value) → nothing ready, re-park on the same pair.
-                // If the timer fires between the sweep and the waker
-                // registration below, `register_recv_waker`'s closed-state
-                // double-check fires the waker inline — no lost wakeup.
-                let resume_args = vec![
-                    Value::Channel(ch.clone()),
-                    make_recv_timeout_resume_marker(&timer_ch),
-                ];
-                return Err(vm.park_with_reason(&resume_args, BlockReason::Select(select_ops)));
-            }
-            // Main-thread path: drive the same select condvar loop that the
-            // `channel.select` builtin uses. Mirrors the structure there;
-            // we only differ in how we map the final Value back to a Result
-            // variant.
-            let pair = Arc::new((Mutex::new(false), Condvar::new()));
-            let mut registrations: Vec<crate::runtime::channel::WakerRegistration> =
-                Vec::with_capacity(ops.len());
-            for op in &ops {
-                let pair2 = pair.clone();
-                let waker = Box::new(move || {
-                    let (lock, cvar) = &*pair2;
-                    *lock.lock() = true;
-                    cvar.notify_one();
-                });
-                match op {
-                    SelectOp::Receive(c) if !c.is_closed() => {
-                        registrations.push(c.register_recv_waker_guard(waker));
-                    }
-                    SelectOp::Receive(_) | SelectOp::Send(_, _) => {}
-                }
-            }
-            loop {
-                // A successful sweep drops the registrations.
-                if let Some(val) = try_select_sweep_registered(&ops, &mut registrations)? {
-                    return Ok(map_recv_timeout_result(val, &timer_ch));
-                }
-                let (lock, cvar) = &*pair;
-                let mut notified = lock.lock();
-                if !*notified {
-                    cvar.wait_for(&mut notified, std::time::Duration::from_secs(1));
-                }
-                *notified = false;
-            }
+            let select_ops: Vec<(Arc<Channel>, SelectOpKind)> = ops
+                .iter()
+                .map(|op| match op {
+                    SelectOp::Receive(c) => (c.clone(), SelectOpKind::Receive),
+                    SelectOp::Send(c, _) => (c.clone(), SelectOpKind::Send),
+                })
+                .collect();
+            // We DO re-enter this arm on resume because the parked call
+            // is made again — but with arguments that carry the resume
+            // marker (SAME timer channel) instead of the user's
+            // Duration, so the re-entry races the ORIGINAL absolute
+            // deadline rather than arming a fresh full-length timer.
+            // Wake causes and their re-entry outcomes:
+            //   * value landed during the park → `try_receive` at entry
+            //     returns it (delivery beats an expired timer);
+            //   * user channel closed → `try_receive` maps to
+            //     Err(ChannelClosed);
+            //   * timer expired → timer_ch is closed, the
+            //     `try_select_sweep` above sees it and
+            //     `map_recv_timeout_result` yields Err(ChannelTimeout);
+            //   * spurious wake (e.g. a racing sibling consumed the
+            //     value) → nothing ready, re-park on the same pair.
+            // If the timer fires between the sweep and the waker
+            // registration below, `register_recv_waker`'s closed-state
+            // double-check fires the waker inline — no lost wakeup.
+            let resume_args = vec![
+                Value::Channel(ch.clone()),
+                make_recv_timeout_resume_marker(&timer_ch),
+            ];
+            Err(vm.park_with_reason(&resume_args, BlockReason::Select(select_ops)))
         }
         "timeout" => {
             if args.len() != 1 {
@@ -551,10 +476,9 @@ fn spawn_with_deadline(
     {
         use crate::scheduler::Task;
         child_vm.start_task(child_closure);
-        child_vm.is_scheduled_task = true;
+        child_vm.spawned = true;
 
-        let scheduler = vm.get_or_create_scheduler();
-        scheduler
+        vm.scheduler()
             .submit(Task {
                 id: task_id,
                 vm: child_vm,
@@ -682,36 +606,8 @@ fn task_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError>
                 };
             }
 
-            // If we're a scheduled task, park via the scheduler.
-            if vm.is_scheduled_task {
-                return Err(vm.park_with_reason(args, BlockReason::Join(handle)));
-            }
-
-            // Main thread: block with condvar, but wake periodically to
-            // consult the scheduler's deadlock heuristic. If the joined
-            // task can never finish (every scheduled task is parked on
-            // an internal graph edge with no runnable counterparty), we
-            // surface a `deadlock on main thread` diagnostic instead of
-            // hanging forever. This is the join analogue of
-            // `main_thread_wait_for_receive`.
-            match main_thread_wait_for_join(&handle, vm) {
-                Ok(val) => Ok(val),
-                Err(mut inner) => {
-                    // Distinguish "the joinee task failed" from "the main
-                    // thread is starved/deadlocked while waiting to join".
-                    // Only the former should be prefixed with
-                    // "joined task failed:"; a main-thread deadlock is a
-                    // condition of the *joiner*, not the joinee, and must
-                    // surface on its own. VmError has no structured kind
-                    // field (see src/vm/error.rs), so we discriminate on the
-                    // stable "deadlock on main thread" marker that every
-                    // such diagnostic in `main_thread_wait_for_join` carries.
-                    if !inner.message.starts_with("deadlock on main thread") {
-                        inner.message = format!("joined task failed: {}", inner.message);
-                    }
-                    Err(inner)
-                }
-            }
+            // The task is not finished: this one waits.
+            Err(vm.park_with_reason(args, BlockReason::Join(handle)))
         }
         "cancel" => {
             if args.len() != 1 {
@@ -977,37 +873,12 @@ fn pass_on_wake_ups(ops: &[SelectOp], taken: usize) {
     }
 }
 
-// ── Main-thread channel wait with event-driven watchdog ──────────
-//
-// When `fn main()` runs on the main thread (`is_scheduled_task = false`)
-// and calls `channel.send` on a full channel or `channel.receive` on an
-// empty one, we cannot park via the scheduler — the main thread is
-// invisible to it. Previously `send` spun with `yield_now()` (100% CPU
-// forever) and `receive` blocked indefinitely via `receive_blocking`,
-// so a program with no other producers/consumers would hang.
-//
-// Phase 4: these helpers block on the channel's existing waker
-// machinery via a local condvar with INDEFINITE `condvar.wait` — the
-// 100ms-tick polling layer + consecutive-streak escalator that lived
-// here through Phase 3 are deleted. The wake graph
-// (`src/scheduler/wake_graph.rs`) signals our local condvar via
-// `install_main_waiter` on every park / wake / spawn / complete, so
-// the only state changes that wake us are the ones that could
-// plausibly unblock us. On a real deadlock the wake graph proves
-// starvation atomically with the scheduler-state mutation that caused
-// it (typically the last task's `on_complete`), the signal callback
-// fires once, we wake and `is_main_starved` returns `true` — total
-// fire latency is one signal hop, target <200ms even on heavily
-// loaded CI.
-
 // ── Stream-fed channels ──────────────────────────────────────────
 //
 // The output channel of a `stream.*` stage is fed by a plain OS thread
-// (`src/builtins/stream.rs`), not by a scheduler task. The wake graph
-// cannot see that thread, and a program that never calls `task.spawn`
-// has no scheduler at all, so the main-thread waits below used to read
-// an empty stream channel as "no counterparty" and reported a deadlock
-// while the stage was about to deliver.
+// (`src/builtins/stream.rs`), not by a task. The scheduler does not
+// count that thread, so a wait on an empty stream channel would read
+// as a deadlock while the stage was about to deliver.
 //
 // `stream.rs` therefore records the output channel of every stage
 // here, and a receive on a recorded channel never gets a deadlock
@@ -1049,796 +920,9 @@ pub(crate) fn mark_stream_fed(ch: &Arc<Channel>) {
 }
 
 /// True iff `ch` is the output channel of a stream stage.
-fn is_stream_fed(ch: &Arc<Channel>) -> bool {
+pub(crate) fn is_stream_fed(ch: &Arc<Channel>) -> bool {
     let key = Arc::as_ptr(ch) as usize;
     stream_fed_channels().lock().contains_key(&key)
-}
-
-/// True iff `target` includes a receive on a stream-fed channel: a
-/// plain receive on one, or a select with at least one such receive
-/// arm. Such a wait never gets a deadlock verdict. A send and a join
-/// are never covered.
-fn waits_on_stream_fed_channel(target: &crate::scheduler::MainTarget) -> bool {
-    match target {
-        crate::scheduler::MainTarget::Recv(ch) => is_stream_fed(ch),
-        crate::scheduler::MainTarget::Select(edges) => edges.iter().any(|edge| match edge {
-            crate::scheduler::SelectEdge::Recv(ch) => is_stream_fed(ch),
-            crate::scheduler::SelectEdge::Send(_) => false,
-        }),
-        crate::scheduler::MainTarget::Send(_) | crate::scheduler::MainTarget::Join(_) => false,
-    }
-}
-
-/// Phase 3: register the main thread with the wake graph and install
-/// a callback that pokes `pair`'s condvar on every graph state-change.
-/// Returns the install guard (drop deregisters the callback) so a
-/// stale callback never fires into a freed local condvar. Callers
-/// MUST keep the guard alive across the wait loop and call
-/// `unpark_main` (via `Scheduler::unpark_main`) on exit.
-fn install_main_signal(
-    vm: &Vm,
-    pair: &Arc<(Mutex<bool>, Condvar)>,
-) -> Option<crate::scheduler::MainWaiterGuard> {
-    let sched = vm.current_scheduler()?;
-    sched.register_main_present();
-    let pair_for_cb = pair.clone();
-    let cb: crate::scheduler::MainWaiterCallback = Arc::new(move || {
-        // Cheap poke: flip the flag and wake one waiter. The waiter
-        // re-checks its full state on wakeup, so multiple back-to-
-        // back signals just collapse into one re-check.
-        let (lock, cvar) = &*pair_for_cb;
-        *lock.lock() = true;
-        cvar.notify_one();
-    });
-    Some(sched.install_main_waiter(cb))
-}
-
-/// Returns `true` iff the wake graph proves the main thread cannot
-/// be driven forward on `target`. When there is no scheduler at all,
-/// the only remaining wake source is the channel's own waker
-/// machinery — fired by either an external `ch.close()` (e.g. the
-/// `TimerManager` thread for `channel.timeout`) or, in principle,
-/// some other thread holding an `Arc<Channel>`. We treat a pending
-/// timer close as not-starved (the timer thread will fire); any
-/// other no-scheduler park is a deadlock.
-///
-/// When a scheduler IS attached, defer to `Scheduler::is_main_starved`
-/// — the wake graph is the SOLE deadlock signal.
-///
-/// Before either of those: a receive on a stream-fed channel is never
-/// starved. Its counterparty is a stream thread, which neither the
-/// wake graph nor the no-scheduler reasoning can see. See the
-/// "Stream-fed channels" section above.
-fn main_thread_is_starved(vm: &Vm, target: &crate::scheduler::MainTarget) -> bool {
-    if waits_on_stream_fed_channel(target) {
-        return false;
-    }
-    if let Some(sched) = vm.current_scheduler() {
-        return sched.is_main_starved(target);
-    }
-    // No scheduler. Only an external timer can wake us.
-    match target {
-        crate::scheduler::MainTarget::Recv(ch) | crate::scheduler::MainTarget::Send(ch) => {
-            !ch.has_pending_timer_close()
-        }
-        // Join with no scheduler: the joinee never ran, so there's
-        // no result coming.
-        crate::scheduler::MainTarget::Join(_) => true,
-        // Select with no scheduler: same reasoning as Recv/Send, per
-        // arm. If ANY arm's channel has a pending timer close, the
-        // timer thread's `ch.close()` will fire that arm's waker and
-        // unblock the select — not starved. This is the
-        // `channel.select([Recv(ch), Recv(channel.timeout(..))])` case
-        // with no spawned tasks (so no scheduler is ever created): the
-        // timeout arm must still wake. Only when NO arm has an external
-        // timer waiting is the select a genuine deadlock.
-        crate::scheduler::MainTarget::Select(edges) => !edges.iter().any(|e| match e {
-            crate::scheduler::SelectEdge::Recv(ch) | crate::scheduler::SelectEdge::Send(ch) => {
-                ch.has_pending_timer_close()
-            }
-        }),
-    }
-}
-
-/// Block the main thread until the channel accepts `val`, the channel
-/// is closed, or the scheduler can no longer make progress (deadlock).
-/// Per-round wait for the deadlock-confirmation gate, in milliseconds.
-///
-/// `main_thread_is_starved` is evaluated against a single snapshot taken under
-/// the wake-graph mutex. Under heavy CPU contention that snapshot can be
-/// *transiently* starved during a task state transition — e.g. the window
-/// between a worker dequeuing a task and that task re-registering its park edge,
-/// or between a task's last side effect and its `on_complete` propagating.
-/// Acting on such a transient snapshot is a false positive, so a suspected
-/// starvation is only a *candidate* deadlock: each confirmation round waits up
-/// to this long for any graph mutation (every spawn/park/wake/complete calls
-/// `signal_progress`) before re-checking.
-const CONFIRM_MS: u64 = 100;
-
-/// Number of consecutive starved observations required to confirm a deadlock.
-///
-/// A single post-wait snapshot can ITSELF land on a transient (a *different*
-/// task mid-transition), so one confirmation round is not enough under extreme
-/// contention. We require `CONFIRM_ROUNDS` consecutive rounds in which no
-/// progress signal arrived AND the graph re-reads as starved. A real deadlock
-/// is a permanent fixpoint, so it accumulates all rounds back-to-back; any
-/// in-flight transition fires `signal_progress` (waking a round early) or
-/// clears starvation, which resets the requirement. Worst-case added latency
-/// for a genuine deadlock is `CONFIRM_ROUNDS * CONFIRM_MS` (200ms) — well
-/// within the detector tests' multi-second budget, and only paid once, on a
-/// program that is actually dead.
-///
-/// Two rounds is the floor that still gives a SECOND independent observation
-/// after the initial `is_main_starved` candidate: the bug was a single
-/// transient snapshot, and two clean rounds (plus the candidate check that
-/// got us here) means three consecutive starved reads with no intervening
-/// `signal_progress`. Raise this only if a sustained false positive ever
-/// resurfaces under heavier contention than the CI Windows concurrency
-/// partition.
-const CONFIRM_ROUNDS: u32 = 2;
-
-/// Confirmation gate for a suspected main-thread deadlock.
-///
-/// `main_thread_is_starved` returning `true` is only a *candidate* deadlock,
-/// because the snapshot it reads can be transiently starved during an in-flight
-/// task transition. This gate confirms the candidate is stable before the
-/// caller fires: it returns `true` iff `CONFIRM_ROUNDS` consecutive rounds each
-/// see no progress signal AND a fresh `still_starved()` re-read. Any round that
-/// observes a progress signal or non-starved graph returns `false` immediately,
-/// and the caller must `continue` its wait loop instead of firing.
-///
-/// Soundness:
-/// - REAL deadlock: once the last runnable task completes, the wake graph is a
-///   stable fixpoint — by definition nothing can mutate it. Every round clears
-///   the progress flag, waits `CONFIRM_MS`, observes no `signal_progress`, and
-///   re-reads starved -> all `CONFIRM_ROUNDS` pass -> confirmed. Added latency
-///   <= `CONFIRM_ROUNDS * CONFIRM_MS`, paid once.
-/// - FALSE positive: caused by an in-flight task transition, which calls
-///   `signal_progress` when it settles (on_park/on_wake/on_complete) -> the
-///   flag is set and the condvar is notified -> a round wakes early or its
-///   re-read observes fuel -> the gate returns `false` and the loop re-checks.
-///   Requiring CONFIRM_ROUNDS consecutive clean rounds makes a sustained false
-///   positive (every 100ms window happening to catch a transient with no
-///   intervening signal) astronomically unlikely for a program that is in fact
-///   making progress.
-///
-/// IMPORTANT: the flag is cleared *before* each wait so a `signal_progress`
-/// racing the gate is not lost — it either wakes the round early or leaves the
-/// flag set for that round's post-wait check.
-fn confirm_main_starved(
-    pair: &Arc<(Mutex<bool>, Condvar)>,
-    still_starved: impl Fn() -> bool,
-) -> bool {
-    let (lock, cvar) = &**pair;
-    for _ in 0..CONFIRM_ROUNDS {
-        let mut guard = lock.lock();
-        *guard = false;
-        let _ = cvar.wait_for(&mut guard, Duration::from_millis(CONFIRM_MS));
-        let progressed = *guard;
-        drop(guard);
-        if progressed || !still_starved() {
-            return false;
-        }
-    }
-    true
-}
-
-/// Report the tasks that failed and that nobody joined, before a
-/// main-thread wait gives its deadlock verdict.
-///
-/// The verdict ends the program, and a task that failed is the usual
-/// reason why the counterparty of the wait is missing: a producer that
-/// stopped with an error before it sent. Without the report the user
-/// sees the deadlock and not its cause. Each failure is reported once,
-/// so the report at the end of the program does not repeat it. Where a
-/// front end collects the failures (`scheduler::collect_unjoined_failures`),
-/// this reports nothing: the front end takes them when the verdict
-/// reaches it and shows them before it.
-fn report_unjoined_failures(vm: &Vm) {
-    if let Some(sched) = vm.current_scheduler() {
-        let _ = sched.report_unjoined_failures();
-    }
-}
-
-fn main_thread_wait_for_send(
-    ch: &Arc<crate::runtime::channel::Channel>,
-    val: Value,
-    vm: &Vm,
-) -> Result<Value, VmError> {
-    // No-scheduler + no-timer fast path: there is no scheduler to
-    // pump events through `signal_progress`, AND no pending timer
-    // close that would fire `wake_all_send` on the channel. Any wait
-    // here would be infinite — fire deadlock immediately.
-    if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() {
-        match ch.try_send(val) {
-            TrySendResult::Sent => return Ok(Value::Unit),
-            TrySendResult::Closed => {
-                return Err(closed_channel_send_err(ch.id));
-            }
-            TrySendResult::Full => {
-                return Err(VmError::new(
-                    "deadlock on main thread: channel send with no counterparty".into(),
-                ));
-            }
-        }
-    }
-    let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    // Install the wake-graph signal callback + park MAIN. See
-    // `main_thread_wait_for_receive` for rationale.
-    let target = crate::scheduler::MainTarget::from_send(ch);
-    let _signal_guard = install_main_signal(vm, &pair);
-    if let Some(sched) = vm.current_scheduler() {
-        sched.park_main(&target);
-    }
-    let unpark_main = |vm: &Vm| {
-        if let Some(sched) = vm.current_scheduler() {
-            sched.unpark_main();
-        }
-    };
-    // ROUND93-RECHECK(send): the single in-loop race-point re-check.
-    // Every race window in the wait loop below (top-of-loop,
-    // post-waker-registration, post-starvation-BFS, post-confirm)
-    // funnels through this one closure so the copies cannot drift apart
-    // (they were four byte-identical blocks hardened across audit
-    // rounds 90-92; a future edit to one copy that missed the siblings
-    // would silently reopen lost-wakeup / deadlock-false-positive
-    // bugs). Locked by
-    // `tests/concurrency/round93_concurrency_recheck_extraction_tests.rs`.
-    //
-    // Semantics (load-bearing, must not change):
-    //   Sent   -> drop the waker-registration guard FIRST (deregisters
-    //             the stale waker), THEN unpark MAIN, then Ok(Unit).
-    //   Closed -> same drop/unpark ordering, canonical closed-send err.
-    //   Full   -> None: fall through to the caller's wait protocol.
-    // The post-`confirm_main_starved` call site consults this BEFORE
-    // testing `confirmed`, so a send slot that races open during the
-    // confirm window always wins over a deadlock verdict.
-    //
-    // NOTE: the no-scheduler fast path at the top of this function
-    // looks similar but is INTENTIONALLY different (no waker or park
-    // exists yet; `Full` is an immediate deadlock there) — do not unify
-    // it with this closure.
-    let recheck = |reg: &mut Option<crate::runtime::channel::WakerRegistration>| match ch
-        .try_send(val.clone())
-    {
-        TrySendResult::Sent => {
-            drop(reg.take());
-            unpark_main(vm);
-            Some(Ok(Value::Unit))
-        }
-        TrySendResult::Closed => {
-            drop(reg.take());
-            unpark_main(vm);
-            Some(Err(closed_channel_send_err(ch.id)))
-        }
-        TrySendResult::Full => None,
-    };
-    // Track the most recently registered send-waker as a
-    // `WakerRegistration` guard. Dropping / replacing the guard
-    // deregisters the prior iteration's waker. Without this, the
-    // channel only drains wakers on successful receive/close, so the
-    // guard swap on every loop iteration would leave a stale waker
-    // closure in the queue (unbounded growth on a channel that nobody
-    // is draining).
-    let mut reg: Option<crate::runtime::channel::WakerRegistration> = None;
-    loop {
-        // Try first so we don't miss a send slot that just opened.
-        if let Some(out) = recheck(&mut reg) {
-            return out;
-        }
-        // Explicitly take-and-drop the previous iteration's guard
-        // before minting a new one so the old waker is deregistered
-        // first. (If we assigned via `reg = Some(..)`, the RHS would
-        // be evaluated — registering the new waker — before the old
-        // value was dropped, briefly doubling the registration.)
-        drop(reg.take());
-        let pair2 = pair.clone();
-        reg = Some(ch.register_send_waker_guard(Box::new(move || {
-            let (lock, cvar) = &*pair2;
-            *lock.lock() = true;
-            cvar.notify_one();
-        })));
-        // Re-check after registering to avoid a lost wakeup race
-        // between try_send above and register_send_waker.
-        if let Some(out) = recheck(&mut reg) {
-            return out;
-        }
-        // Pre-wait starvation check: see `main_thread_wait_for_receive`.
-        if main_thread_is_starved(vm, &target) {
-            // Candidate deadlock. First catch a send slot that raced
-            // open between the re-check above and this BFS.
-            if let Some(out) = recheck(&mut reg) {
-                return out;
-            }
-            // Confirm the starvation is STABLE before firing: a single
-            // snapshot can be transiently starved during a task state
-            // transition under load. Wait up to CONFIRM_MS for any
-            // `signal_progress`; only fire if still starved afterward.
-            // NOTE: the re-check below runs BEFORE `confirmed` is
-            // tested — a slot that raced open during the confirm window
-            // must win over the deadlock verdict.
-            let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
-            if let Some(out) = recheck(&mut reg) {
-                return out;
-            }
-            if confirmed {
-                drop(reg);
-                unpark_main(vm);
-                report_unjoined_failures(vm);
-                return Err(VmError::new(
-                    "deadlock on main thread: channel send with no counterparty".into(),
-                ));
-            }
-            // Progress signalled or starvation cleared: re-evaluate.
-            continue;
-        }
-        // Indefinite wait: woken by either our send-waker firing
-        // (a real progress event on the channel) or the wake-graph
-        // signal callback (a scheduler state change that could make
-        // the channel reachable). The 100ms-tick polling layer that
-        // lived here through Phase 3 is gone; the wake graph is the
-        // sole deadlock signal.
-        {
-            let (lock, cvar) = &*pair;
-            let mut notified = lock.lock();
-            while !*notified {
-                cvar.wait(&mut notified);
-            }
-            *notified = false;
-        }
-    }
-}
-
-/// Block the main thread until the channel yields a value, is closed,
-/// or the wake graph proves no scheduled task can drive the receive
-/// forward (deadlock).
-///
-/// Phase 4: the wake graph (`src/scheduler/wake_graph.rs`) is the
-/// SOLE deadlock signal. Main parks itself in the graph (so parked
-/// counterparties' BFS sees MAIN as a wake source) and waits
-/// indefinitely on a local condvar; the graph's `signal_progress`
-/// callback flips the condvar on every park / wake / spawn /
-/// complete. On every wake we re-check the channel (lost wakeup
-/// guard) and consult `is_main_starved`: a `true` return is the
-/// proof of starvation — fire deadlock immediately. A `false` return
-/// means the graph cannot rule out a wake from some still-runnable
-/// task; loop and wait again. No 100ms tick, no consecutive-streak
-/// escalator — those were Phase 3 polling-fallback artifacts.
-fn main_thread_wait_for_receive(
-    ch: &Arc<crate::runtime::channel::Channel>,
-    vm: &Vm,
-) -> Result<Value, VmError> {
-    // No-scheduler + no-timer fast path: there is no scheduler to
-    // pump events through `signal_progress`, AND no pending timer
-    // close that would fire `wake_all_recv` on the channel. Any wait
-    // here would be infinite — fire deadlock immediately. (When a
-    // timer IS pending, the recv-waker we register below is woken by
-    // the timer thread's `ch.close()` → `wake_all_recv()` chain, so
-    // the indefinite `cvar.wait` is finite.)
-    //
-    // A stream-fed channel never takes this path: the stream thread
-    // that feeds it is a counterparty this check cannot see. The
-    // recv-waker we register below is woken by that thread's send or
-    // by its `ch.close()`, neither of which needs a scheduler.
-    if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() && !is_stream_fed(ch) {
-        match ch.try_receive() {
-            TryReceiveResult::Value(val) => {
-                return Ok(Value::variant(bv::MESSAGE, vec![val]));
-            }
-            TryReceiveResult::Closed => return Ok(Value::variant(bv::CLOSED, vec![])),
-            TryReceiveResult::Empty => {
-                return Err(VmError::new(
-                    "deadlock on main thread: channel receive with no counterparty".into(),
-                ));
-            }
-        }
-    }
-    let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    // Install the wake-graph signal callback so any state change in
-    // the scheduler pokes `pair`'s condvar. Park MAIN in the graph so
-    // other tasks' BFS from `target` finds us as the destination;
-    // unpark on exit so the graph stops modeling MAIN when the
-    // receive resolves.
-    let target = crate::scheduler::MainTarget::from_recv(ch);
-    let _signal_guard = install_main_signal(vm, &pair);
-    if let Some(sched) = vm.current_scheduler() {
-        sched.park_main(&target);
-    }
-    // Track the most recently registered recv-waker as a
-    // `WakerRegistration` guard so the prior iteration's waker is
-    // deregistered when the guard is dropped / replaced. Without
-    // this, each iteration would re-register a waker whose `WakerId`
-    // is dropped — `waiting_receivers` inflates unboundedly per
-    // iteration, and a later rendezvous `try_send` from another task
-    // sees a phantom receiver, places a value into the handoff slot,
-    // and returns `Sent` with no real receiver. Values are lost. See
-    // round-26 B6.
-    let mut reg: Option<crate::runtime::channel::WakerRegistration> = None;
-    // Helper to consistently unpark MAIN from the wake graph on exit.
-    // Called before every early-return in the loop.
-    let unpark_main = |vm: &Vm| {
-        if let Some(sched) = vm.current_scheduler() {
-            sched.unpark_main();
-        }
-    };
-    // ROUND93-RECHECK(recv): the single in-loop race-point re-check —
-    // same rationale as ROUND93-RECHECK(send) in
-    // `main_thread_wait_for_send` (four formerly byte-identical copies;
-    // see that comment for the full story). Locked by
-    // `tests/concurrency/round93_concurrency_recheck_extraction_tests.rs`.
-    //
-    // Semantics (load-bearing, must not change):
-    //   Value(v) -> drop the waker-registration guard FIRST, THEN
-    //               unpark MAIN, then Ok(Message(v)).
-    //   Closed   -> same drop/unpark ordering, Ok(Closed).
-    //   Empty    -> None: fall through to the caller's wait protocol.
-    // The post-`confirm_main_starved` call site consults this BEFORE
-    // testing `confirmed`, so a value that races into flight during the
-    // confirm window always wins over a deadlock verdict.
-    //
-    // NOTE: the no-scheduler fast path at the top of this function is
-    // INTENTIONALLY different (no waker or park exists yet; `Empty` is
-    // an immediate deadlock there) — do not unify it with this closure.
-    let recheck =
-        |reg: &mut Option<crate::runtime::channel::WakerRegistration>| match ch.try_receive() {
-            TryReceiveResult::Value(val) => {
-                drop(reg.take());
-                unpark_main(vm);
-                Some(Ok(Value::variant(bv::MESSAGE, vec![val])))
-            }
-            TryReceiveResult::Closed => {
-                drop(reg.take());
-                unpark_main(vm);
-                Some(Ok(Value::variant(bv::CLOSED, vec![])))
-            }
-            TryReceiveResult::Empty => None,
-        };
-    loop {
-        if let Some(out) = recheck(&mut reg) {
-            return out;
-        }
-        // Explicitly take-and-drop the previous iteration's guard
-        // before minting a new one — see `main_thread_wait_for_send`
-        // for the ordering rationale.
-        drop(reg.take());
-        let pair2 = pair.clone();
-        reg = Some(ch.register_recv_waker_guard(Box::new(move || {
-            let (lock, cvar) = &*pair2;
-            *lock.lock() = true;
-            cvar.notify_one();
-        })));
-        // Re-check after registration to avoid a lost wakeup.
-        if let Some(out) = recheck(&mut reg) {
-            return out;
-        }
-        // Pre-wait starvation check: if the wake graph already proves
-        // we cannot be unblocked, fire deadlock without waiting. This
-        // covers the steady-state case where main parks LAST (after
-        // every other task is already blocked), so no future
-        // signal_progress event will fire to wake us.
-        //
-        // Race window: a sender's `try_send` may have just landed a
-        // value AND completed (the last task) between the
-        // `register_recv_waker_guard` re-check above and this BFS.
-        // The graph reads as starved (no live tasks) but the channel
-        // has a value waiting. Do one final `try_receive` after the
-        // graph says starved — the recv-waker also fires, but a
-        // racing wake might be in flight. This mirrors the pre-Phase-4
-        // "give one last try" pattern.
-        if main_thread_is_starved(vm, &target) {
-            // Candidate deadlock. First catch a value that raced into
-            // flight (a sender's `try_send` may have landed AND completed
-            // between the re-check above and this BFS).
-            if let Some(out) = recheck(&mut reg) {
-                return out;
-            }
-            // Confirm the starvation is STABLE before firing: a single
-            // snapshot can be transiently starved during a task state
-            // transition under load. Wait up to CONFIRM_MS for any
-            // `signal_progress`; only fire if still starved afterward.
-            // NOTE: the re-check below runs BEFORE `confirmed` is
-            // tested — a value that raced in during the confirm window
-            // must win over the deadlock verdict.
-            let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
-            if let Some(out) = recheck(&mut reg) {
-                return out;
-            }
-            if confirmed {
-                drop(reg);
-                unpark_main(vm);
-                report_unjoined_failures(vm);
-                return Err(VmError::new(
-                    "deadlock on main thread: channel receive with no counterparty".into(),
-                ));
-            }
-            // Progress signalled or starvation cleared: re-evaluate.
-            continue;
-        }
-        // Indefinite wait — woken by the recv-waker (channel state
-        // change) or the wake-graph signal callback (any scheduler
-        // state change). The Phase-3 100ms tick is gone.
-        {
-            let (lock, cvar) = &*pair;
-            let mut notified = lock.lock();
-            while !*notified {
-                cvar.wait(&mut notified);
-            }
-            *notified = false;
-        }
-        // Re-check the channel; the loop will also re-check
-        // `is_main_starved` on the next iteration before waiting.
-    }
-}
-
-/// Block the main thread on a `channel.select` over `ops` until one
-/// arm becomes ready, or the wake graph proves no scheduled task can
-/// drive ANY arm forward (deadlock).
-///
-/// Phase 4: same wake-graph-driven protocol as
-/// `main_thread_wait_for_receive` / `_send`, generalized to a set of
-/// select arms via `MainTarget::Select`. Each arm registers a
-/// recv/send waker (held as a `WakerRegistration` guard so a losing
-/// sibling is deregistered on return and its `waiting_*` counter does
-/// not leak a phantom peer); a single shared condvar is poked by any
-/// waker firing or by the wake-graph signal callback. On each wake we
-/// re-run `try_select_sweep` (lost-wakeup guard) and consult
-/// `main_thread_is_starved`; a confirmed-stable starvation fires a
-/// "deadlock on main thread" error rather than spinning forever.
-///
-/// Before this path existed, this branch spun on `cvar.wait_for(1s)`
-/// indefinitely — a `channel.select` over a set with no possible
-/// counterparty never returned. `channel.receive` / `channel.send` on
-/// the same dead set DO report a deadlock; this brings select in line
-/// (and matches docs/concurrency.md, which claims select "detects a
-/// deadlock and reports an error").
-///
-/// NOTE: `channel.recv_timeout` deliberately keeps its own inline
-/// condvar loop and does NOT call this — its private timer channel is
-/// `pending_timer_close`, so the timer thread's `close()` guarantees
-/// termination even with no scheduler attached, where this function's
-/// no-scheduler `MainTarget::Select` starvation check would (correctly,
-/// for a plain select) report deadlock.
-fn main_thread_wait_for_select(ops: &[SelectOp], vm: &Vm) -> Result<Value, VmError> {
-    // Build the wake-graph target: one edge per arm. Closed channels
-    // are still included — `is_main_starved`'s Select arm treats a
-    // closed channel as fuel (not starved), and `try_select_sweep`
-    // observes the closed state directly on the next pass.
-    let edges: Vec<crate::scheduler::SelectEdge> = ops
-        .iter()
-        .map(|op| match op {
-            SelectOp::Receive(ch) => crate::scheduler::SelectEdge::Recv(ch.clone()),
-            SelectOp::Send(ch, _) => crate::scheduler::SelectEdge::Send(ch.clone()),
-        })
-        .collect();
-    let target = crate::scheduler::MainTarget::Select(edges);
-
-    let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    // Install the wake-graph signal callback + park MAIN on the select
-    // edge set so parked counterparties' BFS finds MAIN as a wake
-    // destination. Unpark on exit (the `unpark_main` closure below).
-    let _signal_guard = install_main_signal(vm, &pair);
-    if let Some(sched) = vm.current_scheduler() {
-        sched.park_main(&target);
-    }
-    let unpark_main = |vm: &Vm| {
-        if let Some(sched) = vm.current_scheduler() {
-            sched.unpark_main();
-        }
-    };
-
-    // Per-arm waker registrations. Each iteration re-registers every
-    // open arm and drops the prior guards first, so a stale waker is
-    // deregistered before a fresh one is minted (no `waiting_*` leak —
-    // same rationale as the receive/send single-waker paths, but here
-    // the guards are a `Vec` over the arm set).
-    let mut registrations: Vec<crate::runtime::channel::WakerRegistration> =
-        Vec::with_capacity(ops.len());
-    // Re-check helper: returns Some(result) when an arm is ready,
-    // dropping the registrations FIRST then unparking MAIN — same
-    // drop/unpark ordering as the receive/send recheck closures. The
-    // sweep drops the registrations itself, before it passes on the
-    // wake-ups of the arms that were not taken.
-    let try_finish =
-        |registrations: &mut Vec<crate::runtime::channel::WakerRegistration>| -> Result<Option<Value>, VmError> {
-            if let Some(result) = try_select_sweep_registered(ops, registrations)? {
-                unpark_main(vm);
-                return Ok(Some(result));
-            }
-            Ok(None)
-        };
-    loop {
-        if let Some(result) = try_finish(&mut registrations)? {
-            return Ok(result);
-        }
-        // Drop the previous iteration's guards before minting new ones
-        // so old wakers are deregistered first.
-        registrations.clear();
-        for op in ops {
-            let pair2 = pair.clone();
-            let waker = Box::new(move || {
-                let (lock, cvar) = &*pair2;
-                *lock.lock() = true;
-                cvar.notify_one();
-            });
-            match op {
-                SelectOp::Receive(ch) if !ch.is_closed() => {
-                    registrations.push(ch.register_recv_waker_guard(waker));
-                }
-                SelectOp::Send(ch, _) if !ch.is_closed() => {
-                    registrations.push(ch.register_send_waker_guard(waker));
-                }
-                // Closed channels: no registration — `try_select_sweep`
-                // observes the closed state directly.
-                SelectOp::Receive(_) | SelectOp::Send(_, _) => {}
-            }
-        }
-        // Re-check after registering to close the lost-wakeup window
-        // between the sweep above and the registrations.
-        if let Some(result) = try_finish(&mut registrations)? {
-            return Ok(result);
-        }
-        // Pre-wait starvation check: if the wake graph already proves
-        // no arm can ever be made ready, this is a candidate deadlock.
-        if main_thread_is_starved(vm, &target) {
-            // Catch an arm that raced ready between the re-check above
-            // and this BFS.
-            if let Some(result) = try_finish(&mut registrations)? {
-                return Ok(result);
-            }
-            // Confirm the starvation is STABLE before firing — a single
-            // snapshot can be transiently starved under contention.
-            let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
-            // An arm that raced ready during the confirm window wins
-            // over the deadlock verdict.
-            if let Some(result) = try_finish(&mut registrations)? {
-                return Ok(result);
-            }
-            if confirmed {
-                registrations.clear();
-                unpark_main(vm);
-                report_unjoined_failures(vm);
-                return Err(VmError::new(
-                    "deadlock on main thread: channel select with no counterparty".into(),
-                ));
-            }
-            // Progress signalled or starvation cleared: re-evaluate.
-            continue;
-        }
-        // Indefinite wait — woken by any arm's waker (channel state
-        // change) or the wake-graph signal callback. No 100ms tick.
-        {
-            let (lock, cvar) = &*pair;
-            let mut notified = lock.lock();
-            while !*notified {
-                cvar.wait(&mut notified);
-            }
-            *notified = false;
-        }
-    }
-}
-
-/// Block the main thread until `handle` produces a result or the wake
-/// graph proves no scheduled task can drive the joinee forward
-/// (deadlock).
-///
-/// Phase 4: same shape as `main_thread_wait_for_receive` — indefinite
-/// `condvar.wait` woken by the join-waker (joinee completion) or the
-/// wake-graph signal callback. The graph's BFS walks the joinee's
-/// Join chain looking for a runnable / I/O / pending-counterparty
-/// node; if it finds none, fire deadlock immediately. The Phase-3
-/// `is_handle_blocked` carve-out + 100ms-tick streak escalator are
-/// gone — the BFS subsumes them.
-fn main_thread_wait_for_join(
-    handle: &Arc<crate::runtime::handle::TaskHandle>,
-    vm: &Vm,
-) -> Result<Value, VmError> {
-    // Fast path: no scheduler exists. The joinee can only have run
-    // and completed if a scheduler exists, so absent one, either the
-    // handle already has its result or the join is unsatisfiable.
-    if vm.current_scheduler().is_none() {
-        if let Some(result) = handle.try_get() {
-            handle.mark_joined();
-            return result;
-        }
-        return Err(VmError::new(
-            "deadlock on main thread: task.join with no progress possible".into(),
-        ));
-    }
-    let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    // Install the wake-graph signal callback + park MAIN on the join
-    // target so the joinee BFS sees us as the destination.
-    let target = crate::scheduler::MainTarget::from_join(handle);
-    let _signal_guard = install_main_signal(vm, &pair);
-    if let Some(sched) = vm.current_scheduler() {
-        sched.park_main(&target);
-    }
-    let unpark_main = |vm: &Vm| {
-        if let Some(sched) = vm.current_scheduler() {
-            sched.unpark_main();
-        }
-    };
-    // ROUND93-RECHECK(join): the single in-loop race-point re-check —
-    // same rationale as ROUND93-RECHECK(send) in
-    // `main_thread_wait_for_send` (three formerly identical copies).
-    // Locked by `tests/concurrency/round93_concurrency_recheck_extraction_tests.rs`.
-    //
-    // Semantics (load-bearing, must not change): if the joinee's result
-    // is available, unpark MAIN and return it; otherwise None and the
-    // caller continues its wait protocol. There is no waker-registration
-    // guard here — `register_join_waker` is one-shot, so the join family
-    // has no `reg` to drop. The post-`confirm_main_starved` call site
-    // consults this BEFORE testing `confirmed`, so a result that races
-    // in during the confirm window always wins over a deadlock verdict.
-    //
-    // NOTE: the no-scheduler fast path at the top of this function is
-    // INTENTIONALLY different (nothing is parked; a missing result is an
-    // immediate deadlock) — do not unify it with this closure.
-    let recheck = || match handle.try_get() {
-        Some(result) => {
-            // The join has the result: a failure of the task is not an
-            // unjoined failure any more.
-            handle.mark_joined();
-            unpark_main(vm);
-            Some(result)
-        }
-        None => None,
-    };
-    // Register a one-shot waker that flips the local condvar when the
-    // task completes. `register_join_waker` fires the closure inline if
-    // the task has already completed, which short-circuits the loop.
-    let pair2 = pair.clone();
-    handle.register_join_waker(Box::new(move || {
-        let (lock, cvar) = &*pair2;
-        *lock.lock() = true;
-        cvar.notify_one();
-    }));
-    loop {
-        if let Some(out) = recheck() {
-            return out;
-        }
-        // Pre-wait starvation check: see `main_thread_wait_for_receive`.
-        // If the graph says starved, do one final `try_get` — the
-        // join-waker may have fired between the try above and the BFS,
-        // racing the `on_complete` that flipped the graph empty.
-        if main_thread_is_starved(vm, &target) {
-            // Candidate deadlock. First catch a result that raced into
-            // flight (the join-waker may have fired between the try
-            // above and the BFS, racing the `on_complete`).
-            if let Some(out) = recheck() {
-                return out;
-            }
-            // Confirm the starvation is STABLE before firing: a single
-            // snapshot can be transiently starved during a task state
-            // transition under load. Wait up to CONFIRM_MS for any
-            // `signal_progress`; only fire if still starved afterward.
-            // NOTE: the re-check below runs BEFORE `confirmed` is
-            // tested — a result that raced in during the confirm window
-            // must win over the deadlock verdict.
-            let confirmed = confirm_main_starved(&pair, || main_thread_is_starved(vm, &target));
-            if let Some(out) = recheck() {
-                return out;
-            }
-            if confirmed {
-                unpark_main(vm);
-                report_unjoined_failures(vm);
-                return Err(VmError::new(
-                    "deadlock on main thread: task.join with no progress possible".into(),
-                ));
-            }
-            // Progress signalled or starvation cleared: re-evaluate.
-            continue;
-        }
-        // Indefinite wait — woken by the join-waker (joinee completed)
-        // or the wake-graph signal callback.
-        {
-            let (lock, cvar) = &*pair;
-            let mut notified = lock.lock();
-            while !*notified {
-                cvar.wait(&mut notified);
-            }
-            *notified = false;
-        }
-    }
 }
 
 #[cfg(test)]

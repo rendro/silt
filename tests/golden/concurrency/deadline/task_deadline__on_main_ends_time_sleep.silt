@@ -1,0 +1,12 @@
+-- repeat: 3
+-- timeout: 10
+-- The program's own code waits like a task: a deadline ends a
+-- `time.sleep` that would go past it. This returns after 50 ms, not
+-- after an hour.
+import task
+import time
+
+fn main() {
+  task.deadline(time.ms(50), { -> time.sleep(time.ms(3600000)) })
+  println("woke")
+}
