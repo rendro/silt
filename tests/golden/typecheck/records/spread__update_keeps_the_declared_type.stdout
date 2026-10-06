@@ -1,0 +1,4 @@
+Bob 43
+Person {age: 43, name: Bob}
+<anon> {age: 43, name: Bob}
+true
