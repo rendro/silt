@@ -66,7 +66,10 @@ fn a_row_s_scheme_is_its_signature() {
         let constraints: Vec<String> = scheme
             .preds
             .iter()
-            .map(|Pred::Trait { tr, .. }| tr.name.to_string())
+            .filter_map(|pred| match pred {
+                Pred::Trait { tr, .. } => Some(tr.name.to_string()),
+                Pred::Anon { .. } => None,
+            })
             .collect();
         let ty = checker.instantiate(&scheme);
         (format!("{ty}"), constraints, scheme.optional_last_param)

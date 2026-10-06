@@ -1,0 +1,5 @@
+import time
+
+fn main() {
+  println(time.add_days(time.Date { year: 2024, month: 1, day: 31 }, 1))
+}

@@ -3,7 +3,7 @@
 -- An anonymous record does not satisfy a user-trait `where` bound (rejected before run time).
 -- stderr-contains: error[type]
 -- stderr-contains: does not implement trait 'MyTrait'
--- stderr-contains: <anon>
+-- stderr-contains: type '{x: Int, y: Int}' does not implement trait 'MyTrait'
 trait MyTrait { fn ident(self) -> Int }
 trait MyTrait for Int { fn ident(self) { self } }
 fn use_it(x: a) -> Int where a: MyTrait { x.ident() }

@@ -1,7 +1,8 @@
 -- cmd: check
 -- exit: 1
--- `==` on open-row anonymous records is rejected (the hidden tails could differ).
--- stderr-contains: error[type]: type '{x: Int, ...}' does not implement trait 'Equal': its other fields are not known
+-- `==` on two records with different open rows is rejected: they are
+-- two types (the hidden fields could differ).
+-- stderr-contains: error[type]: type mismatch: expected {x: Int, ...ra}, got {x: Int, ...rb}
 fn cmp(a: {x: Int, ...ra}, b: {x: Int, ...rb}) { a == b }
 fn main() {
   println(cmp({x: 1, y: 2}, {x: 1, z: 3}))

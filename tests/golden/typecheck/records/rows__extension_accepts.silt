@@ -1,0 +1,9 @@
+-- The same functions on records that have no `age`: the other fields
+-- come through the row.
+fn ext(p: {name: String, ...r}) -> {name: String, age: Int, ...r} { {...p, age: 30} }
+fn ext2(p) { {...p, age: 30} }
+fn main() {
+  println(ext({name: "A"}).age)
+  let q = ext2({name: "A", city: "x"})
+  println("{q.name} {q.city} {q.age}")
+}

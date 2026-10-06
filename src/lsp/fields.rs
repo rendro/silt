@@ -165,17 +165,13 @@ pub(super) fn find_field_in_expr(
 /// Look up a field's type within a record type.
 pub(super) fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
     match ty {
-        Type::Record(_, fields) => fields
-            .iter()
-            .find(|(n, _)| *n == field_name)
-            .map(|(_, t)| t.clone()),
         // Anonymous structural record (`{ x: Int, y: Int }`). The
         // typechecker assigns this to bindings whose annotation refers to
         // a user-declared record type when the literal/initializer is
         // structurally inferred — without this arm, hover/completion
         // never see the fields. Tail status doesn't affect lookup of an
         // explicitly listed field; if the field isn't in `fields` we
-        // simply return `None`, matching the `Type::Record` path.
+        // simply return `None`.
         Type::AnonRecord { fields, .. } => fields.get(&field_name).cloned(),
         Type::Tuple(elems) => resolve(field_name)
             .parse::<usize>()
@@ -188,7 +184,7 @@ pub(super) fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
 /// Look up a field's type, resolving `Type::Generic(record_name, _)`
 /// through the checker's record fields. The typechecker annotates
 /// intermediate nodes of a chained field access like `o.inner.val` with
-/// `Type::Generic(<record_name>, [])` rather than `Type::Record(...)`, so
+/// `Type::Generic(<record_name>, args)`, a declared record's type, so
 /// the bare `get_field_type` cannot resolve anything past the leftmost
 /// dot.
 pub(super) fn get_field_type_resolved(
@@ -209,6 +205,18 @@ pub(super) fn get_field_type_resolved(
     }
 }
 
+/// The fields of a record type, each with its type: an anonymous record's
+/// own, a declared record's from the checker's records.
+pub(super) fn record_field_types(ty: &Type, records: &RecordFields) -> Option<Vec<(Symbol, Type)>> {
+    match ty {
+        Type::AnonRecord { fields, .. } => {
+            Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
+        }
+        Type::Generic(name, _) => records.get(name).cloned(),
+        _ => None,
+    }
+}
+
 /// Given a type, return the record fields if it is (or wraps) a record type.
 /// A named record's fields are the checker's.
 pub(super) fn record_fields_from_type(
@@ -216,7 +224,6 @@ pub(super) fn record_fields_from_type(
     records: &RecordFields,
 ) -> Option<Vec<(String, Type)>> {
     let fields = match ty {
-        Type::Record(_, fields) => fields.clone(),
         // Anonymous structural record (`{ x: Int, y: Int }`). The
         // typechecker assigns this shape to bindings whose initializer is
         // a record literal — even when the binder has an explicit named
@@ -239,17 +246,22 @@ mod tests {
     use crate::lsp::testing::checked_program;
     use crate::source::Span;
 
+    /// A closed record type of these fields.
+    fn anon(fields: Vec<(Symbol, Type)>) -> Type {
+        Type::AnonRecord {
+            fields: fields.into_iter().collect(),
+            tail: crate::types::RowTail::Closed,
+        }
+    }
+
     // ── get_field_type ────────────────────────────────────────────
 
     #[test]
     fn test_get_field_type_record() {
-        let ty = Type::Record(
-            crate::types::TypeRef::test("User"),
-            vec![
-                (crate::intern::intern("name"), Type::String),
-                (crate::intern::intern("age"), Type::Int),
-            ],
-        );
+        let ty = anon(vec![
+            (crate::intern::intern("name"), Type::String),
+            (crate::intern::intern("age"), Type::Int),
+        ]);
         assert_eq!(
             get_field_type(&ty, crate::intern::intern("name")),
             Some(Type::String)
@@ -284,13 +296,10 @@ mod tests {
 
     #[test]
     fn test_get_field_type_missing_field() {
-        let ty = Type::Record(
-            crate::types::TypeRef::test("Point"),
-            vec![
-                (crate::intern::intern("x"), Type::Float),
-                (crate::intern::intern("y"), Type::Float),
-            ],
-        );
+        let ty = anon(vec![
+            (crate::intern::intern("x"), Type::Float),
+            (crate::intern::intern("y"), Type::Float),
+        ]);
         assert_eq!(
             get_field_type(&ty, crate::intern::intern("x")),
             Some(Type::Float)
@@ -313,7 +322,7 @@ mod tests {
     fn test_find_field_single_dot_access() {
         //            0         1         2         3         4         5         6
         //            0123456789012345678901234567890123456789012345678901234567890123456
-        let source = "type Pt { x: Int, y: Int }\nfn main() { let p = Pt { x: 1, y: 2 }\np.x }";
+        let source = "fn main() { let p = { x: 1, y: 2 }\np.x }";
         let program = checked_program(source);
 
         // "p.x" — the 'x' field starts after the dot.  Find where "p.x" is
@@ -351,16 +360,7 @@ mod tests {
         let d_expr = Expr {
             kind: ExprKind::Ident(crate::intern::intern("d")),
             span: at(0, 1),
-            ty: Some(Type::Record(
-                crate::types::TypeRef::test("Outer"),
-                vec![(
-                    inner_sym,
-                    Type::Record(
-                        crate::types::TypeRef::test("Inner"),
-                        vec![(value_sym, Type::Int)],
-                    ),
-                )],
-            )),
+            ty: Some(anon(vec![(inner_sym, anon(vec![(value_sym, Type::Int)]))])),
             res: None,
         };
 
@@ -368,10 +368,7 @@ mod tests {
         let inner_access = Expr {
             kind: ExprKind::FieldAccess(Box::new(d_expr), inner_sym, at(2, 7)),
             span: at(0, 7),
-            ty: Some(Type::Record(
-                crate::types::TypeRef::test("Inner"),
-                vec![(value_sym, Type::Int)],
-            )),
+            ty: Some(anon(vec![(value_sym, Type::Int)])),
             res: None,
         };
 
@@ -419,26 +416,14 @@ mod tests {
         let d_expr = Expr {
             kind: ExprKind::Ident(crate::intern::intern("d")),
             span: at(0, 1),
-            ty: Some(Type::Record(
-                crate::types::TypeRef::test("Outer"),
-                vec![(
-                    inner_sym,
-                    Type::Record(
-                        crate::types::TypeRef::test("Inner"),
-                        vec![(value_sym, Type::Int)],
-                    ),
-                )],
-            )),
+            ty: Some(anon(vec![(inner_sym, anon(vec![(value_sym, Type::Int)]))])),
             res: None,
         };
 
         let inner_access = Expr {
             kind: ExprKind::FieldAccess(Box::new(d_expr), inner_sym, at(2, 7)),
             span: at(0, 7),
-            ty: Some(Type::Record(
-                crate::types::TypeRef::test("Inner"),
-                vec![(value_sym, Type::Int)],
-            )),
+            ty: Some(anon(vec![(value_sym, Type::Int)])),
             res: None,
         };
 
@@ -466,10 +451,7 @@ mod tests {
         let (name, ty) = result.unwrap();
         assert_eq!(name, "inner");
         // `inner` field type is Record("Inner", ...)
-        if let Type::Record(sym, _) = &ty {
-            assert_eq!(crate::intern::resolve(sym.name), "Inner");
-        } else {
-            panic!("expected Record type for 'inner' field, got {:?}", ty);
-        }
+        // `inner` field type is the record of `value`.
+        assert_eq!(ty, anon(vec![(value_sym, Type::Int)]));
     }
 }

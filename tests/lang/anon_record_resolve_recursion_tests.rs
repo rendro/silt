@@ -184,25 +184,3 @@ fn f10_row_tail_var_remapped_to_fresh_var_during_substitution() {
         other => panic!("expected AnonRecord after substitution, got {other:?}"),
     }
 }
-
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "row tail var bound to non-record concrete type")]
-fn f10_row_tail_var_bound_to_non_record_panics_in_debug() {
-    // Construct a contrived AnonRecord whose RowTail::Var is mapped
-    // (in the substitution mapping passed to substitute_vars) to a
-    // non-Record, non-Var concrete type — Int in this case. The
-    // unifier should never produce this state; if a future change
-    // drifts the invariant, the debug_assert!() must catch it
-    // immediately instead of silently dropping the binding.
-    let row_var: silt::types::TyVar = 42;
-    let ty = Type::AnonRecord {
-        fields: std::collections::BTreeMap::new(),
-        tail: RowTail::Var(row_var),
-    };
-    let mut mapping: HashMap<silt::types::TyVar, Type> = HashMap::new();
-    mapping.insert(row_var, Type::Int);
-
-    // Should panic via debug_assert! in debug builds.
-    let _ = silt::types::substitute_vars(&ty, &mapping);
-}

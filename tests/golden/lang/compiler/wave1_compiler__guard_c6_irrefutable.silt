@@ -19,7 +19,7 @@ fn main() {
   println(c + d + e)
   let {name, age} = {name: "A", age: 3}
   println("{name} {age}")
-  println(sum({x: 3, y: 4}))
+  println(sum(P { x: 3, y: 4 }))
   let pairs = [(1, 2), (3, 4)]
   println(pairs |> list.map { (l, r) -> l * r })
 }

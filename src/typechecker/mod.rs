@@ -96,6 +96,16 @@ pub struct TypeChecker {
     pub(super) display_written: std::collections::HashSet<TypeRef>,
     /// The (place, type) pairs a missing trait is reported for.
     pub(super) lacking: std::collections::HashSet<(Span, String)>,
+    /// The row variables of the signatures of the module's functions
+    /// (each by the variable it is in the function's scheme).
+    pub(super) sig_rows: std::collections::HashSet<TyVar>,
+    /// Those of them a body spreads a record over, or binds the rest
+    /// of: no declared record may stand for one (`Pred::Anon`).
+    pub(super) anon_rows: std::collections::HashSet<TyVar>,
+    /// What stands for a signature's row variable whose body may not be
+    /// checked yet: decided when the module's bodies are
+    /// (`settle_rows`).
+    pub(super) anon_waiting: Vec<(TyVar, Type, Origin)>,
     /// Whether the expression checked next is the callee of a call:
     /// `x.m` there is a method call, anywhere else a field.
     pub(super) callee_position: bool,
@@ -265,6 +275,9 @@ impl TypeChecker {
             current_return_type: None,
             display_written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),
+            sig_rows: std::collections::HashSet::new(),
+            anon_rows: std::collections::HashSet::new(),
+            anon_waiting: Vec::new(),
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
@@ -800,6 +813,32 @@ impl TypeChecker {
                 self.register_type_decl(td, &mut env);
             }
         }
+        // A record's fields are read from the tables wherever a value of
+        // the record is used: with every alias of the module declared,
+        // an alias a field's type names (declared before or after the
+        // record) is written out.
+        for decl in &program.decls {
+            if let Decl::Type(td) = decl
+                && matches!(td.body, TypeBody::Record(_))
+            {
+                let ty = self.own_type(td.name);
+                if let Some(info) = self.tables.records.get(&ty).cloned() {
+                    let fields = info
+                        .fields
+                        .iter()
+                        .map(|(n, t)| {
+                            (
+                                *n,
+                                crate::types::canonical::canonicalize(&self.tables.resolver, t),
+                            )
+                        })
+                        .collect();
+                    if let Some(info) = self.tables.records.get_mut(&ty) {
+                        info.fields = fields;
+                    }
+                }
+            }
+        }
 
         // The declarations and the bodies are checked one level deep:
         // what a signature leaves out and what a body leaves unknown are
@@ -1006,13 +1045,22 @@ impl TypeChecker {
             .iter()
             .filter_map(|&i| sigs[i].as_ref())
             .flat_map(|sig| sig.bounds.iter().cloned())
-            .map(|Pred::Trait { tr, args, subject }| Pred::Trait {
-                tr,
-                args,
-                subject: match subject {
+            .map(|pred| {
+                let rep = |subject: Type| match subject {
                     Type::Var(var) => Type::Var(self.rigid_rep_var(var)),
                     other => other,
-                },
+                };
+                match pred {
+                    Pred::Trait { tr, args, subject } => Pred::Trait {
+                        tr,
+                        args,
+                        subject: rep(subject),
+                    },
+                    Pred::Anon { row, given } => Pred::Anon {
+                        row: rep(row),
+                        given: given.map(|var| self.rigid_rep_var(var)),
+                    },
+                }
             })
             .collect();
         for &i in &component.members {
@@ -1179,7 +1227,6 @@ fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
             }
             fields.values().for_each(|t| row_tail_vars(t, out));
         }
-        Type::Record(_, fields) => fields.iter().for_each(|(_, t)| row_tail_vars(t, out)),
         Type::Generic(_, args) | Type::Tuple(args) => {
             args.iter().for_each(|t| row_tail_vars(t, out))
         }
@@ -1318,6 +1365,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         checker.report_at_cell(program);
         checker.leave_waiting(program);
     }
+    checker.settle_rows();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);

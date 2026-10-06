@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot spread a `Person` through 'copy': convert it where its type is known, `{...p}`
+-- stderr-contains: error[type]: cannot spread a `Person` through 'g'
+-- stderr-contains: error[type]: cannot spread a `Person` through 'city'
+-- stderr-contains: error[type]: cannot spread a `Person` through 'wrap'
+-- stderr-contains: error[type]: cannot spread a `Person` through 'tag'
+-- stderr-contains: error[type]: cannot spread a `Person` through 'rest_of'
+-- stderr-contains: 34:16
+-- stderr-contains: 36:13
+-- stderr-contains: 37:16
+-- stderr-contains: 38:16
+-- stderr-contains: 39:15
+-- stderr-contains: 40:19
+-- A function that spreads a record whose type it does not know makes an
+-- anonymous record over the record's row, and so does one that binds
+-- the rest of it: no declared record stands for that row, whether or
+-- not the row reaches the function's type, through a function that
+-- calls it, and for a row its signature writes.
+type Person { name: String, age: Int }
+fn copy(p) { {...p} }
+fn city(p) {
+  let x = {...p, city: "c"}
+  x.city
+}
+fn wrap(p) { tag(p) }
+fn tag(p: {name: String, ...r}) -> {name: String, seen: Bool, ...r} { {...p, seen: true} }
+fn rest_of(b) {
+  let {name, ...rest} = b
+  rest
+}
+fn main() {
+  let bob = Person { name: "Bob", age: 42 }
+  println(copy(bob))
+  let g = { p -> {...p} }
+  println(g(bob))
+  println(city(bob))
+  println(wrap(bob))
+  println(tag(bob))
+  println(rest_of(bob))
+}

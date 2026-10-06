@@ -1,7 +1,0 @@
--- A dot-update of an anon-typed nominal compares equal to an anon literal.
-type P { x: Int }
-fn main() {
-  let p: { x: Int } = P { x: 1 }
-  let q = p.{ x: 2 }
-  println(q == { x: 2 })
-}

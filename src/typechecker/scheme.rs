@@ -1,5 +1,40 @@
 use super::*;
 
+/// Each record type `ty` writes over a row variable it writes more than
+/// once, with the fields it lists there.
+fn row_listings(ty: &Type) -> Vec<(TyVar, std::collections::BTreeMap<Symbol, Type>)> {
+    fn walk(ty: &Type, out: &mut Vec<(TyVar, std::collections::BTreeMap<Symbol, Type>)>) {
+        match ty {
+            Type::AnonRecord { fields, tail } => {
+                if let RowTail::Var(v) = tail {
+                    out.push((*v, fields.clone()));
+                }
+                fields.values().for_each(|t| walk(t, out));
+            }
+            Type::Fun(params, ret) => {
+                params.iter().for_each(|t| walk(t, out));
+                walk(ret, out);
+            }
+            Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
+            Type::Map(k, v) => {
+                walk(k, out);
+                walk(v, out);
+            }
+            Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().for_each(|t| walk(t, out)),
+            _ => {}
+        }
+    }
+    let mut all = Vec::new();
+    walk(ty, &mut all);
+    let once: Vec<TyVar> = all
+        .iter()
+        .map(|(v, _)| *v)
+        .filter(|v| all.iter().filter(|(w, _)| w == v).count() == 1)
+        .collect();
+    all.retain(|(v, fields)| !once.contains(v) && !fields.is_empty());
+    all
+}
+
 impl TypeChecker {
     // ── Generalization / Instantiation ──────────────────────────────
 
@@ -29,6 +64,7 @@ impl TypeChecker {
         // anywhere: the `let` is general in a receiver bounded by the
         // trait.)
         self.decide_tries();
+        self.default_rebuilds();
         self.default_selects(true);
         for i in self.closed_mark..self.wanted.len() {
             if self.wanted[i].solved {
@@ -43,6 +79,16 @@ impl TypeChecker {
                 Goal::Try { operand, ok, ret } => {
                     ret.iter().chain([operand, ok]).cloned().collect()
                 }
+                Goal::Lacks { .. } | Goal::Listed { .. } => continue,
+                // (One that waits is over a record of an outer scope.)
+                Goal::Rebuild {
+                    base, with, result, ..
+                } => with
+                    .iter()
+                    .map(|(_, ty)| ty)
+                    .chain([base, result])
+                    .cloned()
+                    .collect(),
             };
             for ty in mentioned {
                 self.keep_monomorphic(&ty);
@@ -63,21 +109,26 @@ impl TypeChecker {
                 if self.wanted[i].solved {
                     continue;
                 }
-                let Goal::Pred(Pred::Trait { tr, args, subject }) = &self.wanted[i].goal.clone()
-                else {
+                let Goal::Pred(pred) = &self.wanted[i].goal.clone() else {
                     continue;
                 };
-                let Type::Var(subject) = self.apply(subject) else {
+                let Type::Var(subject) = self.apply(pred.subject()) else {
                     continue;
                 };
                 if !vars.contains(&subject) {
                     continue;
                 }
                 self.wanted[i].in_scheme = true;
-                let pred = Pred::Trait {
-                    tr: *tr,
-                    args: args.iter().map(|t| self.apply(t)).collect(),
-                    subject: Type::Var(subject),
+                let pred = match pred {
+                    Pred::Trait { tr, args, .. } => Pred::Trait {
+                        tr: *tr,
+                        args: args.iter().map(|t| self.apply(t)).collect(),
+                        subject: Type::Var(subject),
+                    },
+                    Pred::Anon { given, .. } => Pred::Anon {
+                        row: Type::Var(subject),
+                        given: *given,
+                    },
                 };
                 if !preds.contains(&pred) {
                     preds.push(pred);
@@ -85,8 +136,8 @@ impl TypeChecker {
             }
             // A variable only a predicate's trait arguments mention is
             // the scheme's as well.
-            for Pred::Trait { args, .. } in &preds {
-                for v in args.iter().flat_map(free_vars_in) {
+            for pred in &preds {
+                for v in pred.args().iter().flat_map(free_vars_in) {
                     if self.tables.vars.is_generalizable(v) && !vars.contains(&v) {
                         vars.push(v);
                     }
@@ -113,8 +164,7 @@ impl TypeChecker {
             }
         }
         for bound in bounds {
-            let Pred::Trait { subject, .. } = bound;
-            if matches!(subject, Type::Var(v) if scheme.vars.contains(v))
+            if matches!(bound.subject(), Type::Var(v) if scheme.vars.contains(v))
                 && !scheme.preds.contains(bound)
             {
                 scheme.preds.push(bound.clone());
@@ -137,12 +187,22 @@ impl TypeChecker {
             if wanted.solved {
                 continue;
             }
-            if self.waits_for_outer(wanted.goal.waits_on()) {
+            let waits_on = match &wanted.goal {
+                Goal::Rebuild { base, .. } => self.rebuild_waits(base).map(Type::Var),
+                goal => Some(goal.waits_on().clone()),
+            };
+            if waits_on.is_some_and(|ty| self.waits_for_outer(&ty)) {
                 self.wanted.push(wanted);
                 continue;
             }
             let (tr, args, subject) = match &wanted.goal {
                 Goal::Pred(Pred::Trait { tr, args, subject }) => (tr, args, subject),
+                // (A row nothing gives fields to has none to clash, and
+                // is no declared record.)
+                Goal::Lacks { .. }
+                | Goal::Listed { .. }
+                | Goal::Rebuild { .. }
+                | Goal::Pred(Pred::Anon { .. }) => continue,
                 Goal::Try { .. } => {
                     self.errors.push(
                         Diagnostic::error(
@@ -227,6 +287,27 @@ impl TypeChecker {
                 self.want(pred.substitute(&mapping), origin);
             }
         }
+        // A row variable the type extends with a field somewhere must
+        // not be given that field by the use.
+        for (row, field) in Self::row_extensions(&scheme.ty) {
+            if let Some(row) = mapping.get(&row).cloned() {
+                let origin = self.use_origin();
+                self.want_goal(Goal::Lacks { row, field }, origin);
+            }
+        }
+        // A row variable the type writes more than once: what a declared
+        // record that stands for it says of each field holds for each
+        // writing.
+        for (row, fields) in row_listings(&scheme.ty) {
+            if let Some(row) = mapping.get(&row).cloned() {
+                let origin = self.use_origin();
+                let fields = fields
+                    .iter()
+                    .map(|(name, ty)| (*name, substitute_vars(ty, &mapping)))
+                    .collect();
+                self.want_goal(Goal::Listed { fields, row }, origin);
+            }
+        }
         self.named_use = None;
         substitute_vars(&scheme.ty, &mapping)
     }
@@ -271,6 +352,7 @@ impl TypeChecker {
                         scheme.ty = substitute_vars(&ty, &unknown);
                     }
                 }
+                scheme.preds = self.settled_preds(&scheme.preds);
                 self.tables.schemes.insert(*id, scheme);
             }
         }
@@ -307,8 +389,13 @@ impl TypeChecker {
     pub(super) fn method_scheme(&self, entry: &MethodEntry) -> Scheme {
         let ty = self.apply(&entry.method_type);
         let mut vars = free_vars_in(&ty);
-        for Pred::Trait { args, subject, .. } in &entry.preds {
-            for v in args.iter().chain([subject]).flat_map(free_vars_in) {
+        for pred in &entry.preds {
+            for v in pred
+                .args()
+                .iter()
+                .chain([pred.subject()])
+                .flat_map(free_vars_in)
+            {
                 if !vars.contains(&v) {
                     vars.push(v);
                 }

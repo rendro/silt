@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: help: an anonymous record is not a `shapes.Person`: write `shapes.Person { ... }`
+-- stderr-contains: help: a `shapes.Person` is not an anonymous record: convert it with a spread, `{...v}`, or take an open row, `{x: T, ...r}`
+-- stderr-contains: help: an anonymous record is not a `time.Date`: write `time.Date { ... }`
+-- A hint writes a type as the module would: one of another module with
+-- the module's name.
+import shapes
+import time
+fn main() {
+  println(shapes.takes({name: "local", age: 2}))
+  let r: {name: String, age: Int} = shapes.mk()
+  let e: time.Date = {year: 2024, month: 1, day: 31}
+}
