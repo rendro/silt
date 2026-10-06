@@ -154,16 +154,17 @@ fn truthy(v: &Value) -> bool {
 
 /// The arguments of a function that takes the state and the item
 /// (`list.fold`).
-fn acc_and_item(acc: &Value, item: &Value) -> Vec<Value> {
-    vec![acc.clone(), item.clone()]
+fn acc_and_item(acc: &Value, item: &Value, stack: &mut Vec<Value>) {
+    stack.push(acc.clone());
+    stack.push(item.clone());
 }
 
 /// The arguments of a function that takes the key and the value of a
 /// map's entry, which is the item `(key, value)`.
-fn key_and_value<S>(_: &S, entry: &Value) -> Vec<Value> {
+fn key_and_value<S>(_: &S, entry: &Value, stack: &mut Vec<Value>) {
     match entry {
-        Value::Tuple(pair) => pair.clone(),
-        other => vec![other.clone()],
+        Value::Tuple(pair) => stack.extend(pair.iter().cloned()),
+        other => stack.push(other.clone()),
     }
 }
 
@@ -339,7 +340,7 @@ impl Native for Unfold {
         "list.unfold"
     }
 
-    fn resume(&mut self, _vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if self.called {
             match input {
                 Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
@@ -367,10 +368,7 @@ impl Native for Unfold {
             }
         }
         self.called = true;
-        Ok(Step::Call {
-            callee: self.callback.clone(),
-            args: vec![self.state.clone()],
-        })
+        Ok(vm.call(self.callback.clone(), [self.state.clone()]))
     }
 }
 
@@ -600,7 +598,7 @@ pub(crate) fn call_list(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step
                 xs,
                 f,
                 (args[1].clone(), vec![args[1].clone()]),
-                |(running, _), item| vec![running.clone(), item.clone()],
+                |(running, _), item, stack| acc_and_item(running, item, stack),
                 |(running, prefix), _, result| {
                     *running = result.clone();
                     prefix.push(result);
@@ -692,16 +690,11 @@ pub(crate) fn call_map(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step,
             ensure_no_fn("map.update", "Hash", &[&key])?;
             let current = m.get(&key).unwrap_or(&args[2]).clone();
             let m = m.clone();
-            call_then(
-                "map.update",
-                args[3].clone(),
-                vec![current],
-                move |new_val| {
-                    let mut new_map = (*m).clone();
-                    new_map.insert(key, new_val);
-                    Ok(Value::Map(Arc::new(new_map)))
-                },
-            )
+            call_then("map.update", args[3].clone(), current, move |new_val| {
+                let mut new_map = (*m).clone();
+                new_map.insert(key, new_val);
+                Ok(Value::Map(Arc::new(new_map)))
+            })
         }
         _ => Step::Done(map_plain(name, args)?),
     })

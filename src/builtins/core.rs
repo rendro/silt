@@ -108,7 +108,7 @@ fn shared_adt_call(shape: &AdtShape, name: &str, args: &[Value]) -> Result<Optio
         Value::Variant(tag, fields) if tag.is(ok_tag) && fields.len() == 1 => Ok(Some(call_then(
             full,
             args[1].clone(),
-            vec![fields[0].clone()],
+            fields[0].clone(),
             move |result| match wraps {
                 true => Ok(Value::variant(ok_tag, vec![result])),
                 false => Ok(result),
@@ -136,7 +136,7 @@ pub(crate) fn call_result(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<St
             Value::Variant(tag, fields) if tag.is(bv::ERR) && fields.len() == 1 => Ok(call_then(
                 "result.map_err",
                 args[1].clone(),
-                vec![fields[0].clone()],
+                fields[0].clone(),
                 |new_val| Ok(Value::variant(bv::ERR, vec![new_val])),
             )),
             _ => Err(VmError::new("result.map_err requires a Result".into())),

@@ -90,7 +90,7 @@ impl Vm {
     }
 
     /// Push the frame of a builtin.
-    fn push_native_frame(&mut self, native: Box<dyn Native>) {
+    pub(super) fn push_native_frame(&mut self, native: Box<dyn Native>) {
         self.frames.push(Frame::Native(native));
         self.native_frames += 1;
     }
@@ -124,6 +124,28 @@ impl Vm {
                 self.stack.truncate(func_slot);
                 self.call_with(other, args)
             }
+        }
+    }
+
+    /// The step of a builtin's frame that calls `callee` with `args`
+    /// ([`Step::Call`]).
+    pub(crate) fn call(&mut self, callee: Value, args: impl IntoIterator<Item = Value>) -> Step {
+        self.call_step(callee, |stack| stack.extend(args))
+    }
+
+    /// [`Vm::call`] with the arguments `push_args` pushes on the stack.
+    pub(crate) fn call_step(
+        &mut self,
+        callee: Value,
+        push_args: impl FnOnce(&mut Vec<Value>),
+    ) -> Step {
+        // The slot a `Call` instruction has the function in.
+        let func_slot = self.stack.len();
+        self.stack.push(Value::Unit);
+        push_args(&mut self.stack);
+        Step::Call {
+            callee,
+            argc: self.stack.len() - func_slot - 1,
         }
     }
 

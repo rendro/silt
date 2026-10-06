@@ -189,6 +189,10 @@ pub struct Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
+        // The calls in progress end here, however the VM ends: a task
+        // that failed, was cancelled or was still waiting when the
+        // program ended. Each builtin's frame is told ([`Native::abandon`]).
+        self.unwind(0, 0);
         if self.owns_runtime {
             self.runtime.shutdown();
         }
@@ -648,8 +652,16 @@ impl Vm {
     /// entries that belong to frames no longer on the physical stack.
     /// Called after any frame pop / truncate / split-off so stale
     /// diagnostic state doesn't bleed across unrelated calls.
+    ///
+    /// The log is in the order of the depths: an entry is logged for
+    /// the frame on top, and this is called whenever a frame goes. So
+    /// the entries to drop are the last ones.
     pub(crate) fn prune_tco_elided(&mut self, keep_depth: usize) {
-        self.tco_elided.retain(|(d, _, _)| *d < keep_depth);
+        while let Some((depth, _, _)) = self.tco_elided.last()
+            && *depth >= keep_depth
+        {
+            self.tco_elided.pop();
+        }
     }
 
     // ── Error enrichment ─────────────────────────────────────────
@@ -687,6 +699,9 @@ impl Vm {
         // logged at that same depth — newest caller first so the chain
         // reads "callee -> most-recent-tco-caller -> ... -> oldest-caller".
         let mut stack = Vec::new();
+        // The log is in the order of the depths, so its entries are
+        // met from the end as the frames are.
+        let mut elided = self.tco_elided.iter().rev().peekable();
         for (depth, frame) in self.frames.iter().enumerate().rev() {
             let Frame::Code(frame) = frame else {
                 continue;
@@ -696,11 +711,9 @@ impl Vm {
             let span = frame.closure.function.chunk().span_at(ip);
             stack.push((func_name, span));
             // Newer (later-pushed) entries for this depth are more recent
-            // callers, so walk in reverse to keep the callee-first order.
-            for (d, name, caller_span) in self.tco_elided.iter().rev() {
-                if *d == depth {
-                    stack.push((name.clone(), *caller_span));
-                }
+            // callers, so they come first: the chain stays callee-first.
+            while let Some((_, name, caller_span)) = elided.next_if(|(d, _, _)| *d >= depth) {
+                stack.push((name.clone(), *caller_span));
             }
         }
         err.call_stack = stack;

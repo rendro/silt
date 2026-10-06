@@ -121,7 +121,10 @@ impl Vm {
         }
         if let Some(Frame::Native(_)) = self.frames.last() {
             let input = self.pending_input.take().unwrap_or(Value::Unit);
-            if let Some(end) = self.deliver(floor, input, &mut budget)? {
+            let mut left = budget;
+            let end = self.deliver(floor, input, &mut left)?;
+            budget = left;
+            if let Some(end) = end {
                 return Ok(end);
             }
         }
@@ -145,9 +148,19 @@ impl Vm {
                     }
                     // The function's own slot goes with its frame.
                     self.stack.truncate(finished.base_slot.saturating_sub(1));
-                    self.deliver(floor, result, &mut budget)?
+                    // (A copy, so that the loop's own count stays in a
+                    // register.)
+                    let mut left = budget;
+                    let end = self.deliver(floor, result, &mut left)?;
+                    budget = left;
+                    end
                 }
-                DispatchResult::Native => self.deliver(floor, Value::Unit, &mut budget)?,
+                DispatchResult::Native => {
+                    let mut left = budget;
+                    let end = self.deliver(floor, Value::Unit, &mut left)?;
+                    budget = left;
+                    end
+                }
                 DispatchResult::Parked => Some(Slice::Parked),
             };
             if let Some(end) = end {
@@ -198,9 +211,10 @@ impl Vm {
                     self.frames.push(Frame::Native(native));
                     Entered::Parked
                 }
-                Ok(Step::Call { callee, args }) => {
+                Ok(Step::Call { callee, argc }) => {
                     self.frames.push(Frame::Native(native));
-                    self.call_with(callee, args)?
+                    let func_slot = self.stack.len() - argc - 1;
+                    self.call_value(callee, argc, func_slot)?
                 }
                 Err(e) => {
                     self.frames.push(Frame::Native(native));
@@ -554,15 +568,15 @@ impl Vm {
                             frame.closure.function.chunk().span_at(caller_ip),
                         )
                     };
-                    let count_at_depth = self
+                    // The entries of this depth are the log's last ones.
+                    let at_depth = self
                         .tco_elided
                         .iter()
-                        .filter(|(d, _, _)| *d == depth)
+                        .rev()
+                        .take_while(|(d, _, _)| *d == depth)
                         .count();
-                    if count_at_depth >= crate::vm::runtime::TCO_ELIDED_CAP
-                        && let Some(pos) = self.tco_elided.iter().position(|(d, _, _)| *d == depth)
-                    {
-                        self.tco_elided.remove(pos);
+                    if at_depth >= crate::vm::runtime::TCO_ELIDED_CAP {
+                        self.tco_elided.remove(self.tco_elided.len() - at_depth);
                     }
                     self.tco_elided.push((depth, caller_name, caller_span));
                     let frame = self.frame_mut();
@@ -578,9 +592,13 @@ impl Vm {
                 return Ok(DispatchResult::Return(result));
             }
             Instr::CallBuiltin { name, argc } => {
-                let name = self.chunk().string(name).to_owned();
+                // The name stays where it is, in the function's constants,
+                // which the function's closure keeps while the builtin
+                // has the VM.
+                let closure = self.frame().closure.clone();
+                let name = closure.function.chunk().string(name);
                 let args = self.stack.split_off(self.stack.len() - argc);
-                let entered = self.enter_builtin(&name, &args)?;
+                let entered = self.enter_builtin(name, &args)?;
                 return Ok(self.entered(entered));
             }
             Instr::MakeClosure { f, captures } => {
@@ -1034,7 +1052,10 @@ impl Vm {
                 argc,
                 of: trait_index,
             } => {
-                let method_name = self.chunk().string(method).to_owned();
+                // As for a builtin's name: the method's stays in the
+                // constants.
+                let closure = self.frame().closure.clone();
+                let method_name = closure.function.chunk().string(method);
                 let receiver_slot = self.stack.len() - argc;
                 let receiver = self.stack[receiver_slot].clone();
                 let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
@@ -1050,7 +1071,7 @@ impl Vm {
                 if trait_index == crate::bytecode::NO_TRAIT
                     && self.global_slots.ambiguous(
                         receiver_type,
-                        &method_name,
+                        method_name,
                         !matches!(receiver, Value::Record(..) | Value::Variant(..)),
                     )
                 {
@@ -1062,7 +1083,7 @@ impl Vm {
                 }
                 let method = self
                     .global_slots
-                    .call_method(trait_index, receiver_type, &method_name)
+                    .call_method(trait_index, receiver_type, method_name)
                     .and_then(|slot| self.globals.get(slot as usize).cloned().flatten());
                 if let Some(func) = method {
                     // The method's frame starts above a slot of its own,
@@ -1078,13 +1099,13 @@ impl Vm {
                 // Try built-in trait methods (display, equal, compare)
                 if let Some(result) = self.dispatch_trait_method(
                     &receiver,
-                    &method_name,
+                    method_name,
                     &self.stack[receiver_slot + 1..],
                 ) {
                     self.stack.truncate(receiver_slot);
                     self.push(result?);
                 } else if let Value::Record(_, ref fields) = receiver
-                    && let Some(callable) = fields.get(&method_name).cloned()
+                    && let Some(callable) = fields.get(method_name).cloned()
                 {
                     // A record's field that holds a function: the
                     // receiver's slot is the function's.

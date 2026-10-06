@@ -68,12 +68,9 @@ struct Each {
 }
 
 impl Each {
-    fn call(&mut self, message: Value) -> Step {
+    fn call(&mut self, vm: &mut Vm, message: Value) -> Step {
         self.called = true;
-        Step::Call {
-            callee: self.callback.clone(),
-            args: vec![message],
-        }
+        vm.call(self.callback.clone(), [message])
     }
 }
 
@@ -88,7 +85,7 @@ impl Native for Each {
             return Ok(Step::Park);
         }
         match self.ch.try_receive() {
-            TryReceiveResult::Value(message) => Ok(self.call(message)),
+            TryReceiveResult::Value(message) => Ok(self.call(vm, message)),
             TryReceiveResult::Closed => Ok(Step::Done(Value::Unit)),
             // Channel empty -- park via scheduler or block.
             TryReceiveResult::Empty if vm.is_scheduled_task => {
@@ -104,7 +101,7 @@ impl Native for Each {
             // `tests/concurrency/main_thread_each_deadlock_tests.rs`.
             TryReceiveResult::Empty => match main_thread_wait_for_receive(&self.ch, vm)? {
                 Value::Variant(tag, mut vals) if tag.is(bv::MESSAGE) => {
-                    Ok(self.call(vals.pop().unwrap_or(Value::Unit)))
+                    Ok(self.call(vm, vals.pop().unwrap_or(Value::Unit)))
                 }
                 Value::Variant(tag, _) if tag.is(bv::CLOSED) => Ok(Step::Done(Value::Unit)),
                 _ => unreachable!("main_thread_wait_for_receive returns Message or Closed"),
@@ -328,8 +325,8 @@ fn channel_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             };
             let ch = ch.clone();
 
-            // Resume detection. A scheduled task that parks below re-pushes
-            // its args with args[1] swapped for an internal marker record
+            // Resume detection. A scheduled task that parks below is called
+            // again with args[1] swapped for an internal marker record
             // carrying the ORIGINAL private timer channel (see the park
             // site). Recovering that channel preserves the original absolute
             // deadline across parks: the timer thread will close (or has
@@ -437,8 +434,8 @@ fn channel_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         SelectOp::Send(c, _) => (c.clone(), SelectOpKind::Send),
                     })
                     .collect();
-                // We DO re-enter this arm on resume because CallBuiltin
-                // replays its args — but the replayed args carry the resume
+                // We DO re-enter this arm on resume because the parked call
+                // is made again — but with arguments that carry the resume
                 // marker (SAME timer channel) instead of the user's
                 // Duration, so the re-entry races the ORIGINAL absolute
                 // deadline rather than arming a fresh full-length timer.
@@ -630,10 +627,7 @@ impl Native for Deadline {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (None, x) | (x, None) => x,
             };
-            return Ok(Step::Call {
-                callee,
-                args: Vec::new(),
-            });
+            return Ok(vm.call(callee, []));
         }
         self.abandon(vm);
         Ok(Step::Done(input))
@@ -771,13 +765,14 @@ fn task_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError>
 
 // The internal `channel.recv_timeout` resume marker.
 //
-// When a scheduled task parks inside `recv_timeout`, the re-pushed args
-// replace the user's `Duration` (args[1]) with a record of this type
+// When a scheduled task parks inside `recv_timeout`, the arguments it is
+// called again with (`Vm::park_with_reason`) have a record of this type
+// in place of the user's `Duration` (args[1]),
 // wrapping the call's private timer channel, so the re-entry after a wake
 // races the ORIGINAL absolute deadline instead of arming a fresh
 // full-length timer (the round-101 livelock: every timer expiry re-armed
-// the timeout forever). The marker only ever exists on the VM stack
-// between a park and its CallBuiltin replay — it is never user-visible,
+// the timeout forever). The marker only ever exists in the frame of the
+// parked call, between a park and the next call — it is never user-visible,
 // and its type (`ty::RECV_TIMEOUT`) is no type a program can name, so
 // it cannot be mistaken for a typechecked `Duration` argument.
 

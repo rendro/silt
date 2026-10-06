@@ -1130,7 +1130,7 @@ impl Native for Consume {
         self.name
     }
 
-    fn resume(&mut self, _vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if std::mem::take(&mut self.called)
             && let Some(acc) = &mut self.acc
         {
@@ -1144,10 +1144,8 @@ impl Native for Consume {
                         return Err(e);
                     }
                     self.called = true;
-                    return Ok(Step::Call {
-                        callee: self.callback.clone(),
-                        args: self.acc.iter().cloned().chain([v]).collect(),
-                    });
+                    let args = self.acc.iter().cloned().chain([v]);
+                    return Ok(vm.call(self.callback.clone(), args));
                 }
                 TryReceiveResult::Closed => {
                     return Ok(Step::Done(self.acc.take().unwrap_or(Value::Unit)));

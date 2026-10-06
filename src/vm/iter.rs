@@ -23,16 +23,20 @@ pub(crate) fn stop(value: Value) -> Flow {
     Ok(ControlFlow::Break(value))
 }
 
+/// What puts the arguments of the call for an item on the stack.
+pub(crate) type Args<S> = fn(&S, &Value, &mut Vec<Value>);
+
 /// A builtin that calls `callback` for each of `items` in turn, with a
 /// state `S` of its own (`list.map`: the results so far).
 struct Iterate<S> {
     name: &'static str,
-    items: std::vec::IntoIter<Value>,
-    /// The item the call that is running was made for.
-    current: Option<Value>,
+    items: Vec<Value>,
+    /// How many items a call was made for: the call that is running is
+    /// the one for the item before this index.
+    called: usize,
     callback: Value,
     state: S,
-    args: fn(&S, &Value) -> Vec<Value>,
+    args: Args<S>,
     step: fn(&mut S, Value, Value) -> Flow,
     finish: fn(&mut S) -> Result<Value, VmError>,
 }
@@ -42,43 +46,41 @@ impl<S: Send> Native for Iterate<S> {
         self.name
     }
 
-    fn resume(&mut self, _vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        if let Some(item) = self.current.take()
-            && let ControlFlow::Break(value) = (self.step)(&mut self.state, item, input)?
-        {
-            return Ok(Step::Done(value));
-        }
-        match self.items.next() {
-            Some(item) => {
-                let args = (self.args)(&self.state, &item);
-                self.current = Some(item);
-                Ok(Step::Call {
-                    callee: self.callback.clone(),
-                    args,
-                })
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        if let Some(done) = self.called.checked_sub(1) {
+            // The item is the step's now: nothing reads it again.
+            let item = std::mem::replace(&mut self.items[done], Value::Unit);
+            if let ControlFlow::Break(value) = (self.step)(&mut self.state, item, input)? {
+                return Ok(Step::Done(value));
             }
-            None => (self.finish)(&mut self.state).map(Step::Done),
         }
+        let Some(item) = self.items.get(self.called) else {
+            return (self.finish)(&mut self.state).map(Step::Done);
+        };
+        self.called += 1;
+        Ok(vm.call_step(self.callback.clone(), |stack| {
+            (self.args)(&self.state, item, stack)
+        }))
     }
 }
 
 /// The builtin `name` as an iteration over `items`: for each item,
-/// `callback` is called with `args(state, item)`, and `step(state,
-/// item, result)` takes the value it returned; after the last item, or
+/// `callback` is called with the arguments `args(state, item, stack)`
+/// pushes, and `step(state, item, result)` takes the value it returned; after the last item, or
 /// with no items, the builtin's value is `finish(state)`.
 pub(crate) fn iterate<S: Send + 'static>(
     name: &'static str,
     items: Vec<Value>,
     callback: Value,
     state: S,
-    args: fn(&S, &Value) -> Vec<Value>,
+    args: Args<S>,
     step: fn(&mut S, Value, Value) -> Flow,
     finish: fn(&mut S) -> Result<Value, VmError>,
 ) -> Step {
     Step::Run(Box::new(Iterate {
         name,
-        items: items.into_iter(),
-        current: None,
+        items,
+        called: 0,
         callback,
         state,
         args,
@@ -88,14 +90,14 @@ pub(crate) fn iterate<S: Send + 'static>(
 }
 
 /// The arguments of a function that takes the item.
-pub(crate) fn item_arg<S>(_: &S, item: &Value) -> Vec<Value> {
-    vec![item.clone()]
+pub(crate) fn item_arg<S>(_: &S, item: &Value, stack: &mut Vec<Value>) {
+    stack.push(item.clone());
 }
 
 /// A builtin that makes one call and makes its value from the result.
 struct CallThen<F> {
     name: &'static str,
-    call: Option<(Value, Vec<Value>)>,
+    call: Option<(Value, Value)>,
     then: Option<F>,
 }
 
@@ -107,24 +109,24 @@ where
         self.name
     }
 
-    fn resume(&mut self, _vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        if let Some((callee, args)) = self.call.take() {
-            return Ok(Step::Call { callee, args });
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        if let Some((callee, arg)) = self.call.take() {
+            return Ok(vm.call(callee, [arg]));
         }
         let then = self.then.take().expect("a frame is resumed once per call");
         then(input).map(Step::Done)
     }
 }
 
-/// The builtin `name` as one call of `callee` with `args`; its value
+/// The builtin `name` as one call of `callee` with `arg`; its value
 /// is `then(result)`.
-pub(crate) fn call_then<F>(name: &'static str, callee: Value, args: Vec<Value>, then: F) -> Step
+pub(crate) fn call_then<F>(name: &'static str, callee: Value, arg: Value, then: F) -> Step
 where
     F: FnOnce(Value) -> Result<Value, VmError> + Send + 'static,
 {
     Step::Run(Box::new(CallThen {
         name,
-        call: Some((callee, args)),
+        call: Some((callee, arg)),
         then: Some(then),
     }))
 }

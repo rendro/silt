@@ -2916,3 +2916,147 @@ mod type_confusion {
         assert_eq!(err.to_diagnostic().code, Code::RuntimeError);
     }
 }
+
+// ── A builtin's frame is told when it is dropped ─────────────────────
+//
+// `Native::abandon` is how `task.deadline` restores the outer deadline
+// and `postgres.transact` rolls back. It must be called exactly once on
+// every way a VM's calls end without the frame finishing.
+
+mod abandon {
+    use super::*;
+    use crate::runtime::channel::Channel;
+    use crate::runtime::handle::TaskHandle;
+    use crate::scheduler::Task;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    /// A frame that fails, or parks on a channel nobody sends to, and
+    /// counts how often it is abandoned.
+    struct Probe {
+        abandoned: Arc<AtomicUsize>,
+        park_on: Option<Arc<Channel>>,
+    }
+
+    impl Native for Probe {
+        fn name(&self) -> &str {
+            "test.probe"
+        }
+
+        fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+            match &self.park_on {
+                Some(ch) => {
+                    vm.block_reason = Some(BlockReason::Receive(ch.clone()));
+                    Ok(Step::Park)
+                }
+                None => Err(VmError::new("the probe failed".into())),
+            }
+        }
+
+        fn abandon(&mut self, _vm: &mut Vm) {
+            self.abandoned.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A VM whose one call in progress is a probe's.
+    fn with_probe(mut vm: Vm, park_on: Option<Arc<Channel>>) -> (Vm, Arc<AtomicUsize>) {
+        let abandoned = Arc::new(AtomicUsize::new(0));
+        vm.push_native_frame(Box::new(Probe {
+            abandoned: abandoned.clone(),
+            park_on,
+        }));
+        (vm, abandoned)
+    }
+
+    /// The task of `main` that runs a probe, and its handle.
+    fn spawn_probe(
+        main: &mut Vm,
+        park_on: Option<Arc<Channel>>,
+    ) -> (Arc<TaskHandle>, Arc<AtomicUsize>) {
+        let (mut vm, abandoned) = with_probe(main.spawn_child(), park_on);
+        vm.is_scheduled_task = true;
+        let id = main.next_task_id();
+        let handle = Arc::new(TaskHandle::new(id));
+        main.get_or_create_scheduler()
+            .submit(Task {
+                id,
+                vm,
+                handle: handle.clone(),
+            })
+            .unwrap();
+        (handle, abandoned)
+    }
+
+    /// Wait until the probe has been abandoned, then long enough for a
+    /// second time to show, and give the count.
+    fn settled(abandoned: &AtomicUsize) -> usize {
+        let limit = Instant::now() + Duration::from_secs(10);
+        while abandoned.load(Ordering::SeqCst) == 0 && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        abandoned.load(Ordering::SeqCst)
+    }
+
+    /// Wait until the task of a parking probe is parked.
+    fn parked(ch: &Channel) {
+        let limit = Instant::now() + Duration::from_secs(10);
+        while ch.recv_waker_queue_len() == 0 && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(ch.recv_waker_queue_len() > 0, "the task did not park");
+    }
+
+    #[test]
+    fn an_error_on_the_main_thread_abandons_the_frame_once() {
+        let (mut vm, abandoned) = with_probe(Vm::new(crate::HostIo::process()), None);
+        let run = vm.run_frames(0, usize::MAX);
+        let err = vm.finish_run(run, 0, 0).unwrap_err();
+        assert_eq!(err.message, "the probe failed");
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+        drop(vm);
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_error_in_a_task_abandons_the_frame_once() {
+        let mut main = Vm::new(crate::HostIo::process());
+        let (handle, abandoned) = spawn_probe(&mut main, None);
+        let err = handle.join().unwrap_err();
+        handle.mark_joined();
+        assert_eq!(err.message, "the probe failed");
+        assert_eq!(settled(&abandoned), 1);
+        drop(main);
+        assert_eq!(settled(&abandoned), 1);
+    }
+
+    #[test]
+    fn a_cancel_of_a_parked_task_abandons_the_frame_once() {
+        let mut main = Vm::new(crate::HostIo::process());
+        let ch = Arc::new(Channel::new(main.next_channel_id(), 0));
+        let (handle, abandoned) = spawn_probe(&mut main, Some(ch.clone()));
+        parked(&ch);
+        assert_eq!(abandoned.load(Ordering::SeqCst), 0);
+        // What `task.cancel` does.
+        handle.complete(Err(VmError::new("cancelled".to_string())));
+        handle.mark_joined();
+        assert_eq!(settled(&abandoned), 1);
+        drop(main);
+        assert_eq!(settled(&abandoned), 1);
+    }
+
+    #[test]
+    fn the_end_of_the_program_abandons_the_frame_of_a_parked_task_once() {
+        let mut main = Vm::new(crate::HostIo::process());
+        let ch = Arc::new(Channel::new(main.next_channel_id(), 0));
+        let (handle, abandoned) = spawn_probe(&mut main, Some(ch.clone()));
+        parked(&ch);
+        assert_eq!(abandoned.load(Ordering::SeqCst), 0);
+        drop(main);
+        assert_eq!(settled(&abandoned), 1);
+        // The channel and the handle outlive the task: it was not
+        // their end that dropped it.
+        drop((ch, handle));
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+    }
+}
