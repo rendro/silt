@@ -432,14 +432,16 @@ Returns `Unit`.
 ### When a program ends
 
 A program ends when `main` has returned **and its tasks can do no more**:
-every task has ended or waits, and no timer and no I/O operation is
-pending. Until then `silt run` keeps going:
+every task has ended or waits, and none of them waits for a sleep, a
+timeout or an I/O operation that is still pending. Until then `silt run`
+keeps going:
 
 - A task that is still at work when `main` returns runs to its end. What it
   prints is part of the program's output; if it fails, the run fails.
 - A task that sleeps, or waits for a timeout or for I/O, is waited for.
-  (A `channel.timeout` channel that is still to close holds nothing up by
-  itself: once every task has ended there is nobody it could wake.)
+  A `channel.timeout` channel counts only while a task waits on it: one
+  that lost its race in a `select`, or that nobody looks at any more,
+  holds nothing up, however long it still has to run.
 - A task that waits for something only another task could give (a receive
   on a channel nobody will send on) is dropped when nothing else can run:
   such a wait could never end.
@@ -1288,14 +1290,15 @@ that error, silt reports the tasks that failed and that nobody joined
 [Failures that nobody joins](#failures-that-nobody-joins)): a failed
 producer is the usual reason why a counterpart is missing.
 
-A timer that is pending counts as able to end a wait: a `time.sleep`, a
-`channel.timeout` channel that has not closed yet, a `channel.recv_timeout`
-that has not expired. While one is pending, no deadlock is reported, whether
-or not it could ever reach the channel that `main` waits on. The verdict
-comes after the timer has fired, if the program is still stuck then. So a
-background task that sleeps for a minute delays the report of an unrelated
-deadlock by up to a minute. The same holds for an I/O operation that is in
-flight. Only `main` gets a deadlock verdict; tasks that are stuck while
+A wait that will end by itself counts as able to go on: a `time.sleep`, a
+`channel.recv_timeout` that has not expired, a wait on a `channel.timeout`
+channel that has not closed yet (a `channel.timeout` that no task waits on
+does not count: it could wake nobody). While a task is in such a wait, no
+deadlock is reported, whether or not that task could ever reach the channel
+that `main` waits on. The verdict comes when the wait has ended, if the
+program is still stuck then. So a background task that sleeps for a minute
+delays the report of an unrelated deadlock by up to a minute. The same holds
+for a task that waits for an I/O operation. Only `main` gets a deadlock verdict; tasks that are stuck while
 `main` is not waiting stay parked.
 
 ### Implications of real parallelism

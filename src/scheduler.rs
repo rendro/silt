@@ -20,12 +20,13 @@
 //! Tasks are counted by owner (`set_task_owner`): the program, or one
 //! test of a test run, with which the tasks of its file's top-level
 //! code count (`set_task_owner_within`). The tasks of an owner have
-//! come to a stop when
-//! each has ended or waits and nothing of theirs is pending outside:
-//! no deadline, no timer that will close a channel, no I/O operation
-//! in flight (`Scheduler::external`). That is checked when one of
-//! them parks or ends and when something external of theirs ends; it
-//! is exact and stays true, so the event that completes it sees it.
+//! come to a stop when each has ended or waits, none of the waits
+//! will end by itself (it has no deadline, and it is not on a channel
+//! that a timer will close), and no I/O operation that one of them
+//! waits for is in flight (`Scheduler::external`). That is checked
+//! when one of them parks or ends and when something external of
+//! theirs ends; it is exact and stays true, so the event that
+//! completes it sees it.
 //!
 //! - If the program's own thread is in a wait then, the program is
 //!   deadlocked: the wait fails with the error.
@@ -33,9 +34,9 @@
 //!   the program to end (`Scheduler::settle`), it has ended: the tasks
 //!   that still wait are dropped.
 //!
-//! A timer that will close a channel counts as pending only while a
-//! task is left that it could wake. After an error of the program's
-//! own code nothing is waited for: `Scheduler::stop_tasks` ends the
+//! A timer that will close a channel which no task waits on wakes
+//! nobody, and holds nothing up. After an error of the program's own
+//! code nothing is waited for: `Scheduler::stop_tasks` ends the
 //! owner's tasks where they are.
 
 use parking_lot::{Condvar, Mutex};
@@ -166,10 +167,6 @@ struct Group {
     /// operations in flight. See [`External`]. (The deadline of a wait
     /// is seen on the wait.)
     external: AtomicUsize,
-    /// The timers that will close a channel (`channel.timeout`). One
-    /// can end a wait too, but only a wait: where no task is left, it
-    /// has nobody to wake.
-    timers: AtomicUsize,
     /// The tasks that wait or are on their way into a wait: never
     /// fewer than those that wait. A look without a lock that spares
     /// most of the exact ones.
@@ -339,17 +336,6 @@ pub(crate) struct External(Arc<Inner>, Arc<Group>);
 impl Drop for External {
     fn drop(&mut self) {
         self.1.external.fetch_sub(1, Ordering::SeqCst);
-        self.0.check(&self.1);
-    }
-}
-
-/// A timer that will close a channel, until it has. See
-/// `Group::timers`.
-struct PendingClose(Arc<Inner>, Arc<Group>);
-
-impl Drop for PendingClose {
-    fn drop(&mut self) {
-        self.1.timers.fetch_sub(1, Ordering::SeqCst);
         self.0.check(&self.1);
     }
 }
@@ -545,14 +531,11 @@ impl Scheduler {
         self.inner.parking.cancel(TaskId(handle.id as u64));
     }
 
-    /// Close `channel` when the clock reads `deadline`. Until then the
-    /// timer counts as pending for the owner of the code that asks.
+    /// Close `channel` when the clock reads `deadline`. Until then a
+    /// task that waits on the channel has a wait that will end.
     pub(crate) fn close_at(&self, deadline: Duration, channel: Arc<Channel>) {
-        let group = self.inner.group(current_task_owner());
-        group.timers.fetch_add(1, Ordering::SeqCst);
-        let pending: Box<dyn Send> = Box::new(PendingClose(self.inner.clone(), group));
         let timer = self.inner.parking.timer();
-        timer.close_at(deadline, channel, Some(pending));
+        timer.close_at(deadline, channel);
         self.inner.timer_armed();
     }
 
@@ -599,7 +582,7 @@ impl Scheduler {
 
     /// The program's own code has returned: wait until the program has
     /// ended. That is when none of its tasks can go on: each of them
-    /// has ended or waits, and no timer and no I/O operation of theirs
+    /// has ended or waits, and no sleep, timeout or I/O operation of theirs
     /// is pending. The tasks that still wait then are dropped; they
     /// could never be woken. Called by the thread that ran the code,
     /// for the owner it ran it for (`set_task_owner`): a test waits
@@ -785,7 +768,6 @@ impl Inner {
                 owner,
                 live: AtomicUsize::new(0),
                 external: AtomicUsize::new(0),
-                timers: AtomicUsize::new(0),
                 parking: AtomicUsize::new(0),
                 stopped: AtomicBool::new(false),
             })
@@ -1159,13 +1141,15 @@ impl Inner {
             let count = |of: fn(&Group) -> &AtomicUsize| -> usize {
                 main.groups().map(|g| of(g).load(Ordering::SeqCst)).sum()
             };
-            let live = count(|g| &g.live);
-            let stopped = own.len() == live
-                && own.iter().all(|waiting| waiting.deadline.is_none())
-                && count(|g| &g.external) == 0
-                // A channel that closes later wakes nobody where
-                // nobody is left.
-                && (live == 0 || count(|g| &g.timers) == 0);
+            // A wait that will end without anybody's doing: one with a
+            // deadline, or one on a channel that a timer will close. A
+            // timer whose channel nobody waits on wakes nobody.
+            let will_end = |waiting: &&Waiting<'_, Sleeper>| {
+                waiting.deadline.is_some() || waiting.on.iter().any(Source::closes_by_timer)
+            };
+            let stopped = own.len() == count(|g| &g.live)
+                && !own.iter().any(will_end)
+                && count(|g| &g.external) == 0;
             stopped.then(|| match &main.waits {
                 MainWaits::Settling(_) | MainWaits::Stopping(_) => None,
                 MainWaits::Blocked(id) => Some(verdict(&own, *id)),

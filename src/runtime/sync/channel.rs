@@ -9,6 +9,7 @@
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use super::queue::{Waiter, Wakes};
@@ -51,6 +52,8 @@ pub struct Channel {
     /// What its only reader does when it gives the channel up
     /// ([`Channel::abandon`]): tell whoever feeds it to stop.
     on_abandon: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Set when a timer was told to close it (`channel.timeout`).
+    closes_by_timer: AtomicBool,
     pub(super) state: Mutex<State>,
 }
 
@@ -143,11 +146,24 @@ impl State {
 impl Channel {
     /// A channel that buffers up to `capacity` values. With capacity 0
     /// a send completes only when a receiver takes the value.
+    /// A timer will close the channel.
+    pub(super) fn set_closes_by_timer(&self) {
+        self.closes_by_timer.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether a timer will close the channel, or has: a wait on it
+    /// ends without anybody's doing. (Nobody waits on it once it is
+    /// closed, so the answer need not change then.)
+    pub fn closes_by_timer(&self) -> bool {
+        self.closes_by_timer.load(Ordering::SeqCst)
+    }
+
     pub fn new(id: usize, capacity: usize) -> Arc<Channel> {
         Arc::new(Channel {
             id,
             capacity,
             on_abandon: OnceLock::new(),
+            closes_by_timer: AtomicBool::new(false),
             state: Mutex::new(State {
                 capacity,
                 buf: VecDeque::new(),

@@ -661,7 +661,9 @@ fn the_timer_closes_a_channel_at_its_time() {
     let d = Double::new();
     let ch = Channel::new(0, 0);
     let deadline = d.timer.deadline_after(10 * MS).unwrap();
-    let id = d.timer.close_at(deadline, ch.clone(), None);
+    assert!(!ch.closes_by_timer());
+    let id = d.timer.close_at(deadline, ch.clone());
+    assert!(ch.closes_by_timer());
     assert_eq!(id.deadline(), deadline);
     assert!(d.block(1, recv(&ch)).is_none());
 
@@ -672,9 +674,7 @@ fn the_timer_closes_a_channel_at_its_time() {
     assert_eq!(d.timer.pending(), 0);
     assert!(!d.timer.disarm(id));
 
-    let id = d
-        .timer
-        .close_at(d.timer.now() + MS, Channel::new(1, 0), None);
+    let id = d.timer.close_at(d.timer.now() + MS, Channel::new(1, 0));
     assert!(d.timer.disarm(id));
     assert_eq!(d.timer.pending(), 0);
 }
@@ -1081,34 +1081,6 @@ fn the_waiting_tasks_are_shown_with_what_they_wait_on() {
         (1, Resumed::Fired(Fired::Deadline))
     ));
     assert_eq!(shown(), [(2, "send 5".to_string(), false)]);
-}
-
-/// What a timer entry that closes a channel holds is dropped when the
-/// entry has done its work, and when it is disarmed.
-#[test]
-fn a_closing_timer_entry_lets_go_of_what_it_holds() {
-    struct Held(Arc<std::sync::atomic::AtomicUsize>);
-    impl Drop for Held {
-        fn drop(&mut self) {
-            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-    let d = Double::new();
-    let dropped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let held = || -> Option<Box<dyn Send>> { Some(Box::new(Held(dropped.clone()))) };
-    let count = || dropped.load(std::sync::atomic::Ordering::SeqCst);
-    let ch = Channel::new(0, 0);
-    let deadline = d.timer.deadline_after(MS).expect("in range");
-
-    let id = d.timer.close_at(deadline, ch.clone(), held());
-    assert!(d.timer.disarm(id));
-    assert_eq!(count(), 1);
-
-    d.timer.close_at(deadline, ch.clone(), held());
-    assert_eq!(count(), 1);
-    assert_eq!(d.advance(MS), 1);
-    assert!(ch.is_closed());
-    assert_eq!(count(), 2);
 }
 
 // ── Threads ─────────────────────────────────────────────────────────

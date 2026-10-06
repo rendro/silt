@@ -75,6 +75,12 @@ pub enum Source {
 }
 
 impl Source {
+    /// Whether this is a wait on a channel that a timer will close.
+    pub fn closes_by_timer(&self) -> bool {
+        self.channel()
+            .is_some_and(|channel| channel.closes_by_timer())
+    }
+
     fn channel(&self) -> Option<&Arc<Channel>> {
         match self {
             Source::Recv(channel) | Source::Send(channel) => Some(channel),
