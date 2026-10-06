@@ -12,7 +12,7 @@ impl TypeChecker {
     pub(super) fn generalize(&mut self, ty: &Type) -> Scheme {
         // What the scope owes for a subject it has decided since is
         // checked first: what that leaves owed is on variables.
-        self.solve_wanted(self.closed_mark);
+        self.decide_closed();
         let ty = self.apply(ty);
         let mut vars: Vec<TyVar> = free_vars_in(&ty)
             .into_iter()
@@ -24,7 +24,10 @@ impl TypeChecker {
                 if self.wanted[i].solved {
                     continue;
                 }
-                let Pred::Trait { tr, args, subject } = &self.wanted[i].pred.clone();
+                let Goal::Pred(Pred::Trait { tr, args, subject }) = &self.wanted[i].goal.clone()
+                else {
+                    continue;
+                };
                 let Type::Var(subject) = self.apply(subject) else {
                     continue;
                 };
@@ -88,15 +91,35 @@ impl TypeChecker {
     /// that is not generalised), which is owed, and checked, when a later
     /// definition decides it.
     pub(super) fn settle_bounds(&mut self) {
+        self.decide_closed();
         let recorded = self.wanted.split_off(self.closed_mark);
         for wanted in recorded {
-            let Pred::Trait { tr, args, subject } = &wanted.pred;
             if wanted.solved {
                 continue;
             }
-            if self.waits_for_outer(subject) {
+            if self.waits_for_outer(wanted.goal.waits_on()) {
                 self.wanted.push(wanted);
-            } else if !wanted.in_scheme
+                continue;
+            }
+            let (tr, args, subject) = match &wanted.goal {
+                Goal::Pred(Pred::Trait { tr, args, subject }) => (tr, args, subject),
+                // (Each is decided when the scope is generalised.)
+                Goal::Select { .. } => continue,
+                Goal::Update { field, .. } => {
+                    self.errors.push(
+                        Diagnostic::error(
+                            Code::AmbiguousType,
+                            wanted.origin.span,
+                            format!(
+                                "cannot infer the record type whose field '{field}' this update sets"
+                            ),
+                        )
+                        .with_help("annotate the record: `r: SomeRecord`"),
+                    );
+                    continue;
+                }
+            };
+            if !wanted.in_scheme
                 && crate::defs::builtin_trait_id(&resolve(tr.name)) != Some(tr.id)
                 && matches!(self.apply(subject), Type::Var(_))
             {
@@ -117,9 +140,6 @@ impl TypeChecker {
                 );
             }
         }
-        let mut fields = std::mem::take(&mut self.pending_field_accesses);
-        fields.retain(|(obj_ty, ..)| self.waits_for_outer(obj_ty));
-        self.pending_field_accesses = fields;
         let mut numeric = std::mem::take(&mut self.pending_numeric_checks);
         numeric.retain(|(ty, ..)| self.waits_for_outer(ty));
         self.pending_numeric_checks = numeric;

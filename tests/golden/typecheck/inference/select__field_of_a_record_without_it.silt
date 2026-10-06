@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+trait HasX { fn x(self) -> Int }
+fn getx(r) { r.x }
+fn main() {
+  println(getx({ y: 1 }))
+}

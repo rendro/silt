@@ -48,7 +48,7 @@ use declare_fns::FnSig;
 use derive_synth::*;
 use env::TypeEnv;
 use infer::pattern::collect_pattern_vars;
-use solve::{Origin, Wanted};
+use solve::{Goal, Origin, Wanted};
 use std::rc::Rc;
 pub use tables::*;
 pub use unify::*;
@@ -90,11 +90,13 @@ pub struct TypeChecker {
     pub(super) bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
-    /// Deferred checks for field access on type variables (B4).
-    /// Each entry is `(object_type, field_name, result_type, span)`.
-    /// Re-examined after all function bodies are inferred: if the object type
-    /// is still a Var, we emit an error.
-    pub(super) pending_field_accesses: Vec<(Type, Symbol, Type, Span)>,
+    /// Whether the expression checked next is the callee of a call:
+    /// `x.m` there is a method call, anywhere else a field.
+    pub(super) callee_position: bool,
+    /// The receiver and the name of the callee just checked, when it is
+    /// `x.m` and the type of `x` is unknown: `check_call` lets the call
+    /// wait (`Goal::Select`).
+    pub(super) unknown_receiver: Option<(Type, Symbol)>,
     /// Deferred checks for numeric operations on type variables (B5 / B2).
     /// Each entry is `(operand_type, op_description, span)`. Re-examined after
     /// all function bodies are inferred: if the operand is still a Var, we
@@ -270,7 +272,8 @@ impl TypeChecker {
             loop_binding_types: None,
             bounds: HashMap::new(),
             current_return_type: None,
-            pending_field_accesses: Vec::new(),
+            callee_position: false,
+            unknown_receiver: None,
             pending_numeric_checks: Vec::new(),
             pending_question_marks: Vec::new(),
             current_qmark_spans: Vec::new(),
@@ -581,13 +584,6 @@ impl TypeChecker {
                     .filter(|w| waits(&w.origin.span))
                     .cloned(),
             );
-            self.pending_field_accesses.extend(
-                waiting
-                    .field_accesses
-                    .iter()
-                    .filter(|(.., span)| waits(span))
-                    .cloned(),
-            );
             self.pending_numeric_checks.extend(
                 waiting
                     .numeric_checks
@@ -661,10 +657,6 @@ impl TypeChecker {
                 .into_iter()
                 .filter(|w| !w.solved && own(&w.origin.span))
                 .collect(),
-            field_accesses: std::mem::take(&mut self.pending_field_accesses)
-                .into_iter()
-                .filter(|(.., span)| own(span))
-                .collect(),
             numeric_checks: std::mem::take(&mut self.pending_numeric_checks)
                 .into_iter()
                 .filter(|(.., span)| own(span))
@@ -718,7 +710,6 @@ impl TypeChecker {
         self.wanted
             .iter()
             .map(|w| w.origin.span.file)
-            .chain(self.pending_field_accesses.iter().map(|(.., s)| s.file))
             .chain(self.pending_numeric_checks.iter().map(|(.., s)| s.file))
             .chain(self.pending_question_marks.iter().map(|(.., s)| s.file))
             .collect()

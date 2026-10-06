@@ -1,3 +1,4 @@
+use super::inference::*;
 use super::*;
 
 /// A predicate a use owes (`TypeChecker::want`), until it is solved:
@@ -6,13 +7,50 @@ use super::*;
 /// of the definition that is generalised over its subject.
 #[derive(Debug, Clone)]
 pub(crate) struct Wanted {
-    pub(super) pred: Pred,
+    pub(super) goal: Goal,
     pub(super) origin: Origin,
     /// Whether it is checked already.
     pub(super) solved: bool,
     /// Whether a scheme has it: its subject is a variable a definition
     /// is general in (`generalize`), so each use of that owes it.
     pub(super) in_scheme: bool,
+}
+
+/// What waits for a type to be known.
+#[derive(Debug, Clone)]
+pub(crate) enum Goal {
+    /// A predicate a use owes.
+    Pred(Pred),
+    /// `recv.name(args)`, with the result `result`, where the receiver's
+    /// type was unknown at the call: which method or function-typed
+    /// field it calls is decided when the receiver's type is (`select`),
+    /// and when the definition is generalised if it still is not.
+    Select {
+        recv: Type,
+        name: Symbol,
+        args: Vec<Type>,
+        result: Type,
+    },
+    /// `base.{ field: value }` where the type of `base` was unknown at
+    /// the update: the field is checked when it is known. It never
+    /// enters a scheme: an update of a record nothing decides needs an
+    /// annotation.
+    Update {
+        base: Type,
+        field: Symbol,
+        value: Type,
+    },
+}
+
+impl Goal {
+    /// The type the goal waits for.
+    pub(super) fn waits_on(&self) -> &Type {
+        match self {
+            Goal::Pred(Pred::Trait { subject, .. }) => subject,
+            Goal::Select { recv, .. } => recv,
+            Goal::Update { base, .. } => base,
+        }
+    }
 }
 
 /// Where a predicate is owed, and what asked for it.
@@ -32,8 +70,13 @@ impl TypeChecker {
     /// predicate is the scheme's (`generalize`), or it belongs to an
     /// outer binding and waits on.
     pub(super) fn want(&mut self, pred: Pred, origin: Origin) {
+        self.want_goal(Goal::Pred(pred), origin);
+    }
+
+    /// `goal` waits for its type, or is decided now if the type is known.
+    pub(super) fn want_goal(&mut self, goal: Goal, origin: Origin) {
         self.wanted.push(Wanted {
-            pred,
+            goal,
             origin,
             solved: false,
             in_scheme: false,
@@ -50,17 +93,377 @@ impl TypeChecker {
         let mut i = from;
         while i < self.wanted.len() {
             if !self.wanted[i].solved {
-                let Pred::Trait { tr, args, subject } = self.wanted[i].pred.clone();
                 let origin = self.wanted[i].origin;
-                let subject = self.apply(&subject);
-                if matches!(subject, Type::Var(_)) {
-                    i += 1;
-                    continue;
+                match self.wanted[i].goal.clone() {
+                    Goal::Pred(Pred::Trait { tr, args, subject }) => {
+                        let subject = self.apply(&subject);
+                        if !matches!(subject, Type::Var(_)) {
+                            self.wanted[i].solved = true;
+                            self.verify_trait_obligation(tr, &args, &subject, origin);
+                        }
+                    }
+                    Goal::Select {
+                        recv,
+                        name,
+                        args,
+                        result,
+                    } => {
+                        if !matches!(self.apply(&recv), Type::Var(_)) {
+                            self.wanted[i].solved = true;
+                            self.select_call(&recv, name, args, result, origin.span);
+                        }
+                    }
+                    Goal::Update { base, field, value } => {
+                        let base = self.apply(&base);
+                        if !matches!(base, Type::Var(_)) {
+                            self.wanted[i].solved = true;
+                            self.update_field(&base, field, &value, origin.span);
+                        }
+                    }
                 }
-                self.wanted[i].solved = true;
-                self.verify_trait_obligation(tr, &args, &subject, origin);
             }
             i += 1;
+        }
+    }
+
+    /// Decide what `recv.field(args)` calls, now that the receiver's type
+    /// is known: a method of the type (its impls, or the bounds of an
+    /// annotation variable), or the function a field of the record holds.
+    fn select_call(
+        &mut self,
+        recv: &Type,
+        field: Symbol,
+        args: Vec<Type>,
+        result: Type,
+        span: Span,
+    ) {
+        let obj_ty = recv.clone();
+        let result_ty = Type::Fun(args, Box::new(result));
+        let resolved =
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(recv));
+        match &resolved {
+            Type::Error | Type::Never => {}
+            Type::Var(_) => unreachable!("a selection waits while its receiver is unknown"),
+            // The receiver became an annotation variable: it has the
+            // methods of its bounds, and nothing else.
+            Type::Rigid(r) => match self.bound_methods(*r, field).as_slice() {
+                [(trait_name, scheme)] => {
+                    let method_ty = self.instantiate_method(scheme, field, span);
+                    self.deferred_method_traits.insert(span, *trait_name);
+                    self.unify_deferred_method(&result_ty, &method_ty, span);
+                }
+                _ => self.error(
+                    Code::UnknownMethod,
+                    format!(
+                        "no field or method '{field}' on a value of type `{}`: the \
+                         bounds of the type variable provide none, or more than one",
+                        r.name
+                    ),
+                    span,
+                ),
+            },
+            Type::Record(rec_name, rec_fields) => {
+                if let Some((_, field_ty)) = rec_fields.iter().find(|(n, _)| *n == field) {
+                    let ft = field_ty.clone();
+                    self.unify(&result_ty, &ft, span);
+                } else if !self.deferred_method_call(*rec_name, field, &obj_ty, &result_ty, span) {
+                    // GAP (round 35 F7): thread did-you-mean suggestion
+                    // through the deferred-field-access path so typos
+                    // on Record-shaped receivers get the same hint.
+                    let base = format!("unknown field '{field}' on type {resolved}");
+                    self.error_help(
+                        Code::UnknownField,
+                        format_record_field_suggestion(base, field, rec_fields),
+                        span,
+                    );
+                }
+            }
+            Type::AnonRecord { fields: af, tail } => {
+                if let Some(field_ty) = af.get(&field) {
+                    let ft = field_ty.clone();
+                    self.unify(&result_ty, &ft, span);
+                } else if let RowTail::Var(_) = tail {
+                    let extended = Type::AnonRecord {
+                        fields: std::collections::BTreeMap::from([(field, result_ty.clone())]),
+                        tail: RowTail::Var(self.fresh_tyvar_id()),
+                    };
+                    self.unify(&resolved, &extended, span);
+                } else {
+                    // ERR-GAP (round 81 F2): match the sibling Record /
+                    // Generic deferred sites and append a did-you-mean
+                    // hint when a near-edit-distance field exists.
+                    let candidates: Vec<(Symbol, Type)> =
+                        af.iter().map(|(k, v)| (*k, v.clone())).collect();
+                    let base = format!("anon record has no field '{field}'");
+                    self.error_help(
+                        Code::NoSuchField,
+                        format_record_field_suggestion(base, field, &candidates),
+                        span,
+                    );
+                }
+            }
+            Type::Generic(type_name, type_args) => {
+                // User-declared records with or without type parameters
+                // are represented as Type::Generic(name, args). Look up
+                // the record definition and validate the field.
+                let type_name = *type_name;
+                let type_args = type_args.clone();
+                if let Some(rec_info) = self.tables.records.get(&type_name).cloned()
+                    && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
+                {
+                    // Same fresh-var fallback as in infer_expr (T1 audit fix):
+                    // never return the template TyVar; if the caller's
+                    // type_args are missing/mismatched, use fresh vars.
+                    let field_ty = if let Some(param_var_ids) =
+                        self.tables.record_param_var_ids.get(&type_name).cloned()
+                    {
+                        let mapping: HashMap<TyVar, Type> =
+                            if type_args.len() == param_var_ids.len() {
+                                param_var_ids
+                                    .iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&v, t)| (v, t.clone()))
+                                    .collect()
+                            } else {
+                                param_var_ids
+                                    .iter()
+                                    .map(|&v| (v, self.fresh_var()))
+                                    .collect()
+                            };
+                        let substituted = substitute_vars(ft, &mapping);
+                        self.apply(&substituted)
+                    } else {
+                        self.apply(ft)
+                    };
+                    self.unify(&result_ty, &field_ty, span);
+                    return;
+                }
+                // Also check the method table for trait methods.
+                if self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span) {
+                    return;
+                }
+                // Round 93: the field-aware auto-derive gate removed
+                // this type's provisional `.equal()`/`.compare()`/
+                // `.hash()` entry — name the offending field instead
+                // of a generic "unknown method".
+                if let Some(msg) = self.method_auto_derive_violation(type_name, field) {
+                    self.error(Code::NotDerivable, msg, span);
+                    return;
+                }
+                // GAP (round 35 F7): thread did-you-mean suggestion
+                // through the Generic/named-record deferred path.
+                let shown = self.show_type(&Type::Generic(type_name, vec![]));
+                let base = format!("unknown field or method '{field}' on type {shown}");
+                let msg = if let Some(rec_info) = self.tables.records.get(&type_name) {
+                    format_record_field_suggestion(base, field, &rec_info.fields)
+                } else {
+                    (base, None)
+                };
+                self.error_help(Code::UnknownField, msg, span);
+            }
+            // A builtin type (`Int`, `List`, ...): its trait methods.
+            _ => {
+                if let Some(type_name) = self.type_name_for_impl(&resolved)
+                    && self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span)
+                {
+                    return;
+                }
+                self.error(
+                    Code::UnknownField,
+                    format!(
+                        "unknown field or method '{field}' on type {}",
+                        self.show_type(&resolved)
+                    ),
+                    span,
+                );
+            }
+        }
+    }
+
+    /// Check `base.{ field: value }` now that the type of `base` is
+    /// known.
+    fn update_field(&mut self, base: &Type, field: Symbol, value: &Type, span: Span) {
+        let declared: Vec<(Symbol, Type)> = match base {
+            Type::Error | Type::Never => return,
+            Type::AnonRecord { fields, tail } => {
+                if !fields.contains_key(&field) && matches!(tail, RowTail::Var(_)) {
+                    let extended = Type::AnonRecord {
+                        fields: std::collections::BTreeMap::from([(field, value.clone())]),
+                        tail: RowTail::Var(self.fresh_tyvar_id()),
+                    };
+                    self.unify(base, &extended, span);
+                    return;
+                }
+                fields.iter().map(|(k, v)| (*k, v.clone())).collect()
+            }
+            Type::Record(_, fields) => fields.clone(),
+            Type::Generic(name, args) if self.tables.records.contains_key(name) => {
+                let fields = self.tables.records[name].fields.clone();
+                match self.tables.record_param_var_ids.get(name).cloned() {
+                    Some(params) if params.len() == args.len() => {
+                        let mapping: HashMap<TyVar, Type> =
+                            params.iter().copied().zip(args.iter().cloned()).collect();
+                        fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect()
+                    }
+                    _ => fields,
+                }
+            }
+            other => {
+                self.error(
+                    Code::TypeMismatch,
+                    format!(
+                        "record update requires a record base, but '{}' is not a record type",
+                        self.show_type(other)
+                    ),
+                    span,
+                );
+                return;
+            }
+        };
+        match declared.iter().find(|(n, _)| *n == field) {
+            Some((_, declared_ty)) => self.unify(value, declared_ty, span),
+            None => {
+                let base = format!("unknown field '{field}' in {}", self.show_type(base));
+                self.error_help(
+                    Code::UnknownField,
+                    format_record_field_suggestion(base, field, &declared),
+                    span,
+                );
+            }
+        }
+    }
+
+    /// Decide each call `x.m(args)` of the scope just left whose
+    /// receiver is still unknown and is the scope's to generalise. When
+    /// exactly one trait the module sees declares a method `m`, the call
+    /// is that method's and `x` is bounded by the trait
+    /// (`fn g(x) { x.greet() }` is `a -> String where a: Greet`). When
+    /// none does, `x` is a record with a function in its field `m`. When
+    /// several do, the receiver needs an annotation.
+    pub(super) fn default_selects(&mut self) {
+        let mine: Vec<usize> = (self.closed_mark..self.wanted.len())
+            .filter(|&i| {
+                !self.wanted[i].solved
+                    && matches!(self.wanted[i].goal, Goal::Select { .. })
+                    && matches!(
+                        self.apply(self.wanted[i].goal.waits_on()),
+                        Type::Var(var) if self.tables.vars.is_generalizable(var)
+                    )
+            })
+            .collect();
+        // The variables this makes are the scope's.
+        self.reopen_level();
+        for i in mine {
+            let origin = self.wanted[i].origin;
+            let Goal::Select {
+                recv,
+                name,
+                args,
+                result,
+            } = self.wanted[i].goal.clone()
+            else {
+                continue;
+            };
+            // (An earlier one of these may have decided this receiver.)
+            if matches!(self.apply(&recv), Type::Var(_)) {
+                self.wanted[i].solved = true;
+                let call_ty = Type::Fun(args, Box::new(result));
+                self.default_select(&recv, name, call_ty, origin.span);
+            }
+        }
+        self.solve_wanted(self.closed_mark);
+        self.close_level();
+    }
+
+    fn default_select(&mut self, recv: &Type, name: Symbol, call_ty: Type, span: Span) {
+        let mut traits: Vec<TraitKey> = self
+            .tables
+            .traits
+            .iter()
+            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == name))
+            .map(|(t, _)| *t)
+            .filter(|t| self.sees_trait(*t))
+            .collect();
+        traits.sort_by_key(|t| self.show_trait(*t));
+        match traits.as_slice() {
+            [] => {
+                let row = Type::AnonRecord {
+                    fields: std::collections::BTreeMap::from([(name, call_ty)]),
+                    tail: RowTail::Var(self.fresh_tyvar_id()),
+                };
+                self.unify(recv, &row, span);
+            }
+            [tr] => {
+                let info = self.tables.traits[tr].clone();
+                let (_, method_ty) = info
+                    .methods
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .expect("the trait declares the method");
+                // The trait's parameters are what the receiver's impl
+                // will say; the method's own variables are new.
+                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                mapping.insert(info.self_var, recv.clone());
+                let params: Vec<Type> = info
+                    .param_var_ids
+                    .iter()
+                    .map(|v| {
+                        let fresh = self.fresh_var();
+                        mapping.insert(*v, fresh.clone());
+                        fresh
+                    })
+                    .collect();
+                let ty = substitute_vars(method_ty, &mapping);
+                let preds: Vec<Pred> = info
+                    .method_bounds
+                    .get(&name)
+                    .into_iter()
+                    .flatten()
+                    .map(|pred| pred.substitute(&mapping))
+                    .collect();
+                let own: Vec<TyVar> = free_vars_in(method_ty)
+                    .into_iter()
+                    .filter(|v| !mapping.contains_key(v))
+                    .collect();
+                let scheme = Scheme {
+                    vars: own,
+                    preds,
+                    ty,
+                    optional_last_param: false,
+                };
+                let origin = Origin {
+                    span,
+                    callee: Some(name),
+                };
+                self.want(
+                    Pred::Trait {
+                        tr: *tr,
+                        args: params,
+                        subject: recv.clone(),
+                    },
+                    origin,
+                );
+                let method_ty = self.instantiate_method(&scheme, name, span);
+                self.deferred_method_traits.insert(span, *tr);
+                self.unify_deferred_method(&call_ty, &method_ty, span);
+            }
+            several => {
+                let shown: Vec<String> = several.iter().map(|t| self.show_trait(*t)).collect();
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousMethod,
+                        span,
+                        format!(
+                            "ambiguous method '{name}' on a value whose type is not known: provided by traits {}",
+                            shown.join(", ")
+                        ),
+                    )
+                    .with_help("annotate the receiver's type, or bound it with a `where` clause"),
+                );
+            }
         }
     }
 

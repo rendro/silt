@@ -27,7 +27,7 @@ impl TypeChecker {
     /// (`deferred_method_traits`), which `resolve_all_types` writes on
     /// the access; a call that sees the method in two traits is
     /// ambiguous, as anywhere.
-    fn deferred_method_call(
+    pub(super) fn deferred_method_call(
         &mut self,
         type_name: TypeRef,
         field: Symbol,
@@ -54,7 +54,7 @@ impl TypeChecker {
     /// site originally saw this field access as an unknown Var, it
     /// unified the var with a function type built from the *explicit*
     /// args only (no receiver). Strip `self` when adapting.
-    fn unify_deferred_method(&mut self, result_ty: &Type, method_ty: &Type, span: Span) {
+    pub(super) fn unify_deferred_method(&mut self, result_ty: &Type, method_ty: &Type, span: Span) {
         let result_resolved = self.apply(result_ty);
         match (&result_resolved, method_ty) {
             (Type::Fun(call_params, call_ret), Type::Fun(method_params, method_ret))
@@ -72,152 +72,6 @@ impl TypeChecker {
     }
 
     pub(super) fn finalize_deferred_checks(&mut self) {
-        // B4: pending field accesses on type variables. Only flag when
-        // the receiver resolved to a concrete type.
-        let pending_fields = std::mem::take(&mut self.pending_field_accesses);
-        for (obj_ty, field, result_ty, span) in pending_fields {
-            let resolved = self.apply(&obj_ty);
-            match &resolved {
-                Type::Error | Type::Never => {}
-                // Still unknown: it waits. `settle_bounds` drops it once
-                // the variable is generalised (see above); on a variable
-                // of an outer binding it is checked when that is decided.
-                Type::Var(_) => {
-                    self.pending_field_accesses
-                        .push((obj_ty, field, result_ty, span));
-                }
-                // The receiver became an annotation variable: it has the
-                // methods of its bounds, and nothing else.
-                Type::Rigid(r) => match self.bound_methods(*r, field).as_slice() {
-                    [(trait_name, scheme)] => {
-                        let method_ty = self.instantiate_method(scheme, field, span);
-                        self.deferred_method_traits.insert(span, *trait_name);
-                        self.unify_deferred_method(&result_ty, &method_ty, span);
-                    }
-                    _ => self.error(
-                        Code::UnknownMethod,
-                        format!(
-                            "no field or method '{field}' on a value of type `{}`: the \
-                             bounds of the type variable provide none, or more than one",
-                            r.name
-                        ),
-                        span,
-                    ),
-                },
-                Type::Record(rec_name, rec_fields) => {
-                    if let Some((_, field_ty)) = rec_fields.iter().find(|(n, _)| *n == field) {
-                        let ft = field_ty.clone();
-                        self.unify(&result_ty, &ft, span);
-                    } else if !self
-                        .deferred_method_call(*rec_name, field, &obj_ty, &result_ty, span)
-                    {
-                        // GAP (round 35 F7): thread did-you-mean suggestion
-                        // through the deferred-field-access path so typos
-                        // on Record-shaped receivers get the same hint.
-                        let base = format!("unknown field '{field}' on type {resolved}");
-                        self.error_help(
-                            Code::UnknownField,
-                            format_record_field_suggestion(base, field, rec_fields),
-                            span,
-                        );
-                    }
-                }
-                Type::AnonRecord { fields: af, .. } => {
-                    if let Some(field_ty) = af.get(&field) {
-                        let ft = field_ty.clone();
-                        self.unify(&result_ty, &ft, span);
-                    } else {
-                        // ERR-GAP (round 81 F2): match the sibling Record /
-                        // Generic deferred sites and append a did-you-mean
-                        // hint when a near-edit-distance field exists.
-                        let candidates: Vec<(Symbol, Type)> =
-                            af.iter().map(|(k, v)| (*k, v.clone())).collect();
-                        let base = format!("anon record has no field '{field}'");
-                        self.error_help(
-                            Code::NoSuchField,
-                            format_record_field_suggestion(base, field, &candidates),
-                            span,
-                        );
-                    }
-                }
-                Type::Generic(type_name, type_args) => {
-                    // User-declared records with or without type parameters
-                    // are represented as Type::Generic(name, args). Look up
-                    // the record definition and validate the field.
-                    let type_name = *type_name;
-                    let type_args = type_args.clone();
-                    if let Some(rec_info) = self.tables.records.get(&type_name).cloned()
-                        && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
-                    {
-                        // Same fresh-var fallback as in infer_expr (T1 audit fix):
-                        // never return the template TyVar; if the caller's
-                        // type_args are missing/mismatched, use fresh vars.
-                        let field_ty = if let Some(param_var_ids) =
-                            self.tables.record_param_var_ids.get(&type_name).cloned()
-                        {
-                            let mapping: HashMap<TyVar, Type> =
-                                if type_args.len() == param_var_ids.len() {
-                                    param_var_ids
-                                        .iter()
-                                        .zip(type_args.iter())
-                                        .map(|(&v, t)| (v, t.clone()))
-                                        .collect()
-                                } else {
-                                    param_var_ids
-                                        .iter()
-                                        .map(|&v| (v, self.fresh_var()))
-                                        .collect()
-                                };
-                            let substituted = substitute_vars(ft, &mapping);
-                            self.apply(&substituted)
-                        } else {
-                            self.apply(ft)
-                        };
-                        self.unify(&result_ty, &field_ty, span);
-                        continue;
-                    }
-                    // Also check the method table for trait methods.
-                    if self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span) {
-                        continue;
-                    }
-                    // Round 93: the field-aware auto-derive gate removed
-                    // this type's provisional `.equal()`/`.compare()`/
-                    // `.hash()` entry — name the offending field instead
-                    // of a generic "unknown method".
-                    if let Some(msg) = self.method_auto_derive_violation(type_name, field) {
-                        self.error(Code::NotDerivable, msg, span);
-                        continue;
-                    }
-                    // GAP (round 35 F7): thread did-you-mean suggestion
-                    // through the Generic/named-record deferred path.
-                    let shown = self.show_type(&Type::Generic(type_name, vec![]));
-                    let base = format!("unknown field or method '{field}' on type {shown}");
-                    let msg = if let Some(rec_info) = self.tables.records.get(&type_name) {
-                        format_record_field_suggestion(base, field, &rec_info.fields)
-                    } else {
-                        (base, None)
-                    };
-                    self.error_help(Code::UnknownField, msg, span);
-                }
-                // A builtin type (`Int`, `List`, ...): its trait methods.
-                _ => {
-                    if let Some(type_name) = self.type_name_for_impl(&resolved)
-                        && self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span)
-                    {
-                        continue;
-                    }
-                    self.error(
-                        Code::UnknownField,
-                        format!(
-                            "unknown field or method '{field}' on type {}",
-                            self.show_type(&resolved)
-                        ),
-                        span,
-                    );
-                }
-            }
-        }
-
         // B5 / B2 / B3: pending numeric / comparison checks on type variables.
         let pending_numeric = std::mem::take(&mut self.pending_numeric_checks);
         for (ty, op_desc, span) in pending_numeric {

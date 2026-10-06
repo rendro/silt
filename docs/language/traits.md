@@ -424,6 +424,25 @@ fn main() {
 }
 ```
 
+`value.method` without a call is not a function: a method is called.
+Write `Type.method`, or a closure, `{ x -> x.method() }`.
+
+## Calls on a value of unknown type
+
+In a function whose parameter has no annotation, `x.m(..)` and `x.f` are
+decided by what is written, not by which names happen to exist:
+
+- `x.f` is a field: `fn name_of(p) { p.name }` takes any record with a
+  field `name`, whatever methods traits declare.
+- `x.m(..)` means the one trait in sight that declares a method `m`, and
+  bounds `x` by it: `fn g(x) { x.greet() }` is `fn g(x: a) -> String
+  where a: Greet`. If no trait declares `m`, `x` is a record whose field
+  `m` holds a function. If several traits declare `m`, annotate `x`.
+
+When the type of `x` is decided later in the same definition (a closure's
+parameter by the call it is passed to), the call is checked against that
+type.
+
 ## Built-in Traits
 
 silt ships **five** built-in traits. Four of them — `Equal`, `Hash`,
