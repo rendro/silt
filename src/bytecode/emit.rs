@@ -6,11 +6,12 @@
 //!
 //! | Call | What it does |
 //! |---|---|
-//! | [`Emitter::new`]`(name, arity)` | Start a function. Its frame holds its `arity` arguments, in slots `0..arity`. |
+//! | [`Emitter::new`]`(name, arity, span)` | Start a function. Its frame holds its `arity` arguments, in slots `0..arity`. |
 //! | [`Emitter::constant`]`(value, span)` | Put `value` in the function's constant pool (once, for the values that can be compared) and give the [`Const`] that names it. |
 //! | [`Emitter::emit`]`(asm, span)` | Append the instruction [`Asm`], whose code is blamed on `span`. |
 //! | [`Emitter::label`]`()` | A new [`Label`]: a place jumps can go to, not placed yet. |
 //! | [`Emitter::bind`]`(label, span)` | Place `label` at the next instruction. |
+//! | [`Emitter::bind_over`]`(label, over, span)` | The same, naming what the jumps to `label` go over, for the limit on a conditional jump's reach. |
 //! | [`Emitter::height`]`()` | The number of values in the frame where the next instruction runs. |
 //! | [`Emitter::reachable`]`()` | Whether control can reach the next instruction. |
 //! | [`Emitter::assume_height`]`(height)` | In unreachable code, what the height would be. |
@@ -24,7 +25,7 @@
 //! use silt::value::Value;
 //!
 //! let span = Span::BUILTIN;
-//! let mut e = Emitter::new("pick".to_string(), 1);
+//! let mut e = Emitter::new("pick".to_string(), 1, span)?;
 //! let one = e.constant(Value::Int(1), span)?;
 //! let two = e.constant(Value::Int(2), span)?;
 //! let otherwise = e.label();
@@ -94,7 +95,7 @@ use crate::diagnostic::{Code, Diagnostic};
 use crate::source::Span;
 use crate::value::Value;
 
-use super::ops::{Asm, Flow, Limit, Writer};
+use super::ops::{Asm, FRAME_VALUES, Flow, Limit, Writer, narrow_u8};
 use super::{Chunk, Const, Function, Label, verify};
 
 /// Where a label is, and how jumps get there.
@@ -120,19 +121,22 @@ pub struct Emitter {
 
 impl Emitter {
     /// An emitter for a function named `name` that takes `arity`
-    /// arguments.
-    pub fn new(name: String, arity: u8) -> Self {
-        Emitter {
+    /// arguments; more than a function can take is a compile limit at
+    /// `span`.
+    pub fn new(name: String, arity: usize, span: Span) -> Result<Self, Diagnostic> {
+        let narrowed = narrow_u8(arity, "parameters of a function")
+            .map_err(|limit| limit_diagnostic(limit, span))?;
+        Ok(Emitter {
             function: Function {
                 name,
-                arity,
+                arity: narrowed,
                 upvalue_count: 0,
                 chunk: Chunk::new(),
             },
-            height: usize::from(arity),
+            height: arity,
             reachable: true,
             labels: Vec::new(),
-        }
+        })
     }
 
     /// The name of the function being emitted.
@@ -161,12 +165,14 @@ impl Emitter {
 
     /// The constant `value` of the function.
     pub fn constant(&mut self, value: Value, span: Span) -> Result<Const, Diagnostic> {
+        let count = self.function.chunk.constants.len() + 1;
         self.function.chunk.add_constant(value).ok_or_else(|| {
-            Diagnostic::error(
-                Code::CompileLimit,
-                span,
-                "constant pool overflow: too many constants in function",
-            )
+            let limit = Limit {
+                what: "constants in a function (its distinct literals, names and functions)",
+                count,
+                max: usize::from(u16::MAX) + 1,
+            };
+            limit_diagnostic(limit, span)
         })
     }
 
@@ -219,21 +225,43 @@ impl Emitter {
     }
 
     /// Place `label` at the next instruction: the jumps waiting for it
-    /// go here. `span` is blamed when one of them is too far away.
+    /// go here.
     pub fn bind(&mut self, label: Label, span: Span) -> Result<(), Diagnostic> {
+        self.bind_over(label, "bytes of code in a branch", span)
+    }
+
+    /// [`Emitter::bind`], saying what the jumps to `label` go over: what
+    /// a program has too much of (`"bytes of code in a match arm"`)
+    /// when a conditional jump, which reaches 65,535 bytes forward,
+    /// cannot get here. `span` is blamed then.
+    pub fn bind_over(
+        &mut self,
+        label: Label,
+        over: &'static str,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
         let here = self.function.chunk.len();
         if self.labels[label.0].bound.is_some() {
             return Err(self.bug(span, "a label is bound twice".into()));
         }
         let state = &mut self.labels[label.0];
         let code = &mut self.function.chunk.code;
-        let too_far = || limit_diagnostic(Limit::JumpTooFar, span);
         for (operand, wide) in std::mem::take(&mut state.waiting) {
             if wide {
-                let distance = i32::try_from(here - (operand + 4)).map_err(|_| too_far())?;
+                let count = here - (operand + 4);
+                let distance = i32::try_from(count)
+                    .map_err(|_| limit_diagnostic(function_too_large(count), span))?;
                 code[operand..operand + 4].copy_from_slice(&distance.to_le_bytes());
             } else {
-                let distance = u16::try_from(here - (operand + 2)).map_err(|_| too_far())?;
+                let count = here - (operand + 2);
+                let distance = u16::try_from(count).map_err(|_| {
+                    let limit = Limit {
+                        what: over,
+                        count,
+                        max: usize::from(u16::MAX),
+                    };
+                    limit_diagnostic(limit, span)
+                })?;
                 code[operand..operand + 2].copy_from_slice(&distance.to_le_bytes());
             }
         }
@@ -248,10 +276,10 @@ impl Emitter {
         Ok(())
     }
 
-    /// The function, with `upvalue_count` upvalues. Its code is
-    /// verified: malformed code is a compiler bug, reported here and
-    /// never run.
-    pub fn finish(mut self, upvalue_count: u8) -> Result<Function, Diagnostic> {
+    /// The function, with `upvalue_count` upvalues (more than a closure
+    /// can capture is a compile limit). Its code is verified: malformed
+    /// code is a compiler bug, reported here and never run.
+    pub fn finish(mut self, upvalue_count: usize) -> Result<Function, Diagnostic> {
         let span = self
             .function
             .chunk
@@ -265,7 +293,8 @@ impl Emitter {
         {
             return Err(self.bug(span, "a jump goes to a label that is never bound".into()));
         }
-        self.function.upvalue_count = upvalue_count;
+        self.function.upvalue_count =
+            narrow_u8(upvalue_count, CAPTURES).map_err(|limit| limit_diagnostic(limit, span))?;
         match verify(&self.function) {
             Ok(()) => Ok(self.function),
             Err(error) => Err(self.bug(span, error.to_string())),
@@ -329,8 +358,8 @@ impl Writer for Out<'_> {
                 if self.arriving.is_some_and(|arriving| arriving != height) {
                     self.bug = Some("jumps back with a height the loop did not start with");
                 }
-                let back =
-                    i32::try_from(self.chunk.len() + 4 - target).map_err(|_| Limit::JumpTooFar)?;
+                let count = self.chunk.len() + 4 - target;
+                let back = i32::try_from(count).map_err(|_| function_too_large(count))?;
                 -back
             }
         };
@@ -341,22 +370,34 @@ impl Writer for Out<'_> {
     }
 }
 
-/// The compile error for an operand that does not fit its encoding.
-fn limit_diagnostic(limit: Limit, span: Span) -> Diagnostic {
-    let message = match limit {
-        Limit::TooMany { what, count, max } => {
-            format!("too many {what}: {count} (the limit is {max})")
-        }
-        Limit::Slots => format!(
-            "this function keeps more than {} values on its stack at once \
-             (its local bindings plus the values of the expression being evaluated); \
-             move some of its statements into separate functions, or split a large \
-             expression into smaller parts",
-            u16::MAX
+/// What a closure has too many of when its upvalue count does not fit.
+const CAPTURES: &str = "values a closure captures";
+
+/// A `Jump` over `count` bytes, more than its operand can say.
+fn function_too_large(count: usize) -> Limit {
+    Limit {
+        what: "bytes of code in a function",
+        count,
+        max: i32::MAX.unsigned_abs() as usize,
+    }
+}
+
+/// The compile error for a limit of the bytecode: the one wording every
+/// limit has.
+pub fn limit_diagnostic(limit: Limit, span: Span) -> Diagnostic {
+    let Limit { what, count, max } = limit;
+    let diagnostic = Diagnostic::error(
+        Code::CompileLimit,
+        span,
+        format!("too many {what}: {count} (the limit is {max})"),
+    );
+    match what == FRAME_VALUES {
+        true => diagnostic.with_help(
+            "move some of the function's statements into separate functions, \
+             or split a large expression into smaller parts",
         ),
-        Limit::JumpTooFar => "jump offset overflow: function body too large".to_string(),
-    };
-    Diagnostic::error(Code::CompileLimit, span, message)
+        false => diagnostic,
+    }
 }
 
 #[cfg(test)]
@@ -370,7 +411,7 @@ mod tests {
 
     #[test]
     fn height_follows_the_table() {
-        let mut e = Emitter::new("f".into(), 2);
+        let mut e = Emitter::new("f".into(), 2, span()).unwrap();
         assert_eq!(e.height(), 2);
         e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
         e.emit(Asm::GetLocal { slot: 1 }, span()).unwrap();
@@ -391,7 +432,7 @@ mod tests {
 
     #[test]
     fn an_operand_that_does_not_fit_is_a_compile_limit() {
-        let mut e = Emitter::new("f".into(), 0);
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         e.emit(Asm::Unit, span()).unwrap();
         let err = e.emit(Asm::TestListExact { len: 256 }, span()).unwrap_err();
         assert_eq!(err.code, Code::CompileLimit);
@@ -401,12 +442,71 @@ mod tests {
         );
         let err = e.emit(Asm::GetLocal { slot: 65_536 }, span()).unwrap_err();
         assert_eq!(err.code, Code::CompileLimit);
-        assert!(err.message.contains("more than 65535 values"), "{err:?}");
+        assert!(
+            err.message
+                .starts_with("too many values in the frame of a function"),
+            "{err:?}"
+        );
+        assert!(
+            err.message.ends_with(": 65537 (the limit is 65536)"),
+            "{err:?}"
+        );
+        assert_eq!(err.help.len(), 1);
+    }
+
+    #[test]
+    fn what_a_function_and_a_closure_can_hold_are_compile_limits() {
+        let err = Emitter::new("f".into(), 256, span()).err().unwrap();
+        assert_eq!(err.code, Code::CompileLimit);
+        assert_eq!(
+            err.message,
+            "too many parameters of a function: 256 (the limit is 255)"
+        );
+
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
+        e.emit(Asm::GetUpvalue { index: 255 }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
+        let err = e.finish(256).unwrap_err();
+        assert_eq!(err.code, Code::CompileLimit);
+        assert_eq!(
+            err.message,
+            "too many values a closure captures: 256 (the limit is 255)"
+        );
+
+        let inner = Function::returning_unit("inner".into(), 0);
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
+        let f = e
+            .constant(
+                Value::VmClosure(std::sync::Arc::new(crate::bytecode::VmClosure {
+                    function: std::sync::Arc::new(inner),
+                    upvalues: vec![],
+                })),
+                span(),
+            )
+            .unwrap();
+        let captures = [crate::bytecode::UpvalueDesc {
+            is_local: true,
+            index: 256,
+        }];
+        let err = e
+            .emit(
+                Asm::MakeClosure {
+                    f,
+                    captures: &captures,
+                },
+                span(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err.message,
+            "too many values in the frame below a local that a closure captures: \
+             256 (the limit is 255)"
+        );
     }
 
     #[test]
     fn an_instruction_that_underflows_the_frame_is_a_compiler_bug() {
-        let mut e = Emitter::new("f".into(), 0);
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         e.emit(Asm::Unit, span()).unwrap();
         let err = e.emit(Asm::Add, span()).unwrap_err();
         assert_eq!(err.code, Code::CompilerBug);
@@ -418,7 +518,7 @@ mod tests {
 
     #[test]
     fn a_label_takes_the_height_of_the_jumps_to_it() {
-        let mut e = Emitter::new("f".into(), 1);
+        let mut e = Emitter::new("f".into(), 1, span()).unwrap();
         let other = e.label();
         let end = e.label();
         e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
@@ -438,7 +538,7 @@ mod tests {
 
     #[test]
     fn unreachable_code_is_emitted_unchecked_at_the_assumed_height() {
-        let mut e = Emitter::new("f".into(), 0);
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         e.emit(Asm::Unit, span()).unwrap();
         e.emit(Asm::Return, span()).unwrap();
         e.assume_height(1);
@@ -449,7 +549,7 @@ mod tests {
 
     #[test]
     fn a_jump_back_must_arrive_with_the_height_of_its_label() {
-        let mut e = Emitter::new("f".into(), 0);
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         let start = e.label();
         e.bind(start, span()).unwrap();
         e.emit(Asm::Unit, span()).unwrap();
@@ -459,7 +559,7 @@ mod tests {
 
     #[test]
     fn a_conditional_jump_over_more_than_65535_bytes_is_a_compile_limit() {
-        let mut e = Emitter::new("f".into(), 0);
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         let far = e.label();
         let end = e.label();
         e.emit(Asm::True, span()).unwrap();
@@ -472,12 +572,15 @@ mod tests {
         e.emit(Asm::Jump { to: end }, span()).unwrap();
         let err = e.bind(far, span()).unwrap_err();
         assert_eq!(err.code, Code::CompileLimit);
-        assert_eq!(err.message, "jump offset overflow: function body too large");
+        assert_eq!(
+            err.message,
+            "too many bytes of code in a branch: 80005 (the limit is 65535)"
+        );
     }
 
     #[test]
     fn a_jump_reaches_back_over_more_than_65535_bytes() {
-        let mut e = Emitter::new("f".into(), 0);
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         let start = e.label();
         e.bind(start, span()).unwrap();
         for _ in 0..40_000 {
@@ -493,7 +596,7 @@ mod tests {
 
     #[test]
     fn a_jump_to_a_label_never_bound_is_a_compiler_bug() {
-        let mut e = Emitter::new("f".into(), 0);
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         let nowhere = e.label();
         e.emit(Asm::Jump { to: nowhere }, span()).unwrap();
         e.emit(Asm::Unit, span()).unwrap();

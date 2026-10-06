@@ -1,8 +1,8 @@
-use parking_lot::{Condvar, Mutex};
+use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
-use crate::runtime::channel::Waker;
+use crate::runtime::sync::{Cell, Completion, Wake};
 use crate::value::Value;
 use crate::vm::VmError;
 
@@ -95,36 +95,20 @@ pub struct TcpStreamHandle {
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
 pub struct TaskHandle {
     pub id: usize,
-    result: Mutex<Option<Result<Value, VmError>>>,
-    condvar: Condvar,
-    /// Wakers to call when the task completes (for scheduler-based join).
-    /// Each entry carries a monotonic id so a `JoinWakerRegistration`
-    /// guard can deregister exactly its own entry on drop, avoiding the
-    /// leak that occurred when a `task.join(h)`-blocked task was
-    /// cancelled while the joinee was still running (the closure stayed
-    /// in this Vec holding `Arc<Mutex<Option<Task>>>` + `Arc<SchedulerInner>`
-    /// until the joinee finally completed).
-    join_wakers: Mutex<Vec<(u64, Waker)>>,
-    /// Monotonic counter for minting `join_wakers` entry ids.
-    next_join_waker_id: AtomicU64,
-    /// Cleanup to run when a blocked task is cancelled (removes stale waker state).
-    ///
-    /// Lock order: this mutex is a leaf. It is held only to move a
-    /// closure in or out, never while a closure runs or is dropped, and
-    /// no other lock is acquired while it is held. The scheduler
-    /// acquires it while holding the lock of a parked task's slot; a
-    /// cleanup closure locks that slot. If the closure ran under this
-    /// mutex, the two orders would meet and `task.cancel` would hang.
-    cancel_cleanup: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-    /// True while the task has ended with an error of its own that no
-    /// join has received, that no cancel has dismissed, and that has not
-    /// been reported. Set by `fail`, cleared by `join`, `mark_joined`
-    /// and `take_unjoined_failure`.
+    /// The task's result, set once: what it returned, the error it
+    /// failed with, or that it was cancelled. A join waits for it.
+    result: Arc<Cell<Result<Value, VmError>>>,
+    /// Set by `task.cancel`. The scheduler reads it before each slice
+    /// of the task and before each park, so a cancelled task runs no
+    /// further and takes nothing.
+    cancelled: Arc<AtomicBool>,
+    /// True while the task has failed and nobody has handled the
+    /// failure: no join has received it and no cancel has dismissed
+    /// it. Read when the program ends, for the report of failures that
+    /// nobody joined.
     unjoined_failure: AtomicBool,
-    /// Who spawned the task, as the tag that was current where it was
-    /// spawned (`crate::scheduler::set_task_owner`); 0 when nobody set
-    /// one. A report of the task's failure carries it, so `silt test`
-    /// can fail the test that spawned the task.
+    /// Who the task belongs to (`scheduler::set_task_owner`): the
+    /// program, or one test of a test run.
     owner: u64,
 }
 
@@ -133,273 +117,91 @@ impl TaskHandle {
         Self::with_owner(id, 0)
     }
 
-    /// A handle for a task spawned under the owner tag `owner`.
+    /// A handle for a task that belongs to `owner`.
     pub fn with_owner(id: usize, owner: u64) -> Self {
         Self {
             id,
-            result: Mutex::new(None),
-            condvar: Condvar::new(),
-            join_wakers: Mutex::new(Vec::new()),
-            next_join_waker_id: AtomicU64::new(0),
-            cancel_cleanup: Mutex::new(None),
+            result: Cell::labelled(format!("task <handle:{id}>")),
+            cancelled: Arc::new(AtomicBool::new(false)),
             unjoined_failure: AtomicBool::new(false),
             owner,
         }
     }
 
-    /// The owner tag the task was spawned under. See `with_owner`.
+    /// The owner tag of the task.
     pub fn owner(&self) -> u64 {
         self.owner
     }
 
-    /// Register a cleanup closure to run when the task completes or is cancelled
-    /// while blocked. This removes stale waker registrations from channels.
-    ///
-    /// A closure that was registered before is dropped, after the lock
-    /// on the cleanup has been released.
-    pub fn set_cancel_cleanup(&self, f: Box<dyn FnOnce() + Send>) {
-        // The guard is a temporary of this statement, so the lock is
-        // released before `previous` is dropped.
-        let previous = self.cancel_cleanup.lock().replace(f);
-        drop(previous);
+    /// The task's end, as an arm of a wait: a join.
+    pub fn done(&self) -> Arc<dyn Completion> {
+        self.result.clone()
     }
 
-    /// Clear any pending cancel-cleanup closure so it won't fire when
-    /// the task completes normally (prevents double-decrement of
-    /// `live_tasks` and double-removal of the wake-graph node).
-    ///
-    /// The closure is dropped after the lock on the cleanup has been
-    /// released.
-    pub fn clear_cancel_cleanup(&self) {
-        let previous = self.cancel_cleanup.lock().take();
-        drop(previous);
+    /// The task ended with `result`. `false` when the handle has a
+    /// result already (the task was cancelled): the first stands.
+    pub fn complete(&self, result: Result<Value, VmError>, wake: &dyn Wake) -> bool {
+        self.result.complete(result, wake).is_ok()
     }
 
-    /// Store the task result and notify any joiners.
-    /// If the task has already completed, this is a no-op (prevents
-    /// cancel from overwriting a finished task's result).
-    pub fn complete(&self, result: Result<Value, VmError>) {
-        self.finish(result, false);
-    }
-
-    /// Store the error that the task itself ended with, and notify any
-    /// joiners. Like `complete`, and in addition the error counts as
-    /// not joined until a join receives it.
-    ///
-    /// Returns `true` if this call stored the error, `false` if the
-    /// handle already had a result (the task was cancelled before it
-    /// failed); the error is dropped then.
-    pub fn fail(&self, error: VmError) -> bool {
-        self.finish(Err(error), true)
-    }
-
-    /// Shared body of `complete` and `fail`. Returns `true` if this
-    /// call stored the result.
-    fn finish(&self, result: Result<Value, VmError>, task_failed: bool) -> bool {
-        {
-            let mut guard = self.result.lock();
-            if guard.is_some() {
-                return false; // Already completed, don't overwrite
-            }
-            if task_failed {
-                // Set before the result becomes visible: a join that
-                // sees the result clears the flag after this.
-                self.unjoined_failure.store(true, AtomicOrdering::Release);
-            }
-            *guard = Some(result);
+    /// The task failed with `error`. `true` when that is the handle's
+    /// result now: the failure is then unhandled until a join receives
+    /// it or a cancel dismisses it.
+    pub fn fail(&self, error: VmError, wake: &dyn Wake) -> bool {
+        if self.result.get().is_some() {
+            return false;
         }
-        // Fire cancel cleanup (removes stale waker state for blocked
-        // tasks). The closure is taken out first and runs after the
-        // lock on the cleanup has been released: see `cancel_cleanup`.
-        let cleanup = self.cancel_cleanup.lock().take();
-        if let Some(cleanup) = cleanup {
-            cleanup();
-        }
-        self.condvar.notify_all();
-        // Wake all tasks blocked on join.
-        let wakers: Vec<(u64, Waker)> = {
-            let mut guard = self.join_wakers.lock();
-            std::mem::take(&mut *guard)
-        };
-        for (_, w) in wakers {
-            w();
-        }
-        true
+        // Before the joiners are woken: one of them handles it.
+        self.unjoined_failure.store(true, AtomicOrdering::Release);
+        self.result.complete(Err(error), wake).is_ok()
     }
 
-    /// Block until the task produces a result.
-    pub fn join(&self) -> Result<Value, VmError> {
-        let mut guard = self.result.lock();
-        loop {
-            if let Some(result) = guard.clone() {
-                self.mark_joined();
-                return result;
-            }
-            self.condvar.wait(&mut guard);
-        }
+    /// `task.cancel`: the task runs no further, and its result is the
+    /// cancellation unless it had one. A failure it had is dismissed.
+    /// The caller ends the task's wait, if it waits
+    /// (`Scheduler::cancel`).
+    pub fn cancel(&self, wake: &dyn Wake) {
+        self.cancelled.store(true, AtomicOrdering::SeqCst);
+        let _ = self
+            .result
+            .complete(Err(VmError::new("cancelled".to_string())), wake);
+        self.mark_joined();
     }
 
-    /// Non-blocking poll.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(AtomicOrdering::SeqCst)
+    }
+
+    /// The flag that says so, for the waits of the task
+    /// (`runtime::sync::Wait::cancel`).
+    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
+        self.cancelled.clone()
+    }
+
+    /// The result, once the task has one.
     pub fn try_get(&self) -> Option<Result<Value, VmError>> {
-        self.result.lock().clone()
+        self.result.get().cloned()
     }
 
-    /// Note that the program has handled the task: a join has received
-    /// its result, or `task.cancel` was called on it. A failure of the
-    /// task is the program's to handle from here on, and is not reported
-    /// as unjoined.
+    /// The failure of the task is handled: a join received it, or a
+    /// cancel dismissed it.
     pub fn mark_joined(&self) {
         self.unjoined_failure.store(false, AtomicOrdering::Release);
     }
 
-    /// True iff the task failed and no join has received the error.
     pub fn has_unjoined_failure(&self) -> bool {
         self.unjoined_failure.load(AtomicOrdering::Acquire)
     }
 
-    /// The error of a task that failed and that no join has received.
-    /// Returns it once: after this call the failure counts as reported.
+    /// The failure of the task, if nobody has handled it; it counts as
+    /// handled from now on.
     pub fn take_unjoined_failure(&self) -> Option<VmError> {
         if !self.unjoined_failure.swap(false, AtomicOrdering::AcqRel) {
             return None;
         }
-        match self.result.lock().as_ref() {
+        match self.result.get() {
             Some(Err(error)) => Some(error.clone()),
             _ => None,
         }
-    }
-
-    /// Mint a fresh id for a new join-waker registration.
-    fn mint_join_waker_id(&self) -> u64 {
-        self.next_join_waker_id
-            .fetch_add(1, AtomicOrdering::Relaxed)
-    }
-
-    /// Register a waker to be called when the task completes.
-    ///
-    /// Legacy entry point: callers that need RAII deregistration on
-    /// cancel should prefer [`register_join_waker_guard`](Self::register_join_waker_guard).
-    /// This non-guard variant remains for stable call sites that join
-    /// with no cancellation pressure (e.g. `task.join(h)` from main in
-    /// `concurrency::main_thread_wait_for_join`).
-    pub fn register_join_waker(&self, waker: Waker) {
-        // Allocate an id even on the non-guard path so the storage
-        // shape stays uniform — drop(_id) is a no-op once the closure
-        // has been fired or drained.
-        let id = self.mint_join_waker_id();
-        // Check if already complete to avoid missed wakeups.
-        let already_done = self.result.lock().is_some();
-        if already_done {
-            waker();
-        } else {
-            self.join_wakers.lock().push((id, waker));
-            // Double-check to avoid race: if result was set between our check and push.
-            if self.result.lock().is_some() {
-                // It completed in the meantime; drain and fire.
-                let wakers: Vec<(u64, Waker)> = {
-                    let mut guard = self.join_wakers.lock();
-                    std::mem::take(&mut *guard)
-                };
-                for (_, w) in wakers {
-                    w();
-                }
-            }
-        }
-    }
-
-    /// Register a join waker and return a `JoinWakerRegistration` RAII
-    /// guard that deregisters the entry on drop. Required for cancel-
-    /// path correctness: a `task.join(h)`-blocked task that is cancelled
-    /// before the joinee completes must NOT leave its waker closure in
-    /// `join_wakers`, because the closure holds `Arc<Mutex<Option<Task>>>`
-    /// (with the Task already taken, so it would be inert) plus
-    /// `Arc<SchedulerInner>`. Without the guard, the entry persists
-    /// until the joinee finally completes — N cancelled joiners means N
-    /// leaked closures on a long-running joinee.
-    ///
-    /// If the joinee is already complete, this fires the waker inline
-    /// and returns a guard whose `id` does not appear in the Vec; the
-    /// guard's Drop is a no-op deregister in that case.
-    pub fn register_join_waker_guard(self: &Arc<Self>, waker: Waker) -> JoinWakerRegistration {
-        let id = self.mint_join_waker_id();
-        let already_done = self.result.lock().is_some();
-        if already_done {
-            waker();
-        } else {
-            self.join_wakers.lock().push((id, waker));
-            // Double-check to avoid race: if result was set between our check and push.
-            if self.result.lock().is_some() {
-                let wakers: Vec<(u64, Waker)> = {
-                    let mut guard = self.join_wakers.lock();
-                    std::mem::take(&mut *guard)
-                };
-                for (_, w) in wakers {
-                    w();
-                }
-            }
-        }
-        JoinWakerRegistration {
-            handle: self.clone(),
-            id,
-        }
-    }
-
-    /// Remove a previously-registered join waker by id. Returns `true`
-    /// if the entry was found and removed, `false` if it had already
-    /// been drained (e.g. by `complete()` firing all pending wakers).
-    pub fn remove_join_waker(&self, id: u64) -> bool {
-        let mut guard = self.join_wakers.lock();
-        if let Some(pos) = guard.iter().position(|(wid, _)| *wid == id) {
-            // Drop the (id, Waker) tuple — we are intentionally
-            // discarding the closure without firing it; cancellation
-            // of a parked task means its waker should never run.
-            let _ = guard.remove(pos);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Test/introspection accessor: number of join-waker entries
-    /// currently registered. Used by regression tests that verify
-    /// cancelled `task.join(h)` blocks do not leak waker closures.
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub fn join_waker_count(&self) -> usize {
-        self.join_wakers.lock().len()
-    }
-}
-
-/// RAII guard that owns a registered join-waker entry on a
-/// `TaskHandle` and deregisters it on drop. Construct via
-/// [`TaskHandle::register_join_waker_guard`].
-///
-/// Ensures the cancel path for `task.join(h)`-blocked tasks does not
-/// leak waker closures into `TaskHandle::join_wakers`. The guard's
-/// Drop calls `remove_join_waker`, which is idempotent: if the waker
-/// already fired (drained by `complete()`), Drop returns `false`
-/// without further action.
-pub struct JoinWakerRegistration {
-    handle: Arc<TaskHandle>,
-    id: u64,
-}
-
-impl JoinWakerRegistration {
-    /// Expose the underlying entry id. Primarily for tests; production
-    /// code should not need this because the guard owns deregistration.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
-
-    /// Expose the handle this registration is on. Useful for tests
-    /// that want to query `join_waker_count` without re-plumbing the
-    /// handle separately.
-    pub fn handle(&self) -> &Arc<TaskHandle> {
-        &self.handle
-    }
-}
-
-impl Drop for JoinWakerRegistration {
-    fn drop(&mut self) {
-        self.handle.remove_join_waker(self.id);
     }
 }

@@ -1,0 +1,26 @@
+-- repeat: 20
+-- A task that only computes inside `list.fold` gives way like any other:
+-- with every worker busy in such a task, a task that does nothing still
+-- runs within 50 ms.
+import list
+import task
+import time
+
+fn busy() {
+  list.fold(1..3000, 0) { acc, x ->
+    list.fold(1..3000, acc) { inner, y -> (inner + x * y) % 1000003 }
+  }
+}
+
+fn main() {
+  let workers = list.map(1..16) { _ -> task.spawn(busy) }
+  time.sleep(time.ms(20))
+  let asked = time.now()
+  let ran = task.join(task.spawn({ -> time.now() }))
+  let waited = (ran.epoch_ns - asked.epoch_ns) / 1000000
+  println(match waited < 50 {
+    true -> "within 50 ms"
+    false -> "waited {waited} ms"
+  })
+  list.each(workers, task.cancel)
+}

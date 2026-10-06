@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[runtime]
--- stderr-contains: stack overflow: recursion depth exceeded
+-- stderr-contains: stack overflow: recursion depth exceeded 100000 frames
 -- stderr-not-contains: overflowed its stack
 import list
 
@@ -12,5 +12,5 @@ fn deep(n) {
 }
 
 fn main() {
-  println(deep(50000))
+  println(deep(200000))
 }

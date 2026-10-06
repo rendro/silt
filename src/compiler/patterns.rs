@@ -168,13 +168,8 @@ impl Compiler {
                 self.emit(Asm::Dup, span)?;
                 if let Some(slot) = self.resolve_local_outside_pattern(*name) {
                     self.emit(Asm::GetLocal { slot }, span)?;
-                } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
-                    self.emit(
-                        Asm::GetUpvalue {
-                            index: usize::from(idx),
-                        },
-                        span,
-                    )?;
+                } else if let Some(idx) = self.resolve_upvalue(*name) {
+                    self.emit(Asm::GetUpvalue { index: idx }, span)?;
                 } else if let Some(def) = self.value_def(pattern.res) {
                     self.emit_global_value(def, span)?;
                 } else {
@@ -644,13 +639,6 @@ impl Compiler {
                     // actual parent on every iteration regardless of which
                     // sub-value happens to be on TOS.
                     let names: Vec<Symbol> = fields.iter().map(|(n, _, _)| *n).collect();
-                    if names.len() > u8::MAX as usize {
-                        return Err(Diagnostic::error(
-                            Code::CompileLimit,
-                            span,
-                            "anon record pattern cannot exclude more than 255 fields",
-                        ));
-                    }
                     items.push((
                         BindDestructKind::RecordRest(names),
                         Pattern::new(PatternKind::Ident(*rest_name), pattern.span),

@@ -49,7 +49,7 @@ fn make_list_source(n: usize) -> String {
 }
 
 /// Build a map literal source with exactly `n` pairs:
-/// `#{"k0": 0, "k1": 1, ...}`. silt map literals use the `#{ ... }`
+/// `#{"k": 1, "k": 1, ...}`. silt map literals use the `#{ ... }`
 /// (HashBrace) syntax — see parser.rs line 1559.
 fn make_map_source(n: usize) -> String {
     let mut s = String::with_capacity(n * 16 + 32);
@@ -58,7 +58,9 @@ fn make_map_source(n: usize) -> String {
         if i > 0 {
             s.push_str(", ");
         }
-        s.push_str(&format!("\"k{i}\": {i}"));
+        // One key and one value: the pairs are what is counted, and
+        // distinct ones would fill the constant pool first.
+        s.push_str("\"k\": 1");
     }
     s.push_str("}\n}\n");
     s
@@ -106,8 +108,8 @@ fn test_compiler_rejects_list_literal_over_65535() {
     let src = make_list_source(u16::MAX as usize + 1);
     let err = try_compile(&src).expect_err("oversized list literal must be rejected");
     assert!(
-        err.contains("list literal too large"),
-        "error must mention 'list literal too large', got: {err}"
+        err.contains("too many elements of a list literal"),
+        "error must mention 'too many elements of a list literal', got: {err}"
     );
     assert!(
         err.contains("65536"),
@@ -124,8 +126,8 @@ fn test_compiler_rejects_map_literal_over_65535() {
     let src = make_map_source(u16::MAX as usize + 1);
     let err = try_compile(&src).expect_err("oversized map literal must be rejected");
     assert!(
-        err.contains("map literal too large"),
-        "error must mention 'map literal too large', got: {err}"
+        err.contains("too many entries of a map literal"),
+        "error must mention 'too many entries of a map literal', got: {err}"
     );
     assert!(
         err.contains("65536"),
@@ -141,8 +143,8 @@ fn test_compiler_rejects_set_literal_over_65535() {
     let src = make_set_source(u16::MAX as usize + 1);
     let err = try_compile(&src).expect_err("oversized set literal must be rejected");
     assert!(
-        err.contains("set literal too large"),
-        "error must mention 'set literal too large', got: {err}"
+        err.contains("too many elements of a set literal"),
+        "error must mention 'too many elements of a set literal', got: {err}"
     );
     assert!(
         err.contains("65536"),
@@ -181,7 +183,7 @@ fn test_compiler_rejects_list_spread_accumulated_over_65535() {
     // matters is that the compiler refuses the oversized literal
     // instead of emitting a wrapped u16.
     assert!(
-        err.contains("list literal too large"),
-        "error must mention 'list literal too large', got: {err}"
+        err.contains("too many elements of a list literal"),
+        "error must mention 'too many elements of a list literal', got: {err}"
     );
 }

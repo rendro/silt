@@ -6,7 +6,7 @@ use std::sync::Arc;
 use super::common::value_kind;
 use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
-use crate::vm::{BuiltinAcc, BuiltinIterKind, SuspendedBuiltin, Vm, VmError};
+use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
 
 /// Lazy iterator over `Value::List` or `Value::Range` without materializing.
 enum ValueIter {
@@ -94,7 +94,7 @@ impl Iterator for ValueIter {
 impl ExactSizeIterator for ValueIter {}
 
 /// Materialize a List or Range into a concrete `Vec<Value>` of items.
-/// Used by higher-order list/set/map builtins to feed `iterate_builtin`.
+/// Used by the list builtins that call a function for each item.
 /// Returns an error if the source is not a list or range, or if the range
 /// would exceed the materialization limit.
 fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
@@ -138,121 +138,619 @@ fn ensure_no_fn(fn_name: &str, trait_name: &str, vals: &[&Value]) -> Result<(), 
     Ok(())
 }
 
-/// Step result for `list.unfold` callback dispatch.
-enum UnfoldStep {
-    /// Continue iterating with updated state and result.
-    Continue,
-    /// Iteration is complete; return the current result list.
-    Done,
+// ── The functions that call a function ───────────────────────────
+//
+// Each is an iteration (`vm::iterate`): its state, the arguments of a
+// call, what a call's result does to the state, and the value the
+// state gives at the end.
+
+fn truthy(v: &Value) -> bool {
+    match v {
+        Value::Bool(b) => *b,
+        Value::Unit => false,
+        _ => true,
+    }
 }
 
-/// Apply a `list.unfold` callback result to the running `(state, result)`.
-/// Mirrors the original inline logic in the `unfold` builtin.
-fn apply_unfold_result(
-    val: Value,
-    state: &mut Value,
-    result: &mut Vec<Value>,
-) -> Result<UnfoldStep, VmError> {
-    match val {
-        Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
-            if let Value::Tuple(pair) = &fields[0]
-                && pair.len() == 2
-            {
-                result.push(pair[0].clone());
-                if result.len() > MAX_RANGE_MATERIALIZE {
-                    return Err(VmError::new(format!(
-                        "list.unfold: accumulated result exceeds maximum list length of {} elements",
-                        MAX_RANGE_MATERIALIZE
-                    )));
-                }
-                *state = pair[1].clone();
-                return Ok(UnfoldStep::Continue);
+/// The arguments of a function that takes the state and the item
+/// (`list.fold`).
+fn acc_and_item(acc: &Value, item: &Value, stack: &mut Vec<Value>) {
+    stack.push(acc.clone());
+    stack.push(item.clone());
+}
+
+/// The arguments of a function that takes the key and the value of a
+/// map's entry, which is the item `(key, value)`.
+fn key_and_value<S>(_: &S, entry: &Value, stack: &mut Vec<Value>) {
+    match entry {
+        Value::Tuple(pair) => stack.extend(pair.iter().cloned()),
+        other => stack.push(other.clone()),
+    }
+}
+
+/// The entries of a map as items.
+fn entries(m: &BTreeMap<Value, Value>) -> Vec<Value> {
+    m.iter()
+        .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
+        .collect()
+}
+
+fn keep_result(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
+    out.push(result);
+    next()
+}
+
+fn keep_item_if(out: &mut Vec<Value>, item: Value, result: Value) -> Flow {
+    if truthy(&result) {
+        out.push(item);
+    }
+    next()
+}
+
+fn ignore<S>(_: &mut S, _item: Value, _result: Value) -> Flow {
+    next()
+}
+
+fn set_acc(acc: &mut Value, _item: Value, result: Value) -> Flow {
+    *acc = result;
+    next()
+}
+
+fn as_list(out: &mut Vec<Value>) -> Result<Value, VmError> {
+    Ok(Value::List(Arc::new(std::mem::take(out))))
+}
+
+fn as_set(out: &mut Vec<Value>) -> Result<Value, VmError> {
+    Ok(Value::Set(Arc::new(
+        std::mem::take(out).into_iter().collect(),
+    )))
+}
+
+fn as_map(out: &mut BTreeMap<Value, Value>) -> Result<Value, VmError> {
+    Ok(Value::Map(Arc::new(std::mem::take(out))))
+}
+
+fn unit<S>(_: &mut S) -> Result<Value, VmError> {
+    Ok(Value::Unit)
+}
+
+fn take_acc(acc: &mut Value) -> Result<Value, VmError> {
+    Ok(std::mem::replace(acc, Value::Unit))
+}
+
+fn too_long(name: &str) -> VmError {
+    VmError::new(format!(
+        "{name}: accumulated result exceeds maximum list length of {MAX_RANGE_MATERIALIZE} elements"
+    ))
+}
+
+fn flat_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
+    match result {
+        Value::List(inner) => {
+            // The cap applies to the final list size.
+            if out.len().saturating_add(inner.len()) > MAX_RANGE_MATERIALIZE {
+                return Err(too_long("list.flat_map"));
             }
-            result.push(fields[0].clone());
-            Ok(UnfoldStep::Done)
+            out.extend(inner.iter().cloned());
         }
-        Value::Variant(ref tag, _) if tag.is(bv::NONE) => Ok(UnfoldStep::Done),
+        Value::Range(lo, hi) => {
+            // Check that this range fits the cap before materializing
+            // it, alone and added to the list so far: a callback that
+            // returns `0..i64::MAX` must not exhaust memory.
+            let range_len = checked_range_len(lo, hi)
+                .map_err(|m| VmError::new(format!("list.flat_map: {m}")))?;
+            if out.len().saturating_add(range_len) > MAX_RANGE_MATERIALIZE {
+                return Err(too_long("list.flat_map"));
+            }
+            if lo <= hi {
+                out.extend((lo..=hi).map(Value::Int));
+            }
+        }
         other => {
-            result.push(other);
-            Ok(UnfoldStep::Done)
+            if out.len() >= MAX_RANGE_MATERIALIZE {
+                return Err(too_long("list.flat_map"));
+            }
+            out.push(other);
+        }
+    }
+    next()
+}
+
+fn filter_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
+    match result {
+        Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
+            out.push(fields[0].clone());
+        }
+        Value::Variant(ref tag, _) if tag.is(bv::NONE) => {}
+        other => out.push(other),
+    }
+    next()
+}
+
+fn fold_until_step(acc: &mut Value, _item: Value, result: Value) -> Flow {
+    match result {
+        Value::Variant(ref tag, ref fields) if tag.is(bv::CONTINUE) && fields.len() == 1 => {
+            *acc = fields[0].clone();
+            next()
+        }
+        Value::Variant(ref tag, ref fields) if tag.is(bv::STOP) && fields.len() == 1 => {
+            stop(fields[0].clone())
+        }
+        other => {
+            *acc = other;
+            next()
         }
     }
 }
 
-/// Dispatch `list.<name>(args)`.
-pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "map" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.map takes 2 arguments (list, fn)".into()));
+/// The key a function gave for an item is compared, or is a map's key:
+/// a key with a function in it would be ordered by the address of the
+/// function, differently from run to run. Same policy as
+/// [`ensure_no_fn`]; the signatures of these builtins have no bound, so
+/// the typechecker does not reject such keys. Locked by
+/// tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.
+fn key_without_fn(name: &str, trait_name: &str, key: &Value) -> Result<(), VmError> {
+    ensure_no_fn(name, trait_name, &[key])
+}
+
+type Best = Option<(Value, Value)>;
+
+/// `list.min_by` / `list.max_by`: keep the item whose key is `wanted`
+/// against the best key so far.
+fn best_step(
+    name: &str,
+    wanted: std::cmp::Ordering,
+    best: &mut Best,
+    item: Value,
+    key: Value,
+) -> Flow {
+    key_without_fn(name, "Compare", &key)?;
+    *best = Some(match best.take() {
+        Some((best_key, best_item))
+            if key
+                .partial_cmp(&best_key)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                != wanted =>
+        {
+            (best_key, best_item)
+        }
+        _ => (key, item),
+    });
+    next()
+}
+
+fn best_item(best: &mut Best) -> Result<Value, VmError> {
+    Ok(match best.take() {
+        Some((_, item)) => Value::variant(bv::SOME, vec![item]),
+        None => Value::variant(bv::NONE, Vec::new()),
+    })
+}
+
+/// `list.unfold(seed, f)`: `f` is called with the state until it gives
+/// no next one.
+struct Unfold {
+    state: Value,
+    out: Vec<Value>,
+    callback: Value,
+    called: bool,
+}
+
+impl Native for Unfold {
+    fn name(&self) -> &str {
+        "list.unfold"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        if self.called {
+            match input {
+                Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
+                    match &fields[0] {
+                        Value::Tuple(pair) if pair.len() == 2 => {
+                            self.out.push(pair[0].clone());
+                            if self.out.len() > MAX_RANGE_MATERIALIZE {
+                                return Err(too_long("list.unfold"));
+                            }
+                            self.state = pair[1].clone();
+                        }
+                        other => {
+                            self.out.push(other.clone());
+                            return as_list(&mut self.out).map(Step::Done);
+                        }
+                    }
+                }
+                Value::Variant(ref tag, _) if tag.is(bv::NONE) => {
+                    return as_list(&mut self.out).map(Step::Done);
+                }
+                other => {
+                    self.out.push(other);
+                    return as_list(&mut self.out).map(Step::Done);
+                }
             }
-            // On a fresh call, materialize items.  On resume, the helper
-            // discards this and uses the saved items from `suspended_builtin`.
-            let items = materialize_iter(&args[0], "list.map")?;
-            vm.iterate_builtin(BuiltinIterKind::ListMap, items, args[1].clone(), args)
+        }
+        self.called = true;
+        Ok(vm.call(self.callback.clone(), [self.state.clone()]))
+    }
+}
+
+fn arity(name: &str, args: &[Value], count: usize) -> Result<(), VmError> {
+    if args.len() == count {
+        Ok(())
+    } else {
+        Err(VmError::new(format!("{name} takes {count} arguments")))
+    }
+}
+
+/// Dispatch `list.<name>(args)`.
+pub(crate) fn call_list(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    // `list.f(xs, f)` and `list.f(xs, init, f)`: the items and the
+    // function.
+    let items = |full: &str, count: usize| -> Result<(Vec<Value>, Value), VmError> {
+        arity(full, args, count)?;
+        Ok((materialize_iter(&args[0], full)?, args[count - 1].clone()))
+    };
+    Ok(match name {
+        "map" => {
+            let (xs, f) = items("list.map", 2)?;
+            iterate(
+                "list.map",
+                xs,
+                f,
+                Vec::new(),
+                item_arg,
+                keep_result,
+                as_list,
+            )
         }
         "filter" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.filter takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.filter")?;
-            vm.iterate_builtin(BuiltinIterKind::ListFilter, items, args[1].clone(), args)
+            let (xs, f) = items("list.filter", 2)?;
+            iterate(
+                "list.filter",
+                xs,
+                f,
+                Vec::new(),
+                item_arg,
+                keep_item_if,
+                as_list,
+            )
         }
         "each" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.each takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.each")?;
-            vm.iterate_builtin(BuiltinIterKind::ListEach, items, args[1].clone(), args)
+            let (xs, f) = items("list.each", 2)?;
+            iterate("list.each", xs, f, (), item_arg, ignore, unit)
         }
         "fold" => {
-            if args.len() != 3 {
-                return Err(VmError::new("list.fold takes 3 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.fold")?;
-            vm.iterate_builtin_with_acc(
-                BuiltinIterKind::ListFold,
-                items,
-                args[2].clone(),
-                BuiltinAcc::Fold(args[1].clone()),
-                args,
+            let (xs, f) = items("list.fold", 3)?;
+            iterate(
+                "list.fold",
+                xs,
+                f,
+                args[1].clone(),
+                acc_and_item,
+                set_acc,
+                take_acc,
             )
         }
         "find" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.find takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.find")?;
-            vm.iterate_builtin(BuiltinIterKind::ListFind, items, args[1].clone(), args)
+            let (xs, f) = items("list.find", 2)?;
+            iterate(
+                "list.find",
+                xs,
+                f,
+                (),
+                item_arg,
+                |_, item, found| match truthy(&found) {
+                    true => stop(Value::variant(bv::SOME, vec![item])),
+                    false => next(),
+                },
+                |_| Ok(Value::variant(bv::NONE, Vec::new())),
+            )
         }
         "any" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.any takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.any")?;
-            vm.iterate_builtin(BuiltinIterKind::ListAny, items, args[1].clone(), args)
+            let (xs, f) = items("list.any", 2)?;
+            iterate(
+                "list.any",
+                xs,
+                f,
+                (),
+                item_arg,
+                |_, _, holds| match truthy(&holds) {
+                    true => stop(Value::Bool(true)),
+                    false => next(),
+                },
+                |_| Ok(Value::Bool(false)),
+            )
         }
         "all" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.all takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.all")?;
-            vm.iterate_builtin(BuiltinIterKind::ListAll, items, args[1].clone(), args)
+            let (xs, f) = items("list.all", 2)?;
+            iterate(
+                "list.all",
+                xs,
+                f,
+                (),
+                item_arg,
+                |_, _, holds| match truthy(&holds) {
+                    true => next(),
+                    false => stop(Value::Bool(false)),
+                },
+                |_| Ok(Value::Bool(true)),
+            )
         }
         "flat_map" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.flat_map takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.flat_map")?;
-            vm.iterate_builtin(BuiltinIterKind::ListFlatMap, items, args[1].clone(), args)
+            let (xs, f) = items("list.flat_map", 2)?;
+            iterate(
+                "list.flat_map",
+                xs,
+                f,
+                Vec::new(),
+                item_arg,
+                flat_map_step,
+                as_list,
+            )
         }
         "filter_map" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.filter_map takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.filter_map")?;
-            vm.iterate_builtin(BuiltinIterKind::ListFilterMap, items, args[1].clone(), args)
+            let (xs, f) = items("list.filter_map", 2)?;
+            iterate(
+                "list.filter_map",
+                xs,
+                f,
+                Vec::new(),
+                item_arg,
+                filter_map_step,
+                as_list,
+            )
         }
+        "sort_by" => {
+            let (xs, f) = items("list.sort_by", 2)?;
+            iterate(
+                "list.sort_by",
+                xs,
+                f,
+                Vec::<(Value, Value)>::new(),
+                item_arg,
+                |keyed, item, key| {
+                    keyed.push((key, item));
+                    next()
+                },
+                |keyed| {
+                    keyed.sort_by(|(a, _), (b, _)| {
+                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    let sorted = std::mem::take(keyed).into_iter().map(|(_, item)| item);
+                    Ok(Value::List(Arc::new(sorted.collect())))
+                },
+            )
+        }
+        "fold_until" => {
+            let (xs, f) = items("list.fold_until", 3)?;
+            iterate(
+                "list.fold_until",
+                xs,
+                f,
+                args[1].clone(),
+                acc_and_item,
+                fold_until_step,
+                take_acc,
+            )
+        }
+        "unfold" => {
+            arity("list.unfold", args, 2)?;
+            Step::Run(Box::new(Unfold {
+                state: args[0].clone(),
+                out: Vec::new(),
+                callback: args[1].clone(),
+                called: false,
+            }))
+        }
+        "group_by" => {
+            let (xs, f) = items("list.group_by", 2)?;
+            iterate(
+                "list.group_by",
+                xs,
+                f,
+                BTreeMap::<Value, Vec<Value>>::new(),
+                item_arg,
+                |groups, item, key| {
+                    key_without_fn("list.group_by", "Hash", &key)?;
+                    groups.entry(key).or_default().push(item);
+                    next()
+                },
+                |groups| {
+                    let groups = std::mem::take(groups).into_iter();
+                    Ok(Value::Map(Arc::new(
+                        groups.map(|(k, v)| (k, Value::List(Arc::new(v)))).collect(),
+                    )))
+                },
+            )
+        }
+        "min_by" => {
+            let (xs, f) = items("list.min_by", 2)?;
+            iterate(
+                "list.min_by",
+                xs,
+                f,
+                None,
+                item_arg,
+                |best, item, key| {
+                    best_step("list.min_by", std::cmp::Ordering::Less, best, item, key)
+                },
+                best_item,
+            )
+        }
+        "max_by" => {
+            let (xs, f) = items("list.max_by", 2)?;
+            iterate(
+                "list.max_by",
+                xs,
+                f,
+                None,
+                item_arg,
+                |best, item, key| {
+                    best_step("list.max_by", std::cmp::Ordering::Greater, best, item, key)
+                },
+                best_item,
+            )
+        }
+        "scan" => {
+            // The running value, and the list of the values it had,
+            // the initial one first.
+            let (xs, f) = items("list.scan", 3)?;
+            iterate(
+                "list.scan",
+                xs,
+                f,
+                (args[1].clone(), vec![args[1].clone()]),
+                |(running, _), item, stack| acc_and_item(running, item, stack),
+                |(running, prefix), _, result| {
+                    *running = result.clone();
+                    prefix.push(result);
+                    if prefix.len() > MAX_RANGE_MATERIALIZE {
+                        return Err(too_long("list.scan"));
+                    }
+                    next()
+                },
+                |(_, prefix)| as_list(prefix),
+            )
+        }
+        _ => Step::Done(list_plain(name, args)?),
+    })
+}
+
+/// Dispatch `map.<name>(args)`.
+pub(crate) fn call_map(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    // `map.f(m, f)`: the entries and the function.
+    let items = |full: &str| -> Result<(Vec<Value>, Value), VmError> {
+        arity(full, args, 2)?;
+        match &args[0] {
+            Value::Map(m) => Ok((entries(m), args[1].clone())),
+            _ => Err(VmError::new(format!("{full} requires a map"))),
+        }
+    };
+    Ok(match name {
+        "filter" => {
+            let (xs, f) = items("map.filter")?;
+            iterate(
+                "map.filter",
+                xs,
+                f,
+                BTreeMap::new(),
+                key_and_value,
+                |kept, entry, keep| {
+                    if truthy(&keep)
+                        && let Value::Tuple(pair) = entry
+                        && let Ok([k, v]) = <[Value; 2]>::try_from(pair)
+                    {
+                        kept.insert(k, v);
+                    }
+                    next()
+                },
+                as_map,
+            )
+        }
+        "map" => {
+            let (xs, f) = items("map.map")?;
+            iterate(
+                "map.map",
+                xs,
+                f,
+                BTreeMap::new(),
+                key_and_value,
+                |out, _, result| {
+                    let pair = match result {
+                        Value::Tuple(pair) => <[Value; 2]>::try_from(pair).ok(),
+                        _ => None,
+                    };
+                    let [k, v] = pair.ok_or_else(|| {
+                        VmError::new("map.map callback must return a (key, value) tuple".into())
+                    })?;
+                    out.insert(k, v);
+                    next()
+                },
+                as_map,
+            )
+        }
+        "each" => {
+            let (xs, f) = items("map.each")?;
+            iterate("map.each", xs, f, (), key_and_value, ignore, unit)
+        }
+        "update" => {
+            if args.len() != 4 {
+                return Err(VmError::new(
+                    "map.update takes 4 arguments (map, key, default, fn)".into(),
+                ));
+            }
+            let Value::Map(m) = &args[0] else {
+                return Err(VmError::new("map.update requires a map".into()));
+            };
+            let key = args[1].clone();
+            // Runtime Fn gate on the KEY only — same rationale as the
+            // `map.from_entries` gate (its signature has no bound, so a
+            // Fn key typechecks and both the `m.get` probe and the
+            // `insert` below would compare it by Arc pointer address).
+            // The default and the callback result are map VALUES and
+            // stay ungated.
+            ensure_no_fn("map.update", "Hash", &[&key])?;
+            let current = m.get(&key).unwrap_or(&args[2]).clone();
+            let m = m.clone();
+            call_then("map.update", args[3].clone(), current, move |new_val| {
+                let mut new_map = (*m).clone();
+                new_map.insert(key, new_val);
+                Ok(Value::Map(Arc::new(new_map)))
+            })
+        }
+        _ => Step::Done(map_plain(name, args)?),
+    })
+}
+
+/// Dispatch `set.<name>(args)`.
+pub(crate) fn call_set(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    // `set.f(s, f)` and `set.f(s, init, f)`: the elements and the
+    // function.
+    let items = |full: &str, count: usize| -> Result<(Vec<Value>, Value), VmError> {
+        arity(full, args, count)?;
+        match &args[0] {
+            Value::Set(s) => Ok((s.iter().cloned().collect(), args[count - 1].clone())),
+            _ => Err(VmError::new(format!("{full} requires a set"))),
+        }
+    };
+    Ok(match name {
+        "map" => {
+            let (xs, f) = items("set.map", 2)?;
+            iterate("set.map", xs, f, Vec::new(), item_arg, keep_result, as_set)
+        }
+        "filter" => {
+            let (xs, f) = items("set.filter", 2)?;
+            iterate(
+                "set.filter",
+                xs,
+                f,
+                Vec::new(),
+                item_arg,
+                keep_item_if,
+                as_set,
+            )
+        }
+        "each" => {
+            let (xs, f) = items("set.each", 2)?;
+            iterate("set.each", xs, f, (), item_arg, ignore, unit)
+        }
+        "fold" => {
+            let (xs, f) = items("set.fold", 3)?;
+            iterate(
+                "set.fold",
+                xs,
+                f,
+                args[1].clone(),
+                acc_and_item,
+                set_acc,
+                take_acc,
+            )
+        }
+        _ => Step::Done(set_plain(name, args)?),
+    })
+}
+
+/// The `list` functions that call no function.
+fn list_plain(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
         // Non-closure list builtins
         "zip" => {
             if args.len() != 2 {
@@ -671,118 +1169,6 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             Ok(Value::List(Arc::new(result)))
         }
-        "sort_by" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.sort_by takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.sort_by")?;
-            vm.iterate_builtin(BuiltinIterKind::ListSortBy, items, args[1].clone(), args)
-        }
-        "fold_until" => {
-            if args.len() != 3 {
-                return Err(VmError::new("list.fold_until takes 3 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.fold_until")?;
-            vm.iterate_builtin_with_acc(
-                BuiltinIterKind::ListFoldUntil,
-                items,
-                args[2].clone(),
-                BuiltinAcc::Fold(args[1].clone()),
-                args,
-            )
-        }
-        "unfold" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.unfold takes 2 arguments".into()));
-            }
-            // ── Restore state from a prior yield, if any ──────────
-            // `unfold` doesn't materialize items up front (the callback drives
-            // iteration), so it can't ride on `iterate_builtin`. Instead we
-            // stash `(state, result)` in `BuiltinAcc::State` and the callback
-            // value in the `SuspendedBuiltin`. We also handle a mid-callback
-            // yield via `suspended_invoke`.
-            let (mut state, mut result, callback) = if let Some(susp) = vm.take_suspended_builtin()
-            {
-                if susp.name == "list.unfold" {
-                    if let BuiltinAcc::State(s, r) = susp.acc {
-                        (s, r, susp.callback)
-                    } else {
-                        // Wrong shape — defensive: start fresh.
-                        (args[0].clone(), Vec::new(), args[1].clone())
-                    }
-                } else {
-                    // Belongs to a different builtin — put it back so its
-                    // owner can pick it up on its own re-dispatch.
-                    vm.push_suspended_builtin(susp);
-                    (args[0].clone(), Vec::new(), args[1].clone())
-                }
-            } else {
-                (args[0].clone(), Vec::new(), args[1].clone())
-            };
-
-            // ── Resume a mid-execution callback if needed ─────────
-            if vm.suspended_invoke.is_some() {
-                let cb_result = match vm.resume_suspended_invoke() {
-                    Ok(v) => v,
-                    Err(e) if e.is_yield => {
-                        // Still yielding — stash our state and re-push args.
-                        vm.push_suspended_builtin(SuspendedBuiltin {
-                            name: "list.unfold".into(),
-                            items: Vec::new(),
-                            next_index: 0,
-                            callback,
-                            acc: BuiltinAcc::State(state, result),
-                        });
-                        for a in args {
-                            vm.push(a.clone());
-                        }
-                        return Err(e);
-                    }
-                    Err(e) => return Err(e),
-                };
-                // Apply the resumed callback's result to (state, result).
-                match apply_unfold_result(cb_result, &mut state, &mut result)? {
-                    UnfoldStep::Continue => {}
-                    UnfoldStep::Done => {
-                        return Ok(Value::List(Arc::new(result)));
-                    }
-                }
-            }
-
-            // ── Main iteration ────────────────────────────────────
-            loop {
-                let invoke_result = vm.invoke_callable(&callback, &[state.clone()]);
-                let val = match invoke_result {
-                    Ok(v) => v,
-                    Err(e) if e.is_yield => {
-                        vm.push_suspended_builtin(SuspendedBuiltin {
-                            name: "list.unfold".into(),
-                            items: Vec::new(),
-                            next_index: 0,
-                            callback,
-                            acc: BuiltinAcc::State(state, result),
-                        });
-                        for a in args {
-                            vm.push(a.clone());
-                        }
-                        return Err(e);
-                    }
-                    Err(e) => return Err(e),
-                };
-                match apply_unfold_result(val, &mut state, &mut result)? {
-                    UnfoldStep::Continue => continue,
-                    UnfoldStep::Done => break,
-                }
-            }
-            Ok(Value::List(Arc::new(result)))
-        }
-        "group_by" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.group_by takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.group_by")?;
-            vm.iterate_builtin(BuiltinIterKind::ListGroupBy, items, args[1].clone(), args)
-        }
         "index_of" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.index_of takes 2 arguments".into()));
@@ -827,25 +1213,6 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             v.remove(idx);
             Ok(Value::List(Arc::new(v)))
-        }
-        "min_by" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.min_by takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.min_by")?;
-            // Route through `iterate_builtin` so that callbacks which yield
-            // (e.g. `io.read_file` inside the key-fn) re-push args and stash
-            // partial state.  Without this, restarting the iteration from
-            // scratch on resume would silently re-run the side-effecting
-            // callback for already-processed items.
-            vm.iterate_builtin(BuiltinIterKind::ListMinBy, items, args[1].clone(), args)
-        }
-        "max_by" => {
-            if args.len() != 2 {
-                return Err(VmError::new("list.max_by takes 2 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.max_by")?;
-            vm.iterate_builtin(BuiltinIterKind::ListMaxBy, items, args[1].clone(), args)
         }
         "sum" => {
             if args.len() != 1 {
@@ -925,26 +1292,6 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // it stays out, so one check at the end sees it.
             crate::builtins::numeric::checked_float(total, || "list.product_float overflow".into())
         }
-        "scan" => {
-            if args.len() != 3 {
-                return Err(VmError::new("list.scan takes 3 arguments".into()));
-            }
-            let items = materialize_iter(&args[0], "list.scan")?;
-            let init = args[1].clone();
-            // Seed the accumulator with the initial value as both the running
-            // acc AND the first element of the prefix list (matching the prior
-            // behavior).  `iterate_builtin_with_acc` will iterate over `items`
-            // and apply the callback's result to the accumulator; on yield it
-            // re-pushes args and stashes partial state in `suspended_builtin`.
-            let init_prefix = vec![init.clone()];
-            vm.iterate_builtin_with_acc(
-                BuiltinIterKind::ListScan,
-                items,
-                args[2].clone(),
-                BuiltinAcc::Scan(init, init_prefix),
-                args,
-            )
-        }
         "intersperse" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.intersperse takes 2 arguments".into()));
@@ -976,8 +1323,8 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
     }
 }
 
-/// Dispatch `map.<name>(args)`.
-pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+/// The `map` functions that call no function.
+fn map_plain(name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "get" => {
             if args.len() != 2 {
@@ -1105,90 +1452,12 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             }
             Ok(Value::Map(Arc::new(result)))
         }
-        "filter" => {
-            if args.len() != 2 {
-                return Err(VmError::new("map.filter takes 2 arguments".into()));
-            }
-            let Value::Map(m) = &args[0] else {
-                return Err(VmError::new("map.filter requires a map".into()));
-            };
-            // Materialize entries as Tuple(k, v) for iterate_builtin.
-            let items: Vec<Value> = m
-                .iter()
-                .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
-                .collect();
-            vm.iterate_builtin(BuiltinIterKind::MapFilter, items, args[1].clone(), args)
-        }
-        "map" => {
-            if args.len() != 2 {
-                return Err(VmError::new("map.map takes 2 arguments".into()));
-            }
-            let Value::Map(m) = &args[0] else {
-                return Err(VmError::new("map.map requires a map".into()));
-            };
-            let items: Vec<Value> = m
-                .iter()
-                .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
-                .collect();
-            // iterate_builtin will short-circuit with a marker Variant on a
-            // type error; translate that to a proper VmError here.
-            let result =
-                vm.iterate_builtin(BuiltinIterKind::MapMap, items, args[1].clone(), args)?;
-            if let Value::Variant(ref tag, _) = result
-                && tag.is(bv::MAP_ERROR)
-            {
-                return Err(VmError::new(
-                    "map.map callback must return a (key, value) tuple".into(),
-                ));
-            }
-            Ok(result)
-        }
-        "each" => {
-            if args.len() != 2 {
-                return Err(VmError::new("map.each takes 2 arguments".into()));
-            }
-            let Value::Map(m) = &args[0] else {
-                return Err(VmError::new("map.each requires a map".into()));
-            };
-            let items: Vec<Value> = m
-                .iter()
-                .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
-                .collect();
-            vm.iterate_builtin(BuiltinIterKind::MapEach, items, args[1].clone(), args)
-        }
-        "update" => {
-            if args.len() != 4 {
-                return Err(VmError::new(
-                    "map.update takes 4 arguments (map, key, default, fn)".into(),
-                ));
-            }
-            let Value::Map(m) = &args[0] else {
-                return Err(VmError::new("map.update requires a map".into()));
-            };
-            let key = &args[1];
-            let default = &args[2];
-            let func = &args[3];
-            // Runtime Fn gate on the KEY only — same rationale as the
-            // `map.from_entries` gate above (`constraints: vec![]`, so a
-            // Fn key typechecks and both the `m.get` probe and the
-            // `insert` below would compare it by Arc pointer address).
-            // The default and the callback result are map VALUES and
-            // stay ungated.
-            ensure_no_fn("map.update", "Hash", &[key])?;
-            let current = m.get(key).unwrap_or(default).clone();
-            // map.update is a single-callback builtin.  Use the resumable
-            // helper so yields inside `func` are handled correctly.
-            let new_val = vm.invoke_callable_resumable(func, &[current], args)?;
-            let mut new_map = (**m).clone();
-            new_map.insert(key.clone(), new_val);
-            Ok(Value::Map(Arc::new(new_map)))
-        }
         _ => Err(VmError::new(format!("unknown map function: {name}"))),
     }
 }
 
-/// Dispatch `set.<name>(args)`.
-pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+/// The `set` functions that call no function.
+fn set_plain(name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "new" => Ok(Value::Set(Arc::new(BTreeSet::new()))),
         "from_list" => {
@@ -1321,52 +1590,6 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             Ok(Value::Set(Arc::new(
                 a.symmetric_difference(b).cloned().collect(),
             )))
-        }
-        "map" => {
-            if args.len() != 2 {
-                return Err(VmError::new("set.map takes 2 arguments".into()));
-            }
-            let Value::Set(s) = &args[0] else {
-                return Err(VmError::new("set.map requires a set".into()));
-            };
-            let items: Vec<Value> = s.iter().cloned().collect();
-            vm.iterate_builtin(BuiltinIterKind::SetMap, items, args[1].clone(), args)
-        }
-        "filter" => {
-            if args.len() != 2 {
-                return Err(VmError::new("set.filter takes 2 arguments".into()));
-            }
-            let Value::Set(s) = &args[0] else {
-                return Err(VmError::new("set.filter requires a set".into()));
-            };
-            let items: Vec<Value> = s.iter().cloned().collect();
-            vm.iterate_builtin(BuiltinIterKind::SetFilter, items, args[1].clone(), args)
-        }
-        "each" => {
-            if args.len() != 2 {
-                return Err(VmError::new("set.each takes 2 arguments".into()));
-            }
-            let Value::Set(s) = &args[0] else {
-                return Err(VmError::new("set.each requires a set".into()));
-            };
-            let items: Vec<Value> = s.iter().cloned().collect();
-            vm.iterate_builtin(BuiltinIterKind::SetEach, items, args[1].clone(), args)
-        }
-        "fold" => {
-            if args.len() != 3 {
-                return Err(VmError::new("set.fold takes 3 arguments".into()));
-            }
-            let Value::Set(s) = &args[0] else {
-                return Err(VmError::new("set.fold requires a set".into()));
-            };
-            let items: Vec<Value> = s.iter().cloned().collect();
-            vm.iterate_builtin_with_acc(
-                BuiltinIterKind::SetFold,
-                items,
-                args[2].clone(),
-                BuiltinAcc::Fold(args[1].clone()),
-                args,
-            )
         }
         _ => Err(VmError::new(format!("unknown set function: {name}"))),
     }

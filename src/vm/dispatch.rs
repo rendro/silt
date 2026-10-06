@@ -2,6 +2,7 @@
 
 use std::panic::AssertUnwindSafe;
 
+use super::runtime::{Native, Step};
 use super::{Vm, VmError};
 use crate::builtins;
 use crate::typeinfo::Tag;
@@ -98,14 +99,33 @@ fn decode_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
 /// Intended to wrap each arm of the module-name match in `dispatch_builtin`.
 /// Callers that capture `&mut Vm` (or other non-`UnwindSafe` state) should
 /// wrap the closure in [`AssertUnwindSafe`] before passing it here.
-fn catch_builtin_panic<F>(module: &str, f: F) -> Result<Value, VmError>
+fn catch_builtin_panic<F, T>(module: &str, f: F) -> Result<T, VmError>
 where
-    F: FnOnce() -> Result<Value, VmError> + std::panic::UnwindSafe,
+    F: FnOnce() -> Result<T, VmError> + std::panic::UnwindSafe,
 {
     match std::panic::catch_unwind(f) {
         Ok(result) => result,
         Err(payload) => {
             let msg = decode_panic_payload(&payload);
+            Err(VmError::new(format!(
+                "builtin module '{module}' panicked: {msg}"
+            )))
+        }
+    }
+}
+
+/// Resume the frame of a builtin, as a call of the builtin is made:
+/// a panic that escapes it is an error of the program.
+pub(super) fn resume_native(
+    vm: &mut Vm,
+    native: &mut dyn Native,
+    input: Value,
+) -> Result<Step, VmError> {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| native.resume(vm, input))) {
+        Ok(step) => step,
+        Err(payload) => {
+            let msg = decode_panic_payload(&payload);
+            let module = native.name().split('.').next().unwrap_or_default();
             Err(VmError::new(format!(
                 "builtin module '{module}' panicked: {msg}"
             )))
@@ -437,19 +457,15 @@ impl Vm {
     /// this call or on one of the runtime's threads, fails the call:
     /// the readings the builtin got since are not real, and the waits
     /// it was woken from have not ended.
-    pub(super) fn dispatch_builtin(
-        &mut self,
-        name: &str,
-        args: &[Value],
-    ) -> Result<Value, VmError> {
-        let value = self.dispatch_builtin_unchecked(name, args)?;
+    pub(super) fn dispatch_builtin(&mut self, name: &str, args: &[Value]) -> Result<Step, VmError> {
+        let step = self.dispatch_builtin_unchecked(name, args)?;
         match self.runtime.io.clock_failure() {
             Some(failure) => Err(VmError::new(failure)),
-            None => Ok(value),
+            None => Ok(step),
         }
     }
 
-    fn dispatch_builtin_unchecked(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+    fn dispatch_builtin_unchecked(&mut self, name: &str, args: &[Value]) -> Result<Step, VmError> {
         if let Some((module, func)) = name.split_once('.') {
             // A builtin module's function: the body of its row in the
             // builtin registry. A panic inside it becomes a clean
@@ -488,7 +504,7 @@ impl Vm {
                     let mut text = self.display_value(&args[0]);
                     text.push('\n');
                     write_stdout(self, &text)?;
-                    Ok(Value::Unit)
+                    Ok(Step::Done(Value::Unit))
                 }
                 "print" => {
                     if args.len() != 1 {
@@ -498,7 +514,7 @@ impl Vm {
                         )));
                     }
                     write_stdout(self, &self.display_value(&args[0]))?;
-                    Ok(Value::Unit)
+                    Ok(Step::Done(Value::Unit))
                 }
                 "panic" => {
                     let msg = args.first().map(|v| v.to_string()).unwrap_or_default();

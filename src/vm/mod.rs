@@ -13,9 +13,9 @@ mod runtime;
 
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
-pub(crate) use iter::BuiltinIterKind;
+pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::Runtime;
-pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind, SuspendedBuiltin};
+pub(crate) use runtime::{CallFrame, ErrFactory, Frame, Native, Step};
 
 /// Test-only: report the worker count of the I/O pool attached to this
 /// VM. Used by the `SILT_IO_POOL_SIZE` env-knob integration tests to
@@ -54,141 +54,37 @@ pub fn default_io_pool_size() -> usize {
     runtime::default_io_pool_size()
 }
 
-/// Test-only: submit a panicking closure to this VM's I/O pool with a
-/// caller-supplied `IoCompletion` (whose `timeout_err` factory shapes
-/// the resulting `Err` Value), block until the completion fires, and
-/// return the resulting `Value`. Used by the round-76 lock test for
-/// the IoPool worker-panic recovery path: pre-fix, a worker panic
-/// produced an untyped `Err(String)` that bypassed every typed match
-/// arm; post-fix it routes through `IoCompletion::build_timeout_err`
-/// with a "panic: " prefix so the result is the same typed shape the
-/// scheduler watchdog produces on a deadline cancel.
+/// Test-only: run a panicking operation on this VM's I/O pool, wait
+/// for it, and return the value it completes with: `failure` of the
+/// panic's message, with a "panic: " prefix. `failure` is the typed
+/// error of a builtin module, so the value has the shape that module's
+/// callers match on.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn submit_panicking_io_for_test(vm: &Vm, completion: Arc<IoCompletion>) -> Value {
-    let c = vm.runtime.io_pool.submit_with(completion, || {
+pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(&str) -> Value) -> Value {
+    let op = vm.runtime.io_pool.submit(failure, || {
         panic!("synthetic IO worker panic for round-76 lock");
     });
-    c.wait()
+    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+    let _ = vm.runtime.scheduler.block_thread(wait, false);
+    op.cell.get().cloned().expect("the operation has ended")
 }
 
 use regex::Regex;
-use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::bytecode::{Function, Globals, VmClosure};
-use crate::runtime::completion::IoCompletion;
+use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
 use crate::value::Value;
-use runtime::{IoPool, RegexCache, TimerManager};
-
-// ── Native stack budget ───────────────────────────────────────────
-//
-// A plain silt call pushes a VM frame and stays in the interpreter loop
-// that is already running. A method call, and a function passed to a
-// builtin (`list.map`, `result.map_ok`, ...), instead run a nested
-// interpreter loop on the host stack (`Vm::invoke_callable`,
-// `Vm::resume_suspended_invoke`). Recursion through either therefore
-// consumes host stack, and running out of host stack aborts the whole
-// process. The VM bounds it by counting the interpreter loops nested on
-// the current thread and refusing to start one more than the thread's
-// stack can hold.
-
-/// Host stack, in bytes, that one nested interpreter loop is assumed to
-/// need, together with the builtin that started it.
-///
-/// Unoptimised build: measured, by recursing until the 256 MiB main
-/// thread overflowed. A level entered through a method call costs about
-/// 95 KiB, a level entered through a `list.*` callback (the most
-/// expensive builtin measured) about 152 KiB; nothing is inlined and
-/// every local of the opcode dispatch gets its own stack slot. The value
-/// is 1.68 times the most expensive level, so at the limit the nested
-/// loops fill at most about 60% of the stack. The rest is left for the
-/// frames below the first loop and for the native work of the innermost
-/// call.
-///
-/// Optimised build: measured from the resident size of the thread's
-/// stack at two depths. A level entered through a method call costs about
-/// 4.0 KiB, through `set.map` about 6.2 KiB, through `list.unfold` about
-/// 6.3 KiB, and through `list.fold`, `list.map`, `list.sort_by`, string
-/// interpolation or a pattern match (the most expensive measured) about
-/// 7.5 KiB, the same on the main thread, in a task and in a stream stage.
-/// The value, 12 KiB, is 1.6 times the most expensive level: at the limit
-/// of 21845 levels on a 256 MiB stack the nested loops fill about 62% of
-/// it, and the stack would overflow only at about 34,900 levels.
-///
-/// The margin is guarded by `tests/lang/wave2_vm_tests.rs`, which recurses
-/// through the most expensive shapes to exactly the limit, on the main
-/// thread and in a task, and requires a normal result. If a compiler or
-/// platform change makes a level more expensive than this value allows
-/// for, that test aborts instead of passing; measure again and raise the
-/// value.
-///
-/// The build kind is read off `debug_assertions`, which is on in the
-/// `dev` and `test` profiles and off in `release` and `bench`.
-const NATIVE_STACK_BYTES_PER_LEVEL: usize = if cfg!(debug_assertions) {
-    256 * 1024
-} else {
-    12 * 1024
-};
-
-/// Stack size assumed for a thread that never called
-/// [`set_native_stack_budget`].
-///
-/// Native targets: 2 MiB, the size Rust gives a spawned thread by
-/// default.
-///
-/// WebAssembly: 1 MiB. A wasm module has no threads with a stack size of
-/// their own; its one stack is a region of linear memory whose size is
-/// fixed when the module is linked, and rustc links every wasm target
-/// with `-z stack-size=1048576` unless the embedder overrides it. The
-/// playground module (built with the default) confirms it: its
-/// `__stack_pointer` starts at 1048576, with the stack placed first in
-/// memory. An embedder that links a different stack size calls
-/// [`set_native_stack_budget`] with it before running silt code.
-const DEFAULT_NATIVE_STACK_BUDGET: usize = if cfg!(target_family = "wasm") {
-    1024 * 1024
-} else {
-    2 * 1024 * 1024
-};
-
-/// How many nested interpreter loops fit into a stack of `bytes` bytes.
-/// Never less than one, so a thread can always run a program.
-const fn native_depth_limit_for(bytes: usize) -> usize {
-    let levels = bytes / NATIVE_STACK_BYTES_PER_LEVEL;
-    if levels == 0 { 1 } else { levels }
-}
-
-thread_local! {
-    /// Most interpreter loops that may be nested on this thread.
-    static NATIVE_DEPTH_LIMIT: Cell<usize> =
-        const { Cell::new(native_depth_limit_for(DEFAULT_NATIVE_STACK_BUDGET)) };
-    /// Interpreter loops currently nested on this thread.
-    static NATIVE_DEPTH: Cell<usize> = const { Cell::new(0) };
-    /// Whether the thread's outermost interpreter loop is running the
-    /// program itself (see [`ProgramLoop`]), which then does not count
-    /// against the limit.
-    static PROGRAM_LOOP_RUNNING: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Tell the VM how large the stack of the CURRENT thread is, in bytes.
-///
-/// Call it once, at the start of every thread that is created with an
-/// explicit stack size and runs silt code. The VM derives from it how
-/// deep method calls and builtin callbacks may nest on this thread before
-/// it reports a stack overflow as a runtime error. A thread that never
-/// calls it is treated as having a 2 MiB stack (1 MiB on WebAssembly).
-pub fn set_native_stack_budget(bytes: usize) {
-    NATIVE_DEPTH_LIMIT.with(|limit| limit.set(native_depth_limit_for(bytes)));
-}
+use runtime::{IoOp, IoPool, RegexCache};
 
 /// Start an OS thread that runs silt callbacks outside the scheduler: a
 /// stream stage or an HTTP handler. It gets the stack of a scheduler
-/// worker and the matching native recursion budget, so callbacks nest as
-/// deep there as in a task. If the system refuses a stack that large, the
-/// thread starts on the default stack, whose budget is the default one.
+/// worker (see [`crate::scheduler::WORKER_STACK_BYTES`]). If the system
+/// refuses a stack that large, the thread starts on the default stack.
 pub(crate) fn spawn_callback_thread<F, T>(f: F) -> std::thread::JoinHandle<T>
 where
     F: FnOnce() -> T + Send + 'static,
@@ -202,7 +98,6 @@ where
     let spawned = std::thread::Builder::new()
         .stack_size(bytes)
         .spawn(move || {
-            set_native_stack_budget(bytes);
             let f = for_large.lock().take().expect("thread body runs once");
             f()
         });
@@ -215,83 +110,6 @@ where
     }
 }
 
-/// Most method calls and builtin callbacks that may be nested on the
-/// current thread, which is the number the stack-overflow error names.
-/// The loop that runs the program itself comes on top (see
-/// [`ProgramLoop`]).
-pub(crate) fn native_depth_limit() -> usize {
-    NATIVE_DEPTH_LIMIT.with(|limit| limit.get())
-}
-
-/// One nested interpreter loop on the current thread. Entering counts the
-/// loop; dropping the guard, on whatever path the loop is left (result,
-/// error, yield or panic), uncounts it.
-#[must_use = "the loop is uncounted as soon as the guard is dropped"]
-pub(crate) struct NativeDepthGuard(());
-
-impl NativeDepthGuard {
-    /// Count one more nested loop, or return `None` if the thread is at
-    /// its limit already.
-    pub(crate) fn enter() -> Option<Self> {
-        let program_loop = PROGRAM_LOOP_RUNNING.with(|running| running.get());
-        let limit = native_depth_limit() + usize::from(program_loop);
-        NATIVE_DEPTH.with(|depth| {
-            let current = depth.get();
-            if current >= limit {
-                None
-            } else {
-                depth.set(current + 1);
-                Some(NativeDepthGuard(()))
-            }
-        })
-    }
-}
-
-impl Drop for NativeDepthGuard {
-    fn drop(&mut self) {
-        // `try_with`: a guard may be dropped while the thread is being
-        // torn down, when its thread-locals are no longer accessible.
-        let _ = NATIVE_DEPTH.try_with(|depth| depth.set(depth.get().saturating_sub(1)));
-    }
-}
-
-/// The outermost interpreter loop of a thread, while it runs a program
-/// (`Vm::run`), is not a method call or a callback and is not charged
-/// against the limit: its host stack comes out of the part of the budget
-/// that the per-level cost leaves for the frames below the first nested
-/// loop. With it uncharged, a program can nest exactly
-/// [`native_depth_limit`] method calls and callbacks on any thread, on the
-/// main thread as in a task (whose loop, `execute_slice`, is never
-/// counted), and the stack-overflow error names that number. A loop
-/// started while others are already nested on the thread is charged as
-/// usual.
-#[must_use = "the program loop is charged again as soon as the guard is dropped"]
-struct ProgramLoop(());
-
-impl ProgramLoop {
-    /// Allow one loop more than the limit on this thread, for the loop
-    /// about to run the program, until the returned guard is dropped.
-    /// Returns `None`, and changes nothing, if a loop is running on the
-    /// thread already.
-    fn start() -> Option<Self> {
-        let idle = NATIVE_DEPTH.with(|depth| depth.get()) == 0;
-        PROGRAM_LOOP_RUNNING.with(|running| {
-            if idle && !running.get() {
-                running.set(true);
-                Some(ProgramLoop(()))
-            } else {
-                None
-            }
-        })
-    }
-}
-
-impl Drop for ProgramLoop {
-    fn drop(&mut self) {
-        let _ = PROGRAM_LOOP_RUNNING.try_with(|running| running.set(false));
-    }
-}
-
 // ── VM ────────────────────────────────────────────────────────────
 
 pub struct Vm {
@@ -299,7 +117,14 @@ pub struct Vm {
     /// True for the VM made by [`Vm::new`], false for the VMs of its
     /// tasks: when that VM is dropped, the runtime's threads end.
     owns_runtime: bool,
-    pub(crate) frames: Vec<CallFrame>,
+    /// The calls in progress, the innermost last: functions, and
+    /// builtins that call functions or wait ([`Native`]).
+    pub(crate) frames: Vec<Frame>,
+    /// How many of the frames are builtins'.
+    native_frames: usize,
+    /// The value the builtin's frame on top is resumed with, when a
+    /// slice ended between the value and the frame.
+    pending_input: Option<Value>,
     pub(crate) stack: Vec<Value>,
     /// The values of the program's global slots; `None` until the
     /// definition's code has run.
@@ -315,56 +140,21 @@ pub struct Vm {
     next_task_id: Arc<AtomicU64>,
 
     // ── M:N scheduler state ─────────────────────────────────────
-    /// Set by channel/task ops when they need to park this task.
-    /// Consumed by execute_slice to return SliceResult::Blocked.
-    pub(crate) block_reason: Option<BlockReason>,
-    /// True when this VM is running as a scheduled task (not on the main thread).
-    pub(crate) is_scheduled_task: bool,
-    /// Pending I/O completion handle (persists across yield/re-execute).
-    pub(crate) pending_io: Option<Arc<IoCompletion>>,
+    /// How the wait of the builtin's frame on top ended, between the
+    /// end of the wait and the frame's resumption ([`Step::Park`]).
+    pub(crate) woken: Option<Fired>,
+    /// True for the VM of a task made by `task.spawn`.
+    pub(crate) spawned: bool,
     /// Scoped deadline in effect for this task, as a reading of the
     /// host clock ([`Clock::monotonic`]). Set by
-    /// `task.deadline(dur, fn)` for the duration of the callback; the
-    /// scheduler's I/O watchdog consults this when the task parks on
-    /// I/O, and I/O builtins check it at entry so a call made past the
+    /// `task.deadline(dur, fn)` for the duration of the callback; a
+    /// wait for I/O ends at it ([`Vm::io`]), and I/O builtins check it
+    /// at entry so a call made past the
     /// deadline returns `Err(...)` immediately without submitting to
     /// the I/O pool. Nested `task.deadline` calls use the earlier
-    /// deadline (monotonic tightening).
+    /// deadline (monotonic tightening); each one's frame holds the
+    /// deadline to restore when its callback returns.
     pub(crate) current_deadline: Option<Duration>,
-    /// LIFO stack of outer deadlines, pushed by each task.deadline call
-    /// on its first entry and popped on non-yield return. Lets nested
-    /// synchronous `task.deadline` scopes correctly restore the outer
-    /// deadline when an inner scope exits. Across yields, the stack is
-    /// preserved (not touched on yield return), so the first-entry
-    /// check `suspended_invoke.is_none()` distinguishes fresh entry
-    /// from a resume.
-    pub(crate) deadline_stack: Vec<Option<Duration>>,
-    /// Saved state from an `invoke_callable` that was interrupted by a yield.
-    ///
-    /// Invariant: this Option is the TOP of a LIFO stack of suspended invokes.
-    /// Deeper (older) suspended states live in `suspended_invoke_outer`. When
-    /// a yield happens while another suspended_invoke is already parked
-    /// (e.g. nested `task.deadline` + I/O), the existing top is spilled into
-    /// the outer vec before the new state overwrites the slot. When the top
-    /// is taken on resume, the next state is auto-promoted from the vec back
-    /// into the slot so nested-resume bytecode paths still observe
-    /// `.is_some()` correctly. See `Vm::push_suspended_invoke` /
-    /// `Vm::take_suspended_invoke`. Audit round 26, fix B5.
-    pub(crate) suspended_invoke: Option<runtime::SuspendedInvoke>,
-    /// Deeper suspended-invoke states (older, further from the current
-    /// resume frontier). Top of stack = last element. See the doc on
-    /// `suspended_invoke` for the stack invariant.
-    pub(crate) suspended_invoke_outer: Vec<runtime::SuspendedInvoke>,
-    /// Saved iteration state for a higher-order builtin (e.g. `list.map`)
-    /// whose callback yielded (e.g. via I/O).  On resume, the outer
-    /// `CallBuiltin` re-dispatches the same builtin, which picks up its
-    /// iteration state from this slot instead of restarting from index 0.
-    ///
-    /// Same LIFO stack discipline as `suspended_invoke`: deeper (older)
-    /// states live in `suspended_builtin_outer`.
-    pub(crate) suspended_builtin: Option<runtime::SuspendedBuiltin>,
-    /// Deeper suspended-builtin states. Top of stack = last element.
-    pub(crate) suspended_builtin_outer: Vec<runtime::SuspendedBuiltin>,
 
     /// Diagnostic log of callers that were elided by tail-call replacement.
     /// Each entry is `(frame_depth, caller_name, caller_span)` where
@@ -391,6 +181,10 @@ pub struct Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
+        // The calls in progress end here, however the VM ends: a task
+        // that failed, was cancelled or was still waiting when the
+        // program ended. Each builtin's frame is told ([`Native::abandon`]).
+        self.unwind(0, 0);
         if self.owns_runtime {
             self.runtime.shutdown();
         }
@@ -406,17 +200,6 @@ fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
     Ok(Value::Float(if f == 0.0 { 0.0 } else { f }))
 }
 
-/// Build the task-deadline-exceeded `Err` Value that I/O builtins
-/// return when the current task.deadline has already elapsed at entry.
-/// Shape matches the watchdog-fired timeout so silt-side match arms
-/// don't have to distinguish between "timed out at entry" and "timed
-/// out while parked". Single source of truth for the message text
-/// lives on `scheduler::DeadlineSource`.
-///
-/// Phase 1 of the stdlib error redesign: wrapped in `IoUnknown(msg)`
-/// so the outer `Err` payload has the typed `IoError` shape every io/fs
-/// signature now returns. Users can still substring-match on the
-/// message via `e.message()`.
 impl Vm {
     /// If the current task.deadline has already elapsed, build an `Err`
     /// Value via the caller's factory; otherwise return `None`. I/O
@@ -425,10 +208,7 @@ impl Vm {
     /// I/O pool. The factory determines which typed error variant the
     /// caller's signature expects (io uses `IoUnknown`, tcp uses
     /// `TcpTimeout`, etc.).
-    pub(crate) fn deadline_exceeded_with(
-        &self,
-        timeout_err: &(dyn Fn(&str) -> Value + Sync),
-    ) -> Option<Value> {
+    pub(crate) fn deadline_exceeded_with(&self, timeout_err: ErrFactory) -> Option<Value> {
         let deadline = self.current_deadline?;
         if self.runtime.io.monotonic() >= deadline {
             Some(timeout_err(
@@ -439,160 +219,53 @@ impl Vm {
         }
     }
 
-    /// Run the shared I/O builtin entry guard:
-    ///   1. If a pending I/O completion exists (we're resuming after a
-    ///      yield), consume it — return `Ok(Some(result))` if ready,
-    ///      else re-park via yield.
-    ///   2. If the current task.deadline has already elapsed (fresh
-    ///      call, no pending), return `Ok(Some(Err(timeout)))`.
-    ///   3. Otherwise `Ok(None)` — caller proceeds with a fresh submit
-    ///      (or main-thread sync call).
+    /// The step of the I/O builtin `name` that runs the blocking
+    /// operation `op` on the I/O pool and waits for its value, which
+    /// is the builtin's: already `Ok(_)` or `Err(_)`.
     ///
-    /// The `args` slice is pushed back onto the stack on re-park so the
-    /// CallBuiltin opcode can re-read them when the task resumes. The
-    /// re-park branch routes through
-    /// [`park_on_completion`](Self::park_on_completion) so the
-    /// pending_io / block_reason / args-pushback protocol lives in
-    /// exactly one place.
-    ///
-    /// The `timeout_err` factory shapes the typed `Err` variant emitted
-    /// when `current_deadline` has already elapsed at entry. Modules
-    /// with non-IoError error types (tcp, http, ...) pass their own
-    /// factory so a deadline-at-entry surfaces the right typed variant
-    /// rather than the generic `Err(IoUnknown(_))`. Most callers should
-    /// use [`submit_io_or_run`](Self::submit_io_or_run) which calls
-    /// this internally; direct callers exist only when post-guard
-    /// logic must run before the actual submit (e.g. tcp.read's
-    /// closed-stream check).
-    pub(crate) fn io_entry_guard_with(
+    /// The wait ends at the earlier of the task deadline in effect
+    /// and `SILT_IO_TIMEOUT`, with `timeout_err` of the reason: the
+    /// typed error the builtin's signature declares. With the task
+    /// deadline already past, nothing is run.
+    pub(crate) fn io(
         &mut self,
-        args: &[Value],
-        timeout_err: &(dyn Fn(&str) -> Value + Sync),
-    ) -> Result<Option<Value>, VmError> {
-        if self.is_scheduled_task
-            && let Some(completion) = self.pending_io.take()
-        {
-            if let Some(result) = completion.try_get() {
-                return Ok(Some(result));
-            }
-            return Err(self.park_on_completion(args, completion));
-        }
+        name: &'static str,
+        timeout_err: ErrFactory,
+        op: impl FnOnce() -> Value + Send + 'static,
+    ) -> Result<Step, VmError> {
         if let Some(err) = self.deadline_exceeded_with(timeout_err) {
-            return Ok(Some(err));
+            return Ok(Step::Done(err));
         }
-        Ok(None)
+        self.io_started(name, timeout_err, op)
     }
 
-    /// Park the current scheduled task with the given block reason and
-    /// re-push `args` onto the stack so the CallBuiltin opcode can
-    /// re-execute on resume. Returns the yield signal as a `VmError`
-    /// so the caller can `return Err(...)` directly.
-    ///
-    /// This is the **single** place that owns the args-pushback +
-    /// yield_signal sequence. Every park site — IO completions
-    /// (`park_on_completion`), channel send/receive/select, task
-    /// join — routes through here so the protocol cannot drift
-    /// across builtins. (Round 78 extraction; the prior ~30
-    /// hand-rolled sites collapse to one.)
-    ///
-    /// The caller is responsible for setting up whatever wakes the
-    /// task: a completion handle on `pending_io`, a waker
-    /// registered on a channel, a join slot on a task handle, etc.
-    pub(crate) fn park_with_reason(
+    /// [`Vm::io`] for a caller that has looked at the task deadline
+    /// itself ([`Vm::deadline_exceeded_with`]) and done something
+    /// between that and the operation.
+    pub(crate) fn io_started(
         &mut self,
-        args: &[Value],
-        reason: crate::vm::runtime::BlockReason,
-    ) -> VmError {
-        self.block_reason = Some(reason);
-        for arg in args {
-            self.push(arg.clone());
-        }
-        VmError::yield_signal()
-    }
-
-    /// Park the current scheduled task on an IO completion handle.
-    /// Sets `pending_io` so the entry-guard's resume branch picks
-    /// up this completion, then delegates to
-    /// [`park_with_reason`](Self::park_with_reason) for the
-    /// shared block_reason / args-pushback / yield sequence.
-    ///
-    /// The completion must already be wired so that something will
-    /// call `completion.complete(_)` to wake the task — typically a
-    /// closure submitted to `runtime.io_pool` or a deadline
-    /// scheduled on `runtime.timer`.
-    pub(crate) fn park_on_completion(
-        &mut self,
-        args: &[Value],
-        completion: Arc<IoCompletion>,
-    ) -> VmError {
-        use crate::vm::runtime::BlockReason;
-        self.pending_io = Some(completion.clone());
-        self.park_with_reason(args, BlockReason::Io(completion))
-    }
-
-    /// One-shot "submit to the IO pool, park on yield, run synchronously
-    /// on the main thread" helper for IO-pool-backed builtins.
-    ///
-    /// Encapsulates the entire entry-guard / submit / park / sync-fallback
-    /// dance in a single call so every IO builtin uses the same code path
-    /// and the args-pushback on re-park is the helper's responsibility,
-    /// not the caller's. Adding a new IO builtin reduces to picking the
-    /// right `(completion_factory, timeout_err)` pair and writing the
-    /// closure body — no manual completion-state mutation, no manual
-    /// args-pushback loop.
-    ///
-    /// `op` runs on a worker thread when called from a scheduled task,
-    /// or synchronously on the main thread otherwise. It must produce
-    /// the typed `Value` result already wrapped in `Ok(_)` / `Err(_)`
-    /// variants.
-    ///
-    /// Builtins with non-IoPool parking (channel send/receive, timer
-    /// sleeps, postgres listen workers) handle their own park sequence —
-    /// they call [`park_on_completion`](Self::park_on_completion) for
-    /// the timer-backed case and never touch this helper.
-    ///
-    /// Builtins that need to inject logic *between* the entry guard and
-    /// the submit (e.g. tcp.read's "drain pending completion before
-    /// reporting closed-stream") call [`io_entry_guard_with`] themselves
-    /// for the resume gate, then call
-    /// [`run_or_submit_io`](Self::run_or_submit_io) with the
-    /// already-guarded `args` for the submit-or-sync half.
-    pub(crate) fn submit_io_or_run<F>(
-        &mut self,
-        args: &[Value],
-        completion: Arc<IoCompletion>,
-        timeout_err: &(dyn Fn(&str) -> Value + Sync),
-        op: F,
-    ) -> Result<Value, VmError>
-    where
-        F: FnOnce() -> Value + Send + 'static,
-    {
-        if let Some(r) = self.io_entry_guard_with(args, timeout_err)? {
-            return Ok(r);
-        }
-        self.run_or_submit_io(args, completion, op)
-    }
-
-    /// Submit-or-run half of [`submit_io_or_run`] without the entry
-    /// guard. Use when the caller has already run
-    /// [`io_entry_guard_with`] and wants to interleave additional
-    /// post-guard checks (e.g. tcp.read's closed-stream check, which
-    /// must happen *after* the resume gate so a pending completion
-    /// wins over a racing close) before the actual submit.
-    pub(crate) fn run_or_submit_io<F>(
-        &mut self,
-        args: &[Value],
-        completion: Arc<IoCompletion>,
-        op: F,
-    ) -> Result<Value, VmError>
-    where
-        F: FnOnce() -> Value + Send + 'static,
-    {
-        if self.is_scheduled_task {
-            let c = self.runtime.io_pool.submit_with(completion, op);
-            return Err(self.park_on_completion(args, c));
-        }
-        Ok(op())
+        name: &'static str,
+        timeout_err: ErrFactory,
+        op: impl FnOnce() -> Value + Send + 'static,
+    ) -> Result<Step, VmError> {
+        let IoOp { cell, in_flight } = self.runtime.io_pool.submit(timeout_err, op);
+        let (deadline, source) = match self.runtime.scheduler.io_deadline(self.current_deadline) {
+            Some((deadline, source)) => (Some(deadline), source),
+            None => (None, crate::scheduler::DeadlineSource::Task),
+        };
+        let wait = Wait::new(vec![Arm::Cell(cell.clone())]).deadline(deadline);
+        Ok(self.park(name, wait, move |_, fired| {
+            Ok(Step::Done(match (fired, cell.get()) {
+                (Fired::Arm(..), Some(value)) => value.clone(),
+                // The operation goes on without a waiter: it no longer
+                // counts as pending for the program.
+                _ => {
+                    let abandoned = in_flight.lock().take();
+                    drop(abandoned);
+                    timeout_err(source.message())
+                }
+            }))
+        }))
     }
 
     /// A VM whose programs write to the output of `io` and read its
@@ -604,32 +277,32 @@ impl Vm {
     /// failed since the last report and that nobody joined are reported
     /// on the stderr of `io`.
     pub fn new(io: HostIo) -> Self {
+        let scheduler = Arc::new(Scheduler::new(io.clone()));
         Vm {
             runtime: Arc::new(Runtime {
-                scheduler: parking_lot::Mutex::new(None),
-                timer: TimerManager::new(io.clone()),
-                io_pool: IoPool::new(runtime::resolve_io_pool_size(), io.clone()),
+                io_pool: IoPool::new(
+                    runtime::resolve_io_pool_size(),
+                    io.clone(),
+                    scheduler.clone(),
+                ),
+                scheduler,
                 io,
                 rng: parking_lot::Mutex::new(None),
                 uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
             }),
             owns_runtime: true,
             frames: Vec::new(),
+            pending_input: None,
+            native_frames: 0,
             stack: Vec::new(),
             globals: Vec::new(),
             global_slots: Arc::new(Globals::default()),
             types: Arc::new(TypeTable::default()),
             next_channel_id: Arc::new(AtomicU64::new(0)),
             next_task_id: Arc::new(AtomicU64::new(0)),
-            block_reason: None,
-            is_scheduled_task: false,
-            pending_io: None,
+            woken: None,
+            spawned: false,
             current_deadline: None,
-            deadline_stack: Vec::new(),
-            suspended_invoke: None,
-            suspended_invoke_outer: Vec::new(),
-            suspended_builtin: None,
-            suspended_builtin_outer: Vec::new(),
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
         }
@@ -639,9 +312,7 @@ impl Vm {
     /// and that nobody joined or cancelled. Nothing while a front end
     /// collects them (`scheduler::collect_unjoined_failures`).
     fn report_unjoined_failures(&self) {
-        if let Some(scheduler) = self.current_scheduler() {
-            scheduler.report_unjoined_failures();
-        }
+        self.runtime.scheduler.report_unjoined_failures();
     }
 
     /// Run a compiled program: take in its tables, then run its script.
@@ -692,51 +363,33 @@ impl Vm {
             runtime: self.runtime.clone(), // Arc clone = cheap
             owns_runtime: false,
             frames: Vec::new(),
+            pending_input: None,
+            native_frames: 0,
             stack: Vec::new(),
             globals: self.globals.clone(),
             global_slots: self.global_slots.clone(),
             types: self.types.clone(),
             next_channel_id: self.next_channel_id.clone(),
             next_task_id: self.next_task_id.clone(),
-            block_reason: None,
-            is_scheduled_task: false,
-            pending_io: None,
+            woken: None,
+            spawned: false,
             current_deadline: None,
-            deadline_stack: Vec::new(),
-            suspended_invoke: None,
-            suspended_invoke_outer: Vec::new(),
-            suspended_builtin: None,
-            suspended_builtin_outer: Vec::new(),
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
         }
     }
 
-    /// Return a clone of the current scheduler `Arc`, if one exists.
-    ///
-    /// Unlike [`get_or_create_scheduler`], this does NOT create a scheduler
-    /// on demand — it returns `None` when no task has been spawned yet.
-    /// Used by the main-thread channel watchdog to decide whether any
-    /// scheduled task could still make progress.
-    pub(crate) fn current_scheduler(&self) -> Option<Arc<Scheduler>> {
-        self.runtime.scheduler.lock().clone()
+    /// The scheduler of the program.
+    pub(crate) fn scheduler(&self) -> &Arc<Scheduler> {
+        &self.runtime.scheduler
     }
 
-    /// Get or create the shared scheduler.
-    pub(crate) fn get_or_create_scheduler(&self) -> Arc<Scheduler> {
-        let mut guard = self.runtime.scheduler.lock();
-        if let Some(ref sched) = *guard {
-            sched.clone()
-        } else {
-            let sched = Arc::new(Scheduler::new(self.runtime.io.clone()));
-            *guard = Some(sched.clone());
-            sched
-        }
-    }
-
-    /// Take the block_reason out of this VM (consuming it).
-    pub(crate) fn take_block_reason(&mut self) -> Option<BlockReason> {
-        self.block_reason.take()
+    /// Whether this is the VM that runs the program itself (`fn main`,
+    /// a test, a REPL entry), not one of a task, a stream stage or a
+    /// handler: its thread gets the error when the program is
+    /// deadlocked.
+    pub(crate) fn is_program(&self) -> bool {
+        self.owns_runtime
     }
 
     /// Allocate a new unique channel ID.
@@ -766,41 +419,32 @@ impl Vm {
     /// don't render phantom call-stack frames from prior entries. See
     /// `tests/cli/repl_frame_leak_tests.rs` for the regression lock.
     pub(crate) fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
-        let saved_frames_len = self.frames.len();
-        let saved_stack_len = self.stack.len();
-        let saved_tco_len = self.tco_elided.len();
+        let floor = self.frames.len();
+        let stack_floor = self.stack.len();
         assert_eq!(script.upvalue_count(), 0, "a script captures nothing");
         let closure = Arc::new(VmClosure {
             function: script,
             upvalues: vec![],
         });
-        self.frames.push(CallFrame {
+        self.frames.push(Frame::Code(CallFrame {
             closure,
             ip: 0,
             base_slot: 0,
-        });
-        // Held until `execute` has returned; see `ProgramLoop`.
-        let _program_loop = ProgramLoop::start();
-        match self.execute() {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                // Build the enriched error first — `enrich_error` walks
-                // `self.frames`/`self.tco_elided` to reconstruct the
-                // call stack for THIS run, which is exactly the state
-                // we're about to discard.
-                let enriched = self.enrich_error(e);
-                // Restore VM shape to the entry snapshot. Without this
-                // the call frame pushed above (and any frames the
-                // unwinding error left behind from nested calls)
-                // remain on the VM and leak into the next `run`'s
-                // call stack as phantom frames (the REPL runs many
-                // scripts on one VM).
-                self.frames.truncate(saved_frames_len);
-                self.stack.truncate(saved_stack_len);
-                self.tco_elided.truncate(saved_tco_len);
-                Err(enriched)
-            }
-        }
+        }));
+        let run = self.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
+        self.finish_run(run, floor, stack_floor)
+    }
+
+    /// Make this VM the one of a task that calls `closure` with no
+    /// arguments: the scheduler runs it slice by slice
+    /// ([`Vm::execute_slice`]).
+    pub(crate) fn start_task(&mut self, closure: Arc<VmClosure>) {
+        self.stack = vec![Value::Unit];
+        self.frames = vec![Frame::Code(CallFrame {
+            closure,
+            ip: 0,
+            base_slot: 1,
+        })];
     }
 
     // ── Stack operations ──────────────────────────────────────────
@@ -830,14 +474,20 @@ impl Vm {
     // ── Frame access ──────────────────────────────────────────────
 
     /// The frame of the instruction being run.
+    #[inline(always)]
     fn frame(&self) -> &CallFrame {
-        self.frames.last().expect("an instruction runs in a frame")
+        match self.frames.last() {
+            Some(Frame::Code(frame)) => frame,
+            _ => unreachable!("an instruction runs in a function's frame"),
+        }
     }
 
+    #[inline(always)]
     fn frame_mut(&mut self) -> &mut CallFrame {
-        self.frames
-            .last_mut()
-            .expect("an instruction runs in a frame")
+        match self.frames.last_mut() {
+            Some(Frame::Code(frame)) => frame,
+            _ => unreachable!("an instruction runs in a function's frame"),
+        }
     }
 
     /// The code and constants of the function being run.
@@ -861,8 +511,16 @@ impl Vm {
     /// entries that belong to frames no longer on the physical stack.
     /// Called after any frame pop / truncate / split-off so stale
     /// diagnostic state doesn't bleed across unrelated calls.
+    ///
+    /// The log is in the order of the depths: an entry is logged for
+    /// the frame on top, and this is called whenever a frame goes. So
+    /// the entries to drop are the last ones.
     pub(crate) fn prune_tco_elided(&mut self, keep_depth: usize) {
-        self.tco_elided.retain(|(d, _, _)| *d < keep_depth);
+        while let Some((depth, _, _)) = self.tco_elided.last()
+            && *depth >= keep_depth
+        {
+            self.tco_elided.pop();
+        }
     }
 
     // ── Error enrichment ─────────────────────────────────────────
@@ -877,11 +535,16 @@ impl Vm {
     /// `middle` and `main` both tail-called) would render a single-frame
     /// stack that drops both intermediate names. See F10 in audit round 17.
     pub(crate) fn enrich_error(&self, mut err: VmError) -> VmError {
-        if err.is_yield || err.span.is_some() {
+        if err.span.is_some() {
             return err;
         }
         // Capture span from current frame's IP position.
-        if let Some(frame) = self.frames.last() {
+        // A builtin's error is its caller's: the innermost function.
+        let innermost = self.frames.iter().rev().find_map(|frame| match frame {
+            Frame::Code(frame) => Some(frame),
+            Frame::Native(_) => None,
+        });
+        if let Some(frame) = innermost {
             let ip = frame.ip.saturating_sub(1);
             let span = frame.closure.function.chunk().span_at(ip);
             if span.is_in_source() {
@@ -895,17 +558,21 @@ impl Vm {
         // logged at that same depth — newest caller first so the chain
         // reads "callee -> most-recent-tco-caller -> ... -> oldest-caller".
         let mut stack = Vec::new();
+        // The log is in the order of the depths, so its entries are
+        // met from the end as the frames are.
+        let mut elided = self.tco_elided.iter().rev().peekable();
         for (depth, frame) in self.frames.iter().enumerate().rev() {
+            let Frame::Code(frame) = frame else {
+                continue;
+            };
             let func_name = frame.closure.function.name().to_string();
             let ip = frame.ip.saturating_sub(1);
             let span = frame.closure.function.chunk().span_at(ip);
             stack.push((func_name, span));
             // Newer (later-pushed) entries for this depth are more recent
-            // callers, so walk in reverse to keep the callee-first order.
-            for (d, name, caller_span) in self.tco_elided.iter().rev() {
-                if *d == depth {
-                    stack.push((name.clone(), *caller_span));
-                }
+            // callers, so they come first: the chain stays callee-first.
+            while let Some((_, name, caller_span)) = elided.next_if(|(d, _, _)| *d >= depth) {
+                stack.push((name.clone(), *caller_span));
             }
         }
         err.call_stack = stack;
@@ -1144,141 +811,6 @@ impl Vm {
             // arms are read from the same source.
             _ => self.type_name(val).to_string(),
         }
-    }
-}
-
-#[cfg(test)]
-mod native_stack_tests {
-    use super::{
-        DEFAULT_NATIVE_STACK_BUDGET, NATIVE_DEPTH, NATIVE_STACK_BYTES_PER_LEVEL, NativeDepthGuard,
-        ProgramLoop, native_depth_limit, native_depth_limit_for, set_native_stack_budget,
-    };
-
-    /// Run `f` on a thread of its own, so that the thread-locals it reads
-    /// and changes belong to this test alone.
-    fn on_fresh_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
-        std::thread::spawn(f).join().expect("test thread panicked")
-    }
-
-    #[test]
-    fn a_thread_without_a_budget_is_treated_as_2_mib() {
-        let limit = on_fresh_thread(native_depth_limit);
-        assert_eq!(limit, native_depth_limit_for(2 * 1024 * 1024));
-        assert_eq!(limit, native_depth_limit_for(DEFAULT_NATIVE_STACK_BUDGET));
-        assert!(limit >= 1);
-    }
-
-    #[test]
-    fn a_budget_belongs_to_the_thread_that_set_it() {
-        let (inside, outside) = on_fresh_thread(|| {
-            set_native_stack_budget(64 * 1024 * 1024);
-            let inside = native_depth_limit();
-            let outside = on_fresh_thread(native_depth_limit);
-            (inside, outside)
-        });
-        assert_eq!(inside, native_depth_limit_for(64 * 1024 * 1024));
-        assert_eq!(outside, native_depth_limit_for(DEFAULT_NATIVE_STACK_BUDGET));
-        assert!(inside > outside);
-    }
-
-    #[test]
-    fn a_larger_stack_allows_proportionally_more_levels() {
-        assert_eq!(native_depth_limit_for(NATIVE_STACK_BYTES_PER_LEVEL), 1);
-        assert_eq!(
-            native_depth_limit_for(10 * NATIVE_STACK_BYTES_PER_LEVEL),
-            10
-        );
-        assert_eq!(
-            native_depth_limit_for(10 * NATIVE_STACK_BYTES_PER_LEVEL + 1),
-            10
-        );
-    }
-
-    #[test]
-    fn a_stack_smaller_than_one_level_still_allows_one() {
-        assert_eq!(native_depth_limit_for(0), 1);
-        assert_eq!(native_depth_limit_for(NATIVE_STACK_BYTES_PER_LEVEL - 1), 1);
-    }
-
-    #[test]
-    fn the_guard_refuses_the_level_past_the_limit_and_frees_its_level_on_drop() {
-        on_fresh_thread(|| {
-            set_native_stack_budget(3 * NATIVE_STACK_BYTES_PER_LEVEL);
-            let first = NativeDepthGuard::enter().expect("level 1 fits");
-            let second = NativeDepthGuard::enter().expect("level 2 fits");
-            let third = NativeDepthGuard::enter().expect("level 3 fits");
-            assert!(
-                NativeDepthGuard::enter().is_none(),
-                "a fourth level must be refused"
-            );
-            assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 3);
-            drop(third);
-            let again = NativeDepthGuard::enter().expect("the freed level can be taken again");
-            drop(again);
-            drop(second);
-            drop(first);
-            assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 0);
-        });
-    }
-
-    #[test]
-    fn a_refused_level_is_not_counted() {
-        on_fresh_thread(|| {
-            set_native_stack_budget(NATIVE_STACK_BYTES_PER_LEVEL);
-            let only = NativeDepthGuard::enter().expect("level 1 fits");
-            for _ in 0..5 {
-                assert!(NativeDepthGuard::enter().is_none());
-            }
-            assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 1);
-            drop(only);
-            assert_eq!(NATIVE_DEPTH.with(|depth| depth.get()), 0);
-        });
-    }
-
-    #[test]
-    fn the_program_loop_comes_on_top_of_the_limit() {
-        on_fresh_thread(|| {
-            set_native_stack_budget(2 * NATIVE_STACK_BYTES_PER_LEVEL);
-            let program = ProgramLoop::start().expect("an idle thread can start a program");
-            let outer = NativeDepthGuard::enter().expect("the program loop fits");
-            let first = NativeDepthGuard::enter().expect("nested level 1 fits");
-            let second = NativeDepthGuard::enter().expect("nested level 2 fits");
-            assert!(
-                NativeDepthGuard::enter().is_none(),
-                "a third nested level must be refused"
-            );
-            // The error names the nested levels, not the program loop.
-            assert_eq!(native_depth_limit(), 2);
-            drop(second);
-            drop(first);
-            drop(outer);
-            drop(program);
-            // Without a program running, the limit is the plain one.
-            let a = NativeDepthGuard::enter().expect("level 1 fits");
-            let b = NativeDepthGuard::enter().expect("level 2 fits");
-            assert!(NativeDepthGuard::enter().is_none());
-            drop(b);
-            drop(a);
-        });
-    }
-
-    #[test]
-    fn only_the_outermost_loop_of_a_thread_is_a_program_loop() {
-        on_fresh_thread(|| {
-            set_native_stack_budget(2 * NATIVE_STACK_BYTES_PER_LEVEL);
-            let busy = NativeDepthGuard::enter().expect("level 1 fits");
-            assert!(
-                ProgramLoop::start().is_none(),
-                "a program started inside a running loop is charged as usual"
-            );
-            drop(busy);
-            let program = ProgramLoop::start().expect("the thread is idle again");
-            assert!(
-                ProgramLoop::start().is_none(),
-                "a thread has at most one program loop"
-            );
-            drop(program);
-        });
     }
 }
 

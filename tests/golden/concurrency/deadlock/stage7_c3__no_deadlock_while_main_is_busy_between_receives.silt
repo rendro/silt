@@ -1,0 +1,30 @@
+-- repeat: 100
+-- stderr-not-contains: deadlock
+-- 16 senders wait on a channel without a buffer while the program is
+-- busy between its receives. Every sender waits, and the program does
+-- not: that is no deadlock, and every value arrives (1+..+16 = 136).
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let _senders = 1..16
+    |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
+  let sum = loop c = 0, acc = 0 {
+    let _busy = loop k = 0 {
+      match k >= 5000 {
+        true -> 0
+        _ -> loop(k + 1)
+      }
+    }
+    match c >= 16 {
+      true -> acc
+      _ -> match channel.receive(ch) {
+        channel.Message(v) -> loop(c + 1, acc + v)
+        _ -> acc
+      }
+    }
+  }
+  println(sum)
+}
