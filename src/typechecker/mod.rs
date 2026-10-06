@@ -182,13 +182,12 @@ pub struct TypeChecker {
     /// for.
     pub(super) group_rigid: HashMap<TyVar, Vec<usize>>,
     pub(super) rigid_alias: HashMap<TyVar, RigidId>,
-    /// The declaration of each top-level `let` of the module, by the
-    /// names it binds, and the one whose value is being checked: its
-    /// value may not read a `let` declared after it, which has not run
-    /// when it does.
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in (`init_order`).
     pub(super) let_order: Vec<Span>,
+    /// Those of them, by the span of each, that are reported because
+    /// they reach themselves.
+    pub(super) let_rings: Vec<Span>,
     /// The signature of each method written in an impl of the module, as
     /// its body sees it, by the impl's type, the method and the trait,
     /// until the body is checked.
@@ -304,6 +303,7 @@ impl TypeChecker {
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),
             let_order: Vec::new(),
+            let_rings: Vec::new(),
             impl_sigs: HashMap::new(),
             last_field_access_was_method: false,
             method_trait: None,
@@ -711,9 +711,14 @@ impl TypeChecker {
             return;
         }
         for decl in &program.decls {
-            let Decl::Let { is_pub, .. } = decl else {
+            let Decl::Let { is_pub, span, .. } = decl else {
                 continue;
             };
+            // (A `let` that needs its own value is reported for that:
+            // its type is unknown because of it.)
+            if self.let_rings.contains(span) {
+                continue;
+            }
             let (what, keyword, why) = match is_pub {
                 true => (
                     "public let",

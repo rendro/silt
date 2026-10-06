@@ -397,6 +397,7 @@ impl TypeChecker {
                 ),
             );
         }
+        self.let_rings = in_ring.iter().map(|&n| nodes[n].span).collect();
         for reached in needs.values_mut() {
             reached.retain(|n| !in_ring.contains(n));
         }
