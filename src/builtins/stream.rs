@@ -32,7 +32,6 @@ use parking_lot::Mutex;
 use super::common::ok;
 use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
-use crate::scheduler::Task;
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{IoOp, Native, Step, Vm, VmError};
@@ -354,11 +353,7 @@ fn stage(
     child.spawned = true;
     child.push_native_frame(Box::new(pipe));
     vm.scheduler()
-        .submit(Task {
-            id,
-            vm: child,
-            handle,
-        })
+        .submit(id, child, handle)
         .map_err(VmError::new)?;
     Ok(Step::Done(Value::Channel(out)))
 }

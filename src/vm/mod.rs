@@ -305,6 +305,49 @@ impl Vm {
         result
     }
 
+    /// Wait until the program has ended. [`Vm::run_program`] and
+    /// [`Vm::call_test`] return when the program's own code (`fn main`,
+    /// the test function) has returned; the tasks it spawned may still
+    /// run. The program has ended when none of them can go on: each
+    /// has ended or waits, and no timer and no I/O operation of theirs
+    /// is pending. The tasks that still wait then are dropped, and the
+    /// failures that nobody joined are final.
+    ///
+    /// `silt run` and `silt test` call this before they give the
+    /// program's result, so a task that fails after `main` has
+    /// returned still makes the run fail, and a task that never ends
+    /// (an endless loop, a sleep) keeps the program from ending. An
+    /// embedder that wants neither does not call it, and drops the VM
+    /// to end the program where it is.
+    ///
+    /// The tasks waited for are those of the current owner
+    /// ([`crate::scheduler::set_task_owner`]).
+    pub fn settle(&mut self) {
+        self.runtime.scheduler.settle();
+        self.report_unjoined_failures();
+    }
+
+    /// End the program whose own code has failed: stop its tasks
+    /// where they are, and return when all have ended. One that waits
+    /// is dropped; one that runs ends with the slice it is in. Nothing
+    /// is waited for, as after an error of `main` under `silt run`,
+    /// where the process ends; `silt test` calls this after a test
+    /// that failed, since the VM goes on to the next test.
+    pub fn stop_tasks(&mut self) {
+        self.runtime.scheduler.stop_tasks();
+        self.report_unjoined_failures();
+    }
+
+    /// Wait as [`Vm::settle`] does, and drop nothing: the tasks that
+    /// wait stay, for code that this VM runs next and that may wake
+    /// them. `silt test` calls this after a file's top-level code, the
+    /// tasks of which may serve the file's tests
+    /// ([`crate::scheduler::set_task_owner_within`]).
+    pub fn wait_until_idle(&mut self) {
+        self.runtime.scheduler.wait_until_idle();
+        self.report_unjoined_failures();
+    }
+
     /// Call the test function `test` of the program this VM ran with
     /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
     /// arguments, and give its value.

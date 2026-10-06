@@ -1,0 +1,29 @@
+-- cmd: test
+-- exit: 1
+-- repeat: 20
+-- stderr-contains: PASS stage7_c5__a_failing_task_of_the_top_level_code_fails_the_file.silt::test_asks_for_too_much
+-- stderr-contains: FAIL stage7_c5__a_failing_task_of_the_top_level_code_fails_the_file.silt (a task spawned by the file's top-level code failed)
+-- stderr-contains: failed and was never joined: division by zero
+-- stderr-contains: deadlock on main thread: channel send with no counterparty
+-- stderr-contains: 2 tests: 1 passed, 1 failed, 0 skipped
+-- A task of the file's top-level code that a test makes fail is a
+-- failure of the file, reported once the test that woke it has ended;
+-- the test itself is judged by what it did. The next test, which
+-- needs the task, is deadlocked, and told so at once.
+import channel
+import task
+import test
+
+let requests = channel.new(0)
+let server = task.spawn({ ->
+  channel.each(requests) { n -> 10 / n }
+})
+
+fn test_asks_for_too_much() {
+  channel.send(requests, 0)
+  test.assert_eq(1, 1)
+}
+
+fn test_finds_nobody() {
+  channel.send(requests, 1)
+}

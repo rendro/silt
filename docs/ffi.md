@@ -234,7 +234,8 @@ The report of tasks that failed and that nobody joined is written when
 `run_program` returns, for the tasks that have failed by then. It does
 not change the result: `run_program` still returns `main`'s value. A
 task that fails later is reported when the `Vm` is dropped, if it has
-failed by then. With `HostIo::process()`, a program
+failed by then; `vm.settle()` waits for every task first (see "The end
+of a program" below). With `HostIo::process()`, a program
 that writes to a closed stdout pipe ends the process quietly with status
 141; give `HostIo::new` your own `Output` if the process must go on.
 
@@ -354,8 +355,18 @@ trait method), then runs the program's script and returns `main`'s
 value. The program carries its host functions, and the `Vm` its output
 and clock: there is no other set-up.
 
-**Dropping a Vm** ends its program. The threads that served it end (the
-scheduler's workers, the timer thread, the I/O workers; each when what
+**The end of a program.** `run_program` returns when `main` has
+returned; tasks that the program spawned may still be at work.
+`vm.settle()` waits until the program has ended as `silt run` defines
+it: until none of its tasks can do more (each has ended or waits, and
+no timer and no I/O is pending). It then drops the tasks that still
+wait, and reports on stderr the tasks that failed and that nobody
+joined. An embedder that must not wait for a program's background
+tasks (a playground with a time limit) does not call it, and drops the
+`Vm`.
+
+**Dropping a Vm** ends its program where it is. The threads that
+served it end (the scheduler's workers, the timer thread, the I/O workers; each when what
 it is doing returns), tasks that are still running or waiting never run
 again, and pending timers never fire. The state behind `math.random`
 and `uuid.v7` belongs to the `Vm` too: one `Vm` does not affect

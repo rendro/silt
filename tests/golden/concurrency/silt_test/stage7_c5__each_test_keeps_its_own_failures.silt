@@ -1,0 +1,21 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: task(s) failed and were never joined
+-- stderr-contains: failed and was never joined: panic: the one failure of test b
+-- stderr-contains: 2 tests: 0 passed, 2 failed
+-- At most 64 failures are kept for a test, and each test has its own
+-- 64: the hundred failures of the first test do not push out the one
+-- of the second.
+import list
+import task
+import test
+
+fn test_a_has_a_hundred_failures() {
+  let _hs = 1..100 |> list.map { i -> task.spawn({ -> panic("failure {i} of test a") }) }
+  test.assert_eq(1, 1)
+}
+
+fn test_b_has_one() {
+  let _h = task.spawn({ -> panic("the one failure of test b") })
+  test.assert_eq(1, 1)
+}

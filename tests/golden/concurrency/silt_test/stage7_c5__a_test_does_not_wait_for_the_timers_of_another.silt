@@ -1,0 +1,28 @@
+-- cmd: test
+-- exit: 1
+-- timeout: 10
+-- stderr-contains: PASS stage7_c5__a_test_does_not_wait_for_the_timers_of_another.silt::test_a_leaves_a_timer
+-- stderr-contains: FAIL stage7_c5__a_test_does_not_wait_for_the_timers_of_another.silt::test_b_is_deadlocked
+-- stderr-contains: deadlock on main thread: channel receive with no counterparty
+-- stderr-contains: 2 tests: 1 passed, 1 failed
+-- The first test leaves a channel that a timer will close in a
+-- minute. The test has ended all the same (no task of it is left for
+-- the timer to wake), and the deadlock of the second test is reported
+-- at once: the timer is not the second test's.
+import channel
+import test
+
+fn test_a_leaves_a_timer() {
+  let ch = channel.new(1)
+  channel.send(ch, 7)
+  let late = channel.timeout(60000)
+  match channel.select([channel.Recv(ch), channel.Recv(late)]) {
+    (_, channel.Message(v)) -> test.assert_eq(v, 7)
+    _ -> panic("the timer won")
+  }
+}
+
+fn test_b_is_deadlocked() {
+  let never = channel.new(0)
+  let _ = channel.receive(never)
+}

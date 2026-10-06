@@ -129,6 +129,46 @@ fn main() {{
     panic!("the task's failure was never there when run_program returned");
 }
 
+/// `settle` waits until the program has ended: until its tasks can do
+/// no more. A task that fails after `run_program` has returned has
+/// failed by then, and is reported; a task that waits for something
+/// nobody will give is dropped, and does not keep `settle` waiting.
+#[test]
+fn settle_waits_for_the_program_to_end_and_reports_what_failed() {
+    let source = r#"
+import channel
+import task
+import time
+fn main() {
+  let never = channel.new(0)
+  let _waits = task.spawn({ -> channel.receive(never) })
+  let _late = task.spawn({ ->
+    time.sleep(time.ms(20))
+    println("about to fail")
+    panic("late")
+  })
+}
+"#;
+    let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let out = Buffer::new();
+    let err = Buffer::new();
+    let mut vm = Vm::new(HostIo::new(out.clone(), err.clone()));
+    assert_eq!(
+        vm.run_program(&program).map_err(|e| e.message),
+        Ok(Value::Unit)
+    );
+    vm.settle();
+    assert_eq!(out.contents(), "about to fail\n");
+    let report = err.contents();
+    assert!(
+        report.contains("task <handle:1> failed and was never joined: panic: late"),
+        "the report: {report:?}"
+    );
+    // Nothing is left to report when the VM is dropped.
+    drop(vm);
+    assert_eq!(err.contents(), report);
+}
+
 /// A task that fails after `run_program` has returned is reported when
 /// the VM is dropped, if it has failed by then.
 #[test]

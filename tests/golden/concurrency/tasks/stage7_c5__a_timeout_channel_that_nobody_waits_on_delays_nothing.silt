@@ -1,0 +1,15 @@
+-- timeout: 10
+-- A `channel.timeout` that lost its race is still to close when
+-- `main` returns. With no task left that it could wake, the program
+-- has ended: it does not last the minute.
+import channel
+
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch, 7)
+  let late = channel.timeout(60000)
+  match channel.select([channel.Recv(ch), channel.Recv(late)]) {
+    (_, channel.Message(v)) -> println("got {v}")
+    _ -> println("the timer won")
+  }
+}

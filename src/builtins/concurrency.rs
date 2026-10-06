@@ -391,11 +391,7 @@ fn spawn_with_deadline(
     child_vm.start_task(closure.clone());
     child_vm.spawned = true;
     vm.scheduler()
-        .submit(crate::scheduler::Task {
-            id: task_id,
-            vm: child_vm,
-            handle: handle.clone(),
-        })
+        .submit(task_id, child_vm, handle.clone())
         .map_err(VmError::new)?;
 
     Ok(Value::Handle(handle))

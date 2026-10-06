@@ -127,6 +127,12 @@ fn main() {
   `stream.repeat(x) |> stream.take(3)` leaves nothing running. The output
   of a stage is closed by this: read it with one consumer. A channel that
   no stage feeds (one you made with `channel.new`) is left open.
+- **A stream that you stop reading goes on.** A stream that is read by
+  hand (`channel.receive`, `channel.select`) and then left is still at
+  work: its stages run until their outputs are full or the source is at
+  its end, and the program does not end before they have stopped (see
+  [When a program ends](../concurrency.md#when-a-program-ends)).
+  `channel.close(s)` on the stream stops them at once.
 - **Errors flow through the stream.** File sources emit
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;

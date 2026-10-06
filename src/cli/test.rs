@@ -221,12 +221,17 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             sources,
             entry: file,
         });
-        let setup_owner = owners.add_owner(file_index, None);
+        let setup_owner = owners.add_owner(file_index);
         silt::scheduler::set_task_owner(setup_owner);
 
         let mut vm = Vm::new(silt::HostIo::process());
-        if let Err(e) = vm.run_program(&program) {
-            owners.mark_failed(setup_owner);
+        let setup = vm.run_program(&program);
+        // The top-level code has ended when its tasks can do no more.
+        // Those that wait then stay: a test may be what they wait for.
+        if setup.is_ok() {
+            vm.wait_until_idle();
+        }
+        if let Err(e) = setup {
             // G2 (audit round 21): frame and error-header paths follow
             // the style of the path the user typed, as under `silt run`.
             //
@@ -240,6 +245,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             counts.file_errors += 1;
             continue;
         }
+        // A task of the file's top-level code that failed and that
+        // nobody joined fails the file.
+        let setup_failures = owners.take_task_failures(setup_owner, &mut counts);
+        if !setup_failures.is_empty() {
+            owners.fail_file(setup_owner, &setup_failures, &mut counts);
+        }
 
         // Run each selected test function
         for test in tests {
@@ -252,13 +263,23 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             }
             // The tasks that this test spawns, and the tasks that those
             // spawn in turn, are the test's: their failures fail it.
-            let owner = owners.add_owner(file_index, Some(name.clone()));
-            silt::scheduler::set_task_owner(owner);
+            let owner = owners.add_owner(file_index);
+            // The tasks of the file's top-level code are still there,
+            // and may work for the test.
+            silt::scheduler::set_task_owner_within(owner, setup_owner);
             let outcome = vm.call_test(test);
-            // The failures of spawned tasks that have happened by now.
-            // Those of this test's tasks are reported under its result
-            // line; those of earlier tests are reported here.
-            let task_failures = owners.charge_task_failures(Some(owner), &mut counts);
+            // The test has ended when its tasks can do no more: one
+            // that fails after the test function has returned fails
+            // this test. Those that still wait are dropped. After an
+            // error of the test function nothing is waited for: its
+            // tasks are stopped where they are.
+            match outcome {
+                Ok(_) => vm.settle(),
+                Err(_) => vm.stop_tasks(),
+            }
+            // The failures of the test's tasks are reported under its
+            // result line.
+            let task_failures = owners.take_task_failures(owner, &mut counts);
             let test_failed = match outcome {
                 Ok(value) => match returned_err(&value) {
                     // `Ok(..)`, Unit and every other value: the test ran
@@ -309,7 +330,6 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 eprint_indented(report);
             }
             if test_failed {
-                owners.mark_failed(owner);
                 counts.failed += 1;
             } else {
                 counts.passed += 1;
@@ -323,12 +343,6 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         println!("no matching test files found");
         return;
     }
-
-    // The last test has returned. The tasks that have failed by now are
-    // charged to the tests that spawned them, before the summary. A task
-    // that is still running is not a failure; if it fails later, its
-    // failure is not reported.
-    let _ = owners.charge_task_failures(None, &mut counts);
 
     let Counts {
         passed,
@@ -381,9 +395,8 @@ struct TestFile {
 struct TaskOwner {
     /// Index of the file in `TaskOwners::files`.
     file: usize,
-    /// The test's name; `None` for the file's top-level code.
-    test: Option<String>,
-    /// True once the test (or the file) has been counted as failed.
+    /// For a file's top-level code: true once the file has been
+    /// counted as failed for a task of it.
     failed: bool,
 }
 
@@ -404,36 +417,26 @@ impl TaskOwners {
         self.files.len() - 1
     }
 
-    /// A new owner in the file at `file`: the test `test`, or the file's
+    /// A new owner in the file at `file`: a test, or the file's
     /// top-level code. Returns its owner tag.
-    fn add_owner(&mut self, file: usize, test: Option<String>) -> u64 {
+    fn add_owner(&mut self, file: usize) -> u64 {
         self.owners.push(TaskOwner {
             file,
-            test,
             failed: false,
         });
         self.owners.len() as u64
     }
 
-    /// Note that the owner tagged `tag` has been counted as failed.
-    fn mark_failed(&mut self, tag: u64) {
-        if let Some(index) = owner_index(tag)
-            && let Some(owner) = self.owners.get_mut(index)
-        {
-            owner.failed = true;
-        }
-    }
-
-    /// Take the failures of spawned tasks that have happened so far, each
-    /// rendered against the file of the test that spawned the task.
+    /// Take the failures of the tasks of the owner tagged `current`,
+    /// which has just ended (the scheduler has waited for its tasks),
+    /// each rendered against the owner's file: the caller prints them
+    /// under the owner's result line, and counts it as failed.
     ///
-    /// The reports of the owner tagged `current`, the test that has just
-    /// run, are returned: the caller prints them under the test's result
-    /// line, and counts the test as failed. Every other owner has been
-    /// counted already. It is reported here, as failed, with the reports
-    /// of its tasks; a test that was counted as passed is counted as
-    /// failed instead.
-    fn charge_task_failures(&mut self, current: Option<u64>, counts: &mut Counts) -> Vec<String> {
+    /// The tasks of every earlier test have ended or were dropped with
+    /// it, so a failure of another owner is one of a task of the
+    /// file's top-level code, which was woken by the test: it is
+    /// reported here, as a failure of the file.
+    fn take_task_failures(&mut self, current: u64, counts: &mut Counts) -> Vec<String> {
         let taken = silt::scheduler::take_unjoined_failures();
         // The reports per owner tag, in the order in which the tasks
         // failed.
@@ -468,54 +471,30 @@ impl TaskOwners {
         }
         let mut current_reports = Vec::new();
         for (tag, owner_reports) in reports {
-            if Some(tag) == current {
+            if tag == current {
                 current_reports = owner_reports;
             } else {
-                self.report_late_failures(tag, &owner_reports, counts);
+                self.fail_file(tag, &owner_reports, counts);
             }
         }
         current_reports
     }
 
-    /// The file of the owner tagged `tag`.
-    fn file_of(&self, tag: u64) -> Option<&TestFile> {
-        let owner = self.owners.get(owner_index(tag)?)?;
-        self.files.get(owner.file)
-    }
-
-    /// Report the failures of tasks spawned by the owner tagged `tag`,
-    /// which has been counted already, and count it as failed.
-    fn report_late_failures(&mut self, tag: u64, reports: &[String], counts: &mut Counts) {
-        let owner = match owner_index(tag) {
-            Some(index) => self.owners.get_mut(index),
-            None => None,
-        };
+    /// Report the failures of tasks of the top-level code tagged
+    /// `tag`, and count its file as failed, once.
+    fn fail_file(&mut self, tag: u64, reports: &[String], counts: &mut Counts) {
+        let owner = owner_index(tag).and_then(|index| self.owners.get_mut(index));
         match owner {
             Some(owner) => {
                 let path = self.files[owner.file].path.as_str();
-                match &owner.test {
-                    Some(name) => {
-                        eprintln!(
-                            "  FAIL {path}::{name} (a task it spawned failed after the test had returned)"
-                        );
-                        if !owner.failed {
-                            counts.passed = counts.passed.saturating_sub(1);
-                            counts.failed += 1;
-                        }
-                    }
-                    None => {
-                        eprintln!(
-                            "  FAIL {path} (a task spawned by the file's top-level code failed)"
-                        );
-                        if !owner.failed {
-                            counts.file_errors += 1;
-                        }
-                    }
+                eprintln!("  FAIL {path} (a task spawned by the file's top-level code failed)");
+                if !owner.failed {
+                    counts.file_errors += 1;
                 }
                 owner.failed = true;
             }
-            // Every task of the run is spawned under a tag of this run;
-            // this is a failure that nothing can be charged with.
+            // Every task of the run is spawned under a tag of this
+            // run: this is a failure that nothing can be charged with.
             None => {
                 eprintln!("  FAIL a task that no test can be named for failed");
                 counts.file_errors += 1;
@@ -524,6 +503,12 @@ impl TaskOwners {
         for report in reports {
             eprint_indented(report);
         }
+    }
+
+    /// The file of the owner tagged `tag`.
+    fn file_of(&self, tag: u64) -> Option<&TestFile> {
+        let owner = self.owners.get(owner_index(tag)?)?;
+        self.files.get(owner.file)
     }
 }
 

@@ -1,0 +1,14 @@
+-- repeat: 20
+-- A task that is still at work when `main` returns goes on to its
+-- end: its output is the program's.
+import list
+import task
+import time
+
+fn main() {
+  let _workers = 1..3 |> list.map { i -> task.spawn({ ->
+    time.sleep(time.ms(10 * i))
+    println("worker {i} done")
+  }) }
+  println("main returns")
+}

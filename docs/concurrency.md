@@ -427,6 +427,49 @@ typically want one of two patterns when cancellation is an expected outcome:
 
 Returns `Unit`.
 
+### When a program ends
+
+A program ends when `main` has returned **and its tasks can do no more**:
+every task has ended or waits, and no timer and no I/O operation is
+pending. Until then `silt run` keeps going:
+
+- A task that is still at work when `main` returns runs to its end. What it
+  prints is part of the program's output; if it fails, the run fails.
+- A task that sleeps, or waits for a timeout or for I/O, is waited for.
+  (A `channel.timeout` channel that is still to close holds nothing up by
+  itself: once every task has ended there is nobody it could wake.)
+- A task that waits for something only another task could give (a receive
+  on a channel nobody will send on) is dropped when nothing else can run:
+  such a wait could never end.
+- A task that never stops keeps the program from ending. A ticker, a
+  server loop or a watcher has to be told to stop, or cancelled, before
+  `main` returns:
+
+```silt
+import channel
+import task
+import time
+fn main() {
+  let ticks = channel.new(8)
+  let ticker = task.spawn({ ->
+    loop {
+      time.sleep(time.ms(10))
+      let _ = channel.try_send(ticks, ())
+      loop()
+    }
+  })
+  let _ = channel.receive(ticks)
+  println("one tick")
+  -- Without this the program would tick for ever.
+  task.cancel(ticker)
+}
+```
+
+If `main` fails with a runtime error, the program has failed: nothing is
+waited for. Under `silt test`, each test ends in the same way, for the
+tasks that the test spawned (see
+[Testing](language/testing.md#spawned-tasks)).
+
 ### Failures that nobody joins
 
 A task that ends with a runtime error (a `panic`, a failed assertion, a
@@ -437,10 +480,8 @@ exits with status 1, even if `main` returned normally:
 
 ```silt
 import task
-import time
 fn main() {
   let _ = task.spawn({ -> 1 / 0 })
-  time.sleep(time.ms(100))
   println("main done")
 }
 ```
@@ -448,9 +489,9 @@ fn main() {
 ```text
 main done
 error[runtime]: task <handle:0> failed and was never joined: division by zero
- --> main.silt:4:27
+ --> main.silt:3:27
    |
- 4 |   let _ = task.spawn({ -> 1 / 0 })
+ 3 |   let _ = task.spawn({ -> 1 / 0 })
    |                           ^ task <handle:0> failed and was never joined: division by zero
   = help: join the task with task.join to handle its error, or cancel it with task.cancel
 ```
@@ -464,10 +505,10 @@ more than one frame. The rules:
   a second time.
 - **A cancel handles the failure.** `task.cancel(h)` on a task that has
   failed dismisses the failure: no report, no exit status 1.
-- **Only failures that have happened count.** The report is made when
-  `main` returns (or fails). A task that is still running then is not a
-  failure; if it fails afterwards, while the process shuts down, it is not
-  reported.
+- **Every failure counts.** The report is made when the program has ended
+  (see [When a program ends](#when-a-program-ends)): a task that fails
+  after `main` has returned still makes the run fail, every time. The
+  example above does not have to wait for its task.
 - **A deadlock shows its cause.** When `main` is told
   `deadlock on main thread`, the failures reported with it are usually the
   reason: a producer that failed before it sent.

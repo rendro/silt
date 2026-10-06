@@ -738,11 +738,7 @@ fn do_http_serve_inner(
                 state: ServeState::Start,
                 _inflight: Decrement(inflight.clone()),
             }));
-            let submitted = scheduler.submit(crate::scheduler::Task {
-                id,
-                vm: request_vm,
-                handle: task_handle,
-            });
+            let submitted = scheduler.submit(id, request_vm, task_handle);
             // The program is ending: the request is turned away.
             if submitted.is_err()
                 && let Some(req) = request.lock().take()

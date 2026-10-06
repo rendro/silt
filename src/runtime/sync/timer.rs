@@ -31,7 +31,7 @@ enum Action {
     /// The deadline of a wait.
     Fire(Arc<Token>),
     /// A channel that closes at a set time (`channel.timeout`).
-    Close(Arc<Channel>),
+    Close(Arc<Channel>, Option<Box<dyn Send>>),
 }
 
 #[derive(Default)]
@@ -82,9 +82,17 @@ impl Timer {
         self.arm(deadline, Action::Fire(token))
     }
 
-    /// Close `channel` at `deadline`.
-    pub fn close_at(&self, deadline: Duration, channel: Arc<Channel>) -> TimerId {
-        self.arm(deadline, Action::Close(channel))
+    /// Close `channel` at `deadline`. `held` is dropped when that is
+    /// done and whoever waited on the channel is woken, or when the
+    /// entry is disarmed: what counts the entry as pending for its
+    /// owner.
+    pub fn close_at(
+        &self,
+        deadline: Duration,
+        channel: Arc<Channel>,
+        held: Option<Box<dyn Send>>,
+    ) -> TimerId {
+        self.arm(deadline, Action::Close(channel, held))
     }
 
     /// Take an entry out before its time. `false` when it has fired.
@@ -145,8 +153,9 @@ impl Timer {
                         claim.fire(Fired::Deadline, &mut wakes);
                     }
                 }
-                Action::Close(channel) => {
+                Action::Close(channel, held) => {
                     channel.close(Close::default(), wake);
+                    drop(held);
                 }
             }
         }
