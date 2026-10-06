@@ -1,0 +1,13 @@
+-- cmd: fmt
+-- An or-pattern as a closure's parameter is laid out as in a match arm.
+type Shape {
+  Circle(Int),
+  Square(Int),
+}
+
+fn main() {
+  let side = { Circle(n)
+    | Square(n) -> n }
+  let pair = { (Circle(a)|Square(a)), Circle(b)  |  Square(b) -> a + b }
+  println("{side(Square(4))} {pair(Circle(1), Square(2))}")
+}

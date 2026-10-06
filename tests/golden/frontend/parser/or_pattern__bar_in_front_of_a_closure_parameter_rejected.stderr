@@ -1,0 +1,5 @@
+error[parse]: expected parameter name, found |
+ --> or_pattern__bar_in_front_of_a_closure_parameter_rejected.silt:6:16
+   |
+ 6 |   let pick = { | Some(n) | Ok(n) -> n }
+   |                ^ expected parameter name, found |

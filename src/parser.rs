@@ -3652,7 +3652,7 @@ impl<'src> Parser<'src> {
     /// True when the current token is a `{` whose contents start like a
     /// closure: `params ->`. A parameter is a pattern with an optional
     /// `: Type` annotation, so the scan accepts, at the brace's own
-    /// depth, identifiers, `,`, `:`, `::`, `.`, `type` and the openers
+    /// depth, identifiers, `,`, `|`, `:`, `::`, `.`, `type` and the openers
     /// of nested groups (whose contents it skips), and answers true at
     /// the first `->`. Anything else at that depth, including the
     /// closing `}`, means a block or a record literal: neither can put
@@ -3692,6 +3692,7 @@ impl<'src> Parser<'src> {
                 Token::Newline
                 | Token::Ident(_)
                 | Token::Comma
+                | Token::Bar
                 | Token::Colon
                 | Token::ColonColon
                 | Token::Dot
