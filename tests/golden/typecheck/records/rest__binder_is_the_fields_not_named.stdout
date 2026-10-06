@@ -1,0 +1,7 @@
+<anon> {age: 2}
+true
+3
+<anon> {name: a}
+3
+<anon> {age: 2, k: true}
+<anon> {age: 2}

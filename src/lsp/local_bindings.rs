@@ -317,11 +317,10 @@ fn collect_pattern_bindings(
         PatternKind::AnonRecord { fields, rest } => {
             // Round-62 B9: row-polymorphism destructure
             // (`let { x, y } = anon_record`). Mirror the `Record` arm.
-            // The expr type may be an anonymous record type; for now we
-            // don't try to extract field types from it (the v1
-            // typechecker may or may not surface them as Type::Record),
-            // so we conservatively bind without a type when sub is
-            // missing. Where sub is present, we recurse with no type.
+            // The fields come from the type of the expression: an
+            // anonymous record type's own, or a declared record's
+            // (`record_field_types`). A field the type does not list
+            // binds without a type.
             let field_tys = expr_ty.and_then(|ty| record_field_types(ty, records));
             let lookup_field_ty = |fname: Symbol| -> Option<Type> {
                 field_tys
@@ -350,17 +349,30 @@ fn collect_pattern_bindings(
                     });
                 }
             }
-            // Round-101: the named rest binder (`{ x, ...rest }`) binds
-            // `rest` to a record of the unmatched fields — mirror the
-            // typechecker's `collect_pattern_vars`.
+            // The named rest binder (`{ x, ...rest }`) binds `rest` to
+            // an anonymous record of the fields the pattern does not
+            // name, whatever the record is (over an open row, with the
+            // row).
             if let Some((r, r_span)) = rest {
+                let tail = match expr_ty {
+                    Some(Type::AnonRecord { tail, .. }) => tail.clone(),
+                    _ => crate::types::RowTail::Closed,
+                };
+                let ty = field_tys.as_ref().map(|fs| Type::AnonRecord {
+                    fields: fs
+                        .iter()
+                        .filter(|(n, _)| !fields.iter().any(|(named, _, _)| named == n))
+                        .cloned()
+                        .collect(),
+                    tail,
+                });
                 bindings.push(LocalBinding {
                     name: *r,
                     binding_offset: r_span.start as usize,
                     binding_len: resolve(*r).len(),
                     scope_start: visible_from,
                     scope_end,
-                    ty: None,
+                    ty,
                 });
             }
         }

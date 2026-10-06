@@ -1,0 +1,29 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Person, got {...}
+-- stderr-contains: error[type]: type mismatch: expected Person, got {name: String, age: Int}
+-- stderr-contains: help: an anonymous record is not a `Person`: write `Person { ... }`
+-- stderr-contains: 15:21
+-- stderr-contains: 27:17
+-- stderr-contains: 28:49
+-- A spread makes an anonymous record whenever the type of its base is
+-- decided: a base that turns out to be a `Person` later in the body is
+-- converted like one known at the spread, and what the spread makes is
+-- never the `Person`.
+type Person { name: String, age: Int }
+fn greet(p: Person) -> String { "hi {p.name} {p.age}" }
+fn g(p) -> Person { {...p} }
+fn f(p) {
+  let a = {...p}
+  println(greet(p))
+  a
+}
+fn h(p) {
+  let a = {...p}
+  let b: Person = p
+  a
+}
+fn main() {
+  println(greet(f(Person { name: "Bob", age: 42 })))
+  println(h(Person { name: "Bob", age: 42 }) == Person { name: "Bob", age: 42 })
+}

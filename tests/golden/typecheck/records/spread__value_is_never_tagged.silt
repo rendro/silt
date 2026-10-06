@@ -1,0 +1,24 @@
+-- What a spread makes carries no declared type's name, whatever its
+-- base: through a function it is given anonymous records only, and
+-- where the base is a declared record it is converted. An update keeps
+-- the record's type.
+type Person { name: String, age: Int }
+fn copy(p) { {...p} }
+fn city(p) {
+  let x = {...p, city: "c"}
+  println(x)
+  x.city
+}
+fn keep(p: {name: String, ...r}) -> {name: String, ...r} { p }
+fn tag(p: {name: String, ...r}) -> {name: String, seen: Bool, ...r} { {...p, seen: true} }
+fn main() {
+  let bob = Person { name: "Bob", age: 42 }
+  println(copy({name: "a"}))
+  println(city({name: "a"}))
+  println(copy({...bob}))
+  println(city({...bob}))
+  println(tag({name: "a", k: 1}))
+  println(keep(bob))
+  println(bob.{ age: 43 })
+  println({...bob})
+}

@@ -1,0 +1,24 @@
+-- A spread whose base is decided later in the body converts it then:
+-- the value is the anonymous record, as the type says.
+import list
+type Person { name: String, age: Int }
+fn greet(p: Person) -> String { "hi {p.name} {p.age}" }
+fn f(p) {
+  let a = {...p}
+  println(greet(p))
+  a
+}
+fn ext(p) {
+  let a = {...p, city: "x"}
+  let n: Person = p
+  a.city
+}
+fn main() {
+  let bob = Person { name: "Bob", age: 42 }
+  let q = f(bob)
+  println(q)
+  println(q == {name: "Bob", age: 42})
+  println(ext(bob))
+  println(list.map([bob]) { p -> {...p, k: 1} })
+  match q { {name, age} -> println("{name} {age}") }
+}

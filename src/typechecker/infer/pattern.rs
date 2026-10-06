@@ -745,10 +745,10 @@ impl TypeChecker {
                 // anonymous record is not a `P`, and an open row that is
                 // matched with `P { .. }` is `P`). Where it is not, the
                 // mismatch is reported and the pattern covers nothing.
-                let fits = match self.head(expected) {
+                let fits = match self.apply(expected) {
                     Type::Generic(n, _) => match &declared {
-                        Some((rec_ref, _)) => n == rec_ref,
-                        None => self.tables.records.contains_key(n),
+                        Some((rec_ref, _)) => n == *rec_ref,
+                        None => self.tables.records.contains_key(&n),
                     },
                     Type::Error | Type::Var(_) | Type::Never => true,
                     _ => false,
@@ -860,8 +860,8 @@ impl TypeChecker {
                 // The pattern's type is an open record with a fresh type
                 // for every field it names. The tail is open with or
                 // without a `...rest` binding: without one the other
-                // fields are just not named. Unification widens a nominal
-                // record, so `{name: n, ...rest}` matches a
+                // fields are just not named. A declared record is such
+                // a record, so `{name: n, ...rest}` matches a
                 // `type Person { ... }` value too.
                 use std::collections::BTreeMap;
                 let field_tys: BTreeMap<Symbol, Type> = fields
@@ -888,13 +888,25 @@ impl TypeChecker {
                     subs.insert(*fname, sub);
                 }
                 if let Some((rest_name, _)) = rest {
-                    // The rest is a record of the fields the row
-                    // variable stands for.
-                    let rest_ty = self.apply(&Type::AnonRecord {
-                        fields: BTreeMap::new(),
-                        tail: RowTail::Var(row_var),
-                    });
-                    env.define(*rest_name, Scheme::mono(rest_ty));
+                    // The rest is an anonymous record of the fields the
+                    // pattern does not name, whatever the record is
+                    // (`Goal::Rebuild`).
+                    let rest_ty = self.fresh_var();
+                    self.want_goal(
+                        Goal::Rebuild {
+                            base: expected.clone(),
+                            without: fields.iter().map(|(name, _, _)| *name).collect(),
+                            with: Vec::new(),
+                            result: rest_ty.clone(),
+                            rest: true,
+                        },
+                        Origin {
+                            span,
+                            callee: None,
+                            op: None,
+                        },
+                    );
+                    env.define(*rest_name, Scheme::mono(self.apply(&rest_ty)));
                 }
                 let (names, subs) = subs.into_iter().unzip();
                 self.ctor_pat(CtorId::Record(names), subs)

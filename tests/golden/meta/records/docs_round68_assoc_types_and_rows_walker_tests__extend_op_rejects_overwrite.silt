@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: existing field
+-- stderr-contains: cannot extend the record with field 'name': it has one already
 fn main() {
   let p = {name: "Alice"}
   let q = {...p, name: "Bob"}

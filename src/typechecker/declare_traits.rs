@@ -1850,8 +1850,10 @@ impl TypeChecker {
     ) -> bool {
         // What the declared bounds say of `var`, supertraits included.
         let outer = self.bounds.remove(&var);
-        for Pred::Trait { tr, args, subject } in declared {
-            if *subject == Type::Var(var) {
+        for pred in declared {
+            if let Pred::Trait { tr, args, subject } = pred
+                && *subject == Type::Var(var)
+            {
                 self.declare_bound(var, *tr, args.clone());
             }
         }

@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot extend the record with field 'name': it has one already
+-- stderr-contains: error[type]: cannot extend the record with field 'age': it has one already
+-- stderr-contains: help: a record is extended, never overwritten: update the field with `r.{ name: ... }`
+-- stderr-not-contains: v1 row polymorphism
+-- stderr-not-contains: of type
+-- stderr-contains: 17:3
+-- stderr-contains: 19:54
+-- stderr-contains: 22:15
+-- stderr-contains: 24:22
+-- A spread that writes a field its base has says so in one way,
+-- wherever the base's fields are known: at the spread, or at the call
+-- that gives the row a record with the field.
+fn f(p) {
+  let n: String = p.name
+  {...p, name: 1}
+}
+fn g(p: {name: String, ...r}) -> {name: Int, ...r} { {...p, name: 1} }
+fn ext(p) { {...p, age: 30} }
+fn main() {
+  println(ext({age: 1}))
+  let mk = { n -> {age: n} }
+  println({ x -> ext(mk(x)) }("old"))
+}

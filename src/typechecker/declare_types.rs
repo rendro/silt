@@ -386,7 +386,7 @@ impl TypeChecker {
     /// Cycle detection traverses the resolved target looking for any
     /// reference back to the alias being declared (or to another alias
     /// that — transitively — references this one). Implementation: walk
-    /// the target's free `Type::Generic` / `Type::Record` heads and ask
+    /// the target's free `Type::Generic` heads and ask
     /// the registry whether the head is an alias whose own target
     /// reaches `td.name`. The walk uses an explicit "in-progress" set
     /// keyed on alias name so a chain `A -> B -> A` produces the

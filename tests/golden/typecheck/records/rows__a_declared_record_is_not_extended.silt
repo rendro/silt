@@ -1,11 +1,11 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: cannot extend a `Person` with field 'city': it is a declared record type
--- stderr-contains: convert the record where its type is known, with a spread
--- A declared record behind an open row is not extended: the function
--- cannot know it must make a new record, and the value would keep the
--- record's name with a field the type does not declare. (Where the
--- record's type is known, `{...p, city: "x"}` converts it.)
+-- stderr-contains: error[type]: cannot spread a `Person` through 'ext': convert it where its type is known, `{...p}`
+-- stderr-contains: 14:15
+-- A declared record behind an open row is not extended: what the
+-- function makes is an anonymous record over the row, and no declared
+-- record stands for a row that is spread. (Where the record's type is
+-- known, `{...p, city: "x"}` converts it.)
 type Person { name: String, age: Int }
 fn ext(p) { {...p, city: "x"} }
 fn main() {

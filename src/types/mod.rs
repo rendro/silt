@@ -505,6 +505,13 @@ pub enum Pred {
         args: Vec<Type>,
         subject: Type,
     },
+    /// The row `row` (a row variable, as a type) is not the rest of a
+    /// declared record: the definition spreads a record over the row, or
+    /// binds the rest of one, and what that makes is an anonymous
+    /// record. With `given`, the row variable of a function's signature,
+    /// only if the body of that function does so to that variable
+    /// (which is known once the body is checked).
+    Anon { row: Type, given: Option<TyVar> },
 }
 
 impl Pred {
@@ -525,6 +532,26 @@ impl Pred {
                 args: args.iter().map(|t| substitute_vars(t, mapping)).collect(),
                 subject: substitute_vars(subject, mapping),
             },
+            Pred::Anon { row, given } => Pred::Anon {
+                row: substitute_vars(row, mapping),
+                given: *given,
+            },
+        }
+    }
+
+    /// The type the predicate is about.
+    pub fn subject(&self) -> &Type {
+        match self {
+            Pred::Trait { subject, .. } => subject,
+            Pred::Anon { row, .. } => row,
+        }
+    }
+
+    /// The types the predicate names besides its subject.
+    pub fn args(&self) -> &[Type] {
+        match self {
+            Pred::Trait { args, .. } => args,
+            Pred::Anon { .. } => &[],
         }
     }
 }

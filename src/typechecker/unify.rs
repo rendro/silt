@@ -160,6 +160,7 @@ impl TypeChecker {
         self.solve_wanted(self.closed_mark);
         self.close_level();
         self.decide_tries();
+        self.default_rebuilds();
         self.default_selects(false);
     }
 
@@ -364,8 +365,8 @@ impl TypeChecker {
 
     /// Round 74 Fix #5: canonical wording for the occurs-check
     /// diagnostic emitted from every unification site (main `Var(v) ↔ t`
-    /// arm at line ~1270, plus the five row-unif arms in
-    /// `unify_anon_anon` / `unify_anon_nominal`). Pre-fix: the row-unif
+    /// arm, plus the row-unif arms in `unify_anon_anon` and
+    /// `open_row_is`). Pre-fix: the row-unif
     /// arms emitted the terse `"infinite type"` while the main arm
     /// emitted `"infinite type: the type variable appears inside {t}"`.
     /// Routing all six sites through this helper keeps the diagnostic
@@ -621,11 +622,11 @@ impl TypeChecker {
             }
         }
         if !missing.is_empty() {
-            out.push(Fault::new(
+            let shown = self.written_type(*name);
+            let mut fault = Fault::new(
                 Code::NoSuchField,
                 format!(
-                    "record {} has no field{} {}",
-                    self.show_type(&Type::Generic(*name, Vec::new())),
+                    "record {shown} has no field{} {}",
                     if missing.len() == 1 { "" } else { "s" },
                     missing
                         .iter()
@@ -633,7 +634,18 @@ impl TypeChecker {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
-            ));
+            );
+            // A method of the record is not a field of it: what reads
+            // a record's fields calls a field.
+            if let Some(method) = missing
+                .iter()
+                .find(|f| self.tables.method_table.contains_key(&(*name, intern(f))))
+            {
+                fault.help = Some(format!(
+                    "'{method}' is a method of `{shown}`, and what is asked for here is a record with a field '{method}': a value whose fields are read is a record, and `x.{method}(..)` on it calls a field; annotate it, `p: {shown}`"
+                ));
+            }
+            out.push(fault);
             return;
         }
         if occurs_in(v, nominal) {
@@ -897,19 +909,17 @@ impl TypeChecker {
                     }
                     RowTail::Rigid(_) => out.push(self.type_mismatch(&t1, &t2)),
                     RowTail::Closed => {
-                        let (anon_is_got, nominal) = match &t1 {
-                            Type::AnonRecord { .. } => (true, &t2),
-                            _ => (false, &t1),
-                        };
+                        let anon_is_got = matches!(&t1, Type::AnonRecord { .. });
                         let mut fault = self.type_mismatch(&t1, &t2);
-                        let shown = self.show_type(&Type::Generic(*name, Vec::new()));
+                        // (As the module writes the type: an imported
+                        // one with its module.)
+                        let shown = self.written_type(*name);
                         fault.help = Some(match anon_is_got {
                             true => format!(
                                 "an anonymous record is not a `{shown}`: write `{shown} {{ ... }}`"
                             ),
                             false => format!(
-                                "a `{}` is not an anonymous record: convert it with a spread, `{{...v}}`, or take an open row, `{{x: T, ...r}}`",
-                                self.show_type(nominal)
+                                "a `{shown}` is not an anonymous record: convert it with a spread, `{{...v}}`, or take an open row, `{{x: T, ...r}}`"
                             ),
                         });
                         out.push(fault);

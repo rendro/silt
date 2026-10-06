@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: record Person has no field 'greet'
+-- stderr-contains: help: 'greet' is a method of `Person`, and what is asked for here is a record with a field 'greet'
+-- stderr-contains: annotate it, `p: Person`
+-- stderr-contains: 18:17
+-- A value whose field is read is a record, and `p.greet()` on it calls
+-- a function its field `greet` holds: a `Person` has a method of that
+-- name, not a field, and the error says so.
+type Person { name: String, age: Int }
+trait Greet { fn greet(self) -> String }
+trait Greet for Person { fn greet(self) -> String { "I am {self.name}" } }
+fn call2(p) {
+  let n: String = p.name
+  p.greet()
+}
+fn main() {
+  println(call2(Person { name: "B", age: 1 }))
+}

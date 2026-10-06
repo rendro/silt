@@ -347,9 +347,9 @@ impl Resolver {
 /// - `Type::Range(t)` -> `Type::List(canonicalize(t))`
 /// - `Type::Generic(name, args)` whose `name` is a registered alias ->
 ///   the alias's stored target with `args` substituted into its
-///   parameters, then canonicalised. (Only `Generic` heads can be
-///   aliases: a name cannot be declared as both a record and an alias,
-///   so the `Type::Record` arm below is pure structural recursion.)
+///   parameters, then canonicalised. (A name cannot be declared as
+///   both a record and an alias: a declared record's `Generic` head is
+///   never an alias.)
 /// - `Type::AssocProj` whose receiver canonicalises to a concrete head
 ///   with a registered impl binding -> that binding's stored type,
 ///   canonicalised.
@@ -511,8 +511,8 @@ pub fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
 /// and typechecker for dispatch lookup.
 ///
 /// Returns `String` (rather than the `&'static str` the design sketch
-/// originally suggested) because user-declared `Type::Record` and
-/// `Type::Generic` carry runtime-interned [`Symbol`]
+/// originally suggested) because a user-declared type's
+/// `Type::Generic` carries a runtime-interned [`Symbol`]
 /// names whose backing string is owned by the interner pool, not a
 /// `'static` literal. Built-in names (`"Int"`, `"List"`, `"Map"`, ...)
 /// match the entries in [`crate::types::builtins::BUILTIN_TYPES`]; the
