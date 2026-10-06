@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 #[cfg(feature = "http")]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(feature = "http")]
 use std::time::Duration;
 
@@ -553,6 +553,9 @@ struct Serve {
     /// handler fails.
     handle: Arc<TaskHandle>,
     state: ServeState,
+    /// The operation that sends the response, while the task waits
+    /// for it.
+    responding: Option<crate::vm::IoOp>,
     _inflight: Decrement,
 }
 
@@ -612,10 +615,13 @@ impl crate::vm::Native for Serve {
                     }
                     Value::Unit
                 });
-                Ok(Step::Park(Wait::new(vec![Arm::Cell(op.cell)])))
+                let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+                self.responding = Some(op);
+                Ok(Step::Park(wait))
             }
             ServeState::Responding => {
                 vm.woken()?;
+                self.responding = None;
                 Ok(Step::Done(Value::Unit))
             }
         }
@@ -695,9 +701,17 @@ fn do_http_serve_inner(
     // task that waits for the server is not deadlocked.
     let serving = vm.scheduler().external();
     let scheduler = vm.scheduler().clone();
+    // The server ends with the wait of the task that serves: when that
+    // task is cancelled, or dropped at the end of the program, the
+    // accept loop is told to end.
+    let stopped = Arc::new(AtomicBool::new(false));
+    let stop = StopServer(server.clone(), stopped.clone());
     std::thread::spawn(move || {
         let _serving = serving;
         loop {
+            if stopped.load(Ordering::SeqCst) {
+                break;
+            }
             // Use recv_timeout so the accept loop periodically
             // unblocks and can notice a shutdown. Note: this
             // does NOT per-connection bound the time tiny_http
@@ -736,6 +750,7 @@ fn do_http_serve_inner(
                 handler: handler.clone(),
                 handle: task_handle.clone(),
                 state: ServeState::Start,
+                responding: None,
                 _inflight: Decrement(inflight.clone()),
             }));
             let submitted = scheduler.submit(id, request_vm, task_handle);
@@ -754,8 +769,10 @@ fn do_http_serve_inner(
 
     // The caller waits until the server shuts down.
     let wait = Wait::new(vec![Arm::Cell(handle.done())]);
-    Ok(
-        vm.park(name_for_err, wait, move |_, _| match handle.try_get() {
+    Ok(vm.park(name_for_err, wait, move |_, _| {
+        // Owned by the frame that waits: see `StopServer`.
+        let _ = &stop;
+        match handle.try_get() {
             Some(Err(mut inner)) => {
                 inner.message = format!("{name_for_err} failed: {}", inner.message);
                 Err(inner)
@@ -764,8 +781,21 @@ fn do_http_serve_inner(
             None => Err(VmError::new(format!(
                 "internal VM error: {name_for_err} ended before its server"
             ))),
-        }),
-    )
+        }
+    }))
+}
+
+/// Ends a server's accept loop when it is dropped: the loop reads the
+/// flag before each `recv`, and a `recv` that waits returns.
+#[cfg(feature = "http")]
+struct StopServer(Arc<tiny_http::Server>, Arc<AtomicBool>);
+
+#[cfg(feature = "http")]
+impl Drop for StopServer {
+    fn drop(&mut self) {
+        self.1.store(true, Ordering::SeqCst);
+        self.0.unblock();
+    }
 }
 
 /// Dispatch `http.<name>(args)`.

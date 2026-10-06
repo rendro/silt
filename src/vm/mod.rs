@@ -219,22 +219,19 @@ impl Vm {
         timeout_err: ErrFactory,
         op: impl FnOnce() -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
-        let IoOp { cell, in_flight } = self.runtime.io_pool.submit(timeout_err, op);
+        let op = self.runtime.io_pool.submit(timeout_err, op);
         let (deadline, source) = match self.runtime.scheduler.io_deadline(self.current_deadline) {
             Some((deadline, source)) => (Some(deadline), source),
             None => (None, crate::scheduler::DeadlineSource::Task),
         };
-        let wait = Wait::new(vec![Arm::Cell(cell.clone())]).deadline(deadline);
+        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(deadline);
+        // The frame owns the operation: when the wait is over, however
+        // it ends, the operation has no waiter and no longer counts as
+        // pending for the program (`IoOp`'s `Drop`).
         Ok(self.park(name, wait, move |_, fired| {
-            Ok(Step::Done(match (fired, cell.get()) {
+            Ok(Step::Done(match (fired, op.cell.get()) {
                 (Fired::Arm(..), Some(value)) => value.clone(),
-                // The operation goes on without a waiter: it no longer
-                // counts as pending for the program.
-                _ => {
-                    let abandoned = in_flight.lock().take();
-                    drop(abandoned);
-                    timeout_err(source.message())
-                }
+                _ => timeout_err(source.message()),
             }))
         }))
     }

@@ -445,7 +445,10 @@ pending. Until then `silt run` keeps going:
   such a wait could never end.
 - A task that never stops keeps the program from ending. A ticker, a
   server loop or a watcher has to be told to stop, or cancelled, before
-  `main` returns:
+  `main` returns. That holds for a task that waits in I/O as well
+  (`tcp.accept`, `io.read_line`): once it is cancelled nobody waits for
+  the operation, which then counts for nothing. A server started with
+  `http.serve` ends when the task that called it is cancelled.
 
 ```silt
 import channel
