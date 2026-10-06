@@ -205,6 +205,18 @@ pub(super) fn get_field_type_resolved(
     }
 }
 
+/// The fields of a record type, each with its type: an anonymous record's
+/// own, a declared record's from the checker's records.
+pub(super) fn record_field_types(ty: &Type, records: &RecordFields) -> Option<Vec<(Symbol, Type)>> {
+    match ty {
+        Type::AnonRecord { fields, .. } => {
+            Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
+        }
+        Type::Generic(name, _) => records.get(name).cloned(),
+        _ => None,
+    }
+}
+
 /// Given a type, return the record fields if it is (or wraps) a record type.
 /// A named record's fields are the checker's.
 pub(super) fn record_fields_from_type(

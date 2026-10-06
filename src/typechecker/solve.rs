@@ -513,9 +513,9 @@ impl TypeChecker {
                         origin.span,
                         format!("cannot extend a `{shown}` with field '{field}': it is a declared record type"),
                     )
-                    .with_help(format!(
-                        "update a field it has with `r.{{ f: ... }}`, or build an anonymous record from its fields: `{{ x: r.x, ..., {field}: ... }}`"
-                    )),
+                    .with_help(
+                        "convert the record where its type is known, with a spread: `{...r}` is an anonymous record with its fields",
+                    ),
                 );
             }
             _ => {}
@@ -1188,48 +1188,41 @@ impl TypeChecker {
                 }
                 walk.seen.push((head, args.clone()));
                 // The type's parts, at its arguments.
-                let parts: Vec<(String, Type)> = match &ty {
-                    _ => {
-                        if let Some(info) = self.tables.records.get(name) {
-                            let mapping: HashMap<TyVar, Type> = self
-                                .tables
-                                .record_param_var_ids
-                                .get(name)
-                                .filter(|ids| ids.len() == args.len())
-                                .map(|ids| ids.iter().copied().zip(args.iter().cloned()).collect())
-                                .unwrap_or_default();
-                            info.fields
-                                .iter()
-                                .map(|(n, t)| {
-                                    (format!("field '{n}'"), substitute_vars(t, &mapping))
-                                })
-                                .collect()
-                        } else if let Some(info) = self.tables.enums.get(name) {
-                            let mapping: HashMap<TyVar, Type> =
-                                if info.param_var_ids.len() == args.len() {
-                                    info.param_var_ids
-                                        .iter()
-                                        .copied()
-                                        .zip(args.iter().cloned())
-                                        .collect()
-                                } else {
-                                    HashMap::new()
-                                };
-                            info.variants
-                                .iter()
-                                .flat_map(|v| {
-                                    v.field_types.iter().enumerate().map(|(i, t)| {
-                                        (
-                                            format!("variant '{}' payload #{}", v.name, i + 1),
-                                            substitute_vars(t, &mapping),
-                                        )
-                                    })
-                                })
-                                .collect()
-                        } else {
-                            Vec::new()
-                        }
-                    }
+                let parts: Vec<(String, Type)> = if let Some(info) = self.tables.records.get(name) {
+                    let mapping: HashMap<TyVar, Type> = self
+                        .tables
+                        .record_param_var_ids
+                        .get(name)
+                        .filter(|ids| ids.len() == args.len())
+                        .map(|ids| ids.iter().copied().zip(args.iter().cloned()).collect())
+                        .unwrap_or_default();
+                    info.fields
+                        .iter()
+                        .map(|(n, t)| (format!("field '{n}'"), substitute_vars(t, &mapping)))
+                        .collect()
+                } else if let Some(info) = self.tables.enums.get(name) {
+                    let mapping: HashMap<TyVar, Type> = if info.param_var_ids.len() == args.len() {
+                        info.param_var_ids
+                            .iter()
+                            .copied()
+                            .zip(args.iter().cloned())
+                            .collect()
+                    } else {
+                        HashMap::new()
+                    };
+                    info.variants
+                        .iter()
+                        .flat_map(|v| {
+                            v.field_types.iter().enumerate().map(|(i, t)| {
+                                (
+                                    format!("variant '{}' payload #{}", v.name, i + 1),
+                                    substitute_vars(t, &mapping),
+                                )
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
                 };
                 first(self, walk, parts)
             }

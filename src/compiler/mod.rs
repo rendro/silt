@@ -1556,22 +1556,52 @@ impl Compiler {
                         "anon record literal cannot have more than 255 fields",
                     ));
                 }
-                if let Some(base) = spread {
-                    // Extend op: compile base, then RecordUpdate-style merge
-                    // (RecordUpdate already supports adding new fields too).
-                    //
-                    // Round 83 originally emitted a sibling `RecordUpdateAnon`
-                    // opcode that rebranded the result's `type_name` to
-                    // `"<anon>"` so a spread of a nominal record would
-                    // compare equal to an anon-record literal of the same
-                    // shape. Round 85 follow-up removed the sibling opcode:
-                    // rounds 84-85 made `Value::PartialEq` / `Value::Ord` /
-                    // `Value::Hash` treat `<anon>` as a wildcard on either
-                    // side, which closes the equality, ordering, and
-                    // hashing surfaces uniformly without a runtime
-                    // rebrand. Locks: tests/lang/round83_anonrec_spread_eq_tests.rs
-                    // (PartialEq), tests/typecheck/round85_anonrec_hash_ord_contract_tests.rs
-                    // (Hash + Ord + Set contract).
+                if let Some(base) = spread
+                    && let Some(Type::Generic(record, _)) = &base.ty
+                    && let declared = self.record_fields(record.id)
+                    && !declared.is_empty()
+                {
+                    // A spread over a value of a declared record type
+                    // makes an anonymous record: a new record of the
+                    // anonymous type, with each field of the base the
+                    // literal does not write read from the base (kept in
+                    // a hidden local), then the written fields.
+                    self.begin_scope();
+                    self.in_tail_position = false;
+                    self.compile_expr(base)?;
+                    let slot = self.add_local(intern("__spread_base__"), span)?;
+                    self.emit(Asm::SetLocal { slot }, span)?;
+                    let mut field_names: Vec<Symbol> = Vec::new();
+                    for (name, _) in &declared {
+                        if fields.iter().any(|(written, _)| written == name) {
+                            continue;
+                        }
+                        self.emit(Asm::GetLocal { slot }, span)?;
+                        let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
+                        self.emit(Asm::GetField { name: name_idx }, span)?;
+                        field_names.push(*name);
+                    }
+                    for (name, value) in fields {
+                        self.in_tail_position = false;
+                        self.compile_expr(value)?;
+                        field_names.push(*name);
+                    }
+                    if field_names.len() > u8::MAX as usize {
+                        return Err(Diagnostic::error(
+                            Code::CompileLimit,
+                            span,
+                            "anon record literal cannot have more than 255 fields",
+                        ));
+                    }
+                    let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
+                    let ty = self.add_constant(Value::TypeDescriptor(anon.clone()), span)?;
+                    let names = self.name_constants(&field_names, span)?;
+                    self.emit(Asm::MakeRecord { ty, fields: &names }, span)?;
+                    self.end_scope_with_result(false, span)?;
+                } else if let Some(base) = spread {
+                    // A spread over an anonymous record: compile the base,
+                    // then a RecordUpdate-style merge, which adds the new
+                    // fields and keeps the base's (anonymous) type.
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.compile_operands(
                         std::iter::once(&**base).chain(fields.iter().map(|(_, val)| val)),

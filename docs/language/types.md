@@ -248,8 +248,8 @@ greet({name: "x", age: 3})
 -- help: an anonymous record is not a `Person`: write `Person { ... }`
 
 let r: {name: String, age: Int} = Person { name: "x", age: 3 }
--- error: a `Person` is not an anonymous record: build one from its
--- fields, `{ name: p.name, age: p.age }`
+-- error: a `Person` is not an anonymous record: convert it with a
+-- spread, `{...p}`
 ```
 
 A row variable can be bounded like a type variable, for a function
@@ -293,10 +293,26 @@ update (`p.{ name: "Bob" }`) for that. The same holds behind an open
 row: `fn ext(p) { {...p, age: 30} }` takes any record that has no
 `age`, and a call with one that has is an error at the call.
 
-A spread makes an anonymous record, so its base is one: a declared
-record type is not extended (`{...person, city: "x"}` is an error).
-Update its fields with `person.{ ... }`, or build the anonymous record
-from its fields.
+A spread always makes an anonymous record. Over a value of a declared
+record type it is the conversion, written out: `{...person}` is the
+anonymous record with `Person`'s fields, and a field written after the
+spread is added, or replaces the record's by name:
+
+```silt
+type Person { name: String, age: Int }
+
+fn main() {
+  let p = Person { name: "Bob", age: 42 }
+  let r = {...p, city: "x"}      -- {name: String, age: Int, city: String}
+  println(r.city)                -- x
+}
+```
+
+There is no spelling for the other direction: a `Person` is built from
+its fields, `Person { name: r.name, age: r.age }`. A function over an
+open row cannot extend a declared record it is given
+(`fn ext(p) { {...p, city: "x"} }` called with a `Person` is an error):
+convert first, `ext({...person})`.
 
 ### Pattern destructuring with rest
 

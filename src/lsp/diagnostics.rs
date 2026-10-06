@@ -28,6 +28,7 @@ use crate::source::{FileId, SourceFile, SourceMap, SourceName};
 
 use super::Server;
 use super::definitions::build_definitions;
+use super::fields::RecordFields;
 use super::local_bindings::collect_local_bindings;
 use super::panic_message;
 use super::project::{Project, path_key, project_dir};
@@ -72,11 +73,11 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
     let (program, _) = parse_text(file, &text);
     let definitions = program
         .as_ref()
-        .map(|p| build_definitions(p, None))
+        .map(|p| build_definitions(p, None, &RecordFields::new()))
         .unwrap_or_default();
     let locals = program
         .as_ref()
-        .map(|p| collect_local_bindings(p, &text, None))
+        .map(|p| collect_local_bindings(p, &text, None, &RecordFields::new()))
         .unwrap_or_default();
     Document {
         source: SourceFile::new(SourceName::Path(path.clone()), text),
@@ -361,11 +362,14 @@ impl Server {
         let doc = self.documents.get_mut(uri).expect("an analysed document");
         match checked {
             Some(checked) => {
-                doc.definitions = build_definitions(&checked.ast, Some(&checked.top_level));
+                let records = project.session.tables().record_fields();
+                doc.definitions =
+                    build_definitions(&checked.ast, Some(&checked.top_level), &records);
                 doc.locals = collect_local_bindings(
                     &checked.ast,
                     &doc.source.text,
                     Some(&checked.top_level),
+                    &records,
                 );
                 doc.program = Some(checked.ast.clone());
             }
