@@ -1,5 +1,8 @@
 -- verdict: same
 fn main() {
   let x = 5
-  println("v={match x { 5 -> "five" _ -> "other" }}")
+  println("v={match x {
+    5 -> "five"
+    _ -> "other"
+  }}")
 }

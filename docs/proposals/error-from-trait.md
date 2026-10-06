@@ -58,8 +58,8 @@ closure:
 
 ```silt
 fn load_config(path: String) -> Result(Config, AppError) {
-  let raw    = result.map_err(io.read_file(path),       { e -> IoProblem(e) })?
-  let config = result.map_err(json.parse(raw, Config),  { e -> JsonProblem(e) })?
+  let raw = result.map_err(io.read_file(path)) { e -> IoProblem(e) }?
+  let config = result.map_err(json.parse(raw, Config)) { e -> JsonProblem(e) }?
   Ok(config)
 }
 ```
@@ -123,7 +123,7 @@ impl From(json.JsonError) for AppError {
 
 ```silt
 fn load_config(path: String) -> Result(Config, AppError) {
-  let raw    = result.map_err(io.read_file(path),      AppError.from)?
+  let raw = result.map_err(io.read_file(path), AppError.from)?
   let config = result.map_err(json.parse(raw, Config), AppError.from)?
   Ok(config)
 }
@@ -200,8 +200,8 @@ that work on the current silt tree:
 
 ```silt
 fn load_config(path: String) -> Result(Config, AppError) {
-  let raw    = result.map_err(io.read_file(path),      { e -> IoProblem(e) })?
-  let config = result.map_err(json.parse(raw, Config), { e -> JsonProblem(e) })?
+  let raw = result.map_err(io.read_file(path)) { e -> IoProblem(e) }?
+  let config = result.map_err(json.parse(raw, Config)) { e -> JsonProblem(e) }?
   Ok(config)
 }
 ```
@@ -216,17 +216,21 @@ trait IntoAppError {
 }
 
 trait IntoAppError for io.IoError {
-  fn into_app_error(self) -> AppError { IoProblem(self) }
+  fn into_app_error(self) -> AppError {
+    IoProblem(self)
+  }
 }
 
 trait IntoAppError for json.JsonError {
-  fn into_app_error(self) -> AppError { JsonProblem(self) }
+  fn into_app_error(self) -> AppError {
+    JsonProblem(self)
+  }
 }
 
 fn load_config(path: String) -> Result(Config, AppError) {
-  let raw    = result.map_err(io.read_file(path),      io.IoError.into_app_error)?
+  let raw = result.map_err(io.read_file(path), io.IoError.into_app_error)?
   -- OR using a closure to make the conversion name visible on the value side:
-  let cfg    = result.map_err(json.parse(raw, Config), { e -> e.into_app_error() })?
+  let cfg = result.map_err(json.parse(raw, Config)) { e -> e.into_app_error() }?
   Ok(cfg)
 }
 ```

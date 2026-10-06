@@ -20,6 +20,9 @@ fn describe(shape) {
 }
 ```
 
+Each arm starts on its own line; there is no separator between arms. A match
+with one arm may be written on one line: `match pair { (a, b) -> a + b }`.
+
 ## Match without Scrutinee (Boolean Dispatch)
 
 Omit the scrutinee for boolean conditions:
@@ -28,8 +31,8 @@ Omit the scrutinee for boolean conditions:
 fn classify(n) {
   match {
     n == 0 -> "zero"
-    n > 0  -> "positive"
-    _      -> "negative"
+    n > 0 -> "positive"
+    _ -> "negative"
   }
 }
 ```
@@ -98,7 +101,7 @@ fn fizzbuzz(n) {
     (0, 0) -> "FizzBuzz"
     (0, _) -> "Fizz"
     (_, 0) -> "Buzz"
-    _      -> "{n}"
+    _ -> "{n}"
   }
 }
 ```
@@ -154,6 +157,17 @@ match n {
 }
 ```
 
+A long list of alternatives may continue on the next line, which then
+starts with its `|`:
+
+```silt
+match day {
+  "Saturday"
+  | "Sunday" -> "weekend"
+  _ -> "weekday"
+}
+```
+
 All alternatives must bind the **same** variables (and, as in any match,
 all alternatives must have the same type — you can't mix `Some(x)` with
 `Ok(x)` in one or-pattern):
@@ -167,7 +181,7 @@ fn unwrap_either(r: Result(Int, Int)) -> Int {
 }
 
 fn main() {
-  println("{unwrap_either(Ok(7))}")   -- 7
+  println("{unwrap_either(Ok(7))}") -- 7
 }
 ```
 
@@ -197,9 +211,9 @@ Inclusive numeric ranges:
 ```silt
 match score {
   90..100 -> "A"
-  80..89  -> "B"
-  70..79  -> "C"
-  _       -> "F"
+  80..89 -> "B"
+  70..79 -> "C"
+  _ -> "F"
 }
 ```
 
@@ -238,8 +252,12 @@ Asserts a pattern match and binds on success, or diverges on failure:
 
 ```silt
 fn process(input) {
-  when let Ok(value) = parse(input) else { return Err("parse failed") }
-  when let Admin(perms) = user.role else { return Err("unauthorized") }
+  when let Ok(value) = parse(input) else {
+    return Err("parse failed")
+  }
+  when let Admin(perms) = user.role else {
+    return Err("unauthorized")
+  }
   do_admin_thing(value, perms)
 }
 ```
@@ -288,6 +306,6 @@ A match with so many interdependent patterns that the check cannot finish
 is an error too ("could not verify that the match is exhaustive"); a `_`
 arm settles it.
 
-**Trade-off: no `if`.** Simple boolean checks are more verbose (`match debug
-{ true -> ..., false -> () }`). In practice, guardless match and `when`-`else`
-cover most cases.
+**Trade-off: no `if`.** Simple boolean checks are more verbose (a `match
+debug { ... }` with a `true` arm and a `false` arm, each on its own line). In
+practice, guardless match and `when`-`else` cover most cases.

@@ -9,7 +9,10 @@ fn f(xs: List(Int)) -> Result(Int, String) {
   Ok(list.length(ys))
 }
 fn check(x: Int) -> Result(Int, String) {
-  match x { 0 -> Err("zero"), _ -> Ok(x) }
+  match x {
+    0 -> Err("zero")
+    _ -> Ok(x)
+  }
 }
 fn main() {
   println(f([1, 2]))

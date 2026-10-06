@@ -1,0 +1,17 @@
+-- cmd: fmt
+-- A `?` behind a pipeline applies to the pipeline. Where its last stage
+-- would take the `?` for itself, the parentheses that prevent it stay,
+-- around the stage or around the pipeline, as they are written.
+fn run(a, b, c, f) -> Result(Int, String) {
+  let p = (a |> f)?
+  let q = a |> (-b)?
+  let r = a |> (b + c)?
+  let s = (a |> b + c)?
+  let t = a |> (f?)
+  let u = (a |> (f))?
+  Ok(p + q + r + s + t + u)
+}
+
+fn main() {
+  println("ok")
+}

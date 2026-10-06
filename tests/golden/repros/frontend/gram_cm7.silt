@@ -1,8 +1,14 @@
 -- verdict: same
 fn main() {
   let x = 5
-  let y = 1 + match x { 5 -> 10 _ -> 20 }
+  let y = 1 + match x {
+    5 -> 10
+    _ -> 20
+  }
   println("{y}")
-  let z = [1, match x { 5 -> 10 _ -> 20 }]
+  let z = [1, match x {
+    5 -> 10
+    _ -> 20
+  }]
   println("{z}")
 }

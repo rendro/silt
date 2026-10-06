@@ -5,7 +5,12 @@ trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
 fn main() {
   let ch = channel.new(1)
-  let f = { -> match channel.try_receive(ch) { channel.Message(m) -> m.greet(), _ -> "none" } }
+  let f = { ->
+    match channel.try_receive(ch) {
+      channel.Message(m) -> m.greet()
+      _ -> "none"
+    }
+  }
   channel.send(ch, 3)
   println(f())
 }

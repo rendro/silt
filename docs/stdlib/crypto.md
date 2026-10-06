@@ -56,7 +56,7 @@ fn main() {
   -- HMAC authentication
   let key = bytes.from_string("secret key")
   let tag = crypto.hmac_sha256(key, bytes.from_string("hello"))
-  println(bytes.length(tag))                       -- 32
+  println(bytes.length(tag)) -- 32
 
   -- CSPRNG: 32 random bytes (256-bit token)
   match crypto.random_bytes(32) {
@@ -67,7 +67,7 @@ fn main() {
   -- Timing-safe comparison for auth tag verification
   let expected = crypto.hmac_sha256(key, bytes.from_string("hello"))
   let received = crypto.hmac_sha256(key, bytes.from_string("hello"))
-  println(crypto.constant_time_eq(expected, received))  -- true
+  println(crypto.constant_time_eq(expected, received)) -- true
 }
 ```
 

@@ -52,17 +52,17 @@ fn main() {
 
   -- Round-trip.
   match encoding.url_decode(encoded) {
-    Ok(back) -> println(back)              -- hello world & goodbye?
+    Ok(back) -> println(back) -- hello world & goodbye?
     Err(e) -> println(e)
   }
 
   -- Non-ASCII: UTF-8 bytes are encoded.
-  println(encoding.url_encode("café"))     -- caf%C3%A9
+  println(encoding.url_encode("café")) -- caf%C3%A9
 
   -- Malformed input is rejected.
   match encoding.url_decode("bad%") {
     Ok(_) -> println("should not happen")
-    Err(e) -> println(e)                   -- truncated percent-escape at offset 3
+    Err(e) -> println(e) -- truncated percent-escape at offset 3
   }
 }
 ```
@@ -110,11 +110,9 @@ list produces the empty string.
 import encoding
 
 fn main() {
-  let body = encoding.form_encode([
-    ("name", "Ada Lovelace"),
-    ("role", "analyst & author"),
-    ("lang", "English"),
-  ])
+  let body = encoding.form_encode(
+    [("name", "Ada Lovelace"), ("role", "analyst & author"), ("lang", "English")],
+  )
   println(body)
   -- name=Ada+Lovelace&role=analyst+%26+author&lang=English
 }

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A selective import list with a missing comma or closer: the message names the list
+-- and labels where it starts.
+import list.{ map filter }
+
+fn main() {}

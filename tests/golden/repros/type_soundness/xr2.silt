@@ -4,7 +4,11 @@ type P { v: Int }
 trait Equal for P { fn equal(self, other: P) -> Bool { true } }
 trait Compare for P { fn compare(self, other: P) -> Int { 0 - int_cmp(self.v, other.v) } }
 trait Display for P { fn display(self) -> String { "custom" } }
-fn int_cmp(a: Int, b: Int) -> Int { match { a < b -> -1, a > b -> 1, _ -> 0 } }
+fn int_cmp(a: Int, b: Int) -> Int { match {
+  a < b -> -1
+  a > b -> 1
+  _ -> 0
+} }
 fn main() {
   let a = P { v: 1 }
   let b = P { v: 2 }

@@ -1,0 +1,31 @@
+-- cmd: fmt
+-- Behind a `match` whose scrutinee is a pipeline, a `{` that starts the
+-- next line would be read as the body of that match. Where the source
+-- has parentheses in front of such a `{` (a statement, an arm) they
+-- stay; the first statement of a block needs none. In a guard, braces
+-- stay in their parentheses too: the parser looks along the line for
+-- the arm's `->`.
+fn main() {
+  {
+    1
+  }
+  let a = match 7 |> dbl {
+    x -> x
+  }
+  ({
+    let b = a
+    b
+  })
+  ({ x -> x })(a)
+  match (a, { g: 1 }) {
+    (_, _) -> 1
+    ({ g }) -> g
+    [b] when (-{ -> b }()) > 0 -> b
+    _ when ({ -> a }()) > 0 -> a
+  }
+  [1]
+}
+
+fn dbl(n) {
+  n * 2
+}

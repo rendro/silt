@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue anon record literal, found y
+ --> comma_list__unclosed_anon_record_literal.silt:6:17
+   |
+ 6 |   let p = {x: 1 y: 2}
+   |                 ^ expected '}' or ',' to continue anon record literal, found y
+ ::: comma_list__unclosed_anon_record_literal.silt:6:11
+   |
+ 6 |   let p = {x: 1 y: 2}
+   |           - the anon record literal starts here

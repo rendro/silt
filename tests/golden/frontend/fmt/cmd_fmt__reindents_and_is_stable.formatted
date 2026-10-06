@@ -1,0 +1,12 @@
+-- cmd: fmt
+-- `silt fmt` rewrites the file: the harness compares the result with
+-- the `.formatted` file and formats it a second time.
+
+fn double(n) {
+  n * 2
+}
+
+fn main() {
+  let x = double(21)
+  println("{x}")
+}

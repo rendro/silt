@@ -7,7 +7,7 @@ type Bigger  { a: Int, b: Int }
 
 fn pick(flag: Bool) -> Smaller {
   match flag {
-    true  -> Smaller { a: 1 },
+    true  -> Smaller { a: 1 }
     false -> Bigger { a: 1, b: 2 }
   }
 }

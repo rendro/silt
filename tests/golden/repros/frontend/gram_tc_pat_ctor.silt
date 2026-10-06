@@ -1,2 +1,5 @@
 -- verdict: same
-fn main() { match Some(1) { Some(a,) -> println("{a}")  _ -> println("no") } }
+fn main() { match Some(1) {
+  Some(a,) -> println("{a}")
+  _ -> println("no")
+} }

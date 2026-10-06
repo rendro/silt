@@ -390,3 +390,27 @@ fn cross_module_doc_surfaces_via_workspace() {
 
     client.shutdown();
 }
+
+/// The comments above the functions of a shipped example are their docs:
+/// no empty line stands between a comment and its declaration. (The
+/// formatter before stage 8 put one there, which made every one of them
+/// an ordinary comment.)
+#[test]
+fn hover_on_a_function_of_an_example_shows_its_comment() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/maze_solver.silt");
+    let source = std::fs::read_to_string(path).expect("examples/maze_solver.silt");
+    let (line, _) = source
+        .lines()
+        .enumerate()
+        .find(|(_, text)| text.starts_with("fn get_neighbors("))
+        .expect("fn get_neighbors");
+    let mut client = LspClient::spawn();
+    let uri = "file:///tmp/silt_doc_example_maze_solver.silt";
+    client.did_open_and_wait(uri, &source);
+    let hover = hover_value(&mut client, uri, line as u32, 4);
+    assert!(
+        hover.contains("Get valid neighboring positions"),
+        "hover should carry the comment above the function; got:\n{hover}"
+    );
+    client.shutdown();
+}

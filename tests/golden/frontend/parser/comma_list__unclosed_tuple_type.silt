@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A tuple type with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn first(p: (Int, String Int)) -> Int { 0 }
+
+fn main() {}

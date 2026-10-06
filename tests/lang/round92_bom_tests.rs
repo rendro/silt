@@ -73,12 +73,13 @@ fn bom_then_error_on_line_one_points_past_the_bom() {
     );
 }
 
-// ── (d) fmt on a BOM file: clean round-trip, BOM dropped ──────────────
+// ── (d) fmt on a BOM file: the BOM stays, the program is formatted ───
 
 #[test]
-fn fmt_on_bom_file_drops_bom_without_corruption() {
+fn fmt_on_bom_file_keeps_the_bom_and_formats_the_program() {
     let body = "fn main() {\n  println(\"fmt bom\")\n}\n";
-    let path = temp_silt_file("bom_fmt", &format!("{BOM}{body}"));
+    let messy = "fn   main() {\nprintln( \"fmt bom\" )\n}\n";
+    let path = temp_silt_file("bom_fmt", &format!("{BOM}{messy}"));
 
     let (code, _stdout, stderr) = run_cmd(silt_cmd().arg("fmt").arg(&path));
     assert_eq!(
@@ -86,15 +87,10 @@ fn fmt_on_bom_file_drops_bom_without_corruption() {
         "expected fmt to succeed on a BOM-prefixed file, got exit {code}, stderr:\n{stderr}"
     );
 
+    // The mark is the editor's choice of encoding signature: `silt fmt`
+    // leaves it where it is.
     let after = fs::read_to_string(&path).unwrap();
-    assert!(
-        !after.starts_with(BOM),
-        "fmt re-emits from the token stream, so the BOM must be dropped; got:\n{after:?}"
-    );
-    assert_eq!(
-        after, body,
-        "fmt must not corrupt the program while dropping the BOM"
-    );
+    assert_eq!(after, format!("{BOM}{body}"));
 
     // The reformatted file still runs.
     let (code, stdout, stderr) = run_cmd(silt_cmd().arg("run").arg(&path));

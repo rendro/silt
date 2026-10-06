@@ -2143,9 +2143,9 @@ impl Resolver<'_> {
             "break" | "continue" => {
                 Some("silt has no 'break'/'continue' — return early or restructure the recursion")
             }
-            "if" => {
-                Some("silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'")
-            }
+            "if" => Some(
+                "silt has no 'if' keyword — use 'match cond { ... }' with a 'true -> ...' and a 'false -> ...' arm",
+            ),
             "self" => Some(
                 "`self` is bound only as the first parameter of a trait method; name the \
                  value as a parameter instead",

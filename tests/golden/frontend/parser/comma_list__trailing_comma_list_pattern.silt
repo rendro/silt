@@ -1,0 +1,19 @@
+-- A comma may follow the last element of a list pattern.
+fn describe(xs: List(Int)) -> String {
+  match xs {
+    [] -> "empty"
+    [a,] -> "one: {a}"
+    [
+      a,
+      b,
+    ] -> "two: {a} {b}"
+    _ -> "many"
+  }
+}
+
+fn main() {
+  println(describe([]))
+  println(describe([1]))
+  println(describe([1, 2]))
+  println(describe([1, 2, 3]))
+}

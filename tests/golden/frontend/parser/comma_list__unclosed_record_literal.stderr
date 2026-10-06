@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue record literal, found y
+ --> comma_list__unclosed_record_literal.silt:8:20
+   |
+ 8 |   let p = P { x: 1 y: 2 }
+   |                    ^ expected '}' or ',' to continue record literal, found y
+ ::: comma_list__unclosed_record_literal.silt:8:13
+   |
+ 8 |   let p = P { x: 1 y: 2 }
+   |             - the record literal starts here

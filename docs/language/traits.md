@@ -36,10 +36,23 @@ type for `Self`. The impl may leave the annotations out; what it does
 write must agree with the trait:
 
 ```silt
-trait Scale { fn scale(self, by: Int) -> Int }
+trait Scale {
+  fn scale(self, by: Int) -> Int
+}
 
-trait Scale for Int  { fn scale(self, by) { self * by } }      -- by: Int, returns Int
-trait Scale for Bool { fn scale(self, by) { "no" } }           -- ERROR: expected Int, got String
+-- by: Int, returns Int
+trait Scale for Int {
+  fn scale(self, by) {
+    self * by
+  }
+}
+
+-- ERROR: expected Int, got String
+trait Scale for Bool {
+  fn scale(self, by) {
+    "no"
+  }
+}
 ```
 
 A method's own `where` clause is part of its signature too
@@ -172,8 +185,12 @@ Overriding a default is just writing the method in the impl as usual:
 
 ```silt
 trait Show for Item {
-  fn show(self) -> String { "explicit-show" }   -- overrides the default
-  fn debug(self) -> String { "item-debug" }
+  fn show(self) -> String {
+    "explicit-show"
+  } -- overrides the default
+  fn debug(self) -> String {
+    "item-debug"
+  }
 }
 ```
 
@@ -213,8 +230,12 @@ trait Monoid {
 }
 
 trait Monoid for Int {
-  fn empty() -> Self { 0 }
-  fn combine(a: Self, b: Self) -> Self { a + b }
+  fn empty() -> Self {
+    0
+  }
+  fn combine(a: Self, b: Self) -> Self {
+    a + b
+  }
 }
 ```
 
@@ -225,7 +246,9 @@ parameters directly in the impl header. Lowercase names in the target's
 argument list are fresh type variables scoped to every method in the impl:
 
 ```silt
-type Box(T) { Box(T) }
+type Box(T) {
+  Box(T),
+}
 
 trait Wrap {
   fn unwrap(self) -> Int
@@ -324,7 +347,9 @@ signature and the header:
 ```silt
 trait Greet for Box(a) {
   fn greet(self) -> String where a: Greet {
-    match self { Box(inner) -> inner.greet() }
+    match self {
+      Box(inner) -> inner.greet()
+    }
   }
 }
 -- error: method 'greet' of the impl of 'Greet' for 'Box' adds the bound
@@ -334,13 +359,24 @@ trait Greet for Box(a) {
 Field access on a type-var field in a record works the same way:
 
 ```silt
-type Cell(T) { value: T }
+type Cell(T) {
+  value: T,
+}
 
-trait Peek { fn peek(self) -> Int }
-trait Peek for Int { fn peek(self) -> Int { self } }
+trait Peek {
+  fn peek(self) -> Int
+}
+
+trait Peek for Int {
+  fn peek(self) -> Int {
+    self
+  }
+}
 
 trait Peek for Cell(a) where a: Peek {
-  fn peek(self) -> Int { self.value.peek() }
+  fn peek(self) -> Int {
+    self.value.peek()
+  }
 }
 ```
 
@@ -354,8 +390,13 @@ trait From(a) {
   fn from(source: a) -> Self
 }
 
-type Celsius { c: Float }
-type Fahrenheit { f: Float }
+type Celsius {
+  c: Float,
+}
+
+type Fahrenheit {
+  f: Float,
+}
 
 trait From(Celsius) for Fahrenheit {
   fn from(source: Celsius) -> Self {
@@ -384,12 +425,16 @@ trait Monoid {
 }
 
 trait Monoid for Int {
-  fn empty() -> Self { 0 }
-  fn combine(a: Self, b: Self) -> Self { a + b }
+  fn empty() -> Self {
+    0
+  }
+  fn combine(a: Self, b: Self) -> Self {
+    a + b
+  }
 }
 
 fn main() {
-  let zero = Int.empty()                 -- concrete dispatch
+  let zero = Int.empty() -- concrete dispatch
   let five = Int.combine(2, 3)
   println("{zero} {five}")
 }
@@ -411,10 +456,14 @@ writing a one-line closure around `x.method()`:
 ```silt
 import list
 
-type Celsius { c: Float }
+type Celsius {
+  c: Float,
+}
 
 trait Display for Celsius {
-  fn display(self) -> String { "{self.c}°C" }
+  fn display(self) -> String {
+    "{self.c}°C"
+  }
 }
 
 fn main() {
@@ -470,7 +519,10 @@ with annotation variables it declares them:
 
 ```silt
 fn largest(x: a, y: a) -> a where a: Compare {
-  match x < y { true -> y, false -> x }
+  match x < y {
+    true -> y
+    false -> x
+  }
 }
 ```
 
@@ -562,20 +614,30 @@ applies there too.
 A local trait on a built-in type satisfies the trait-local arm:
 
 ```silt
-trait Greet { fn greet(self) -> String }
+trait Greet {
+  fn greet(self) -> String
+}
 
 trait Greet for List(a) {
-  fn greet(self) -> String { "a list" }
+  fn greet(self) -> String {
+    "a list"
+  }
 }
 ```
 
 A built-in trait on a local type satisfies the type-local arm:
 
 ```silt
-type Color { Red, Green, Blue }
+type Color {
+  Red,
+  Green,
+  Blue,
+}
 
 trait Display for Color {
-  fn display(self) -> String { "a color" }
+  fn display(self) -> String {
+    "a color"
+  }
 }
 ```
 
@@ -583,11 +645,20 @@ A local trait on a local type is the trivial case — both arms are
 satisfied:
 
 ```silt
-type Color { Red, Green, Blue }
-trait Greet { fn greet(self) -> String }
+type Color {
+  Red,
+  Green,
+  Blue,
+}
+
+trait Greet {
+  fn greet(self) -> String
+}
 
 trait Greet for Color {
-  fn greet(self) -> String { "color" }
+  fn greet(self) -> String {
+    "color"
+  }
 }
 ```
 
@@ -598,8 +669,10 @@ an orphan impl — neither anchor is local:
 
 ```silt
 -- in package `myapp`
-trait Display for List(a) {                  -- error
-  fn display(self) -> String { "stolen" }
+trait Display for List(a) { -- error
+  fn display(self) -> String {
+    "stolen"
+  }
 }
 ```
 

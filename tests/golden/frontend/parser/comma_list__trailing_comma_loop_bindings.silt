@@ -1,0 +1,19 @@
+-- A comma may follow the last binding of a loop.
+fn main() {
+  let total = loop i = 0, acc = 0, {
+    match i > 4 {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
+  }
+  println(total)
+  let count = loop
+    n = 3,
+  {
+    match n {
+      0 -> "done"
+      _ -> loop(n - 1)
+    }
+  }
+  println(count)
+}

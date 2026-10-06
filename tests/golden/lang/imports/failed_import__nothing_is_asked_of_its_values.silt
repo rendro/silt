@@ -31,7 +31,10 @@ fn main() {
   let f = { -> nosuchmodule.thing() }
   println(f().show())
   let xs = [nosuchmodule.thing()]
-  match xs { [h, ..t] -> println(h.show()), _ -> () }
+  match xs {
+    [h, ..t] -> println(h.show())
+    _ -> ()
+  }
 }
 fn g() -> Result(Int, String) {
   let o = nosuchmodule.opt()?

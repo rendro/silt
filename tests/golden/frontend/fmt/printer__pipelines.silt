@@ -1,0 +1,23 @@
+-- cmd: fmt
+-- A pipeline is on one line if it fits; if not, each stage has its
+-- line, indented under the first operand, in parentheses too. A stage
+-- whose closure holds statements breaks the pipeline.
+import list
+import option
+
+fn inc(n) { n + 1 }
+
+fn main() {
+  let a = 1
+  let v5 = -(a |> inc)
+  let short = [1, 2, 3]
+  |> list.map { x -> x + 1 }
+  let long = [1, 2, 3] |> list.map { x -> x + 1 } |> list.filter { x -> x > 1 } |> list.fold(0) { acc, x -> acc + x }
+  let nested = option.unwrap_or([1, 2, 3] |> list.map { x -> x * 2 } |> list.filter { x -> x > 2 } |> list.head, 0)
+  [1, 2] |> list.each { v ->
+    let w = v + 1
+    println("{w}")
+  }
+  let checked = [1, 2] |> list.head |> option.unwrap_or(0)
+  println("{v5} {short} {long} {nested} {checked}")
+}

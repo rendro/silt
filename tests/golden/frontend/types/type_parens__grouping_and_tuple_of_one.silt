@@ -1,0 +1,25 @@
+-- In a type, as in an expression, parentheses around one element only
+-- group: `(Int)` is `Int`. The tuple of one element is `(Int,)`.
+fn double(x: (Int)) -> (Int) {
+  x * 2
+}
+
+fn only(t: (Int,)) -> Int {
+  match t {
+    (n,) -> n
+  }
+}
+
+fn apply(f: (Fn((Int)) -> Int), pair: ((Int, Int))) -> Int {
+  let (a, b) = pair
+  f(a) + b
+}
+
+fn main() {
+  let a: (Int) = double(4)
+  let t: (Int,) = (5,)
+  let unit: () = ()
+  println(a + only(t))
+  println(apply(double, (1, 2)))
+  println(unit)
+}

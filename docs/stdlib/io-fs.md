@@ -54,9 +54,10 @@ name.
 ```silt
 import io
 import list
+
 fn main() {
-    let args = io.args()
-    list.each(args) { a -> println(a) }
+  let args = io.args()
+  list.each(args) { a -> println(a) }
 }
 ```
 
@@ -72,9 +73,10 @@ Returns a debug-style string representation of any value, using silt syntax
 
 ```silt
 import io
+
 fn main() {
-    let s = io.inspect((1, "hello", true))
-    println(s)  -- (1, "hello", true)
+  let s = io.inspect((1, "hello", true))
+  println(s) -- (1, "hello", true)
 }
 ```
 
@@ -91,12 +93,13 @@ transparently yields to the scheduler while the file is being read.
 
 ```silt
 import io
+
 fn main() {
-    match io.read_file("data.txt") {
-        Ok(contents) -> println(contents)
-        Err(io.IoNotFound(path)) -> println("no such file: {path}")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match io.read_file("data.txt") {
+    Ok(contents) -> println(contents)
+    Err(io.IoNotFound(path)) -> println("no such file: {path}")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -114,13 +117,14 @@ task, the operation transparently yields to the scheduler.
 
 ```silt
 import io
+
 fn main() {
-    print("Name: ")
-    match io.read_line() {
-        Ok(name) -> println("Hello, {name}!")
-        Err(io.IoUnexpectedEof) -> println("(EOF)")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  print("Name: ")
+  match io.read_line() {
+    Ok(name) -> println("Hello, {name}!")
+    Err(io.IoUnexpectedEof) -> println("(EOF)")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -138,11 +142,12 @@ written.
 
 ```silt
 import io
+
 fn main() {
-    match io.write_file("output.txt", "hello") {
-        Ok(_) -> println("written")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match io.write_file("output.txt", "hello") {
+    Ok(_) -> println("written")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -176,10 +181,10 @@ if it is not.
 import env
 
 fn main() {
-    match env.get("HOME") {
-        Some(home) -> println("Home directory: {home}")
-        None -> println("HOME not set")
-    }
+  match env.get("HOME") {
+    Some(home) -> println("Home directory: {home}")
+    None -> println("HOME not set")
+  }
 }
 ```
 
@@ -196,8 +201,8 @@ Sets the environment variable `key` to `value` for the current process.
 import env
 
 fn main() {
-    env.set("MY_VAR", "hello")
-    println(env.get("MY_VAR"))  -- Some(hello)
+  env.set("MY_VAR", "hello")
+  println(env.get("MY_VAR")) -- Some(hello)
 }
 ```
 
@@ -215,12 +220,12 @@ Idempotent: removing a variable that is not set is not an error.
 import env
 
 fn main() {
-    env.set("MY_VAR", "hello")
-    env.remove("MY_VAR")
-    println(env.get("MY_VAR"))  -- None
+  env.set("MY_VAR", "hello")
+  env.remove("MY_VAR")
+  println(env.get("MY_VAR")) -- None
 
-    -- Already unset — still OK.
-    env.remove("MY_VAR")
+  -- Already unset — still OK.
+  env.remove("MY_VAR")
 }
 ```
 
@@ -245,8 +250,8 @@ import env
 import list
 
 fn main() {
-    let all = env.vars()
-    println("env has {list.length(all)} vars")
+  let all = env.vars()
+  println("env has {list.length(all)} vars")
 }
 ```
 
@@ -297,10 +302,10 @@ Copies a file from `from` to `to`. Returns `Ok(())` on success or
 import fs
 
 fn main() {
-    match fs.copy("original.txt", "backup.txt") {
-        Ok(_) -> println("copied")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match fs.copy("original.txt", "backup.txt") {
+    Ok(_) -> println("copied")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -315,11 +320,12 @@ Returns `true` if the file or directory at `path` exists.
 
 ```silt
 import fs
+
 fn main() {
-    match {
-        fs.exists("config.toml") -> println("found config")
-        _ -> println("no config")
-    }
+  match {
+    fs.exists("config.toml") -> println("found config")
+    _ -> println("no config")
+  }
 }
 ```
 
@@ -334,11 +340,12 @@ Returns `true` if the path exists and is a regular file.
 
 ```silt
 import fs
+
 fn main() {
-    match {
-        fs.is_file("data.csv") -> println("it's a file")
-        _ -> println("not a file")
-    }
+  match {
+    fs.is_file("data.csv") -> println("it's a file")
+    _ -> println("not a file")
+  }
 }
 ```
 
@@ -353,11 +360,12 @@ Returns `true` if the path exists and is a directory.
 
 ```silt
 import fs
+
 fn main() {
-    match {
-        fs.is_dir("src") -> println("it's a directory")
-        _ -> println("not a directory")
-    }
+  match {
+    fs.is_dir("src") -> println("it's a directory")
+    _ -> println("not a directory")
+  }
 }
 ```
 
@@ -373,13 +381,13 @@ or `Err(IoError)` if the path does not exist or is not a directory.
 
 ```silt
 import fs
-
 import list
+
 fn main() {
-    match fs.list_dir(".") {
-        Ok(entries) -> list.each(entries) { name -> println(name) }
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match fs.list_dir(".") {
+    Ok(entries) -> list.each(entries) { name -> println(name) }
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -397,10 +405,10 @@ Returns `Ok(())` on success or `Err(IoError)` on failure.
 import fs
 
 fn main() {
-    match fs.mkdir("output/reports") {
-        Ok(_) -> println("directory created")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match fs.mkdir("output/reports") {
+    Ok(_) -> println("directory created")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -418,10 +426,10 @@ Removes a file or an empty directory. Returns `Ok(())` on success or
 import fs
 
 fn main() {
-    match fs.remove("temp.txt") {
-        Ok(_) -> println("removed")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match fs.remove("temp.txt") {
+    Ok(_) -> println("removed")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -439,10 +447,10 @@ on success or `Err(IoError)` on failure.
 import fs
 
 fn main() {
-    match fs.rename("old_name.txt", "new_name.txt") {
-        Ok(_) -> println("renamed")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match fs.rename("old_name.txt", "new_name.txt") {
+    Ok(_) -> println("renamed")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -500,16 +508,16 @@ denied, or the OS reports another I/O error.
 import fs
 
 fn main() {
-    match fs.stat("README.md") {
-        Ok(s) -> {
-            println("size = {s.size}, modified = {s.modified}")
-            match s.created {
-                Some(dt) -> println("created at {dt.date.year}-{dt.date.month}-{dt.date.day}")
-                None -> println("creation time not tracked on this filesystem")
-            }
-        }
-        Err(e) -> println("Error: {e.message()}")
+  match fs.stat("README.md") {
+    Ok(s) -> {
+      println("size = {s.size}, modified = {s.modified}")
+      match s.created {
+        Some(dt) -> println("created at {dt.date.year}-{dt.date.month}-{dt.date.day}")
+        None -> println("creation time not tracked on this filesystem")
+      }
     }
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -526,11 +534,12 @@ symlink (unlike `fs.is_file` / `fs.is_dir`, which follow). Returns
 
 ```silt
 import fs
+
 fn main() {
-    match {
-        fs.is_symlink("link") -> println("it's a symlink")
-        _ -> println("not a symlink")
-    }
+  match {
+    fs.is_symlink("link") -> println("it's a symlink")
+    _ -> println("not a symlink")
+  }
 }
 ```
 
@@ -549,10 +558,10 @@ be read.
 import fs
 
 fn main() {
-    match fs.read_link("link") {
-        Ok(target) -> println("points at {target}")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match fs.read_link("link") {
+    Ok(target) -> println("points at {target}")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -585,10 +594,10 @@ a higher layer.
 import fs
 
 fn main() {
-    match fs.walk("src") {
-        Ok(paths) -> println("{paths}")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match fs.walk("src") {
+    Ok(paths) -> println("{paths}")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```
 
@@ -616,9 +625,9 @@ is subject to the same `1_000_000`-entry cap as `fs.walk`.
 import fs
 
 fn main() {
-    match fs.glob("src/**/*.silt") {
-        Ok(files) -> println("{files}")
-        Err(e) -> println("Error: {e.message()}")
-    }
+  match fs.glob("src/**/*.silt") {
+    Ok(files) -> println("{files}")
+    Err(e) -> println("Error: {e.message()}")
+  }
 }
 ```

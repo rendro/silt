@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue enum variant field list, found Int
+ --> comma_list__unclosed_enum_variant_field_list.silt:5:18
+   |
+ 5 | type S { Foo(Int Int) }
+   |                  ^^^ expected ')' or ',' to continue enum variant field list, found Int
+ ::: comma_list__unclosed_enum_variant_field_list.silt:5:13
+   |
+ 5 | type S { Foo(Int Int) }
+   |             - the enum variant field list starts here

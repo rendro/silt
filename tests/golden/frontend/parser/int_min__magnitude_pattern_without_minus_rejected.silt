@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- 2^63 without its minus sign is no Int pattern, alone or as the end of
+-- a range.
+fn main() {
+  let name = match 1 {
+    0..9223372036854775808 -> "all"
+    _ -> "none"
+  }
+  println(name)
+}

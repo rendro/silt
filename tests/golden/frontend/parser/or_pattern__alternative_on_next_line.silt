@@ -1,0 +1,47 @@
+-- An or-pattern may continue on the next line, which then starts with
+-- its `|` (as a long operator chain does).
+type Shape {
+  Circle(Int),
+  Square(Int),
+  Dot,
+}
+
+fn kind(day) {
+  match day {
+    "Saturday"
+    | "Sunday" -> "weekend"
+    "Monday" | "Tuesday"
+      | "Wednesday"
+
+      | "Thursday" | "Friday" -> "weekday"
+    _ -> "unknown"
+  }
+}
+
+fn size(shape) {
+  match shape {
+    Circle(n)
+    | Square(n) when n > 9 -> "big"
+    Circle(_)
+    | Square(_) -> "small"
+    Dot -> "none"
+  }
+}
+
+fn main() {
+  println(kind("Sunday"))
+  println(kind("Thursday"))
+  println(kind("Someday"))
+  println(size(Square(10)))
+  println(size(Circle(1)))
+  println(size(Dot))
+  let nested = match Some(3) {
+    Some(
+      1
+      | 2
+      | 3
+    ) -> "low"
+    _ -> "high"
+  }
+  println(nested)
+}

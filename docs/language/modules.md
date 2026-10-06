@@ -15,8 +15,13 @@ Each `.silt` file is a module named after the file:
 
 ```silt
 -- File: src/geometry.silt
-pub fn add(a, b) { a + b }
-fn helper(x) { x * 2 }   -- private
+pub fn add(a, b) {
+  a + b
+}
+
+fn helper(x) {
+  x * 2
+} -- private
 ```
 
 A module path is one name: there is no `import net.http`, and a file in a
@@ -33,14 +38,24 @@ src/
 Items are **private by default**. Only `pub` items are exported:
 
 ```silt
-pub fn add(a, b) { a + b }
-fn helper(x) { x * 2 }       -- not exported
+pub fn add(a, b) {
+  a + b
+}
 
-pub let limit = 10                  -- exported
-pub let (low, high) = (1, 99)       -- exports `low` and `high`
+fn helper(x) {
+  x * 2
+} -- not exported
 
-pub type Point { x: Int, y: Int }   -- exports the type and its constructor
-pub type Shape {                     -- exports the type and all variants
+pub let limit = 10 -- exported
+
+pub let (low, high) = (1, 99) -- exports `low` and `high`
+
+pub type Point {
+  x: Int,
+  y: Int,
+} -- exports the type and its constructor
+
+pub type Shape { -- exports the type and all variants
   Circle(Int),
   Square(Int),
 }
@@ -78,9 +93,9 @@ Naming a private item from another module is an error at the name:
 Three forms:
 
 ```silt
-import geometry                   -- qualified:  geometry.add(1, 2)
-import geometry.{ add, Point }    -- direct:     add(1, 2)
-import geometry as g              -- aliased:    g.add(1, 2)
+import geometry -- qualified:  geometry.add(1, 2)
+import geometry as g -- aliased:    g.add(1, 2)
+import geometry.{ add, Point } -- direct:     add(1, 2)
 ```
 
 `import geometry` binds one name, `geometry`, and every member of the
@@ -118,13 +133,20 @@ which; a bare `Red` where both enums are in scope is an error, with a
 label at each declaration:
 
 ```silt
-type Shape { Red, Square }
-type Color { Red, Blue }
+type Shape {
+  Red,
+  Square,
+}
+
+type Color {
+  Red,
+  Blue,
+}
 
 fn main() {
   let s = Shape.Red
   let c = Color.Red
-  println("{s} {c}")     -- Red Red
+  println("{s} {c}") -- Red Red
 }
 ```
 
@@ -169,16 +191,18 @@ the same alias). Such a program is rejected with an error naming both
 declarations.
 
 ```silt
-import other            -- other.silt: pub fn double(x) { x * 2 }
+import other -- other.silt: pub fn double(x) { x * 2 }
 
-type P { year: Int }
+type P {
+  year: Int,
+}
 
 fn f(other: P) -> Int {
-  other.year            -- field access on the parameter, not a module lookup
+  other.year -- field access on the parameter, not a module lookup
 }
 
 fn caller() -> Int {
-  other.double(21)      -- no `other` binding in scope here: module call
+  other.double(21) -- no `other` binding in scope here: module call
 }
 ```
 
@@ -222,9 +246,9 @@ Standard-library modules are registered in the global environment — there is
 no `.silt` file for them. You still import them explicitly:
 
 ```silt
+import channel
 import io
 import list
-import channel
 ```
 
 Each built-in module has a reference page under

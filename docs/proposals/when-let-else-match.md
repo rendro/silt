@@ -60,7 +60,7 @@ let res = load_data(path)
 when let Ok(data) = res else {
   match res {
     Err(e) -> panic("load failed: {e.message()}")
-    Ok(_)  -> panic("unreachable")
+    Ok(_) -> panic("unreachable")
   }
 }
 -- (rejected — see below)
@@ -85,7 +85,7 @@ typecheck today and neither of which says what they mean:
 ```silt
 let res = load_data(path)
 when let Ok(data) = res else {
-  panic("load failed")  -- can't mention the Err payload
+  panic("load failed") -- can't mention the Err payload
 }
 -- data is in scope here
 ```
@@ -100,7 +100,7 @@ when let Ok(data) = res else {
 let res = load_data(path)
 match res {
   Err(e) -> panic("load failed: {e.message()}")
-  Ok(_)  -> {}
+  Ok(_) -> {}
 }
 when let Ok(data) = res else {
   panic("unreachable")
@@ -225,7 +225,7 @@ forces is a known bad code smell.
 
 ```silt
 when let Ok(data) = res else {
-  panic("failed: {res.message()}")  -- res is AppError here
+  panic("failed: {res.message()}") -- res is AppError here
 }
 ```
 

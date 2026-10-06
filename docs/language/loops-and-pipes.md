@@ -25,9 +25,9 @@ top-to-bottom:
 
 ```silt
 [1, 2, 3, 4, 5]
-|> list.filter { x -> x > 2 }
-|> list.map { x -> x * 10 }
-|> list.fold(0) { acc, x -> acc + x }
+  |> list.filter { x -> x > 2 }
+  |> list.map { x -> x * 10 }
+  |> list.fold(0) { acc, x -> acc + x }
 -- result: 120
 ```
 
@@ -35,6 +35,7 @@ top-to-bottom:
 
 ```silt
 import list
+
 type User {
   name: String,
   age: Int,
@@ -52,11 +53,9 @@ fn main() {
   ]
 
   users
-  |> list.filter { u -> u.active }
-  |> list.map { u -> birthday(u) }
-  |> list.each { u ->
-    println("{u.name} is now {u.age}")
-  }
+    |> list.filter { u -> u.active }
+    |> list.map { u -> birthday(u) }
+    |> list.each { u -> println("{u.name} is now {u.age}") }
 }
 ```
 
@@ -85,9 +84,9 @@ Silt strings support inline expressions with curly braces:
 
 ```silt
 let name = "world"
-let greeting = "hello {name}"          -- "hello world"
-let sum = "sum is {1 + 2 + 3}"        -- "sum is 6"
-println("{user.name} is {user.age}")   -- field access in interpolation
+let greeting = "hello {name}" -- "hello world"
+let sum = "sum is {1 + 2 + 3}" -- "sum is 6"
+println("{user.name} is {user.age}") -- field access in interpolation
 ```
 
 String interpolation automatically invokes the `Display` trait. User-defined
@@ -136,9 +135,9 @@ loop _ = () {
   match channel.receive(ch) {
     channel.Message(val) -> {
       process(val)
-      loop(())          -- re-enter to keep going
+      loop(()) -- re-enter to keep going
     }
-    channel.Closed -> ()        -- fall through; loop returns
+    channel.Closed -> () -- fall through; loop returns
     _ -> loop(())
   }
 }
@@ -195,7 +194,7 @@ fn fact(n) {
   loop i = n, acc = 1 {
     match i {
       0 -> acc
-      _ -> loop(i - 1, acc * i)    -- OK: last expression of a tail arm
+      _ -> loop(i - 1, acc * i) -- OK: last expression of a tail arm
     }
   }
 }
@@ -230,7 +229,10 @@ state:
 ```silt
 -- fold_until: accumulator IS the result
 [1, 2, 3] |> list.fold_until(0) { acc, x ->
-  match acc + x > 6 { true -> list.Stop(acc), _ -> list.Continue(acc + x) }
+  match acc + x > 6 {
+    true -> list.Stop(acc)
+    _ -> list.Continue(acc + x)
+  }
 }
 
 -- loop: state is (queue, visited) but result is Option(node)
@@ -259,9 +261,7 @@ Ranges are lazy — they don't allocate memory until iterated, so `1..1000000`
 is cheap. All `list.*` functions work on ranges directly.
 
 ```silt
-1..10
-|> list.map { n -> n * n }
-|> list.each { n -> println("{n}") }
+1..10 |> list.map { n -> n * n } |> list.each { n -> println("{n}") }
 ```
 
 ## Comments
@@ -270,7 +270,7 @@ Line comments with `--`. Block comments with `{-` and `-}` (nestable):
 
 ```silt
 -- line comment
-let x = 42  -- inline comment
+let x = 42 -- inline comment
 
 {-
   Block comment.

@@ -1,0 +1,33 @@
+-- cmd: fmt
+-- A comment behind `->` (FRONTEND-4 b): in a match arm, a closure, a
+-- function's return type and a function type.
+import list
+
+fn f(x) -> -- the result
+  String {
+  match x {
+    1 -> -- the one case
+      "one"
+    2 ->
+      -- on its own line
+      "two"
+    3 -> {- inline -} "three"
+    _ -> "other"
+  }
+}
+
+fn apply(g: Fn(Int) -> -- returns
+  Int, x) {
+  g(x)
+}
+
+fn main() {
+  let ys = list.map([1, 2]) { x -> -- explain x
+    x + 1
+  }
+  let zs = list.map([1, 2]) { x ->
+    -- a line of its own
+    x + 2
+  }
+  println("{f(1)} {apply({ n -> n }, 1)} {ys} {zs}")
+}

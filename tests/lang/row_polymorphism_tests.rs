@@ -21,7 +21,7 @@ fn main() {
 "#;
     let mut lexer = Lexer::new(silt::source::FileId::default(), source);
     let _tokens = lexer.tokenize().expect("lex");
-    let formatted = silt::formatter::format(source).expect("format");
+    let formatted = silt::format::format(silt::source::FileId::default(), source).expect("format");
     // Re-parse the formatted output — must succeed.
     let mut lexer2 = Lexer::new(silt::source::FileId::default(), &formatted);
     let tokens2 = lexer2.tokenize().expect("lex2");

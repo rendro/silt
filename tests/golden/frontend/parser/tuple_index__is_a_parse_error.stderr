@@ -1,0 +1,5 @@
+error[parse]: tuple indexing ('t.0') is not supported; destructure instead: 'let (a, b) = t'
+ --> tuple_index__is_a_parse_error.silt:7:13
+   |
+ 7 |   println(t.0)
+   |             ^ tuple indexing ('t.0') is not supported; destructure instead: 'let (a, b) = t'

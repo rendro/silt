@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue function type parameter list, found Int
+ --> comma_list__unclosed_function_type_parameter_list.silt:5:20
+   |
+ 5 | fn apply(f: Fn(Int Int) -> Int) -> Int { f(1, 2) }
+   |                    ^^^ expected ')' or ',' to continue function type parameter list, found Int
+ ::: comma_list__unclosed_function_type_parameter_list.silt:5:15
+   |
+ 5 | fn apply(f: Fn(Int Int) -> Int) -> Int { f(1, 2) }
+   |               - the function type parameter list starts here

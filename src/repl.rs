@@ -925,7 +925,7 @@ mod tests {
         value(&mut repl, "type Color { Red, Green }");
         value(&mut repl, "let col = Color.Red");
         assert_eq!(
-            value(&mut repl, "match col { Color.Red -> 1, Green -> 2 }"),
+            value(&mut repl, "match col {\n  Color.Red -> 1\n  Green -> 2\n}"),
             "1"
         );
     }

@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue record type, found y
+ --> comma_list__unclosed_record_type.silt:5:17
+   |
+ 5 | type P { x: Int y: Int }
+   |                 ^ expected '}' or ',' to continue record type, found y
+ ::: comma_list__unclosed_record_type.silt:5:8
+   |
+ 5 | type P { x: Int y: Int }
+   |        - the record type starts here

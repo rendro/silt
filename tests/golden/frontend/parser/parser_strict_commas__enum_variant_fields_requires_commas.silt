@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[parse]
--- stderr-contains: enum variant fields
+-- stderr-contains: to continue enum variant field list,
 -- stderr-contains: ','
 type S { Foo(Int Int) }
