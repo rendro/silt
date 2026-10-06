@@ -48,11 +48,6 @@ pub(crate) enum Goal {
         ok: Type,
         ret: Option<Type>,
     },
-    /// The row `row` (a row variable, as a type) has no field `field`:
-    /// a record type lists the field beside the row
-    /// (`{...p, age: 30}` over an open row; a signature that returns
-    /// `{age: Int, ...r}` for a `{...r}` it is given).
-    Lacks { row: Type, field: Symbol },
     /// `result` is the anonymous record made from the record `base`:
     /// its fields but those named `without`, and the fields `with`
     /// (a spread `{...base, f: e}`; the rest binder of a record pattern,
@@ -87,7 +82,7 @@ impl Goal {
             Goal::Select { recv, .. } => recv,
             Goal::Update { base, .. } => base,
             Goal::Try { operand, .. } => operand,
-            Goal::Lacks { row, .. } | Goal::Listed { row, .. } => row,
+            Goal::Listed { row, .. } => row,
             // (Or the row of an open record: `rebuild_waits`.)
             Goal::Rebuild { base, .. } => base,
         }
@@ -197,11 +192,19 @@ impl TypeChecker {
                     Goal::Pred(Pred::Anon { row, given }) => match self.apply(&row) {
                         Type::Var(_) => {}
                         // (The row of an open record is the rest of
-                        // the row.)
+                        // the row; the fields it has by now are looked
+                        // at when the signature's body is known.)
                         Type::AnonRecord {
+                            fields,
                             tail: RowTail::Var(rest),
-                            ..
                         } => {
+                            if let Some(given) = given {
+                                let seen = Type::AnonRecord {
+                                    fields,
+                                    tail: RowTail::Closed,
+                                };
+                                self.anon_waiting.push((given, seen, origin));
+                            }
                             self.wanted[i].goal = Goal::Pred(Pred::Anon {
                                 row: Type::Var(rest),
                                 given,
@@ -209,7 +212,10 @@ impl TypeChecker {
                         }
                         row => {
                             self.wanted[i].solved = true;
-                            self.row_is_anon(&row, given, origin);
+                            match given {
+                                Some(given) => self.anon_waiting.push((given, row, origin)),
+                                None => self.row_is_anon(&row, origin),
+                            }
                         }
                     },
                     Goal::Rebuild {
@@ -258,7 +264,7 @@ impl TypeChecker {
                             self.try_operand(&operand, &ok, ret, origin.span);
                         }
                     }
-                    Goal::Lacks { row, field } => {
+                    Goal::Pred(Pred::Lacks { row, field }) => {
                         let row = self.apply(&row);
                         if !matches!(row, Type::Var(_)) {
                             self.wanted[i].solved = true;
@@ -547,6 +553,9 @@ impl TypeChecker {
     /// Report that the record a spread extends with `field` has the
     /// field already: the one wording.
     pub(super) fn extends_existing(&mut self, field: Symbol, span: Span) {
+        if !self.lacking.insert((span, format!("field {field}"))) {
+            return;
+        }
         self.errors.push(
             Diagnostic::error(
                 Code::TypeMismatch,
@@ -582,21 +591,16 @@ impl TypeChecker {
 
     /// Check that no declared record stands for `row`, known now
     /// (`Pred::Anon`).
-    fn row_is_anon(&mut self, row: &Type, given: Option<TyVar>, origin: Origin) {
-        let waits = given.filter(|g| !self.is_anon_row(*g));
+    fn row_is_anon(&mut self, row: &Type, origin: Origin) {
         match row {
             Type::AnonRecord {
                 tail: RowTail::Rigid(r),
                 ..
             }
-            | Type::Rigid(r) => match waits {
-                Some(g) => self.anon_waiting.push((g, Type::Rigid(*r), origin)),
-                None => self.anon_rigid(*r, origin),
-            },
-            Type::Generic(name, _) if self.tables.records.contains_key(name) => match waits {
-                Some(g) => self.anon_waiting.push((g, row.clone(), origin)),
-                None => self.spread_through(row, origin),
-            },
+            | Type::Rigid(r) => self.anon_rigid(*r, origin),
+            Type::Generic(name, _) if self.tables.records.contains_key(name) => {
+                self.spread_through(row, origin)
+            }
             _ => {}
         }
     }
@@ -607,15 +611,57 @@ impl TypeChecker {
         self.anon_rows.contains(&var) || self.anon_rows.contains(&self.rigid_rep_var(var))
     }
 
+    /// Whether `var` is a row variable of a function's signature.
+    fn is_sig_row(&self, var: TyVar) -> bool {
+        self.sig_rows.contains(&var) || self.sig_rows.contains(&self.rigid_rep_var(var))
+    }
+
+    /// The fields a body adds over the row variable `var` of its
+    /// function's signature.
+    fn adds_of(&self, var: TyVar) -> Vec<Symbol> {
+        let mut adds = self.row_adds.get(&var).cloned().unwrap_or_default();
+        if let Some(more) = self.row_adds.get(&self.rigid_rep_var(var)) {
+            adds.extend(
+                more.iter()
+                    .filter(|f| !adds.contains(f))
+                    .copied()
+                    .collect::<Vec<_>>(),
+            );
+        }
+        adds
+    }
+
     /// A body makes an anonymous record from a record whose row is the
-    /// annotation variable `r`. For a row variable of a function's
-    /// signature, the function's uses owe that no declared record
-    /// stands for it; no other annotation can ask that.
+    /// annotation variable `r`, with the fields `adds` added. For a row
+    /// variable of a function's signature, the function's uses owe that
+    /// no declared record stands for it and that what does has none of
+    /// the fields; no other annotation can ask that. Whether it is news.
+    fn mark_sig_row(&mut self, var: TyVar, adds: &[Symbol]) -> bool {
+        let rep = self.rigid_rep_var(var);
+        let mut news = self.anon_rows.insert(var);
+        news |= self.anon_rows.insert(rep);
+        for key in [var, rep] {
+            let known = self.row_adds.entry(key).or_default();
+            for field in adds {
+                if !known.contains(field) {
+                    known.push(*field);
+                    news = true;
+                }
+            }
+        }
+        news
+    }
+
+    /// See `mark_sig_row`: reports the row of another annotation.
     pub(super) fn anon_rigid(&mut self, r: RigidId, origin: Origin) {
-        let rep = self.rigid_rep_var(r.var);
-        if self.sig_rows.contains(&r.var) || self.sig_rows.contains(&rep) {
-            self.anon_rows.insert(r.var);
-            self.anon_rows.insert(rep);
+        if self.is_sig_row(r.var) {
+            self.mark_sig_row(r.var, &[]);
+            return;
+        }
+        if !self
+            .lacking
+            .insert((origin.span, format!("row {}", r.name)))
+        {
             return;
         }
         self.errors.push(
@@ -635,39 +681,80 @@ impl TypeChecker {
 
     /// Decide what waited for the bodies of the module's functions:
     /// whether what stands for a row variable of a signature is spread
-    /// by the body.
+    /// by the body, and with which fields added.
     pub(super) fn settle_rows(&mut self) {
-        let mut waiting = std::mem::take(&mut self.anon_waiting);
+        let waiting = std::mem::take(&mut self.anon_waiting);
+        // What a body does to its row it does to the row of a signature
+        // that is given for it.
         loop {
-            let (now, later): (Vec<_>, Vec<_>) = waiting
-                .into_iter()
-                .partition(|(given, _, _)| self.is_anon_row(*given));
-            waiting = later;
-            if now.is_empty() {
+            let mut news = false;
+            for (given, row, _) in &waiting {
+                if !self.is_anon_row(*given) {
+                    continue;
+                }
+                let (fields, to) = match row {
+                    Type::AnonRecord {
+                        fields,
+                        tail: RowTail::Rigid(r),
+                    } => (fields.keys().copied().collect(), r.var),
+                    Type::Rigid(r) => (Vec::new(), r.var),
+                    _ => continue,
+                };
+                if self.is_sig_row(to) {
+                    let adds: Vec<Symbol> = self
+                        .adds_of(*given)
+                        .into_iter()
+                        .filter(|f| !fields.contains(f))
+                        .collect();
+                    news |= self.mark_sig_row(to, &adds);
+                }
+            }
+            if !news {
                 break;
             }
-            for (_, row, origin) in now {
-                self.row_is_anon(&row, None, origin);
+        }
+        for (given, row, origin) in waiting {
+            if !self.is_anon_row(given) {
+                continue;
+            }
+            self.row_is_anon(&row, origin);
+            if let Type::AnonRecord { fields, .. } = &row {
+                for field in self.adds_of(given) {
+                    if fields.contains_key(&field) {
+                        self.extends_existing(field, origin.span);
+                    }
+                }
             }
         }
     }
 
-    /// The predicates of a scheme as another module reads them: whether
-    /// a body spreads a row variable of its signature is decided.
+    /// The predicates of a scheme as another module reads them: what a
+    /// body does to a row variable of its signature is decided.
     pub(super) fn settled_preds(&self, preds: &[Pred]) -> Vec<Pred> {
-        preds
-            .iter()
-            .filter_map(|pred| match pred {
+        let mut settled = Vec::new();
+        for pred in preds {
+            match pred {
                 Pred::Anon {
                     row,
                     given: Some(given),
-                } => self.is_anon_row(*given).then(|| Pred::Anon {
-                    row: row.clone(),
-                    given: None,
-                }),
-                other => Some(other.clone()),
-            })
-            .collect()
+                } => {
+                    if self.is_anon_row(*given) {
+                        settled.push(Pred::Anon {
+                            row: row.clone(),
+                            given: None,
+                        });
+                        for field in self.adds_of(*given) {
+                            settled.push(Pred::Lacks {
+                                row: row.clone(),
+                                field,
+                            });
+                        }
+                    }
+                }
+                other => settled.push(other.clone()),
+            }
+        }
+        settled
     }
 
     /// The variable a `Goal::Rebuild` over `base` waits for: the type
@@ -768,11 +855,16 @@ impl TypeChecker {
         }
         match &tail {
             RowTail::Closed => {}
-            RowTail::Rigid(r) => self.anon_rigid(*r, origin),
+            RowTail::Rigid(r) => {
+                self.anon_rigid(*r, origin);
+                for (name, _) in with {
+                    self.lacks_rigid(*r, *name);
+                }
+            }
             RowTail::Var(row) => {
                 for (name, _) in with {
-                    self.want_goal(
-                        Goal::Lacks {
+                    self.want(
+                        Pred::Lacks {
                             row: Type::Var(*row),
                             field: *name,
                         },
@@ -861,8 +953,20 @@ impl TypeChecker {
         }
     }
 
-    /// Check that the row `row`, known now, has no field `field`. A
-    /// declared record cannot stand for a row that is extended at all.
+    /// The record over the annotation variable `r` is extended with
+    /// `field`: for a row variable of a function's signature, the
+    /// function's uses owe that what stands for it has no such field.
+    /// (For another annotation's, the spread itself is the error:
+    /// `anon_rigid`.)
+    fn lacks_rigid(&mut self, r: RigidId, field: Symbol) {
+        if self.is_sig_row(r.var) {
+            self.mark_sig_row(r.var, &[field]);
+        }
+    }
+
+    /// Check that the row `row`, known now, has no field `field`
+    /// (`Pred::Lacks`). A declared record cannot stand for a row that
+    /// is extended at all.
     fn row_lacks(&mut self, row: &Type, field: Symbol, origin: Origin) {
         match row {
             Type::AnonRecord { fields, tail } => {
@@ -870,66 +974,24 @@ impl TypeChecker {
                     self.extends_existing(field, origin.span);
                     return;
                 }
-                if let RowTail::Var(rest) = tail {
-                    self.want_goal(
-                        Goal::Lacks {
+                match tail {
+                    RowTail::Var(rest) => self.want(
+                        Pred::Lacks {
                             row: Type::Var(*rest),
                             field,
                         },
                         origin,
-                    );
+                    ),
+                    RowTail::Rigid(r) => self.lacks_rigid(*r, field),
+                    RowTail::Closed => {}
                 }
             }
+            Type::Rigid(r) => self.lacks_rigid(*r, field),
             Type::Generic(name, _) if self.tables.records.contains_key(name) => {
                 self.spread_through(row, origin);
             }
             _ => {}
         }
-    }
-
-    /// The fields that some record type in `ty` lists beside the row
-    /// variable `v` and another does not: where a use gives `v` its
-    /// fields, they must not be among these (`Goal::Lacks`).
-    pub(super) fn row_extensions(ty: &Type) -> Vec<(TyVar, Symbol)> {
-        fn walk(ty: &Type, rows: &mut Vec<(TyVar, Vec<Vec<Symbol>>)>) {
-            match ty {
-                Type::AnonRecord { fields, tail } => {
-                    if let RowTail::Var(v) = tail {
-                        let listed: Vec<Symbol> = fields.keys().copied().collect();
-                        match rows.iter_mut().find(|(row, _)| row == v) {
-                            Some((_, seen)) => seen.push(listed),
-                            None => rows.push((*v, vec![listed])),
-                        }
-                    }
-                    fields.values().for_each(|t| walk(t, rows));
-                }
-                Type::Fun(params, ret) => {
-                    params.iter().for_each(|t| walk(t, rows));
-                    walk(ret, rows);
-                }
-                Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => walk(t, rows),
-                Type::Map(k, v) => {
-                    walk(k, rows);
-                    walk(v, rows);
-                }
-                Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().for_each(|t| walk(t, rows)),
-                _ => {}
-            }
-        }
-        let mut rows = Vec::new();
-        walk(ty, &mut rows);
-        let mut out = Vec::new();
-        for (v, listings) in rows {
-            let mut all: Vec<Symbol> = listings.iter().flatten().copied().collect();
-            all.sort();
-            all.dedup();
-            for field in all {
-                if !listings.iter().all(|listed| listed.contains(&field)) {
-                    out.push((v, field));
-                }
-            }
-        }
-        out
     }
 
     /// Check `base.{ field: value }` now that the type of `base` is

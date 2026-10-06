@@ -1182,7 +1182,7 @@ impl TypeChecker {
                 for k in owed_before..self.wanted.len() {
                     let Type::Var(v) = (match &self.wanted[k].goal {
                         Goal::Pred(pred) => pred.subject(),
-                        Goal::Lacks { row, .. } | Goal::Listed { row, .. } => row,
+                        Goal::Listed { row, .. } => row,
                         _ => continue,
                     }) else {
                         continue;

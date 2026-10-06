@@ -106,6 +106,10 @@ pub struct TypeChecker {
     /// checked yet: decided when the module's bodies are
     /// (`settle_rows`).
     pub(super) anon_waiting: Vec<(TyVar, Type, Origin)>,
+    /// The fields a body adds to a record over a row variable of its
+    /// signature: what stands for the row has none of them
+    /// (`Pred::Lacks`).
+    pub(super) row_adds: HashMap<TyVar, Vec<Symbol>>,
     /// Whether the expression checked next is the callee of a call:
     /// `x.m` there is a method call, anywhere else a field.
     pub(super) callee_position: bool,
@@ -278,6 +282,7 @@ impl TypeChecker {
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),
             anon_waiting: Vec::new(),
+            row_adds: HashMap::new(),
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
@@ -1059,6 +1064,10 @@ impl TypeChecker {
                     Pred::Anon { row, given } => Pred::Anon {
                         row: rep(row),
                         given: given.map(|var| self.rigid_rep_var(var)),
+                    },
+                    Pred::Lacks { row, field } => Pred::Lacks {
+                        row: rep(row),
+                        field,
                     },
                 }
             })
