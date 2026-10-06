@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: panic: the value does not match the pattern it is bound to
+-- A hole of the checker that stage 6 step 3c closes: an anonymous record
+-- type lets a `P` through to where a `Q` is expected. The compiler's
+-- defence (TEST_NOMINAL_PATTERNS_MARKED_IRREFUTABLE, compiler/patterns.rs)
+-- stops the program at the `let` instead of binding `a` from a `P`. When
+-- `as_q` is a type error, this case is one of `check`, and the defence
+-- can go.
+type P { a: Int, b: Int }
+type Q { a: Int, b: Int }
+fn as_q(r: {a: Int, b: Int}) -> Q { r }
+fn main() {
+  let Q { a, .. } = as_q(P { a: 1, b: 2 })
+  println(a)
+}

@@ -243,115 +243,202 @@ fn main() { area(Circle(1.0)) }
     );
 }
 
-// ── Recursive variant match certifies in polynomial time ────────
-//
-// Regression for a doubly-exponential blowup bug. On a recursive
-// enum like `Expr { Leaf(Int), Pair(Expr, Expr) }`, the usefulness
-// algorithm used to re-enumerate every variant at every level of
-// the recursion — `Pair`'s two `Expr` sub-columns each triggered a
-// fresh round of constructor enumeration, and the work grew as
-// `k^d` until `MAX_EXHAUSTIVENESS_DEPTH` tripped. The match was
-// then reported as "could not verify exhaustiveness" (and before
-// that, silently accepted).
-//
-// The fix is a standard Maranget shortcut: if any row in the matrix
-// at the current column is a bare wildcard/ident, it already covers
-// every value at that column, so no wildcard query can be useful.
-// This collapses `Pair(_, _)`-style arms to O(1) work per column
-// instead of `k^d`. This test locks in that the shortcut fires:
-// the match is certified exhaustive with no depth-limit warning and
-// no spurious diagnostics.
-#[test]
-fn test_recursive_variant_match_certifies_without_depth_bailout() {
-    use super::MAX_EXHAUSTIVENESS_DEPTH;
+// ── The search itself, on lowered patterns ──────────────────────
+
+use super::{CtorId, Pat, Unverified};
+
+/// A checker that knows the enum `Expr { Leaf(Int), Pair(Expr, Expr) }`,
+/// and the enum's type.
+fn checker_with_expr() -> (TypeChecker, TypeRef) {
     use crate::intern::intern;
-    use crate::source::Span;
-
     let mut tc = TypeChecker::new();
-
-    // Register a recursive enum `Expr { Leaf(Int), Pair(Expr, Expr) }`.
-    // (Constructed directly because writing a depth-20+ nested pattern
-    // in source would be unwieldy and fragile.)
-    let expr_name = TypeRef {
+    let expr = TypeRef {
         id: crate::defs::TypeId(crate::defs::DefId(u32::MAX - 1)),
-        name: intern("ExhaustivenessDepthExpr"),
+        name: intern("ExhaustivenessExpr"),
     };
-    let leaf_name = intern("ExhaustivenessDepthLeaf");
-    let pair_name = intern("ExhaustivenessDepthPair");
-    let expr_ty = Type::Generic(expr_name, vec![]);
-
+    let expr_ty = Type::Generic(expr, vec![]);
     tc.tables.enums.insert(
-        expr_name,
+        expr,
         EnumInfo {
             params: vec![],
             param_var_ids: vec![],
             variants: vec![
                 VariantInfo {
-                    name: leaf_name,
+                    name: intern("ExhaustivenessLeaf"),
                     field_types: vec![Type::Int],
                 },
                 VariantInfo {
-                    name: pair_name,
-                    field_types: vec![expr_ty.clone(), expr_ty.clone()],
+                    name: intern("ExhaustivenessPair"),
+                    field_types: vec![expr_ty.clone(), expr_ty],
                 },
             ],
             defined_in: super::TypeChecker::builtin_pkg(),
         },
     );
+    (tc, expr)
+}
 
-    // Build a two-arm match that IS logically exhaustive — every
-    // `Expr` is either a `Leaf` or a `Pair`. Pre-fix, the Maranget
-    // algorithm re-enumerated all variants at every level as it
-    // recursed into `Pair`'s two `Expr` columns, hit the depth
-    // bound, and raised "could not verify". With the wildcard-row
-    // shortcut the algorithm certifies this cleanly and fast.
-    let span = Span::point(crate::source::FileId::default(), 0);
-    let body = Expr::new(crate::ast::ExprKind::Int(0), span);
-    let wild = || Pattern::new(PatternKind::Wildcard, span);
-    let arms = vec![
-        MatchArm {
-            pattern: Pattern::new(
-                PatternKind::Constructor {
-                    qualifier: Vec::new(),
-                    name: leaf_name,
-                    name_span: span,
-                    args: vec![wild()],
-                },
-                span,
-            ),
-            guard: None,
-            body: body.clone(),
-        },
-        MatchArm {
-            pattern: Pattern::new(
-                PatternKind::Constructor {
-                    qualifier: Vec::new(),
-                    name: pair_name,
-                    name_span: span,
-                    args: vec![wild(), wild()],
-                },
-                span,
-            ),
-            guard: None,
-            body: body.clone(),
-        },
-    ];
-    // Silence unused-warning — `MAX_EXHAUSTIVENESS_DEPTH` is imported
-    // as a documentation anchor for this test.
-    let _ = MAX_EXHAUSTIVENESS_DEPTH;
+fn bool_pat(value: bool) -> Pat {
+    Pat::Ctor(CtorId::Bool(value), Vec::new())
+}
 
-    tc.check_exhaustiveness(&arms, &expr_ty, span);
+fn tuple(elems: Vec<Pat>) -> Pat {
+    Pat::Ctor(CtorId::Tuple, elems)
+}
 
-    // Post-fix expectation: the match is certified exhaustive with
-    // no "could not verify" warning, no "non-exhaustive" error, and
-    // no depth-bailout flag set.
-    assert!(
-        tc.errors.is_empty(),
-        "expected no diagnostics, got: {:?}",
-        tc.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+/// A recursive type is not unfolded: `Leaf(_) | Pair(_, _)` covers
+/// `Expr` whatever `Pair` holds.
+#[test]
+fn test_recursive_variant_is_covered_by_its_two_constructors() {
+    let (tc, expr) = checker_with_expr();
+    let leaf = Pat::Ctor(CtorId::Variant(expr, 0), vec![Pat::Wild]);
+    let pair = Pat::Ctor(CtorId::Variant(expr, 1), vec![Pat::Wild, Pat::Wild]);
+    assert_eq!(
+        tc.irrefutable(&Pat::Or(vec![leaf.clone(), pair.clone()])),
+        Ok(true)
     );
-    assert!(
-        !tc.exhaustiveness_depth_exceeded.get(),
-        "depth bound should not be hit on a simple recursive variant match",
+    assert_eq!(tc.irrefutable(&leaf), Ok(false));
+    // `Pair(Leaf(_), _) | Pair(Pair(_, _), _) | Leaf(_)`: one level down.
+    let nested = Pat::Or(vec![
+        Pat::Ctor(CtorId::Variant(expr, 1), vec![leaf.clone(), Pat::Wild]),
+        Pat::Ctor(CtorId::Variant(expr, 1), vec![pair, Pat::Wild]),
+        leaf,
+    ]);
+    assert_eq!(tc.irrefutable(&nested), Ok(true));
+}
+
+/// An or-pattern that covers its column is not split: sixty columns of
+/// `true | false` are one row, not 2^60.
+#[test]
+fn test_or_patterns_in_many_columns_are_not_multiplied() {
+    let tc = TypeChecker::new();
+    let either = || Pat::Or(vec![bool_pat(true), bool_pat(false)]);
+    assert_eq!(
+        tc.irrefutable(&tuple((0..60).map(|_| either()).collect())),
+        Ok(true)
     );
+    let mut refutable: Vec<Pat> = (0..60).map(|_| either()).collect();
+    refutable.push(bool_pat(true));
+    assert_eq!(tc.irrefutable(&tuple(refutable)), Ok(false));
+}
+
+/// Integer ranges cover the integers when they leave no gap.
+#[test]
+fn test_int_ranges_cover_without_a_gap() {
+    let tc = TypeChecker::new();
+    let ranges = |cut: i64| {
+        Pat::Or(vec![
+            Pat::IntRange(i64::MIN, 0),
+            Pat::IntRange(cut, i64::MAX),
+        ])
+    };
+    assert_eq!(tc.irrefutable(&ranges(1)), Ok(true));
+    assert_eq!(tc.irrefutable(&ranges(-5)), Ok(true));
+    assert_eq!(tc.irrefutable(&ranges(2)), Ok(false));
+    assert_eq!(tc.irrefutable(&Pat::IntRange(3, 3)), Ok(false));
+}
+
+/// Record patterns of one column may name different fields.
+#[test]
+fn test_record_patterns_align_by_field_name() {
+    use crate::intern::intern;
+    let tc = TypeChecker::new();
+    let (a, b) = (intern("a"), intern("b"));
+    let rec = |names: Vec<Symbol>, pats: Vec<Pat>| Pat::Ctor(CtorId::Record(names), pats);
+    let covering = Pat::Or(vec![
+        rec(vec![a], vec![bool_pat(true)]),
+        rec(vec![b, a], vec![Pat::Wild, bool_pat(false)]),
+    ]);
+    assert_eq!(tc.irrefutable(&covering), Ok(true));
+    let leaking = Pat::Or(vec![
+        rec(vec![a], vec![bool_pat(true)]),
+        rec(vec![b, a], vec![bool_pat(true), bool_pat(false)]),
+    ]);
+    assert_eq!(tc.irrefutable(&leaking), Ok(false));
+}
+
+/// Rows that are read together are decided together: sixteen pairs of
+/// columns, each pair covered by four rows that leave every other column
+/// alone. Going through the columns from left to right would look at
+/// every combination of the first sixteen.
+#[test]
+fn test_pairs_of_columns_are_decided_by_the_first_row() {
+    let tc = TypeChecker::new();
+    let pairs = 16;
+    let mut rows = Vec::new();
+    for i in 0..pairs {
+        for (first, second) in [(true, true), (true, false), (false, true), (false, false)] {
+            let mut row = vec![Pat::Wild; 2 * pairs];
+            row[i] = bool_pat(first);
+            row[i + pairs] = bool_pat(second);
+            rows.push(tuple(row));
+        }
+    }
+    let mut cells = 0;
+    let rows: Vec<&Pat> = rows.iter().collect();
+    assert_eq!(tc.cover_together(&rows, &mut cells), Ok(true));
+    assert!(cells < 100_000, "{cells} patterns looked at");
+}
+
+/// A search that would look at more patterns than its bound gives up, and
+/// says so: it does not answer. The rows are a formula no order of the
+/// columns decides quickly: 300 rows, each testing 3 of 60 columns drawn
+/// by a fixed pseudo-random sequence.
+#[test]
+fn test_a_search_past_its_bound_is_unverified() {
+    let tc = TypeChecker::new();
+    let (columns, clauses) = (60, 300);
+    let mut state: u64 = 1;
+    let mut next = |below: u64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((state >> 33) % below) as usize
+    };
+    let mut rows = Vec::new();
+    for _ in 0..clauses {
+        let mut row = vec![Pat::Wild; columns];
+        let mut tested = 0;
+        while tested < 3 {
+            let column = next(columns as u64);
+            if matches!(row[column], Pat::Wild) {
+                row[column] = bool_pat(next(2) == 1);
+                tested += 1;
+            }
+        }
+        rows.push(tuple(row));
+    }
+    assert_eq!(tc.irrefutable(&Pat::Or(rows)), Err(Unverified));
+}
+
+/// So does one that would recurse deeper than its bound: a `Bool`
+/// inside 1,100 nested pairs, where the `k13` repro has 25.
+#[test]
+fn test_a_search_too_deep_is_unverified() {
+    let tc = TypeChecker::new();
+    let nested = |depth: usize, value: bool| {
+        (0..depth).fold(bool_pat(value), |inner, _| tuple(vec![inner, Pat::Wild]))
+    };
+    let both = |depth: usize| Pat::Or(vec![nested(depth, true), nested(depth, false)]);
+    assert_eq!(tc.irrefutable(&both(25)), Ok(true));
+    assert_eq!(tc.irrefutable(&nested(25, true)), Ok(false));
+    assert_eq!(tc.irrefutable(&both(1_100)), Err(Unverified));
+}
+
+/// A list pattern is `cons` cells; one too long to follow is one test.
+#[test]
+fn test_list_patterns() {
+    let tc = TypeChecker::new();
+    let any = |n: usize, tail: Pat| Pat::list(vec![Pat::Wild; n], tail);
+    // `[] | [_] | [_, _, ..rest]`
+    let covering = Pat::Or(vec![
+        any(0, Pat::nil()),
+        any(1, Pat::nil()),
+        any(2, Pat::Wild),
+    ]);
+    assert_eq!(tc.irrefutable(&covering), Ok(true));
+    // `[] | [_, _, ..rest]`
+    let leaking = Pat::Or(vec![any(0, Pat::nil()), any(2, Pat::Wild)]);
+    assert_eq!(tc.irrefutable(&leaking), Ok(false));
+    assert_eq!(any(5_000, Pat::Wild), Pat::Lit);
 }

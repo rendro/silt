@@ -1,8 +1,5 @@
--- cmd: check
--- exit: 1
--- stderr-contains: non-exhaustive match: not all patterns are covered
 -- Port of repros/type_soundness/ex10.silt, two statements on one line split.
--- A false rejection, pending in repros/SOUNDNESS.tsv.
+-- Literal fields of anonymous-record patterns count towards coverage.
 fn h(r: {on: Bool, n: Int}) -> Int {
   match r {
     {on: true, n: n} -> n

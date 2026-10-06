@@ -195,14 +195,21 @@ pub struct Pattern {
     /// What a `Constructor` or `Record` pattern names, filled in by the
     /// resolver: the variant, or the record type.
     pub res: Option<Res>,
+    /// Whether the pattern matches every value of the type it is matched
+    /// against, so that no test is needed. A wildcard and a name do by
+    /// their form; for every other pattern the typechecker decides, and
+    /// until it has the pattern counts as one that can fail.
+    pub irrefutable: bool,
 }
 
 impl Pattern {
     pub fn new(kind: PatternKind, span: Span) -> Self {
+        let irrefutable = matches!(kind, PatternKind::Wildcard | PatternKind::Ident(_));
         Self {
             kind,
             span,
             res: None,
+            irrefutable,
         }
     }
 }

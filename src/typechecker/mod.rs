@@ -47,6 +47,7 @@ pub use builtin_env::*;
 use declare_fns::FnSig;
 use derive_synth::*;
 use env::TypeEnv;
+use infer::pattern::collect_pattern_vars;
 use solve::{Origin, Wanted};
 use std::rc::Rc;
 pub use tables::*;
@@ -115,15 +116,6 @@ pub struct TypeChecker {
     /// of leaving a bare header-located mismatch. Saved/restored around
     /// each fn body and lambda body, like `current_return_type`.
     pub(super) current_qmark_spans: Vec<Span>,
-    /// Set by the exhaustiveness checker when its recursion depth bound is
-    /// exceeded during a single `check_exhaustiveness` call. Interior
-    /// mutability lets the `&self`-taking `is_useful` recursion record the
-    /// event without threading a result type through every recursive call.
-    /// Reset at the start of each `check_exhaustiveness` invocation.
-    pub(super) exhaustiveness_depth_exceeded: std::cell::Cell<bool>,
-    /// The span of the match (or the pattern) the usefulness search is
-    /// working on: the patterns the search makes up take it.
-    pub(super) exhaustiveness_span: std::cell::Cell<Span>,
     /// Names of function declarations that were synthesized by parser
     /// error recovery (Option B). Populated in register_fn_decl when the
     /// FnDecl has `is_recovery_stub == true`. Used by the `ExprKind::Call`
@@ -275,8 +267,6 @@ impl TypeChecker {
             pending_numeric_checks: Vec::new(),
             pending_question_marks: Vec::new(),
             current_qmark_spans: Vec::new(),
-            exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
-            exhaustiveness_span: std::cell::Cell::new(Span::BUILTIN),
             recovery_stub_names: std::collections::HashSet::new(),
             current_type_anno_span: None,
             wanted: Vec::new(),
@@ -949,7 +939,7 @@ impl TypeChecker {
     /// generalised with the group it is checked in.
     fn check_top_level_let(
         &mut self,
-        pattern: &Pattern,
+        pattern: &mut Pattern,
         ty: Option<&TypeExpr>,
         value: &mut Expr,
         span: Span,
@@ -974,12 +964,12 @@ impl TypeChecker {
         } else {
             // A top-level `let` has no failure branch either:
             // the pattern must be irrefutable.
-            self.bind_irrefutable_pattern(
+            self.check_pattern(
                 pattern,
                 &val_ty,
                 env,
                 span,
-                infer::pattern::BindingSite::Let,
+                infer::pattern::PatternMode::Binding(infer::pattern::BindingSite::Let),
             );
         }
         is_value
@@ -1127,66 +1117,6 @@ fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::
 }
 
 pub(crate) use crate::types::canonical::{canonical_head, head_of_canon as head_of};
-
-/// Collect the set of variable names bound by a pattern.
-pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
-    match &pat.kind {
-        PatternKind::Ident(name) => vec![*name],
-        PatternKind::Tuple(pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
-        PatternKind::List(pats, rest) => {
-            let mut vars: Vec<Symbol> = pats.iter().flat_map(collect_pattern_vars).collect();
-            if let Some(rest_pat) = rest {
-                vars.extend(collect_pattern_vars(rest_pat));
-            }
-            vars
-        }
-        PatternKind::Constructor { args: pats, .. } => {
-            pats.iter().flat_map(collect_pattern_vars).collect()
-        }
-        PatternKind::Record { fields, .. } => {
-            let mut vars: Vec<Symbol> = Vec::new();
-            for (field_name, _, sub_pat) in fields {
-                if let Some(p) = sub_pat {
-                    vars.extend(collect_pattern_vars(p));
-                } else {
-                    // Shorthand field `{ x }` binds `x`
-                    vars.push(*field_name);
-                }
-            }
-            vars
-        }
-        PatternKind::AnonRecord { fields, rest } => {
-            let mut vars: Vec<Symbol> = Vec::new();
-            for (field_name, _, sub_pat) in fields {
-                if let Some(p) = sub_pat {
-                    vars.extend(collect_pattern_vars(p));
-                } else {
-                    vars.push(*field_name);
-                }
-            }
-            if let Some((r, _)) = rest {
-                vars.push(*r);
-            }
-            vars
-        }
-        PatternKind::Or(alts) => {
-            // Return vars from first alt (they should all be the same after validation)
-            alts.first().map(collect_pattern_vars).unwrap_or_default()
-        }
-        PatternKind::Map(entries) => entries
-            .iter()
-            .flat_map(|(_, p)| collect_pattern_vars(p))
-            .collect(),
-        PatternKind::Wildcard
-        | PatternKind::Int(_)
-        | PatternKind::Float(_)
-        | PatternKind::Bool(_)
-        | PatternKind::StringLit(..)
-        | PatternKind::Range(_, _)
-        | PatternKind::FloatRange(_, _)
-        | PatternKind::Pin(_) => vec![],
-    }
-}
 
 /// What checking one module gives.
 pub struct ModuleCheck {
