@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected P, got {name: String, age: Int}
+-- stderr-contains: help: an anonymous record is not a `P`: write `P { ... }`
+-- stderr-contains: error[type]: type mismatch: expected Q, got P
+-- stderr-contains: error[type]: type mismatch: expected {name: String, age: Int}, got P
+-- stderr-contains: help: a `P` is not an anonymous record: build one from its fields
+-- An anonymous record and a declared record type are different types,
+-- in both directions: converting is written out.
+type P { name: String, age: Int }
+type Q { name: String, age: Int }
+fn takes_p(p: P) -> String { p.name }
+fn takes_anon(r: {name: String, age: Int}) -> String { r.name }
+fn main() {
+  let anon = {name: "x", age: 3}
+  println(takes_p(anon))
+  let p: P = anon
+  let q: Q = P { name: "x", age: 3 }
+  println(takes_anon(P { name: "x", age: 3 }))
+  println(P { name: "x", age: 3 } == anon)
+}

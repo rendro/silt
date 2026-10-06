@@ -250,7 +250,7 @@ impl TypeChecker {
                 // fresh type vars are generated for each param so
                 // `json.parse(Box, ...)` can unify with a monomorphic
                 // instance at the call site.
-                let record_ty = Type::Record(ty, field_types);
+                let record_ty = Type::Generic(ty, Vec::new());
                 let scheme = if td.params.is_empty() {
                     Scheme {
                         vars: vec![],
@@ -551,23 +551,6 @@ impl TypeChecker {
                 }
                 for a in args {
                     if let Some(c) = self.find_alias_cycle(a, visiting) {
-                        return Some(c);
-                    }
-                }
-                None
-            }
-            Type::Record(_name, fields) => {
-                // Dead-arm cleanup (round 88 item D3): a prior version
-                // also tested `visiting.contains(name)` here, but
-                // `visiting` is seeded only with alias-decl names and
-                // the parser rejects a top-level name bound twice — so
-                // an alias name can never collide with a
-                // record name. The guard was unreachable. Field
-                // recursion below remains: it descends into nested
-                // alias references inside record fields, which IS how
-                // a real alias cycle can route through a record.
-                for (_, t) in fields {
-                    if let Some(c) = self.find_alias_cycle(t, visiting) {
                         return Some(c);
                     }
                 }

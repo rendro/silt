@@ -1,9 +1,0 @@
-import set
-type P { x: Int }
-fn main() {
-  let p: P = P { x: 1 }
-  let r: { x: Int } = { x: 1 }
-  let s = set.from_list([p])
-  let s2 = set.insert(s, r)
-  println(set.length(s2))
-}

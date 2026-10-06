@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Box' does not implement trait 'Equal': field 'v' is of type 'Fn(_) -> _', which does not
+-- stderr-contains: error[type]: type 'Box(Fn(_) -> _)' does not implement trait 'Equal': field 'v' is of type 'Fn(_) -> _', which does not
 -- stderr-contains: field 'v'
 type Box(a) { v: a }
 fn main() {

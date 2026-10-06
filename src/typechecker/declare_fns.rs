@@ -119,7 +119,12 @@ impl TypeChecker {
             let type_param = &wc.type_param;
             let trait_name = &wc.trait_name;
             let trait_args = &wc.trait_args;
-            if let Some(ty) = param_map.get(type_param) {
+            // (A bound may be on a row variable: `where r: Display`.)
+            let row_key = intern(&format!("__row__{type_param}"));
+            if let Some(ty) = param_map
+                .get(type_param)
+                .or_else(|| param_map.get(&row_key))
+            {
                 let resolved = self.apply(ty);
                 // An unknown trait is reported when the body is checked
                 // (or was, by the resolver); what the variable is bounded
@@ -166,20 +171,20 @@ impl TypeChecker {
             }
         }
 
-        // The annotation variables: rigid in the body. A row variable
-        // (`{name: String, ...r}`) is a variable of the body instead.
+        // The annotation variables: rigid in the body, a row variable
+        // (`{name: String, ...r}`) like any other. (A row variable is
+        // kept under `__row__r`, apart from a type variable `r`.)
         let mut rigid: Vec<RigidId> = Vec::new();
         let mut names: HashMap<Symbol, Type> = HashMap::new();
         let mut body_view: HashMap<TyVar, Type> = HashMap::new();
         for (name, ty) in &param_map {
             let Type::Var(var) = ty else { continue };
-            if resolve(*name).starts_with("__row__") {
-                body_view.insert(*var, self.fresh_var());
-                continue;
-            }
             let id = RigidId {
                 var: *var,
-                name: *name,
+                name: match resolve(*name).strip_prefix("__row__") {
+                    Some(row) => intern(row),
+                    None => *name,
+                },
             };
             rigid.push(id);
             names.insert(*name, Type::Rigid(id));

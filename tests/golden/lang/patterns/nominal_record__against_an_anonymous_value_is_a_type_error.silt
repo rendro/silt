@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Q, got {a: Int, b: Int}
+-- A pattern that names a record type matches values of that type: an
+-- anonymous record is of another type, in a match arm, a when-let and a
+-- let alike.
+type Q { a: Int, b: Int }
+fn main() {
+  let v = {a: 1, b: 2}
+  match v {
+    Q { a, b } -> println(a + b)
+    _ -> println("other")
+  }
+  let Q { a, b } = v
+  println(a)
+}

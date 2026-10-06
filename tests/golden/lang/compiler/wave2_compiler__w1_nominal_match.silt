@@ -21,9 +21,9 @@ fn k(ps: List(P)) -> Int {
 }
 
 fn main() {
-  println(f({x: 3, y: 4}))
-  println(g({x: 3, y: 4}))
-  println(g({x: 0, y: 4}))
-  println(k([{x: 8, y: 4}]))
-  println(k([{x: 8, y: 5}]))
+  println(f(P { x: 3, y: 4 }))
+  println(g(P { x: 3, y: 4 }))
+  println(g(P { x: 0, y: 4 }))
+  println(k([P { x: 8, y: 4 }]))
+  println(k([P { x: 8, y: 5 }]))
 }

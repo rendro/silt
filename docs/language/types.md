@@ -186,7 +186,8 @@ fn main() {
 
 Inside the function `p.name` is the only legal access; `p.age` would be
 rejected, even when the caller passes a record that happens to have an
-`age` field.
+`age` field. The row variable of an annotation stands for whatever the
+caller's record has, and the function may assume nothing about it.
 
 A row variable can be threaded into the return type so the caller's
 extra fields survive the round trip:
@@ -222,9 +223,41 @@ fn main() {
 }
 ```
 
-The reverse direction does not happen — anonymous records do not
-automatically become nominal. Use the constructor (`Person { ... }`)
-when nominal identity matters.
+The row is then the record itself: what a function gives back through
+the row is still a `Person`, with its methods and patterns.
+
+```silt
+type Person { name: String, age: Int }
+
+fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
+
+fn main() {
+  let q = id_name(Person { name: "Bob", age: 42 })   -- q is a Person
+  println(q.age)                                     -- 42
+}
+```
+
+That is the only place a nominal record and an anonymous record type
+meet. An anonymous record is not a `Person`, and a `Person` is not a
+closed anonymous record: converting is written out.
+
+```silt
+fn greet(p: Person) -> String { p.name }
+greet({name: "x", age: 3})
+-- error: type mismatch: expected Person, got {name: String, age: Int}
+-- help: an anonymous record is not a `Person`: write `Person { ... }`
+
+let r: {name: String, age: Int} = Person { name: "x", age: 3 }
+-- error: a `Person` is not an anonymous record: build one from its
+-- fields, `{ name: p.name, age: p.age }`
+```
+
+A row variable can be bounded like a type variable, for a function
+that prints or compares the whole record:
+
+```silt
+fn show(p: {name: String, ...r}) -> String where r: Display { "{p}" }
+```
 
 ### Closed rows reject extra fields
 
@@ -256,7 +289,14 @@ fn main() {
 
 Trying to redefine an existing field — `{...p, name: "Bob"}` — is a
 compile-time error. The shape is "extend, never overwrite"; use record
-update (`p.{ name: "Bob" }`) for that.
+update (`p.{ name: "Bob" }`) for that. The same holds behind an open
+row: `fn ext(p) { {...p, age: 30} }` takes any record that has no
+`age`, and a call with one that has is an error at the call.
+
+A spread makes an anonymous record, so its base is one: a declared
+record type is not extended (`{...person, city: "x"}` is an error).
+Update its fields with `person.{ ... }`, or build the anonymous record
+from its fields.
 
 ### Pattern destructuring with rest
 

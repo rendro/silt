@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: anon record has no field 'age'
+-- stderr-contains: error[type]: type mismatch: expected {name: String, ...r}, got {name: String}
+-- The row variable of an annotation is whatever the caller's record
+-- has: the function may not read a field behind it, nor return a
+-- record without it where it promised the row.
+fn first(p: {name: String, ...r}) -> String { "{p.name} {p.age}" }
+fn keep(p: {name: String, ...r}) -> {name: String, ...r} { {name: "x"} }
+fn main() {
+  println(first({name: "a", age: 1}))
+  println(keep({name: "a", age: 1}))
+}

@@ -296,14 +296,6 @@ impl Resolver {
                 }
                 self.find_assoc_cycle(ret, visited)
             }
-            Type::Record(_, fields) => {
-                for (_, t) in fields {
-                    if let Some(c) = self.find_assoc_cycle(t, visited) {
-                        return Some(c);
-                    }
-                }
-                None
-            }
             Type::Generic(_, args) => {
                 for a in args {
                     if let Some(c) = self.find_assoc_cycle(a, visited) {
@@ -408,13 +400,6 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
         Type::Tuple(elems) => {
             Type::Tuple(elems.iter().map(|t| canonicalize(resolver, t)).collect())
         }
-        Type::Record(name, fields) => Type::Record(
-            *name,
-            fields
-                .iter()
-                .map(|(n, t)| (*n, canonicalize(resolver, t)))
-                .collect(),
-        ),
         Type::Generic(name, args) => Type::Generic(
             *name,
             args.iter().map(|t| canonicalize(resolver, t)).collect(),
@@ -560,8 +545,6 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Tuple(_) => "Tuple".to_string(),
         Type::Fun(_, _) => "Fn".to_string(),
 
-        // ── User-declared nominal types: identity is the name ──────
-        Type::Record(name, _) => crate::intern::resolve(name.name),
         Type::Generic(name, _) => crate::intern::resolve(name.name),
 
         // ── Diagnostic / inference-internal shapes ─────────────────
@@ -641,7 +624,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         Type::Channel(_) => "Channel",
         Type::Tuple(_) => "Tuple",
         Type::Fun(_, _) => "Fn",
-        Type::Record(name, _) | Type::Generic(name, _) => return Some(*name),
+        Type::Generic(name, _) => return Some(*name),
         Type::Var(_)
         | Type::Rigid(_)
         | Type::Error
@@ -823,16 +806,6 @@ mod tests {
             canonicalize(&res, &c),
             Type::Channel(Box::new(Type::List(Box::new(Type::Int))))
         );
-    }
-
-    #[test]
-    fn canonicalize_range_in_record_field() {
-        let name = user_type("Holder");
-        let field = intern::intern("xs");
-        let r = Type::Record(name, vec![(field, Type::Range(Box::new(Type::Int)))]);
-        let expected = Type::Record(name, vec![(field, Type::List(Box::new(Type::Int)))]);
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &r), expected);
     }
 
     #[test]
@@ -1059,13 +1032,7 @@ mod tests {
     #[test]
     fn canonical_name_user_record_uses_name() {
         let sym = user_type("Point");
-        let r = Type::Record(
-            sym,
-            vec![
-                (intern::intern("x"), Type::Int),
-                (intern::intern("y"), Type::Int),
-            ],
-        );
+        let r = Type::Generic(sym, Vec::new());
         assert_eq!(canonical_name(&r), "Point");
     }
 

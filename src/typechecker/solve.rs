@@ -48,6 +48,11 @@ pub(crate) enum Goal {
         ok: Type,
         ret: Option<Type>,
     },
+    /// The row `row` (a row variable, as a type) has no field `field`:
+    /// a record type lists the field beside the row
+    /// (`{...p, age: 30}` over an open row; a signature that returns
+    /// `{age: Int, ...r}` for a `{...r}` it is given).
+    Lacks { row: Type, field: Symbol },
 }
 
 impl Goal {
@@ -58,6 +63,7 @@ impl Goal {
             Goal::Select { recv, .. } => recv,
             Goal::Update { base, .. } => base,
             Goal::Try { operand, .. } => operand,
+            Goal::Lacks { row, .. } => row,
         }
     }
 }
@@ -180,6 +186,13 @@ impl TypeChecker {
                             self.try_operand(&operand, &ok, ret, origin.span);
                         }
                     }
+                    Goal::Lacks { row, field } => {
+                        let row = self.apply(&row);
+                        if !matches!(row, Type::Var(_)) {
+                            self.wanted[i].solved = true;
+                            self.row_lacks(&row, field, origin);
+                        }
+                    }
                     Goal::Update { base, field, value } => {
                         let base = self.apply(&base);
                         if !matches!(base, Type::Var(_)) {
@@ -279,22 +292,6 @@ impl TypeChecker {
                     span,
                 ),
             },
-            Type::Record(rec_name, rec_fields) => {
-                if let Some((_, field_ty)) = rec_fields.iter().find(|(n, _)| *n == field) {
-                    let ft = field_ty.clone();
-                    self.unify(&result_ty, &ft, span);
-                } else if !self.deferred_method_call(*rec_name, field, &obj_ty, &result_ty, span) {
-                    // GAP (round 35 F7): thread did-you-mean suggestion
-                    // through the deferred-field-access path so typos
-                    // on Record-shaped receivers get the same hint.
-                    let base = format!("unknown field '{field}' on type {resolved}");
-                    self.error_help(
-                        Code::UnknownField,
-                        format_record_field_suggestion(base, field, rec_fields),
-                        span,
-                    );
-                }
-            }
             Type::AnonRecord { fields: af, tail } => {
                 if let Some(field_ty) = af.get(&field) {
                     let ft = field_ty.clone();
@@ -475,6 +472,101 @@ impl TypeChecker {
         }
     }
 
+    /// Check that the row `row`, known now, has no field `field`. A row
+    /// that is a nominal record cannot be extended at all: the value
+    /// would keep the record's name with fields the record does not
+    /// declare.
+    fn row_lacks(&mut self, row: &Type, field: Symbol, origin: Origin) {
+        match row {
+            Type::AnonRecord { fields, tail } => {
+                if let Some(has) = fields.get(&field) {
+                    self.errors.push(
+                        Diagnostic::error(
+                            Code::TypeMismatch,
+                            origin.span,
+                            format!(
+                                "cannot extend the record with field '{field}': it has one already, of type {}",
+                                self.show_type(&self.apply(has))
+                            ),
+                        )
+                        .with_help(format!(
+                            "a record is extended, never overwritten: update the field with `r.{{ {field}: ... }}`"
+                        )),
+                    );
+                    return;
+                }
+                if let RowTail::Var(rest) = tail {
+                    self.want_goal(
+                        Goal::Lacks {
+                            row: Type::Var(*rest),
+                            field,
+                        },
+                        origin,
+                    );
+                }
+            }
+            Type::Generic(name, _) if self.tables.records.contains_key(name) => {
+                let shown = self.show_type(row);
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::TypeMismatch,
+                        origin.span,
+                        format!("cannot extend a `{shown}` with field '{field}': it is a declared record type"),
+                    )
+                    .with_help(format!(
+                        "update a field it has with `r.{{ f: ... }}`, or build an anonymous record from its fields: `{{ x: r.x, ..., {field}: ... }}`"
+                    )),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// The fields that some record type in `ty` lists beside the row
+    /// variable `v` and another does not: where a use gives `v` its
+    /// fields, they must not be among these (`Goal::Lacks`).
+    pub(super) fn row_extensions(ty: &Type) -> Vec<(TyVar, Symbol)> {
+        fn walk(ty: &Type, rows: &mut Vec<(TyVar, Vec<Vec<Symbol>>)>) {
+            match ty {
+                Type::AnonRecord { fields, tail } => {
+                    if let RowTail::Var(v) = tail {
+                        let listed: Vec<Symbol> = fields.keys().copied().collect();
+                        match rows.iter_mut().find(|(row, _)| row == v) {
+                            Some((_, seen)) => seen.push(listed),
+                            None => rows.push((*v, vec![listed])),
+                        }
+                    }
+                    fields.values().for_each(|t| walk(t, rows));
+                }
+                Type::Fun(params, ret) => {
+                    params.iter().for_each(|t| walk(t, rows));
+                    walk(ret, rows);
+                }
+                Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => walk(t, rows),
+                Type::Map(k, v) => {
+                    walk(k, rows);
+                    walk(v, rows);
+                }
+                Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().for_each(|t| walk(t, rows)),
+                _ => {}
+            }
+        }
+        let mut rows = Vec::new();
+        walk(ty, &mut rows);
+        let mut out = Vec::new();
+        for (v, listings) in rows {
+            let mut all: Vec<Symbol> = listings.iter().flatten().copied().collect();
+            all.sort();
+            all.dedup();
+            for field in all {
+                if !listings.iter().all(|listed| listed.contains(&field)) {
+                    out.push((v, field));
+                }
+            }
+        }
+        out
+    }
+
     /// Check `base.{ field: value }` now that the type of `base` is
     /// known.
     fn update_field(&mut self, base: &Type, field: Symbol, value: &Type, span: Span) {
@@ -491,7 +583,6 @@ impl TypeChecker {
                 }
                 fields.iter().map(|(k, v)| (*k, v.clone())).collect()
             }
-            Type::Record(_, fields) => fields.clone(),
             Type::Generic(name, args) if self.tables.records.contains_key(name) => {
                 let fields = self.tables.records[name].fields.clone();
                 match self.tables.record_param_var_ids.get(name).cloned() {
@@ -1054,8 +1145,19 @@ impl TypeChecker {
                 if tr.is_builtin("Compare") {
                     return leaf(self, &self.show_type(&ty), None);
                 }
-                if !matches!(tail, RowTail::Closed) {
-                    return leaf(self, "", Some("its other fields are not known"));
+                // The fields behind an open row have the trait when the
+                // row does: a row variable owes it like a type variable
+                // (and stands for the record's other fields, or for the
+                // nominal record itself, at a use).
+                let rest = match tail {
+                    RowTail::Closed => None,
+                    RowTail::Var(v) => Some(Type::Var(*v)),
+                    RowTail::Rigid(r) => Some(Type::Rigid(*r)),
+                };
+                if let Some(rest) = rest
+                    && !walk.open.contains(&rest)
+                {
+                    walk.open.push(rest);
                 }
                 let parts = fields
                     .iter()
@@ -1063,7 +1165,7 @@ impl TypeChecker {
                     .collect();
                 first(self, walk, parts)
             }
-            Type::Record(name, _) | Type::Generic(name, _) => {
+            Type::Generic(name, _) => {
                 let head = canonical_head(&self.tables.resolver, *name);
                 // A written `Display` impl answers for its type.
                 if !self.by_structure(tr, head) {
@@ -1072,8 +1174,7 @@ impl TypeChecker {
                 }
                 // A type with no fields or variants to look at (a
                 // handle, `Bytes`) has what the builtins say it has.
-                let opaque = !matches!(ty, Type::Record(..))
-                    && !self.tables.records.contains_key(name)
+                let opaque = !self.tables.records.contains_key(name)
                     && !self.tables.enums.contains_key(name);
                 if opaque {
                     return match stamped(self, head) {
@@ -1088,10 +1189,6 @@ impl TypeChecker {
                 walk.seen.push((head, args.clone()));
                 // The type's parts, at its arguments.
                 let parts: Vec<(String, Type)> = match &ty {
-                    Type::Record(_, fields) => fields
-                        .iter()
-                        .map(|(n, t)| (format!("field '{n}'"), t.clone()))
-                        .collect(),
                     _ => {
                         if let Some(info) = self.tables.records.get(name) {
                             let mapping: HashMap<TyVar, Type> = self
@@ -1472,9 +1569,6 @@ impl TypeChecker {
                         .zip(a2.iter())
                         .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
             }
-            (Type::Record(n1, _), Type::Record(n2, _)) => n1 == n2,
-            (Type::Record(n1, _), Type::Generic(n2, _))
-            | (Type::Generic(n1, _), Type::Record(n2, _)) => n1 == n2,
             // Round 79 TS-B1: structurally compare anonymous records so
             // bounds like `where a: Convert({a: Int, b: String})` accept
             // an impl whose trait-arg is the byte-equal record. Without

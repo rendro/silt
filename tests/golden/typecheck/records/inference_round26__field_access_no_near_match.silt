@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: no field or method 'completelydifferent'
+-- stderr-contains: error[type]: unknown field or method 'completelydifferent' on type User
 -- stderr-not-contains: did you mean
 type User { name: String, age: Int }
 fn main() {

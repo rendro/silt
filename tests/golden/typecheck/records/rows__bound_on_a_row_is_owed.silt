@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type variable `r` is not known to implement trait 'Display'
+-- stderr-contains: help: add `where r: Display`
+-- stderr-contains: does not implement trait 'Display': field 'f' is of type
+fn plain(p: {name: String, ...r}) -> String { "{p}" }
+fn show(p: {name: String, ...r}) -> String where r: Display { "{p}" }
+fn main() {
+  println(show({name: "z", f: { n -> n }}))
+}
