@@ -83,17 +83,23 @@ fn refused(file: FileId, lexed: &Lexed, refusal: Refusal) -> Diagnostic {
         .span
         .or_else(|| lexed.tokens.first().map(|tok| tok.span))
         .unwrap_or(Span::point(file, 0));
+    // What helps until the defect is fixed; a comment only where the
+    // text has one.
+    let way_out = if lexed.comments.is_empty() {
+        "simplifying the expression"
+    } else {
+        "moving the comment onto a line of its own or simplifying the expression"
+    };
     Diagnostic::error(
         Code::FormatRefused,
         span,
         format!("formatting refused: {}", refusal.message),
     )
     .with_note("the text was left unchanged")
-    .with_note(
-        "this is a defect in `silt fmt`, not in your program; until it is fixed, moving the \
-         comment onto a line of its own or simplifying the expression usually lets the file \
-         format",
-    )
+    .with_note(format!(
+        "this is a defect in `silt fmt`, not in your program; until it is fixed, {way_out} \
+         usually lets the file format"
+    ))
 }
 
 /// The stack `format` works on. The printer and the oracle recurse over
@@ -265,6 +271,21 @@ mod tests {
         assert!(refused(|text| text.replace("x + 0x01", "(x + 0x01")).contains("would not parse"));
         // Untampered, it is formatted.
         assert_eq!(fmt(&format!("\n{source}")), source);
+    }
+
+    #[test]
+    fn a_refusal_speaks_of_a_comment_only_where_there_is_one() {
+        let note = |source: &str| {
+            let refusal = format_with(FileId::default(), source, |text| text.replace("0x01", "1"))
+                .unwrap_err();
+            assert_eq!(refusal.code, Code::FormatRefused, "{refusal:?}");
+            refusal.notes.join("\n")
+        };
+        let with = note("fn inc(x) {\n  x + 0x01 -- one\n}\n");
+        assert!(with.contains("moving the comment"), "{with}");
+        let without = note("fn inc(x) {\n  x + 0x01\n}\n");
+        assert!(!without.contains("comment"), "{without}");
+        assert!(without.contains("simplifying the expression"), "{without}");
     }
 
     #[test]
