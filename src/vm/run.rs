@@ -326,6 +326,7 @@ impl Vm {
 
     /// Run `closure` in the current frame, with the `argc` values from
     /// the stack's slot `args_at` on as its arguments: a tail call.
+    #[inline(always)]
     fn reuse_frame(&mut self, closure: Arc<VmClosure>, args_at: usize, argc: usize) {
         let base = self.frame().base_slot;
         for i in 0..argc {
