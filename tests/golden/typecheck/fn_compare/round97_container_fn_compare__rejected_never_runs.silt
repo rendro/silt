@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: cannot derive 'Compare'
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
 -- `silt run` of the list-of-fn ordering program fails before the VM and prints nothing.
 fn main() {
   let xs = [{ x -> x }]

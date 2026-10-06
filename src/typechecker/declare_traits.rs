@@ -1165,32 +1165,6 @@ impl TypeChecker {
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
         let mut impl_level_constraints: Vec<Pred> = Vec::new();
-        // Parallel structure used to populate self.tables.impl_constraints below so
-        // that call-site constraint resolution can recursively verify the
-        // impl's own where clauses against the actual concrete type
-        // arguments at the call site.
-        //
-        // Round 101 BROKEN: the stored index MUST live in the index space
-        // the consumer uses. `verify_trait_obligation` resolves an
-        // obligation via `type_args_of(resolved_receiver).get(idx)` — the
-        // positional args of the CANONICAL EXPANDED type. For direct
-        // targets (`Box(a)`, `Map(k, v)`) that space coincides with
-        // `target_param_names` order, but for ALIAS targets it does not:
-        // with `type Named(a) = Map(String, a)`, param `a` is at param
-        // position 0 but EXPANDED slot 1, so indexing by param position
-        // verified the key slot (`String`) instead of `a` — both false
-        // rejects ("'String' does not implement 'Marked'" on a valid
-        // program) and false accepts (a `where a: Display` bound checked
-        // against `String` while the actual value type was `Fn`). Compute
-        // the index as the position of the param's tyvar within the
-        // expanded self_type's positional args so both sides of the table
-        // agree. A param that never surfaces as a top-level positional
-        // slot (Tuple/Fn alias targets, occurrences nested deeper than
-        // one wrapper) gets no entry — the same effective behavior as
-        // before, where `args.get(idx)` returned `None` at verify time
-        // and the obligation was skipped.
-        let expanded_self_args = self.type_args_of(&self_type);
-        let mut impl_obligations_by_index: Vec<(usize, TraitKey, Vec<Type>)> = Vec::new();
         for wc in &ti.where_clauses {
             let unknown = wc.trait_res == Some(crate::defs::Res::Error)
                 || self
@@ -1249,16 +1223,6 @@ impl TypeChecker {
                             *trait_name,
                             resolved_bound_args.clone(),
                         ));
-                        // Round 101 BROKEN: index in the EXPANDED-args
-                        // space (see the `expanded_self_args` comment
-                        // above), NOT the `target_param_names` space —
-                        // the two diverge for alias targets.
-                        if let Some(idx) = expanded_self_args
-                            .iter()
-                            .position(|slot| matches!(slot, Type::Var(v) if *v == tv))
-                        {
-                            impl_obligations_by_index.push((idx, *trait_name, resolved_bound_args));
-                        }
                     }
                     // If resolved is concrete (shouldn't happen — impl_param_map
                     // only inserts fresh Var entries) treat it as a tautology
@@ -1279,10 +1243,10 @@ impl TypeChecker {
                 }
             }
         }
-        if !impl_obligations_by_index.is_empty() {
+        if !impl_level_constraints.is_empty() {
             self.tables
-                .impl_constraints
-                .insert((trait_key, target_type), impl_obligations_by_index);
+                .impl_preds
+                .insert((trait_key, target_type), impl_level_constraints.clone());
         }
 
         // GAP (round 35 F5): extraneous trait-impl methods — methods on
@@ -1492,11 +1456,9 @@ impl TypeChecker {
                     .iter()
                     .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
                     .collect();
-                // For type-variable bindings (e.g. `type Item = a` in a
-                // parameterized impl), defer the obligation to the
-                // pending-where path — verify_trait_obligation already
-                // accepts a Var receiver and emits a clean diagnostic
-                // for unresolved cases at finalize time.
+                // (A binding that is one of the impl's own variables,
+                // `type Item = a`, says nothing here: the impl's uses
+                // owe what the variable needs.)
                 self.verify_declared(*bound_trait, &resolved_bound_args, &applied, assoc.span);
             }
         }

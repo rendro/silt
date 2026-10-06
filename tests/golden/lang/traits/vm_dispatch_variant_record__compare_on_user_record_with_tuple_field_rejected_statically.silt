@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: type 'Point' does not implement trait 'Compare'
+-- stderr-contains: error[type]: type 'Point' cannot derive 'Compare': field 't' has type '(Int, Int)', which is not comparable
 type Point { n: Int, t: (Int, Int), }
 fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
 fn main() {

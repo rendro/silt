@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'String' does not implement trait 'Marked'
+-- An impl's header bound is owed wherever its variable is in the impl's
+-- type, not only as a direct argument: here inside the alias's list.
+trait Marked { fn mark(self) -> String }
+trait Marked for Int { fn mark(self) -> String { "int" } }
+type Named(a) = Map(String, List(a))
+trait Marked for Named(a) where a: Marked { fn mark(self) -> String { "named" } }
+fn need(x: t) -> String where t: Marked { x.mark() }
+fn main() {
+  println(need(#{ "a": [1] }))
+  println(need(#{ "a": ["s"] }))
+}

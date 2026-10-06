@@ -1,6 +1,6 @@
 -- A polymorphic `==` on lists of functions fails at run time.
 -- exit: 1
--- stderr-contains: does not implement Equal
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
 -- stderr-contains: 'Fn'
 fn eq(a: x, b: x) -> Bool where x: Equal { a == b }
 fn main() {

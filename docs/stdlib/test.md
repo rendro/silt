@@ -14,8 +14,8 @@ message argument.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `assert` | `(Bool, String?) -> ()` | Assert value is truthy |
-| `assert_eq` | `(a, a, String?) -> ()` | Assert two values are equal |
-| `assert_ne` | `(a, a, String?) -> ()` | Assert two values are not equal |
+| `assert_eq` | `(a, a, String?) -> () where a: Equal + Display` | Assert two values are equal |
+| `assert_ne` | `(a, a, String?) -> () where a: Equal + Display` | Assert two values are not equal |
 
 
 ## `test.assert`
@@ -39,8 +39,8 @@ fn main() {
 ## `test.assert_eq`
 
 ```
-test.assert_eq(left: a, right: a) -> ()
-test.assert_eq(left: a, right: a, message: String) -> ()
+test.assert_eq(left: a, right: a) -> () where a: Equal + Display
+test.assert_eq(left: a, right: a, message: String) -> () where a: Equal + Display
 ```
 
 Panics if `left != right`, displaying both values.
@@ -58,8 +58,8 @@ fn main() {
 ## `test.assert_ne`
 
 ```
-test.assert_ne(left: a, right: a) -> ()
-test.assert_ne(left: a, right: a, message: String) -> ()
+test.assert_ne(left: a, right: a) -> () where a: Equal + Display
+test.assert_ne(left: a, right: a, message: String) -> () where a: Equal + Display
 ```
 
 Panics if `left == right`, displaying both values.

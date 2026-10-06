@@ -492,6 +492,32 @@ trait Compare for Version { ... }
 -- impl; Equal, Compare and Hash are derived
 ```
 
+What "every field supports them" means, for `Equal`, `Hash`, `Compare`
+and for `Display` where no impl is written:
+
+- `Int`, `Float`, `String`, `Bool` and `()` have all four.
+- A function has none. A channel has `Equal` only (it is equal to
+  itself).
+- A list has what its elements have. A tuple, a map and a set have
+  `Equal`, `Hash` and `Display` when their parts do, and no `Compare`.
+- A record or an enum has a trait when every field and payload does, at
+  the type's arguments: `Option(Int)` has `Compare`, `Option(Fn(Int) ->
+  Int)` has none of them. A closed anonymous record (`{a: Int}`) has
+  `Equal`, `Hash` and `Display` when its fields do.
+- A type variable has what its bound says (`where a: Compare`).
+
+The standard library declares what it asks of its arguments the same
+way: `list.sort` needs `Compare` of the elements, `list.contains`
+`Equal`, map keys and set elements `Hash` (so do `#{..}` and `#[..]`
+literals), `println` and `string.from` `Display`.
+
+```silt
+type Job { name: String, run: Fn(Int) -> Int }
+println(Job { name: "j", run: { n -> n } })
+-- error: type 'Job' cannot derive 'Display': field 'run' has type
+-- 'Fn(Int) -> Int', which is not printable
+```
+
 The `Error` trait has supertrait `Display` and one method,
 `message(self) -> String`. Each stdlib error enum (`IoError`,
 `JsonError`, `HttpError`, …) implements it explicitly, and user code

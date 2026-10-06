@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: type 'Holder' does not implement trait 'Hash'
+-- stderr-contains: error[type]: type 'Holder' cannot derive 'Hash': field 'ch' has type 'Channel(Int)', which is not hashable
 import channel
 type Holder { id: String, ch: Channel(Int) }
 fn h(x: a) -> Int where a: Hash { x.hash() }

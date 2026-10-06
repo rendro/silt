@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'List(Fn(_) -> _)' cannot derive 'Equal'
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
 -- Port of repros/type_soundness/z4.silt, in brace closures.
 fn main() {
   let f = { x -> x }

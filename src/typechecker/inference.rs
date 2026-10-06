@@ -226,6 +226,23 @@ impl TypeChecker {
         }
     }
 
+    /// The map or set literal at `span` hashes values of the type
+    /// `key`.
+    fn want_hash(&mut self, key: &Type, span: Span) {
+        self.want(
+            Pred::Trait {
+                tr: TraitKey::builtin("Hash"),
+                args: Vec::new(),
+                subject: key.clone(),
+            },
+            Origin {
+                span,
+                callee: None,
+                op: None,
+            },
+        );
+    }
+
     /// The operator `op` at `span` needs its operand's type, still
     /// unknown or an annotation variable, to implement the builtin trait
     /// `tr`: `+` needs `Number`, `==` `Equal`, `<` `Compare`.
@@ -1265,33 +1282,18 @@ impl TypeChecker {
                         let expr_span = e.span;
                         let t = self.infer_expr(e, env);
                         let resolved = self.apply(&t);
-                        if matches!(resolved, Type::Var(_) | Type::Rigid(_)) {
-                            self.want(
-                                Pred::Trait {
-                                    tr: TraitKey::builtin("Display"),
-                                    args: Vec::new(),
-                                    subject: resolved,
-                                },
-                                Origin {
-                                    span: expr_span,
-                                    callee: None,
-                                    op: None,
-                                },
-                            );
-                        } else if let Some(type_name) = self.type_name_for_impl(&resolved)
-                            && !self
-                                .tables
-                                .trait_impl_set
-                                .contains(&(TraitKey::builtin("Display"), type_name))
-                        {
-                            self.error(Code::MissingTraitImpl,
-                                format!(
-                                    "type '{}' does not implement Display (required for string interpolation)",
-                                    type_name
-                                ),
-                                expr_span,
-                            );
-                        }
+                        self.want(
+                            Pred::Trait {
+                                tr: TraitKey::builtin("Display"),
+                                args: Vec::new(),
+                                subject: resolved,
+                            },
+                            Origin {
+                                span: expr_span,
+                                callee: None,
+                                op: None,
+                            },
+                        );
                     }
                 }
                 Type::String
@@ -1422,6 +1424,8 @@ impl TypeChecker {
                             );
                         }
                     }
+                    // A map hashes its keys.
+                    self.want_hash(&first_k, span);
                     Type::Map(Box::new(first_k), Box::new(first_v))
                 }
             }
@@ -1453,6 +1457,8 @@ impl TypeChecker {
                             );
                         }
                     }
+                    // A set hashes its elements.
+                    self.want_hash(&elem_type, span);
                     Type::Set(Box::new(elem_type))
                 }
             }
@@ -2217,21 +2223,11 @@ impl TypeChecker {
                                         span,
                                     );
                                 }
+                                // A type of the operator's shape: its
+                                // parts must support it too.
                                 _ => {
-                                    // Round 93: nominal record / enum operands
-                                    // pass the shape check above, but the
-                                    // field-aware auto-derive gate may have
-                                    // proven the type cannot support the
-                                    // Value-level operation (e.g. a record
-                                    // wrapping a `Fn(..)` field — closure
-                                    // ordering is Arc-pointer-address
-                                    // nondeterministic). Reject statically
-                                    // with the precise reason.
-                                    if let Some(msg) =
-                                        self.operand_builtin_trait_violation(&resolved, is_equality)
-                                    {
-                                        self.error(Code::NotDerivable, msg, span);
-                                    }
+                                    let tr = if is_equality { "Equal" } else { "Compare" };
+                                    self.want_operand(tr, &resolved, op_str, span);
                                 }
                             }
                         }
@@ -3744,22 +3740,9 @@ pub(super) fn arith_operand_message(op_str: &str, ty: &Type) -> String {
 /// PartialEq implementation but not `Value::cmp` (Tuple, Map, Set, Bool, Unit).
 /// Type variables and `Type::Error` are treated as "maybe valid".
 ///
-/// Round 93: this is a SHAPE check only. `Record(..)` / `Generic(..)`
-/// heads pass here, but nominal operands are additionally vetted by
-/// `TypeChecker::operand_builtin_trait_violation` at both call sites
-/// (the concrete comparison arm and the deferred pending-check pass):
-/// a record / enum wrapping a field that cannot satisfy Equal/Compare
-/// (e.g. `Fn(..)` — closure ordering is Arc-pointer-address
-/// nondeterministic) is rejected there with a field-precise message.
-/// This free function stays stateless because every other arm is
-/// purely structural.
-///
-/// Round 97: the same applies to CONTAINER heads. `List(_)` / `Range(_)`
-/// (ordering + equality) and `Tuple`/`Map`/`Set` (equality) pass this
-/// shape gate, but a container whose element / component / value type is
-/// `Fn`-shaped would launder into the same Arc-pointer-address ordering
-/// at runtime. `operand_builtin_trait_violation` recurses into the
-/// element types (via `gate_field_supports_trait`) and rejects those.
+/// This is the operator's SHAPE check only, for its message: whether
+/// the type's parts support the operator too is the trait judgement's
+/// to say (`Equal` for `==`, `Compare` for `<`), which the operator owes.
 pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
     match ty {
         Type::Int

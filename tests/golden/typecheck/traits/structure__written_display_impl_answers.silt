@@ -1,0 +1,12 @@
+-- A type with a written `Display` impl has `Display` by that impl,
+-- whatever its fields are, and its header's bounds are owed.
+type Job { name: String, run: Fn(Int) -> Int }
+trait Display for Job { fn display(self) -> String { "job {self.name}" } }
+type Box(a) { Box(a) }
+trait Display for Box(a) where a: Display { fn display(self) -> String { match self { Box(v) -> "box of {v}" } } }
+fn show(x: a) -> String where a: Display { x.display() }
+fn main() {
+  let j = Job { name: "j", run: { n -> n } }
+  println(show(j))
+  println(show(Box(1)))
+}

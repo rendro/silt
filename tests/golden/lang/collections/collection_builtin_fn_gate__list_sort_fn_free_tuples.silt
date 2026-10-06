@@ -1,3 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'Tuple' does not implement trait 'Compare'
+-- `list.sort` needs `Compare` of the elements, and a tuple has none
+-- (`<` and `.compare()` do not order tuples): sort by a key.
 import list
 fn main() {
   println(list.length(list.sort([(2, "b"), (1, "a")])))

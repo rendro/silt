@@ -1,0 +1,8 @@
+-- A type that recurs at ever larger arguments is checked in bounded
+-- time.
+type N(a) { Z, S(N(List(a))) }
+fn main() {
+  let n: N(Int) = Z
+  println(n == n)
+  println(n)
+}
