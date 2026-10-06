@@ -317,6 +317,8 @@ impl Vm {
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
                     // (src/typechecker/mod.rs:8173). All units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
+                    // A tuple is ordered part by part.
+                    (Value::Tuple(_), Value::Tuple(_)) => receiver.cmp(other),
                     _ => {
                         return Some(Err(VmError::new(format!(
                             "compare() not supported between {} and {}",

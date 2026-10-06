@@ -132,6 +132,11 @@ impl Vm {
                 Self::ordering_with_fn_gate(&a, &b)?
             }
             (Value::Variant(..), Value::Variant(..)) => Self::ordering_with_fn_gate(&a, &b)?,
+            // What has `Compare` is ordered: a tuple part by part, `false`
+            // before `true`, `()` equal to itself.
+            (Value::Tuple(_), Value::Tuple(_)) => Self::ordering_with_fn_gate(&a, &b)?,
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
             _ => {
                 return Err(VmError::type_confusion(format!(
                     "unsupported operation: cannot compare {} and {}",
