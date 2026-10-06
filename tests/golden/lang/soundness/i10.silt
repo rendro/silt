@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
 -- Port of repros/type_soundness/i10.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: type 'Fn' does not implement Equal
 type Box(a) { Box(a) }
 fn same(x, y) { x == y }
 fn less(x, y) { x < y }

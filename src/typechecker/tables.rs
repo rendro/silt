@@ -274,8 +274,6 @@ pub(super) struct Waiting {
     /// waits for as long as something can still run that body.
     pub(super) decls: Vec<CellDecl>,
     pub(super) wanted: Vec<super::solve::Wanted>,
-    pub(super) numeric_checks: Vec<(Type, &'static str, Span)>,
-    pub(super) question_marks: Vec<(Type, Type, Option<Type>, Span)>,
 }
 
 /// A function or a `let` of a REPL cell.

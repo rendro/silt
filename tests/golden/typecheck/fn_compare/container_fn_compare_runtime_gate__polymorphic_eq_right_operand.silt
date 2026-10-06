@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: does not implement Equal
 -- stderr-contains: 'Fn'
-fn eq(a: x, b: x) -> Bool { a == b }
+fn eq(a: x, b: x) -> Bool where x: Equal { a == b }
 fn main() {
   println(eq([], [{ y -> y }]))
 }

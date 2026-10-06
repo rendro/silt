@@ -74,7 +74,7 @@ traits without colliding with the built-in `Equal` / `Compare`, which
 cannot be redefined.)
 
 Implementing `Cmp2` on a type requires that type to also implement `Eq2`
-(four of silt's five built-in traits — `Equal`, `Hash`, `Compare`,
+(four of silt's six built-in traits — `Equal`, `Hash`, `Compare`,
 `Display` — are auto-derived for every user-defined type and the
 displayable builtins, so the obligation is satisfied automatically;
 channels and function values are the exception — they do not implement
@@ -445,10 +445,11 @@ type.
 
 ## Built-in Traits
 
-silt ships **five** built-in traits. Four of them — `Equal`, `Hash`,
+silt ships **six** built-in traits. Four of them — `Equal`, `Hash`,
 `Compare`, `Display` — are **automatically derived** for every
-user-defined type. The fifth, `Error`, is built-in but is **not**
-auto-derived.
+user-defined type. `Error` is built-in but is **not** auto-derived.
+`Number` is the types arithmetic is on, `Int` and `Float`, and nothing
+else.
 
 | Trait     | Purpose                          | Auto-derived? |
 |-----------|----------------------------------|---------------|
@@ -457,6 +458,22 @@ auto-derived.
 | `Hash`    | Hash value for maps/sets         | yes           |
 | `Compare` | Order comparison                 | yes           |
 | `Error`   | Error reporting (`message()`)    | no            |
+| `Number`  | `+ - * / %` and unary `-`        | Int and Float only |
+
+Operators are these traits: `==` and `!=` need `Equal`, `<` `>` `<=`
+`>=` need `Compare`, interpolation and `println` need `Display`,
+arithmetic needs `Number`. A function without annotations is general
+over them (`fn add(a, b) { a + b }` is `(a, a) -> a where a: Number`);
+with annotation variables it declares them:
+
+```silt
+fn largest(x: a, y: a) -> a where a: Compare {
+  match x < y { true -> y, false -> x }
+}
+```
+
+`?` and a record update (`r.{ f: e }`) are not general: the value they
+apply to needs a type the definition decides, or an annotation.
 
 The auto-derived `Display` formats in constructor syntax (`Circle(5)`).
 Write your own `trait Display for T` to override.

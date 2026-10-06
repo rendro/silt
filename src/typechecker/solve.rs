@@ -40,6 +40,14 @@ pub(crate) enum Goal {
         field: Symbol,
         value: Type,
     },
+    /// `operand?`, with the result `ok`, in a function that returns `ret`
+    /// (none outside any), where the operand's type was unknown. Like an
+    /// update, it never enters a scheme.
+    Try {
+        operand: Type,
+        ok: Type,
+        ret: Option<Type>,
+    },
 }
 
 impl Goal {
@@ -49,6 +57,7 @@ impl Goal {
             Goal::Pred(Pred::Trait { subject, .. }) => subject,
             Goal::Select { recv, .. } => recv,
             Goal::Update { base, .. } => base,
+            Goal::Try { operand, .. } => operand,
         }
     }
 }
@@ -60,6 +69,9 @@ pub(crate) struct Origin {
     pub(super) span: Span,
     /// The name of what is used, for a message (`hello`, `list.sort`).
     pub(super) callee: Option<Symbol>,
+    /// The operator that owes it, as a message names it (`'+'`), when
+    /// the use is an operator's operand.
+    pub(super) op: Option<&'static str>,
 }
 
 impl TypeChecker {
@@ -113,6 +125,13 @@ impl TypeChecker {
                             self.select_call(&recv, name, args, result, origin.span);
                         }
                     }
+                    Goal::Try { operand, ok, ret } => {
+                        let operand = self.apply(&operand);
+                        if !matches!(operand, Type::Var(_)) {
+                            self.wanted[i].solved = true;
+                            self.try_operand(&operand, &ok, ret, origin.span);
+                        }
+                    }
                     Goal::Update { base, field, value } => {
                         let base = self.apply(&base);
                         if !matches!(base, Type::Var(_)) {
@@ -123,6 +142,56 @@ impl TypeChecker {
                 }
             }
             i += 1;
+        }
+    }
+
+    /// A method call whose receiver was a type variable when it was
+    /// inferred and is the type `type_name` now: `true` when the type has
+    /// the method. The call's trait is recorded by its span
+    /// (`deferred_method_traits`), which `resolve_all_types` writes on
+    /// the access; a call that sees the method in two traits is
+    /// ambiguous, as anywhere.
+    pub(super) fn deferred_method_call(
+        &mut self,
+        type_name: TypeRef,
+        field: Symbol,
+        obj_ty: &Type,
+        result_ty: &Type,
+        span: Span,
+    ) -> bool {
+        let Some(entry) = self.tables.method_table.get(&(type_name, field)).cloned() else {
+            return false;
+        };
+        let instantiated = self.dispatch_method_entry(&entry, field, obj_ty, span);
+        if let Some(t) = self.method_trait.take() {
+            self.deferred_method_traits.insert(span, t);
+        }
+        let method_ty = self.apply(&instantiated);
+        self.unify_deferred_method(result_ty, &method_ty, span);
+        true
+    }
+
+    /// Unify the type a method call on an unknown receiver was given
+    /// (`result_ty`) with the method it turned out to call.
+    ///
+    /// Method types include `self` as the first param. When the call
+    /// site originally saw this field access as an unknown Var, it
+    /// unified the var with a function type built from the *explicit*
+    /// args only (no receiver). Strip `self` when adapting.
+    pub(super) fn unify_deferred_method(&mut self, result_ty: &Type, method_ty: &Type, span: Span) {
+        let result_resolved = self.apply(result_ty);
+        match (&result_resolved, method_ty) {
+            (Type::Fun(call_params, call_ret), Type::Fun(method_params, method_ret))
+                if method_params.len() == call_params.len() + 1 =>
+            {
+                for (cp, mp) in call_params.iter().zip(method_params.iter().skip(1)) {
+                    self.unify(cp, mp, span);
+                }
+                self.unify(call_ret, method_ret, span);
+            }
+            _ => {
+                self.unify(result_ty, method_ty, span);
+            }
         }
     }
 
@@ -275,6 +344,82 @@ impl TypeChecker {
                         self.show_type(&resolved)
                     ),
                     span,
+                );
+            }
+        }
+    }
+
+    /// Check `operand?` now that the operand's type is known: it is a
+    /// Result or an Option, whose payload is `result_ty`, and the
+    /// function it is in returns the same wrapper.
+    fn try_operand(
+        &mut self,
+        resolved: &Type,
+        result_ty: &Type,
+        expected_ret: Option<Type>,
+        span: Span,
+    ) {
+        let (head, args) = match &resolved {
+            Type::Error | Type::Never => return,
+            Type::Generic(name, args) if name.is_builtin("Result") && args.len() == 2 => {
+                ("Result", args.clone())
+            }
+            Type::Generic(name, args) if name.is_builtin("Option") && args.len() == 1 => {
+                ("Option", args.clone())
+            }
+            other => {
+                self.error(
+                    Code::InvalidQuestion,
+                    format!("'?' operator requires Result or Option type, got '{other}'"),
+                    span,
+                );
+                return;
+            }
+        };
+        // The unwrapped Ok/Some payload is what flowed into the
+        // surrounding expression (t1 = got, t2 = expected).
+        self.unify(&args[0], result_ty, span);
+        let Some(ret) = expected_ret else {
+            self.error(
+                Code::InvalidQuestion,
+                "? operator can only be used inside a function that returns Result or Option"
+                    .to_string(),
+                span,
+            );
+            return;
+        };
+        let ret_resolved = self.apply(&ret);
+        let expected_wrapper = if head == "Result" {
+            let fresh_ok = self.fresh_var();
+            Type::builtin("Result", vec![fresh_ok, args[1].clone()])
+        } else {
+            let fresh_inner = self.fresh_var();
+            Type::option(fresh_inner)
+        };
+        match &ret_resolved {
+            Type::Error | Type::Never => {}
+            // Return type still open (or already the right wrapper):
+            // constrain it, exactly like the inline concrete path.
+            Type::Var(_) => {
+                self.unify(&ret_resolved, &expected_wrapper, span);
+            }
+            Type::Generic(n, _) if n.is_builtin(head) => {
+                self.unify(&ret_resolved, &expected_wrapper, span);
+            }
+            // Concrete non-matching return type: this is the unsound
+            // lambda repro (`{ x -> x? + 1 }` whose return type
+            // resolved to Int). Curated message, same class as the
+            // inline no-context error.
+            other => {
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::InvalidQuestion,
+                        span,
+                        "? operator can only be used inside a function that returns Result or Option",
+                    )
+                    .with_note(format!(
+                        "the ?-ed expression is {resolved}, but the enclosing function returns {other}"
+                    )),
                 );
             }
         }
@@ -437,6 +582,7 @@ impl TypeChecker {
                 let origin = Origin {
                     span,
                     callee: Some(name),
+                    op: None,
                 };
                 self.want(
                     Pred::Trait {
@@ -487,6 +633,7 @@ impl TypeChecker {
         self.named_use.unwrap_or(Origin {
             span: self.at,
             callee: None,
+            op: None,
         })
     }
 
@@ -609,6 +756,21 @@ impl TypeChecker {
             .trait_impl_set
             .contains(&(trait_name, type_name))
         {
+            // An operator's own operand: the operator's message.
+            if let Some(op) = origin.op {
+                let message = if trait_name.is_builtin("Number") {
+                    arith_operand_message(op, &resolved)
+                } else {
+                    let domain = if trait_name.is_builtin("Equal") {
+                        "a comparable type"
+                    } else {
+                        "Int, Float, String, List, Range, Record, or Variant"
+                    };
+                    format!("operator {op} requires {domain}, got '{resolved}'")
+                };
+                self.error(Code::UnsupportedOperation, message, span);
+                return;
+            }
             self.error(
                 Code::MissingTraitImpl,
                 format!(
@@ -751,7 +913,16 @@ impl TypeChecker {
         span: Span,
     ) {
         let owed = self.wanted.len();
-        self.verify_trait_obligation(trait_name, args, ty, Origin { span, callee: None });
+        self.verify_trait_obligation(
+            trait_name,
+            args,
+            ty,
+            Origin {
+                span,
+                callee: None,
+                op: None,
+            },
+        );
         self.wanted.truncate(owed);
     }
 

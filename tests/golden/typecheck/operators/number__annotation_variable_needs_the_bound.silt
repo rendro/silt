@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type variable `a` is not known to implement trait 'Number'
+-- stderr-contains: help: add `where a: Number`
+fn add(x: a, y: a) -> a { x + y }
+fn main() { println(add(1, 2)) }

@@ -103,6 +103,17 @@ impl TypeChecker {
             }
             let (tr, args, subject) = match &wanted.goal {
                 Goal::Pred(Pred::Trait { tr, args, subject }) => (tr, args, subject),
+                Goal::Try { .. } => {
+                    self.errors.push(
+                        Diagnostic::error(
+                            Code::AmbiguousType,
+                            wanted.origin.span,
+                            "cannot infer the type `?` is applied to: a Result or an Option",
+                        )
+                        .with_help("annotate the value: `x: Result(Int, String)`"),
+                    );
+                    continue;
+                }
                 // (Each is decided when the scope is generalised.)
                 Goal::Select { .. } => continue,
                 Goal::Update { field, .. } => {
@@ -119,9 +130,20 @@ impl TypeChecker {
                     continue;
                 }
             };
-            if !wanted.in_scheme
-                && crate::defs::builtin_trait_id(&resolve(tr.name)) != Some(tr.id)
-                && matches!(self.apply(subject), Type::Var(_))
+            if wanted.in_scheme || !matches!(self.apply(subject), Type::Var(_)) {
+                continue;
+            }
+            // Nothing decides the subject and no definition is general
+            // in it. For a trait every type implements by its structure
+            // it does not matter which type it is: it is `()`
+            // (`println([])`).
+            if ["Display", "Equal", "Compare", "Hash"]
+                .iter()
+                .any(|name| tr.is_builtin(name))
+            {
+                let _ = self.unify_types(subject, &Type::Unit);
+                continue;
+            }
             {
                 // Nothing decides the subject, and no definition is
                 // general in it: which impl the use means is unknown.
@@ -140,12 +162,6 @@ impl TypeChecker {
                 );
             }
         }
-        let mut numeric = std::mem::take(&mut self.pending_numeric_checks);
-        numeric.retain(|(ty, ..)| self.waits_for_outer(ty));
-        self.pending_numeric_checks = numeric;
-        let mut questions = std::mem::take(&mut self.pending_question_marks);
-        questions.retain(|(inner_ty, ..)| self.waits_for_outer(inner_ty));
-        self.pending_question_marks = questions;
     }
 
     /// Whether `ty` is a variable still unresolved that the scope

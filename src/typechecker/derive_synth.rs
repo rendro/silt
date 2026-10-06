@@ -607,6 +607,19 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             span: dummy_span,
             doc: None,
         },
+        // trait Number {}: the types arithmetic is on, Int and Float.
+        TraitDecl {
+            name: intern("Number"),
+            name_span: dummy_span,
+            params: Vec::new(),
+            supertraits: Vec::new(),
+            param_where_clauses: Vec::new(),
+            methods: Vec::new(),
+            assoc_types: Vec::new(),
+            is_pub: true,
+            span: dummy_span,
+            doc: None,
+        },
         // trait Hash { fn hash(self) -> Int }
         TraitDecl {
             name: intern("Hash"),
@@ -703,8 +716,17 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         all_auto_traits,
     );
     register_auto_derived_impls_for(checker, &["List"], all_auto_traits);
+    // Arithmetic is on Int and Float.
+    for ty in ["Int", "Float"] {
+        checker
+            .tables
+            .trait_impl_set
+            .insert((TraitKey::builtin("Number"), TypeRef::builtin(ty)));
+    }
     // Tuple/Map/Set: Equal/Hash/Display only.
     register_auto_derived_impls_for(checker, &["Tuple", "Map", "Set"], non_ordering_traits);
+    // A channel is equal to itself only (`ch1 == ch2`).
+    register_auto_derived_impls_for(checker, &["Channel"], &["Equal"]);
     // ── Built-in enums + records that flow through synth ────────────
     //
     // Each stamp below tells `synthesize_auto_derive_impls` which
