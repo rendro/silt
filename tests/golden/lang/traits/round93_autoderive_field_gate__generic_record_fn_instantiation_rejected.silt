@@ -1,8 +1,7 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'Box' cannot derive 'Equal'
+-- stderr-contains: error[type]: type 'Box' does not implement trait 'Equal': field 'v' is of type 'Fn(_) -> _', which does not
 -- stderr-contains: field 'v'
--- stderr-contains: not equatable
 type Box(a) { v: a }
 fn main() {
     let c = Box{v: { x -> x }}

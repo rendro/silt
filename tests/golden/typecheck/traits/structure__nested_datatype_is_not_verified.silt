@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'N(Int)' cannot be shown to implement trait 'Equal': it is nested too deeply, or its definition recurs at ever larger types
+-- A type that recurs at ever larger arguments cannot be decided by
+-- looking at its parts: it is reported, in bounded time, not assumed.
+type N(a) { Z, S(N(List(a))) }
+fn main() {
+  let n: N(Int) = Z
+  println(n == n)
+}

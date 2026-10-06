@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: error[type]: type 'V' cannot derive 'Hash': variant 'Box1' payload #1 has type 'Channel(Int)', which is not hashable
+-- stderr-contains: error[type]: type 'V' does not implement trait 'Hash': variant 'Box1' payload #1 is of type 'Channel(Int)', which does not
 import channel
 type V { Box1(Channel(Int)), Other }
 fn h(x: a) -> Int where a: Hash { x.hash() }

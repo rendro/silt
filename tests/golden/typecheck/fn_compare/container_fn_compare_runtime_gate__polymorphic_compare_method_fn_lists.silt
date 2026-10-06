@@ -1,7 +1,6 @@
 -- `.compare()` through a polymorphic wrapper on lists of functions fails.
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
--- stderr-contains: 'Fn'
+-- stderr-contains: error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Compare': element is of type 'Fn(_) -> _', which does not
 fn cmpm(a: t, b: t) -> Int where t: Compare { a.compare(b) }
 fn main() {
   println(cmpm([{ y -> y }], [{ y -> y }]))

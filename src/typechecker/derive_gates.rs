@@ -1,18 +1,5 @@
 use super::*;
 
-/// Round 93: human adjective for the gated built-in traits, used by
-/// the field-aware auto-derive gate's diagnostics ("... which is not
-/// comparable").
-pub(super) fn builtin_trait_adjective(trait_sym: TraitKey) -> &'static str {
-    match resolve(trait_sym.name).as_str() {
-        "Compare" => "comparable",
-        "Equal" => "equatable",
-        "Hash" => "hashable",
-        "Display" => "printable",
-        _ => "supported",
-    }
-}
-
 impl TypeChecker {
     /// Conservative check: is the field type `ty` known to satisfy
     /// `trait_name` as recorded in `trait_impl_set`? Returns false on
@@ -53,6 +40,7 @@ impl TypeChecker {
                 "Equal" => intern("equal"),
                 "Compare" => intern("compare"),
                 "Hash" => intern("hash"),
+                "Display" => intern("display"),
                 _ => continue,
             };
             // `method_table` is keyed on the declared (un-canonical)
@@ -80,199 +68,41 @@ impl TypeChecker {
         self.tables.auto_derive_negatives.extend(negatives);
     }
 
-    /// Round 93: fixpoint over the user-declared types computing which
-    /// `(trait, type)` pairs canNOT satisfy a gated built-in trait
-    /// because of an offending field / variant payload. Returns
-    /// `(trait, canonical type name) → full diagnostic message`.
-    ///
-    /// Termination / recursion notes: each pass may only ADD
-    /// negatives and the pair space is finite, so the loop is bounded
-    /// by `3 × |types|` passes. Recursive and mutually-recursive
-    /// types that are otherwise clean are never added — the walk
-    /// reads the CURRENT stamp for nominal heads (coinductive: a
-    /// reference cycle with no offending field is sound because
-    /// runtime values are finite trees), so `type Tree { leaf: Int,
-    /// kids: List(Tree) }` keeps all four traits.
+    /// Which of the four structural traits each of the module's types
+    /// does not have, with the reason as a message: the judgement
+    /// (`structure_gap`) asked of the type at its own parameters, which
+    /// hold whatever a use gives them. `Display` is not asked of a type
+    /// with a written impl.
     fn compute_auto_derive_field_negatives(
         &self,
         user_type_names: &std::collections::HashSet<TypeRef>,
     ) -> HashMap<(TraitKey, TypeRef), String> {
-        let gated_traits = [
-            TraitKey::builtin("Equal"),
-            TraitKey::builtin("Compare"),
-            TraitKey::builtin("Hash"),
-        ];
-
-        // Owned snapshot of each user type's resolved body so the
-        // fixpoint can walk without re-borrowing `self.tables.enums` /
-        // `self.tables.records`. Sorted by name for deterministic results.
-        // (Generic-param fields resolve to `Type::Var`s, which the
-        // walker treats as supporting — the synthesized impl's
-        // `where p: Trait` clause covers them at instantiation.)
-        let mut entries: Vec<(TypeRef, TypeRef, TypeBodyKind)> = Vec::new();
-        for name in user_type_names {
-            let canon = canonical_head(&self.tables.resolver, *name);
-            if let Some(info) = self.tables.enums.get(name) {
-                entries.push((*name, canon, TypeBodyKind::Enum(info.variants.clone())));
-            } else if let Some(info) = self.tables.records.get(name) {
-                entries.push((*name, canon, TypeBodyKind::Record(info.fields.clone())));
-            }
-        }
-        entries.sort_by_key(|(name, ..)| resolve(name.name));
-
+        let mut names: Vec<TypeRef> = user_type_names.iter().copied().collect();
+        names.sort_by_key(|name| resolve(name.name));
         let mut negatives: HashMap<(TraitKey, TypeRef), String> = HashMap::new();
-        loop {
-            let mut changed = false;
-            for (name, canon, body) in &entries {
-                for trait_sym in gated_traits {
-                    let key = (trait_sym, *canon);
-                    if negatives.contains_key(&key) || !self.tables.trait_impl_set.contains(&key) {
-                        continue;
-                    }
-                    let supports =
-                        |fty: &Type| self.gate_field_supports_trait(trait_sym, fty, &negatives, 0);
-                    let offending: Option<String> = match body {
-                        TypeBodyKind::Record(fields) => fields.iter().find_map(|(fname, fty)| {
-                            (!supports(fty)).then(|| {
-                                format!(
-                                    "field '{}' has type '{}'",
-                                    resolve(*fname),
-                                    self.apply(fty)
-                                )
-                            })
-                        }),
-                        TypeBodyKind::Enum(variants) => variants.iter().find_map(|v| {
-                            v.field_types.iter().enumerate().find_map(|(i, fty)| {
-                                (!supports(fty)).then(|| {
-                                    format!(
-                                        "variant '{}' payload #{} has type '{}'",
-                                        resolve(v.name),
-                                        i + 1,
-                                        self.apply(fty)
-                                    )
-                                })
-                            })
-                        }),
-                    };
-                    if let Some(field_desc) = offending {
-                        negatives.insert(
-                            key,
-                            format!(
-                                "type '{}' cannot derive '{}': {}, which is not {}",
-                                resolve(name.name),
-                                resolve(trait_sym.name),
-                                field_desc,
-                                builtin_trait_adjective(trait_sym),
-                            ),
-                        );
-                        changed = true;
-                    }
+        for name in names {
+            let canon = canonical_head(&self.tables.resolver, name);
+            let params: Vec<Type> = match self.tables.enums.get(&name) {
+                Some(info) => info.param_var_ids.iter().map(|v| Type::Var(*v)).collect(),
+                None => self
+                    .tables
+                    .record_param_var_ids
+                    .get(&name)
+                    .map(|ids| ids.iter().map(|v| Type::Var(*v)).collect())
+                    .unwrap_or_default(),
+            };
+            let own = Type::Generic(name, params);
+            for tr in ["Equal", "Compare", "Hash", "Display"] {
+                let tr = TraitKey::builtin(tr);
+                if !self.by_structure(tr, canon) {
+                    continue;
                 }
-            }
-            if !changed {
-                break;
+                let mut walk = super::solve::Walk::default();
+                if let Some(gap) = self.structure_gap(tr, &own, &mut walk, 0) {
+                    negatives.insert((tr, canon), self.gap_message(tr, &own, &gap));
+                }
             }
         }
         negatives
-    }
-
-    /// Round 93: recursive, honest "does this FIELD type satisfy the
-    /// gated built-in trait?" check used by the field-aware gate and
-    /// by the operator-operand instantiation walk.
-    ///
-    /// Deliberately permissive arms (over-rejection is the failure
-    /// mode to avoid):
-    ///   - `Var`: a generic param of the enclosing type (the
-    ///     synthesized impl's `where p: Trait` clause covers it at
-    ///     the instantiation site) or a not-yet-resolved inference
-    ///     var — never provably bad here.
-    ///   - `AssocProj`: "maybe valid" exactly like `Var` (round-92
-    ///     operand parity).
-    ///   - depth cap: give up permissively on absurdly deep types
-    ///     rather than risk a stack overflow.
-    fn gate_field_supports_trait(
-        &self,
-        trait_sym: TraitKey,
-        ty: &Type,
-        negatives: &HashMap<(TraitKey, TypeRef), String>,
-        depth: usize,
-    ) -> bool {
-        if depth > 64 {
-            return true;
-        }
-        let ty = self.apply(ty);
-        let recurse = |t: &Type| self.gate_field_supports_trait(trait_sym, t, negatives, depth + 1);
-        // Stamp lookup for a nominal/container head, honest w.r.t. the
-        // in-progress negatives.
-        let head_ok = |head: TypeRef| {
-            let canon = canonical_head(&self.tables.resolver, head);
-            let key = (trait_sym, canon);
-            if negatives.contains_key(&key) {
-                return false;
-            }
-            self.tables.trait_impl_set.contains(&key)
-        };
-        match &ty {
-            Type::Error | Type::Never | Type::Var(_) | Type::Rigid(_) | Type::AssocProj { .. } => {
-                true
-            }
-            // Functions support none of Equal/Compare/Hash: the
-            // Value-level fallbacks are Arc-pointer identity (equal),
-            // Arc-pointer ADDRESS ordering (compare — ASLR-
-            // nondeterministic) and a constant tag (hash).
-            Type::Fun(..) => false,
-            // Channels carry identity-based equality (round 82:
-            // `Value::Channel(a) == Value::Channel(b)` iff ids match)
-            // but no ordering or hashing through the trait surface.
-            Type::Channel(_) => trait_sym == TraitKey::builtin("Equal"),
-            Type::List(t) | Type::Range(t) | Type::Set(t) => {
-                let head = self
-                    .type_name_for_impl(&ty)
-                    .expect("container head has canonical name");
-                head_ok(head) && recurse(t)
-            }
-            Type::Map(k, v) => head_ok(TypeRef::builtin("Map")) && recurse(k) && recurse(v),
-            Type::Tuple(ts) => head_ok(TypeRef::builtin("Tuple")) && ts.iter().all(recurse),
-            // Structural records: Value's PartialEq / Ord / Hash all
-            // compare them element-wise (round-85 contracts), so the
-            // honest answer is the conjunction over the known fields.
-            // Open rows are rejected: the hidden tail could carry
-            // anything.
-            Type::AnonRecord { fields, tail } => {
-                matches!(tail, RowTail::Closed) && fields.values().all(recurse)
-            }
-            // Nominal heads: the stamp (kept honest by the fixpoint
-            // for user types, by registration policy for builtins)
-            // decides the head; instantiation args / embedded field
-            // types are walked so `Box(Fn(Int) -> Int)` is caught even
-            // though `Box(a)` itself is conditionally eligible.
-            Type::Record(name, fields) => head_ok(*name) && fields.iter().all(|(_, t)| recurse(t)),
-            Type::Generic(name, args) => head_ok(*name) && args.iter().all(recurse),
-            // Scalars and anything else: defer to the registered
-            // stamp, exactly like the one-level synthesis gate.
-            _ => self.field_type_supports_trait(trait_sym, &ty),
-        }
-    }
-
-    /// Round 93: when a `.equal()` / `.compare()` / `.hash()` call
-    /// misses the method table because the field-aware gate removed
-    /// the provisional auto-derive entry, surface the precise reason
-    /// instead of a generic "unknown field or method".
-    pub(super) fn method_auto_derive_violation(
-        &self,
-        type_name: TypeRef,
-        method: Symbol,
-    ) -> Option<String> {
-        let trait_sym = match resolve(method).as_str() {
-            "equal" => TraitKey::builtin("Equal"),
-            "compare" => TraitKey::builtin("Compare"),
-            "hash" => TraitKey::builtin("Hash"),
-            _ => return None,
-        };
-        let canon = canonical_head(&self.tables.resolver, type_name);
-        self.tables
-            .auto_derive_negatives
-            .get(&(trait_sym, canon))
-            .cloned()
     }
 }

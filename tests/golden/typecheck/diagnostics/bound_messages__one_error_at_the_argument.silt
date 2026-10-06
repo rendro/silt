@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A bound a call owes is reported at the argument that fails it, once
+-- for the argument however many traits it lacks; an argument of the
+-- wrong type is the one error of its call; errors come in source order.
+import test
+import list
+fn add(a, b) { a + b }
+fn show(x: a) -> String { "{x}" }
+fn main() {
+  let f = { n -> n }
+  test.assert_eq(f, f)
+  println(add("a", true))
+  println(list.sort([f]))
+  println(-"s" + 1)
+}

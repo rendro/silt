@@ -4,9 +4,8 @@
 -- implemented for Int: a call on an Int here sees both traits and is
 -- ambiguous (prelude traits are always seen); a call through a `where`
 -- bound names its trait and is not.
--- stderr-contains: error[type]: ambiguous method 'display' on type 'Int': provided by traits Describe, Display
+-- stderr-contains: error[type]: ambiguous method 'display' on type 'Int': provided by traits Describe, prelude.Display
 -- stderr-contains: --> user_trait_method_named_like_builtin_call.silt:16:11
--- stderr-contains: error[type]: ambiguous method 'compare' on type 'Int': provided by traits Compare, Ranked
 trait Describe { fn display(self) -> String }
 trait Describe for Int { fn display(self) -> String { "described {self}" } }
 trait Ranked { fn compare(self, other: Self) -> Int }

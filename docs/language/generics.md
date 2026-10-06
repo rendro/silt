@@ -539,7 +539,7 @@ The rules:
 - **Ambiguity across traits is rejected.** If both `Foo` and `Bar`
   declare a method `build` and `a` is constrained to `Foo + Bar`,
   calling `a.build()` errors with "ambiguous method 'build' on `type a`:
-  provided by multiple traits (Foo, Bar)".
+  provided by traits Bar, Foo".
 
 This is how `default`, `empty`, and similar constructor-style trait
 methods become directly writable in user code — without silt growing

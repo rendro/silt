@@ -1,9 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'H' cannot derive 'Equal'
+-- stderr-contains: error[type]: type 'H' does not implement trait 'Equal': field 'f' is of type 'Fn(Int) -> Int', which does not
 -- stderr-contains: field 'f'
 -- stderr-contains: Fn(Int) -> Int
--- stderr-contains: not equatable
 type H { f: Fn(Int) -> Int }
 fn mk() -> H { H{f: { x -> x }} }
 fn main() { println(mk() == mk()) }

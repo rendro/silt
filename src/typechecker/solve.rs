@@ -62,6 +62,44 @@ impl Goal {
     }
 }
 
+/// How many types deep the structural judgement looks (see
+/// `structure_gap`).
+const STRUCTURE_DEPTH: usize = 100;
+
+const TOO_DEEP: &str = "it is nested too deeply, or its definition recurs at ever larger types";
+
+/// What one structural judgement has gathered so far.
+#[derive(Default)]
+pub(super) struct Walk {
+    /// The nominal types looked at, each at its arguments: a type that
+    /// comes up again is not looked at twice.
+    seen: Vec<(TypeRef, Vec<Type>)>,
+    /// The parts whose type is unknown, or an annotation variable.
+    pub(super) open: Vec<Type>,
+    /// The parts that have a written `Display` impl.
+    pub(super) written: Vec<Type>,
+}
+
+/// The part of a type that lacks a structural trait.
+pub(super) struct Gap {
+    /// The way to the part from the type: `field 'f'`, `element`.
+    path: Vec<String>,
+    /// The head of the part's type (`Fn`), and the type.
+    head: String,
+    full: String,
+    /// Why, when it is not simply that the part's type has no such
+    /// trait.
+    why: Option<&'static str>,
+}
+
+impl Gap {
+    /// Whether it is the type itself that lacks the trait, not a part
+    /// of it.
+    pub(super) fn is_whole(&self) -> bool {
+        self.path.is_empty() && self.why.is_none()
+    }
+}
+
 /// Where a predicate is owed, and what asked for it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Origin {
@@ -111,7 +149,17 @@ impl TypeChecker {
                         let subject = self.apply(&subject);
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
+                            // One error for one type at one place: a use
+                            // that owes two traits its type has neither
+                            // of (`test.assert_eq(f, f)`) says the first.
+                            let reported = self.errors.len();
                             self.verify_trait_obligation(tr, &args, &subject, origin);
+                            if self.errors.len() > reported {
+                                let key = (origin.span, self.show_type(&subject));
+                                if !self.lacking.insert(key) {
+                                    self.errors.truncate(reported);
+                                }
+                            }
                         }
                     }
                     Goal::Select {
@@ -311,12 +359,14 @@ impl TypeChecker {
                 if self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span) {
                     return;
                 }
-                // Round 93: the field-aware auto-derive gate removed
-                // this type's provisional `.equal()`/`.compare()`/
-                // `.hash()` entry — name the offending field instead
-                // of a generic "unknown method".
-                if let Some(msg) = self.method_auto_derive_violation(type_name, field) {
-                    self.error(Code::NotDerivable, msg, span);
+                // A method of a structural trait the type has no entry
+                // for.
+                if let Some(method_ty) = self.structural_method(&obj_ty, field, span) {
+                    self.last_field_access_was_method = false;
+                    if let Some(t) = self.method_trait.take() {
+                        self.deferred_method_traits.insert(span, t);
+                    }
+                    self.unify_deferred_method(&result_ty, &method_ty, span);
                     return;
                 }
                 // GAP (round 35 F7): thread did-you-mean suggestion
@@ -481,6 +531,46 @@ impl TypeChecker {
         }
     }
 
+    /// Decide each `e?` of the scope just left whose operand is still
+    /// unknown and is the scope's to generalise, where the return type
+    /// of the function it is in is known by now: `?` unwraps a Result
+    /// with the function's error type, or an Option.
+    pub(super) fn decide_tries(&mut self) {
+        let mine: Vec<usize> = (self.closed_mark..self.wanted.len())
+            .filter(|&i| {
+                !self.wanted[i].solved
+                    && matches!(self.wanted[i].goal, Goal::Try { .. })
+                    && matches!(
+                        self.apply(self.wanted[i].goal.waits_on()),
+                        Type::Var(var) if self.tables.vars.is_generalizable(var)
+                    )
+            })
+            .collect();
+        self.reopen_level();
+        for i in mine {
+            let Goal::Try {
+                operand,
+                ret: Some(ret),
+                ..
+            } = self.wanted[i].goal.clone()
+            else {
+                continue;
+            };
+            let wrapper = match self.apply(&ret) {
+                Type::Generic(name, args) if name.is_builtin("Result") && args.len() == 2 => {
+                    Type::builtin("Result", vec![self.fresh_var(), args[1].clone()])
+                }
+                Type::Generic(name, args) if name.is_builtin("Option") && args.len() == 1 => {
+                    Type::option(self.fresh_var())
+                }
+                _ => continue,
+            };
+            let _ = self.unify_types(&operand, &wrapper);
+        }
+        self.solve_wanted(self.closed_mark);
+        self.close_level();
+    }
+
     /// Decide each call `x.m(args)` of the scope just left whose
     /// receiver is still unknown and is the scope's to generalise. When
     /// exactly one trait the module sees declares a method `m`, the call
@@ -488,7 +578,7 @@ impl TypeChecker {
     /// (`fn g(x) { x.greet() }` is `a -> String where a: Greet`). When
     /// none does, `x` is a record with a function in its field `m`. When
     /// several do, the receiver needs an annotation.
-    pub(super) fn default_selects(&mut self) {
+    pub(super) fn default_selects(&mut self, wait_if_several: bool) {
         let mine: Vec<usize> = (self.closed_mark..self.wanted.len())
             .filter(|&i| {
                 !self.wanted[i].solved
@@ -513,7 +603,9 @@ impl TypeChecker {
                 continue;
             };
             // (An earlier one of these may have decided this receiver.)
-            if matches!(self.apply(&recv), Type::Var(_)) {
+            if matches!(self.apply(&recv), Type::Var(_))
+                && !(wait_if_several && self.traits_declaring(name).len() > 1)
+            {
                 self.wanted[i].solved = true;
                 let call_ty = Type::Fun(args, Box::new(result));
                 self.default_select(&recv, name, call_ty, origin.span);
@@ -523,7 +615,9 @@ impl TypeChecker {
         self.close_level();
     }
 
-    fn default_select(&mut self, recv: &Type, name: Symbol, call_ty: Type, span: Span) {
+    /// The traits in sight that declare a method `name`, in the order
+    /// of their names.
+    fn traits_declaring(&self, name: Symbol) -> Vec<TraitKey> {
         let mut traits: Vec<TraitKey> = self
             .tables
             .traits
@@ -533,6 +627,11 @@ impl TypeChecker {
             .filter(|t| self.sees_trait(*t))
             .collect();
         traits.sort_by_key(|t| self.show_trait(*t));
+        traits
+    }
+
+    fn default_select(&mut self, recv: &Type, name: Symbol, call_ty: Type, span: Span) {
+        let traits = self.traits_declaring(name);
         match traits.as_slice() {
             [] => {
                 let row = Type::AnonRecord {
@@ -597,20 +696,40 @@ impl TypeChecker {
                 self.unify_deferred_method(&call_ty, &method_ty, span);
             }
             several => {
-                let shown: Vec<String> = several.iter().map(|t| self.show_trait(*t)).collect();
-                self.errors.push(
-                    Diagnostic::error(
-                        Code::AmbiguousMethod,
-                        span,
-                        format!(
-                            "ambiguous method '{name}' on a value whose type is not known: provided by traits {}",
-                            shown.join(", ")
-                        ),
-                    )
-                    .with_help("annotate the receiver's type, or bound it with a `where` clause"),
-                );
+                self.ambiguous_method(name, "a value whose type is not known", several, span);
             }
         }
+    }
+
+    /// Report that `method`, called on `on` (`type 'Int'`, `a value
+    /// whose type is not known`), is a method of each of `traits`: the
+    /// one wording, the traits by their names in order, each with the
+    /// module that declares it.
+    pub(super) fn ambiguous_method(
+        &mut self,
+        method: Symbol,
+        on: &str,
+        traits: &[TraitKey],
+        span: Span,
+    ) {
+        let mut shown: Vec<String> = traits
+            .iter()
+            .map(|t| self.show_trait_in_module(*t))
+            .collect();
+        shown.sort();
+        self.errors.push(
+            Diagnostic::error(
+                Code::AmbiguousMethod,
+                span,
+                format!(
+                    "ambiguous method '{method}' on {on}: provided by traits {}",
+                    shown.join(", ")
+                ),
+            )
+            .with_help(
+                "say which is meant: annotate the receiver's type, or bound it with a `where` clause",
+            ),
+        );
     }
 
     /// The bound `tr(args)` as a message shows it: `Greet`, `Conv(Int)`.
@@ -754,41 +873,29 @@ impl TypeChecker {
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
         if self.by_structure(trait_name, type_name) {
-            let mut open = Vec::new();
-            let mut written = Vec::new();
-            let mut assumed = Vec::new();
-            match self.structure_gap(trait_name, &resolved, &mut assumed, &mut open, &mut written) {
+            let mut walk = Walk::default();
+            match self.structure_gap(trait_name, &resolved, &mut walk, 0) {
                 Some(gap) => {
-                    // An operator's own operand of a type the operator
+                    // An operator's own operand, of a type the operator
                     // is not for: the operator's message.
-                    let message = match origin.op {
-                        Some(op)
-                            if !is_valid_compare_operand(
-                                &resolved,
-                                trait_name.is_builtin("Equal"),
-                            ) && !trait_name.is_builtin("Display") =>
-                        {
-                            let domain = if trait_name.is_builtin("Equal") {
-                                "a comparable type"
-                            } else {
-                                "Int, Float, String, Bool, List, Tuple, Record, or Variant"
-                            };
-                            self.error(
-                                Code::UnsupportedOperation,
-                                format!("operator {op} requires {domain}, got '{resolved}'"),
-                                span,
-                            );
-                            return;
-                        }
-                        _ => gap,
-                    };
+                    if let Some(op) = origin.op
+                        && gap.is_whole()
+                    {
+                        self.error(
+                            Code::UnsupportedOperation,
+                            operator_message(&resolve(trait_name.name), op, &resolved),
+                            span,
+                        );
+                        return;
+                    }
+                    let message = self.gap_message(trait_name, &resolved, &gap);
                     self.error(Code::MissingTraitImpl, message, span);
                 }
                 None => {
                     // A part still unknown, or an annotation variable,
                     // owes the trait in turn; a part with a written
                     // `Display` impl is that impl's to answer.
-                    for part in open {
+                    for part in walk.open {
                         self.want(
                             Pred::Trait {
                                 tr: trait_name,
@@ -798,7 +905,7 @@ impl TypeChecker {
                             origin,
                         );
                     }
-                    for part in written {
+                    for part in walk.written {
                         self.verify_impl(trait_name, &[], &part, origin);
                     }
                 }
@@ -819,6 +926,7 @@ impl TypeChecker {
             return true;
         }
         trait_name.is_builtin("Display")
+            && !self.display_written.contains(&head)
             && self
                 .tables
                 .method_table
@@ -826,41 +934,89 @@ impl TypeChecker {
                 .is_none_or(|entry| entry.is_auto_derived)
     }
 
+    /// What a message says of a type that lacks the structural trait
+    /// `tr`: the type, and the way down to the part that lacks it
+    /// (`type 'Box(H)' does not implement trait 'Display': variant 'Box'
+    /// payload #1 > field 'f' is of type 'Fn(Int) -> Int', which does
+    /// not`).
+    pub(super) fn gap_message(&self, tr: TraitKey, ty: &Type, gap: &Gap) -> String {
+        let tr = self.show_trait(tr);
+        if gap.why == Some(TOO_DEEP) {
+            return format!(
+                "type '{}' cannot be shown to implement trait '{tr}': {TOO_DEEP}",
+                self.show_type(&self.apply(ty))
+            );
+        }
+        match (gap.path.is_empty(), gap.why) {
+            (true, None) => format!("type '{}' does not implement trait '{tr}'", gap.head),
+            (true, Some(why)) => {
+                format!("type '{}' does not implement trait '{tr}': {why}", gap.full)
+            }
+            (false, why) => format!(
+                "type '{}' does not implement trait '{tr}': {} is of type '{}', {}",
+                self.show_type(&self.apply(ty)),
+                gap.path.join(" > "),
+                gap.full,
+                why.unwrap_or("which does not")
+            ),
+        }
+    }
+
     /// Why `ty` does not have the structural trait `tr`, if it does not:
     /// a function has none of them, a channel only `Equal`; a container,
-    /// a tuple, a record or an enum has one when its head does (`Option`
-    /// has no `Compare`) and each of its parts does. The parts whose
-    /// type is still unknown, or an annotation variable, are added to
-    /// `open`: the trait holds if it holds of them. A recursive type
-    /// holds if its other parts do (`assumed`).
-    fn structure_gap(
+    /// a tuple, a record or an enum has one when each of its parts does
+    /// (and its head has it at all: a map has no `Compare`). The parts
+    /// whose type is still unknown, or an annotation variable, are added
+    /// to `walk.open`: the trait holds if it holds of them. A type being
+    /// looked at is taken to hold where it comes up again inside itself
+    /// (`walk.seen`), so a recursive type holds if its other parts do. A
+    /// type that recurs at ever larger arguments
+    /// (`type N(a) { Z, S(N(List(a))) }`) cannot be decided this way:
+    /// past `STRUCTURE_DEPTH` levels it is reported as not verified.
+    pub(super) fn structure_gap(
         &self,
         tr: TraitKey,
         ty: &Type,
-        assumed: &mut Vec<(TypeRef, Vec<Type>)>,
-        open: &mut Vec<Type>,
-        written: &mut Vec<Type>,
-    ) -> Option<String> {
+        walk: &mut Walk,
+        depth: usize,
+    ) -> Option<Gap> {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
-        let lacks = |this: &Self, head: &str| {
-            Some(format!(
-                "type '{head}' does not implement trait '{}'",
-                this.show_trait(tr)
-            ))
+        let leaf = |this: &Self, head: &str, why: Option<&'static str>| {
+            Some(Gap {
+                path: Vec::new(),
+                head: head.to_string(),
+                full: this.show_type(&ty),
+                why,
+            })
         };
+        if depth > STRUCTURE_DEPTH {
+            return leaf(self, "", Some(TOO_DEEP));
+        }
         let stamped = |this: &Self, head: TypeRef| {
             let canon = canonical_head(&this.tables.resolver, head);
             this.tables.trait_impl_set.contains(&(tr, canon))
         };
+        // The first part that lacks the trait, with the way to it.
+        let first = |this: &Self, walk: &mut Walk, parts: Vec<(String, Type)>| {
+            parts.into_iter().find_map(|(what, part)| {
+                this.structure_gap(tr, &part, walk, depth + 1)
+                    .map(|mut gap| {
+                        if gap.why != Some(TOO_DEEP) {
+                            gap.path.insert(0, what);
+                        }
+                        gap
+                    })
+            })
+        };
         match &ty {
             Type::Error | Type::Never | Type::AssocProj { .. } => None,
             Type::Var(_) | Type::Rigid(_) => {
-                if !open.contains(&ty) {
-                    open.push(ty.clone());
+                if !walk.open.contains(&ty) {
+                    walk.open.push(ty.clone());
                 }
                 None
             }
-            Type::Fun(..) => lacks(self, "Fn"),
+            Type::Fun(..) => leaf(self, "Fn", None),
             Type::Channel(_) if tr.is_builtin("Equal") => None,
             Type::List(_)
             | Type::Range(_)
@@ -875,42 +1031,43 @@ impl TypeChecker {
             | Type::Unit => {
                 let head = self.type_name_for_impl(&ty).expect("the type has a head");
                 if !stamped(self, head) {
-                    return lacks(self, &resolve(head.name));
+                    return leaf(self, &resolve(head.name), None);
                 }
-                let parts: Vec<&Type> = match &ty {
-                    Type::List(t) | Type::Range(t) | Type::Set(t) => vec![&**t],
-                    Type::Map(k, v) => vec![&**k, &**v],
-                    Type::Tuple(ts) => ts.iter().collect(),
+                let parts: Vec<(String, Type)> = match &ty {
+                    Type::List(t) | Type::Range(t) | Type::Set(t) => {
+                        vec![("element".to_string(), (**t).clone())]
+                    }
+                    Type::Map(k, v) => vec![
+                        ("key".to_string(), (**k).clone()),
+                        ("value".to_string(), (**v).clone()),
+                    ],
+                    Type::Tuple(ts) => ts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| (format!("part #{}", i + 1), t.clone()))
+                        .collect(),
                     _ => Vec::new(),
                 };
-                parts
-                    .into_iter()
-                    .find_map(|part| self.structure_gap(tr, part, assumed, open, written))
+                first(self, walk, parts)
             }
             Type::AnonRecord { fields, tail } => {
                 if tr.is_builtin("Compare") {
-                    return Some(format!(
-                        "type '{}' does not implement trait '{}'",
-                        self.show_type(&ty),
-                        self.show_trait(tr)
-                    ));
+                    return leaf(self, &self.show_type(&ty), None);
                 }
                 if !matches!(tail, RowTail::Closed) {
-                    return Some(format!(
-                        "type '{}' does not implement trait '{}': its other fields are not known",
-                        self.show_type(&ty),
-                        self.show_trait(tr)
-                    ));
+                    return leaf(self, "", Some("its other fields are not known"));
                 }
-                fields
-                    .values()
-                    .find_map(|part| self.structure_gap(tr, part, assumed, open, written))
+                let parts = fields
+                    .iter()
+                    .map(|(n, t)| (format!("field '{n}'"), t.clone()))
+                    .collect();
+                first(self, walk, parts)
             }
             Type::Record(name, _) | Type::Generic(name, _) => {
                 let head = canonical_head(&self.tables.resolver, *name);
                 // A written `Display` impl answers for its type.
                 if !self.by_structure(tr, head) {
-                    written.push(ty.clone());
+                    walk.written.push(ty.clone());
                     return None;
                 }
                 // A type with no fields or variants to look at (a
@@ -921,18 +1078,14 @@ impl TypeChecker {
                 if opaque {
                     return match stamped(self, head) {
                         true => None,
-                        false => lacks(self, &self.show_type(&Type::Generic(*name, vec![]))),
+                        false => leaf(self, &self.show_type(&Type::Generic(*name, vec![])), None),
                     };
                 }
                 let args = self.type_args_of(&ty);
-                // A recursive type holds if its other parts do. (A type
-                // that recurs at ever larger arguments,
-                // `type N(a) { Z, S(N(List(a))) }`, is taken to hold
-                // past a depth no value of a program reaches.)
-                if assumed.len() > 64 || assumed.iter().any(|(h, a)| *h == head && *a == args) {
+                if walk.seen.iter().any(|(h, a)| *h == head && *a == args) {
                     return None;
                 }
-                assumed.push((head, args.clone()));
+                walk.seen.push((head, args.clone()));
                 // The type's parts, at its arguments.
                 let parts: Vec<(String, Type)> = match &ty {
                     Type::Record(_, fields) => fields
@@ -981,18 +1134,7 @@ impl TypeChecker {
                         }
                     }
                 };
-                parts.into_iter().find_map(|(what, part)| {
-                    self.structure_gap(tr, &part, assumed, open, written)
-                        .map(|_| {
-                            format!(
-                                "type '{}' cannot derive '{}': {what} has type '{}', which is not {}",
-                                self.show_type(&ty),
-                                self.show_trait(tr),
-                                self.show_type(&self.apply(&part)),
-                                derive_gates::builtin_trait_adjective(tr),
-                            )
-                        })
-                })
+                first(self, walk, parts)
             }
         }
     }
@@ -1018,17 +1160,11 @@ impl TypeChecker {
         {
             // An operator's own operand: the operator's message.
             if let Some(op) = origin.op {
-                let message = if trait_name.is_builtin("Number") {
-                    arith_operand_message(op, &resolved)
-                } else {
-                    let domain = if trait_name.is_builtin("Equal") {
-                        "a comparable type"
-                    } else {
-                        "Int, Float, String, Bool, List, Tuple, Record, or Variant"
-                    };
-                    format!("operator {op} requires {domain}, got '{resolved}'")
-                };
-                self.error(Code::UnsupportedOperation, message, span);
+                self.error(
+                    Code::UnsupportedOperation,
+                    operator_message(&resolve(trait_name.name), op, &resolved),
+                    span,
+                );
                 return;
             }
             self.error(
@@ -1438,16 +1574,8 @@ impl TypeChecker {
         let Some(traits) = self.ambiguous_methods.get(&(ty, method)).cloned() else {
             return false;
         };
-        let shown: Vec<String> = traits.iter().map(|t| self.show_trait(*t)).collect();
-        self.error(
-            Code::AmbiguousMethod,
-            format!(
-                "ambiguous method '{method}' on type '{}': provided by traits {}",
-                self.show_type(&Type::Generic(ty, vec![])),
-                shown.join(", ")
-            ),
-            span,
-        );
+        let on = format!("type '{}'", self.show_type(&Type::Generic(ty, vec![])));
+        self.ambiguous_method(method, &on, &traits, span);
         true
     }
 }

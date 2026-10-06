@@ -64,6 +64,11 @@ impl TypeChecker {
             }
         }
 
+        self.display_written = user_display_impls
+            .iter()
+            .map(|ty| canonical_head(&self.tables.resolver, *ty))
+            .collect();
+
         let compare_sym = TraitKey::builtin("Compare");
         let equal_sym = TraitKey::builtin("Equal");
         let hash_sym = TraitKey::builtin("Hash");
@@ -565,12 +570,19 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             span: dummy_span,
             doc: None,
         },
-        // trait Compare { fn compare(self, other: Self) -> Int }
+        // trait Compare: Equal { fn compare(self, other: Self) -> Int }
+        // What is ordered can be compared for equality.
         TraitDecl {
             name: intern("Compare"),
             name_span: dummy_span,
             params: Vec::new(),
-            supertraits: Vec::new(),
+            supertraits: vec![TraitRef {
+                module: None,
+                name: intern("Equal"),
+                args: Vec::new(),
+                span: dummy_span,
+                res: None,
+            }],
             param_where_clauses: Vec::new(),
             methods: vec![sig_only_method(
                 "compare",

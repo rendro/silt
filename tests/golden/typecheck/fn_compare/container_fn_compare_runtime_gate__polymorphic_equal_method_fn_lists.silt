@@ -1,7 +1,6 @@
 -- `.equal()` through a polymorphic wrapper on lists of functions fails.
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
--- stderr-contains: 'Fn'
+-- stderr-contains: error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Equal': element is of type 'Fn(_) -> _', which does not
 fn eqm(a: t, b: t) -> Bool where t: Equal { a.equal(b) }
 fn main() {
   println(eqm([{ y -> y }], [{ y -> y }]))

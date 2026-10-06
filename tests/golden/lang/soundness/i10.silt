@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
+-- stderr-contains: error[type]: type 'Box(Fn(_) -> _)' does not implement trait 'Equal': variant 'Box' payload #1 is of type 'Fn(_) -> _', which does not
 -- Port of repros/type_soundness/i10.silt, in brace closures.
 type Box(a) { Box(a) }
 fn same(x, y) { x == y }

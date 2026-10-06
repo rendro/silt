@@ -1,0 +1,17 @@
+-- A record's field is read before a method of the same name, by the
+-- checker and when it runs: `r.greet()` calls the function in the
+-- field. Through a bound on the trait it is the trait's method.
+trait Greet { fn greet(self) -> String }
+type R { greet: Fn() -> Int }
+trait Greet for R { fn greet(self) -> String { "method" } }
+fn apply(f: Fn(a) -> b, x: a) -> b { f(x) }
+fn bounded(x: t) -> String where t: Greet { x.greet() }
+fn inferred(x) { x.greet() }
+fn main() {
+  let r = R { greet: { -> 42 } }
+  let n: Int = r.greet()
+  println(n + 1)
+  println(apply({ x -> x.greet() }, r) + 1)
+  println(bounded(r))
+  println(inferred(r))
+}
