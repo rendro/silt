@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'String' does not implement trait 'Greet'
+-- What an impl's header asks of a part of the type that is still
+-- unknown is owed by the function that is general in it: `w` needs
+-- `x: Greet`, though only `Box(x)` is given to `hello`.
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+type Box(a) { Box(a) }
+trait Greet for Box(a) where a: Greet { fn greet(self) -> String { match self { Box(i) -> i.greet() } } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+fn w(x) { hello(Box(x)) }
+fn main() { println(w("s")) }

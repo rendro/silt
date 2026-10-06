@@ -190,15 +190,6 @@ pub(super) fn format_unknown_method_message(
 }
 
 impl TypeChecker {
-    /// Whether the bounds in scope say that the annotation variable `r`
-    /// implements `trait_name`: a `where` clause of the declaration being
-    /// checked, or a supertrait of one.
-    pub(super) fn bound_in_scope(&self, r: RigidId, trait_name: TraitKey) -> bool {
-        self.bounds
-            .get(&r.var)
-            .is_some_and(|bounds| bounds.iter().any(|(t, _)| *t == trait_name))
-    }
-
     /// Put `var: trait_name` (at the trait arguments `args`) in scope,
     /// and with it each supertrait, at the arguments the trait's
     /// declaration gives it: `where a: Ordered` with
@@ -236,28 +227,87 @@ impl TypeChecker {
     }
 
     /// Report that the declaration being checked does not declare
-    /// `r: trait_name`, which a call in it needs, unless it does.
+    /// `r: trait_name(args)`, which the use `origin` in it needs, unless
+    /// it does. The bound it declares for the trait is the only one `r`
+    /// has, so its arguments are the ones needed.
     pub(super) fn require_declared_bound(
         &mut self,
         r: RigidId,
         trait_name: TraitKey,
-        callee_fn_name: Option<Symbol>,
-        span: Span,
+        args: &[Type],
+        origin: Origin,
     ) {
-        if self.bound_in_scope(r, trait_name) || self.unknown_bounds.contains(&r.var) {
+        if self.unknown_bounds.contains(&r.var) {
             return;
         }
-        let fn_label = callee_fn_name
-            .map(|s| format!("'{}'", resolve(s)))
-            .unwrap_or_else(|| "<callee>".to_string());
-        self.error(
-            Code::MissingConstraint,
-            format!(
-                "enclosing function does not declare constraint required by call to {fn_label}: `{}: {trait_name}`",
+        let declared = self
+            .bounds
+            .get(&r.var)
+            .and_then(|bounds| bounds.iter().find(|(t, _)| *t == trait_name))
+            .map(|(_, declared)| declared.clone());
+        if let Some(declared) = declared {
+            if args.is_empty() || declared.len() != args.len() {
+                return;
+            }
+            let declared: Vec<Type> = declared
+                .iter()
+                .map(|t| substitute_vars(t, &self.rigid_of))
+                .collect();
+            let agree = args
+                .iter()
+                .zip(&declared)
+                .all(|(needed, declared)| self.unify_types(needed, declared).is_ok());
+            if !agree {
+                self.error(
+                    Code::MissingConstraint,
+                    format!(
+                        "type variable `{}` is declared to implement '{}', not '{}'",
+                        r.name,
+                        self.show_bound(trait_name, &declared),
+                        self.show_bound(trait_name, args)
+                    ),
+                    origin.span,
+                );
+            }
+            return;
+        }
+        let bound = self.show_bound(trait_name, args);
+        if self.let_vars.contains(&r.var) {
+            let needs = match origin.callee {
+                Some(callee) => format!("'{callee}' needs"),
+                None => "the value needs".to_string(),
+            };
+            self.errors.push(
+                Diagnostic::error(
+                    Code::MissingConstraint,
+                    origin.span,
+                    format!(
+                        "{needs} `{}: {bound}`, and the type variable of a `let` annotation cannot have a bound",
+                        r.name
+                    ),
+                )
+                .with_help(format!(
+                    "write the type the value is used at in place of `{}`, or leave the annotation out",
+                    r.name
+                )),
+            );
+            return;
+        }
+        let message = match origin.callee {
+            Some(callee) => format!(
+                "enclosing function does not declare constraint required by call to '{callee}': `{}: {bound}`",
                 r.name
             ),
-            span,
-        );
+            None => format!(
+                "type variable `{}` is not known to implement trait '{bound}'",
+                r.name
+            ),
+        };
+        let mut diagnostic = Diagnostic::error(Code::MissingConstraint, origin.span, message);
+        if origin.callee.is_none() {
+            diagnostic = diagnostic.with_help(format!("add `where {}: {bound}`", r.name));
+        }
+        self.errors.push(diagnostic);
     }
 
     /// The methods named `field` that the bounds in scope give the
@@ -919,6 +969,7 @@ impl TypeChecker {
             })
             .collect();
         own.sort_by_key(|r| r.var);
+        self.let_vars.extend(own.iter().map(|r| r.var));
         (rigidify(&declared, &own), own)
     }
 
@@ -1026,13 +1077,21 @@ impl TypeChecker {
                 ) {
                     let message = match form {
                         CallForm::Call => {
-                            let what = match callee_name {
-                                Some(name) => format!("`{name}`"),
-                                None => "function".to_string(),
+                            // A method's receiver is not one of the
+                            // arguments the call writes.
+                            let what = match (&callee.kind, callee_name) {
+                                (ExprKind::FieldAccess(_, method, _), _) if is_method_call => {
+                                    format!("method `{method}`")
+                                }
+                                (_, Some(name)) => format!("`{name}`"),
+                                _ => "function".to_string(),
                             };
                             format!(
                                 "{what} expects {}, got {}",
-                                accepted_arity_text(params.len(), optional_last_param),
+                                accepted_arity_text(
+                                    params.len() - implicit_self,
+                                    optional_last_param
+                                ),
                                 args.len()
                             )
                         }
@@ -1041,8 +1100,8 @@ impl TypeChecker {
                         // call forgets the remaining ones.
                         CallForm::BarePipe => format!(
                             "cannot pipe into function taking {} {}; wrap in a call or use partial application",
-                            params.len(),
-                            plural(params.len(), "argument", "arguments")
+                            params.len() - implicit_self,
+                            plural(params.len() - implicit_self, "argument", "arguments")
                         ),
                     };
                     self.error(Code::ArityMismatch, message, span);

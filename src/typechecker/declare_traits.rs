@@ -1348,7 +1348,7 @@ impl TypeChecker {
                             _ => {
                                 // Parameterless sub-bound: `trait Foo(a) where a: Display`
                                 // — no args to thread.
-                                self.verify_trait_obligation(*bound_trait, &[], &applied, ti.span);
+                                self.verify_declared(*bound_trait, &[], &applied, ti.span);
                             }
                         }
                     }
@@ -1494,12 +1494,7 @@ impl TypeChecker {
                 // pending-where path — verify_trait_obligation already
                 // accepts a Var receiver and emits a clean diagnostic
                 // for unresolved cases at finalize time.
-                self.verify_trait_obligation(
-                    *bound_trait,
-                    &resolved_bound_args,
-                    &applied,
-                    assoc.span,
-                );
+                self.verify_declared(*bound_trait, &resolved_bound_args, &applied, assoc.span);
             }
         }
 
@@ -1762,10 +1757,12 @@ impl TypeChecker {
                             // through the trait knows: the impl's method
                             // may restate a bound the trait or the impl's
                             // header declares, not add one.
-                            let declared = method_constraints.iter().any(|pred| {
-                                let Pred::Trait { tr, subject, .. } = pred;
-                                tr == trait_name && *subject == Type::Var(tv)
-                            });
+                            let declared = self.bound_follows(
+                                &method_constraints,
+                                tv,
+                                *trait_name,
+                                &resolved_bound_args,
+                            );
                             if !declared && has_declared_type {
                                 self.errors.push(
                                     Diagnostic::error(
@@ -1778,7 +1775,7 @@ impl TypeChecker {
                                             ti.trait_name,
                                             ti.target_type,
                                             type_param,
-                                            wc.trait_name
+                                            self.show_bound(*trait_name, &resolved_bound_args)
                                         ),
                                     )
                                     .with_help(format!(
@@ -1872,6 +1869,36 @@ impl TypeChecker {
                 );
             }
         }
+    }
+
+    /// Whether `var: tr(args)` follows from the bounds `declared`: it is
+    /// one of them, or a supertrait of one, at the same trait arguments.
+    fn bound_follows(
+        &mut self,
+        declared: &[Pred],
+        var: TyVar,
+        tr: TraitKey,
+        args: &[Type],
+    ) -> bool {
+        // What the declared bounds say of `var`, supertraits included.
+        let outer = self.bounds.remove(&var);
+        for Pred::Trait { tr, args, subject } in declared {
+            if *subject == Type::Var(var) {
+                self.declare_bound(var, *tr, args.clone());
+            }
+        }
+        let said = self.bounds.remove(&var).unwrap_or_default();
+        if let Some(outer) = outer {
+            self.bounds.insert(var, outer);
+        }
+        said.iter().any(|(said_tr, said_args)| {
+            *said_tr == tr
+                && said_args.len() == args.len()
+                && said_args
+                    .iter()
+                    .zip(args)
+                    .all(|(a, b)| self.apply(a) == self.apply(b))
+        })
     }
 
     /// The bounds the trait `info` declares for its method `method`,

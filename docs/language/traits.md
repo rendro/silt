@@ -316,7 +316,8 @@ trait Greet for Box(a) where a: Greet, a: Loud {
 A bound on the impl's type variable belongs on the impl's header. An
 impl's method has the signature its trait declares, `where` clause
 included: it may restate a bound the trait declares for the method or
-the header declares, and may not add one, because a call through the
+the header declares (or a supertrait of one), with the same trait
+arguments, and may not add one, because a call through the
 trait (`fn f(x: t) where t: Greet { x.greet() }`) knows only the trait's
 signature and the header:
 

@@ -1,0 +1,6 @@
+-- verdict: same
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+import list
+fn main() { let g = 3.greet
+ println(list.map([3], g)) }
