@@ -1,440 +1,91 @@
 use crate::ast::*;
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
-use crate::lexer::{Lexed, Tok, Token};
+use crate::lexer::{Comment, CommentKind, Lexed, Tok, Token};
 use crate::source::Span;
 
 type Result<T> = std::result::Result<T, Diagnostic>;
 
-// ── Doc-comment scanner ──────────────────────────────────────────────
+// ── Doc comments ─────────────────────────────────────────────────────
 //
-// The lexer drops every comment. We want doc comments to attach to the
-// following top-level declaration (and to trait / impl methods) so hover,
-// completion, and signature-help can surface Markdown documentation.
-//
-// Approach: scan the raw source once (independent of the lexer) and
-// produce a per-source-line map `line -> doc_text`. For every line L
-// that starts a decl (after lexer-delivered newline handling, we just
-// use the line of the decl's first token as the "decl start line"), we
-// look up the doc block whose last-comment-line is `L - 1`
-// with no blank line between the comment block and the decl.
-//
-// A doc comment is one or more contiguous comments — `--` lines and/or
-// `{- ... -}` blocks — with no blank line between them or between the
-// last of them and the decl. The collected segments are concatenated
-// with `\n`, then leading whitespace common to all lines is stripped
-// (dedent the markdown).
+// The comments directly above a declaration (and above a trait's or an
+// impl's method) are its documentation, which hover, completion and
+// signature help show as Markdown. They are the comments the lexer
+// attached to the declaration's first token.
 
-/// Per-line doc comment index: for each source line L that ends a doc
-/// comment block, records the concatenated, dedented Markdown text.
+/// The documentation in `comments`, the comments in front of a
+/// declaration's first token, which stands `newlines_before` line breaks
+/// behind the last of them; `starts_file`: nothing stands in front of
+/// the first comment.
 ///
-/// Also tracks which source lines are "blank" (whitespace only) and
-/// which lines are part of a comment so the parser can verify that the
-/// decl on line L+1 is IMMEDIATELY adjacent to the doc block.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct DocIndex {
-    /// `docs_by_end_line[line]` = doc block ending at that line, if any.
-    /// The block ends on the line whose `--`/`-}` closes the block. The
-    /// decl that consumes this doc must begin on line `end_line + 1`.
-    docs_by_end_line: std::collections::HashMap<usize, String>,
-}
-
-impl DocIndex {
-    /// Build a doc-comment index from raw source text.
-    ///
-    /// The scan is string-aware (skips `"..."`, `"""..."""`, and
-    /// interpolation braces) but otherwise independent of the lexer.
-    pub(crate) fn from_source(source: &str) -> Self {
-        let bytes = source.as_bytes();
-        let n = bytes.len();
-
-        // First pass: classify each byte as Code / InString / InBlockComment
-        // so we correctly identify which `--` sequences are comments and
-        // which are inside strings. We record comment spans as Segment
-        // entries (see module-level `Segment` type below).
-        let mut segments: Vec<Segment> = Vec::new();
-        let mut line: usize = 1; // 1-based
-        let mut i: usize = 0;
-
-        // Mode stack for string/interp awareness: we only need to know
-        // "am I inside any string
-        // context" — if so, `--` is content, not a comment.
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum Mode {
-            Code,
-            InRegular, // inside a "..." string (escape-aware)
-            InTriple,  // inside a """...""" string
-        }
-        let mut stack: Vec<Mode> = vec![Mode::Code];
-        // For `{...}` interp inside a regular string: when we open a
-        // brace inside a string, we push Mode::Code so the inner
-        // expression is parsed like normal code. Mirrors the lexer.
-        let mut interp_depth_at_open: Vec<usize> = Vec::new();
-        let mut brace_depth: usize = 0;
-
-        while i < n {
-            let c = bytes[i];
-            let top = *stack.last().unwrap();
-
-            if c == b'\n' {
-                line += 1;
-                i += 1;
-                continue;
-            }
-
-            match top {
-                Mode::Code => {
-                    // Detect triple-quoted string first (three quotes).
-                    if c == b'"' && i + 2 < n && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
-                        stack.push(Mode::InTriple);
-                        i += 3;
-                        continue;
-                    }
-                    if c == b'"' {
-                        stack.push(Mode::InRegular);
-                        i += 1;
-                        continue;
-                    }
-                    // Line comment: -- ...
-                    if c == b'-' && i + 1 < n && bytes[i + 1] == b'-' {
-                        // Collect until end of line (or EOF).
-                        let start = i + 2; // skip the `--`
-                        let mut end = start;
-                        while end < n && bytes[end] != b'\n' {
-                            end += 1;
-                        }
-                        let raw = &source[start..end];
-                        // Strip one leading space if present, to produce
-                        // clean markdown. Further dedent happens later
-                        // when joining segments.
-                        let content = if let Some(stripped) = raw.strip_prefix(' ') {
-                            stripped.to_string()
-                        } else {
-                            raw.to_string()
-                        };
-                        segments.push(Segment::LineComment { line, content });
-                        i = end;
-                        continue;
-                    }
-                    // Block comment: {- ... -} (nested)
-                    if c == b'{' && i + 1 < n && bytes[i + 1] == b'-' {
-                        let start_line = line;
-                        i += 2;
-                        let mut depth = 1;
-                        let content_start = i;
-                        while i < n && depth > 0 {
-                            if i + 1 < n && bytes[i] == b'{' && bytes[i + 1] == b'-' {
-                                depth += 1;
-                                i += 2;
-                            } else if i + 1 < n && bytes[i] == b'-' && bytes[i + 1] == b'}' {
-                                depth -= 1;
-                                if depth == 0 {
-                                    // Content is [content_start .. i)
-                                    let raw = &source[content_start..i];
-                                    let end_line = line;
-                                    i += 2; // consume -}
-                                    let content_lines: Vec<String> =
-                                        raw.split('\n').map(|s| s.to_string()).collect();
-                                    segments.push(Segment::BlockComment {
-                                        start_line,
-                                        end_line,
-                                        content_lines,
-                                    });
-                                    break;
-                                }
-                                i += 2;
-                            } else {
-                                if bytes[i] == b'\n' {
-                                    line += 1;
-                                }
-                                i += 1;
-                            }
-                        }
-                        continue;
-                    }
-                    // Brace tracking for interp resumption
-                    if c == b'{' {
-                        brace_depth += 1;
-                    } else if c == b'}' {
-                        if let Some(&resume_at) = interp_depth_at_open.last()
-                            && brace_depth == resume_at + 1
-                        {
-                            // Closing an interp `{`: return to the
-                            // enclosing string.
-                            interp_depth_at_open.pop();
-                            brace_depth -= 1;
-                            // The parent is InRegular (interp lives
-                            // only inside regular strings). We pushed
-                            // Code when we opened the interp — reverse
-                            // it now (see open `{` side below).
-                            stack.pop();
-                            i += 1;
-                            continue;
-                        }
-                        brace_depth = brace_depth.saturating_sub(1);
-                    }
-                    i += 1;
-                }
-                Mode::InRegular => {
-                    if c == b'\\' && i + 1 < n {
-                        // Escape — skip the next char (could be `{`, `"`, etc.)
-                        i += 2;
-                        continue;
-                    }
-                    if c == b'"' {
-                        stack.pop();
-                        i += 1;
-                        continue;
-                    }
-                    if c == b'{' {
-                        // Open interp: switch to Code mode (push frame).
-                        interp_depth_at_open.push(brace_depth);
-                        brace_depth += 1;
-                        stack.push(Mode::Code);
-                        i += 1;
-                        continue;
-                    }
-                    i += 1;
-                }
-                Mode::InTriple => {
-                    if c == b'"' && i + 2 < n && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
-                        stack.pop();
-                        i += 3;
-                        continue;
-                    }
-                    i += 1;
-                }
-            }
-        }
-
-        // Line strings for comment-only detection.
-        let line_strs: Vec<&str> = source.split('\n').collect();
-
-        // Also track: for a given line L, does L contain any NON-comment
-        // code? If yes, comments on L cannot be a standalone doc block's
-        // tail (e.g. `fn f() -- trailing` is not a doc comment for the
-        // next decl — it's a trailing comment on `fn f()`). A comment
-        // is only eligible to be part of a doc block if it's the ONLY
-        // non-whitespace content on its line.
-        //
-        // Build a set of lines that are "comment-only lines".
-        let mut comment_only_line: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
-        for seg in &segments {
-            match seg {
-                Segment::LineComment { line, .. } => {
-                    let l = *line;
-                    // Find the raw source line and verify everything
-                    // before `--` is whitespace.
-                    if l == 0 || l > line_strs.len() {
-                        continue;
-                    }
-                    let src_line = line_strs[l - 1];
-                    // Locate the `--` position (the first one OUTSIDE
-                    // a string; but since this segment was produced by
-                    // the main scanner we know this `--` is real. The
-                    // test is: is everything before the first `--` pure
-                    // whitespace? If yes, this line is comment-only.
-                    // We approximate with: position of `--` in the line
-                    // — the first one is safe because a doc line by
-                    // convention has no code before it.
-                    if let Some(idx) = src_line.find("--") {
-                        let prefix = &src_line[..idx];
-                        if prefix
-                            .bytes()
-                            .all(|b| b == b' ' || b == b'\t' || b == b'\r')
-                        {
-                            comment_only_line.insert(l);
-                        }
-                    }
-                }
-                Segment::BlockComment {
-                    start_line,
-                    end_line,
-                    ..
-                } => {
-                    // Block comments are eligible if both the start
-                    // line's prefix (before `{-`) and the end line's
-                    // suffix (after `-}`) are whitespace-only. The
-                    // interior lines are automatically eligible.
-                    if *start_line == 0 || *start_line > line_strs.len() {
-                        continue;
-                    }
-                    let start_src = line_strs[start_line - 1];
-                    let start_ok = start_src
-                        .find("{-")
-                        .map(|idx| {
-                            start_src[..idx]
-                                .bytes()
-                                .all(|b| b == b' ' || b == b'\t' || b == b'\r')
-                        })
-                        .unwrap_or(false);
-                    let end_src = if *end_line <= line_strs.len() {
-                        line_strs[*end_line - 1]
-                    } else {
-                        ""
-                    };
-                    let end_ok = end_src
-                        .rfind("-}")
-                        .map(|idx| {
-                            end_src[idx + 2..]
-                                .bytes()
-                                .all(|b| b == b' ' || b == b'\t' || b == b'\r')
-                        })
-                        .unwrap_or(false);
-                    if start_ok && end_ok {
-                        for l in *start_line..=*end_line {
-                            comment_only_line.insert(l);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Now build doc blocks. Walk segments in source order; every
-        // maximal run of comment-only-line segments with NO blank line
-        // between adjacent segments forms a block. The block's end_line
-        // is the last segment's last line.
-        let mut docs_by_end_line: std::collections::HashMap<usize, String> =
-            std::collections::HashMap::new();
-
-        let mut i_seg = 0;
-        while i_seg < segments.len() {
-            // Start a run only if this segment is comment-only.
-            let (first_line, _) = segment_line_range(&segments[i_seg]);
-            if !comment_only_line.contains(&first_line) {
-                i_seg += 1;
-                continue;
-            }
-
-            // Collect contiguous segments.
-            let mut run_end = i_seg;
-            while run_end + 1 < segments.len() {
-                let (_, prev_end) = segment_line_range(&segments[run_end]);
-                let (next_start, _) = segment_line_range(&segments[run_end + 1]);
-                // Must be comment-only on start line.
-                if !comment_only_line.contains(&next_start) {
-                    break;
-                }
-                // No blank line between them. next_start must be
-                // prev_end + 1 (consecutive) or prev_end (same line,
-                // only possible for two block comments on same line —
-                // unusual but harmless).
-                if next_start > prev_end + 1 {
-                    break;
-                }
-                // Also verify all lines strictly between are NOT blank.
-                // (With next_start <= prev_end + 1 there are no such
-                // lines, so this is automatically true.)
-                run_end += 1;
-            }
-
-            // Build the doc text by concatenating segment contents.
-            let mut raw_lines: Vec<String> = Vec::new();
-            for s in &segments[i_seg..=run_end] {
-                match s {
-                    Segment::LineComment { content, .. } => {
-                        raw_lines.push(content.clone());
-                    }
-                    Segment::BlockComment { content_lines, .. } => {
-                        // Block content: each interior line is a raw
-                        // line. We drop a purely-empty leading line and
-                        // a purely-empty trailing line (common pattern
-                        // with `{-\n ... \n-}`).
-                        let mut lines = content_lines.clone();
-                        if lines.first().is_some_and(|s| s.trim().is_empty()) {
-                            lines.remove(0);
-                        }
-                        if lines.last().is_some_and(|s| s.trim().is_empty()) {
-                            lines.pop();
-                        }
-                        for l in lines {
-                            raw_lines.push(l);
-                        }
-                    }
-                }
-            }
-
-            // Dedent: find the minimum leading-whitespace prefix across
-            // all non-blank lines and strip that common prefix from
-            // each line (blank lines stay blank).
-            let min_indent = raw_lines
-                .iter()
-                .filter(|l| !l.trim().is_empty())
-                .map(|l| l.chars().take_while(|c| *c == ' ' || *c == '\t').count())
-                .min()
-                .unwrap_or(0);
-            let dedented: Vec<String> = raw_lines
-                .iter()
-                .map(|l| {
-                    if l.trim().is_empty() {
-                        String::new()
-                    } else {
-                        // Strip min_indent leading whitespace chars.
-                        let mut stripped = l.as_str();
-                        let mut n = 0;
-                        for ch in l.chars() {
-                            if n >= min_indent {
-                                break;
-                            }
-                            if ch == ' ' || ch == '\t' {
-                                stripped = &stripped[ch.len_utf8()..];
-                                n += 1;
-                            } else {
-                                break;
-                            }
-                        }
-                        stripped.to_string()
-                    }
-                })
-                .collect();
-
-            let text = dedented.join("\n");
-            let (_, end_line) = segment_line_range(&segments[run_end]);
-            docs_by_end_line.insert(end_line, text);
-
-            i_seg = run_end + 1;
-        }
-
-        DocIndex { docs_by_end_line }
+/// It is the last run of comments that each stand on lines of their own
+/// (a `--` line, or a `{- -}` block with nothing in front of it and
+/// behind it on its lines), with no empty line between two of them or
+/// between the last one and the declaration. Their texts are joined
+/// line by line: a `--` comment without the `--` and one space, a block
+/// without its delimiters and without an empty first and last line.
+/// The indentation the lines share is taken off.
+fn doc_of(
+    comments: &[Comment],
+    newlines_before: u8,
+    starts_file: bool,
+    source: &str,
+) -> Option<String> {
+    if comments.is_empty() || newlines_before != 1 {
+        return None;
     }
-
-    /// Look up the doc comment block that ENDS on the line immediately
-    /// before `decl_line`. Returns `None` if there's no such block, or
-    /// if the line between is blank (meaning the comment isn't adjacent).
-    pub(crate) fn doc_for_decl_at_line(&self, decl_line: usize) -> Option<String> {
-        if decl_line == 0 {
-            return None;
+    // How many line breaks stand behind comment `k`.
+    let breaks_behind = |k: usize| match comments.get(k + 1) {
+        Some(next) => next.newlines_before,
+        None => newlines_before,
+    };
+    let on_own_lines = |k: usize| {
+        (comments[k].newlines_before > 0 || (k == 0 && starts_file)) && breaks_behind(k) > 0
+    };
+    let mut first = comments.len();
+    while first > 0 && on_own_lines(first - 1) && breaks_behind(first - 1) == 1 {
+        first -= 1;
+    }
+    if first == comments.len() {
+        return None;
+    }
+    let mut lines: Vec<&str> = Vec::new();
+    for comment in &comments[first..] {
+        let text = comment.text(source);
+        match comment.kind {
+            CommentKind::Line => {
+                let text = text.strip_prefix("--").unwrap_or(text);
+                lines.push(text.strip_prefix(' ').unwrap_or(text));
+            }
+            CommentKind::Block => {
+                let inner = text.strip_prefix("{-").unwrap_or(text);
+                let inner = inner.strip_suffix("-}").unwrap_or(inner);
+                let mut block: Vec<&str> = inner.split('\n').collect();
+                if block.first().is_some_and(|line| line.trim().is_empty()) {
+                    block.remove(0);
+                }
+                if block.last().is_some_and(|line| line.trim().is_empty()) {
+                    block.pop();
+                }
+                lines.extend(block);
+            }
         }
-        self.docs_by_end_line.get(&(decl_line - 1)).cloned()
     }
-}
-
-fn segment_line_range(seg: &Segment) -> (usize, usize) {
-    match seg {
-        Segment::LineComment { line, .. } => (*line, *line),
-        Segment::BlockComment {
-            start_line,
-            end_line,
-            ..
-        } => (*start_line, *end_line),
-    }
-}
-
-/// Comment segment discovered during the doc scan. Public only to the
-/// parser module so `DocIndex::from_source` and `segment_line_range`
-/// can share the type.
-#[derive(Debug, Clone)]
-enum Segment {
-    LineComment {
-        line: usize,
-        content: String,
-    },
-    BlockComment {
-        start_line: usize,
-        end_line: usize,
-        content_lines: Vec<String>,
-    },
+    let indent_of = |line: &str| line.len() - line.trim_start_matches([' ', '\t']).len();
+    let indent = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| indent_of(line))
+        .min()
+        .unwrap_or(0);
+    let dedented: Vec<&str> = lines
+        .iter()
+        .map(|line| match line.trim().is_empty() {
+            true => "",
+            false => line[indent..].trim_end_matches('\r'),
+        })
+        .collect();
+    Some(dedented.join("\n"))
 }
 
 // ── Top-level names ──────────────────────────────────────────────────
@@ -680,12 +331,14 @@ pub struct Parser<'src> {
     /// stub and call ourselves again. Incremented on entry to the recovery
     /// path, checked on re-entry.
     in_fn_recovery: bool,
-    /// Optional doc-comment index. When `Some` (see `with_docs`), the
-    /// parser attaches preceding doc comments to each top-level decl and
-    /// each trait / impl method. When `None`, all `doc` fields are left
-    /// as `None`. The LSP builds the index; the paths that only compile
-    /// don't bother.
-    doc_index: Option<DocIndex>,
+    /// The comments of the source, when the parser is asked to attach
+    /// documentation (see `with_docs`): each top-level declaration and
+    /// each trait or impl method gets its `doc` from the comments in
+    /// front of its first token. `None` leaves every `doc` empty: only
+    /// the language server reads them.
+    docs: Option<Vec<Comment>>,
+    /// The comments the lexer found, kept for `with_docs`.
+    comments: Vec<Comment>,
     /// Name of the trait whose body the parser is currently inside.
     /// Used by `Self::Item` projection sugar to fill in the implicit
     /// trait-name. `None` outside a trait/impl body. The parser sets
@@ -697,9 +350,6 @@ pub struct Parser<'src> {
     /// "declaration" in a file, a "statement" in the REPL, whose entries
     /// are statements (see `parse_cell`).
     top_level_item: &'static str,
-    /// The offset each line of the source after the first starts at, in
-    /// order: `line_of` finds a line without reading the source again.
-    line_starts: Vec<usize>,
 }
 
 /// Delimiter depth before each token; see `Parser::delim_depth`.
@@ -733,6 +383,7 @@ impl<'src> Parser<'src> {
         let tokens = lexed.tokens;
         let delim_depth = delimiter_depths(&tokens);
         Self {
+            comments: lexed.comments,
             tokens,
             delim_depth,
             source,
@@ -742,23 +393,17 @@ impl<'src> Parser<'src> {
             errors: Vec::new(),
             depth: 0,
             in_fn_recovery: false,
-            doc_index: None,
+            docs: None,
             current_trait_name: None,
             top_level_item: "declaration",
-            line_starts: source
-                .bytes()
-                .enumerate()
-                .filter(|(_, b)| *b == b'\n')
-                .map(|(at, _)| at + 1)
-                .collect(),
         }
     }
 
-    /// Also attach doc comments: top-level decls (and trait / impl
-    /// methods) get their `doc` field from the adjacent `--` / `{- -}`
-    /// comments of the source.
+    /// Also attach documentation: each top-level declaration (and each
+    /// trait or impl method) gets its `doc` from the comments directly
+    /// above it.
     pub fn with_docs(mut self) -> Self {
-        self.doc_index = Some(DocIndex::from_source(self.source));
+        self.docs = Some(std::mem::take(&mut self.comments));
         self
     }
 
@@ -863,25 +508,38 @@ impl<'src> Parser<'src> {
         Ok(())
     }
 
-    /// Look up a doc comment for a decl whose first-token span is `span`.
-    /// Returns `None` when no doc-index is attached or when no adjacent
-    /// comment block precedes the decl line.
+    /// The documentation of the declaration whose first token has the
+    /// span `span`: the comments directly above it. `None` when the
+    /// parser was not asked for documentation.
     fn doc_for_span(&self, span: Span) -> Option<String> {
-        self.doc_index
-            .as_ref()
-            .and_then(|idx| idx.doc_for_decl_at_line(self.line_of(span) as usize))
+        let comments = self.docs.as_ref()?;
+        // A line-break token stands where the next line's first token
+        // starts; the comments are that token's.
+        let first = self
+            .tokens
+            .partition_point(|tok| tok.span.start < span.start);
+        let (index, tok) = self.tokens[first..]
+            .iter()
+            .enumerate()
+            .take_while(|(_, tok)| tok.span.start == span.start)
+            .find(|(_, tok)| tok.kind != Token::Newline)
+            .map(|(k, tok)| (first + k, tok))?;
+        let range = tok.comments.start as usize..tok.comments.end as usize;
+        let starts_file = self.tokens[..index]
+            .iter()
+            .all(|tok| tok.kind == Token::Newline);
+        doc_of(
+            comments.get(range)?,
+            tok.newlines_before,
+            starts_file,
+            self.source,
+        )
     }
 
     // ── helpers ──────────────────────────────────────────────────────
 
     fn span(&self) -> Span {
         self.tokens[self.pos].span
-    }
-
-    /// The 1-based line `span` starts on, for messages that name a line.
-    fn line_of(&self, span: Span) -> u32 {
-        let at = span.start_offset().min(self.source.len());
-        self.line_starts.partition_point(|start| *start <= at) as u32 + 1
     }
 
     /// End of the last token consumed: the token before `pos`, newlines

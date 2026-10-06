@@ -285,7 +285,6 @@ pub fn session(dir: &Path, entry: &str, timeout: Duration, requests: &[String]) 
         requests,
         root: &root,
         roots: &roots,
-        entry,
     };
     let mut answers = String::new();
     let result = drive(
@@ -453,13 +452,46 @@ fn drive(
     // along with the opened one.
     client.request(3, "workspace/symbol", json!({"query": ""}))?;
     client.response(3, "the second workspace/symbol response")?;
+    // The entry file's text as the server has it: `format` changes it.
+    let mut text = text;
     for (k, request) in asked.requests.iter().enumerate() {
         let id = 10 + k as u64;
+        answers.push_str(&format!("> {request}\n"));
+        if request == "format" {
+            client.request(
+                id,
+                "textDocument/formatting",
+                json!({"textDocument": {"uri": entry_uri},
+                       "options": {"tabSize": 2, "insertSpaces": true}}),
+            )?;
+            client.response(id, "the answer to `format`")?;
+            // The server answers with one edit, the whole new text, or
+            // with none for a text that is formatted or cannot be.
+            let edits = client.last["result"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let [edit] = edits.as_slice() else {
+                answers.push_str("(nothing)\n");
+                continue;
+            };
+            text = edit["newText"].as_str().unwrap_or_default().to_string();
+            client.published.remove(entry_uri);
+            client.notify(
+                "textDocument/didChange",
+                json!({"textDocument": {"uri": entry_uri, "version": 2 + k},
+                       "contentChanges": [{"text": text}]}),
+            )?;
+            client.read_until("diagnostics for the formatted file", |m| {
+                m["method"] == "textDocument/publishDiagnostics" && m["params"]["uri"] == entry_uri
+            })?;
+            answers.extend(text.lines().map(|line| format!("{line}\n")));
+            continue;
+        }
         let (method, params) = asked.message(request, entry_uri, &text)?;
         client.request(id, method, params)?;
         client.response(id, &format!("the answer to `{request}`"))?;
-        answers.push_str(&format!("> {request}\n"));
-        answers.push_str(&asked.render(request, &client.last));
+        answers.push_str(&asked.render(request, &client.last, &text));
     }
     client.request(4, "shutdown", Value::Null)?;
     client.response(4, "the shutdown response")?;
@@ -472,7 +504,6 @@ struct Asked<'a> {
     requests: &'a [String],
     root: &'a Path,
     roots: &'a [String],
-    entry: &'a str,
 }
 
 /// The 0-based LSP position (UTF-16 code units) of the 1-based line and
@@ -570,20 +601,16 @@ impl Asked<'_> {
         format!("{rel}:{}", Self::range(&text, range))
     }
 
-    /// The answer `response` to `request` as lines: one per location,
+    /// The answer `response` to `request` as lines (`entry_text`: the
+    /// entry file's text as the server has it): one per location,
     /// edit or symbol, sorted; `(nothing)` for an empty or null result;
     /// `error: ...` for an error.
-    fn render(&self, request: &str, response: &Value) -> String {
+    fn render(&self, request: &str, response: &Value, entry_text: &str) -> String {
         if let Some(message) = response["error"]["message"].as_str() {
             return format!("error: {message}\n");
         }
         let result = &response["result"];
         let what = request.split_whitespace().next().unwrap_or("");
-        let entry_text = || {
-            std::fs::read(self.root.join(self.entry))
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .unwrap_or_default()
-        };
         let mut lines: Vec<String> = match what {
             "references" => result
                 .as_array()
@@ -597,10 +624,10 @@ impl Asked<'_> {
                 .map(|a| a.as_slice())
                 .unwrap_or_default()
                 .iter()
-                .map(|h| Self::range(&entry_text(), &h["range"]))
+                .map(|h| Self::range(entry_text, &h["range"]))
                 .collect(),
             "prepare-rename" if result.is_object() => {
-                vec![Self::range(&entry_text(), result)]
+                vec![Self::range(entry_text, result)]
             }
             "rename" => result["changes"]
                 .as_object()
