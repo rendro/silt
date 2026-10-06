@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A map literal with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn main() {
+  let m = #{"a": 1 "b": 2}
+}

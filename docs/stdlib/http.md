@@ -11,7 +11,15 @@ HTTP client and server. Included by default. Exclude with `--no-default-features
 ## Types
 
 ```silt
-type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }
+type Method {
+  GET,
+  POST,
+  PUT,
+  PATCH,
+  DELETE,
+  HEAD,
+  OPTIONS,
+}
 
 type Request {
   method: Method,
@@ -80,6 +88,7 @@ call site looks the same.
 ```silt
 import http
 import string
+
 fn main() {
   match http.get("https://api.github.com/users/torvalds") {
     Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")
@@ -99,7 +108,10 @@ import http
 import json
 import result
 
-type User { name: String, id: Int }
+type User {
+  name: String,
+  id: Int,
+}
 
 type FetchError {
   Network(http.HttpError),
@@ -107,8 +119,7 @@ type FetchError {
 }
 
 fn fetch_user(name: String) -> Result(User, FetchError) {
-  let resp = http.get("https://api.example.com/users/{name}")
-    |> result.map_err(Network)?
+  let resp = http.get("https://api.example.com/users/{name}") |> result.map_err(Network)?
   json.parse(resp.body, User) |> result.map_err(Parse)
 }
 ```
@@ -130,15 +141,20 @@ a spawned task.
 let resp = http.request(
   http.POST,
   "https://api.example.com/users",
-  json.stringify(#{"name": "Alice"}),
-  #{"Content-Type": "application/json", "Authorization": "Bearer tok123"}
+  json.stringify(#{ "name": "Alice" }),
+  #{ "Content-Type": "application/json", "Authorization": "Bearer tok123" },
 )?
 
 -- DELETE
 let resp = http.request(http.DELETE, "https://api.example.com/users/42", "", #{})?
 
 -- GET with custom headers
-let resp = http.request(http.GET, "https://api.example.com/data", "", #{"Accept": "text/plain"})?
+let resp = http.request(
+  http.GET,
+  "https://api.example.com/data",
+  "",
+  #{ "Accept": "text/plain" },
+)?
 ```
 
 
@@ -167,33 +183,32 @@ Use pattern matching on `(req.method, segments)` for routing:
 import http
 import json
 
-type User { id: Int, name: String }
+type User {
+  id: Int,
+  name: String,
+}
 
 fn main() {
   println("Listening on :8080")
 
-  http.serve(8080, { req ->
+  http.serve(8080) { req ->
     match (req.method, http.segments(req.path)) {
-      (http.GET, []) ->
-        http.Response { status: 200, body: "Hello!", headers: #{} }
+      (http.GET, []) -> http.Response { status: 200, body: "Hello!", headers: #{} }
 
-      (http.GET, ["users", id]) ->
-        http.Response { status: 200, body: "User {id}", headers: #{} }
+      (http.GET, ["users", id]) -> http.Response { status: 200, body: "User {id}", headers: #{} }
 
-      (http.POST, ["users"]) ->
-        match json.parse(req.body, User) {
-          Ok(user) -> http.Response {
-            status: 201,
-            body: json.stringify(user),
-            headers: #{"Content-Type": "application/json"},
-          }
-          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+      (http.POST, ["users"]) -> match json.parse(req.body, User) {
+        Ok(user) -> http.Response {
+          status: 201,
+          body: json.stringify(user),
+          headers: #{ "Content-Type": "application/json" },
         }
+        Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+      }
 
-      _ ->
-        http.Response { status: 404, body: "Not found", headers: #{} }
+      _ -> http.Response { status: 404, body: "Not found", headers: #{} }
     }
-  })
+  }
 }
 ```
 
@@ -242,9 +257,9 @@ http.segments(path: String) -> List(String)
 Splits a URL path into non-empty segments. Useful for pattern-matched routing.
 
 ```silt
-http.segments("/api/users/42")   -- ["api", "users", "42"]
-http.segments("/")               -- []
-http.segments("//foo//bar/")     -- ["foo", "bar"]
+http.segments("/api/users/42") -- ["api", "users", "42"]
+http.segments("/") -- []
+http.segments("//foo//bar/") -- ["foo", "bar"]
 ```
 
 This function has no dependencies and works even with `--no-default-features`.
@@ -274,14 +289,14 @@ keys accumulate into the same list in the order they appear, so a query like
 import http
 
 fn main() {
-    http.parse_query("name=alice&tag=dev&tag=admin")
-    -- #{"name": ["alice"], "tag": ["dev", "admin"]}
+  http.parse_query("name=alice&tag=dev&tag=admin")
+  -- #{"name": ["alice"], "tag": ["dev", "admin"]}
 
-    http.parse_query("?q=hello%20world")
-    -- #{"q": ["hello world"]}
+  http.parse_query("?q=hello%20world")
+  -- #{"q": ["hello world"]}
 
-    http.parse_query("")
-    -- #{}
+  http.parse_query("")
+  -- #{}
 }
 ```
 

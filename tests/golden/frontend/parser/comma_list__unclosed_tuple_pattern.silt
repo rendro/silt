@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A tuple pattern with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn main() {
+  match (1, 2, 3) {
+    (a, b c) -> a
+  }
+}

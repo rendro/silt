@@ -5,7 +5,7 @@
 
 type P {
   x: Int,
-  y: Int
+  y: Int,
 }
 
 fn g(P { x, y }: P, (a, b): (Int, String)) -> Int {

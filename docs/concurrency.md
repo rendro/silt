@@ -107,7 +107,9 @@ Returns `Unit`.
 ### Receiving: `channel.receive(ch)`
 
 ```silt
-when let channel.Message(msg) = channel.receive(ch) else { return }
+when let channel.Message(msg) = channel.receive(ch) else {
+  return
+}
 ```
 
 `channel.receive` takes one value from the channel's buffer. Its result type
@@ -152,9 +154,9 @@ Returns `Unit`.
 
 ```silt
 let ch = channel.new(2)
-channel.try_send(ch, "a")   -- true
-channel.try_send(ch, "b")   -- true
-channel.try_send(ch, "c")   -- false (buffer full)
+channel.try_send(ch, "a") -- true
+channel.try_send(ch, "b") -- true
+channel.try_send(ch, "c") -- false (buffer full)
 ```
 
 Attempts to send without blocking. Returns `true` if the value was placed in
@@ -167,8 +169,8 @@ yields to the scheduler.
 let ch = channel.new(10)
 channel.send(ch, 42)
 
-channel.try_receive(ch)   -- Message(42)
-channel.try_receive(ch)   -- Empty
+channel.try_receive(ch) -- Message(42)
+channel.try_receive(ch) -- Empty
 ```
 
 Attempts to receive without blocking. Returns a `ChannelResult(a)`. The
@@ -196,9 +198,7 @@ channel.send(ch, "hello")
 channel.send(ch, "world")
 channel.close(ch)
 
-channel.each(ch) { msg ->
-  println("got: {msg}")
-}
+channel.each(ch) { msg -> println("got: {msg}") }
 -- prints:
 --   got: hello
 --   got: world
@@ -231,16 +231,18 @@ a receiver is parked on the channel, and `channel.try_receive` gives a value
 only while a sender is.
 
 ```silt
-let ch = channel.new()   -- capacity 0, true rendezvous
+let ch = channel.new() -- capacity 0, true rendezvous
 
-task.spawn({ ->
+task.spawn { ->
   -- this blocks until the main task calls channel.receive
   channel.send(ch, "hello")
-})
+}
 
 -- this blocks until the spawned task calls channel.send
-when let channel.Message(msg) = channel.receive(ch) else { return }
-println(msg)  -- hello
+when let channel.Message(msg) = channel.receive(ch) else {
+  return
+}
+println(msg) -- hello
 ```
 
 ### Timeout channels
@@ -251,12 +253,12 @@ given number of milliseconds. It is useful for adding deadlines to
 
 ```silt
 let ch = channel.new(10)
-let timer = channel.timeout(5000)  -- closes after 5 seconds
+let timer = channel.timeout(5000) -- closes after 5 seconds
 
 match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
-  (^ch, channel.Message(val))  -> println("got: {val}")
-  (^timer, channel.Closed)     -> println("timed out after 5s")
-  _                    -> ()
+  (^ch, channel.Message(val)) -> println("got: {val}")
+  (^timer, channel.Closed) -> println("timed out after 5s")
+  _ -> ()
 }
 ```
 
@@ -275,14 +277,12 @@ you only need to wait on one channel:
 ```silt
 let ch = channel.new(10)
 
-task.spawn({ ->
-  channel.send(ch, 42)
-})
+task.spawn { -> channel.send(ch, 42) }
 
 match channel.recv_timeout(ch, time.ms(500)) {
-  Ok(val)             -> println("got: {val}")
+  Ok(val) -> println("got: {val}")
   Err(channel.ChannelTimeout) -> println("timed out")
-  Err(channel.ChannelClosed)  -> println("channel closed")
+  Err(channel.ChannelClosed) -> println("channel closed")
 }
 ```
 
@@ -314,10 +314,10 @@ Signature: `channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, Cha
 ### Spawning: `task.spawn(fn)`
 
 ```silt
-let handle = task.spawn({ ->
+let handle = task.spawn { ->
   let result = compute_something()
   channel.send(ch, result)
-})
+}
 ```
 
 `task.spawn` takes a zero-argument function and submits it as a lightweight task
@@ -333,20 +333,22 @@ shared via `Arc` (atomic reference counting).
 let multiplier = 10
 let ch = channel.new(10)
 
-let h = task.spawn({ ->
+let h = task.spawn { ->
   -- captures `multiplier` and `ch` from outer scope
   channel.send(ch, multiplier * 2)
-})
+}
 
 task.join(h)
-when let channel.Message(val) = channel.receive(ch) else { return }  -- val = 20
+when let channel.Message(val) = channel.receive(ch) else {
+  return
+} -- val = 20
 ```
 
 ### Joining: `task.join(handle)`
 
 ```silt
-let h = task.spawn({ -> 42 })
-let result = task.join(h)  -- result = 42
+let h = task.spawn { -> 42 }
+let result = task.join(h) -- result = 42
 ```
 
 `task.join` parks the current task until the spawned task completes, then
@@ -364,10 +366,10 @@ sentinel value when cancellation is an expected outcome rather than an error.
 
 ```silt
 let done = channel.new(1)
-let h = task.spawn({ ->
+let h = task.spawn { ->
   -- long-running work
   channel.send(done, 42)
-})
+}
 task.cancel(h)
 -- task.join(h) would raise `joined task failed: cancelled` at this point;
 -- instead, wait on the sentinel channel if you want a non-raising
@@ -438,8 +440,9 @@ exits with status 1, even if `main` returned normally:
 ```silt
 import task
 import time
+
 fn main() {
-  let _ = task.spawn({ -> 1 / 0 })
+  let _ = task.spawn { -> 1 / 0 }
   time.sleep(time.ms(100))
   println("main done")
 }
@@ -480,9 +483,7 @@ task.
 ### Scoped deadlines: `task.deadline(dur, fn)`
 
 ```silt
-let outcome = task.deadline(time.ms(200), { ->
-  io.read_file("/var/log/slow.log")
-})
+let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
 ```
 
 `task.deadline(dur, f)` runs `f` with a scoped I/O deadline and returns
@@ -512,12 +513,10 @@ import task
 import time
 
 fn main() {
-  let outcome = task.deadline(time.ms(200), { ->
-    io.read_file("/var/log/slow.log")
-  })
+  let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
   match outcome {
     Ok(contents) -> println(contents)
-    Err(io.IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
+    Err(io.IoUnknown(msg)) -> println(msg) -- I/O timeout (task.deadline exceeded)
     Err(_) -> println("other io error")
   }
 }
@@ -528,9 +527,7 @@ Signature: `task.deadline(dur: Duration, f: () -> a) -> a`.
 ### Bounded spawn: `task.spawn_until(dur, fn)`
 
 ```silt
-let h = task.spawn_until(time.seconds(2), { ->
-  io.read_file("/tmp/maybe_slow.txt")
-})
+let h = task.spawn_until(time.seconds(2)) { -> io.read_file("/tmp/maybe_slow.txt") }
 ```
 
 `task.spawn_until(dur, f)` spawns `f` as a task with a bounded
@@ -554,9 +551,7 @@ import task
 import time
 
 fn main() {
-  let h = task.spawn_until(time.seconds(2), { ->
-    io.read_file("/tmp/maybe_slow.txt")
-  })
+  let h = task.spawn_until(time.seconds(2)) { -> io.read_file("/tmp/maybe_slow.txt") }
   match task.join(h) {
     Ok(contents) -> println(contents)
     Err(msg) -> println("io error or timeout")
@@ -583,10 +578,10 @@ two constructors:
 
 ```silt
 match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-  (^ch1, channel.Message(val))  -> handle_input(val)
-  (^ch2, channel.Message(val))  -> handle_other(val)
-  (_, channel.Closed)           -> println("all done")
-  _                     -> ()
+  (^ch1, channel.Message(val)) -> handle_input(val)
+  (^ch2, channel.Message(val)) -> handle_other(val)
+  (_, channel.Closed) -> println("all done")
+  _ -> ()
 }
 ```
 
@@ -614,8 +609,8 @@ channel.send(normal, "status ok")
 match channel.select([channel.Recv(urgent), channel.Recv(normal)]) {
   (^urgent, channel.Message(msg)) -> println("URGENT: {msg}")
   (^normal, channel.Message(msg)) -> println("normal: {msg}")
-  (_, channel.Closed)             -> println("all closed")
-  _                       -> println("no message")
+  (_, channel.Closed) -> println("all closed")
+  _ -> println("no message")
 }
 ```
 
@@ -630,8 +625,8 @@ You do not always care which channel fired. Use `_` to match any channel:
 ```silt
 match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
   (_, channel.Message(val)) -> println("got {val} from somewhere")
-  (_, channel.Closed)       -> println("all done")
-  _                 -> ()
+  (_, channel.Closed) -> println("all done")
+  _ -> ()
 }
 ```
 
@@ -644,8 +639,8 @@ channel itself:
 ```silt
 match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
   (_source, channel.Message(val)) -> println("got {val}")
-  (_, channel.Closed)             -> println("all done")
-  _                       -> ()
+  (_, channel.Closed) -> println("all done")
+  _ -> ()
 }
 ```
 
@@ -684,21 +679,18 @@ Producer ----> [channel] ----> Consumer
 ```silt
 import channel
 import task
+
 fn main() {
   let ch = channel.new(10)
 
-  let producer = task.spawn({ ->
+  let producer = task.spawn { ->
     channel.send(ch, "hello")
     channel.send(ch, "from")
     channel.send(ch, "silt")
     channel.close(ch)
-  })
+  }
 
-  let consumer = task.spawn({ ->
-    channel.each(ch) { msg ->
-      println(msg)
-    }
-  })
+  let consumer = task.spawn { -> channel.each(ch) { msg -> println(msg) } }
 
   task.join(producer)
   task.join(consumer)
@@ -728,6 +720,7 @@ Distribute work across multiple tasks, then collect results.
 import channel
 import list
 import task
+
 fn main() {
   let jobs = channel.new(10)
   let results = channel.new(10)
@@ -742,22 +735,15 @@ fn main() {
   channel.close(jobs)
 
   -- Spawn three workers
-  let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn({ ->
-      channel.each(jobs) { n ->
-        channel.send(results, n * 2)
-      }
-    })
-  }
+  let workers = [1, 2, 3]
+    |> list.map { id -> task.spawn { -> channel.each(jobs) { n -> channel.send(results, n * 2) } } }
 
   -- Wait for all workers to finish, then close results
   workers |> list.each { w -> task.join(w) }
   channel.close(results)
 
   -- Collect
-  channel.each(results) { r ->
-    println(r)
-  }
+  channel.each(results) { r -> println(r) }
 }
 ```
 
@@ -784,32 +770,27 @@ writes to the next.
 ```silt
 import channel
 import task
+
 fn main() {
   let raw = channel.new(10)
   let doubled = channel.new(10)
 
   -- Stage 1: produce raw values
-  let s1 = task.spawn({ ->
+  let s1 = task.spawn { ->
     channel.send(raw, 1)
     channel.send(raw, 2)
     channel.send(raw, 3)
     channel.close(raw)
-  })
+  }
 
   -- Stage 2: double each value
-  let s2 = task.spawn({ ->
-    channel.each(raw) { n ->
-      channel.send(doubled, n * 2)
-    }
+  let s2 = task.spawn { ->
+    channel.each(raw) { n -> channel.send(doubled, n * 2) }
     channel.close(doubled)
-  })
+  }
 
   -- Stage 3: consume the doubled values
-  let s3 = task.spawn({ ->
-    channel.each(doubled) { n ->
-      println("stage 3 got: {n}")
-    }
-  })
+  let s3 = task.spawn { -> channel.each(doubled) { n -> println("stage 3 got: {n}") } }
 
   task.join(s1)
   task.join(s2)
@@ -834,20 +815,21 @@ ordering the list.
 ```silt
 import channel
 import task
+
 fn main() {
   let alerts = channel.new(5)
   let logs = channel.new(5)
 
-  task.spawn({ ->
+  task.spawn { ->
     channel.send(logs, "background task done")
     channel.send(logs, "log rotation complete")
     channel.close(logs)
-  })
+  }
 
-  task.spawn({ ->
+  task.spawn { ->
     channel.send(alerts, "disk full!")
     channel.close(alerts)
-  })
+  }
 
   -- Merge both streams into a single handler. Over many runs, messages from
   -- `alerts` and `logs` interleave fairly -- neither channel starves the other.
@@ -859,7 +841,7 @@ fn main() {
         println("alert: {msg}")
         loop(())
       }
-      (^logs,   channel.Message(msg)) -> {
+      (^logs, channel.Message(msg)) -> {
         println("log: {msg}")
         loop(())
       }
@@ -887,18 +869,17 @@ on `channel.receive`.
 ```silt
 import channel
 import task
+
 fn main() {
   let work = channel.new(10)
   let done = channel.new(1)
 
   -- Worker processes until the work channel closes
-  let worker = task.spawn({ ->
-    channel.each(work) { item ->
-      println("processing: {item}")
-    }
+  let worker = task.spawn { ->
+    channel.each(work) { item -> println("processing: {item}") }
     -- channel.each returned, meaning work is closed
     channel.send(done, "shutdown complete")
-  })
+  }
 
   -- Send some work, then close
   channel.send(work, "task-a")
@@ -908,7 +889,9 @@ fn main() {
 
   -- Wait for the worker to finish
   task.join(worker)
-  when let channel.Message(status) = channel.receive(done) else { return }
+  when let channel.Message(status) = channel.receive(done) else {
+    return
+  }
   println(status)
 }
 -- prints:
@@ -929,21 +912,24 @@ The simplest pattern: spawn several tasks, let them do work, join them all.
 import channel
 import list
 import task
+
 fn main() {
   let results = channel.new(10)
 
-  let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn({ ->
-      channel.send(results, id * 10)
-    })
-  }
+  let workers = [1, 2, 3] |> list.map { id -> task.spawn { -> channel.send(results, id * 10) } }
 
   workers |> list.each { w -> task.join(w) }
   channel.close(results)
 
-  when let channel.Message(r1) = channel.receive(results) else { return }
-  when let channel.Message(r2) = channel.receive(results) else { return }
-  when let channel.Message(r3) = channel.receive(results) else { return }
+  when let channel.Message(r1) = channel.receive(results) else {
+    return
+  }
+  when let channel.Message(r2) = channel.receive(results) else {
+    return
+  }
+  when let channel.Message(r3) = channel.receive(results) else {
+    return
+  }
   println("results: {r1}, {r2}, {r3}")
   -- output: results: 10, 20, 30 (in some order — the receive order is
   -- a permutation of the spawn order, since the workers race to send)
@@ -957,13 +943,14 @@ knowing the exact count:
 
 ```silt
 import channel
+
 fn drain(ch) {
   match channel.try_receive(ch) {
     channel.Message(val) -> {
       println("got: {val}")
       drain(ch)
     }
-    channel.Empty  -> println("no more data (channel still open)")
+    channel.Empty -> println("no more data (channel still open)")
     channel.Closed -> println("channel closed, all done")
     _ -> ()
   }
@@ -995,10 +982,15 @@ channel, and have a supervisor task decide whether to restart:
 import channel
 import task
 
-type Outcome { Finished, Crashed(String) }
+type Outcome {
+  Finished,
+  Crashed(String),
+}
 
 fn do_job(id, job) {
-  when job != "poison" else { return Err("worker {id} hit poison pill") }
+  when job != "poison" else {
+    return Err("worker {id} hit poison pill")
+  }
   println("worker {id} handled {job}")
   Ok(())
 }
@@ -1017,12 +1009,16 @@ fn worker_body(id, jobs, outcomes) {
 }
 
 fn spawn_worker(id, jobs, outcomes) {
-  task.spawn({ -> worker_body(id, jobs, outcomes) })
+  task.spawn { -> worker_body(id, jobs, outcomes) }
 }
 
 fn supervise(jobs, outcomes, outstanding, remaining_restarts) {
-  when outstanding > 0 else { return }
-  when let channel.Message((id, outcome)) = channel.receive(outcomes) else { return }
+  when outstanding > 0 else {
+    return
+  }
+  when let channel.Message((id, outcome)) = channel.receive(outcomes) else {
+    return
+  }
   match outcome {
     Finished -> supervise(jobs, outcomes, outstanding - 1, remaining_restarts)
     Crashed(msg) -> {
@@ -1049,7 +1045,7 @@ fn main() {
   -- Two workers are spawned, so two outcomes are expected before the
   -- supervisor returns. Each restart-on-Crashed adds one more outcome
   -- to wait for; the bounded restart budget caps that growth.
-  let sup = task.spawn({ -> supervise(jobs, outcomes, 2, 3) })
+  let sup = task.spawn { -> supervise(jobs, outcomes, 2, 3) }
 
   channel.send(jobs, "a")
   channel.send(jobs, "b")

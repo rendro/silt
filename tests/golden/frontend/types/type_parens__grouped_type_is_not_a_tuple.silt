@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type_parens__grouped_type_is_not_a_tuple.silt:10:18
+-- stderr-contains: type mismatch: expected Int, got (
+-- stderr-contains: type_parens__grouped_type_is_not_a_tuple.silt:11:19
+-- stderr-contains: , got Int
+-- `(Int)` is `Int`, so a tuple of one does not fit it; `(Int,)` is the
+-- tuple, so an Int does not fit that.
+fn main() {
+  let a: (Int) = (1,)
+  let b: (Int,) = 1
+  println(a)
+  println(b)
+}

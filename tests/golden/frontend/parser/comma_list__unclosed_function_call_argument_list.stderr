@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue function call argument list, found 2
+ --> comma_list__unclosed_function_call_argument_list.silt:6:13
+   |
+ 6 |   println(1 2)
+   |             ^ expected ')' or ',' to continue function call argument list, found 2
+ ::: comma_list__unclosed_function_call_argument_list.silt:6:10
+   |
+ 6 |   println(1 2)
+   |          - the function call argument list starts here

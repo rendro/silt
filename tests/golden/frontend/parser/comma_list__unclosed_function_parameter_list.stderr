@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue function parameter list, found b
+ --> comma_list__unclosed_function_parameter_list.silt:5:8
+   |
+ 5 | fn f(a b) { a }
+   |        ^ expected ')' or ',' to continue function parameter list, found b
+ ::: comma_list__unclosed_function_parameter_list.silt:5:5
+   |
+ 5 | fn f(a b) { a }
+   |     - the function parameter list starts here

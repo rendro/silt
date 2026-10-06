@@ -13,18 +13,24 @@ type Todo {
 }
 
 fn json_response(status, data) {
-  http.Response { status: status, body: json.stringify(data), headers: #{ "Content-Type": "application/json" } }
+  http.Response {
+    status: status,
+    body: json.stringify(data),
+    headers: #{ "Content-Type": "application/json" },
+  }
 }
 
 fn main() {
   println("Listening on http://localhost:8080")
   http.serve(8080) { req ->
-    let segments = string.split(req.path, "/")
-    |> list.filter { s -> !string.is_empty(s) }
+    let segments = string.split(req.path, "/") |> list.filter { s -> !string.is_empty(s) }
     match (req.method, segments) {
       (http.GET, []) -> http.Response { status: 200, body: "Welcome to silt!", headers: #{} }
       (http.GET, ["todos"]) -> {
-        let todos = [Todo { id: 1, title: "Learn silt", done: true }, Todo { id: 2, title: "Build an API", done: false }]
+        let todos = [
+          Todo { id: 1, title: "Learn silt", done: true },
+          Todo { id: 2, title: "Build an API", done: false },
+        ]
         json_response(200, todos)
       }
       (http.POST, ["todos"]) -> match json.parse(req.body, Todo) {

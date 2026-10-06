@@ -7,7 +7,14 @@ trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
 type Box(a) { Box(a) }
 trait Greet for Box(a) where a: Greet { fn greet(self) -> String { match self { Box(i) -> i.greet() } } }
-trait Greet for List(a) where a: Greet { fn greet(self) -> String { match self { [x, ..r] -> x.greet(), _ -> "e" } } }
+trait Greet for List(a) where a: Greet {
+  fn greet(self) -> String {
+    match self {
+      [x, ..r] -> x.greet()
+      _ -> "e"
+    }
+  }
+}
 fn hello(x: a) -> String where a: Greet { x.greet() }
 import channel
 fn main() {

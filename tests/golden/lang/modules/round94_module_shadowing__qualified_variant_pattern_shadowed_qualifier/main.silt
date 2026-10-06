@@ -3,7 +3,7 @@
 import shapes
 fn f(shapes: Int) -> Int {
   match 1 {
-    shapes.Circle(r) -> r,
+    shapes.Circle(r) -> r
     _ -> 0
   }
 }

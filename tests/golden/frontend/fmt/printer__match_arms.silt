@@ -1,0 +1,27 @@
+-- cmd: fmt
+-- Each match arm stands on its own line. An arm's body stays behind its
+-- arrow.
+fn main() {
+  let x = 3
+  let a = match x {
+    1 -> "one"
+    2 -> "two"
+    _ -> "many"
+  }
+  let b = match {
+    x < 0 -> "negative"
+    x == 0 -> "zero"
+    _ -> "positive"
+  }
+  let c = match (x, a) {
+    (1, _) | (2, _) -> {
+      println("small")
+      "s" }
+    (n, "many") when n > 10 -> "large"
+    _ -> match b {
+      "zero" -> "z"
+      _ -> "nz"
+    }
+  }
+  println("{a} {b} {c}")
+}

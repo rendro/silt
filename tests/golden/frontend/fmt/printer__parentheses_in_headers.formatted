@@ -1,0 +1,46 @@
+-- cmd: fmt
+-- In a `match` or `loop` header a `{` outside brackets is the block of
+-- the header, and `match {` is a match without a scrutinee. So the
+-- parentheses stay around a scrutinee that would show a block, a
+-- closure, a record without a name or a record literal without fields;
+-- and around `_` as a condition, which without them is the last arm.
+type P {
+  x: Int,
+}
+
+type E {}
+
+fn main() {
+  let a = 1
+  let b = match ({
+    1
+  } + 1) {
+    _ -> 1
+  }
+  let c = match ({ x -> x + 1 }(2)) {
+    _ -> 2
+  }
+  let d = match (a > { -> 1 }()) {
+    _ -> 3
+  }
+  let e = match ({ x: 1 }).x {
+    _ -> 4
+  }
+  let f = loop i = 0, e = (E {}) {
+    match i {
+      3 -> e
+      _ -> loop(i + 1, e)
+    }
+  }
+  let g = match P { x: 1 } {
+    P { x } -> x
+  }
+  let h = match a + 1 {
+    _ -> 5
+  }
+  let r = match {
+    a > 5 -> "big"
+    (_) -> "small"
+  }
+  println("{b} {c} {d} {e} {f} {g} {h} {r}")
+}

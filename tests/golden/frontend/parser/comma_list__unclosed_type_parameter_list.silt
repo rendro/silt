@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A type parameter list with a missing comma or closer: the message names the list
+-- and labels where it starts.
+type Pair(a b) { first: a, second: b }
+
+fn main() {}

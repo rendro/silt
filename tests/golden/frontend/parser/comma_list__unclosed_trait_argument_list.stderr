@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue trait argument list, found String
+ --> comma_list__unclosed_trait_argument_list.silt:5:41
+   |
+ 5 | fn same(x: a) -> a where a: Convert(Int String) { x }
+   |                                         ^^^^^^ expected ')' or ',' to continue trait argument list, found String
+ ::: comma_list__unclosed_trait_argument_list.silt:5:36
+   |
+ 5 | fn same(x: a) -> a where a: Convert(Int String) { x }
+   |                                    - the trait argument list starts here

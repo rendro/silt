@@ -5,11 +5,17 @@ trait MyOrd for Int {
   fn my_cmp(self, other: Int) -> Int {
     match self < other {
       true -> -1
-      false -> match self > other { true -> 1, false -> 0 }
+      false -> match self > other {
+        true -> 1
+        false -> 0
+      }
     }
   }
 }
 fn use_both(x: a, y: a) -> Int where a: MyEq + MyOrd {
-  match x.my_eq(y) { true -> 0, false -> x.my_cmp(y) }
+  match x.my_eq(y) {
+    true -> 0
+    false -> x.my_cmp(y)
+  }
 }
 fn main() { println(use_both(3, 7)) }

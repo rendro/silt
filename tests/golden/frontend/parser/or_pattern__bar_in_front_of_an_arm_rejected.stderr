@@ -1,0 +1,5 @@
+error[parse]: expected pattern, found |
+ --> or_pattern__bar_in_front_of_an_arm_rejected.silt:6:5
+   |
+ 6 |     | 1 -> "one"
+   |     ^ expected pattern, found |

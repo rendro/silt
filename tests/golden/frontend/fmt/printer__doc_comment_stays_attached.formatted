@@ -1,0 +1,21 @@
+-- cmd: fmt
+-- A comment directly above a declaration stays directly above it, so it
+-- is still the declaration's doc comment (FRONTEND-4 d). A comment with
+-- an empty line below it keeps that line.
+
+-- Adds one.
+fn inc(x) {
+  x + 1
+}
+
+-- Subtracts one.
+-- In two lines.
+pub fn dec(x) {
+  x - 1
+}
+
+-- A remark that is not about `main`.
+
+fn main() {
+  println("{inc(1)} {dec(1)}")
+}

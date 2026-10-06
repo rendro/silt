@@ -32,9 +32,10 @@ Returns the absolute value. Runtime error if `n` is `Int` minimum
 
 ```silt
 import int
+
 fn main() {
-    println(int.abs(-42))  -- 42
-    println(int.abs(7))    -- 7
+  println(int.abs(-42)) -- 42
+  println(int.abs(7)) -- 7
 }
 ```
 
@@ -51,10 +52,11 @@ Returns `x` constrained to the inclusive range `[lo, hi]`: `lo` if
 
 ```silt
 import int
+
 fn main() {
-    println(int.clamp(5, 0, 10))    -- 5
-    println(int.clamp(-3, 0, 10))   -- 0
-    println(int.clamp(42, 0, 10))   -- 10
+  println(int.clamp(5, 0, 10)) -- 5
+  println(int.clamp(-3, 0, 10)) -- 0
+  println(int.clamp(42, 0, 10)) -- 10
 }
 ```
 
@@ -69,8 +71,9 @@ Returns the larger of two integers.
 
 ```silt
 import int
+
 fn main() {
-    println(int.max(3, 7))  -- 7
+  println(int.max(3, 7)) -- 7
 }
 ```
 
@@ -85,8 +88,9 @@ Returns the smaller of two integers.
 
 ```silt
 import int
+
 fn main() {
-    println(int.min(3, 7))  -- 3
+  println(int.min(3, 7)) -- 3
 }
 ```
 
@@ -105,20 +109,21 @@ a human-readable default.
 
 ```silt
 import int
-fn main() {
-    match int.parse("42") {
-        Ok(n) -> println(n)
-        Err(e) -> println("parse error: {e.message()}")
-    }
 
-    -- Pattern-match on specific failure modes:
-    match int.parse("") {
-        Ok(_) -> ()
-        Err(int.ParseEmpty) -> println("cannot parse empty input")
-        Err(int.ParseInvalidDigit(i)) -> println("bad digit at byte {i}")
-        Err(int.ParseOverflow) -> println("too large")
-        Err(int.ParseUnderflow) -> println("too small")
-    }
+fn main() {
+  match int.parse("42") {
+    Ok(n) -> println(n)
+    Err(e) -> println("parse error: {e.message()}")
+  }
+
+  -- Pattern-match on specific failure modes:
+  match int.parse("") {
+    Ok(_) -> ()
+    Err(int.ParseEmpty) -> println("cannot parse empty input")
+    Err(int.ParseInvalidDigit(i)) -> println("bad digit at byte {i}")
+    Err(int.ParseOverflow) -> println("too large")
+    Err(int.ParseUnderflow) -> println("too small")
+  }
 }
 ```
 
@@ -133,9 +138,10 @@ Converts an integer to a float.
 
 ```silt
 import int
+
 fn main() {
-    let f = int.to_float(42)
-    println(f)  -- 42
+  let f = int.to_float(42)
+  println(f) -- 42
 }
 ```
 
@@ -150,9 +156,10 @@ Converts an integer to its string representation.
 
 ```silt
 import int
+
 fn main() {
-    let s = int.to_string(42)
-    println(s)  -- 42
+  let s = int.to_string(42)
+  println(s) -- 42
 }
 ```
 
@@ -169,7 +176,8 @@ Functions for parsing, rounding, converting, and comparing floats.
 > zero", `+`, `-` and `*` raise "float overflow", and `math.sqrt` of a
 > negative number, `math.log` of a number that is not positive, and
 > `math.pow` overflow raise too. Guard the input when it can be out of
-> range: `match b { 0.0 -> 0.0, _ -> a / b }`.
+> range, for example with a `match` on the divisor that has an arm for
+> `0.0`.
 
 > **Note:** `round`, `ceil`, and `floor` return `Float`, not `Int`. Use
 > `float.to_int` to convert the result to an integer.
@@ -205,8 +213,9 @@ Returns the absolute value.
 
 ```silt
 import float
+
 fn main() {
-    println(float.abs(-3.14))  -- 3.14
+  println(float.abs(-3.14)) -- 3.14
 }
 ```
 
@@ -221,9 +230,10 @@ Rounds up to the nearest integer, returned as a Float.
 
 ```silt
 import float
+
 fn main() {
-    println(float.ceil(3.2))   -- 4
-    println(float.ceil(-3.2))  -- -3
+  println(float.ceil(3.2)) -- 4
+  println(float.ceil(-3.2)) -- -3
 }
 ```
 
@@ -240,10 +250,11 @@ Returns `x` constrained to the inclusive range `[lo, hi]`: `lo` if
 
 ```silt
 import float
+
 fn main() {
-    println(float.clamp(0.5, 0.0, 1.0))   -- 0.5
-    println(float.clamp(-0.2, 0.0, 1.0))  -- 0
-    println(float.clamp(1.5, 0.0, 1.0))   -- 1
+  println(float.clamp(0.5, 0.0, 1.0)) -- 0.5
+  println(float.clamp(-0.2, 0.0, 1.0)) -- 0
+  println(float.clamp(1.5, 0.0, 1.0)) -- 1
 }
 ```
 
@@ -258,9 +269,10 @@ Rounds down to the nearest integer, returned as a Float.
 
 ```silt
 import float
+
 fn main() {
-    println(float.floor(3.9))   -- 3
-    println(float.floor(-3.2))  -- -4
+  println(float.floor(3.9)) -- 3
+  println(float.floor(-3.2)) -- -4
 }
 ```
 
@@ -275,8 +287,9 @@ Returns the larger of two floats.
 
 ```silt
 import float
+
 fn main() {
-    println(float.max(1.5, 2.5))  -- 2.5
+  println(float.max(1.5, 2.5)) -- 2.5
 }
 ```
 
@@ -291,8 +304,9 @@ Returns the smaller of two floats.
 
 ```silt
 import float
+
 fn main() {
-    println(float.min(1.5, 2.5))  -- 1.5
+  println(float.min(1.5, 2.5)) -- 1.5
 }
 ```
 
@@ -312,11 +326,12 @@ as `ParseOverflow` (`"1e400"`) or `ParseUnderflow` (`"-1e400"`).
 
 ```silt
 import float
+
 fn main() {
-    match float.parse("3.14") {
-        Ok(f) -> println(f)
-        Err(e) -> println("error: {e.message()}")
-    }
+  match float.parse("3.14") {
+    Ok(f) -> println(f)
+    Err(e) -> println("error: {e.message()}")
+  }
 }
 ```
 
@@ -331,9 +346,10 @@ Rounds to the nearest integer, returned as a Float. Ties round away from zero.
 
 ```silt
 import float
+
 fn main() {
-    println(float.round(3.6))  -- 4
-    println(float.round(3.4))  -- 3
+  println(float.round(3.6)) -- 4
+  println(float.round(3.4)) -- 3
 }
 ```
 
@@ -349,9 +365,10 @@ the value is outside the `Int` range.
 
 ```silt
 import float
+
 fn main() {
-    println(float.to_int(3.9))   -- 3
-    println(float.to_int(-3.9))  -- -3
+  println(float.to_int(3.9)) -- 3
+  println(float.to_int(-3.9)) -- -3
 }
 ```
 
@@ -373,14 +390,15 @@ Converts a float to its string representation.
 
 ```silt
 import float
-fn main() {
-    -- 1-arg form: shortest round-trippable
-    println(float.to_string(3.14159))     -- 3.14159
-    println(float.to_string(42.0))        -- 42.0
 
-    -- 2-arg form: fixed decimal places
-    println(float.to_string(3.14159, 2))  -- 3.14
-    println(float.to_string(42.0, 0))     -- 42
+fn main() {
+  -- 1-arg form: shortest round-trippable
+  println(float.to_string(3.14159)) -- 3.14159
+  println(float.to_string(42.0)) -- 42.0
+
+  -- 2-arg form: fixed decimal places
+  println(float.to_string(3.14159, 2)) -- 3.14
+  println(float.to_string(42.0, 0)) -- 42
 }
 ```
 

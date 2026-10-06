@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- Match arms are separated by line breaks. A comma behind an arm is not
+-- part of the grammar.
+fn main() {
+  let n = 2
+  let name = match n {
+    1 -> "one",
+    _ -> "many"
+  }
+  println(name)
+}

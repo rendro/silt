@@ -28,7 +28,10 @@ fn main() {
   let f = { -> broken.thing() }
   println(f().show())
   let xs = [broken.thing()]
-  match xs { [h, ..t] -> println(h.show()), _ -> () }
+  match xs {
+    [h, ..t] -> println(h.show())
+    _ -> ()
+  }
 }
 fn g() -> Result(Int, String) {
   let o = broken.opt()?

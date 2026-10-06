@@ -47,11 +47,22 @@
 //!       (Green(xa), Green(xb)) -> xa.compare(xb)
 //!       (Blue(a1, a2), Blue(b1, b2)) -> {
 //!         let c1 = a1.compare(b1)
-//!         match c1 { 0 -> a2.compare(b2), _ -> c1 }
+//!         match c1 {
+//!           0 -> a2.compare(b2)
+//!           _ -> c1
+//!         }
 //!       }
 //!       _ -> {
-//!         let ord_self = match self { Red -> 0, Green(_) -> 1, Blue(_, _) -> 2 }
-//!         let ord_other = match other { Red -> 0, Green(_) -> 1, Blue(_, _) -> 2 }
+//!         let ord_self = match self {
+//!           Red -> 0
+//!           Green(_) -> 1
+//!           Blue(_, _) -> 2
+//!         }
+//!         let ord_other = match other {
+//!           Red -> 0
+//!           Green(_) -> 1
+//!           Blue(_, _) -> 2
+//!         }
 //!         ord_self.compare(ord_other)
 //!       }
 //!     }
@@ -64,8 +75,8 @@
 //! for n-ary variants, recursing into `.display()` on each arg.
 //!
 //! For records, lex-comparing fields in declaration order with
-//! `if cx != 0 { cx } else { ... }`-style chaining (encoded as nested
-//! `match cx { 0 -> ..., _ -> cx }`).
+//! `if cx != 0 { cx } else { ... }`-style chaining (encoded as a nested
+//! `match cx` with the arms `0 -> ...` and `_ -> cx`).
 
 use std::collections::HashMap;
 
@@ -297,7 +308,10 @@ impl Derive {
     ///
     /// ```silt
     /// { let __d_bcK__ = <left>
-    ///   match __d_bcK__ { 0 -> <right>, _ -> __d_bcK__ } }
+    ///   match __d_bcK__ {
+    ///     0 -> <right>
+    ///     _ -> __d_bcK__
+    ///   } }
     /// ```
     ///
     /// This combinator is **associative** — `(a ⊕ b) ⊕ c` and `a ⊕ (b ⊕ c)`

@@ -190,6 +190,70 @@ impl std::fmt::Display for BinOp {
     }
 }
 
+/// Operator precedence: the one table of binding powers, read by the
+/// parser and by the printers that decide where parentheses go.
+///
+/// A binding power is how tightly an operator holds an operand; the
+/// higher one wins. An infix operator has a pair, `(left, right)`: with
+/// the right one above the left, the operator is left-associative.
+/// `docs/language/operators.md` shows the left one of every operator.
+pub mod prec {
+    use super::BinOp;
+    use crate::lexer::Token;
+
+    /// `x |> f`. A pipe stage is parsed at exactly the right power,
+    /// which is how a postfix `?` recognises the end of a stage.
+    pub const PIPE: (u8, u8) = (55, 56);
+    /// `a..b`.
+    pub const RANGE: (u8, u8) = (60, 61);
+    /// The operand of a prefix `-` or `!`.
+    pub const UNARY: u8 = 90;
+    /// `expr as Type`.
+    pub const AS: u8 = 95;
+    /// `f { x -> x }`: below a call, so that a context can take calls
+    /// and leave the braces.
+    pub const TRAILING_CLOSURE: u8 = 115;
+    /// `f(a)`, and the postfix `?`, which binds like a call.
+    pub const CALL: u8 = 120;
+    /// `a.b` and `a.{ b: c }`.
+    pub const FIELD: u8 = 130;
+
+    impl BinOp {
+        /// The binary operator a token spells, if it is one.
+        pub fn from_token(token: &Token) -> Option<BinOp> {
+            Some(match token {
+                Token::OrOr => BinOp::Or,
+                Token::AndAnd => BinOp::And,
+                Token::EqEq => BinOp::Eq,
+                Token::NotEq => BinOp::Neq,
+                Token::Lt => BinOp::Lt,
+                Token::Gt => BinOp::Gt,
+                Token::LtEq => BinOp::Leq,
+                Token::GtEq => BinOp::Geq,
+                Token::Plus => BinOp::Add,
+                Token::Minus => BinOp::Sub,
+                Token::Star => BinOp::Mul,
+                Token::Slash => BinOp::Div,
+                Token::Percent => BinOp::Mod,
+                _ => return None,
+            })
+        }
+
+        /// The `(left, right)` binding powers of the operator.
+        pub fn binding_power(self) -> (u8, u8) {
+            let left = match self {
+                BinOp::Or => 20,
+                BinOp::And => 30,
+                BinOp::Eq | BinOp::Neq => 40,
+                BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
+                BinOp::Add | BinOp::Sub => 70,
+                BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
+            };
+            (left, left + 1)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOp {
     Neg,

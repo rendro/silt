@@ -24,6 +24,9 @@ pub enum Token {
     Loop,
 
     // Literals
+    /// An integer literal's magnitude. `Int(i64::MIN)` is the magnitude
+    /// 2^63, which no Int has: the parser accepts it only directly after a
+    /// minus sign, as the smallest Int.
     Int(i64),
     Float(f64),
     Bool(bool),
@@ -110,7 +113,7 @@ impl fmt::Display for Token {
             Token::Else => write!(f, "else"),
             Token::Where => write!(f, "where"),
             Token::Loop => write!(f, "loop"),
-            Token::Int(n) => write!(f, "{n}"),
+            Token::Int(n) => write!(f, "{}", n.unsigned_abs()),
             Token::Float(n) => write!(f, "{n}"),
             Token::Bool(b) => write!(f, "{b}"),
             Token::StringLit(s, _) => write!(f, "\"{}\"", escape_control_chars(s)),
@@ -698,7 +701,7 @@ impl Lexer {
             }
             Ok((Token::Float(val), start))
         } else {
-            let val: i64 = num.parse().map_err(|_| {
+            let val = int_magnitude(&num, 10).ok_or_else(|| {
                 Diagnostic::error(
                     Code::InvalidNumber,
                     self.since(start),
@@ -728,7 +731,7 @@ impl Lexer {
                 "expected hex digit after 0x",
             ));
         }
-        let val = i64::from_str_radix(&digits, 16).map_err(|_| {
+        let val = int_magnitude(&digits, 16).ok_or_else(|| {
             Diagnostic::error(
                 Code::InvalidNumber,
                 self.since(start),
@@ -757,7 +760,7 @@ impl Lexer {
                 "expected binary digit after 0b",
             ));
         }
-        let val = i64::from_str_radix(&digits, 2).map_err(|_| {
+        let val = int_magnitude(&digits, 2).ok_or_else(|| {
             Diagnostic::error(
                 Code::InvalidNumber,
                 self.since(start),
@@ -772,7 +775,7 @@ impl Lexer {
         name.push(first);
 
         while let Some(ch) = self.peek() {
-            if ch.is_alphanumeric() || ch == '_' {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
                 self.advance_char();
                 name.push(ch);
             } else {
@@ -1037,6 +1040,15 @@ impl Lexer {
                 self.since(start),
                 format!("unexpected character: '{}'", ch.escape_default()),
             )),
+            // A letter or digit outside ASCII, at the start of a name or
+            // inside one (`café` ends at the `f`).
+            _ if ch.is_alphanumeric() => Err(Diagnostic::error(
+                Code::UnexpectedChar,
+                self.since(start),
+                format!(
+                    "unexpected character: '{ch}'; a name is made of ASCII letters, digits and '_'"
+                ),
+            )),
             _ => Err(Diagnostic::error(
                 Code::UnexpectedChar,
                 self.since(start),
@@ -1062,6 +1074,18 @@ impl Lexer {
 /// consumed only by parser diagnostics — the formatter renders from
 /// the AST and pattern-matches token variants, and fuzz invariants use
 /// `Debug`.
+/// The value of an integer literal's digits (underscores removed). The
+/// magnitude 2^63 is `i64::MIN` (see `Token::Int`); anything larger is too
+/// large.
+fn int_magnitude(digits: &str, radix: u32) -> Option<i64> {
+    const MIN_MAGNITUDE: u64 = i64::MIN.unsigned_abs();
+    match u64::from_str_radix(digits, radix) {
+        Ok(MIN_MAGNITUDE) => Some(i64::MIN),
+        Ok(n) => i64::try_from(n).ok(),
+        Err(_) => None,
+    }
+}
+
 fn escape_control_chars(s: &str) -> std::borrow::Cow<'_, str> {
     if !s.chars().any(char::is_control) {
         return std::borrow::Cow::Borrowed(s);
@@ -1415,6 +1439,29 @@ mod tests {
         assert_eq!(lex("0x1A"), vec![Token::Int(26)]);
         assert_eq!(lex("0X10"), vec![Token::Int(16)]);
         assert_eq!(lex("0x00"), vec![Token::Int(0)]);
+    }
+
+    #[test]
+    fn test_smallest_int_magnitude() {
+        // 2^63 in every spelling is the one token the parser accepts only
+        // behind a minus sign; one more is too large.
+        for src in [
+            "9223372036854775808",
+            "9_223_372_036_854_775_808",
+            "0x8000000000000000",
+            "0b1000000000000000000000000000000000000000000000000000000000000000",
+        ] {
+            assert_eq!(lex(src), vec![Token::Int(i64::MIN)], "{src}");
+        }
+        assert_eq!(Token::Int(i64::MIN).to_string(), "9223372036854775808");
+        for src in ["9223372036854775809", "0x8000000000000001"] {
+            assert!(
+                Lexer::new(crate::source::FileId::default(), src)
+                    .tokenize()
+                    .is_err(),
+                "{src}"
+            );
+        }
     }
 
     #[test]

@@ -45,52 +45,52 @@ import bytes
 
 fn main() {
   -- Construction
-  let hello = bytes.from_string("hello")           -- 5 bytes
-  let raw = match bytes.from_hex("deadbeef") {     -- 4 bytes
+  let hello = bytes.from_string("hello") -- 5 bytes
+  let raw = match bytes.from_hex("deadbeef") { -- 4 bytes
     Ok(b) -> b
     Err(_) -> bytes.empty()
   }
 
   -- Length and access
-  println(bytes.length(hello))                     -- 5
+  println(bytes.length(hello)) -- 5
   match bytes.get(hello, 0) {
-    Ok(n) -> println(n)                            -- 104
+    Ok(n) -> println(n) -- 104
     Err(e) -> println(e.message())
   }
 
   -- Encoding
-  println(bytes.to_hex(hello))                     -- 68656c6c6f
-  println(bytes.to_base64(hello))                  -- aGVsbG8=
+  println(bytes.to_hex(hello)) -- 68656c6c6f
+  println(bytes.to_base64(hello)) -- aGVsbG8=
 
   -- Concatenation
   let space = bytes.from_string(" ")
   let world = bytes.from_string("world")
   let greeting = bytes.concat_all([hello, space, world])
   match bytes.to_string(greeting) {
-    Ok(s) -> println(s)                            -- hello world
+    Ok(s) -> println(s) -- hello world
     Err(e) -> println(e.message())
   }
 
   -- Slicing (half-open)
   match bytes.slice(greeting, 6, 11) {
-    Ok(s) -> println(bytes.to_hex(s))              -- 776f726c64
+    Ok(s) -> println(bytes.to_hex(s)) -- 776f726c64
     Err(e) -> println(e.message())
   }
 
   -- Equality is structural
   let a = bytes.from_string("foo")
   let b = bytes.from_string("foo")
-  println(a == b)                                  -- true
+  println(a == b) -- true
 
   -- Search / prefix / suffix / split
   let msg = bytes.from_string("foo::bar::baz")
   let sep = bytes.from_string("::")
   match bytes.index_of(msg, sep) {
-    Some(i) -> println(i)                          -- 3
+    Some(i) -> println(i) -- 3
     None -> println(-1)
   }
-  println(bytes.starts_with(msg, bytes.from_string("foo")))  -- true
-  println(bytes.ends_with(msg, bytes.from_string("baz")))    -- true
+  println(bytes.starts_with(msg, bytes.from_string("foo"))) -- true
+  println(bytes.ends_with(msg, bytes.from_string("baz"))) -- true
   -- bytes.split yields [foo, bar, baz] as three Bytes values.
   let parts = bytes.split(msg, sep)
 }

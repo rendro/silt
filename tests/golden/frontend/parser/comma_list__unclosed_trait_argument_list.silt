@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A trait argument list with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn same(x: a) -> a where a: Convert(Int String) { x }
+
+fn main() {}

@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]
+-- stderr-contains: error[parse]
 -- stderr-contains: tuple indexing
 fn main() {
   let pair = (1, "a")

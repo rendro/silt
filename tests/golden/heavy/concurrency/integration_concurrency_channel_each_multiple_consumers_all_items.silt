@@ -36,10 +36,22 @@ fn program() {
 
   -- Each original value is processed exactly once.
   -- Strip the worker prefix and sum the base values.
-  let base_a = match a > 200 { true -> a - 200  _ -> a - 100 }
-  let base_b = match b > 200 { true -> b - 200  _ -> b - 100 }
-  let base_c = match c > 200 { true -> c - 200  _ -> c - 100 }
-  let base_d = match d > 200 { true -> d - 200  _ -> d - 100 }
+  let base_a = match a > 200 {
+    true -> a - 200
+    _ -> a - 100
+  }
+  let base_b = match b > 200 {
+    true -> b - 200
+    _ -> b - 100
+  }
+  let base_c = match c > 200 {
+    true -> c - 200
+    _ -> c - 100
+  }
+  let base_d = match d > 200 {
+    true -> d - 200
+    _ -> d - 100
+  }
   base_a + base_b + base_c + base_d
 }
 

@@ -2,7 +2,7 @@
 -- cmd: fmt --check
 
 type Pair(A, B) {
-  Pair(A, B)
+  Pair(A, B),
 }
 
 trait First {

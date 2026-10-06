@@ -29,9 +29,10 @@ Panics if `condition` is `false`. The optional message is included in the error.
 
 ```silt
 import test
+
 fn main() {
-    test.assert(1 + 1 == 2)
-    test.assert(1 + 1 == 2, "math should work")
+  test.assert(1 + 1 == 2)
+  test.assert(1 + 1 == 2, "math should work")
 }
 ```
 
@@ -46,11 +47,12 @@ test.assert_eq(left: a, right: a, message: String) -> () where a: Equal + Displa
 Panics if `left != right`, displaying both values.
 
 ```silt
-import test
 import list
+import test
+
 fn main() {
-    test.assert_eq(list.length([1, 2, 3]), 3)
-    test.assert_eq(1 + 1, 2, "addition")
+  test.assert_eq(list.length([1, 2, 3]), 3)
+  test.assert_eq(1 + 1, 2, "addition")
 }
 ```
 
@@ -66,7 +68,8 @@ Panics if `left == right`, displaying both values.
 
 ```silt
 import test
+
 fn main() {
-    test.assert_ne("hello", "world")
+  test.assert_ne("hello", "world")
 }
 ```

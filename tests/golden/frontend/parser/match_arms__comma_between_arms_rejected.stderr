@@ -1,0 +1,5 @@
+error[parse]: match arms are separated by line breaks, not by commas: remove the ','
+ --> match_arms__comma_between_arms_rejected.silt:8:15
+   |
+ 8 |     1 -> "one",
+   |               ^ match arms are separated by line breaks, not by commas: remove the ','

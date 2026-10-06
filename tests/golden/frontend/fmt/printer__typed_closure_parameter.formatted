@@ -1,0 +1,22 @@
+-- cmd: fmt
+-- A closure keeps the types of its parameters when it moves behind the
+-- call's parentheses (FRONTEND-3 c), and stays between them where it
+-- would join another call.
+import list
+
+fn make() {
+  { f -> f(1) }
+}
+
+fn main() {
+  let ys = list.map([1, 2]) { x: Int -> x + 1 }
+  let zs = list.fold([1, 2], 0) { acc: Int, x: Int -> acc + x }
+  let direct = make()({ n: Int -> n + 1 })
+  let unit = list.map([1, 2]) { _ -> () }
+  let none = run { -> 1 }
+  println("{ys} {zs} {direct} {unit} {none}")
+}
+
+fn run(f) {
+  f()
+}

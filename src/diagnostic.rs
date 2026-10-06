@@ -33,6 +33,8 @@ pub enum Phase {
     Compile,
     Package,
     Runtime,
+    /// `silt fmt`, when it refuses its own result.
+    Format,
 }
 
 impl Phase {
@@ -47,6 +49,7 @@ impl Phase {
             Phase::Compile => "compile",
             Phase::Package => "package",
             Phase::Runtime => "runtime",
+            Phase::Format => "fmt",
         }
     }
 }
@@ -55,7 +58,8 @@ macro_rules! codes {
     ($( $(#[$doc:meta])* $name:ident = $id:literal, $phase:ident; )*) => {
         /// What a diagnostic is about. Each code has a stable id
         /// (`E0301`), whose hundreds name its phase: 0 lex, 1 parse,
-        /// 2 resolve, 3 type, 4 compile, 5 entry point, 6 package, 7 runtime.
+        /// 2 resolve, 3 type, 4 compile, 5 entry point, 6 package, 7 runtime,
+        /// 8 format.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         pub enum Code {
             $( $(#[$doc])* $name, )*
@@ -237,6 +241,11 @@ codes! {
     /// An instruction met a value of a kind it cannot work on: the
     /// typechecker let through a program it should have rejected.
     TypeConfusion = "E0704", Runtime;
+    // ── format ──
+    /// `silt fmt` could not follow the tokens of a file that parses, or
+    /// its result failed its own check: a defect of the formatter. The
+    /// text is left as it is.
+    FormatRefused = "E0801", Format;
 }
 
 // ── The diagnostic ──────────────────────────────────────────────────
@@ -944,6 +953,7 @@ mod tests {
                 Phase::Compile => &["4", "5"],
                 Phase::Package => &["6"],
                 Phase::Runtime => &["7"],
+                Phase::Format => &["8"],
             };
             assert!(
                 expected.contains(&hundreds),

@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue enum variant list, found B
+ --> comma_list__unclosed_enum_variant_list.silt:5:12
+   |
+ 5 | type S { A B }
+   |            ^ expected '}' or ',' to continue enum variant list, found B
+ ::: comma_list__unclosed_enum_variant_list.silt:5:8
+   |
+ 5 | type S { A B }
+   |        - the enum variant list starts here

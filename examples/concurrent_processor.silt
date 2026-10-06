@@ -10,31 +10,25 @@ import task
 -- back through channels for aggregation.
 
 fn count_lines(content) {
-  content
-  |> string.split("\n")
-  |> list.filter { l -> !string.is_empty(l) }
-  |> list.length
+  content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) } |> list.length
 }
 
 fn count_words(content) {
   content
-  |> string.split("\n")
-  |> list.filter { l -> !string.is_empty(l) }
-  |> list.map { line -> regex.split("\\s+", line)
-  |> list.filter { w -> !string.is_empty(w) }
-  |> list.length }
-  |> list.fold(0) { acc, n -> acc + n }
+    |> string.split("\n")
+    |> list.filter { l -> !string.is_empty(l) }
+    |> list.map { line ->
+      regex.split("\\s+", line) |> list.filter { w -> !string.is_empty(w) } |> list.length
+    }
+    |> list.fold(0) { acc, n -> acc + n }
 }
 
 fn extract_field(content, field_name) {
-  let lines = content
-  |> string.split("\n")
-  let found = lines
-  |> list.find { l -> string.starts_with(l, field_name) }
+  let lines = content |> string.split("\n")
+  let found = lines |> list.find { l -> string.starts_with(l, field_name) }
   match found {
     Some(line) -> {
-      let parts = line
-      |> string.split(": ")
+      let parts = line |> string.split(": ")
       match list.get(parts, 1) {
         Some(val) -> string.trim(val)
         None -> "N/A"
@@ -61,7 +55,12 @@ fn worker(id, jobs, results) {
 }
 
 fn main() {
-  let file_paths = ["examples/data/report_q1.txt", "examples/data/report_q2.txt", "examples/data/report_q3.txt", "examples/data/report_q4.txt"]
+  let file_paths = [
+    "examples/data/report_q1.txt",
+    "examples/data/report_q2.txt",
+    "examples/data/report_q3.txt",
+    "examples/data/report_q4.txt",
+  ]
   let num_workers = 3
   let num_files = list.length(file_paths)
   -- Channels for distributing work and collecting results
@@ -74,8 +73,7 @@ fn main() {
   let w2 = task.spawn { -> worker(2, jobs, results_1) }
   let w3 = task.spawn { -> worker(3, jobs, results_2) }
   -- Send all file paths to the jobs channel
-  file_paths
-  |> list.each { path -> channel.send(jobs, path) }
+  file_paths |> list.each { path -> channel.send(jobs, path) }
   -- Close jobs channel to signal workers: no more work
   channel.close(jobs)
   -- Collect all results using channel.select with wildcard arm
@@ -88,6 +86,7 @@ fn main() {
     match collected >= num_files {
       true -> (successes, failures)
       _ -> {
+        -- Use channel.select to wait on both result channels
         match channel.select([channel.Recv(results_1), channel.Recv(results_2)]) {
           (_, channel.Message(result)) -> {
             let (worker_id, outcome) = result
@@ -117,7 +116,6 @@ fn main() {
       }
     }
   }
-  -- Use channel.select to wait on both result channels
   -- Wait for all workers to finish
   task.join(w1)
   task.join(w2)

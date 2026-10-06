@@ -1,0 +1,12 @@
+-- The smallest Int is a literal: the minus sign and the digits 2^63 are
+-- read together, in every spelling of the digits.
+fn main() {
+  let min = -9223372036854775808
+  println(min)
+  println(-9_223_372_036_854_775_808 == min)
+  println(-0x8000000000000000 == min)
+  println(-0x8000_0000_0000_0000 == min)
+  println(-0b1000000000000000000000000000000000000000000000000000000000000000 == min)
+  println(min + 9223372036854775807)
+  println(-1 - -9223372036854775808)
+}

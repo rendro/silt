@@ -1,27 +1,6 @@
-//! Regression lock: every bundled `examples/**/*.silt` file must be in
-//! canonical `silt fmt` form.
-//!
-//! Round-52 audit GAP: `silt fmt --check examples/*.silt` rejected two
-//! bundled examples (`concurrent.silt` and `cross_module_errors.silt`)
-//! because the formatter rewrites `when let Pat(x) = expr else { return }`
-//! one-liners onto multi-line blocks and splits `a(x) |> b(y)?` chains
-//! across lines. Neither file had a test locking the invariant "every
-//! example is already canonical", so a first-time user running
-//! `silt fmt` against the shipped examples would see a surprise diff.
-//!
-//! The convergent silt design preference is "one way to do things":
-//! every shipped example should already look exactly the way the
-//! formatter would print it. This walker enforces that by iterating
-//! every `.silt` file under `examples/` and asserting that formatting
-//! the file's current contents in-process returns exactly the same
-//! bytes. It uses `silt::format` (the library entry point — see
-//! `src/formatter.rs`) rather than shelling to the CLI, so the test is
-//! fast and fails clearly naming the offending file.
-//!
-//! Fixing a failure is straightforward: run
-//! `silt fmt examples/<offender>.silt` (or
-//! `silt fmt --check examples/*.silt` to discover all drifting files)
-//! to bring the file back into canonical form.
+//! Every `examples/**/*.silt` file is as `silt fmt` writes it: a user
+//! who runs `silt fmt` on a shipped example sees no change. To fix a
+//! failure, run `silt fmt examples/<file>.silt`.
 
 use std::path::{Path, PathBuf};
 
@@ -77,20 +56,10 @@ fn every_example_is_canonical_formatted() {
             }
         };
 
-        // Reset the interner between files so one example's interned
-        // strings can't leak into another's formatter state.
-        silt::intern::reset();
-
-        let formatted = match silt::formatter::format(&source) {
+        let formatted = match silt::format::format(silt::source::FileId::default(), &source) {
             Ok(f) => f,
             Err(e) => {
-                failures.push(format!(
-                    "{}: formatter returned an error — the example must \
-                     be parseable for the canonical-formatting invariant \
-                     to apply. Error: {}",
-                    file.display(),
-                    e
-                ));
+                failures.push(format!("{}: not formatted: {}", file.display(), e.message));
                 continue;
             }
         };

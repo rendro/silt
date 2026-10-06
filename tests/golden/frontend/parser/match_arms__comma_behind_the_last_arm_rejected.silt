@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A comma behind the last arm is no more part of the grammar than one
+-- between two arms: the message says what to do.
+fn main() {
+  let n = 2
+  let name = match n {
+    1 -> "one"
+    _ -> "many",
+  }
+  println(name)
+}

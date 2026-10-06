@@ -1532,7 +1532,12 @@ fn main() {
         let (result, _, _) = run(r#"
 import channel
 import task
-fn spin(n, acc) { match n { 0 -> acc _ -> spin(n - 1, acc + 1) } }
+fn spin(n, acc) {
+  match n {
+    0 -> acc
+    _ -> spin(n - 1, acc + 1)
+  }
+}
 fn main() {
   let ch = channel.new(0)
   let _sends = task.spawn({ -> channel.send(ch, spin(300000, 0)) })

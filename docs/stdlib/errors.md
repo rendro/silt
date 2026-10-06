@@ -23,7 +23,8 @@ through it, with or without the enum as a second qualifier:
 import io
 
 let a = io.IoNotFound("config.toml")
-let b = io.IoError.IoNotFound("config.toml")  -- same value
+
+let b = io.IoError.IoNotFound("config.toml") -- same value
 ```
 
 A selective import binds a variant by its bare name:
@@ -194,7 +195,10 @@ import io
 import json
 import result
 
-type Config { host: String, port: Int }
+type Config {
+  host: String,
+  port: Int,
+}
 
 type AppError {
   IoProblem(io.IoError),

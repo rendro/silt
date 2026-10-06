@@ -17,5 +17,8 @@ fn main() {
     _ -> println(0)
   }
   let a = A { fs: [{ n -> n * 2 }] }
-  match a.fs { [g, ..rest] -> println(g(21)), _ -> println(0) }
+  match a.fs {
+    [g, ..rest] -> println(g(21))
+    _ -> println(0)
+  }
 }

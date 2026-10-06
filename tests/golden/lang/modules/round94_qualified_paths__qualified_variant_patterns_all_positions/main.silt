@@ -4,8 +4,8 @@ import single
 fn main() {
   let c = shapes.Circle(2.0)
   let m = match c {
-    shapes.Circle(r) -> 1,
-    shapes.Rect(w, h) -> 2,
+    shapes.Circle(r) -> 1
+    shapes.Rect(w, h) -> 2
   }
   print(m)
   when let shapes.Circle(r) = c else { return () }
@@ -13,12 +13,12 @@ fn main() {
   let single.Only(n) = single.Only(7)
   print(n)
   let o = match shapes.Rect(3.0, 4.0) {
-    shapes.Circle(x) | shapes.Rect(x, _) -> x,
+    shapes.Circle(x) | shapes.Rect(x, _) -> x
   }
   print(o)
   let t = match (c, 5) {
-    (shapes.Circle(x), n) -> n,
-    (shapes.Rect(_, _), n) -> 0 - n,
+    (shapes.Circle(x), n) -> n
+    (shapes.Rect(_, _), n) -> 0 - n
   }
   print(t)
 }

@@ -49,8 +49,8 @@ renders any variant as a string when you don't want to branch on it.
 
 ```silt
 import bytes
-import tcp
 import task
+import tcp
 import time
 
 fn main() {
@@ -60,7 +60,7 @@ fn main() {
       loop {
         match tcp.accept(listener) {
           Ok(conn) -> {
-            let _ = task.spawn({ ->
+            let _ = task.spawn { ->
               match tcp.read(conn, 4096) {
                 Ok(buf) -> {
                   let _ = tcp.write(conn, buf)
@@ -68,7 +68,7 @@ fn main() {
                 }
                 Err(_) -> tcp.close(conn)
               }
-            })
+            }
           }
           Err(e) -> println("accept error: {e.message()}")
         }

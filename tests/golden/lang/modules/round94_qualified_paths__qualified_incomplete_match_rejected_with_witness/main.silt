@@ -6,7 +6,7 @@ import shapes
 
 fn main() {
   let m = match shapes.Circle(1.0) {
-    shapes.Circle(r) -> 1,
+    shapes.Circle(r) -> 1
   }
   print(m)
 }

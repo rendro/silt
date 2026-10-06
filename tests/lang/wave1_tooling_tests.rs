@@ -547,7 +547,7 @@ fn lsp_survives_rejected_characters_at_the_ends_of_the_document() {
 
 /// The rejected character behind text that shifts byte offsets, UTF-16
 /// columns and code point columns apart: characters outside the basic
-/// multilingual plane, an accented identifier, CRLF line ends, and a
+/// multilingual plane, an accented letter, CRLF line ends, and a
 /// byte order mark.
 #[test]
 fn lsp_survives_rejected_characters_behind_other_non_ascii_text() {
@@ -558,7 +558,7 @@ fn lsp_survives_rejected_characters_behind_other_non_ascii_text() {
     );
     assert_survives_rejected_character(
         "behind_crlf",
-        "fn main() {\r\n  let café = §\r\n}\r\n",
+        "fn main() {\r\n  let s = \"café\" §\r\n}\r\n",
         '§',
     );
     assert_survives_rejected_character(
@@ -568,13 +568,13 @@ fn lsp_survives_rejected_characters_behind_other_non_ascii_text() {
     );
 }
 
-/// Guard: a valid document with non-ASCII text in an identifier, in a
-/// string and in a comment is analysed as before.
+/// Guard: a valid document with non-ASCII text in a string and in a
+/// comment is analysed as before.
 #[test]
 fn lsp_guard_valid_non_ascii_text_has_no_diagnostics() {
     let mut lsp = Lsp::start("valid_non_ascii");
     let uri = "file:///wave1_tooling/valid_non_ascii.silt";
-    let text = "-- “quoted” 😀\nfn main() {\n  let café = \"“q” 😀\"\n  café\n}\n";
+    let text = "-- “quoted” 😀\nfn main() {\n  let cafe = \"“café” 😀\"\n  cafe\n}\n";
     let diagnostics = lsp.open(uri, text);
     assert!(
         diagnostics.is_empty(),

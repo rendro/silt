@@ -28,10 +28,8 @@ fn main() {
   task.join(consumer)
   -- Fan-out: spawn multiple workers
   let results = channel.new(10)
-  let workers = [1, 2, 3]
-  |> list.map { id -> task.spawn { -> channel.send(results, id * 10) } }
-  workers
-  |> list.each { w -> task.join(w) }
+  let workers = [1, 2, 3] |> list.map { id -> task.spawn { -> channel.send(results, id * 10) } }
+  workers |> list.each { w -> task.join(w) }
   channel.close(results)
   when let channel.Message(r1) = channel.receive(results) else {
     return

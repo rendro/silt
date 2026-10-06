@@ -5,9 +5,9 @@
 -- Distinct per-arm errors each still report.
 fn main() {
   let r = match 42 {
-    Ok(v) -> v,
-    "s" -> 1,
-    _ -> 0,
+    Ok(v) -> v
+    "s" -> 1
+    _ -> 0
   }
   println(r)
 }

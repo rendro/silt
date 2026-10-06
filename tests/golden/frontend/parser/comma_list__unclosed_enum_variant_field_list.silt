@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A enum variant field list with a missing comma or closer: the message names the list
+-- and labels where it starts.
+type S { Foo(Int Int) }
+
+fn main() {}

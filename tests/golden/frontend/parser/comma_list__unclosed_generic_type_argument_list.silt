@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A generic type argument list with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn size(m: Map(String Int)) -> Int { 0 }
+
+fn main() {}

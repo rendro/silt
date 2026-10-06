@@ -6,6 +6,7 @@ mod cli;
 mod cli_add_tests;
 mod cli_extra_positional_rejection_tests;
 mod cli_fmt_idempotent_mtime_tests;
+mod cli_fmt_write_tests;
 mod cli_global_flags_parity_tests;
 mod cli_help_and_unknown_subcommand_tests;
 mod cli_init_tests;

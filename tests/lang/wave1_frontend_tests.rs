@@ -1,14 +1,11 @@
 //! Behaviour locks for the front end: formatter self-check, expression
 //! height limit, and "expression followed by a block" headers.
 //!
-//! 1. `silt fmt` checks its own result before it writes. If the result
-//!    would not parse, would be a different program, or would not carry
-//!    the same comments, the file stays byte-for-byte as it was, the
-//!    refusal is printed with the file name, and the exit status is 1.
-//!    `silt fmt --check` reports the same refusal with status 2, apart
-//!    from "would reformat" (status 1). Programs that the formatter
-//!    handles correctly format as before, including every spelling that
-//!    the formatter changes on purpose.
+//! 1. `silt fmt` checks its own result before it writes, and refuses
+//!    one that would not parse, would be a different program, or would
+//!    not carry the same comments. The programs here are ones it once
+//!    refused or got wrong: they format, the result is a fixed point and
+//!    runs as before. One refused file does not stop the others.
 //!
 //! 2. An expression tree has a maximum height. A chain of operators,
 //!    pipes, calls or field accesses that exceeds it is a parse error
@@ -156,69 +153,21 @@ fn assert_ended_cleanly(label: &str, what: &str, out: &Outcome) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 1. The formatter refuses a result that fails its self-check
+// 1. Programs that the formatter once refused, or got wrong
 // ════════════════════════════════════════════════════════════════════
 
-/// `silt fmt` on `src` must refuse: status 1, the file byte-for-byte as
-/// it was, and on stderr the refusal with the file name and `reason`.
-/// `silt fmt --check` must report the same refusal with status 2 and
-/// must not call the file "not formatted".
-fn assert_fmt_refuses(label: &str, src: &str, reason: &str) {
-    let ws = Workspace::new(label);
-    ws.write(MAIN, src);
-
-    let fmt = ws.silt(&["fmt", MAIN]);
-    assert_ended_cleanly(label, "silt fmt", &fmt);
-    assert_eq!(
-        ws.read_bytes(MAIN),
-        src.as_bytes(),
-        "{label}: `silt fmt` must leave the file untouched\n{fmt:?}"
-    );
-    assert_eq!(fmt.code, Some(1), "{label}: `silt fmt` must fail\n{fmt:?}");
-    assert!(
-        fmt.stderr.contains("formatting refused"),
-        "{label}: `silt fmt` must say that it refused\n{fmt:?}"
-    );
-    assert!(
-        fmt.stderr.contains(MAIN),
-        "{label}: the refusal must name the file\n{fmt:?}"
-    );
-    assert!(
-        fmt.stderr.contains(reason),
-        "{label}: the refusal must say `{reason}`\n{fmt:?}"
-    );
-    assert!(
-        fmt.stderr.contains("left unchanged"),
-        "{label}: the refusal must say that the file was left unchanged\n{fmt:?}"
-    );
-
-    let check = ws.silt(&["fmt", "--check", MAIN]);
-    assert_ended_cleanly(label, "silt fmt --check", &check);
-    assert_eq!(
-        check.code,
-        Some(2),
-        "{label}: `silt fmt --check` must report a failure (2), not drift (1)\n{check:?}"
-    );
-    assert!(
-        check.stderr.contains("formatting refused") && check.stderr.contains(reason),
-        "{label}: `silt fmt --check` must report the refusal\n{check:?}"
-    );
-    assert!(
-        !check.stderr.contains("not formatted"),
-        "{label}: a refusal is not \"would reformat\"\n{check:?}"
-    );
-    assert_eq!(
-        ws.read_bytes(MAIN),
-        src.as_bytes(),
-        "{label}: `silt fmt --check` must leave the file untouched"
-    );
+/// `silt fmt` formats `src`, which it refused when it could not: the
+/// result is a fixed point, holds every text in `kept` and runs with
+/// the same output.
+fn assert_fmt_formats(label: &str, src: &str, kept: &[&str]) {
+    assert_fmt_keeps_program(label, src, kept);
 }
 
 /// A trailing comment on a line that ends in `} }`: the printer puts the
 /// comment between the two braces, which comments out the second one.
 #[test]
-fn fmt_refuses_when_a_comment_would_swallow_a_closing_brace() {
-    assert_fmt_refuses(
+fn fmt_formats_when_a_comment_would_swallow_a_closing_brace() {
+    assert_fmt_formats(
         "swallow_brace",
         r#"import list
 fn main() {
@@ -229,15 +178,15 @@ fn main() {
   println("{found}")
 }
 "#,
-        "the result would not parse",
+        &[],
     );
 }
 
 /// A trailing comment that the printer puts in front of the comma that
 /// separates two call arguments.
 #[test]
-fn fmt_refuses_when_a_comment_would_swallow_a_comma() {
-    assert_fmt_refuses(
+fn fmt_formats_when_a_comment_would_swallow_a_comma() {
+    assert_fmt_formats(
         "swallow_comma",
         r#"import option
 import map
@@ -248,15 +197,15 @@ fn main() {
   println("{v}")
 }
 "#,
-        "the result would not parse",
+        &[],
     );
 }
 
 /// A lambda argument in a match scrutinee is printed as a trailing
 /// closure, which a scrutinee cannot hold.
 #[test]
-fn fmt_refuses_a_lambda_argument_in_a_match_scrutinee() {
-    assert_fmt_refuses(
+fn fmt_formats_a_lambda_argument_in_a_match_scrutinee() {
+    assert_fmt_formats(
         "lambda_in_scrutinee",
         r#"fn run(f) { f() }
 fn main() {
@@ -267,15 +216,15 @@ fn main() {
   println(r)
 }
 "#,
-        "the result would not parse",
+        &[],
     );
 }
 
 /// `(a == b) |> show` is printed without the parentheses, which is
 /// `a == (b |> show)`.
 #[test]
-fn fmt_refuses_when_dropped_parentheses_would_regroup_a_pipe() {
-    assert_fmt_refuses(
+fn fmt_formats_when_dropped_parentheses_would_regroup_a_pipe() {
+    assert_fmt_formats(
         "pipe_regroup",
         r#"fn show(x) { "{x}" }
 fn main() {
@@ -285,15 +234,15 @@ fn main() {
   println(s)
 }
 "#,
-        "the result would change the program: function `main`",
+        &[],
     );
 }
 
 /// The float range pattern `1.0..10.0` is printed as the integer range
 /// `1..10`.
 #[test]
-fn fmt_refuses_when_a_float_range_pattern_would_become_an_int_range() {
-    assert_fmt_refuses(
+fn fmt_formats_when_a_float_range_pattern_would_become_an_int_range() {
+    assert_fmt_formats(
         "float_range",
         r#"fn main() {
   let z = match 1.5 {
@@ -303,19 +252,19 @@ fn fmt_refuses_when_a_float_range_pattern_would_become_an_int_range() {
   println(z)
 }
 "#,
-        "the result would change the program: function `main`",
+        &[],
     );
 }
 
 /// Line comments in places where the printer does not look for one.
 #[test]
-fn fmt_refuses_when_a_line_comment_would_be_lost() {
-    assert_fmt_refuses(
+fn fmt_formats_when_a_line_comment_would_be_lost() {
+    assert_fmt_formats(
         "after_eq",
         "fn main() {\n  let x = -- why one\n    1\n  println(\"{x}\")\n}\n",
-        "the result would lose the comment `-- why one`",
+        &["-- why one"],
     );
-    assert_fmt_refuses(
+    assert_fmt_formats(
         "after_arrow",
         r#"fn main() {
   let s = match 1 {
@@ -326,14 +275,14 @@ fn fmt_refuses_when_a_line_comment_would_be_lost() {
   println(s)
 }
 "#,
-        "the result would lose the comment `-- the one case`",
+        &["-- the one case"],
     );
-    assert_fmt_refuses(
+    assert_fmt_formats(
         "fn_header",
         "fn main() -- entry point\n{\n  println(\"hi\")\n}\n",
-        "the result would lose the comment `-- entry point`",
+        &["-- entry point"],
     );
-    assert_fmt_refuses(
+    assert_fmt_formats(
         "type_open",
         r#"type P { -- a point
   x: Int,
@@ -344,9 +293,9 @@ fn main() {
   println("{p.x} {p.y}")
 }
 "#,
-        "the result would lose the comment `-- a point`",
+        &["-- a point"],
     );
-    assert_fmt_refuses(
+    assert_fmt_formats(
         "closure_close",
         r#"import list
 fn main() {
@@ -355,32 +304,15 @@ fn main() {
   } -- done
 }
 "#,
-        "the result would lose the comment `-- done`",
-    );
-}
-
-/// The refusal points at the comment in the input.
-#[test]
-fn fmt_refusal_gives_the_position_of_the_lost_comment() {
-    let ws = Workspace::new("position");
-    ws.write(
-        MAIN,
-        "fn main() {\n  let x = -- why one\n    1\n  println(\"{x}\")\n}\n",
-    );
-    let fmt = ws.silt(&["fmt", MAIN]);
-    assert_ended_cleanly("position", "silt fmt", &fmt);
-    assert_eq!(fmt.code, Some(1), "{fmt:?}");
-    assert!(
-        fmt.stderr.contains("main.silt:2:11"),
-        "the refusal must point at line 2, column 11\n{fmt:?}"
+        &["-- done"],
     );
 }
 
 /// One redundant pair of parentheses anywhere in the file used to switch
 /// off the pass that keeps block comments inside expressions.
 #[test]
-fn fmt_refuses_when_a_block_comment_would_be_lost() {
-    assert_fmt_refuses(
+fn fmt_formats_when_a_block_comment_would_be_lost() {
+    assert_fmt_formats(
         "parens_block_comment",
         r#"fn add(a, b) { a + b }
 fn main() {
@@ -389,20 +321,24 @@ fn main() {
   println("{x} {y}")
 }
 "#,
-        "the result would lose the comment `{- second -}`",
+        &["{- second -}"],
     );
 }
 
 /// One refused file does not stop the others from being formatted, and
-/// the run as a whole fails.
+/// the run as a whole fails. (`--test-tamper` makes the printer's result
+/// wrong for the file that holds `0x10`, as a defect of the printer
+/// would; how the refusal reads is the golden case
+/// `cli/fmt/cli_fmt__refusal_is_a_diagnostic`.)
 #[test]
+#[cfg(debug_assertions)] // the flag exists in a debug build only
 fn fmt_formats_the_other_files_when_one_is_refused() {
     let ws = Workspace::new("two_files");
-    let refused = "fn main() {\n  let x = -- why one\n    1\n  println(\"{x}\")\n}\n";
+    let refused = "fn main() {\n  println( 0x10 )\n}\n";
     ws.write("refused.silt", refused);
     ws.write("fine.silt", "fn   main()  {\nprintln( \"hi\" )\n}\n");
 
-    let fmt = ws.silt(&["fmt", "refused.silt", "fine.silt"]);
+    let fmt = ws.silt(&["fmt", "--test-tamper=0x10=>16", "refused.silt", "fine.silt"]);
     assert_ended_cleanly("two_files", "silt fmt", &fmt);
     assert_eq!(fmt.code, Some(1), "{fmt:?}");
     assert_eq!(ws.read_bytes("refused.silt"), refused.as_bytes(), "{fmt:?}");
@@ -412,14 +348,17 @@ fn fmt_formats_the_other_files_when_one_is_refused() {
         "{fmt:?}"
     );
     assert!(
-        fmt.stderr.contains("refused.silt") && !fmt.stderr.contains("fine.silt"),
+        fmt.stderr.contains("formatting refused")
+            && fmt.stderr.contains("refused.silt")
+            && !fmt.stderr.contains("fine.silt"),
         "only the refused file is reported\n{fmt:?}"
     );
 }
 
 /// Guard: the three answers of `--check` stay apart. 0 for a formatted
 /// file, 1 with "not formatted" for one that would be reformatted.
-/// (Status 2 for a refusal is asserted by `assert_fmt_refuses`.)
+/// (Status 2 for a refusal is the golden case
+/// `cli/fmt/cli_fmt__check_refusal_exits_two`.)
 #[test]
 fn fmt_check_still_tells_formatted_from_unformatted() {
     let ws = Workspace::new("check_states");
@@ -572,76 +511,6 @@ fn fmt_still_drops_redundant_parentheses() {
     );
 }
 
-/// Guard. Number literals are respelled in decimal, a line break in a
-/// string becomes `\n`, a triple-quoted string is kept as written.
-#[test]
-fn fmt_still_respells_literals() {
-    assert_fmt_keeps_program(
-        "literals",
-        "fn main() {\n  let a = 0xFF\n  let b = 0b1010\n  let c = 1_000_000\n  let d = 1e3\n  \
-         let e = 2.50\n  let s = \"line one\nline two\"\n  let t = \"\"\"\n    raw { not \
-         interpolated }\n      indented\n    \"\"\"\n  println(\"{a} {b} {c} {d} {e}\")\n  \
-         println(s)\n  println(t)\n}\n",
-        &[
-            "let a = 255",
-            "let b = 10",
-            "let c = 1000000",
-            "let d = 1000.0",
-            "let e = 2.5",
-            "let s = \"line one\\nline two\"",
-            "    raw { not interpolated }\n      indented\n    \"\"\"",
-        ],
-    );
-}
-
-/// Guard. Trailing commas are kept where the input has them.
-#[test]
-fn fmt_still_keeps_trailing_commas() {
-    assert_fmt_keeps_program(
-        "trailing_commas",
-        r#"type P {
-  x: Int,
-  y: Int,
-}
-fn add(a, b,) { a + b }
-fn main() {
-  let xs = [1, 2, 3,]
-  let t = (1, 2,)
-  let p = P { x: 1, y: 2, }
-  let m = #{ "a": 1, "b": 2, }
-  let n = add(1, 2,)
-  let r = match n {
-    3 -> "three",
-    _ -> "other",
-  }
-  println("{xs} {t} {p.x} {m} {n} {r}")
-}
-"#,
-        &[
-            "fn add(a, b,) {",
-            "let xs = [1, 2, 3,]",
-            "let n = add(1, 2,)",
-            "3 -> \"three\",",
-        ],
-    );
-}
-
-/// Guard. `where` bounds on one type variable are gathered.
-#[test]
-fn fmt_still_groups_where_bounds_by_type_variable() {
-    assert_fmt_keeps_program(
-        "where_grouping",
-        r#"fn show_both(x: a, y: b) -> String where a: Display, b: Display, a: Compare {
-  "{x} {y}"
-}
-fn main() {
-  println(show_both(1, "two"))
-}
-"#,
-        &["where a: Display + Compare, b: Display {"],
-    );
-}
-
 /// Guard. Imports are sorted; the comments above and behind an import
 /// go with it, and no comment is lost.
 #[test]
@@ -780,8 +649,8 @@ fn main() {
 }
 "#,
         &[
-            "  |> string.split(\" \")\n  |> list.map { w -> string.to_upper(w) }",
-            "let nested = list.map([1]) { x -> match x {",
+            "let words = \"a b c\" |> string.split(\" \") |> list.map { w -> string.to_upper(w) }",
+            "let nested = list.map([1]) { x ->\n",
         ],
     );
 }
@@ -933,8 +802,8 @@ fn chains_of_200_links_still_work() {
 /// Guard. The formatter handles a long chain, too.
 #[test]
 fn a_chain_of_200_links_still_formats() {
-    assert_fmt_keeps_program("format_chain", &plus_chain(ORDINARY), &["1 + 1 + 1"]);
-    assert_fmt_keeps_program("format_pipes", &pipe_chain(40), &["  |> id\n  |> id\n"]);
+    assert_fmt_keeps_program("format_chain", &plus_chain(ORDINARY), &["1 +\n    1 +\n"]);
+    assert_fmt_keeps_program("format_pipes", &pipe_chain(40), &["    |> id\n    |> id\n"]);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1003,7 +872,7 @@ fn main() {
   println("{r}")
 }
 "#;
-    assert_fmt_keeps_program("fmt_pipe_head", head, &["  |> list.head {\n"]);
+    assert_fmt_keeps_program("fmt_pipe_head", head, &["match xs |> list.head {\n"]);
 }
 
 /// Guard. A trailing closure on the right operand of a pipe in a
@@ -1034,6 +903,6 @@ fn main() {
     assert_fmt_keeps_program(
         "fmt_pipe_closure_then_body",
         src,
-        &["  |> list.any { x -> x > 5 } {\n"],
+        &["match items |> list.any({ x -> x > 5 }) {\n"],
     );
 }

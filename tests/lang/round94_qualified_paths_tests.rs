@@ -83,7 +83,7 @@ fn formatter_roundtrips_qualified_forms() {
             ("shapes.silt", SHAPES),
             (
                 "main.silt",
-                "import shapes\nimport util\n\nfn main() {\n  let p = util.Pt { x: 1, y: 2 }\n  let m = match shapes.Circle(1.0) {\n    shapes.Circle(r) -> p.x,\n    shapes.Shape.Rect(w, h) -> p.y,\n  }\n  let n = match p {\n    util.Pt { x, .. } -> x,\n  }\n  print(m + n)\n}\n",
+                "import shapes\nimport util\n\nfn main() {\n  let p = util.Pt { x: 1, y: 2 }\n  let m = match shapes.Circle(1.0) {\n    shapes.Circle(r) -> p.x\n    shapes.Shape.Rect(w, h) -> p.y\n  }\n  let n = match p {\n    util.Pt { x, .. } -> x\n  }\n  print(m + n)\n}\n",
             ),
         ],
     );

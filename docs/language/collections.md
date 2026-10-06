@@ -74,7 +74,10 @@ enforced by the type system. For heterogeneous data, use records:
 let m = #{ "name": "Alice", "age": 30 }
 
 -- OK: use a record
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 ```
 
 **Design rationale.** Heterogeneous maps defeat static typing. If the type
@@ -97,13 +100,13 @@ sorted order:
 
 ```silt
 let tags = #[1, 2, 3]
-let words = #["hello", "world", "hello"]   -- duplicates removed
+let words = #["hello", "world", "hello"] -- duplicates removed
 ```
 
 Set equality with `==`/`!=` works:
 
 ```silt
-#[1, 2, 3] == #[3, 2, 1]   -- true
+#[1, 2, 3] == #[3, 2, 1] -- true
 ```
 
 Key functions: `set.new`, `set.from_list`, `set.to_list`, `set.contains`,
