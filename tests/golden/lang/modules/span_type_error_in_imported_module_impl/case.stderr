@@ -3,9 +3,3 @@ error[type]: function expects 1 argument, got 2
    |
  3 | trait Speak for Cat { fn speak(self, times: Int) -> Int { times } }
    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function expects 1 argument, got 2
-
-error[type]: function expects 2 arguments, got 0
- --> main.silt:9:11
-   |
- 9 |   println(c.speak())
-   |           ^^^^^^^^^ function expects 2 arguments, got 0

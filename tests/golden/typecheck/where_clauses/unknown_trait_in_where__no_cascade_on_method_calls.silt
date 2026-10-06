@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A `where` clause that names an unknown trait is reported once; the
+-- method calls on the variable it would have bounded are not reported
+-- as calls on a variable without a bound.
+-- stderr-contains: unknown trait 'Lowd' in where clause for 'a'
+-- stderr-contains: unknown trait 'Lowd' in where clause on trait impl 'Loud for Box'
+-- stderr-not-contains: has no trait bound
+-- stderr-not-contains: does not declare constraint
+type Box(a) { Box(a) }
+trait Loud { fn loud(self) -> String }
+fn shout(x: a) -> String where a: Loud { x.loud() }
+fn f(x: a) -> String where a: Lowd { "{x.loud()}{shout(x)}" }
+trait Loud for Box(a) where a: Lowd {
+  fn loud(self) -> String { match self { Box(v) -> v.loud() } }
+}
+fn main() { println("x") }

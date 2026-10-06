@@ -133,8 +133,10 @@ and a top-level `fn`, `type`, `let` or trait — are an error that names
 both sites. Which declaration a top-level name refers to therefore never
 depends on the order of the declarations.
 
-**Destructuring** works in `let` for irrefutable patterns -- tuples and
-records, which always match exactly one shape:
+**Destructuring** works in `let` for irrefutable patterns, the ones that
+match every value of their type: tuples and records, the constructor of a
+single-variant type, an or-pattern whose alternatives cover the type
+between them, and any nesting of these:
 
 ```silt
 let (x, y) = (1, "hello")

@@ -1,0 +1,10 @@
+-- A top-level `let` with an or-pattern binds each of its names once.
+type Two { L(Int), R(Int) }
+type One { One(Int) }
+let (One(top), L(side) | R(side)) = (One(1), L(2))
+let L(alone) | R(alone) = R(3)
+fn main() {
+  println(alone)
+  println(top)
+  println(side)
+}

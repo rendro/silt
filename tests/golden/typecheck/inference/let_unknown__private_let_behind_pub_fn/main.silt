@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A top-level `let` whose type its module leaves partly unknown is an
+-- error at the `let`, private or not: here two importers' worth of calls
+-- would otherwise decide one channel's message type two ways.
+-- stderr-contains: the type of top-level let 'cell' is not fully known here: Channel(_)
+-- stderr-contains: box.silt:2:5
+-- stderr-contains: annotate it, e.g. `let cell: <type> = ...`
+import box
+fn main() {
+  box.put(1)
+  box.put_text("s")
+}

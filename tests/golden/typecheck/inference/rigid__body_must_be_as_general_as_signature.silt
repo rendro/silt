@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- An annotation variable stands for any type inside its function: the
+-- body cannot decide it.
+-- stderr-contains: rigid__body_must_be_as_general_as_signature.silt:9:19
+-- stderr-contains: type mismatch: expected a, got Int
+-- stderr-contains: rigid__body_must_be_as_general_as_signature.silt:10:28
+-- stderr-contains: type mismatch: expected a, got b
+fn one(x: a) -> a { 1 }
+fn second(x: a, y: b) -> a { y }
+fn main() {
+  println(one(2))
+  println(second(1, "two"))
+}

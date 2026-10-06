@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A top-level `let` that is not generalised has one type for the whole
+-- module: it cannot be the `a` of one function's signature.
+-- stderr-contains: the type variable `a` would escape its declaration
+-- stderr-contains: rigid__variable_cannot_escape_into_outer_let.silt:9:35
+import channel
+let cell = channel.new(4)
+fn put(x: a) { channel.send(cell, x) }
+fn main() {
+  put(1)
+  put("s")
+}

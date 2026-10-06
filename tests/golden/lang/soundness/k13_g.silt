@@ -1,8 +1,5 @@
--- cmd: check
--- exit: 1
--- stderr-contains: non-exhaustive match: not all patterns are covered
--- The first function of repros/type_soundness/k13.silt, the exhaustive one, alone.
--- A false rejection, pending in repros/SOUNDNESS.tsv.
+-- The first function of repros/type_soundness/k13.silt, the exhaustive one, alone:
+-- `true` and `false` 25 tuples deep cover the type.
 fn g(x: (((((((((((((((((((((((((Bool, Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int), Int)) -> Int {
   match x {
     (((((((((((((((((((((((((true, _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _), _) -> 1

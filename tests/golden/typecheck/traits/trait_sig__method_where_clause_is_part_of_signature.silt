@@ -1,0 +1,24 @@
+-- A trait method's own `where` clause is part of its signature: in force
+-- in its default body and in an impl that leaves the annotations out.
+trait Loud { fn loud(self) -> String }
+trait Loud for Int { fn loud(self) -> String { "INT" } }
+trait Shw {
+  fn shw(self, x: a) -> String where a: Loud
+  fn twice(self, x: a) -> String where a: Loud { "{x.loud()}{x.loud()}" }
+  fn text(self, x: a) -> String where a: Display
+}
+trait Shw for Int {
+  fn shw(self, x) { x.loud() }
+  fn text(self, x) { x.display() }
+}
+trait Shw for Bool {
+  fn shw(self, x: b) -> String where b: Loud { x.loud() }
+  fn text(self, x: b) -> String { "bool {x.display()}" }
+}
+fn main() {
+  println(1.shw(2))
+  println(true.shw(3))
+  println(1.twice(4))
+  println(1.text("s"))
+  println(true.text(5))
+}

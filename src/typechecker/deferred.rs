@@ -43,12 +43,20 @@ impl TypeChecker {
             self.deferred_method_traits.insert(span, t);
         }
         let method_ty = self.apply(&instantiated);
-        // Method types include `self` as the first param. When the call
-        // site originally saw this field access as an unknown Var, it
-        // unified the var with a function type built from the *explicit*
-        // args only (no receiver). Strip `self` when adapting.
+        self.unify_deferred_method(result_ty, &method_ty, span);
+        true
+    }
+
+    /// Unify the type a method call on an unknown receiver was given
+    /// (`result_ty`) with the method it turned out to call.
+    ///
+    /// Method types include `self` as the first param. When the call
+    /// site originally saw this field access as an unknown Var, it
+    /// unified the var with a function type built from the *explicit*
+    /// args only (no receiver). Strip `self` when adapting.
+    fn unify_deferred_method(&mut self, result_ty: &Type, method_ty: &Type, span: Span) {
         let result_resolved = self.apply(result_ty);
-        match (&result_resolved, &method_ty) {
+        match (&result_resolved, method_ty) {
             (Type::Fun(call_params, call_ret), Type::Fun(method_params, method_ret))
                 if method_params.len() == call_params.len() + 1 =>
             {
@@ -58,10 +66,9 @@ impl TypeChecker {
                 self.unify(call_ret, method_ret, span);
             }
             _ => {
-                self.unify(result_ty, &method_ty, span);
+                self.unify(result_ty, method_ty, span);
             }
         }
-        true
     }
 
     pub(super) fn finalize_deferred_checks(&mut self) {
@@ -72,9 +79,32 @@ impl TypeChecker {
             let resolved = self.apply(&obj_ty);
             match &resolved {
                 Type::Error | Type::Never => {}
+                // Still unknown: it waits. `settle_bounds` drops it once
+                // the variable is generalised (see above); on a variable
+                // of an outer binding it is checked when that is decided.
                 Type::Var(_) => {
-                    // Polymorphic / unresolved — leave alone (see above).
+                    self.pending_field_accesses
+                        .push((obj_ty, field, result_ty, span));
                 }
+                // The receiver became an annotation variable: it has the
+                // methods of its bounds, and nothing else.
+                Type::Rigid(r) => match self.bound_methods(*r, field).as_slice() {
+                    [(trait_name, method_ty, bounds)] => {
+                        let method_ty =
+                            self.instantiate_bound_method(method_ty, bounds, field, span);
+                        self.deferred_method_traits.insert(span, *trait_name);
+                        self.unify_deferred_method(&result_ty, &method_ty, span);
+                    }
+                    _ => self.error(
+                        Code::UnknownMethod,
+                        format!(
+                            "no field or method '{field}' on a value of type `{}`: the \
+                             bounds of the type variable provide none, or more than one",
+                            r.name
+                        ),
+                        span,
+                    ),
+                },
                 Type::Record(rec_name, rec_fields) => {
                     if let Some((_, field_ty)) = rec_fields.iter().find(|(n, _)| *n == field) {
                         let ft = field_ty.clone();
@@ -211,6 +241,10 @@ impl TypeChecker {
             // — the VM catches it at runtime with a clean operator-domain
             // diagnostic.
             if matches!(resolved, Type::Var(_)) {
+                self.pending_numeric_checks.push((ty, op_desc, span));
+                continue;
+            }
+            if matches!(resolved, Type::Rigid(_)) {
                 continue;
             }
             // Classify the op based on its recorded tag (string literals set
@@ -269,7 +303,12 @@ impl TypeChecker {
         for (inner_ty, result_ty, expected_ret, span) in pending_qmarks {
             let resolved = self.apply(&inner_ty);
             let (head, args) = match &resolved {
-                Type::Error | Type::Never | Type::Var(_) => continue,
+                Type::Error | Type::Never => continue,
+                Type::Var(_) => {
+                    self.pending_question_marks
+                        .push((inner_ty, result_ty, expected_ret, span));
+                    continue;
+                }
                 Type::Generic(name, args) if name.is_builtin("Result") && args.len() == 2 => {
                     ("Result", args.clone())
                 }
@@ -334,19 +373,12 @@ impl TypeChecker {
             }
         }
 
-        // B4: deferred where-clause obligations. At call site we push
-        // `(tyvar, trait, fn_name, span, active_constraints_snapshot,
-        // fn_param_tyvars_snapshot)` for any call whose resolved type
-        // arg was still a type variable at the time. Re-apply the
-        // substitution now — if the var resolved to a concrete type
-        // with a matching impl the obligation is satisfied; if it
-        // resolved to another type variable equivalent to one of the
-        // enclosing fn's param tyvars AND that param is not covered
-        // by the enclosing fn's own where-clause, emit a clean
-        // propagation error. Otherwise (the var is unrelated to the
-        // enclosing fn's polymorphism — e.g. a top-level let whose
-        // scheme was over-general at pass 2) drop it silently; the
-        // value is already concrete from the caller's perspective.
+        // The bounds owed for a variable that was unknown where they
+        // were owed (`owe_bound`). A variable known now is checked. An
+        // annotation variable must have the bound declared. One still
+        // unknown is generalised with the definition being checked, and
+        // the bound is its scheme's (`generalize`), or it belongs to a
+        // binding checked later.
         let pending_where = std::mem::take(&mut self.pending_where_constraints);
         for pending in pending_where {
             let PendingWhereConstraint {
@@ -354,77 +386,20 @@ impl TypeChecker {
                 trait_name,
                 callee_fn_name,
                 span,
-                active_snapshot,
-                param_tyvars,
                 bound_trait_args,
             } = pending;
             let resolved = self.apply(&Type::Var(tyvar));
-            if matches!(resolved, Type::Error | Type::Never) {
-                continue;
-            }
-            if self.type_name_for_impl(&resolved).is_some() {
-                // Recursively walk the matched impl's where clauses
-                // against the resolved type's arguments. Thread the
-                // bound trait args so parameterized-trait obligations
-                // reject impls whose args don't match.
-                self.verify_trait_obligation(trait_name, &bound_trait_args, &resolved, span);
-                continue;
-            }
-            if let Type::Var(v) = &resolved {
-                // Still a type variable. First, test equivalence to any
-                // of the enclosing fn's param tyvars at the time of the
-                // call — if none match, this is not the enclosing fn's
-                // concern (e.g. a top-level `a = id(5)` whose scheme was
-                // over-general during pass 2). In that case, drop.
-                let mut touches_fn_param = false;
-                for &pv in &param_tyvars {
-                    if pv == *v {
-                        touches_fn_param = true;
-                        break;
-                    }
-                    let applied = self.apply(&Type::Var(pv));
-                    if let Type::Var(av) = applied
-                        && av == *v
-                    {
-                        touches_fn_param = true;
-                        break;
-                    }
-                }
-                if !touches_fn_param {
-                    continue;
-                }
-
-                // The var is linked to the enclosing fn's polymorphism.
-                // Check the snapshot of active constraints captured at
-                // the original call site for the matching trait.
-                let mut covered = false;
-                for (tv, traits) in &active_snapshot {
-                    if !traits.contains(&trait_name) {
-                        continue;
-                    }
-                    if *tv == *v {
-                        covered = true;
-                        break;
-                    }
-                    let applied = self.apply(&Type::Var(*tv));
-                    if let Type::Var(av) = applied
-                        && av == *v
-                    {
-                        covered = true;
-                        break;
-                    }
-                }
-                if !covered {
-                    let fn_label = callee_fn_name
-                        .map(|s| format!("'{}'", resolve(s)))
-                        .unwrap_or_else(|| "<callee>".to_string());
-                    self.error(Code::MissingConstraint,
-                        format!(
-                            "enclosing function does not declare constraint required by call to {fn_label}: `a: {trait_name}`"
-                        ),
-                        span,
-                    );
-                }
+            match &resolved {
+                Type::Error | Type::Never => {}
+                Type::Var(v) => self.pending_where_constraints.push(PendingWhereConstraint {
+                    tyvar: *v,
+                    trait_name,
+                    callee_fn_name,
+                    span,
+                    bound_trait_args,
+                }),
+                Type::Rigid(r) => self.require_declared_bound(*r, trait_name, callee_fn_name, span),
+                _ => self.verify_trait_obligation(trait_name, &bound_trait_args, &resolved, span),
             }
         }
     }

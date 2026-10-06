@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- Two variables of one function stay two types, however the group it is
+-- inferred with uses them; and a bound a group member's caller breaks
+-- is the caller's error.
+-- stderr-contains: type mismatch: expected a, got b
+-- stderr-contains: type 'String' does not implement trait 'Loud'
+trait Loud { fn loud(self) -> String }
+trait Loud for Int { fn loud(self) -> String { "i" } }
+fn pair(x: a, y: b, n: Int) {
+  match n {
+    0 -> [x]
+    _ -> flip(y, x, n - 1)
+  }
+}
+fn flip(u: c, v: c, n: Int) { pair(u, v, n) }
+fn say(x: a, n: Int) where a: Loud {
+  match n {
+    0 -> x.loud()
+    _ -> echo(x, n - 1)
+  }
+}
+fn echo(y: b, n: Int) { say(y, n - 1) }
+fn main() {
+  println(pair(1, 2, 1))
+  println(echo("s", 1))
+}

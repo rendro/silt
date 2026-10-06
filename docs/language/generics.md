@@ -132,6 +132,37 @@ plagues ML-family languages with implicit `forall`. When the reader
 encounters a type variable, its origin is always a parameter they can
 point to.
 
+### A type variable is any type
+
+Inside the function a type variable stands for a type the function does
+not know: the body must work for every type the caller may choose. It
+cannot treat an `a` as an `Int`, return a `b` where it promised an `a`,
+or call a method no `where` clause promises:
+
+```silt
+fn one(x: a) -> a { 1 }                    -- ERROR: expected a, got Int
+fn second(x: a, y: b) -> a { y }           -- ERROR: expected a, got b
+fn show(x: a) -> String { x.display() }    -- ERROR: `a` has no trait bound
+fn show(x: a) -> String where a: Display { x.display() }   -- ok
+```
+
+An annotation in the body that writes one of the signature's variables
+means the same variable (`let first: a = x`). A variable that a `let`
+annotation introduces itself is any type for that `let`:
+`let id: Fn(b) -> b = { y -> y }` is general in `b`, and
+`let n: b = 1` is an error.
+
+Functions that call each other may leave their return types out and
+still annotate parameters with variables: inside the group two such
+variables of two functions can be the same one, and each function stays
+general in it.
+
+A function without annotations is not restricted this way: its type is
+inferred from its body, bounds included, so `fn wrap(x) { show(x) }` has
+the type `Fn(a) -> String where a: Display`. Functions that call each
+other are inferred together, and inside such a group each has one type;
+annotate a function to call it at two types from within its own group.
+
 ## Where clauses
 
 Constrain a type variable to types implementing a trait with `where`:
@@ -841,6 +872,8 @@ use cases without introducing a second language stage.
 3. Type variables bind at first appearance in a parameter type.
 4. Every type variable must be anchored — appear in a regular
    parameter's type, or be declared as a `type a` parameter.
+   Inside the function it stands for any type: the body cannot decide
+   it, and may use only what the `where` clauses promise of it.
 5. `type` parameters always come after data parameters, grouped
    contiguously.
 6. Constraints go in `where` clauses. Multiple bounds on one variable

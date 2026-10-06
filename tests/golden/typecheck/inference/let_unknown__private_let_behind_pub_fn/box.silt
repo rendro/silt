@@ -1,0 +1,4 @@
+import channel
+let cell = channel.new(4)
+pub fn put(x) { channel.send(cell, x) }
+pub fn put_text(s) { channel.send(cell, s) }

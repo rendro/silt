@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- Functions that call each other are inferred together: inside the group
+-- each has one type, so `ping` takes a String wherever it is called.
+-- stderr-contains: type mismatch: expected String, got Int
+fn ping(x, n) {
+  match n {
+    0 -> [x]
+    _ -> pong(x, n - 1)
+  }
+}
+fn pong(x, n) {
+  match n {
+    0 -> []
+    _ -> ping("s", n - 1)
+  }
+}
+fn main() { println(ping(1, 3)) }

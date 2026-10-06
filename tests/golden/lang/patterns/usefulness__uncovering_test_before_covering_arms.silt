@@ -1,0 +1,35 @@
+-- A test that covers nothing (a pin, a float literal) may stand before
+-- the arms that cover the type: they still cover it.
+fn f(o: Option(Int), k: Option(Int)) -> Int {
+  match o {
+    ^k -> 0
+    Some(n) -> n
+    None -> -1
+  }
+}
+
+fn g(t: (Float, Bool)) -> Int {
+  match t {
+    (1.5, _) -> 0
+    (_, true) -> 1
+    (_, false) -> 2
+  }
+}
+
+fn h(n: Int, k: Int) -> Int {
+  match n {
+    ^k -> 0
+    0..9 -> 1
+    _ -> 2
+  }
+}
+
+fn main() {
+  println(f(Some(3), Some(3)))
+  println(f(Some(4), Some(3)))
+  println(f(None, Some(3)))
+  println(g((1.5, true)))
+  println(g((2.5, false)))
+  println(h(5, 5))
+  println(h(5, 6))
+}

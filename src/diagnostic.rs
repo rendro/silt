@@ -183,9 +183,6 @@ codes! {
     InvalidTypeAnnotation = "E0335", Type;
     /// A name that hides another one where both are needed.
     Shadowing = "E0336", Type;
-    /// Recursion at another type than the function's inferred one. A
-    /// warning.
-    PolymorphicRecursion = "E0337", Type;
     /// A field named twice in a record type, literal, pattern or update.
     DuplicateRecordField = "E0338", Type;
     // ── compile ──
@@ -1099,7 +1096,7 @@ mod tests {
     #[test]
     fn a_warning_has_a_warning_header() {
         let map = sources("let x = 1");
-        let d = Diagnostic::warning(Code::PolymorphicRecursion, span(4, 5), "unused");
+        let d = Diagnostic::warning(Code::UnreachablePattern, span(4, 5), "unused");
         assert!(render_human(&map, &d).starts_with("warning[type]: unused"));
     }
 

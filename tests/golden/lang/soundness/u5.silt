@@ -1,8 +1,4 @@
--- cmd: check
--- exit: 1
--- stderr-contains: type mismatch: expected Int, got String
 -- Port of repros/type_soundness/u5.silt, in brace closures.
--- A false rejection, pending in repros/SOUNDNESS.tsv.
 fn main() {
   let e = None
   let a: Option(Int) = e
