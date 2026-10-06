@@ -65,7 +65,7 @@ impl Server {
 /// and primitives return `None`.
 fn type_head_name(ty: &Type) -> Option<Symbol> {
     match ty {
-        Type::Record(name, _) | Type::Generic(name, _) => Some(name.name),
+        Type::Generic(name, _) => Some(name.name),
         _ => None,
     }
 }

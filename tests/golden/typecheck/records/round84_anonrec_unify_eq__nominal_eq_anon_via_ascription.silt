@@ -1,7 +1,0 @@
--- A nominal P{x:1} compares equal to an anon literal of the same shape (widened at the binding).
-type P { x: Int }
-fn main() {
-  let p: P = P { x: 1 }
-  let r: { x: Int } = { x: 1 }
-  println(p == r)
-}

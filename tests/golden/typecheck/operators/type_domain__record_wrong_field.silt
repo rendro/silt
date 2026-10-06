@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: record Point has no field or method 'z'
+-- stderr-contains: error[type]: unknown field or method 'z' on type Point
 type Point { x: Int, y: Int }
 fn main() {
   let p = Point { x: 1, y: 2 }

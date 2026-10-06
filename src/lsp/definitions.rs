@@ -210,7 +210,9 @@ fn collect_let_pattern_defs(
         }
         PatternKind::Record { fields, .. } => {
             let field_tys: Option<Vec<(Symbol, Type)>> = match value_ty {
-                Some(Type::Record(_, fs)) => Some(fs.clone()),
+                Some(Type::AnonRecord { fields, .. }) => {
+                    Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
+                }
                 _ => None,
             };
             let lookup_field_ty = |fname: Symbol| -> Option<Type> {
@@ -242,7 +244,9 @@ fn collect_let_pattern_defs(
             // (`let { x, y } = some_anon_record`). Mirrors the nominal
             // `Record` case above.
             let field_tys: Option<Vec<(Symbol, Type)>> = match value_ty {
-                Some(Type::Record(_, fs)) => Some(fs.clone()),
+                Some(Type::AnonRecord { fields, .. }) => {
+                    Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
+                }
                 _ => None,
             };
             let lookup_field_ty = |fname: Symbol| -> Option<Type> {

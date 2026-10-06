@@ -43,6 +43,7 @@ impl TypeChecker {
                 Goal::Try { operand, ok, ret } => {
                     ret.iter().chain([operand, ok]).cloned().collect()
                 }
+                Goal::Lacks { .. } => continue,
             };
             for ty in mentioned {
                 self.keep_monomorphic(&ty);
@@ -143,6 +144,8 @@ impl TypeChecker {
             }
             let (tr, args, subject) = match &wanted.goal {
                 Goal::Pred(Pred::Trait { tr, args, subject }) => (tr, args, subject),
+                // (A row nothing gives fields to has none to clash.)
+                Goal::Lacks { .. } => continue,
                 Goal::Try { .. } => {
                     self.errors.push(
                         Diagnostic::error(
@@ -225,6 +228,14 @@ impl TypeChecker {
             let origin = self.use_origin();
             for pred in &scheme.preds {
                 self.want(pred.substitute(&mapping), origin);
+            }
+        }
+        // A row variable the type extends with a field somewhere must
+        // not be given that field by the use.
+        for (row, field) in Self::row_extensions(&scheme.ty) {
+            if let Some(row) = mapping.get(&row).cloned() {
+                let origin = self.use_origin();
+                self.want_goal(Goal::Lacks { row, field }, origin);
             }
         }
         self.named_use = None;

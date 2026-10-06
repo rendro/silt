@@ -75,7 +75,6 @@ pub(in crate::typechecker) fn names_unresolved(pattern: &Pattern) -> bool {
 struct PatternCx {
     /// The span of the value the pattern is matched against.
     span: Span,
-    mode: PatternMode,
     /// The type of every name the pattern pins, looked up before the
     /// pattern bound a name; `None` for a name that is not in scope.
     pins: HashMap<Symbol, Option<Type>>,
@@ -142,7 +141,6 @@ impl TypeChecker {
             .collect();
         let mut cx = PatternCx {
             span,
-            mode,
             pins,
             cells: 0,
             unverified: false,
@@ -703,9 +701,9 @@ impl TypeChecker {
                 let declared = name
                     .and_then(|rec_name| self.named_record(res, rec_name, span, true))
                     .map(|(rec_ref, rec_info, param_ids)| {
-                        let fields =
+                        let (fields, args) =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());
-                        self.unify(expected, &Type::Record(rec_ref, fields.clone()), span);
+                        self.unify(expected, &Type::Generic(rec_ref, args), span);
                         (rec_ref, fields)
                     });
                 let mut subs: Vec<(Symbol, Pat)> = Vec::with_capacity(fields.len());
@@ -742,15 +740,13 @@ impl TypeChecker {
                     };
                     subs.push((*field_name, sub));
                 }
-                // The pattern names a record type. Until a nominal record
-                // and an anonymous one are two types (stage 6 step 3c), a
-                // value typed as an anonymous record may be of any
-                // nominal type with those fields, or of none: against
-                // such a value the pattern is a test of the type's tag,
-                // which covers nothing, and has no place where a pattern
-                // must not fail.
+                // The pattern names a record type, and what is matched
+                // is of that type (the `unify` above says so: an
+                // anonymous record is not a `P`, and an open row that is
+                // matched with `P { .. }` is `P`). Where it is not, the
+                // mismatch is reported and the pattern covers nothing.
                 let fits = match self.head(expected) {
-                    Type::Record(n, _) | Type::Generic(n, _) => match &declared {
+                    Type::Generic(n, _) => match &declared {
                         Some((rec_ref, _)) => n == rec_ref,
                         None => self.tables.records.contains_key(n),
                     },
@@ -758,16 +754,6 @@ impl TypeChecker {
                     _ => false,
                 };
                 if !fits {
-                    if matches!(cx.mode, PatternMode::Binding(_)) {
-                        self.error(
-                            Code::TypeMismatch,
-                            format!(
-                                "record pattern requires a record value, but '{}' is not a record type",
-                                self.apply(expected)
-                            ),
-                            span,
-                        );
-                    }
                     return Pat::Lit;
                 }
                 let (names, subs) = subs.into_iter().unzip();

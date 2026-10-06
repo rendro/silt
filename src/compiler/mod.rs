@@ -2453,7 +2453,6 @@ impl Compiler {
             Type::Generic(t, args) if t.id == bt::OPTION && args.len() == 1 => Ok(
                 FieldType::Option(Box::new(self.describe_field_type(&args[0], records)?)),
             ),
-            Type::Record(t, _) => self.describe_named_type(*t, ty, records),
             Type::Generic(t, args) if args.is_empty() => self.describe_named_type(*t, ty, records),
             // Set, Channel, functions, generic records, ...
             _ => unsupported(),

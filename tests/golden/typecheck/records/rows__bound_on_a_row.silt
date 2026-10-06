@@ -1,0 +1,12 @@
+-- A row variable can be bounded: printing or comparing a record with an
+-- open row needs the trait of the fields behind it, declared for an
+-- annotation's row and inferred otherwise. A declared record stands
+-- for itself.
+type Person { name: String, age: Int }
+fn show(p: {name: String, ...r}) -> String where r: Display { "{p}" }
+fn same(a, b) { a.name == b.name && a == b }
+fn main() {
+  println(show({name: "z", k: 1}))
+  println(show(Person { name: "Bob", age: 42 }))
+  println(same({name: "a", n: 1}, {name: "a", n: 1}))
+}

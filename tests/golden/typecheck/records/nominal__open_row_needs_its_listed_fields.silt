@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: record Person has no field 'email'
+-- stderr-contains: error[type]: type mismatch: expected String, got Int
+type Person { name: String, age: Int }
+fn email_of(p: {email: String, ...r}) -> String { p.email }
+fn age_of(p: {age: Int, ...r}) -> Int { p.age }
+type Odd { age: String }
+fn main() {
+  println(email_of(Person { name: "Bob", age: 42 }))
+  println(age_of(Odd { age: "old" }))
+}

@@ -800,6 +800,32 @@ impl TypeChecker {
                 self.register_type_decl(td, &mut env);
             }
         }
+        // A record's fields are read from the tables wherever a value of
+        // the record is used: with every alias of the module declared,
+        // an alias a field's type names (declared before or after the
+        // record) is written out.
+        for decl in &program.decls {
+            if let Decl::Type(td) = decl
+                && matches!(td.body, TypeBody::Record(_))
+            {
+                let ty = self.own_type(td.name);
+                if let Some(info) = self.tables.records.get(&ty).cloned() {
+                    let fields = info
+                        .fields
+                        .iter()
+                        .map(|(n, t)| {
+                            (
+                                *n,
+                                crate::types::canonical::canonicalize(&self.tables.resolver, t),
+                            )
+                        })
+                        .collect();
+                    if let Some(info) = self.tables.records.get_mut(&ty) {
+                        info.fields = fields;
+                    }
+                }
+            }
+        }
 
         // The declarations and the bodies are checked one level deep:
         // what a signature leaves out and what a body leaves unknown are
@@ -1179,7 +1205,6 @@ fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
             }
             fields.values().for_each(|t| row_tail_vars(t, out));
         }
-        Type::Record(_, fields) => fields.iter().for_each(|(_, t)| row_tail_vars(t, out)),
         Type::Generic(_, args) | Type::Tuple(args) => {
             args.iter().for_each(|t| row_tail_vars(t, out))
         }

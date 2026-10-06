@@ -268,7 +268,9 @@ fn collect_pattern_bindings(
             // is a nominal record, so hover on a destructured field shows
             // the right type.
             let field_tys: Option<Vec<(Symbol, Type)>> = match expr_ty {
-                Some(Type::Record(_, fs)) => Some(fs.clone()),
+                Some(Type::AnonRecord { fields, .. }) => {
+                    Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
+                }
                 _ => None,
             };
             let lookup_field_ty = |fname: Symbol| -> Option<Type> {
@@ -301,7 +303,9 @@ fn collect_pattern_bindings(
             // so we conservatively bind without a type when sub is
             // missing. Where sub is present, we recurse with no type.
             let field_tys: Option<Vec<(Symbol, Type)>> = match expr_ty {
-                Some(Type::Record(_, fs)) => Some(fs.clone()),
+                Some(Type::AnonRecord { fields, .. }) => {
+                    Some(fields.iter().map(|(n, t)| (*n, t.clone())).collect())
+                }
                 _ => None,
             };
             let lookup_field_ty = |fname: Symbol| -> Option<Type> {

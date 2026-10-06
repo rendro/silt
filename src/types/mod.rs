@@ -41,6 +41,11 @@ pub enum RowTail {
     /// The record may have additional fields. The TyVar is a row variable
     /// that unification can bind to a record carrying the leftover fields.
     Var(TyVar),
+    /// The record has the fields a row variable of an annotation stands
+    /// for, inside the declaration that writes it: whatever they are,
+    /// they are the same ones wherever the variable is written, and
+    /// nothing in the declaration may assume what they are.
+    Rigid(RigidId),
 }
 
 /// A record, enum or alias type, or a builtin type that has no variant of
@@ -182,9 +187,9 @@ pub enum Type {
     Range(Box<Type>),
     /// Tuple type (fixed length, heterogeneous).
     Tuple(Vec<Type>),
-    /// A nominal record type: the type and its field name/type pairs.
-    Record(TypeRef, Vec<(Symbol, Type)>),
-    /// A named type with its arguments, like `Result(Int, String)`.
+    /// A named type with its arguments, like `Result(Int, String)`: an
+    /// enum, a nominal record (its fields are the checker's), a builtin
+    /// type.
     Generic(TypeRef, Vec<Type>),
     /// Map type: key type -> value type.
     Map(Box<Type>, Box<Type>),
@@ -246,7 +251,7 @@ impl Type {
     /// with arguments); `None` for any other type.
     pub fn type_ref(&self) -> Option<TypeRef> {
         match self {
-            Type::Record(r, _) | Type::Generic(r, _) => Some(*r),
+            Type::Generic(r, _) => Some(*r),
             _ => None,
         }
     }
@@ -288,12 +293,6 @@ impl Type {
     /// Every named type `self` mentions.
     pub fn collect_refs(&self, out: &mut Vec<TypeRef>) {
         match self {
-            Type::Record(r, fields) => {
-                out.push(*r);
-                for (_, t) in fields {
-                    t.collect_refs(out);
-                }
-            }
             Type::Generic(r, args) => {
                 out.push(*r);
                 for t in args {
@@ -422,17 +421,6 @@ impl std::fmt::Display for Shown<'_> {
                 }
                 write!(f, ")")
             }
-            Type::Record(name, _) if self.brief => write!(f, "{}", self.name(name)),
-            Type::Record(name, fields) => {
-                write!(f, "{} {{", self.name(name))?;
-                for (i, (n, t)) in fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{n}: {}", self.of(t))?;
-                }
-                write!(f, "}}")
-            }
             Type::Generic(name, args) => {
                 // `TypeOf(a)` is the internal lowering of a `type a`
                 // parameter. Render it as `type a` so diagnostics use the
@@ -483,13 +471,18 @@ impl std::fmt::Display for Shown<'_> {
                     first = false;
                     write!(f, "{n}: {}", self.of(t))?;
                 }
-                if matches!(tail, RowTail::Var(_)) {
+                if !matches!(tail, RowTail::Closed) {
                     if !first {
                         write!(f, ", ")?;
                     }
-                    // Row variables render as `..` to indicate "more
-                    // fields possible". Don't leak the internal id.
-                    write!(f, "...")?;
+                    // A row variable is written `...`: "more fields
+                    // possible" (its id is internal). An annotation's
+                    // row variable, inside its declaration, has its
+                    // name.
+                    match tail {
+                        RowTail::Rigid(r) => write!(f, "...{}", r.name)?,
+                        _ => write!(f, "...")?,
+                    }
                 }
                 write!(f, "}}")
             }
@@ -613,17 +606,6 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             }
             fvs
         }
-        Type::Record(_, fields) => {
-            let mut fvs = Vec::new();
-            for (_, t) in fields {
-                for v in free_vars_in(t) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-            fvs
-        }
         Type::Generic(_, args) => {
             let mut fvs = Vec::new();
             for a in args {
@@ -726,10 +708,6 @@ fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
         Type::Set(inner) => Type::Set(Box::new(map_rigid(inner, f))),
         Type::Channel(inner) => Type::Channel(Box::new(map_rigid(inner, f))),
         Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| map_rigid(e, f)).collect()),
-        Type::Record(name, fields) => Type::Record(
-            *name,
-            fields.iter().map(|(n, t)| (*n, map_rigid(t, f))).collect(),
-        ),
         Type::Generic(name, args) => {
             Type::Generic(*name, args.iter().map(|a| map_rigid(a, f)).collect())
         }
@@ -745,7 +723,14 @@ fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
         },
         Type::AnonRecord { fields, tail } => Type::AnonRecord {
             fields: fields.iter().map(|(n, t)| (*n, map_rigid(t, f))).collect(),
-            tail: tail.clone(),
+            tail: match tail {
+                RowTail::Rigid(r) => match f(*r) {
+                    Type::Var(v) => RowTail::Var(v),
+                    Type::Rigid(other) => RowTail::Rigid(other),
+                    _ => tail.clone(),
+                },
+                _ => tail.clone(),
+            },
         },
         Type::Int
         | Type::Float
@@ -777,13 +762,6 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
         Type::Range(inner) => Type::Range(Box::new(substitute_vars(inner, mapping))),
         Type::Tuple(elems) => {
             Type::Tuple(elems.iter().map(|e| substitute_vars(e, mapping)).collect())
-        }
-        Type::Record(name, fields) => {
-            let fields = fields
-                .iter()
-                .map(|(n, t)| (*n, substitute_vars(t, mapping)))
-                .collect();
-            Type::Record(*name, fields)
         }
         Type::Generic(name, args) => {
             let args = args.iter().map(|a| substitute_vars(a, mapping)).collect();
@@ -858,22 +836,15 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
                     // tripped the `apply` chain and surfaced as
                     // missing-binding crashes.
                     Some(Type::Var(w)) => RowTail::Var(*w),
-                    Some(_other) => {
-                        // Any other concrete type bound here is a
-                        // genuine drift — the unifier should never
-                        // bind a row tail var to a non-record,
-                        // non-Var type. Catch it loudly in debug
-                        // builds; release falls through to the
-                        // pre-existing safe behaviour.
-                        debug_assert!(
-                            false,
-                            "row tail var bound to non-record concrete type {:?}",
-                            _other
-                        );
-                        RowTail::Var(*v)
-                    }
+                    // Inside its declaration an annotation's row
+                    // variable is rigid.
+                    Some(Type::Rigid(r)) => RowTail::Rigid(*r),
+                    // The row is a nominal record: the type is that
+                    // record's (see `TypeChecker::apply`).
+                    Some(other) => return other.clone(),
                     None => RowTail::Var(*v),
                 },
+                RowTail::Rigid(r) => RowTail::Rigid(*r),
             };
             Type::AnonRecord {
                 fields: new_fields,
@@ -950,13 +921,6 @@ pub fn substitute_enum_params(
             param_var_ids,
             type_args,
         ))),
-        Type::Record(name, fields) => Type::Record(
-            *name,
-            fields
-                .iter()
-                .map(|(n, t)| (*n, substitute_enum_params(t, param_var_ids, type_args)))
-                .collect(),
-        ),
         Type::AssocProj {
             receiver,
             trait_name,
