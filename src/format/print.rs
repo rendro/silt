@@ -1192,8 +1192,9 @@ impl Printer<'_> {
                     UnaryOp::Not => Token::Not,
                 };
                 let op_doc = self.tok(token);
-                // `--` starts a comment: `-(-x)` keeps its parentheses,
-                // `- -x` its space.
+                // `--` starts a comment, so a minus in front of a minus
+                // has one spelling, `-(-x)`: the source's parentheses
+                // stay, and `- -x` gets them. (`!!x` needs none.)
                 // The smallest Int is a literal that starts with `-`.
                 let doubled = *op == UnaryOp::Neg
                     && matches!(
@@ -1206,9 +1207,18 @@ impl Printer<'_> {
                     let close = self.tok(Token::RParen);
                     return Doc::concat(vec![op_doc, open, inner, close]);
                 }
-                let gap = if doubled { space() } else { Doc::Nil };
-                let operand = self.expr(operand, ctx.right(prec::UNARY));
-                Doc::concat(vec![op_doc, gap, operand])
+                // A comment between the two stays between them, with
+                // the space the source has.
+                if doubled && self.cur.comment_ahead() {
+                    let operand = self.expr(operand, ctx.right(prec::UNARY));
+                    return Doc::concat(vec![op_doc, space(), operand]);
+                }
+                let operand_doc = self.expr(operand, ctx.right(prec::UNARY));
+                if doubled {
+                    Doc::concat(vec![op_doc, Doc::text("("), operand_doc, Doc::text(")")])
+                } else {
+                    Doc::concat(vec![op_doc, operand_doc])
+                }
             }
             ExprKind::Pipe(..) => self.pipeline(expr, ctx),
             ExprKind::Range(start, end) => Doc::concat(vec![

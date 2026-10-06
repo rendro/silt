@@ -71,7 +71,7 @@ fn h() {
   let p = "a{"b{{ -> 1 }()}c"}d{[1, 2]}"
   let q = x.a.y?.b
   let r = (-x)? as m.T(Int)
-  let s = !!x && - -y == -(-z)
+  let s = !!x && -(-y) == -(-z)
   let t = #[]
   let u = x()(())
   let v = f { -> 1 }(2) { x -> x }.g { y -> y }?
