@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'String' does not implement trait 'Greet'
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Mk { fn mk() -> Self }
+type Box(a) { v: List(a) }
+trait Mk for Box(a) where a: Greet { fn mk() -> Self { Box { v: [] } } }
+fn main() {
+  let c: Box(String) = Box.mk()
+  println(c)
+}

@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: trait 'Number' cannot be implemented by hand: it is the types arithmetic is on, Int and Float
+trait Number for String {}
+fn main() { println(1) }

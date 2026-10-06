@@ -1,0 +1,7 @@
+-- `Equal` is a supertrait of `Compare`: what is ordered can be compared
+-- for equality.
+fn same_or_less(x: t, y: t) -> Bool where t: Compare { x == y || x < y }
+fn main() {
+  println(same_or_less(1, 1))
+  println(same_or_less((2, "a"), (1, "b")))
+}

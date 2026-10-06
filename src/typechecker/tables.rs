@@ -63,10 +63,8 @@ pub(super) struct TraitInfo {
     /// Parallel to `supertraits`: the TypeExpr args supplied to each
     /// supertrait reference. For `trait Sub(a): Super(a)` the entry for
     /// `Super` is `[TypeExpr::Named("a")]`. Empty when the supertrait
-    /// is referenced without args. The `expand_with_supertraits_args`
-    /// path uses these to propagate the enclosing trait's args into
-    /// the supertrait's `trait_arg_bindings` during where-clause
-    /// activation. Arg-less entries keep the bare-name behaviour.
+    /// is referenced without args. `declare_bound` gives a variable
+    /// bounded by this trait the supertrait's bound at these arguments.
     pub(super) supertrait_args: Vec<Vec<TypeExpr>>,
     /// The methods, each with its type: a complete signature, in which
     /// `Self` is `self_var` and the trait's parameters are
@@ -77,7 +75,7 @@ pub(super) struct TraitInfo {
     /// variables, with the bound's trait arguments. They are part of the
     /// method's signature: in force in its default body and in every
     /// impl's body, and owed by every call.
-    pub(super) method_bounds: HashMap<Symbol, Vec<MethodBound>>,
+    pub(super) method_bounds: HashMap<Symbol, Vec<Pred>>,
     /// The variable `Self` is in the methods' types.
     pub(super) self_var: TyVar,
     /// The name of each variable the trait's declaration writes: `Self`,
@@ -113,10 +111,6 @@ pub(super) struct TraitInfo {
     pub(super) defined_in: Symbol,
 }
 
-/// A bound on a type variable of a method: the variable, the trait and
-/// the trait's arguments.
-pub(super) type MethodBound = (TyVar, TraitKey, Vec<Type>);
-
 /// Information about a single associated-type declaration inside a
 /// trait. Bounds are stored as `(trait_name, trait_args)` pairs — the
 /// `trait_args` are the AST `TypeExpr`s captured at decl time and
@@ -140,28 +134,11 @@ pub(crate) struct MethodEntry {
     /// for auto-derived entries (Showable on every type, etc.) that
     /// don't participate in user-visible coherence rules.
     pub(super) trait_name: Option<TraitKey>,
-    /// Trait constraints that must hold at every call site of this
-    /// method. Accumulated from:
-    ///
-    /// (a) impl-level `where` clauses on the trait-impl header
-    ///     (`trait Greet for Box(a) where a: Greet { ... }`) — attached
-    ///     to every method in the impl.
-    /// (b) method-level `where` clauses on individual impl methods
-    ///     (`fn greet(self) -> String where a: Greet { ... }`) — where
-    ///     `a` is either an impl-level binder or a method param binder.
-    ///
-    /// TyVars here live in the same TyVar space as `method_type`, so
-    /// `instantiate_method_entry` can substitute both through a shared
-    /// mapping. Empty for auto-derived entries and for impls with no
-    /// where clauses (which is every impl today prior to this feature).
-    ///
-    /// The third tuple slot carries the trait args for parameterized
-    /// trait bounds — `where a: TryInto(Int)` stores `[Int]` so
-    /// `verify_trait_obligation` can reject mismatched impls (e.g.
-    /// `TryInto(Float) for ...` against a `where a: TryInto(Int)` bound).
-    /// Empty for parameterless traits and the legacy parameterless
-    /// where-clause path.
-    pub(super) method_constraints: Vec<(TyVar, TraitKey, Vec<Type>)>,
+    /// What every use of the method owes, on the variables of
+    /// `method_type`: the `where` clauses of the impl's header
+    /// (`trait Greet for Box(a) where a: Greet`) and the bounds the
+    /// trait declares for the method. None for a derived impl's.
+    pub(super) preds: Vec<Pred>,
 }
 
 /// What the checks of one session share: the type variables, the
@@ -204,24 +181,11 @@ pub struct Tables {
     /// diagnostic in `validate_trait_impls` can point at the impl
     /// block's real source location.
     pub(super) trait_impl_spans: HashMap<(TraitKey, TypeRef), Span>,
-    /// Maps `(trait_name, target_head)` → impl-level where-clause
-    /// obligations expressed as `(target_arg_index, required_trait,
-    /// required_trait_args)` triples. Populated from
-    /// `register_trait_impl` so that constraint resolution at call
-    /// sites can recursively verify that the concrete type arguments
-    /// of the matched impl themselves satisfy the impl's own where
-    /// clauses (e.g. `Box(Box(String)): Greet` with
-    /// `trait Greet for Box(a) where a: Greet` must reject because
-    /// String does not impl Greet, even though `(Greet, Box)` is in
-    /// `trait_impl_set`).
-    ///
-    /// The third tuple slot carries the trait args for parameterized
-    /// bounds — `trait Use for List(a) where a: Conv(Int)` stores
-    /// `[Int]` so the recursive `verify_trait_obligation` step can
-    /// reject `Conv(String) for Int` (a mismatched impl) instead of
-    /// silently accepting any `Conv(*) for Int`. Empty for
-    /// parameterless trait bounds.
-    pub(super) impl_constraints: HashMap<(TraitKey, TypeRef), Vec<(usize, TraitKey, Vec<Type>)>>,
+    /// What each impl's header asks of its type variables
+    /// (`trait Greet for Box(a) where a: Greet`), on the variables of the
+    /// impl's self type (`impl_self_types`): a use that the impl answers
+    /// owes them at the subject's parts (`verify_trait_obligation`).
+    pub(super) impl_preds: HashMap<(TraitKey, TypeRef), Vec<Pred>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`
@@ -276,12 +240,40 @@ pub struct Tables {
     /// `let`, a variant's constructor, a type written as a value. (A
     /// builtin's is the builtin scope's.)
     pub(super) schemes: HashMap<crate::defs::DefId, Scheme>,
+    /// What the check of each REPL cell left waiting for the type of a
+    /// `let` that a later cell may decide (see [`Waiting`]).
+    pub(super) waiting: HashMap<crate::session::ModuleId, Waiting>,
     /// What each module's check added to the tables, so that it can be
     /// forgotten when the module is checked again.
     pub(super) rows: HashMap<crate::session::ModuleId, Rows>,
     /// The name of each module checked, to tell two types of one name
     /// apart in a message (`a.Pt`, `b.Pt`).
     pub(super) module_names: HashMap<crate::session::ModuleId, Symbol>,
+}
+
+/// The checks a REPL cell made on a type still unknown when its check
+/// ended: the type of a `let` of the session that is not generalised
+/// (`let ch = channel.new(4)`). The cell that decides the type is held
+/// to them.
+#[derive(Clone, Default)]
+pub(super) struct Waiting {
+    /// The cell's functions and `let`s. A check in the body of one
+    /// waits for as long as something can still run that body.
+    pub(super) decls: Vec<CellDecl>,
+    pub(super) wanted: Vec<super::solve::Wanted>,
+}
+
+/// A function or a `let` of a REPL cell.
+#[derive(Clone)]
+pub(super) struct CellDecl {
+    /// Where it is, from its first token to the end of its body.
+    pub(super) span: Span,
+    /// What it defines.
+    pub(super) defs: Vec<crate::defs::DefId>,
+    /// The definitions its body refers to: a cell is bound to what its
+    /// names meant when it was entered, so a function an earlier cell
+    /// defined runs for as long as one that refers to it does.
+    pub(super) refers: Vec<crate::defs::DefId>,
 }
 
 /// What one module's check added to the session's [`Tables`].
@@ -369,6 +361,7 @@ impl Tables {
     /// Forget what the check of `module` added: it is checked again, or
     /// it was a REPL cell that is dropped.
     pub fn forget(&mut self, module: crate::session::ModuleId) {
+        self.waiting.remove(&module);
         let Some(rows) = self.rows.remove(&module) else {
             return;
         };
@@ -393,7 +386,7 @@ impl Tables {
         for key in rows.impls {
             self.trait_impl_set.remove(&key);
             self.trait_impl_spans.remove(&key);
-            self.impl_constraints.remove(&key);
+            self.impl_preds.remove(&key);
             self.impl_trait_args.remove(&key);
             self.impl_self_types.remove(&key);
             self.auto_derive_negatives.remove(&key);

@@ -1,9 +1,0 @@
--- exit: 1
--- stderr-contains: does not implement Compare
--- A Fn-bearing set built by set.map is caught by the algebra-op gate.
-import set
-fn main() {
-  let s = set.map(set.from_list([1, 2]), { x -> { y -> y + x } })
-  let u = set.union(s, s)
-  println(set.length(u))
-}

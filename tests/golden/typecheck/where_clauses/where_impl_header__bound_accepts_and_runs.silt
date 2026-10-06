@@ -1,0 +1,16 @@
+-- A bound on the impl's type variable, on the impl's header: the body
+-- uses it, a direct call and a call through the trait owe it.
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Wrap { fn unwrap(self) -> String }
+trait Wrap for Box(a) where a: Greet {
+  fn unwrap(self) -> String {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+fn through(x: t) -> String where t: Wrap { x.unwrap() }
+fn main() {
+  println(Box(42).unwrap())
+  println(through(Box(7)))
+}

@@ -66,6 +66,12 @@ impl TypeChecker {
         if !clashes {
             return t.name.to_string();
         }
+        self.show_trait_in_module(t)
+    }
+
+    /// The trait with the module that declares it, where that is not
+    /// the module being checked: `a.Show`, `prelude.Display`.
+    pub(super) fn show_trait_in_module(&self, t: TraitKey) -> String {
         let first = crate::defs::builtin_types().len();
         let module = if (t.id.0.0 as usize)
             .checked_sub(first)

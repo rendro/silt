@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A holds an Option of a function, which has no Display. Declaring A
+-- is fine; printing a value of it is the error, reported once, at the
+-- use.
+type A { X(Option(Fn(Int) -> Int)), Y }
+
+fn main() {
+  println(A.Y)
+}

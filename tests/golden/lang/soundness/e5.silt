@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Int, got String
 -- Port of repros/type_soundness/e5.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` prints
--- '1' for a value typed Int.
 fn main() {
   let f = { x -> x.display() }
   let n: Int = f(1)

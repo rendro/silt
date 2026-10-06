@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
 -- Port of repros/type_soundness/i4.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: list.sort: type 'Fn' does not implement Compare
 import list
 type W(a) { W(a) }
 fn main() {

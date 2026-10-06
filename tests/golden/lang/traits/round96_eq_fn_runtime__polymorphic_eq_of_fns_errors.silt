@@ -1,7 +1,7 @@
 -- exit: 1
--- stderr-contains: does not implement Equal
+-- stderr-contains: does not implement trait 'Equal'
 -- stderr-contains: 'Fn'
-fn eq(x: a, y: a) -> Bool { x == y }
+fn eq(x: a, y: a) -> Bool where a: Equal { x == y }
 fn f() { 1 }
 fn g() { 2 }
 fn main() { println(eq(f, g)) }

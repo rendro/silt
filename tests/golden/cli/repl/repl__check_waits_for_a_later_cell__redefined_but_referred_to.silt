@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: trait Greet { fn greet(self) -> String }\ntrait Greet for Int { fn greet(self) -> String { "int" } }\nfn hello(x: a) -> String where a: Greet { x.greet() }\nimport channel\nlet ch = channel.new(4)\nfn f() { match channel.try_receive(ch) { channel.Message(m) -> println(hello(m)), _ -> println("none") } }\nfn g() { f() }\nfn f() { println("new f") }\nchannel.send(ch, "s")\ng()\n:quit\n
+-- stderr-contains: error[type]: this input gives a value a type an earlier input does not allow: type 'String' does not implement trait 'Greet'
+-- stderr-contains: --> <repl:9>:1:1
+-- A cell is bound to what its names meant when it was entered: `g`
+-- still runs the first `f`, so the first `f`'s check still waits.

@@ -1,5 +1,0 @@
-error[type]: type 'Fn' does not implement trait 'Display'
- --> span_derived_impl_error_at_type_once.silt:6:1
-   |
- 6 | type A { X(Option(Fn(Int) -> Int)), Y }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Fn' does not implement trait 'Display'

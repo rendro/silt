@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: unknown field 'aeg' in Rec
+type Rec { name: String, age: Int }
+fn apply(f, r: Rec) -> Rec { f(r) }
+fn main() {
+  let r = Rec { name: "alice", age: 30 }
+  println(apply({ x -> x.{ aeg: 31 } }, r).age)
+}

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- stderr-contains: error[type]: type 'Channel' does not implement trait 'Hash'
+import channel
+fn keyed(k) { #{ k: 1 } }
+fn main() {
+  println(keyed(1))
+  println(keyed({ n -> n }))
+  let ch = channel.new(1)
+  println(#[ch])
+}

@@ -1,0 +1,7 @@
+-- verdict: same
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Sh { fn sh(self, x: a) -> String where a: Greet }
+trait Sh for Bool { fn sh(self, x: a) -> String where a: Greet { x.greet() } }
+fn main() { let m = true.sh
+ println(m(true, 3)) }

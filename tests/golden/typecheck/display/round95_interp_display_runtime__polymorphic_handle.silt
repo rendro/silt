@@ -1,9 +1,9 @@
--- Interpolating a task handle through a polymorphic function fails at run time.
+-- Interpolating a task handle through a function bounded by Display is rejected.
 -- exit: 1
--- stderr-contains: does not implement Display
+-- stderr-contains: does not implement trait 'Display'
 -- stderr-contains: 'Handle'
 import task
-fn show(x: a) -> String { "val={x}" }
+fn show(x: a) -> String where a: Display { "val={x}" }
 fn main() {
   let h = task.spawn({ -> 42 })
   println(show(h))

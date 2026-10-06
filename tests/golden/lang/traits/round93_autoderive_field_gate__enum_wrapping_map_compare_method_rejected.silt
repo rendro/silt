@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'W' cannot derive 'Compare'
+-- stderr-contains: error[type]: type 'W' does not implement trait 'Compare': variant 'Wrap' payload #1 is of type 'Map(String, Int)', which does not
 -- stderr-contains: variant 'Wrap'
 type W { Wrap(Map(String, Int)), Empty }
 fn mk() -> W { Wrap(#{"a": 1}) }

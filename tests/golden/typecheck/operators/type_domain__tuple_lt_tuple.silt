@@ -1,9 +1,0 @@
--- cmd: check
--- exit: 1
--- stderr-contains: operator '<' requires
--- stderr-contains: got '(Int, Int)'
-fn main() {
-  let a = (1, 2)
-  let b = (3, 4)
-  a < b
-}

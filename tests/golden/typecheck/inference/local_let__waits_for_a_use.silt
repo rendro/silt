@@ -1,0 +1,7 @@
+-- A closure bound with `let` is not general in what an update or a `?`
+-- in it still waits for: the call below decides it.
+type P { name: String, age: Int }
+fn main() {
+  let h = { p -> p.{ age: 2 } }
+  println(h(P { name: "a", age: 1 }).age)
+}

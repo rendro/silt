@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
+fn same(x, y) { x == y }
+fn less(x, y) { x < y }
+fn show(x) { "{x}" }
+fn main() {
+  let f = { n -> n }
+  println(same(1, 1))
+  println(less("a", "b"))
+  println(show(3))
+  println(same(f, f))
+  println(less(f, f))
+  println(show(f))
+}

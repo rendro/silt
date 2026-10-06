@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method 'sh' of the impl of 'Sh' for 'Int' adds the bound `a: Conv(Int)`, which the trait does not declare for it
+-- The bound an impl's method restates is the trait's, trait arguments
+-- included.
+trait Conv(to) { fn conv(self) -> to }
+trait Conv(String) for Int { fn conv(self) -> String { "i" } }
+trait Conv(Int) for Bool { fn conv(self) -> Int { 1 } }
+trait Sh { fn sh(self, x: a) -> String where a: Conv(String) }
+trait Sh for Int { fn sh(self, x: a) -> String where a: Conv(Int) { "{x.conv()}" } }
+fn main() { println(1.sh(1)) }

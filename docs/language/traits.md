@@ -74,7 +74,7 @@ traits without colliding with the built-in `Equal` / `Compare`, which
 cannot be redefined.)
 
 Implementing `Cmp2` on a type requires that type to also implement `Eq2`
-(four of silt's five built-in traits — `Equal`, `Hash`, `Compare`,
+(four of silt's six built-in traits — `Equal`, `Hash`, `Compare`,
 `Display` — are auto-derived for every user-defined type and the
 displayable builtins, so the obligation is satisfied automatically;
 channels and function values are the exception — they do not implement
@@ -117,13 +117,21 @@ trait Foo: NotATrait { ... }
 -- error: trait 'Foo' lists unknown supertrait 'NotATrait'
 ```
 
+A supertrait is given as many type arguments as it has parameters:
+
+```silt
+trait Holds(a) { fn held(self) -> a }
+trait Bad: Holds(Int, String) { ... }
+-- error: trait 'Holds' expects 1 type argument as a supertrait of 'Bad', got 2
+```
+
 Implementing a subtrait without the supertrait fails:
 
 ```silt
 type MyInt { v: Int }
 trait Ordered for MyInt { ... }
 -- error: type 'MyInt' implements 'Ordered' but does not implement supertrait 'Equal'
--- (only fires when MyInt cannot derive Equal, e.g. it has a function field)
+-- (only when MyInt has no Equal, e.g. it has a function field)
 ```
 
 ## Default Methods
@@ -303,24 +311,25 @@ trait Greet for Box(a) where a: Greet, a: Loud {
 }
 ```
 
-### Method-level where clauses
+### An impl's method adds no bound
 
-Method-level `where` clauses on trait-impl methods also work and have
-the same semantics as fn-level `where`. Use them when only **one**
-method in the impl needs the constraint; put it on the impl header
-when every method needs it:
+A bound on the impl's type variable belongs on the impl's header. An
+impl's method has the signature its trait declares, `where` clause
+included: it may restate a bound the trait declares for the method or
+the header declares (or a supertrait of one), with the same trait
+arguments, and may not add one, because a call through the
+trait (`fn f(x: t) where t: Greet { x.greet() }`) knows only the trait's
+signature and the header:
 
 ```silt
-trait Wrap for Box(a) {
-  fn wrap(self) -> Int { 1 }
+trait Greet for Box(a) {
   fn greet(self) -> String where a: Greet {
     match self { Box(inner) -> inner.greet() }
   }
 }
+-- error: method 'greet' of the impl of 'Greet' for 'Box' adds the bound
+-- `a: Greet`, which the trait does not declare for it
 ```
-
-`Box("hello").wrap()` works (no constraint); `Box("hello").greet()`
-fails at the call site against the method-level `where a: Greet`.
 
 Field access on a type-var field in a record works the same way:
 
@@ -415,12 +424,34 @@ fn main() {
 }
 ```
 
+`value.method` without a call is not a function: a method is called.
+Write `Type.method`, or a closure, `{ x -> x.method() }`.
+
+## Calls on a value of unknown type
+
+In a function whose parameter has no annotation, `x.m(..)` and `x.f` are
+decided by what is written, not by which names happen to exist:
+
+- `x.f` is a field: `fn name_of(p) { p.name }` takes any record with a
+  field `name`, whatever methods traits declare.
+- `r.f(..)` on a record with a field `f` calls the function the field
+  holds, even if a trait has a method `f` for the record's type.
+- `x.m(..)` means the one trait in sight that declares a method `m`, and
+  bounds `x` by it: `fn g(x) { x.greet() }` is `fn g(x: a) -> String
+  where a: Greet`. If no trait declares `m`, `x` is a record whose field
+  `m` holds a function. If several traits declare `m`, annotate `x`.
+
+When the type of `x` is decided later in the same definition (a closure's
+parameter by the call it is passed to), the call is checked against that
+type.
+
 ## Built-in Traits
 
-silt ships **five** built-in traits. Four of them — `Equal`, `Hash`,
+silt ships **six** built-in traits. Four of them — `Equal`, `Hash`,
 `Compare`, `Display` — are **automatically derived** for every
-user-defined type. The fifth, `Error`, is built-in but is **not**
-auto-derived.
+user-defined type. `Error` is built-in but is **not** auto-derived.
+`Number` is the types arithmetic is on, `Int` and `Float`, and nothing
+else.
 
 | Trait     | Purpose                          | Auto-derived? |
 |-----------|----------------------------------|---------------|
@@ -429,6 +460,24 @@ auto-derived.
 | `Hash`    | Hash value for maps/sets         | yes           |
 | `Compare` | Order comparison                 | yes           |
 | `Error`   | Error reporting (`message()`)    | no            |
+| `Number`  | `+ - * / %` and unary `-`        | Int and Float only |
+
+Operators are these traits: `==` and `!=` need `Equal`, `<` `>` `<=`
+`>=` need `Compare`, interpolation and `println` need `Display`,
+arithmetic needs `Number`. A function without annotations is general
+over them (`fn add(a, b) { a + b }` is `(a, a) -> a where a: Number`);
+with annotation variables it declares them:
+
+```silt
+fn largest(x: a, y: a) -> a where a: Compare {
+  match x < y { true -> y, false -> x }
+}
+```
+
+`?` and a record update (`r.{ f: e }`) are not general: the value they
+apply to needs a type the definition decides, or an annotation. `?`
+takes it from the return type of the function it is in, when that is
+known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
 The auto-derived `Display` formats in constructor syntax (`Circle(5)`).
 Write your own `trait Display for T` to override.
@@ -445,6 +494,39 @@ trait Compare for Version { ... }
 -- error: trait 'Compare' cannot be implemented by hand: it is derived
 -- structurally for every type whose fields support it — remove this
 -- impl; Equal, Compare and Hash are derived
+```
+
+What "every field supports them" means, for `Equal`, `Hash`, `Compare`
+and for `Display` where no impl is written:
+
+- `Int`, `Float`, `String`, `Bool` and `()` have all four.
+- A function has none. A channel has `Equal` only (it is equal to
+  itself).
+- A list and a tuple have what their parts have (a tuple is ordered
+  part by part). A map and a set have `Equal`, `Hash` and `Display`
+  when their parts do, and no `Compare`.
+- A record or an enum has a trait when every field and payload does, at
+  the type's arguments: `Option(Int)` has `Compare`, `Option(Fn(Int) ->
+  Int)` has none of them. A closed anonymous record (`{a: Int}`) has
+  `Equal`, `Hash` and `Display` when its fields do.
+- A type variable has what its bound says (`where a: Compare`).
+  `Compare` includes `Equal`: what is ordered can be compared with `==`.
+
+Declaring a type never fails for lack of one of these traits: a type may
+hold a function anywhere. The error is at the use that needs the trait
+(`println`, `==`, a map key), and names the way down to the part that
+lacks it.
+
+The standard library declares what it asks of its arguments the same
+way: `list.sort` needs `Compare` of the elements, `list.contains`
+`Equal`, map keys and set elements `Hash` (so do `#{..}` and `#[..]`
+literals), `println` and `string.from` `Display`.
+
+```silt
+type Job { name: String, run: Fn(Int) -> Int }
+println(Job { name: "j", run: { n -> n } })
+-- error: type 'Job' does not implement trait 'Display': field 'run' is
+-- of type 'Fn(Int) -> Int', which does not
 ```
 
 The `Error` trait has supertrait `Display` and one method,

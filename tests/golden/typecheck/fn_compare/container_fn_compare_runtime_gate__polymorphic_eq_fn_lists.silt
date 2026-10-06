@@ -1,8 +1,7 @@
 -- A polymorphic `==` on lists of functions fails at run time.
 -- exit: 1
--- stderr-contains: does not implement Equal
--- stderr-contains: 'Fn'
-fn eq(a: x, b: x) -> Bool { a == b }
+-- stderr-contains: error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Equal': element is of type 'Fn(_) -> _', which does not
+fn eq(a: x, b: x) -> Bool where x: Equal { a == b }
 fn main() {
   let xs = [{ y -> y }]
   let ys = [{ y -> y }]

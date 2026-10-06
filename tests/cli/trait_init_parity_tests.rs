@@ -51,12 +51,12 @@ fn primitives_get_all_four_traits() {
 
 #[test]
 fn non_ordering_container_types_lack_compare() {
-    // Tuple/Map/Set/Option/Result are explicitly excluded from Compare
-    // because the VM can't order them at runtime. If someone adds
-    // Compare to these, unification will happily accept programs that
-    // panic at runtime — this test pins the exclusion.
+    // Map and Set have no order. Option and Result have no `compare`
+    // method entry (they are ordered by their structure, like any enum).
+    // A tuple is ordered part by part and has Compare.
     let (impls, _) = __trait_init_fingerprint_check_program();
-    for type_name in ["Tuple", "Map", "Set", "Option", "Result"] {
+    assert!(impls.contains("Compare:Tuple"));
+    for type_name in ["Map", "Set", "Option", "Result"] {
         let key = format!("Compare:{type_name}");
         assert!(
             !impls.contains(&key),

@@ -1,0 +1,13 @@
+-- Arithmetic on values of unknown type is general over the numbers:
+-- `add` is `(a, a) -> a where a: Number`. A `where` clause may name the
+-- bound.
+fn add(a, b) { a + b }
+fn neg(x) { -x }
+fn twice(x: n) -> n where n: Number { x * x / x + x }
+fn main() {
+  println(add(1, 2))
+  println(add(1.5, 2.5))
+  println(neg(3))
+  println(twice(4))
+  println(twice(1.5))
+}

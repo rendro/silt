@@ -1,0 +1,7 @@
+-- No trait declares `run`: `x.run(1)` calls the function the record's
+-- field holds.
+fn call(x) { x.run(1) }
+fn main() {
+  println(call({ run: { n -> n + 1 } }))
+  println(call({ run: { n -> n * 10 }, name: "t" }))
+}

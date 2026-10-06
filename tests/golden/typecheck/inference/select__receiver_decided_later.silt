@@ -1,0 +1,11 @@
+-- The receiver's type is decided after the call (the channel's element
+-- by the send): the call is the type's method.
+import channel
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn main() {
+  let ch = channel.new(1)
+  let f = { -> match channel.try_receive(ch) { channel.Message(m) -> m.greet(), _ -> "none" } }
+  channel.send(ch, 3)
+  println(f())
+}

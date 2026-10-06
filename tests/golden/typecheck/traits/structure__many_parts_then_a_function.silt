@@ -1,0 +1,87 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type '
+-- stderr-contains: does not implement trait 'Equal'
+-- stderr-contains: does not implement trait 'Hash'
+-- stderr-contains: does not implement trait 'Compare'
+-- However many types are looked at before it, a function in a later
+-- part is found: seventy wrapper types, then a function.
+import list
+type W0 { W0(Int) }
+type W1 { W1(Int) }
+type W2 { W2(Int) }
+type W3 { W3(Int) }
+type W4 { W4(Int) }
+type W5 { W5(Int) }
+type W6 { W6(Int) }
+type W7 { W7(Int) }
+type W8 { W8(Int) }
+type W9 { W9(Int) }
+type W10 { W10(Int) }
+type W11 { W11(Int) }
+type W12 { W12(Int) }
+type W13 { W13(Int) }
+type W14 { W14(Int) }
+type W15 { W15(Int) }
+type W16 { W16(Int) }
+type W17 { W17(Int) }
+type W18 { W18(Int) }
+type W19 { W19(Int) }
+type W20 { W20(Int) }
+type W21 { W21(Int) }
+type W22 { W22(Int) }
+type W23 { W23(Int) }
+type W24 { W24(Int) }
+type W25 { W25(Int) }
+type W26 { W26(Int) }
+type W27 { W27(Int) }
+type W28 { W28(Int) }
+type W29 { W29(Int) }
+type W30 { W30(Int) }
+type W31 { W31(Int) }
+type W32 { W32(Int) }
+type W33 { W33(Int) }
+type W34 { W34(Int) }
+type W35 { W35(Int) }
+type W36 { W36(Int) }
+type W37 { W37(Int) }
+type W38 { W38(Int) }
+type W39 { W39(Int) }
+type W40 { W40(Int) }
+type W41 { W41(Int) }
+type W42 { W42(Int) }
+type W43 { W43(Int) }
+type W44 { W44(Int) }
+type W45 { W45(Int) }
+type W46 { W46(Int) }
+type W47 { W47(Int) }
+type W48 { W48(Int) }
+type W49 { W49(Int) }
+type W50 { W50(Int) }
+type W51 { W51(Int) }
+type W52 { W52(Int) }
+type W53 { W53(Int) }
+type W54 { W54(Int) }
+type W55 { W55(Int) }
+type W56 { W56(Int) }
+type W57 { W57(Int) }
+type W58 { W58(Int) }
+type W59 { W59(Int) }
+type W60 { W60(Int) }
+type W61 { W61(Int) }
+type W62 { W62(Int) }
+type W63 { W63(Int) }
+type W64 { W64(Int) }
+type W65 { W65(Int) }
+type W66 { W66(Int) }
+type W67 { W67(Int) }
+type W68 { W68(Int) }
+type W69 { W69(Int) }
+type Box(a) { Box(a) }
+fn main() {
+  let f = { n -> n }
+  let t = (W0(0), W1(1), W2(2), W3(3), W4(4), W5(5), W6(6), W7(7), W8(8), W9(9), W10(10), W11(11), W12(12), W13(13), W14(14), W15(15), W16(16), W17(17), W18(18), W19(19), W20(20), W21(21), W22(22), W23(23), W24(24), W25(25), W26(26), W27(27), W28(28), W29(29), W30(30), W31(31), W32(32), W33(33), W34(34), W35(35), W36(36), W37(37), W38(38), W39(39), W40(40), W41(41), W42(42), W43(43), W44(44), W45(45), W46(46), W47(47), W48(48), W49(49), W50(50), W51(51), W52(52), W53(53), W54(54), W55(55), W56(56), W57(57), W58(58), W59(59), W60(60), W61(61), W62(62), W63(63), W64(64), W65(65), W66(66), W67(67), W68(68), W69(69), Box(f))
+  println(t == t)
+  let m = #{ t: 1 }
+  println(list.sort([t]))
+}

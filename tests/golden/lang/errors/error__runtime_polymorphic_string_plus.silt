@@ -1,7 +1,0 @@
--- exit: 1
--- A polymorphic template reaches `+` with Strings at run time; the
--- execution-site error names interpolation like the static one.
-fn add(a, b) { a + b }
-fn main() {
-  println(add("a", "b"))
-}

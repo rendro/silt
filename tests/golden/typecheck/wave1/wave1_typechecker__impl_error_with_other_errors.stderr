@@ -1,11 +1,11 @@
-error[type]: type mismatch: expected String, got Int
- --> wave1_typechecker__impl_error_with_other_errors.silt:14:19
-    |
- 14 |   let n: String = helper(1)
-    |                   ^^^^^^^^^ type mismatch: expected String, got Int
-
 error[type]: type mismatch: expected Int, got String
  --> wave1_typechecker__impl_error_with_other_errors.silt:10:23
     |
  10 |   fn foo(self) -> Int { "not an int" }
     |                       ^^^^^^^^^^^^^^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected String, got Int
+ --> wave1_typechecker__impl_error_with_other_errors.silt:14:19
+    |
+ 14 |   let n: String = helper(1)
+    |                   ^^^^^^^^^ type mismatch: expected String, got Int

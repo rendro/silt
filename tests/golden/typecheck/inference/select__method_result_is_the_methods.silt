@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Int, got String
+-- The call has the method's type: what `coerce` returns is what `same`
+-- does, the receiver's type.
+trait Same { fn same(self) -> Self }
+trait Same for String { fn same(self) -> Self { self } }
+fn coerce(x) { x.same() }
+fn main() {
+  let n: Int = coerce("not an int")
+  println(n)
+}

@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: does not implement Compare
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
 import set
 fn main() {
   println(set.contains(set.new(), { y -> y }))
