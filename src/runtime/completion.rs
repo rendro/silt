@@ -47,6 +47,10 @@ pub struct IoCompletion {
     /// Monotonic counter for minting `wakers` entry ids.
     next_waker_id: AtomicU64,
     timeout_err: TimeoutErrFactory,
+    /// Dropped once the result is stored and its wakers have run: what
+    /// keeps the program from being called deadlocked while the
+    /// operation is in flight ([`IoCompletion::hold`]).
+    held: Mutex<Option<Box<dyn Send>>>,
 }
 
 impl IoCompletion {
@@ -70,6 +74,7 @@ impl IoCompletion {
             wakers: Mutex::new(Vec::new()),
             next_waker_id: AtomicU64::new(0),
             timeout_err,
+            held: Mutex::new(None),
         })
     }
 
@@ -101,7 +106,18 @@ impl IoCompletion {
         for (_, w) in wakers {
             w();
         }
+        let held = self.held.lock().take();
+        drop(held);
         true
+    }
+
+    /// Keep `guard` until the completion has its result, from the
+    /// operation or from a deadline. Dropped at once if it has one.
+    pub fn hold(&self, guard: Box<dyn Send>) {
+        let mut held = self.held.lock();
+        if self.result.lock().is_none() {
+            *held = Some(guard);
+        }
     }
 
     /// Non-blocking poll.

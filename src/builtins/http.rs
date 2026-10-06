@@ -496,8 +496,11 @@ fn do_http_serve_inner(
     let inflight = Arc::new(AtomicUsize::new(0));
 
     // Spawn the accept loop on a dedicated OS thread so it doesn't
-    // block a scheduler worker or the main thread.
+    // block a scheduler worker or the main thread. While it serves, a
+    // task that waits for the server is not deadlocked.
+    let serving = vm.scheduler().external();
     std::thread::spawn(move || {
+        let _serving = serving;
         loop {
             // Use recv_timeout so the accept loop periodically
             // unblocks and can notice a shutdown. Note: this
@@ -637,13 +640,13 @@ fn do_http_serve_inner(
         serve_handle.complete(Ok(Value::Unit));
     });
 
-    // If running as a scheduled task, yield and let the scheduler
-    // park us until the serve handle completes (i.e. server shuts down).
-    if vm.is_scheduled_task {
+    // A spawned task parks until the serve handle completes (i.e. the
+    // server shuts down).
+    if vm.spawned {
         return Err(vm.park_with_reason(args, BlockReason::Join(handle.clone())));
     }
 
-    // Main thread: block until the server shuts down.
+    // The program's thread blocks until the server shuts down.
     match handle.join() {
         Ok(val) => Ok(val),
         Err(mut inner) => {

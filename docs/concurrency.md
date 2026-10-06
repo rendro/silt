@@ -478,7 +478,7 @@ more than one frame. The rules:
   `main` returns (or fails). A task that is still running then is not a
   failure; if it fails afterwards, while the process shuts down, it is not
   reported.
-- **A deadlock shows its cause.** When the main thread is told
+- **A deadlock shows its cause.** When `main` is told
   `deadlock on main thread`, the failures reported with it are usually the
   reason: a producer that failed before it sent.
 
@@ -1239,33 +1239,35 @@ None of these block the OS thread. The task is parked and the thread continues
 running other tasks.
 
 I/O operations follow the same transparent yielding pattern as channel
-operations -- no special syntax needed. When a spawned task calls
-`io.read_file` or `http.get`, the operation is dispatched to an I/O pool and
-the task is parked until the result is ready. From the main thread, these
-operations block synchronously, just like channel operations.
+operations -- no special syntax needed. When code calls `io.read_file` or
+`http.get`, the operation is dispatched to an I/O pool and the task is
+parked until the result is ready. `main` is a task like the others here:
+its I/O and its `time.sleep` are waits too, and a `task.deadline` around
+them ends them when it passes.
 
 ### Deadlock detection
 
-When the main thread waits (a `channel.send`, `channel.receive`,
-`channel.each`, `channel.select` or `task.join` called from `main`), silt
-checks whether any task could still end the wait. If none can -- every task
-is parked on a channel or a join that nothing will satisfy -- the wait fails
-with a runtime error that starts with `deadlock on main thread`, and the
-program exits with status 1. Together with that error, silt reports the
-tasks that failed and that nobody joined (`silt run` before it, `silt test`
-under the failing test, after it; see
+A program is deadlocked when `main` waits (a `channel.send`,
+`channel.receive`, `channel.each`, `channel.select` or `task.join`), every
+other task waits too, and nothing is pending that could end one of the
+waits: no timer and no I/O operation. silt sees that at the moment it
+becomes true -- when the last task parks or ends, or the last timer has
+fired -- and the wait of `main` fails with a runtime error that starts with
+`deadlock on main thread`; the program exits with status 1. Together with
+that error, silt reports the tasks that failed and that nobody joined
+(`silt run` before it, `silt test` under the failing test, after it; see
 [Failures that nobody joins](#failures-that-nobody-joins)): a failed
 producer is the usual reason why a counterpart is missing.
 
-A task that waits on a timer counts as able to make progress: a
-`time.sleep`, a `channel.timeout` channel that has not closed yet, a
-`channel.recv_timeout` that has not expired. While such a task exists, no
-deadlock is reported, whether or not the task could ever reach the channel
-that `main` waits on. The verdict comes after the timer has fired, if the
-program is still stuck then. So a background task that sleeps for a minute
-delays the report of an unrelated deadlock by up to a minute. The same holds
-for a task that waits on I/O. Only the main thread gets a deadlock verdict;
-tasks that are stuck while `main` is not waiting on them stay parked.
+A timer that is pending counts as able to end a wait: a `time.sleep`, a
+`channel.timeout` channel that has not closed yet, a `channel.recv_timeout`
+that has not expired. While one is pending, no deadlock is reported, whether
+or not it could ever reach the channel that `main` waits on. The verdict
+comes after the timer has fired, if the program is still stuck then. So a
+background task that sleeps for a minute delays the report of an unrelated
+deadlock by up to a minute. The same holds for an I/O operation that is in
+flight. Only `main` gets a deadlock verdict; tasks that are stuck while
+`main` is not waiting stay parked.
 
 ### Implications of real parallelism
 

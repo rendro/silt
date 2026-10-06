@@ -134,6 +134,10 @@ pub struct Channel {
     /// other scheduled tasks is not a deadlock — the timer thread will
     /// close the channel on schedule.
     pending_timer_close: AtomicBool,
+    /// Set once a thread has waited in `receive_blocking`: a stream
+    /// stage reads the channel, on a thread the scheduler does not
+    /// count, so a send that waits on it is no deadlock.
+    read_by_stream: AtomicBool,
 }
 
 /// Result of attempting to send on a channel.
@@ -164,6 +168,7 @@ impl Channel {
             handoff: Mutex::new(None),
             waiting_receivers: AtomicUsize::new(0),
             pending_timer_close: AtomicBool::new(false),
+            read_by_stream: AtomicBool::new(false),
         }
     }
 
@@ -289,8 +294,14 @@ impl Channel {
         }
     }
 
+    /// Whether a stream stage reads the channel.
+    pub fn is_read_by_stream(&self) -> bool {
+        self.read_by_stream.load(AtomicOrdering::Acquire)
+    }
+
     /// Blocking receive — waits until a value is available or the channel closes.
     pub fn receive_blocking(&self) -> TryReceiveResult {
+        self.read_by_stream.store(true, AtomicOrdering::Release);
         if self.is_rendezvous() {
             // Signal that a receiver is waiting so rendezvous senders can proceed.
             self.waiting_receivers.fetch_add(1, AtomicOrdering::Release);

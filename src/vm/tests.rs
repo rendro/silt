@@ -2974,10 +2974,10 @@ mod abandon {
         park_on: Option<Arc<Channel>>,
     ) -> (Arc<TaskHandle>, Arc<AtomicUsize>) {
         let (mut vm, abandoned) = with_probe(main.spawn_child(), park_on);
-        vm.is_scheduled_task = true;
+        vm.spawned = true;
         let id = main.next_task_id();
         let handle = Arc::new(TaskHandle::new(id));
-        main.get_or_create_scheduler()
+        main.scheduler()
             .submit(Task {
                 id,
                 vm,

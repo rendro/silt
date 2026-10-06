@@ -10,6 +10,7 @@ use crate::bytecode::VmClosure;
 use crate::runtime::channel::Channel;
 use crate::runtime::completion::IoCompletion;
 use crate::runtime::handle::TaskHandle;
+use crate::scheduler::{External, Scheduler};
 use crate::value::Value;
 
 use super::{HostIo, Vm, VmError};
@@ -103,8 +104,9 @@ pub(crate) enum TimerTarget {
 }
 
 /// A deadline and what to fire at it, as sent to the timer thread. The
-/// deadline is a reading of the host clock.
-type TimerRequest = (Duration, TimerTarget);
+/// deadline is a reading of the host clock. Until it has fired, the
+/// program is not deadlocked.
+type TimerRequest = (Duration, TimerTarget, External);
 
 /// Manages all pending timer deadlines on a single background thread.
 /// Instead of spawning one OS thread per `channel.timeout` or `time.sleep`,
@@ -116,6 +118,7 @@ type TimerRequest = (Duration, TimerTarget);
 /// timers has none, and a platform without threads can make a VM.
 pub(crate) struct TimerManager {
     io: HostIo,
+    scheduler: Arc<Scheduler>,
     thread: parking_lot::Mutex<Threads<TimerRequest>>,
 }
 
@@ -142,9 +145,10 @@ impl<T> Threads<T> {
 const VM_GONE: &str = "the VM that ran the program has been dropped";
 
 impl TimerManager {
-    pub(super) fn new(io: HostIo) -> Self {
+    pub(super) fn new(io: HostIo, scheduler: Arc<Scheduler>) -> Self {
         TimerManager {
             io,
+            scheduler,
             thread: parking_lot::Mutex::new(Threads::Idle),
         }
     }
@@ -158,7 +162,7 @@ impl TimerManager {
     /// The timer thread's loop: take in deadlines, and fire each when
     /// the host clock reaches it.
     fn run(io: HostIo, rx: std::sync::mpsc::Receiver<TimerRequest>) {
-        let mut deadlines: BTreeMap<Duration, Vec<TimerTarget>> = BTreeMap::new();
+        let mut deadlines: BTreeMap<Duration, Vec<(TimerTarget, External)>> = BTreeMap::new();
         loop {
             // Calculate how long to sleep until the next deadline.
             let timeout = deadlines
@@ -168,8 +172,11 @@ impl TimerManager {
 
             // Wait for a new timeout request or until the next deadline fires.
             match rx.recv_timeout(timeout) {
-                Ok((deadline, target)) => {
-                    deadlines.entry(deadline).or_default().push(target);
+                Ok((deadline, target, pending)) => {
+                    deadlines
+                        .entry(deadline)
+                        .or_default()
+                        .push((target, pending));
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -191,13 +198,16 @@ impl TimerManager {
             let expired: Vec<Duration> = deadlines.range(..=now).map(|(k, _)| *k).collect();
             for key in expired {
                 if let Some(targets) = deadlines.remove(&key) {
-                    for target in targets {
+                    for (target, pending) in targets {
                         match target {
                             TimerTarget::Channel(ch) => ch.close(),
                             TimerTarget::Completion(c) => {
                                 c.complete(Value::Unit);
                             }
                         }
+                        // The wait it ended is over: it is pending
+                        // no longer.
+                        drop(pending);
                     }
                 }
             }
@@ -227,7 +237,9 @@ impl TimerManager {
             *thread = Threads::Running(tx);
         }
         match &*thread {
-            Threads::Running(tx) => tx.send((deadline, target)).map_err(|e| unavailable(&e)),
+            Threads::Running(tx) => tx
+                .send((deadline, target, self.scheduler.external()))
+                .map_err(|e| unavailable(&e)),
             Threads::Idle | Threads::Stopped => Err(unavailable(&VM_GONE)),
         }
     }
@@ -302,6 +314,7 @@ type IoJob = Box<dyn FnOnce() + Send>;
 
 pub(crate) struct IoPool {
     io: HostIo,
+    scheduler: Arc<Scheduler>,
     /// The workers, started by the first operation. A program that
     /// parks no task on I/O has none, and a platform without threads
     /// can make a VM.
@@ -311,9 +324,10 @@ pub(crate) struct IoPool {
 }
 
 impl IoPool {
-    pub(super) fn new(num_threads: usize, io: HostIo) -> Self {
+    pub(super) fn new(num_threads: usize, io: HostIo, scheduler: Arc<Scheduler>) -> Self {
         IoPool {
             io,
+            scheduler,
             workers: parking_lot::Mutex::new(Threads::Idle),
             num_workers: num_threads,
         }
@@ -373,6 +387,9 @@ impl IoPool {
         f: impl FnOnce() -> Value + Send + 'static,
     ) -> Arc<IoCompletion> {
         let completion2 = completion.clone();
+        // While the operation is in flight the program is not
+        // deadlocked.
+        completion.hold(Box::new(self.scheduler.external()));
         let job: IoJob = Box::new(move || {
             let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
                 Ok(value) => value,
@@ -447,8 +464,8 @@ impl IoPool {
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub struct Runtime {
     // ── M:N scheduler ──────────────────────────────────────────
-    /// The shared scheduler for spawned tasks (None until first task.spawn).
-    pub(super) scheduler: parking_lot::Mutex<Option<Arc<crate::scheduler::Scheduler>>>,
+    /// The scheduler of the program's tasks.
+    pub(crate) scheduler: Arc<Scheduler>,
 
     // ── Timer manager ──────────────────────────────────────────
     /// Shared timer thread for `channel.timeout`.
@@ -480,14 +497,7 @@ impl Runtime {
     /// The threads are told to end, not waited for: a worker inside a
     /// builtin that blocks ends when the builtin returns.
     pub(super) fn shutdown(&self) {
-        // A scheduler is made if there was none, so that a thread that
-        // outlives the VM (a stream stage) cannot start one.
-        let scheduler = self
-            .scheduler
-            .lock()
-            .get_or_insert_with(|| Arc::new(crate::scheduler::Scheduler::new(self.io.clone())))
-            .clone();
-        scheduler.shutdown();
+        self.scheduler.shutdown();
         self.timer.stop();
         self.io_pool.stop();
     }
@@ -597,7 +607,8 @@ mod tests {
     #[test]
     fn worker_count_reports_constructor_argument() {
         for n in [1usize, 2, 4, 8, 16] {
-            let pool = IoPool::new(n, HostIo::process());
+            let io = HostIo::process();
+            let pool = IoPool::new(n, io.clone(), Arc::new(Scheduler::new(io)));
             assert_eq!(pool.worker_count(), n, "worker_count drift for n={n}");
         }
     }

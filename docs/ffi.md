@@ -193,7 +193,7 @@ thread in the task scheduler's pool. The type system enforces this. Use
 
 A `Vm` is made with a `HostIo`: where the program's output goes, and the
 clock it reads. It is set once, when the `Vm` is made, and holds for the
-program's main thread and for every task.
+program's own code and for every task.
 
 ```rust
 let out = Buffer::new();
@@ -255,7 +255,7 @@ pub trait Clock: Send + Sync {
 | The program | reads |
 |-------------|-------|
 | `time.now`, `time.today`, the timestamp in `uuid.v7`, the seed of `math.random` (at its first call) | `now` |
-| `time.sleep` outside a task | `sleep` |
+| `time.sleep` outside a task | `sleep`, for no longer than a `task.deadline` around it allows |
 | `time.sleep` in a task, `channel.timeout`, `channel.recv_timeout` | `monotonic`: the wait ends when the reading reaches its deadline |
 | `task.deadline`, `task.spawn_until`, `SILT_IO_TIMEOUT` | `monotonic`: I/O started after the deadline fails at once, and a task parked on I/O is cancelled when the reading passes the deadline |
 

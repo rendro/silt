@@ -927,23 +927,22 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if dur_ns <= 0 {
                 return Ok(Value::Unit);
             }
-            // Sync (non-task) call: block the caller thread. Correct
-            // semantics on the main thread, and keeps tests/examples that
-            // use `time.sleep` outside of a spawned task working.
-            if !vm.is_scheduled_task {
-                vm.runtime
-                    .io
-                    .sleep(std::time::Duration::from_nanos(dur_ns as u64));
+            // The program's own thread asks the clock to sleep
+            // (`Clock::sleep`), for no longer than up to the task
+            // deadline in effect.
+            if !vm.spawned {
+                let mut duration = std::time::Duration::from_nanos(dur_ns as u64);
+                if let Some(deadline) = vm.current_deadline {
+                    duration = duration.min(deadline.saturating_sub(vm.runtime.io.monotonic()));
+                }
+                vm.runtime.io.sleep(duration);
                 return Ok(Value::Unit);
             }
-            // Resume path: if we previously parked on a sleep completion,
-            // poll pending_io directly. We intentionally skip
-            // io_entry_guard's deadline-exceeded branch — time.sleep
-            // returns Unit, not Result, so an already-past deadline should
-            // simply skip the sleep rather than inject an Err(...) value.
-            if vm.is_scheduled_task
-                && let Some(completion) = vm.pending_io.take()
-            {
+            // Called again after the park: the sleep is over, or the
+            // task waits on. The deadline check of the I/O builtins is
+            // not made: time.sleep returns Unit, not a Result, so a
+            // deadline that has passed only ends the sleep.
+            if let Some(completion) = vm.pending_io.take() {
                 if let Some(_result) = completion.try_get() {
                     return Ok(Value::Unit); // sleep completed
                 }
@@ -956,9 +955,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             {
                 return Ok(Value::Unit); // deadline already past; nothing to sleep for
             }
-            // Fresh scheduled-task call: submit to the shared timer thread
-            // (NOT the I/O pool — we don't want to burn a worker thread
-            // per sleeper) and park cooperatively.
+            // The timer thread ends the sleep, and the task waits.
             let completion = IoCompletion::new();
             vm.runtime.timer.schedule_completion(
                 std::time::Duration::from_nanos(dur_ns as u64),
