@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- An impl's method has the types its trait declares, also where the impl
+-- writes none: `by` is an Int, and the body must return an Int.
+-- stderr-contains: type mismatch: expected Int, got String
+-- stderr-contains: trait_sig__unannotated_impl_method_has_trait_types.silt:10:43
+-- stderr-not-contains: silt:9:
+trait Scale { fn scale(self, by: Int) -> Int }
+trait Scale for Int { fn scale(self, by) { self * by } }
+trait Scale for Bool { fn scale(self, by) { "unannotated string" } }
+fn total(x: a, y: a) -> Int where a: Scale { x.scale(2) + y.scale(3) }
+fn main() { println(total(1, 2)) }

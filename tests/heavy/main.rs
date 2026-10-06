@@ -2,4 +2,5 @@
 //!
 //! One test binary; each module was a separate test crate before.
 
+mod checker_scaling;
 mod integration;

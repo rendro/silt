@@ -16,6 +16,21 @@ use crate::intern::{Symbol, intern};
 /// A unique identifier for type variables.
 pub type TyVar = usize;
 
+/// An annotation variable inside its own declaration (see
+/// [`Type::Rigid`]): the variable it is in the declaration's scheme, and
+/// its name as written.
+#[derive(Debug, Clone, Copy)]
+pub struct RigidId {
+    pub var: TyVar,
+    pub name: Symbol,
+}
+
+impl PartialEq for RigidId {
+    fn eq(&self, other: &Self) -> bool {
+        self.var == other.var
+    }
+}
+
 /// Tail of a row (record) type. Either closed (no extra fields) or
 /// open with a unification variable that may bind to a record holding
 /// the remaining fields. See `Type::AnonRecord`.
@@ -149,6 +164,12 @@ pub enum Type {
     Unit,
     /// A unification variable, to be resolved during inference.
     Var(TyVar),
+    /// A type variable written in an annotation (`a` in `fn f(x: a) -> a`,
+    /// `Self` in a trait's default method), inside the declaration that
+    /// writes it: it stands for a type the declaration does not know, so
+    /// it unifies with itself only. Outside the declaration the variable
+    /// is quantified in the declaration's scheme (`RigidId::var`).
+    Rigid(RigidId),
     /// Function type: param types -> return type.
     Fun(Vec<Type>, Box<Type>),
     /// Homogeneous list type.
@@ -307,6 +328,7 @@ impl Type {
             | Type::String
             | Type::Unit
             | Type::Var(_)
+            | Type::Rigid(_)
             | Type::Error
             | Type::Never => {}
         }
@@ -372,6 +394,7 @@ impl std::fmt::Display for Shown<'_> {
             // type" convention in patterns and reads as "unknown type"
             // in diagnostics.
             Type::Var(_) => write!(f, "_"),
+            Type::Rigid(r) => write!(f, "{}", r.name),
             Type::Fun(params, ret) => {
                 // Match the parser's surface syntax `Fn(A, B) -> C` so
                 // diagnostics render fn types in the same form users
@@ -607,8 +630,93 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
         | Type::Bool
         | Type::String
         | Type::Unit
+        | Type::Rigid(_)
         | Type::Error
         | Type::Never => Vec::new(),
+    }
+}
+
+/// The type `ty` with each annotation variable of `rigid` written as
+/// the rigid variable it is inside its declaration.
+pub fn rigidify(ty: &Type, rigid: &[RigidId]) -> Type {
+    if rigid.is_empty() {
+        return ty.clone();
+    }
+    let mapping: HashMap<TyVar, Type> = rigid.iter().map(|r| (r.var, Type::Rigid(*r))).collect();
+    substitute_vars(ty, &mapping)
+}
+
+/// The type `ty` with each rigid variable written as the variable a
+/// scheme quantifies, and those variables, in the order they appear.
+pub fn unrigidify(ty: &Type) -> (Type, Vec<TyVar>) {
+    let mut vars = Vec::new();
+    let ty = map_rigid(ty, &mut |r| {
+        if !vars.contains(&r.var) {
+            vars.push(r.var);
+        }
+        Type::Var(r.var)
+    });
+    (ty, vars)
+}
+
+/// The type `ty` with each of the rigid variables `own` written as the
+/// variable a scheme quantifies, and those of them it mentions.
+pub fn release_rigid(ty: &Type, own: &[RigidId]) -> (Type, Vec<TyVar>) {
+    let mut vars = Vec::new();
+    let ty = map_rigid(ty, &mut |r| {
+        if !own.contains(&r) {
+            return Type::Rigid(r);
+        }
+        if !vars.contains(&r.var) {
+            vars.push(r.var);
+        }
+        Type::Var(r.var)
+    });
+    (ty, vars)
+}
+
+/// `ty` with each rigid variable replaced by what `f` gives for it.
+fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
+    match ty {
+        Type::Rigid(r) => f(*r),
+        Type::Fun(params, ret) => {
+            let params = params.iter().map(|p| map_rigid(p, f)).collect();
+            Type::Fun(params, Box::new(map_rigid(ret, f)))
+        }
+        Type::List(inner) => Type::List(Box::new(map_rigid(inner, f))),
+        Type::Range(inner) => Type::Range(Box::new(map_rigid(inner, f))),
+        Type::Set(inner) => Type::Set(Box::new(map_rigid(inner, f))),
+        Type::Channel(inner) => Type::Channel(Box::new(map_rigid(inner, f))),
+        Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| map_rigid(e, f)).collect()),
+        Type::Record(name, fields) => Type::Record(
+            *name,
+            fields.iter().map(|(n, t)| (*n, map_rigid(t, f))).collect(),
+        ),
+        Type::Generic(name, args) => {
+            Type::Generic(*name, args.iter().map(|a| map_rigid(a, f)).collect())
+        }
+        Type::Map(k, v) => Type::Map(Box::new(map_rigid(k, f)), Box::new(map_rigid(v, f))),
+        Type::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } => Type::AssocProj {
+            receiver: Box::new(map_rigid(receiver, f)),
+            trait_name: *trait_name,
+            assoc_name: *assoc_name,
+        },
+        Type::AnonRecord { fields, tail } => Type::AnonRecord {
+            fields: fields.iter().map(|(n, t)| (*n, map_rigid(t, f))).collect(),
+            tail: tail.clone(),
+        },
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Var(_)
+        | Type::Error
+        | Type::Never => ty.clone(),
     }
 }
 

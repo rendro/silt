@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type mismatch: expected <_ as A>::Item, got <_ as B>::Item
+-- stderr-contains: type mismatch: expected <a as A>::Item, got <a as B>::Item
 trait A {
   type Item
   fn ai(self) -> Self::Item

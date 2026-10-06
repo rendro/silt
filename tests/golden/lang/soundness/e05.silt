@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 0
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: no method 'loud' for type 'String'
+-- An impl's method adds a `where` bound its trait does not declare, so a
+-- call through the trait does not owe it.
+trait Loud { fn loud(self) -> String }
+trait Loud for Int { fn loud(self) -> String { "INT" } }
+trait Shw { fn shw(self, x: a) -> String }
+trait Shw for Bool { fn shw(self, x: a) -> String where a: Loud { x.loud() } }
+fn call(s: t, v: String) -> String where t: Shw { s.shw(v) }
+fn main() { println(call(true, "s")) }

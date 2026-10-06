@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A method the trait declares for every `a` cannot be implemented for
+-- Int only; an impl that names the variable differently is the same
+-- method.
+-- stderr-contains: type mismatch: expected a, got Int
+-- stderr-contains: trait_sig__impl_less_general_than_trait.silt:11:23
+-- stderr-not-contains: silt:10:
+trait Wrap { fn wrap(self, x: a) -> List(a) }
+trait Wrap for Int { fn wrap(self, x: b) -> List(b) { [x] } }
+trait Wrap for Bool { fn wrap(self, x: Int) -> List(Int) { [x] } }
+fn main() { println(1.wrap("s")) }

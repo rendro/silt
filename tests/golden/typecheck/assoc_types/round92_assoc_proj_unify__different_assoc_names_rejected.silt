@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type mismatch: expected <_ as Pair>::First, got <_ as Pair>::Second
+-- stderr-contains: type mismatch: expected <a as Pair>::First, got <a as Pair>::Second
 trait Pair {
   type First
   type Second

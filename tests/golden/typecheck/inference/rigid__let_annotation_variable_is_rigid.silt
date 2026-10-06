@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A type variable a `let` annotation introduces is rigid for that let,
+-- in a body and at top level: the value cannot decide it.
+-- stderr-contains: rigid__let_annotation_variable_is_rigid.silt:9:1
+-- stderr-contains: rigid__let_annotation_variable_is_rigid.silt:10:1
+-- stderr-contains: rigid__let_annotation_variable_is_rigid.silt:12:14
+-- stderr-contains: type mismatch: expected a, got Int
+let k: Fn(a) -> a = { y -> 1 }
+let n: a = 1
+fn main() {
+  let x: a = 1
+  println(x)
+}

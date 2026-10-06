@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 0
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
+-- error[runtime]: type 'Fn' does not implement Equal (after printing the function with its record)
+-- A default body interpolates, compares and orders `self`; the impl is
+-- for a record that holds a function.
+type F { f: Fn(Int) -> Int }
+trait S {
+  fn s(self) -> String { "{self}" }
+  fn e(self) -> Bool { self == self }
+  fn c(self) -> Bool { self < self }
+}
+trait S for F {}
+fn main() {
+  let x = F { f: { a -> a } }
+  println(x.s())
+  println(x.e())
+  println(x.c())
+}

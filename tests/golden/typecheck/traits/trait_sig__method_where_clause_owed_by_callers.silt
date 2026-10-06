@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- Every call of a trait method owes the method's own bounds: on a value
+-- of an implementing type, and through a bounded type variable.
+-- stderr-contains: trait_sig__method_where_clause_owed_by_callers.silt:13:
+-- stderr-contains: trait_sig__method_where_clause_owed_by_callers.silt:15:
+-- stderr-contains: type 'String' does not implement trait 'Loud'
+-- stderr-not-contains: owed_by_callers.silt:14:
+trait Loud { fn loud(self) -> String }
+trait Loud for Int { fn loud(self) -> String { "INT" } }
+trait Shw { fn shw(self, x: a) -> String where a: Loud }
+trait Shw for Bool { fn shw(self, x) { x.loud() } }
+fn call(s: t, v: String) -> String where t: Shw { s.shw(v) }
+fn call_ok(s: t, v: Int) -> String where t: Shw { s.shw(v) }
+fn main() { println(true.shw("s")) }

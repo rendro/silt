@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- `trait Get for Box` is an impl for every `Box(a)`: its body cannot
+-- take the payload for an Int.
+-- stderr-contains: type mismatch: expected Int, got a
+-- stderr-contains: trait_sig__impl_for_bare_target_is_for_every_argument.silt:9:
+type Box(a) { Box(a) }
+trait Get { fn get(self) -> Int }
+trait Get for Box { fn get(self) -> Int { match self { Box(v) -> v } } }
+fn main() {
+  println(Box(1).get())
+  println(Box("s").get() + 1)
+}

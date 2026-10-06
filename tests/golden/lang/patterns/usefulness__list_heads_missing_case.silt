@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: non-exhaustive match
+-- `[Some(n), ..rest]` and `[]` leave `[None, ...]` out.
+fn heads(xs: List(Option(Int))) -> Int {
+  match xs {
+    [] -> -1
+    [Some(n), ..rest] -> n
+  }
+}
+fn main() {
+  println(heads([None]))
+}
