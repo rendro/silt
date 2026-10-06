@@ -247,13 +247,18 @@ The row is then the record itself: what a function gives back through
 the row is still a `Person`, with its methods and patterns.
 
 ```silt
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 
-fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
+fn id_name(p: { name: String, ...r }) -> { name: String, ...r } {
+  p
+}
 
 fn main() {
-  let q = id_name(Person { name: "Bob", age: 42 })   -- q is a Person
-  println(q.age)                                     -- 42
+  let q = id_name(Person { name: "Bob", age: 42 }) -- q is a Person
+  println(q.age) -- 42
 }
 ```
 
@@ -286,7 +291,9 @@ fields do, `Display`, `Equal` and `Hash`, for a function that prints,
 compares for equality or hashes the whole record:
 
 ```silt
-fn show(p: {name: String, ...r}) -> String where r: Display { "{p}" }
+fn show(p: { name: String, ...r }) -> String where r: Display {
+  "{p}"
+}
 ```
 
 Any other bound on a row variable (`where r: Compare`, a trait of the
@@ -327,7 +334,7 @@ row: `fn ext(p) { {...p, age: 30} }` takes any record that has no
 `age`, and a call with one that has is an error at the call:
 
 ```silt
-ext({age: 1})
+ext({ age: 1 })
 -- error: cannot extend the record with field 'age': it has one already
 -- help: a record is extended, never overwritten: update the field with `r.{ age: ... }`
 ```
@@ -340,12 +347,15 @@ or replaces the record's by name. The type of the base may be decided
 anywhere in the function, before the spread or after it:
 
 ```silt
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 
 fn main() {
   let p = Person { name: "Bob", age: 42 }
-  let r = {...p, city: "x"}      -- {name: String, age: Int, city: String}
-  println(r.city)                -- x
+  let r = { ...p, city: "x" } -- {name: String, age: Int, city: String}
+  println(r.city) -- x
 }
 ```
 
@@ -384,15 +394,18 @@ and whatever the record is: the rest of a declared record is an
 anonymous record too, never the declared type.
 
 ```silt
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 
 fn main() {
   let p = { name: "A", age: 30 }
   match p {
     { name: nm } -> println(nm) -- "A"
   }
-  let {name, ...rest} = Person { name: "B", age: 42 }   -- rest is {age: Int}
-  println(rest.age)                -- 42
+  let { name, ...rest } = Person { name: "B", age: 42 } -- rest is {age: Int}
+  println(rest.age) -- 42
 }
 ```
 
