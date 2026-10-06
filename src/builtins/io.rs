@@ -8,7 +8,7 @@ use super::common::value_kind;
 use crate::builtins::time::make_datetime;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{Step, Vm, VmError};
 
 /// Program arguments forwarded by the CLI for `io.args()`.
 ///
@@ -158,14 +158,23 @@ pub fn call_io_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError>
     })
 }
 
+/// The error of an `io` function for a reason given as text: its
+/// wait timed out, or its operation could not run.
+fn io_unknown_err(msg: &str) -> Value {
+    io_err(Value::variant(
+        bv::IO_UNKNOWN,
+        vec![Value::String(msg.to_string())],
+    ))
+}
+
 /// Dispatch `io.<name>(args)`.
-pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
     match name {
         "inspect" => {
             if args.len() != 1 {
                 return Err(VmError::new("io.inspect takes 1 argument".into()));
             }
-            Ok(Value::String(args[0].format_silt()))
+            Ok(Step::Done(Value::String(args[0].format_silt())))
         }
         "read_file" => {
             if args.len() != 1 {
@@ -178,10 +187,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 )));
             };
             let path = path.clone();
-            vm.submit_io_or_run(
-                args,
-                crate::runtime::completion::IoCompletion::new(),
-                &crate::runtime::completion::io_unknown_timeout_err,
+            vm.io(
+                "io.read_file",
+                io_unknown_err,
                 move || match std::fs::read_to_string(&path) {
                     Ok(content) => Value::variant(bv::OK, vec![Value::String(content)]),
                     Err(e) => io_result_err(&e, &path),
@@ -201,34 +209,26 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             };
             let path = path.clone();
             let content = content.clone();
-            vm.submit_io_or_run(
-                args,
-                crate::runtime::completion::IoCompletion::new(),
-                &crate::runtime::completion::io_unknown_timeout_err,
+            vm.io(
+                "io.write_file",
+                io_unknown_err,
                 move || match std::fs::write(&path, &content) {
                     Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
                     Err(e) => io_result_err(&e, &path),
                 },
             )
         }
-        "read_line" => vm.submit_io_or_run(
-            args,
-            crate::runtime::completion::IoCompletion::new(),
-            &crate::runtime::completion::io_unknown_timeout_err,
-            move || {
-                let mut line = String::new();
-                match std::io::stdin().read_line(&mut line) {
-                    // Ok(0) means EOF — surface as Err(IoUnexpectedEof) so
-                    // match-against-Err loops terminate cleanly instead of
-                    // spinning on "".
-                    Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, vec![])),
-                    Ok(_) => {
-                        Value::variant(bv::OK, vec![Value::String(line.trim_end().to_string())])
-                    }
-                    Err(e) => io_result_err(&e, ""),
-                }
-            },
-        ),
+        "read_line" => vm.io("io.read_line", io_unknown_err, move || {
+            let mut line = String::new();
+            match std::io::stdin().read_line(&mut line) {
+                // Ok(0) means EOF — surface as Err(IoUnexpectedEof) so
+                // match-against-Err loops terminate cleanly instead of
+                // spinning on "".
+                Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, vec![])),
+                Ok(_) => Value::variant(bv::OK, vec![Value::String(line.trim_end().to_string())]),
+                Err(e) => io_result_err(&e, ""),
+            }
+        }),
         "args" => {
             // Round-74: return only the program args explicitly forwarded
             // by the CLI past a `--` separator (e.g.
@@ -239,7 +239,7 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             // first 3. The `--` separator + dedicated forwarding channel
             // collapses that to one obvious shape.
             let args_list: Vec<Value> = program_args().into_iter().map(Value::String).collect();
-            Ok(Value::List(Arc::new(args_list)))
+            Ok(Step::Done(Value::List(Arc::new(args_list))))
         }
         _ => Err(VmError::new(format!("unknown io function: {name}"))),
     }
@@ -599,7 +599,7 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("env.set takes 2 arguments".into()));
             }
-            if vm.is_scheduled_task {
+            if vm.spawned {
                 return Err(VmError::new(
                     "env.set cannot be called from a spawned task".into(),
                 ));
@@ -619,7 +619,7 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("env.remove takes 1 argument".into()));
             }
-            if vm.is_scheduled_task {
+            if vm.spawned {
                 // Same rationale as env.set: mutating the process-wide
                 // environment from a spawned task races with any other
                 // task reading the env, and libc's setenv/unsetenv are

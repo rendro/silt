@@ -5,7 +5,7 @@ use crate::typeinfo::bv;
 
 /// Helper: build a function of `arity` parameters with the emitter.
 fn make_function_of(arity: u8, build: impl FnOnce(&mut Emitter)) -> Arc<Function> {
-    let mut emitter = Emitter::new("<test>".to_string(), arity);
+    let mut emitter = Emitter::new("<test>".to_string(), usize::from(arity), span()).unwrap();
     build(&mut emitter);
     Arc::new(emitter.finish(0).unwrap_or_else(|e| panic!("{e:?}")))
 }
@@ -2337,17 +2337,16 @@ fn test_scheduler_task_failure_propagates() {
 
 // ── Higher-order builtin suspension tests (G4) ───────────────────────
 //
-// These tests exercise `iterate_builtin` / `iterate_builtin_with_acc` in
-// src/builtins/collections.rs when the user callback yields control back
-// to the scheduler (via `task.join(task.spawn(...))`). They verify that
-// the builtin's internal state — especially the `BuiltinAcc::Fold`
-// accumulator — survives a suspension and resume cleanly.
+// These tests exercise the iteration frame of the higher-order builtins
+// (`vm::iterate`) when the task parks inside the user callback (via
+// `task.join(task.spawn(...))`). They verify that the frame's state —
+// especially a fold's running value — is the same when the task goes
+// on.
 
 #[test]
 fn test_scheduler_list_fold_with_yielding_callback() {
-    // list.fold's accumulator must round-trip across a suspension. If the
-    // BuiltinAcc::Fold state is corrupted during suspend/resume, the sum
-    // will be wrong (likely 0 or a partial value).
+    // list.fold's accumulator must round-trip across a suspension. If it
+    // were lost, the sum would be wrong (likely 0 or a partial value).
     let result = run_vm(
         r#"
             import task
@@ -2556,7 +2555,8 @@ fn test_builtin_panic_converted_to_vm_error() {
     let mut vm = Vm::new(crate::HostIo::process());
     let err = vm
         .dispatch_builtin("__test_panic_builtin.boom", &[])
-        .expect_err("expected VmError from panicking builtin");
+        .err()
+        .expect("expected VmError from panicking builtin");
     let msg = format!("{err}");
     assert!(
         msg.contains("builtin module") && msg.contains("panicked"),
@@ -2589,7 +2589,8 @@ fn test_println_rejects_wrong_arity() {
     // println with 0 args
     let err = vm
         .dispatch_builtin("println", &[])
-        .expect_err("expected VmError for println with 0 args");
+        .err()
+        .expect("expected VmError for println with 0 args");
     let msg = format!("{err}");
     assert!(
         msg.contains("println takes 1 argument, got 0"),
@@ -2599,7 +2600,8 @@ fn test_println_rejects_wrong_arity() {
     // println with 2 args
     let err = vm
         .dispatch_builtin("println", &[Value::Int(1), Value::Int(2)])
-        .expect_err("expected VmError for println with 2 args");
+        .err()
+        .expect("expected VmError for println with 2 args");
     let msg = format!("{err}");
     assert!(
         msg.contains("println takes 1 argument, got 2"),
@@ -2609,7 +2611,8 @@ fn test_println_rejects_wrong_arity() {
     // print with 0 args
     let err = vm
         .dispatch_builtin("print", &[])
-        .expect_err("expected VmError for print with 0 args");
+        .err()
+        .expect("expected VmError for print with 0 args");
     let msg = format!("{err}");
     assert!(
         msg.contains("print takes 1 argument, got 0"),
@@ -2619,7 +2622,8 @@ fn test_println_rejects_wrong_arity() {
     // print with 2 args
     let err = vm
         .dispatch_builtin("print", &[Value::Int(1), Value::Int(2)])
-        .expect_err("expected VmError for print with 2 args");
+        .err()
+        .expect("expected VmError for print with 2 args");
     let msg = format!("{err}");
     assert!(
         msg.contains("print takes 1 argument, got 2"),
@@ -3004,5 +3008,147 @@ mod type_confusion {
             .expect_err("division by zero stops the program");
         assert!(!err.type_confusion);
         assert_eq!(err.to_diagnostic().code, Code::RuntimeError);
+    }
+}
+
+// ── A builtin's frame is told when it is dropped ─────────────────────
+//
+// `Native::abandon` is how `task.deadline` restores the outer deadline
+// and `postgres.transact` rolls back. It must be called exactly once on
+// every way a VM's calls end without the frame finishing.
+
+mod abandon {
+    use super::*;
+    use crate::runtime::handle::TaskHandle;
+    use crate::runtime::sync::{Arm, Channel, Wait};
+    use crate::scheduler::Task;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    /// A frame that fails, or parks on a channel nobody sends to, and
+    /// counts how often it is abandoned.
+    struct Probe {
+        abandoned: Arc<AtomicUsize>,
+        park_on: Option<Arc<Channel>>,
+    }
+
+    impl Native for Probe {
+        fn name(&self) -> &str {
+            "test.probe"
+        }
+
+        fn resume(&mut self, _vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+            match &self.park_on {
+                Some(ch) => Ok(Step::Park(Wait::new(vec![Arm::Recv(ch.clone())]))),
+                None => Err(VmError::new("the probe failed".into())),
+            }
+        }
+
+        fn abandon(&mut self, _vm: &mut Vm) {
+            self.abandoned.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A VM whose one call in progress is a probe's.
+    fn with_probe(mut vm: Vm, park_on: Option<Arc<Channel>>) -> (Vm, Arc<AtomicUsize>) {
+        let abandoned = Arc::new(AtomicUsize::new(0));
+        vm.push_native_frame(Box::new(Probe {
+            abandoned: abandoned.clone(),
+            park_on,
+        }));
+        (vm, abandoned)
+    }
+
+    /// The task of `main` that runs a probe, and its handle.
+    fn spawn_probe(
+        main: &mut Vm,
+        park_on: Option<Arc<Channel>>,
+    ) -> (Arc<TaskHandle>, Arc<AtomicUsize>) {
+        let (mut vm, abandoned) = with_probe(main.spawn_child(), park_on);
+        vm.spawned = true;
+        let id = main.next_task_id();
+        let handle = Arc::new(TaskHandle::new(id));
+        main.scheduler()
+            .submit(Task {
+                id,
+                vm,
+                handle: handle.clone(),
+            })
+            .unwrap();
+        (handle, abandoned)
+    }
+
+    /// Wait until the probe has been abandoned, then long enough for a
+    /// second time to show, and give the count.
+    fn settled(abandoned: &AtomicUsize) -> usize {
+        let limit = Instant::now() + Duration::from_secs(10);
+        while abandoned.load(Ordering::SeqCst) == 0 && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        abandoned.load(Ordering::SeqCst)
+    }
+
+    /// Wait until the task of a parking probe is parked.
+    fn parked(ch: &Channel) {
+        let limit = Instant::now() + Duration::from_secs(10);
+        while ch.waiting().0 == 0 && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(ch.waiting().0 > 0, "the task did not park");
+    }
+
+    #[test]
+    fn an_error_on_the_main_thread_abandons_the_frame_once() {
+        let (mut vm, abandoned) = with_probe(Vm::new(crate::HostIo::process()), None);
+        let run = vm.run_frames(0, usize::MAX);
+        let err = vm.finish_run(run, 0, 0).unwrap_err();
+        assert_eq!(err.message, "the probe failed");
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+        drop(vm);
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_error_in_a_task_abandons_the_frame_once() {
+        let mut main = Vm::new(crate::HostIo::process());
+        let (handle, abandoned) = spawn_probe(&mut main, None);
+        let wait = Wait::new(vec![Arm::Cell(handle.done())]);
+        main.scheduler().block_thread(wait, false).unwrap();
+        let err = handle.try_get().unwrap().unwrap_err();
+        handle.mark_joined();
+        assert_eq!(err.message, "the probe failed");
+        assert_eq!(settled(&abandoned), 1);
+        drop(main);
+        assert_eq!(settled(&abandoned), 1);
+    }
+
+    #[test]
+    fn a_cancel_of_a_parked_task_abandons_the_frame_once() {
+        let mut main = Vm::new(crate::HostIo::process());
+        let ch = Channel::new(main.next_channel_id(), 0);
+        let (handle, abandoned) = spawn_probe(&mut main, Some(ch.clone()));
+        parked(&ch);
+        assert_eq!(abandoned.load(Ordering::SeqCst), 0);
+        // What `task.cancel` does.
+        main.scheduler().cancel(&handle);
+        assert_eq!(settled(&abandoned), 1);
+        drop(main);
+        assert_eq!(settled(&abandoned), 1);
+    }
+
+    #[test]
+    fn the_end_of_the_program_abandons_the_frame_of_a_parked_task_once() {
+        let mut main = Vm::new(crate::HostIo::process());
+        let ch = Channel::new(main.next_channel_id(), 0);
+        let (handle, abandoned) = spawn_probe(&mut main, Some(ch.clone()));
+        parked(&ch);
+        assert_eq!(abandoned.load(Ordering::SeqCst), 0);
+        drop(main);
+        assert_eq!(settled(&abandoned), 1);
+        // The channel and the handle outlive the task: it was not
+        // their end that dropped it.
+        drop((ch, handle));
+        assert_eq!(abandoned.load(Ordering::SeqCst), 1);
     }
 }

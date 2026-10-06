@@ -35,8 +35,8 @@ repros/type_soundness/c2.silt	-	obsolete	fn lambda; ported: lang/soundness/c2.si
 repros/type_soundness/c3.silt	holds	reject E0314	TS-2.1: `fn g(x) { x.greet() }` called with a String (decision D1)
 repros/type_soundness/c4.silt	holds	reject E0308	TS-2.1: `x.greet()` on an annotated variable that has no bound
 repros/type_soundness/c5.silt	-	obsolete	fn lambda; ported: lang/soundness/c5.silt
-repros/type_soundness/cv2.silt	pending:3c	reject E0301	TS-6: an anonymous record literal passed as a nominal `P`
-repros/type_soundness/cv3.silt	pending:3c	reject E0301	TS-6: nominal records through a closed anonymous type; `==` is not transitive
+repros/type_soundness/cv2.silt	holds	reject E0301	TS-6: an anonymous record literal passed as a nominal `P`
+repros/type_soundness/cv3.silt	holds	reject E0301	TS-6: nominal records through a closed anonymous type; `==` is not transitive
 repros/type_soundness/cv4.silt	holds	accept	control: the unit pattern matches (was a compiler defect)
 repros/type_soundness/d1.silt	holds	reject E0301	TS-2.1: a method call on a type variable is a cast (String to Int)
 repros/type_soundness/d2.silt	holds	reject E0335	the annotated form of d1: `-> b` is introduced by no parameter
@@ -207,13 +207,13 @@ repros/type_soundness/r1.silt	holds	reject E0301	two nominal records with the sa
 repros/type_soundness/r10.silt	holds	reject E0301	a spread over an unannotated parameter retypes the field
 repros/type_soundness/r2.silt	holds	reject E0319	TS-2.5: a record update on a type variable does not constrain the field
 repros/type_soundness/r3.silt	-	obsolete	`= expr` function body; ported: lang/soundness/r3.silt
-repros/type_soundness/r4.silt	pending:3c	reject E0301	TS-6: an anonymous record literal passed as a nominal `P`
-repros/type_soundness/r4b.silt	pending:3c	reject E0301	TS-6: one anonymous value is a `P` and a `Q`
+repros/type_soundness/r4.silt	holds	reject E0301	TS-6: an anonymous record literal passed as a nominal `P`
+repros/type_soundness/r4b.silt	holds	reject E0301	TS-6: one anonymous value is a `P` and a `Q`
 repros/type_soundness/r5.silt	holds	reject E0301	a record update may not change a field's type
 repros/type_soundness/r6.silt	holds	reject E0319	an update of a record nothing decides needs an annotation
-repros/type_soundness/r7.silt	pending:3c	reject E0301	TS-6: a spread overwrites a field hidden behind the row variable
+repros/type_soundness/r7.silt	holds	reject E0301	TS-6: a spread overwrites a field hidden behind the row variable
 repros/type_soundness/r8.silt	holds	reject E0301	as r7, with the result used as a String
-repros/type_soundness/r9.silt	pending:3c	reject E0301	TS-6: as r7, with the overwritten field used as an Int
+repros/type_soundness/r9.silt	holds	reject E0301	TS-6: as r7, with the overwritten field used as an Int
 repros/type_soundness/s1.silt	holds	reject E0334	a type named like a builtin type
 repros/type_soundness/s2.silt	holds	reject E0334	a type named like a builtin type
 repros/type_soundness/s3.silt	holds	reject E0301	TS-3.2: a local `Option` is not the prelude's

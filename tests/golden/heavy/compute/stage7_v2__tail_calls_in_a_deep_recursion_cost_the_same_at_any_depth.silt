@@ -1,0 +1,56 @@
+-- timeout: 120
+-- A return costs the same however many tail calls the calls in progress
+-- have made: a recursion in which every second call is a tail call takes
+-- about twice as long when it is twice as deep (it took four times as
+-- long when every return went through the record of all the callers
+-- that tail calls had replaced). The same for a function that
+-- `list.fold` calls and whose body is a tail call.
+import int
+import list
+import time
+
+fn hop(n) {
+  plain(n)
+}
+
+fn plain(n) {
+  match n {
+    0 -> 0
+    _ -> 1 + hop(n - 1)
+  }
+}
+
+fn folded(n) {
+  match n {
+    0 -> 0
+    _ -> 1 + list.fold([n - 1], 0) { _, x -> folded(x) }
+  }
+}
+
+fn timed(run, n) {
+  let started = time.now()
+  let depth = run(n)
+  let took = time.now().epoch_ns - started.epoch_ns
+  match depth == n {
+    true -> took
+    false -> panic("wrong depth {depth}")
+  }
+}
+
+fn best(run, n) {
+  list.fold(1..2, timed(run, n)) { least, _ -> int.min(least, timed(run, n)) }
+}
+
+fn verdict(name, run) {
+  let short = best(run, 40000)
+  let long = best(run, 80000)
+  match long * 2 < short * 7 {
+    true -> "{name}: twice the depth, about twice the time"
+    false -> "{name}: depth 40000 {short / 1000000} ms, depth 80000 {long / 1000000} ms"
+  }
+}
+
+fn main() {
+  println(verdict("plain", plain))
+  println(verdict("folded", folded))
+}

@@ -186,9 +186,9 @@ requires every `match` to cover it (or use a catch-all arm).
 
 This lets you distinguish "nothing right now" from "nothing ever again."
 
-On a rendezvous channel, `try_receive` returns `Empty` even while a sender
-is parked on it: a parked sender hands its value only to a receiver that
-waits (see [Unbuffered channels](#unbuffered-channels-true-rendezvous)).
+On a rendezvous channel, `try_receive` takes the value of a sender that is
+parked on it: the sender waits with its value until somebody takes it (see
+[Unbuffered channels](#unbuffered-channels-true-rendezvous)).
 
 ### Iterating: `channel.each(ch) { val -> ... }`
 
@@ -222,16 +222,13 @@ never buffered. When `channel.send` returns, the value has been handed to a
 receiver that was waiting for it; the receiver may not have run yet. Use a
 reply channel if the sender must know that the value was processed.
 
-The hand-off happens between a receiver that waits and a sender that waits.
-The non-blocking operations do not wait, so they only meet a counterpart
-that is already waiting: `channel.try_send` succeeds only while a receiver
-is parked on the channel, and `channel.try_receive` does **not** take the
-value of a parked sender -- it returns `Empty` even while a sender waits,
-because a parked sender keeps its value until a receiver registers.
-`channel.recv_timeout` with a zero duration behaves like `try_receive`.
-A blocking `channel.receive`, a `Recv` arm of `channel.select`, and
-`channel.recv_timeout` with a positive duration register as receivers, and
-the parked sender then hands its value over.
+A sender on a rendezvous channel waits until its value is taken, and
+whoever takes it completes the send: a blocking `channel.receive`, a `Recv`
+arm of `channel.select`, a `channel.recv_timeout`, or a `channel.try_receive`.
+The non-blocking operations do not wait themselves, so they only meet a
+counterpart that is already waiting: `channel.try_send` succeeds only while
+a receiver is parked on the channel, and `channel.try_receive` gives a value
+only while a sender is.
 
 ```silt
 let ch = channel.new() -- capacity 0, true rendezvous
@@ -296,13 +293,11 @@ rather than a `ChannelResult(a)`:
 - `Err(ChannelTimeout)` -- `dur` elapsed with no value and no close.
 - `Err(ChannelClosed)` -- the channel is closed and its buffer is empty.
 
-A value already sitting in the buffer wins over an expired timer: the
-non-blocking path is always tried first, so a ready value is never
-preempted by the deadline. A `Duration` of zero gives try-receive semantics
-(no timer is scheduled): on a rendezvous channel it returns
-`Err(ChannelTimeout)` even while a sender is parked, because a parked sender
-hands its value only to a receiver that waits. With a positive duration the
-call waits as a receiver, and a parked sender hands its value over.
+A value that is there wins over an expired timer: one in the buffer, or one
+held by a sender that waits on a rendezvous channel. The non-blocking path
+is always tried first, so a ready value is never preempted by the deadline.
+A `Duration` of zero gives try-receive semantics (no timer is scheduled): it
+returns such a value, and `Err(ChannelTimeout)` when there is none.
 Negative durations are an error. Positive sub-millisecond durations are
 rounded up to one millisecond, so the caller always waits at least one timer
 tick.
@@ -389,34 +384,29 @@ dismisses the failure, so it is not reported as a failure that nobody joined
 and does not make the program exit with status 1 (see
 [Failures that nobody joins](#failures-that-nobody-joins)). A later
 `task.join(h)` still raises the task's own error, because the handle keeps
-the result that came first. Its effect on the running task
+the result that came first. Its effect on the task
 depends on where that task is at the moment of cancellation:
 
 - **Task is currently parked** (blocked on a channel receive/send, a
-  `task.join`, a `time.sleep`, a timer, or similar): the pending wake
-  registrations are torn down, the scheduler drops the task from its live
-  set, and the task will not be resumed. The handle resolves to
-  `Err("cancelled")`.
-- **Task is currently running** (executing a worker slice between parks, or
-  in a tight non-yielding loop): the handle's result is set to
-  `Err("cancelled")` immediately, but the running slice continues to
-  execute until its next park point or natural completion. Any side effects
-  the slice performs before it next parks — writes to shared cells, spawns
-  of new tasks, channel sends, I/O — run to completion. When the task
-  eventually parks or finishes, its own completion result is discarded
-  (first-writer-wins: the cancel already won), and a subsequent
-  `task.join(h)` on the cancelled handle raises `joined task failed:
-  cancelled` as a runtime error.
+  `channel.select`, a `task.join`, a `time.sleep`, I/O, or similar): its
+  wait ends without taking or sending anything, and the task is dropped.
+  A value sent afterwards goes to the next receiver, not to it.
+- **Task is currently running** (executing a slice between parks): the
+  handle's result is set to `Err("cancelled")` immediately, and the task
+  runs no further than the end of its current slice (a few thousand
+  steps). Side effects of that slice still happen. If the slice reaches a
+  blocking operation, the task ends there instead of waiting.
 - **Task is queued but not yet running** (spawned but not yet picked up
-  by the scheduler): behaviour matches the running case. The handle's
-  result is set to `Err("cancelled")` immediately, but if the scheduler
-  later picks up the task it may still run a slice before its own
-  completion result is discarded — same first-writer-wins rule. This
-  case mirrors the `task.cancel` section of
-  `docs/stdlib/channel-task.md`; the two are kept in sync deliberately.
+  by a worker, or woken and waiting for one): it is dropped without
+  running again.
 
-`task.cancel` is therefore **not** a synchronous stop signal. Treat it as a
-request that the handle be marked cancelled. Because `task.join` raises on
+In every case a `task.join(h)` on the cancelled handle raises `joined task
+failed: cancelled` as a runtime error. This matches the `task.cancel`
+section of `docs/stdlib/channel-task.md`; the two are kept in sync
+deliberately.
+
+`task.cancel` does not wait for the task to stop: a running slice may still
+finish after it returns. Because `task.join` raises on
 a cancelled handle (it does not return `Err("cancelled")` as a value), you
 typically want one of two patterns when cancellation is an expected outcome:
 
@@ -481,7 +471,7 @@ more than one frame. The rules:
   `main` returns (or fails). A task that is still running then is not a
   failure; if it fails afterwards, while the process shuts down, it is not
   reported.
-- **A deadlock shows its cause.** When the main thread is told
+- **A deadlock shows its cause.** When `main` is told
   `deadlock on main thread`, the failures reported with it are usually the
   reason: a producer that failed before it sent.
 
@@ -661,19 +651,18 @@ from a pseudo-random index, so if multiple channels are ready, any one of them
 may win. Readers must not assume that earlier entries in the list have
 priority -- the choice is fair, not ordered.
 
-If no channel is ready, the task is parked until one of the channels becomes
-ready (via waker-based notification). If a closed channel is selected during
-the sweep, it returns `(channel, Closed)` for that channel. If no tasks can
-make progress and no channels have data, it detects a deadlock and reports an
-error.
+If no branch is ready, the task is parked on all of them at once. Whoever
+makes one possible (a sender, a receiver, a close) completes that branch for
+the select, and only that one: a select performs exactly one of its
+operations. A closed channel is ready: its branch gives `(channel, Closed)`.
+A select never meets itself: a `Send` and a `Recv` on the same channel in
+one select do not complete each other. If no task can make progress, the
+deadlock is reported.
 
-Channels returned by a `stream` function are the exception. A stream stage is
-not a task, so silt cannot tell whether it will still deliver. When the main
-thread waits on such a channel with `channel.receive`, `channel.each`, or a
-`channel.select` that has a receive on it, no deadlock is reported: the wait
-ends when a value arrives or the channel closes. A stream that never delivers
-and never closes therefore hangs. The usual cause is a channel feeding the
-pipeline that was never closed with `channel.close`.
+A stream stage counts as a task here. A wait on the output of a pipeline
+that can never deliver and never closes (the usual cause is a channel
+feeding the pipeline that was never closed with `channel.close`) is a
+deadlock like any other, and is reported.
 
 
 ## 5. Patterns
@@ -1136,11 +1125,10 @@ task off a busy worker.
 
 Silt's I/O builtins (see the [Blocking operations](#blocking-operations) table
 below) normally block indefinitely while they wait on the OS. For deployments
-where a stuck syscall or hung remote peer must not freeze a task forever, the
-scheduler runs a watchdog that can surface a timeout error to any I/O builtin
-that blocks for too long.
+where a stuck syscall or hung remote peer must not freeze a task forever, a
+task's wait for an I/O builtin can be given an end.
 
-The `SILT_IO_TIMEOUT` environment variable enables this watchdog globally.
+The `SILT_IO_TIMEOUT` environment variable sets one for every such wait.
 Setting `SILT_IO_TIMEOUT=5s` makes every I/O
 builtin that blocks longer than that duration return the module's own typed
 timeout variant instead of its normal value:
@@ -1157,7 +1145,7 @@ immediately with no error.
 
 Accepted format: a suffixed duration only — `5s`, `500ms`, `2m`, `1h`.
 A bare integer with no unit (e.g. `SILT_IO_TIMEOUT=5000`) is NOT accepted; it
-fails to parse and silently disables the watchdog (infinite wait).
+fails to parse and leaves the waits without an end.
 
 ```sh
 # Any I/O that stalls > 5s surfaces the module's typed timeout variant.
@@ -1173,11 +1161,10 @@ timeout path.
 
 #### Caveat: I/O threads continue after timeout
 
-The watchdog is cooperative on the task side only. When the deadline
-elapses, the scheduler writes the module's typed timeout variant (e.g.
-`Err(HttpTimeout)` for an `http.get`, `Err(IoUnknown(msg))` for an
-`io.read_file`) into the pending completion and wakes the parked task
-so it resumes with the timeout error. The OS thread in the I/O pool
+The timeout ends the task's wait, not the operation. When the deadline
+elapses, the parked task resumes with the module's typed timeout variant
+(e.g. `Err(HttpTimeout)` for an `http.get`, `Err(IoUnknown(msg))` for an
+`io.read_file`), at the moment the deadline passes. The OS thread in the I/O pool
 that dispatched the blocking syscall (for example `io.read_file`,
 `http.get`, or an `io.write_file`) is **not** interrupted -- it
 continues executing the syscall until the kernel returns, then
@@ -1213,8 +1200,8 @@ Mitigations:
   a safety net.
 - If you need aggressive timeouts on truly blocking operations, split
   the work into shorter-bounded steps (smaller reads, chunked writes,
-  per-request HTTP timeouts configured at the peer) so a fired
-  watchdog is also close to the syscall boundary.
+  per-request HTTP timeouts configured at the peer) so a timeout
+  that fires is also close to the syscall boundary.
 
 ### Blocking operations
 
@@ -1235,33 +1222,35 @@ None of these block the OS thread. The task is parked and the thread continues
 running other tasks.
 
 I/O operations follow the same transparent yielding pattern as channel
-operations -- no special syntax needed. When a spawned task calls
-`io.read_file` or `http.get`, the operation is dispatched to an I/O pool and
-the task is parked until the result is ready. From the main thread, these
-operations block synchronously, just like channel operations.
+operations -- no special syntax needed. When code calls `io.read_file` or
+`http.get`, the operation is dispatched to an I/O pool and the task is
+parked until the result is ready. `main` is a task like the others here:
+its I/O and its `time.sleep` are waits too, and a `task.deadline` around
+them ends them when it passes.
 
 ### Deadlock detection
 
-When the main thread waits (a `channel.send`, `channel.receive`,
-`channel.each`, `channel.select` or `task.join` called from `main`), silt
-checks whether any task could still end the wait. If none can -- every task
-is parked on a channel or a join that nothing will satisfy -- the wait fails
-with a runtime error that starts with `deadlock on main thread`, and the
-program exits with status 1. Together with that error, silt reports the
-tasks that failed and that nobody joined (`silt run` before it, `silt test`
-under the failing test, after it; see
+A program is deadlocked when `main` waits (a `channel.send`,
+`channel.receive`, `channel.each`, `channel.select` or `task.join`), every
+other task waits too, and nothing is pending that could end one of the
+waits: no timer and no I/O operation. silt sees that at the moment it
+becomes true -- when the last task parks or ends, or the last timer has
+fired -- and the wait of `main` fails with a runtime error that starts with
+`deadlock on main thread`; the program exits with status 1. Together with
+that error, silt reports the tasks that failed and that nobody joined
+(`silt run` before it, `silt test` under the failing test, after it; see
 [Failures that nobody joins](#failures-that-nobody-joins)): a failed
 producer is the usual reason why a counterpart is missing.
 
-A task that waits on a timer counts as able to make progress: a
-`time.sleep`, a `channel.timeout` channel that has not closed yet, a
-`channel.recv_timeout` that has not expired. While such a task exists, no
-deadlock is reported, whether or not the task could ever reach the channel
-that `main` waits on. The verdict comes after the timer has fired, if the
-program is still stuck then. So a background task that sleeps for a minute
-delays the report of an unrelated deadlock by up to a minute. The same holds
-for a task that waits on I/O. Only the main thread gets a deadlock verdict;
-tasks that are stuck while `main` is not waiting on them stay parked.
+A timer that is pending counts as able to end a wait: a `time.sleep`, a
+`channel.timeout` channel that has not closed yet, a `channel.recv_timeout`
+that has not expired. While one is pending, no deadlock is reported, whether
+or not it could ever reach the channel that `main` waits on. The verdict
+comes after the timer has fired, if the program is still stuck then. So a
+background task that sleeps for a minute delays the report of an unrelated
+deadlock by up to a minute. The same holds for an I/O operation that is in
+flight. Only `main` gets a deadlock verdict; tasks that are stuck while
+`main` is not waiting stay parked.
 
 ### Implications of real parallelism
 

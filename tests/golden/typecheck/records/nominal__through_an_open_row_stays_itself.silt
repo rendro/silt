@@ -1,0 +1,20 @@
+-- A declared record fits an open row whose listed fields it has, and
+-- the row type is then the record's own: what comes back is a Person,
+-- with its fields, its methods and its patterns.
+type Person { name: String, age: Int }
+trait Greet { fn greet(self) -> String }
+trait Greet for Person { fn greet(self) -> String { "I am {self.name}" } }
+fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
+fn name_of(p) { p.name }
+fn older(p: Person) -> Person { p.{ age: p.age + 1 } }
+fn main() {
+  let q = id_name(Person { name: "Bob", age: 42 })
+  println(q.age)
+  println(q.greet())
+  println(older(q).age)
+  println(name_of(q))
+  match q { Person { name, age } -> println("{name} {age}") }
+  println(q == Person { name: "Bob", age: 42 })
+  let a = id_name({name: "Al", extra: true})
+  println(a.extra)
+}

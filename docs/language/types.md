@@ -199,7 +199,8 @@ fn main() {
 
 Inside the function `p.name` is the only legal access; `p.age` would be
 rejected, even when the caller passes a record that happens to have an
-`age` field.
+`age` field. The row variable of an annotation stands for whatever the
+caller's record has, and the function may assume nothing about it.
 
 A row variable can be threaded into the return type so the caller's
 extra fields survive the round trip:
@@ -242,9 +243,54 @@ fn main() {
 }
 ```
 
-The reverse direction does not happen — anonymous records do not
-automatically become nominal. Use the constructor (`Person { ... }`)
-when nominal identity matters.
+The row is then the record itself: what a function gives back through
+the row is still a `Person`, with its methods and patterns.
+
+```silt
+type Person { name: String, age: Int }
+
+fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
+
+fn main() {
+  let q = id_name(Person { name: "Bob", age: 42 })   -- q is a Person
+  println(q.age)                                     -- 42
+}
+```
+
+That is the only place a nominal record and an anonymous record type
+meet. An anonymous record is not a `Person`, and a `Person` is not a
+closed anonymous record: converting is written out.
+
+```silt
+fn greet(p: Person) -> String { p.name }
+greet({name: "x", age: 3})
+-- error: type mismatch: expected Person, got {name: String, age: Int}
+-- help: an anonymous record is not a `Person`: write `Person { ... }`
+
+let r: {name: String, age: Int} = Person { name: "x", age: 3 }
+-- error: type mismatch: expected {name: String, age: Int}, got Person
+-- help: a `Person` is not an anonymous record: convert it with a spread, `{...v}`, or take an open row, `{x: T, ...r}`
+```
+
+(A type of another module is written with its module in the help:
+`time.Date { ... }`.)
+
+A value whose fields are read is a record, and `p.greet()` on it calls
+a function held in a field `greet`. A method of a declared record is
+not a field: a function that reads `p.name` and calls `p.greet()` needs
+its parameter annotated, `p: Person`, to call the method.
+
+A row variable stands for the rest of a record's fields, not for a
+type, so the only bounds it takes are the traits a record has when its
+fields do, `Display`, `Equal` and `Hash`, for a function that prints,
+compares for equality or hashes the whole record:
+
+```silt
+fn show(p: {name: String, ...r}) -> String where r: Display { "{p}" }
+```
+
+Any other bound on a row variable (`where r: Compare`, a trait of the
+program) is an error where it is written.
 
 ### Closed rows reject extra fields
 
@@ -276,22 +322,83 @@ fn main() {
 
 Trying to redefine an existing field — `{...p, name: "Bob"}` — is a
 compile-time error. The shape is "extend, never overwrite"; use record
-update (`p.{ name: "Bob" }`) for that.
+update (`p.{ name: "Bob" }`) for that. The same holds behind an open
+row: `fn ext(p) { {...p, age: 30} }` takes any record that has no
+`age`, and a call with one that has is an error at the call:
+
+```silt
+ext({age: 1})
+-- error: cannot extend the record with field 'age': it has one already
+-- help: a record is extended, never overwritten: update the field with `r.{ age: ... }`
+```
+
+A spread always makes a new anonymous record: its value never carries
+the name of a declared type. Over a value of a declared record type it
+is the conversion, written out: `{...person}` is the anonymous record
+with `Person`'s fields, and a field written after the spread is added,
+or replaces the record's by name. The type of the base may be decided
+anywhere in the function, before the spread or after it:
+
+```silt
+type Person { name: String, age: Int }
+
+fn main() {
+  let p = Person { name: "Bob", age: 42 }
+  let r = {...p, city: "x"}      -- {name: String, age: Int, city: String}
+  println(r.city)                -- x
+}
+```
+
+There is no spelling for the other direction: a `Person` is built from
+its fields, `Person { name: r.name, age: r.age }`.
+
+A function that spreads a record whose type it does not know makes an
+anonymous record over the record's row, so it takes anonymous records
+only: a declared record does not stand for a row that a function
+spreads, with or without fields after the spread. Convert first,
+`copy({...person})`:
+
+```silt
+fn copy(p) { {...p} }
+fn ext(p) { {...p, city: "x"} }
+
+copy({name: "Bob"})                       -- OK
+copy(Person { name: "Bob", age: 42 })
+-- error: cannot spread a `Person` through 'copy': convert it where its type is known, `{...p}`
+ext({...Person { name: "Bob", age: 42 }}) -- OK
+```
+
+The same holds for a closure bound with `let`, for a function whose
+signature writes the row (`fn tag(p: {name: String, ...r}) -> ...`
+whose body spreads `p`), and through a function that passes its
+parameter on to one of these. The row variable of a trait method's
+signature, or of a `let` annotation, cannot be spread at all.
 
 ### Pattern destructuring with rest
 
 Record patterns mirror the type form. A `{name: nm, ...rest}` pattern
-in a `match` arm binds the listed fields and lets a row variable
-capture the rest of the type, the same way `..rest` works on lists:
+binds the listed fields, and `rest` to an anonymous record of the
+fields the pattern does not name, the same way `..rest` works on
+lists. It does so in `match`, `let`, `when let` and a parameter alike,
+and whatever the record is: the rest of a declared record is an
+anonymous record too, never the declared type.
 
 ```silt
+type Person { name: String, age: Int }
+
 fn main() {
   let p = { name: "A", age: 30 }
   match p {
     { name: nm } -> println(nm) -- "A"
   }
+  let {name, ...rest} = Person { name: "B", age: 42 }   -- rest is {age: Int}
+  println(rest.age)                -- 42
 }
 ```
+
+Like a spread, a rest binder over a record whose type the function
+does not know makes an anonymous record over its row: a function that
+binds one takes anonymous records only.
 
 See [pattern matching](pattern-matching.md) for the full record-pattern
 grammar.

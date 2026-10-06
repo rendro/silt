@@ -1,0 +1,18 @@
+-- A function that `list.fold` calls, and that calls `list.fold` with
+-- itself again, 50,000 deep, in a task: a function a builtin calls takes
+-- a frame of the VM like any call, and no native stack.
+import list
+import task
+
+fn down(acc, n) {
+  match n {
+    0 -> acc
+    _ -> 1 + list.fold([n - 1], acc, down)
+  }
+}
+
+fn main() {
+  let h = task.spawn({ -> down(0, 50000) })
+  println(task.join(h))
+  println(down(0, 50000))
+}

@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: a `Person` cannot be the record here: its field 'name' is of type String, and this use also has the record with a field 'name' of type Int
+-- stderr-contains: 12:5
+-- A signature that writes one row twice with a field at two types: a
+-- `Person` given for one is the row of the other too, and the other's
+-- `name` is not the `Person`'s.
+type Person { name: String, age: Int }
+fn f(a: {name: Int, ...r}, b: {name: String, ...r}) -> Int { a.name }
+fn h(x) {
+  let n = x.name + 1
+  f(x, Person { name: "a", age: 1 })
+  n
+}
+fn main() {
+  println(h(Person { name: "b", age: 2 }))
+}

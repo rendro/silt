@@ -1,0 +1,19 @@
+-- repeat: 3
+-- timeout: 10
+-- requires-feature: tcp
+-- The program's own code waits like a task: a deadline ends an I/O
+-- operation that is in flight. Nobody connects to the listener, so
+-- without the deadline the accept would wait for ever.
+import task
+import tcp
+import time
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let outcome = task.deadline(time.ms(50), { -> tcp.accept(listener) })
+  match outcome {
+    Ok(_) -> println("unexpected ok")
+    Err(tcp.TcpTimeout) -> println("tcp-timeout")
+    Err(other) -> println("other: {other.message()}")
+  }
+}

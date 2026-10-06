@@ -296,14 +296,6 @@ impl Resolver {
                 }
                 self.find_assoc_cycle(ret, visited)
             }
-            Type::Record(_, fields) => {
-                for (_, t) in fields {
-                    if let Some(c) = self.find_assoc_cycle(t, visited) {
-                        return Some(c);
-                    }
-                }
-                None
-            }
             Type::Generic(_, args) => {
                 for a in args {
                     if let Some(c) = self.find_assoc_cycle(a, visited) {
@@ -355,9 +347,9 @@ impl Resolver {
 /// - `Type::Range(t)` -> `Type::List(canonicalize(t))`
 /// - `Type::Generic(name, args)` whose `name` is a registered alias ->
 ///   the alias's stored target with `args` substituted into its
-///   parameters, then canonicalised. (Only `Generic` heads can be
-///   aliases: a name cannot be declared as both a record and an alias,
-///   so the `Type::Record` arm below is pure structural recursion.)
+///   parameters, then canonicalised. (A name cannot be declared as
+///   both a record and an alias: a declared record's `Generic` head is
+///   never an alias.)
 /// - `Type::AssocProj` whose receiver canonicalises to a concrete head
 ///   with a registered impl binding -> that binding's stored type,
 ///   canonicalised.
@@ -408,13 +400,6 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
         Type::Tuple(elems) => {
             Type::Tuple(elems.iter().map(|t| canonicalize(resolver, t)).collect())
         }
-        Type::Record(name, fields) => Type::Record(
-            *name,
-            fields
-                .iter()
-                .map(|(n, t)| (*n, canonicalize(resolver, t)))
-                .collect(),
-        ),
         Type::Generic(name, args) => Type::Generic(
             *name,
             args.iter().map(|t| canonicalize(resolver, t)).collect(),
@@ -526,8 +511,8 @@ pub fn types_equal(resolver: &Resolver, a: &Type, b: &Type) -> bool {
 /// and typechecker for dispatch lookup.
 ///
 /// Returns `String` (rather than the `&'static str` the design sketch
-/// originally suggested) because user-declared `Type::Record` and
-/// `Type::Generic` carry runtime-interned [`Symbol`]
+/// originally suggested) because a user-declared type's
+/// `Type::Generic` carries a runtime-interned [`Symbol`]
 /// names whose backing string is owned by the interner pool, not a
 /// `'static` literal. Built-in names (`"Int"`, `"List"`, `"Map"`, ...)
 /// match the entries in [`crate::types::builtins::BUILTIN_TYPES`]; the
@@ -560,8 +545,6 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Tuple(_) => "Tuple".to_string(),
         Type::Fun(_, _) => "Fn".to_string(),
 
-        // ── User-declared nominal types: identity is the name ──────
-        Type::Record(name, _) => crate::intern::resolve(name.name),
         Type::Generic(name, _) => crate::intern::resolve(name.name),
 
         // ── Diagnostic / inference-internal shapes ─────────────────
@@ -641,7 +624,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         Type::Channel(_) => "Channel",
         Type::Tuple(_) => "Tuple",
         Type::Fun(_, _) => "Fn",
-        Type::Record(name, _) | Type::Generic(name, _) => return Some(*name),
+        Type::Generic(name, _) => return Some(*name),
         Type::Var(_)
         | Type::Rigid(_)
         | Type::Error
@@ -823,16 +806,6 @@ mod tests {
             canonicalize(&res, &c),
             Type::Channel(Box::new(Type::List(Box::new(Type::Int))))
         );
-    }
-
-    #[test]
-    fn canonicalize_range_in_record_field() {
-        let name = user_type("Holder");
-        let field = intern::intern("xs");
-        let r = Type::Record(name, vec![(field, Type::Range(Box::new(Type::Int)))]);
-        let expected = Type::Record(name, vec![(field, Type::List(Box::new(Type::Int)))]);
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &r), expected);
     }
 
     #[test]
@@ -1059,13 +1032,7 @@ mod tests {
     #[test]
     fn canonical_name_user_record_uses_name() {
         let sym = user_type("Point");
-        let r = Type::Record(
-            sym,
-            vec![
-                (intern::intern("x"), Type::Int),
-                (intern::intern("y"), Type::Int),
-            ],
-        );
+        let r = Type::Generic(sym, Vec::new());
         assert_eq!(canonical_name(&r), "Point");
     }
 

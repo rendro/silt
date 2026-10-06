@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::bytecode;
-use crate::runtime::channel::Channel;
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::sync::Channel;
 use crate::typeinfo::{Tag, TypeInfo};
 
 mod convert;

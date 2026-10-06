@@ -1,0 +1,24 @@
+-- A spread over a value whose declared record type is known is the
+-- conversion to an anonymous record: the record's fields, each written
+-- field added or replacing the record's by name (with the written
+-- expression's type). The base is evaluated once, and the result is an
+-- anonymous record like any other.
+import set
+type Person { name: String, age: Int }
+type Box(a) { v: a, n: Int }
+fn mk() -> Person {
+  println("once")
+  Person { name: "Bob", age: 42 }
+}
+fn takes(r: {name: String, age: Int}) -> String { "{r.name} {r.age}" }
+fn main() {
+  let p = Person { name: "Bob", age: 42 }
+  let a = {...p}
+  println(a)
+  println(a == {name: "Bob", age: 42})
+  println(takes({...p}))
+  let b = {...mk(), city: "x", age: "old"}
+  println(b)
+  println({...Box { v: [1], n: 2 }, n: 3}.v)
+  println(set.length(set.from_list([{...p}, {name: "Bob", age: 42}])))
+}

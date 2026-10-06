@@ -10,6 +10,4 @@ fn f(p: P) -> Int {
 fn main() {
   println(f(P { x: 5, y: 6 }))
   println(f(P { x: 1, y: 6 }))
-  println({x: 1, y: 2} == P { x: 1, y: 2 })
-  println({x: 1, y: 3} == P { x: 1, y: 2 })
 }

@@ -546,29 +546,28 @@ impl TypeChecker {
                         .iter()
                         .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
                         .collect();
-                    self.missing_description(rows, &Type::Record(*name, fields))
+                    let rec_name = self.show_type(&Type::Generic(*name, Vec::new()));
+                    let mut expanded = Vec::new();
+                    for row in rows {
+                        expand_or(vec![*row], &mut expanded);
+                    }
+                    for (fname, fty) in &fields {
+                        // The patterns the rows give this field, each field
+                        // looked at alone.
+                        let column: Vec<&Pat> =
+                            specialize(&expanded, &CtorId::Record(vec![*fname]), 1)
+                                .into_iter()
+                                .map(|row| row[0])
+                                .collect();
+                        let child = self.missing_description(&column, fty);
+                        if child != UNSPECIFIC {
+                            return format!("in {rec_name}.{fname}: {child}");
+                        }
+                    }
+                    format!("not all patterns of {rec_name} are covered")
                 } else {
                     UNSPECIFIC.into()
                 }
-            }
-            Type::Record(rec_name, rec_fields) => {
-                let mut expanded = Vec::new();
-                for row in rows {
-                    expand_or(vec![*row], &mut expanded);
-                }
-                for (fname, fty) in rec_fields {
-                    // The patterns the rows give this field, each field
-                    // looked at alone.
-                    let column: Vec<&Pat> = specialize(&expanded, &CtorId::Record(vec![*fname]), 1)
-                        .into_iter()
-                        .map(|row| row[0])
-                        .collect();
-                    let child = self.missing_description(&column, fty);
-                    if child != UNSPECIFIC {
-                        return format!("in {rec_name}.{fname}: {child}");
-                    }
-                }
-                format!("not all patterns of {rec_name} are covered")
             }
             _ => UNSPECIFIC.into(),
         }

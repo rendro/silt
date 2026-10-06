@@ -1,0 +1,29 @@
+type P { x: Int, y: Int }
+
+fn f(p: P) -> Int {
+  match p {
+    P { x, .. } -> x
+  }
+}
+
+fn g(p: P) -> Int {
+  match p {
+    P { x: 0, .. } -> 0
+    P { x, y } -> x + y
+  }
+}
+
+fn k(ps: List(P)) -> Int {
+  match ps {
+    [P { x, y: 4 }, ..rest] -> x
+    _ -> 0 - 1
+  }
+}
+
+fn main() {
+  println(f(P { x: 3, y: 4 }))
+  println(g(P { x: 3, y: 4 }))
+  println(g(P { x: 0, y: 4 }))
+  println(k([P { x: 8, y: 4 }]))
+  println(k([P { x: 8, y: 5 }]))
+}

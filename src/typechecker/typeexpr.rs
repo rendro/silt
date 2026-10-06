@@ -536,14 +536,16 @@ impl TypeChecker {
                         // type vars; for row tails we still use the same
                         // map but carry the id directly.
                         let key = intern(&format!("__row__{}", resolve(*rname)));
-                        let id = if let Some(Type::Var(v)) = param_vars.get(&key).cloned() {
-                            v
-                        } else {
-                            let id = self.fresh_tyvar_id();
-                            param_vars.insert(key, Type::Var(id));
-                            id
-                        };
-                        RowTail::Var(id)
+                        match param_vars.get(&key).cloned() {
+                            Some(Type::Var(v)) => RowTail::Var(v),
+                            // Inside the declaration that introduced it.
+                            Some(Type::Rigid(r)) => RowTail::Rigid(r),
+                            _ => {
+                                let id = self.fresh_tyvar_id();
+                                param_vars.insert(key, Type::Var(id));
+                                RowTail::Var(id)
+                            }
+                        }
                     }
                 };
                 Type::AnonRecord {

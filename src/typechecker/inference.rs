@@ -786,8 +786,13 @@ impl TypeChecker {
 
         // The declared bounds are in scope in the body: a rigid variable
         // has the methods of its bounds and of their supertraits.
-        for Pred::Trait { tr, args, subject } in &sig.bounds {
-            if let Type::Var(var) = subject {
+        for pred in &sig.bounds {
+            if let Pred::Trait {
+                tr,
+                args,
+                subject: Type::Var(var),
+            } = pred
+            {
                 self.declare_bound(*var, *tr, args.clone());
             }
         }
@@ -916,19 +921,22 @@ impl TypeChecker {
         &mut self,
         rec_info: &RecordInfo,
         param_var_ids: Option<&[TyVar]>,
-    ) -> Vec<(Symbol, Type)> {
+    ) -> (Vec<(Symbol, Type)>, Vec<Type>) {
         if let Some(param_var_ids) = param_var_ids {
+            let args: Vec<Type> = param_var_ids.iter().map(|_| self.fresh_var()).collect();
             let mapping: HashMap<TyVar, Type> = param_var_ids
                 .iter()
-                .map(|&v| (v, self.fresh_var()))
+                .copied()
+                .zip(args.iter().cloned())
                 .collect();
-            rec_info
+            let fields = rec_info
                 .fields
                 .iter()
                 .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                .collect()
+                .collect();
+            (fields, args)
         } else {
-            rec_info.fields.clone()
+            (rec_info.fields.clone(), Vec::new())
         }
     }
 
@@ -1050,13 +1058,14 @@ impl TypeChecker {
         self.current_type_anno_span = prev_type_span;
         let mut own: Vec<RigidId> = names
             .iter()
-            .filter(|(name, _)| {
-                !self.sig_names.contains_key(name) && !resolve(**name).starts_with("__row__")
-            })
+            .filter(|(name, _)| !self.sig_names.contains_key(name))
             .filter_map(|(name, ty)| match ty {
                 Type::Var(var) => Some(RigidId {
                     var: *var,
-                    name: *name,
+                    name: match resolve(*name).strip_prefix("__row__") {
+                        Some(row) => intern(row),
+                        None => *name,
+                    },
                 }),
                 _ => None,
             })
@@ -1173,11 +1182,11 @@ impl TypeChecker {
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
                 for k in owed_before..self.wanted.len() {
-                    let Goal::Pred(Pred::Trait {
-                        subject: Type::Var(v),
-                        ..
-                    }) = &self.wanted[k].goal
-                    else {
+                    let Type::Var(v) = (match &self.wanted[k].goal {
+                        Goal::Pred(pred) => pred.subject(),
+                        Goal::Lacks { row, .. } | Goal::Listed { row, .. } => row,
+                        _ => continue,
+                    }) else {
                         continue;
                     };
                     let at = params
@@ -1762,36 +1771,6 @@ impl TypeChecker {
                             self.error_help(
                                 Code::NoSuchField,
                                 format_record_field_suggestion(base, field, &candidates),
-                                span,
-                            );
-                            Type::Error
-                        }
-                    }
-                    Type::Record(rec_name, fields) => {
-                        // Direct field access first
-                        if let Some((_, ft)) = fields.iter().find(|(n, _)| *n == field) {
-                            ft.clone()
-                        } else if let Some(entry) =
-                            self.tables.method_table.get(&(*rec_name, field)).cloned()
-                        {
-                            let instantiated =
-                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
-                            let resolved = self.apply(&instantiated);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        } else if let Some(method_ty) = self.structural_method(&obj_ty, field, span)
-                        {
-                            expr.ty = Some(method_ty.clone());
-                            return method_ty;
-                        } else {
-                            // GAP (round 26 L5): append a did-you-mean
-                            // hint when a near edit-distance field
-                            // exists on this record.
-                            let base =
-                                format!("record {rec_name} has no field or method '{field}'");
-                            self.error_help(
-                                Code::NoSuchField,
-                                format_record_field_suggestion(base, field, fields),
                                 span,
                             );
                             Type::Error
@@ -2400,7 +2379,7 @@ impl TypeChecker {
                     // for each type parameter and substitute them into field types.
                     // This prevents different instantiations from sharing the same
                     // template variables (e.g., Box { value: 42 } and Box { value: "hi" }).
-                    let instantiated_fields =
+                    let (instantiated_fields, type_args) =
                         self.instantiate_record_fields(&rec_info, param_ids.as_deref());
 
                     let field_types: Vec<(Symbol, Type)> = fields
@@ -2461,7 +2440,7 @@ impl TypeChecker {
                         }
                     }
 
-                    Type::Record(rec_ty, instantiated_fields)
+                    Type::Generic(rec_ty, type_args)
                 } else {
                     // G2: Unknown record type (reported by `named_record`
                     // or the resolver) — this used to silently synthesize
@@ -2497,11 +2476,11 @@ impl TypeChecker {
                     }
                 }
                 // Three cases:
-                //  1. Concrete `Type::Record(name, fields)` — validate directly.
-                //  2. `Type::Generic(name, args)` resolving to a declared
-                //     record (happens when the base is a param annotated
-                //     with a user-defined record type). BROKEN-1.
-                //  3. Anything else — compile-time reject. BROKEN-2.
+                //  1. An anonymous record type — validate against its
+                //     fields and row.
+                //  2. `Type::Generic(name, args)`, a declared record —
+                //     validate against the declared fields.
+                //  3. Anything else — compile-time reject.
                 let mut handled = false;
                 // Anon record (row-poly) update: validate each field
                 // against the row's known fields when present; for open
@@ -2547,25 +2526,7 @@ impl TypeChecker {
                     }
                     handled = true;
                 }
-                if let Type::Record(rec_name, rec_fields) = &resolved {
-                    let declared: std::collections::HashMap<Symbol, Type> =
-                        rec_fields.iter().map(|(n, t)| (*n, t.clone())).collect();
-                    for (field_name, field_expr) in &mut *fields {
-                        let ft = self.infer_expr(field_expr, env);
-                        if let Some(declared_ty) = declared.get(field_name) {
-                            self.unify(&ft, declared_ty, span);
-                        } else {
-                            // GAP (round 26 L5): did-you-mean on record-update.
-                            let base = format!("unknown field '{field_name}' in {rec_name}");
-                            self.error_help(
-                                Code::UnknownField,
-                                format_record_field_suggestion(base, *field_name, rec_fields),
-                                span,
-                            );
-                        }
-                    }
-                    handled = true;
-                } else if let Type::Generic(type_name, type_args) = &resolved
+                if let Type::Generic(type_name, type_args) = &resolved
                     && let Some(rec_info) = self.tables.records.get(type_name).cloned()
                 {
                     let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
@@ -2678,89 +2639,26 @@ impl TypeChecker {
                     field_map.insert(*n, t.clone());
                 }
                 if let Some(base_expr) = spread {
-                    let base_ty = self.infer_expr(base_expr, env);
-                    let base_ty = self.apply(&base_ty);
-                    let base_canon =
-                        crate::types::canonical::canonicalize(&self.tables.resolver, &base_ty);
-                    // Determine base's known fields and tail.
-                    let (base_fields, base_tail): (BTreeMap<Symbol, Type>, RowTail) =
-                        match &base_canon {
-                            Type::AnonRecord { fields, tail } => (fields.clone(), tail.clone()),
-                            Type::Record(_, fs) => {
-                                let mut m = BTreeMap::new();
-                                for (n, t) in fs {
-                                    m.insert(*n, t.clone());
-                                }
-                                (m, RowTail::Closed)
-                            }
-                            Type::Generic(name, args) if self.tables.records.contains_key(name) => {
-                                let rec_info = self.tables.records.get(name).cloned().unwrap();
-                                let inst: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                                    self.tables.record_param_var_ids.get(name).cloned()
-                                {
-                                    let mapping: HashMap<TyVar, Type> =
-                                        if args.len() == param_var_ids.len() {
-                                            param_var_ids
-                                                .iter()
-                                                .zip(args.iter())
-                                                .map(|(&v, t)| (v, t.clone()))
-                                                .collect()
-                                        } else {
-                                            param_var_ids
-                                                .iter()
-                                                .map(|&v| (v, self.fresh_var()))
-                                                .collect()
-                                        };
-                                    rec_info
-                                        .fields
-                                        .iter()
-                                        .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                                        .collect()
-                                } else {
-                                    rec_info.fields.clone()
-                                };
-                                let mut m = BTreeMap::new();
-                                for (n, t) in &inst {
-                                    m.insert(*n, t.clone());
-                                }
-                                (m, RowTail::Closed)
-                            }
-                            _ => {
-                                if !matches!(base_canon, Type::Error | Type::Var(_) | Type::Never) {
-                                    self.error(Code::TypeMismatch,
-                                        format!(
-                                            "spread requires a record base, but '{base_canon}' is not a record type"
-                                        ),
-                                        base_expr.span,
-                                    );
-                                }
-                                (BTreeMap::new(), RowTail::Closed)
-                            }
-                        };
-                    // Reject extending an existing field (decision: no
-                    // override; user must restrict first, which v1 doesn't
-                    // support).
-                    for (n, _) in &new_field_tys {
-                        if base_fields.contains_key(n) {
-                            self.error(Code::DuplicateRecordField,
-                                format!(
-                                    "cannot extend record with existing field '{n}'; v1 row polymorphism does not support override"
-                                ),
-                                span,
-                            );
-                        }
-                    }
-                    // Result fields = base ∪ new (new wins on collision —
-                    // already errored, but keep last write semantically
-                    // benign for cascade).
-                    let mut merged: BTreeMap<Symbol, Type> = base_fields.clone();
-                    for (n, t) in &new_field_tys {
-                        merged.insert(*n, t.clone());
-                    }
-                    Type::AnonRecord {
-                        fields: merged,
-                        tail: base_tail,
-                    }
+                    // A spread makes an anonymous record of the base's
+                    // fields and the written ones, once the base's type
+                    // is decided (`Goal::Rebuild`).
+                    let base = self.infer_expr(base_expr, env);
+                    let result = self.fresh_var();
+                    self.want_goal(
+                        Goal::Rebuild {
+                            base,
+                            without: Vec::new(),
+                            with: new_field_tys,
+                            result: result.clone(),
+                            rest: false,
+                        },
+                        Origin {
+                            span,
+                            callee: None,
+                            op: None,
+                        },
+                    );
+                    self.apply(&result)
                 } else {
                     // Closed anon record literal.
                     Type::AnonRecord {

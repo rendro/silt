@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot spread a `Person` through 'ext': convert it where its type is known, `{...p}`
+-- stderr-contains: 14:15
+-- A declared record behind an open row is not extended: what the
+-- function makes is an anonymous record over the row, and no declared
+-- record stands for a row that is spread. (Where the record's type is
+-- known, `{...p, city: "x"}` converts it.)
+type Person { name: String, age: Int }
+fn ext(p) { {...p, city: "x"} }
+fn main() {
+  let p = Person { name: "Bob", age: 42 }
+  println({...p, city: "x"}.city)
+  println(ext(p))
+}

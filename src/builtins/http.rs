@@ -13,11 +13,11 @@ use crate::bytecode::record_type_matches;
 #[cfg(feature = "http")]
 use crate::runtime::handle::TaskHandle;
 #[cfg(feature = "http")]
+use crate::runtime::sync::{Arm, Wait};
+#[cfg(feature = "http")]
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-#[cfg(feature = "http")]
-use crate::vm::BlockReason;
-use crate::vm::{Vm, VmError};
+use crate::vm::{Step, Vm, VmError};
 
 /// Dispatch the builtin `trait Error for HttpError` method table.
 /// Scaffolding lives in `super::dispatch_error_trait`; this site just
@@ -282,20 +282,11 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 /// the rendered message and fall back to `HttpUnknown`.
 #[cfg(feature = "http")]
 /// Factory: deadline-cancelled http op surfaces as `Err(HttpTimeout)`
-/// rather than the default `Err(IoUnknown(_))`. The watchdog calls
-/// this with the deadline message; we drop it because `HttpTimeout`
-/// is a nullary variant. Used by http.get / http.request submits.
+/// rather than `Err(IoUnknown(_))`. It is given the deadline message,
+/// which is dropped because `HttpTimeout` is a nullary variant. Used by http.get / http.request submits.
 #[cfg(feature = "http")]
 fn http_timeout_err(_msg: &str) -> Value {
     Value::variant(bv::ERR, vec![Value::variant(bv::HTTP_TIMEOUT, vec![])])
-}
-
-/// Build a fresh `IoCompletion` configured with `http_timeout_err`.
-#[cfg(feature = "http")]
-fn http_completion() -> std::sync::Arc<crate::runtime::completion::IoCompletion> {
-    crate::runtime::completion::IoCompletion::with_timeout_err(std::sync::Arc::new(
-        http_timeout_err,
-    ))
 }
 
 #[cfg(feature = "http")]
@@ -459,9 +450,9 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
 fn do_http_serve_inner(
     vm: &mut Vm,
     bind_host: &str,
-    name_for_err: &str,
+    name_for_err: &'static str,
     args: &[Value],
-) -> Result<Value, VmError> {
+) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new(format!(
             "{name_for_err} takes 2 arguments (port, handler)"
@@ -496,8 +487,12 @@ fn do_http_serve_inner(
     let inflight = Arc::new(AtomicUsize::new(0));
 
     // Spawn the accept loop on a dedicated OS thread so it doesn't
-    // block a scheduler worker or the main thread.
+    // block a scheduler worker or the main thread. While it serves, a
+    // task that waits for the server is not deadlocked.
+    let serving = vm.scheduler().external();
+    let scheduler = vm.scheduler().clone();
     std::thread::spawn(move || {
+        let _serving = serving;
         loop {
             // Use recv_timeout so the accept loop periodically
             // unblocks and can notice a shutdown. Note: this
@@ -611,7 +606,7 @@ fn do_http_serve_inner(
                 let request_val = make_http_request_value(method, &path, &query, headers, body);
 
                 // Run the user's handler on the per-request child VM
-                match request_vm.invoke_callable(&handler, &[request_val]) {
+                match request_vm.call_blocking(&handler, &[request_val]) {
                     Ok(response_val) => {
                         send_http_response(&request_vm.runtime.io, &response_val, req);
                     }
@@ -634,28 +629,28 @@ fn do_http_serve_inner(
             });
         }
         // Accept loop ended (server shut down) — complete the handle.
-        serve_handle.complete(Ok(Value::Unit));
+        serve_handle.complete(Ok(Value::Unit), scheduler.wake());
     });
 
-    // If running as a scheduled task, yield and let the scheduler
-    // park us until the serve handle completes (i.e. server shuts down).
-    if vm.is_scheduled_task {
-        return Err(vm.park_with_reason(args, BlockReason::Join(handle.clone())));
-    }
-
-    // Main thread: block until the server shuts down.
-    match handle.join() {
-        Ok(val) => Ok(val),
-        Err(mut inner) => {
-            inner.message = format!("{name_for_err} failed: {}", inner.message);
-            Err(inner)
-        }
-    }
+    // The caller waits until the server shuts down.
+    let wait = Wait::new(vec![Arm::Cell(handle.done())]);
+    Ok(
+        vm.park(name_for_err, wait, move |_, _| match handle.try_get() {
+            Some(Err(mut inner)) => {
+                inner.message = format!("{name_for_err} failed: {}", inner.message);
+                Err(inner)
+            }
+            Some(Ok(value)) => Ok(Step::Done(value)),
+            None => Err(VmError::new(format!(
+                "internal VM error: {name_for_err} ended before its server"
+            ))),
+        }),
+    )
 }
 
 /// Dispatch `http.<name>(args)`.
 #[cfg_attr(not(feature = "http"), allow(unused_variables))]
-pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
     match name {
         "get" => {
             #[cfg(feature = "http")]
@@ -671,9 +666,7 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 };
 
                 let url = url.clone();
-                vm.submit_io_or_run(args, http_completion(), &http_timeout_err, move || {
-                    do_http_get(&url)
-                })
+                vm.io("http", http_timeout_err, move || do_http_get(&url))
             }
             #[cfg(not(feature = "http"))]
             {
@@ -731,7 +724,7 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         }
                     })
                     .collect();
-                vm.submit_io_or_run(args, http_completion(), &http_timeout_err, move || {
+                vm.io("http", http_timeout_err, move || {
                     do_http_request(&method_tag, &url, &body, &headers)
                 })
             }
@@ -776,6 +769,13 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
         }
 
+        _ => http_plain(name, args).map(Step::Done),
+    }
+}
+
+/// The `http` functions that do not wait.
+fn http_plain(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
         "segments" => {
             if args.len() != 1 {
                 return Err(VmError::new("http.segments takes 1 argument (path)".into()));

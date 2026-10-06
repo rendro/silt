@@ -8,8 +8,10 @@ use crate::scheduler::SliceResult;
 use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
-use super::calls::enter_native_level;
+use super::calls::Entered;
+use super::runtime::{Frame, Step};
 use super::{Vm, VmError};
+use crate::runtime::sync::Wait;
 
 /// Gate the language-level `==` / `!=` operators against function-shaped
 /// values, returning the canonical surface name (`"Fn"`) to name in the
@@ -42,17 +44,26 @@ fn equality_operand_violation(val: &Value) -> Option<&'static str> {
     }
 }
 
-/// Result of dispatching a single opcode.
+/// What running one instruction did.
 pub(super) enum DispatchResult {
-    /// Normal execution; continue to next opcode.
+    /// Go on with the next instruction of the frame on top (a call put
+    /// the callee's frame there).
     Continue,
-    /// Op::Return was executed. The return value is provided.
-    /// The frame has NOT been popped — the caller must do that.
+    /// The frame on top is finished, with this value: `Return`, or `?`
+    /// on an `Err` or a `None`. The frame is still there.
     Return(Value),
-    /// Op::QuestionMark hit Err/None. The frame HAS been popped.
-    /// The value and the finished frame's base_slot are provided.
-    /// The caller must handle stack cleanup.
-    EarlyReturn { value: Value, finished_base: usize },
+    /// A builtin's frame is on top, not resumed yet.
+    Native,
+}
+
+/// How a run of the instruction loop ended ([`Vm::run_frames`]).
+pub(super) enum Slice {
+    /// The frames above the floor are finished, with this value.
+    Done(Value),
+    /// The budget is used up; the frames can go on.
+    OutOfBudget,
+    /// A builtin's frame waits for this (see [`Step::Park`]).
+    Parked(Wait),
 }
 
 impl Vm {
@@ -65,115 +76,256 @@ impl Vm {
             .collect()
     }
 
-    // ── Main execution loop ───────────────────────────────────────
+    // ── The loop ──────────────────────────────────────────────────
 
-    pub(crate) fn execute(&mut self) -> Result<Value, VmError> {
-        // Usually the outermost loop of its thread, but not always: a
-        // target without threads runs a spawned task's `execute` inside
-        // the `task.spawn` call of its parent.
-        let _native_level = enter_native_level()?;
+    /// Run the frames above the first `floor`, which are finished when
+    /// the function or builtin in frame `floor` has returned, for at
+    /// most `budget` steps: instructions, and resumptions of a
+    /// builtin's frame.
+    ///
+    /// This is the only loop that runs silt code. A call, whoever makes
+    /// it (an instruction, a method call, a builtin that was passed a
+    /// function), is a frame above the caller's, so the depth of silt
+    /// calls costs frames and never host stack. The loop is entered
+    /// with the frames as an earlier run left them, when that one ran
+    /// out of budget or parked.
+    ///
+    /// On an error the frames stay as they are, for the caller to read
+    /// the call stack from ([`Vm::enrich_error`]) and to drop
+    /// ([`Vm::unwind`]).
+    pub(super) fn run_frames(&mut self, floor: usize, mut budget: usize) -> Result<Slice, VmError> {
+        // A builtin's frame on top waits for its input: the value an
+        // earlier run had for it when the budget ran out, or unit.
+        if self.frames.len() == floor {
+            return Ok(Slice::Done(Value::Unit));
+        }
+        if let Some(Frame::Native(_)) = self.frames.last() {
+            let input = self.pending_input.take().unwrap_or(Value::Unit);
+            let mut left = budget;
+            let end = self.deliver(floor, input, &mut left)?;
+            budget = left;
+            if let Some(end) = end {
+                return Ok(end);
+            }
+        }
         loop {
+            if budget == 0 {
+                return Ok(Slice::OutOfBudget);
+            }
+            budget -= 1;
             let instr = self.fetch();
-            match self.dispatch_one(instr)? {
-                DispatchResult::Continue => {}
+            let end = match self.dispatch_one(instr)? {
+                DispatchResult::Continue => continue,
                 DispatchResult::Return(result) => {
-                    let finished_base = self.frame().base_slot;
-                    self.frames.pop();
+                    let Some(Frame::Code(finished)) = self.frames.pop() else {
+                        unreachable!("an instruction runs in a function's frame")
+                    };
                     // Prune any tail-call elided diagnostic entries that
                     // belong to the just-popped frame slot so stale data
                     // can't bleed into later unrelated calls at this depth.
-                    let keep = self.frames.len();
-                    self.prune_tco_elided(keep);
-                    if self.frames.is_empty() {
-                        return Ok(result);
+                    if !self.tco_elided.is_empty() {
+                        self.prune_tco_elided(self.frames.len());
                     }
-                    let func_slot = finished_base.saturating_sub(1);
-                    self.stack.truncate(func_slot);
-                    self.push(result);
+                    // The function's own slot goes with its frame.
+                    self.stack.truncate(finished.base_slot.saturating_sub(1));
+                    // (A copy, so that the loop's own count stays in a
+                    // register.)
+                    let mut left = budget;
+                    let end = self.deliver(floor, result, &mut left)?;
+                    budget = left;
+                    end
                 }
-                DispatchResult::EarlyReturn {
-                    value,
-                    finished_base,
-                } => {
-                    // EarlyReturn from `?` already popped its frame in
-                    // Op::QuestionMark; prune tco_elided to match.
-                    let keep = self.frames.len();
-                    self.prune_tco_elided(keep);
-                    if self.frames.is_empty() {
-                        return Ok(value);
-                    }
-                    let func_slot = finished_base.saturating_sub(1);
-                    self.stack.truncate(func_slot);
-                    self.push(value);
+                DispatchResult::Native => {
+                    let mut left = budget;
+                    let end = self.deliver(floor, Value::Unit, &mut left)?;
+                    budget = left;
+                    end
                 }
+            };
+            if let Some(end) = end {
+                return Ok(end);
             }
         }
+    }
+
+    /// Give `value` to the frame on top: a function's frame gets it on
+    /// the stack, and the instruction loop goes on (`None`); a
+    /// builtin's frame is resumed with it, until one calls a function
+    /// (`None`) or the run ends.
+    fn deliver(
+        &mut self,
+        floor: usize,
+        mut value: Value,
+        budget: &mut usize,
+    ) -> Result<Option<Slice>, VmError> {
+        loop {
+            if self.frames.len() == floor {
+                return Ok(Some(Slice::Done(value)));
+            }
+            if let Some(Frame::Code(_)) = self.frames.last() {
+                self.push(value);
+                return Ok(None);
+            }
+            if *budget == 0 {
+                self.pending_input = Some(value);
+                return Ok(Some(Slice::OutOfBudget));
+            }
+            *budget -= 1;
+            // The frame is off the list while it runs: it is handed the
+            // VM.
+            let Some(Frame::Native(mut native)) = self.frames.pop() else {
+                unreachable!("the frame on top is a builtin's")
+            };
+            let step = super::dispatch::resume_native(self, native.as_mut(), value);
+            let entered = match step {
+                Ok(Step::Done(result)) => {
+                    self.native_frames -= 1;
+                    Entered::Value(result)
+                }
+                Ok(Step::Run(next)) => {
+                    self.frames.push(Frame::Native(next));
+                    Entered::Native
+                }
+                Ok(Step::Park(wait)) => {
+                    self.frames.push(Frame::Native(native));
+                    return Ok(Some(Slice::Parked(wait)));
+                }
+                Ok(Step::Yield) => {
+                    self.frames.push(Frame::Native(native));
+                    return Ok(Some(Slice::OutOfBudget));
+                }
+                Ok(Step::Call { callee, argc }) => {
+                    self.frames.push(Frame::Native(native));
+                    let func_slot = self.stack.len() - argc - 1;
+                    self.call_value(callee, argc, func_slot)?
+                }
+                Err(e) => {
+                    self.frames.push(Frame::Native(native));
+                    return Err(e);
+                }
+            };
+            value = match entered {
+                Entered::Value(result) => result,
+                Entered::Native => Value::Unit,
+                Entered::Code => return Ok(None),
+            };
+        }
+    }
+
+    /// Drop the frames above the first `floor` and the stack above
+    /// `stack_floor`, after an error.
+    pub(super) fn unwind(&mut self, floor: usize, stack_floor: usize) {
+        while self.frames.len() > floor {
+            if let Some(Frame::Native(mut native)) = self.frames.pop() {
+                self.native_frames -= 1;
+                native.abandon(self);
+            }
+        }
+        self.stack.truncate(stack_floor);
+        self.prune_tco_elided(floor);
+        self.pending_input = None;
+    }
+
+    /// Call `callee` with `args` and run it to its end on the calling
+    /// thread, which waits where the code parks ([`Vm::run_thread`]).
+    /// This is how a thread that serves silt code outside the
+    /// scheduler's workers (a stream stage, an HTTP handler) calls a
+    /// function; a builtin never does, it asks the loop that runs it
+    /// to ([`Step::Call`]).
+    pub(crate) fn call_blocking(
+        &mut self,
+        callee: &Value,
+        args: &[Value],
+    ) -> Result<Value, VmError> {
+        let floor = self.frames.len();
+        let stack_floor = self.stack.len();
+        let run = self.run_thread(floor, |vm| {
+            match vm.call_with(callee.clone(), args.to_vec())? {
+                Entered::Value(value) => Ok(Slice::Done(value)),
+                Entered::Code | Entered::Native => vm.run_frames(floor, usize::MAX),
+            }
+        });
+        self.finish_run(run, floor, stack_floor)
+    }
+
+    /// Run the frames above the first `floor` to their end on the
+    /// calling thread, starting with `start`. The thread counts as a
+    /// task of the scheduler while it does; where the code parks, the
+    /// thread waits, and the builtin that parked runs again when its
+    /// wait has ended.
+    pub(super) fn run_thread(
+        &mut self,
+        floor: usize,
+        start: impl FnOnce(&mut Vm) -> Result<Slice, VmError>,
+    ) -> Result<Slice, VmError> {
+        let scheduler = self.runtime.scheduler.clone();
+        let _running = scheduler.enter();
+        let mut run = start(self)?;
+        loop {
+            match run {
+                Slice::Done(_) => return Ok(run),
+                // The frame gave way to other tasks, which a thread
+                // of its own has no need to.
+                Slice::OutOfBudget => {}
+                Slice::Parked(wait) => {
+                    self.woken = Some(scheduler.block_thread(wait, self.is_program())?);
+                }
+            }
+            run = self.run_frames(floor, usize::MAX)?;
+        }
+    }
+
+    /// The value of a run to the end, or its error with the call stack
+    /// of the frames it leaves, which are dropped.
+    pub(super) fn finish_run(
+        &mut self,
+        run: Result<Slice, VmError>,
+        floor: usize,
+        stack_floor: usize,
+    ) -> Result<Value, VmError> {
+        let error = match run {
+            Ok(Slice::Done(value)) => return Ok(value),
+            Ok(Slice::OutOfBudget | Slice::Parked(_)) => {
+                VmError::new("internal VM error: a run to the end stopped before it".into())
+            }
+            Err(e) => e,
+        };
+        // The call stack is read off the frames this run leaves, which
+        // must not stay: the next run on this VM (a REPL's next entry,
+        // a stage's next item) would show them as its own.
+        let enriched = self.enrich_error(error);
+        self.unwind(floor, stack_floor);
+        Err(enriched)
     }
 
     // ── Sliced execution (for M:N scheduler) ─────────────────────
 
-    /// Run up to `max_steps` instructions and return a `SliceResult`.
-    /// Used by the M:N scheduler's worker threads.
-    pub fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
-        for _ in 0..max_steps {
-            if self.frames.is_empty() {
-                let result = if self.stack.is_empty() {
-                    Value::Unit
-                } else {
-                    self.stack.last().cloned().unwrap_or(Value::Unit)
-                };
-                return SliceResult::Completed(result);
-            }
-            let saved_ip = self.frame().ip;
-            let instr = self.fetch();
-            match self.dispatch_one(instr) {
-                Ok(DispatchResult::Continue) => {}
-                Ok(DispatchResult::Return(result)) => {
-                    let finished_base = self.frame().base_slot;
-                    self.frames.pop();
-                    let keep = self.frames.len();
-                    self.prune_tco_elided(keep);
-                    if self.frames.is_empty() {
-                        return SliceResult::Completed(result);
-                    }
-                    let func_slot = finished_base.saturating_sub(1);
-                    self.stack.truncate(func_slot);
-                    self.push(result);
-                }
-                Ok(DispatchResult::EarlyReturn {
-                    value,
-                    finished_base,
-                }) => {
-                    let keep = self.frames.len();
-                    self.prune_tco_elided(keep);
-                    if self.frames.is_empty() {
-                        return SliceResult::Completed(value);
-                    }
-                    let func_slot = finished_base.saturating_sub(1);
-                    self.stack.truncate(func_slot);
-                    self.push(value);
-                }
-                Err(e) if e.is_yield => {
-                    if let Some(frame) = self.frames.last_mut() {
-                        frame.ip = saved_ip;
-                    }
-                    if self.block_reason.is_some() {
-                        return SliceResult::Blocked;
-                    }
-                    return SliceResult::Yielded;
-                }
-                Err(e) => return SliceResult::Failed(e),
-            }
-            if self.block_reason.is_some() {
-                return SliceResult::Blocked;
-            }
+    /// Run a task's frames for up to `max_steps` steps and return a
+    /// `SliceResult`. Used by the M:N scheduler's worker threads.
+    pub(crate) fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
+        match self.run_frames(0, max_steps) {
+            Ok(Slice::Done(value)) => SliceResult::Completed(value),
+            Ok(Slice::OutOfBudget) => SliceResult::Yielded,
+            Ok(Slice::Parked(wait)) => SliceResult::Blocked(wait),
+            Err(e) => SliceResult::Failed(e),
         }
-        // Time slice expired.
-        SliceResult::Yielded
+    }
+
+    /// What the loop does after a call an instruction made: a value is
+    /// the instruction's result.
+    fn entered(&mut self, entered: Entered) -> DispatchResult {
+        match entered {
+            Entered::Value(value) => {
+                self.push(value);
+                DispatchResult::Continue
+            }
+            Entered::Code => DispatchResult::Continue,
+            Entered::Native => DispatchResult::Native,
+        }
     }
 
     /// Run the instruction `instr`, which [`Vm::fetch`] has stepped
-    /// past. Every execution loop calls this.
+    /// past.
     pub(super) fn dispatch_one(&mut self, instr: Instr) -> Result<DispatchResult, VmError> {
         match instr {
             Instr::Constant { k } => {
@@ -380,7 +532,8 @@ impl Vm {
             Instr::Call { argc } => {
                 let func_slot = self.stack.len() - 1 - argc;
                 let func_val = self.stack[func_slot].clone();
-                self.call_value(func_val, argc, func_slot)?;
+                let entered = self.call_value(func_val, argc, func_slot)?;
+                return Ok(self.entered(entered));
             }
             Instr::TailCall { argc } => {
                 let func_slot = self.stack.len() - 1 - argc;
@@ -423,22 +576,23 @@ impl Vm {
                             frame.closure.function.chunk().span_at(caller_ip),
                         )
                     };
-                    let count_at_depth = self
+                    // The entries of this depth are the log's last ones.
+                    let at_depth = self
                         .tco_elided
                         .iter()
-                        .filter(|(d, _, _)| *d == depth)
+                        .rev()
+                        .take_while(|(d, _, _)| *d == depth)
                         .count();
-                    if count_at_depth >= crate::vm::runtime::TCO_ELIDED_CAP
-                        && let Some(pos) = self.tco_elided.iter().position(|(d, _, _)| *d == depth)
-                    {
-                        self.tco_elided.remove(pos);
+                    if at_depth >= crate::vm::runtime::TCO_ELIDED_CAP {
+                        self.tco_elided.remove(self.tco_elided.len() - at_depth);
                     }
                     self.tco_elided.push((depth, caller_name, caller_span));
                     let frame = self.frame_mut();
                     frame.closure = closure;
                     frame.ip = 0;
                 } else {
-                    self.call_value(func_val, argc, func_slot)?;
+                    let entered = self.call_value(func_val, argc, func_slot)?;
+                    return Ok(self.entered(entered));
                 }
             }
             Instr::Return => {
@@ -446,20 +600,14 @@ impl Vm {
                 return Ok(DispatchResult::Return(result));
             }
             Instr::CallBuiltin { name, argc } => {
-                let name = self.chunk().string(name).to_owned();
-                let start = self.stack.len() - argc;
-                let args: Vec<Value> = self.stack[start..].to_vec();
-                self.stack.truncate(start);
-                match self.dispatch_builtin(&name, &args) {
-                    Ok(result) => {
-                        self.push(result);
-                    }
-                    Err(e) if e.is_yield => {
-                        // Args already re-pushed by the builtin before yielding
-                        return Err(e);
-                    }
-                    Err(e) => return Err(e),
-                }
+                // The name stays where it is, in the function's constants,
+                // which the function's closure keeps while the builtin
+                // has the VM.
+                let closure = self.frame().closure.clone();
+                let name = closure.function.chunk().string(name);
+                let args = self.stack.split_off(self.stack.len() - argc);
+                let entered = self.enter_builtin(name, &args)?;
+                return Ok(self.entered(entered));
             }
             Instr::MakeClosure { f, captures } => {
                 let frame = self.frame();
@@ -467,7 +615,7 @@ impl Vm {
                 let upvalues = captures
                     .iter(chunk.code())
                     .map(|capture| {
-                        let index = usize::from(capture.index);
+                        let index = capture.index;
                         match capture.is_local {
                             true => self.stack[frame.base_slot + index].clone(),
                             false => frame.closure.upvalues[index].clone(),
@@ -887,12 +1035,7 @@ impl Vm {
                         }
                         _ if tag.is(bv::ERR) || tag.is(bv::NONE) => {
                             let value = self.pop();
-                            let finished_base = self.frame().base_slot;
-                            self.frames.pop();
-                            return Ok(DispatchResult::EarlyReturn {
-                                value,
-                                finished_base,
-                            });
+                            return Ok(DispatchResult::Return(value));
                         }
                         _ => {
                             return Err(VmError::type_confusion(format!(
@@ -917,7 +1060,10 @@ impl Vm {
                 argc,
                 of: trait_index,
             } => {
-                let method_name = self.chunk().string(method).to_owned();
+                // As for a builtin's name: the method's stays in the
+                // constants.
+                let closure = self.frame().closure.clone();
+                let method_name = closure.function.chunk().string(method);
                 let receiver_slot = self.stack.len() - argc;
                 let receiver = self.stack[receiver_slot].clone();
                 let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
@@ -933,7 +1079,7 @@ impl Vm {
                 if trait_index == crate::bytecode::NO_TRAIT
                     && self.global_slots.ambiguous(
                         receiver_type,
-                        &method_name,
+                        method_name,
                         !matches!(receiver, Value::Record(..) | Value::Variant(..)),
                     )
                 {
@@ -948,88 +1094,49 @@ impl Vm {
                 // the checker reads `r.f(x)` as the field before any
                 // method of the name (and names the trait when it means
                 // a method).
-                let field = match &receiver {
-                    Value::Record(_, fields) if trait_index == crate::bytecode::NO_TRAIT => {
-                        fields.get(&method_name).cloned()
-                    }
-                    _ => None,
-                };
-                let method = match field {
-                    Some(_) => None,
-                    None => self
-                        .global_slots
-                        .call_method(trait_index, receiver_type, &method_name)
-                        .and_then(|slot| self.globals.get(slot as usize).cloned().flatten()),
+                let field_call = trait_index == crate::bytecode::NO_TRAIT
+                    && matches!(&receiver, Value::Record(_, fields) if fields.contains_key(method_name));
+                let method = if field_call {
+                    None
+                } else {
+                    self.global_slots
+                        .call_method(trait_index, receiver_type, method_name)
+                        .and_then(|slot| self.globals.get(slot as usize).cloned().flatten())
                 };
                 if let Some(func) = method {
-                    let args: Vec<Value> = if descriptor_receiver {
-                        self.stack[receiver_slot + 1..].to_vec()
-                    } else {
-                        self.stack[receiver_slot..].to_vec()
-                    };
-                    self.stack.truncate(receiver_slot);
-                    // Use the resumable variant so that if the method
-                    // body yields (e.g. inside `task.spawn`), resuming
-                    // restores the suspended invoke state rather than
-                    // re-running the method body from ip=0 — which would
-                    // duplicate side effects like println, mutation, and
-                    // host function calls. The "original args" we re-push
-                    // on yield must reproduce the stack layout that
-                    // `Op::CallMethod` will consume when this same
-                    // instruction re-executes after resume: descriptor
-                    // (if any) at the bottom, then `args`.
-                    let original_args: Vec<Value> = if descriptor_receiver {
-                        let mut v = Vec::with_capacity(1 + args.len());
-                        v.push(receiver.clone());
-                        v.extend(args.iter().cloned());
-                        v
-                    } else {
-                        args.clone()
-                    };
-                    let result = self.invoke_callable_resumable(&func, &args, &original_args)?;
-                    self.push(result);
-                } else {
-                    let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
-                    // Try built-in trait methods (display, equal, compare)
-                    if field.is_none()
-                        && let Some(result) =
-                            self.dispatch_trait_method(&receiver, &method_name, &extra_args)
-                    {
-                        self.stack.truncate(receiver_slot);
-                        self.push(result?);
-                    } else if let Value::Record(_, ref fields) = receiver {
-                        if let Some(field_val) = fields.get(&method_name) {
-                            let callable = field_val.clone();
-                            self.stack.truncate(receiver_slot);
-                            // Resumable invoke: see the impl-method arm
-                            // above. On yield the original args we re-push
-                            // are receiver + extra_args, so the same
-                            // CallMethod instruction reads them again on
-                            // resume and re-enters this arm — which then
-                            // resumes via `suspended_invoke` instead of
-                            // re-running the callable from scratch.
-                            let mut original_args: Vec<Value> =
-                                Vec::with_capacity(1 + extra_args.len());
-                            original_args.push(receiver.clone());
-                            original_args.extend(extra_args.iter().cloned());
-                            let result = self.invoke_callable_resumable(
-                                &callable,
-                                &extra_args,
-                                &original_args,
-                            )?;
-                            self.push(result);
-                        } else {
-                            return Err(VmError::type_confusion(format!(
-                                "no method '{method_name}' for type '{}'",
-                                crate::types::canonical::dispatch_type_name(&receiver)
-                            )));
-                        }
-                    } else {
-                        return Err(VmError::type_confusion(format!(
-                            "no method '{method_name}' for type '{}'",
-                            crate::types::canonical::dispatch_type_name(&receiver)
-                        )));
+                    // The method's frame starts above a slot of its own,
+                    // as a called function's does: the descriptor's, or
+                    // one made below the receiver.
+                    if !descriptor_receiver {
+                        self.stack.insert(receiver_slot, Value::Unit);
                     }
+                    let argc = self.stack.len() - receiver_slot - 1;
+                    let entered = self.call_value(func, argc, receiver_slot)?;
+                    return Ok(self.entered(entered));
+                }
+                // Try built-in trait methods (display, equal, compare)
+                if !field_call
+                    && let Some(result) = self.dispatch_trait_method(
+                        &receiver,
+                        method_name,
+                        &self.stack[receiver_slot + 1..],
+                    )
+                {
+                    self.stack.truncate(receiver_slot);
+                    self.push(result?);
+                } else if let Value::Record(_, ref fields) = receiver
+                    && let Some(callable) = fields.get(method_name).cloned()
+                {
+                    // A record's field that holds a function: the
+                    // receiver's slot is the function's.
+                    let argc = self.stack.len() - receiver_slot - 1;
+                    let entered = self.call_value(callable, argc, receiver_slot)?;
+                    return Ok(self.entered(entered));
+                } else {
+                    return Err(VmError::type_confusion(format!(
+                        "no method '{method_name}' for type '{}'",
+                        crate::types::canonical::dispatch_type_name(&receiver)
+                    )));
                 }
             }
             Instr::Slide { slot } => {
