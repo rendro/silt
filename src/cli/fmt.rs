@@ -221,8 +221,38 @@ fn format_file(path: &str, tamper: Option<&Tamper>) -> Result<(), String> {
     if formatted == source {
         return Ok(());
     }
-    fs::write(path, formatted).map_err(|e| format!("error writing {path}: {e}"))?;
-    Ok(())
+    replace_file(Path::new(path), &formatted).map_err(|e| {
+        format!(
+            "error writing {path}: {}",
+            silt::diagnostic::io_error_text(&e)
+        )
+    })
+}
+
+/// Give the file at `path` the contents `text`, all of it or none: the
+/// text goes to a new file beside it, which then takes its place. A
+/// `silt fmt` that is interrupted leaves the source as it was, never
+/// half of it.
+fn replace_file(path: &Path, text: &str) -> std::io::Result<()> {
+    // A link stays a link: the file it names is the one replaced.
+    let target = fs::canonicalize(path)?;
+    let permissions = fs::metadata(&target)?.permissions();
+    // Taking a file's place needs no leave to write to it; ask for it
+    // all the same.
+    if permissions.readonly() {
+        return Err(std::io::ErrorKind::PermissionDenied.into());
+    }
+    let mut name = std::ffi::OsString::from(".");
+    name.push(target.file_name().unwrap_or_default());
+    name.push(format!(".{}.fmt-tmp", process::id()));
+    let staged = target.with_file_name(name);
+    let written = fs::write(&staged, text)
+        .and_then(|()| fs::set_permissions(&staged, permissions))
+        .and_then(|()| fs::rename(&staged, &target));
+    if written.is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+    written
 }
 
 /// Three-way result for `silt fmt --check` on a single file. Previously
