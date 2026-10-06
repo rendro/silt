@@ -264,11 +264,7 @@ impl TypeChecker {
     /// annotation variable `r`, each with its trait and its type: `Self`
     /// is `r`, and the trait's parameters are what the bound says
     /// (`where a: TryInto(Int)`).
-    pub(super) fn bound_methods(
-        &mut self,
-        r: RigidId,
-        field: Symbol,
-    ) -> Vec<(TraitKey, Scheme)> {
+    pub(super) fn bound_methods(&mut self, r: RigidId, field: Symbol) -> Vec<(TraitKey, Scheme)> {
         let in_scope = self.bounds.get(&r.var).cloned().unwrap_or_default();
         let mut matches: Vec<(TraitKey, Scheme)> = Vec::new();
         for (trait_name, bound_args) in in_scope {
@@ -313,7 +309,12 @@ impl TypeChecker {
 
     /// The type of a use of the method `method` at `span`, from its
     /// scheme: the use owes the scheme's predicates.
-    pub(super) fn instantiate_method(&mut self, scheme: &Scheme, method: Symbol, span: Span) -> Type {
+    pub(super) fn instantiate_method(
+        &mut self,
+        scheme: &Scheme,
+        method: Symbol,
+        span: Span,
+    ) -> Type {
         self.named_use = Some(Origin {
             span,
             callee: Some(method),

@@ -551,7 +551,13 @@ impl TypeChecker {
                 bounds.push(Pred::bound(info.param_var_ids[i], *tr, Vec::new()));
             }
         }
-        bounds.extend(info.method_bounds.get(&method).into_iter().flatten().cloned());
+        bounds.extend(
+            info.method_bounds
+                .get(&method)
+                .into_iter()
+                .flatten()
+                .cloned(),
+        );
         Some(FnSig {
             params: params.iter().map(|t| rigidify(t, &rigid)).collect(),
             ret: rigidify(ret, &rigid),
@@ -1873,11 +1879,7 @@ impl TypeChecker {
 
     /// The bounds the trait `info` declares for its method `method`,
     /// with the trait's variables replaced as `mapping` says.
-    fn bounds_under(
-        info: &TraitInfo,
-        method: Symbol,
-        mapping: &HashMap<TyVar, Type>,
-    ) -> Vec<Pred> {
+    fn bounds_under(info: &TraitInfo, method: Symbol, mapping: &HashMap<TyVar, Type>) -> Vec<Pred> {
         info.method_bounds
             .get(&method)
             .into_iter()
