@@ -811,7 +811,7 @@ pub(super) fn register_auto_derived_impls_for(
                     span: dummy_span,
                     is_auto_derived: true,
                     trait_name: None,
-                    method_constraints: Vec::new(),
+                    preds: Vec::new(),
                 },
             );
         }

@@ -229,14 +229,14 @@ repros/type_soundness/u4.silt	holds	accept	TS-12: `let e = Err("x")` generalises
 repros/type_soundness/u5.silt	-	obsolete	fn lambda; ported: lang/soundness/u5.silt
 repros/type_soundness/v1.silt	holds	reject E0308	a method on a `type a` descriptor that has no bound
 repros/type_soundness/v2.silt	holds	reject E0308	a method the `where` clause does not give
-repros/type_soundness/w1.silt	pending:3a	reject E0314	TS-4: a `where` bound lost through a user higher-order function
+repros/type_soundness/w1.silt	holds	reject E0314	TS-4: a `where` bound lost through a user higher-order function
 repros/type_soundness/w10.silt	-	obsolete	fn lambda; ported: lang/soundness/w10.silt
-repros/type_soundness/w11.silt	pending:3a	reject E0314	TS-4: a `where` bound lost through an annotated `let`
+repros/type_soundness/w11.silt	holds	reject E0314	TS-4: a `where` bound lost through an annotated `let`
 repros/type_soundness/w12.silt	-	obsolete	fn lambda; ported: lang/soundness/w12.silt
-repros/type_soundness/w2.silt	pending:3a	reject E0314	TS-4: a `where` bound lost through list.map
-repros/type_soundness/w3.silt	pending:3a	reject E0314	TS-4: a `where` bound lost through a record field
+repros/type_soundness/w2.silt	holds	reject E0314	TS-4: a `where` bound lost through list.map
+repros/type_soundness/w3.silt	holds	reject E0314	TS-4: a `where` bound lost through a record field
 repros/type_soundness/w3b.silt	holds	reject E0314	TS-4: a `where` bound lost through a tuple
-repros/type_soundness/w3c.silt	pending:3a	reject E0314	TS-4: a `where` bound lost through a list
+repros/type_soundness/w3c.silt	holds	reject E0314	TS-4: a `where` bound lost through a list
 repros/type_soundness/w3d.silt	-	obsolete	fn lambda; ported: lang/soundness/w3d.silt
 repros/type_soundness/w4.silt	holds	reject E0314	control: a bound through one unannotated wrapper
 repros/type_soundness/w5.silt	-	obsolete	fn lambda; ported: lang/soundness/w5.silt
@@ -364,10 +364,10 @@ repros/typechecker_arch/t_span_impl.silt	-	obsolete	an impl for `Box(Int, String
 repros/typechecker_arch/t_span_trait.silt	holds	reject E0317	TCA-10: in a trait method signature
 repros/typechecker_arch/t_span_variant.silt	holds	reject E0317	TCA-10: in a variant
 repros/typechecker_arch/t_where_direct.silt	holds	reject E0314	control: a `where` bound at a direct call
-repros/typechecker_arch/t_where_hof.silt	pending:3a	reject E0314	TCA-4: a `where` bound lost through a higher-order function
+repros/typechecker_arch/t_where_hof.silt	holds	reject E0314	TCA-4: a `where` bound lost through a higher-order function
 repros/typechecker_arch/t_where_paren.silt	-	obsolete	`[f, ..]` is not a pattern; with `..rest` it is type_soundness/w3c
 repros/typechecker_arch/t_where_pipe_call.silt	holds	reject E0314	control: a `where` bound at `x |> f()`
-repros/typechecker_arch/t_where_pipe_plain.silt	pending:3a	reject E0314	TCA-4: a `where` bound lost at `x |> f`
+repros/typechecker_arch/t_where_pipe_plain.silt	holds	reject E0314	TCA-4: a `where` bound lost at `x |> f`
 lang/soundness/a5.silt	holds	reject E0301	a closure parameter's annotation is enforced
 lang/soundness/b1.silt	pending:3b	reject E0314	TS-2.4: `==` and `<` on closures through polymorphic functions
 lang/soundness/c1.silt	holds	reject E0314	control for b1: the same with a declared Compare bound
@@ -409,12 +409,12 @@ lang/soundness/se2.silt	holds	reject E0201	TS-7.3: `self` in a closure outside a
 lang/soundness/t_poly_method.silt	pending:3b	reject E0314	TCA-4: `show(f) + 1` over `fn show(x) { x.display() }`
 lang/soundness/u5.silt	holds	accept	destructuring a tuple of values generalises each binding: `f(1)` and `f("s")` (false rejection)
 lang/soundness/w10.silt	holds	reject E0314	control for w2: the eta-expanded form
-lang/soundness/w12.silt	pending:3a	reject E0314	TS-4: a Hash bound lost through list.map
-lang/soundness/w3d.silt	pending:3a	reject E0314	TS-4: a Compare bound lost through a user higher-order function
+lang/soundness/w12.silt	holds	reject E0314	TS-4: a Hash bound lost through list.map
+lang/soundness/w3d.silt	holds	reject E0314	TS-4: a Compare bound lost through a user higher-order function
 lang/soundness/w5.silt	holds	reject E0314	a `where` bound through a `let` alias and a closure
 lang/soundness/z1.silt	holds	reject E0314	TS-9: Display of closures; holds through the direct `pr(f)` only, z3 is the program without it
 lang/soundness/z2.silt	holds	reject E0314	TS-9: as z1; holds through the direct `pr(Box(f))` only
 lang/soundness/z3.silt	pending:3b	reject E0314	TS-9: Display of containers of closures through polymorphic functions
 lang/soundness/z4.silt	holds	reject E0315	control: `[f] == [f]` written directly
 lang/soundness/d06.silt	pending:3b	reject E0316	a default body uses `"{self}"`, `==` and `<` on `Self` without the bound; the impl is for a record that holds a function
-lang/soundness/e05.silt	pending:3a	reject E0331	an impl method adds a `where` bound its trait does not declare; a call through the trait does not owe it
+lang/soundness/e05.silt	holds	reject E0331	an impl method adds a `where` bound its trait does not declare; a call through the trait does not owe it

@@ -1,9 +1,8 @@
 -- cmd: check
--- exit: 0
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: no method 'loud' for type 'String'
--- An impl's method adds a `where` bound its trait does not declare, so a
--- call through the trait does not owe it.
+-- exit: 1
+-- stderr-contains: adds the bound `a: Loud`, which the trait does not declare for it
+-- An impl's method adds a `where` bound its trait does not declare: a
+-- call through the trait would not owe it.
 trait Loud { fn loud(self) -> String }
 trait Loud for Int { fn loud(self) -> String { "INT" } }
 trait Shw { fn shw(self, x: a) -> String }

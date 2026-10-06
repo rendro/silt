@@ -1,6 +1,16 @@
-error[type]: ? operator can only be used inside a function that returns Result or Option
- --> round93_lambda_question_mark__rejection_reported_once.silt:7:45
+error[type]: type mismatch: expected Result(_, String), got Int
+ --> round93_lambda_question_mark__rejection_reported_once.silt:8:45
    |
- 7 |   let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
-   |                                             ^^ ? operator can only be used inside a function that returns Result or Option
-  = note: the ?-ed expression is Result(Int, String), but the enclosing function returns Int
+ 8 |   let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
+   |                                             ^^^^^^ type mismatch: expected Result(_, String), got Int
+ ::: round93_lambda_question_mark__rejection_reported_once.silt:8:45
+   |
+ 8 |   let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
+   |                                             -- this `?` requires this function to return Result(_, String)
+
+error[type]: type mismatch: expected Int, got Result(_, String)
+ --> round93_lambda_question_mark__rejection_reported_once.silt:8:23
+   |
+ 8 |   let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got Result(_, String)
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value

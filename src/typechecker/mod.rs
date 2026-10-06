@@ -48,7 +48,7 @@ use declare_fns::FnSig;
 use derive_synth::*;
 use env::TypeEnv;
 use infer::pattern::collect_pattern_vars;
-use solve::PendingWhereConstraint;
+use solve::{Origin, Wanted};
 use std::rc::Rc;
 pub use tables::*;
 pub use unify::*;
@@ -83,17 +83,11 @@ pub struct TypeChecker {
     pub(super) loop_binding_types: Option<Vec<Type>>,
     /// The bounds in scope: for each annotation variable of a declaration
     /// whose body was or is being checked (by the variable it is in the
-    /// declaration's scheme), the traits its `where` clauses declare, and
-    /// their supertraits. A rigid variable has the methods of these.
-    pub(super) active_constraints: HashMap<TyVar, Vec<TraitKey>>,
-    /// Side channel holding trait arguments for parameterized-trait
-    /// constraints, e.g. `where a: TryInto(Int)` stores `[Int]` under
-    /// the key `(tyvar_of_a, TryInto)`. Populated during
-    /// `register_fn_decl` and `register_trait_impl` alongside the
-    /// parallel monomorphic `active_constraints`; consumed during
-    /// descriptor method resolution to substitute trait params.
-    /// Absent for bare `where a: Display` entries.
-    pub(super) trait_arg_bindings: HashMap<(TyVar, TraitKey), Vec<Type>>,
+    /// declaration's scheme), the traits its `where` clauses declare and
+    /// their supertraits, each with its trait arguments (`[Int]` for
+    /// `where a: TryInto(Int)`), as the declaration's scheme writes them.
+    /// A rigid variable has the methods of these.
+    pub(super) bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
     /// Deferred checks for field access on type variables (B4).
@@ -136,19 +130,28 @@ pub struct TypeChecker {
     /// reset it afterward. Defaults to a sentinel zero-span when no
     /// caller has populated it.
     pub(super) current_type_anno_span: Option<Span>,
-    /// The bounds owed for a type variable that was unknown where they
-    /// were owed (see `owe_bound`), until the definitions being checked
-    /// are done.
-    pub(super) pending_where_constraints: Vec<PendingWhereConstraint>,
-    /// The bounds the instantiated variables of the schemes used so far
-    /// owe, in the order they were instantiated: `generalize` puts those
-    /// on a variable it quantifies in the scheme (`let f = constrained_fn`,
-    /// `fn wrap(x) { constrained_fn(x) }`).
-    pub(super) bound_log: Vec<(TyVar, TraitKey)>,
-    /// Where in `bound_log` each open generalisation scope starts
+    /// The predicates the uses checked so far owe (`want`), in the order
+    /// they were owed. One is solved once its subject is known; one whose
+    /// subject `generalize` quantifies is the scheme's
+    /// (`let f = constrained_fn`, `fn wrap(x) { constrained_fn(x) }`).
+    pub(super) wanted: Vec<Wanted>,
+    /// Where in `wanted` each open generalisation scope starts
     /// (`enter_level`), and where the one `exit_level` just left started.
-    pub(super) bound_marks: Vec<usize>,
+    pub(super) wanted_marks: Vec<usize>,
     pub(super) closed_mark: usize,
+    /// The use that names itself for the scheme instantiated next: a
+    /// call (its span, the callee as written), a name used as a value.
+    /// `instantiate` takes it.
+    pub(super) named_use: Option<Origin>,
+    /// In a REPL cell: the files (cells) of the checks taken up from the
+    /// earlier cells (`take_up_waiting`).
+    pub(super) taken_up: std::collections::HashSet<crate::source::FileId>,
+    /// The expression being checked.
+    pub(super) at: Span,
+    /// The parameter types the closure literal checked next is expected
+    /// to have: it is an argument of a call whose callee is known. The
+    /// closure takes it.
+    pub(super) expected_closure: Option<Vec<Type>>,
     /// The annotation variables of the declaration whose body is being
     /// checked, by name: an annotation in the body that writes one of the
     /// names means the same variable.
@@ -242,6 +245,10 @@ pub struct TypeChecker {
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
+    /// Whether the declarations read are rows of the builtin registry.
+    /// A row's text may say what a program's cannot: the type `Never`,
+    /// and a result of a type no parameter fixes (`set.new() -> Set(a)`).
+    pub(super) registry_rows: bool,
     /// What the checks of a session share; see [`Tables`]. Moved in
     /// for one module's check and out again after it.
     pub(super) tables: Tables,
@@ -258,8 +265,7 @@ impl TypeChecker {
         TypeChecker {
             errors: Vec::new(),
             loop_binding_types: None,
-            active_constraints: HashMap::new(),
-            trait_arg_bindings: HashMap::new(),
+            bounds: HashMap::new(),
             current_return_type: None,
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
@@ -267,10 +273,13 @@ impl TypeChecker {
             current_qmark_spans: Vec::new(),
             recovery_stub_names: std::collections::HashSet::new(),
             current_type_anno_span: None,
-            pending_where_constraints: Vec::new(),
-            bound_log: Vec::new(),
-            bound_marks: Vec::new(),
+            wanted: Vec::new(),
+            wanted_marks: Vec::new(),
             closed_mark: 0,
+            named_use: None,
+            taken_up: std::collections::HashSet::new(),
+            at: Span::BUILTIN,
+            expected_closure: None,
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
             unknown_bounds: std::collections::HashSet::new(),
@@ -296,6 +305,7 @@ impl TypeChecker {
             unresolved_impl_methods: std::collections::HashSet::new(),
             is_cell: false,
             signatures_only: false,
+            registry_rows: false,
             tables: Tables::default(),
         }
     }
@@ -507,6 +517,64 @@ impl TypeChecker {
         }
     }
 
+    /// A REPL cell takes up what the earlier cells left waiting for a
+    /// type still unknown: if the cell decides the type, their checks are
+    /// its to pass. (They stay the earlier cells' in the session's
+    /// tables: a cell that fails is forgotten, and the next one takes
+    /// them up again.)
+    fn take_up_waiting(&mut self) {
+        for (module, waiting) in &self.tables.waiting {
+            if *module == self.module {
+                continue;
+            }
+            self.wanted.extend(waiting.wanted.iter().cloned());
+            self.pending_field_accesses
+                .extend(waiting.field_accesses.iter().cloned());
+            self.pending_numeric_checks
+                .extend(waiting.numeric_checks.iter().cloned());
+            self.pending_question_marks
+                .extend(waiting.question_marks.iter().cloned());
+        }
+        self.taken_up = self.waiting_files();
+    }
+
+    /// Leave what this cell's own checks still wait for to the cells
+    /// after it.
+    fn leave_waiting(&mut self) {
+        let earlier = std::mem::take(&mut self.taken_up);
+        let own = |span: &Span| !earlier.contains(&span.file);
+        let waiting = Waiting {
+            wanted: std::mem::take(&mut self.wanted)
+                .into_iter()
+                .filter(|w| !w.solved && own(&w.origin.span))
+                .collect(),
+            field_accesses: std::mem::take(&mut self.pending_field_accesses)
+                .into_iter()
+                .filter(|(.., span)| own(span))
+                .collect(),
+            numeric_checks: std::mem::take(&mut self.pending_numeric_checks)
+                .into_iter()
+                .filter(|(.., span)| own(span))
+                .collect(),
+            question_marks: std::mem::take(&mut self.pending_question_marks)
+                .into_iter()
+                .filter(|(.., span)| own(span))
+                .collect(),
+        };
+        self.tables.waiting.insert(self.module, waiting);
+    }
+
+    /// The files of what is waiting: each REPL cell is a file of its own.
+    fn waiting_files(&self) -> std::collections::HashSet<crate::source::FileId> {
+        self.wanted
+            .iter()
+            .map(|w| w.origin.span.file)
+            .chain(self.pending_field_accesses.iter().map(|(.., s)| s.file))
+            .chain(self.pending_numeric_checks.iter().map(|(.., s)| s.file))
+            .chain(self.pending_question_marks.iter().map(|(.., s)| s.file))
+            .collect()
+    }
+
     /// Report each top-level `let` whose type the module's check leaves
     /// partly unknown (`let ch = channel.new(1)` when nothing in the
     /// module sends on it). A module's check is where its types are
@@ -639,6 +707,14 @@ impl TypeChecker {
         for decl in &program.decls {
             if let Decl::Trait(t) = decl {
                 self.register_trait_decl_user(t);
+            }
+        }
+        // Each supertrait is given as many arguments as it has
+        // parameters: checked where it is written, once every trait of
+        // the module is declared.
+        for decl in &program.decls {
+            if let Decl::Trait(t) = decl {
+                self.check_supertrait_arity(t);
             }
         }
 
@@ -821,12 +897,19 @@ impl TypeChecker {
         // A definition's type may mention an annotation variable of
         // another function of the group: the bounds are the group's, each
         // on the variable its own stands for.
-        let bounds: Vec<(TyVar, TraitKey)> = component
+        let bounds: Vec<Pred> = component
             .members
             .iter()
             .filter_map(|&i| sigs[i].as_ref())
-            .flat_map(|sig| sig.bounds.iter().copied())
-            .map(|(var, bound)| (self.rigid_rep_var(var), bound))
+            .flat_map(|sig| sig.bounds.iter().cloned())
+            .map(|Pred::Trait { tr, args, subject }| Pred::Trait {
+                tr,
+                args,
+                subject: match subject {
+                    Type::Var(var) => Type::Var(self.rigid_rep_var(var)),
+                    other => other,
+                },
+            })
             .collect();
         for &i in &component.members {
             if let (Decl::Fn(f), Some(sig)) = (&decls[i], &sigs[i])
@@ -1123,7 +1206,13 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
             checker.seen_modules.insert(*id);
         }
     }
+    if checker.is_cell {
+        checker.take_up_waiting();
+    }
     let env = checker.check_program_in(program, env);
+    if checker.is_cell {
+        checker.leave_waiting();
+    }
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);

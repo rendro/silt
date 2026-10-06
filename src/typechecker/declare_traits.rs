@@ -204,6 +204,34 @@ impl TypeChecker {
         self.register_trait_decl_inner(t);
     }
 
+    /// Report each supertrait of `t` written with another number of type
+    /// arguments than the supertrait has parameters
+    /// (`trait Bad: Holds(Int, String)` for `trait Holds(a)`).
+    pub(super) fn check_supertrait_arity(&mut self, t: &TraitDecl) {
+        for r in &t.supertraits {
+            let Some(expected) = self
+                .named_trait(r.res, r.name)
+                .and_then(|sup| self.tables.traits.get(&sup))
+                .map(|info| info.params.len())
+            else {
+                continue;
+            };
+            if expected != r.args.len() {
+                self.error(
+                    Code::ArityMismatch,
+                    format!(
+                        "trait '{}' expects {expected} {} as a supertrait of '{}', got {}",
+                        r.name,
+                        inference::plural(expected, "type argument", "type arguments"),
+                        t.name,
+                        r.args.len()
+                    ),
+                    r.span,
+                );
+            }
+        }
+    }
+
     /// Shared trait-registration body. Runs for both user-source decls
     /// (after the redefinition guard in `register_trait_decl_user`) and
     /// built-in synthetic decls (via `builtin_trait_decls`).
@@ -328,7 +356,7 @@ impl TypeChecker {
         // An impl's method has the declared type whatever the impl
         // writes, and a default body is checked against it.
         let mut methods: Vec<(Symbol, Type)> = Vec::with_capacity(t.methods.len());
-        let mut method_bounds: HashMap<Symbol, Vec<MethodBound>> = HashMap::new();
+        let mut method_bounds: HashMap<Symbol, Vec<Pred>> = HashMap::new();
         for m in &t.methods {
             let mut param_map = HashMap::new();
             param_map.insert(self_sym, self_var.clone());
@@ -406,7 +434,7 @@ impl TypeChecker {
             var_names.extend(own);
             // The method's own bounds. (An unknown trait in one is
             // reported where a body is checked against the method.)
-            let mut bounds: Vec<MethodBound> = Vec::new();
+            let mut bounds: Vec<Pred> = Vec::new();
             for wc in &m.where_clauses {
                 let (Some(Type::Var(tv)), Some(bound)) = (
                     param_map.get(&wc.type_param).cloned(),
@@ -420,10 +448,7 @@ impl TypeChecker {
                     .iter()
                     .map(|te| self.resolve_type_expr(te, &mut param_map))
                     .collect();
-                if !args.is_empty() {
-                    self.trait_arg_bindings.insert((tv, bound), args.clone());
-                }
-                bounds.push((tv, bound, args));
+                bounds.push(Pred::bound(tv, bound, args));
             }
             if !bounds.is_empty() {
                 method_bounds.insert(m.name, bounds);
@@ -494,12 +519,6 @@ impl TypeChecker {
                 defined_in: pkg,
             },
         );
-        // In a default body `Self` implements the trait, at the trait's
-        // own parameters.
-        if !trait_param_vars.is_empty() {
-            let args = trait_param_vars.iter().map(|(_, ty)| ty.clone()).collect();
-            self.trait_arg_bindings.insert((self_var_id, key), args);
-        }
     }
 
     /// The signature a default method's body is checked against, once,
@@ -524,15 +543,21 @@ impl TypeChecker {
                 name: *name,
             })
             .collect();
-        let mut bounds = vec![(info.self_var, key)];
-        for (param, bound) in &info.param_where_clauses {
+        // `Self` implements the trait, at the trait's own parameters.
+        let own_args = info.param_var_ids.iter().map(|v| Type::Var(*v)).collect();
+        let mut bounds = vec![Pred::bound(info.self_var, key, own_args)];
+        for (param, tr) in &info.param_where_clauses {
             if let Some(i) = info.params.iter().position(|p| p == param) {
-                bounds.push((info.param_var_ids[i], *bound));
+                bounds.push(Pred::bound(info.param_var_ids[i], *tr, Vec::new()));
             }
         }
-        for (var, bound, _) in info.method_bounds.get(&method).into_iter().flatten() {
-            bounds.push((*var, *bound));
-        }
+        bounds.extend(
+            info.method_bounds
+                .get(&method)
+                .into_iter()
+                .flatten()
+                .cloned(),
+        );
         Some(FnSig {
             params: params.iter().map(|t| rigidify(t, &rigid)).collect(),
             ret: rigidify(ret, &rigid),
@@ -972,8 +997,8 @@ impl TypeChecker {
                     // dispatched fine through a where-bound fn
                     // (head-keyed obligation + runtime dispatch). The
                     // fresh vars are per-registration, like the alias /
-                    // user-arity branches: `instantiate_method_entry`
-                    // refreshes them per call site.
+                    // user-arity branches: `method_scheme`
+                    // quantifies them, new at each use.
                     //
                     // Variadic `Tuple` has no fresh-var shape; it keeps
                     // the `Generic("Tuple", [])` fallback and is matched
@@ -1136,7 +1161,7 @@ impl TypeChecker {
         // from parse_where_clauses_opt as separate (tv, trait) entries
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
-        let mut impl_level_constraints: Vec<(TyVar, TraitKey, Vec<Type>)> = Vec::new();
+        let mut impl_level_constraints: Vec<Pred> = Vec::new();
         // Parallel structure used to populate self.tables.impl_constraints below so
         // that call-site constraint resolution can recursively verify the
         // impl's own where clauses against the actual concrete type
@@ -1216,17 +1241,11 @@ impl TypeChecker {
                 Some(ty) => {
                     let resolved = self.apply(ty);
                     if let Type::Var(tv) = resolved {
-                        impl_level_constraints.push((tv, *trait_name, resolved_bound_args.clone()));
-                        // Record the bound's args under (tv, trait) so
-                        // the call-site `bound_args` lookup in
-                        // `dispatch_method_entry` finds them when the
-                        // impl method gets dispatched. `instantiate_with_constraints`
-                        // / `instantiate_method_entry` propagate these
-                        // entries to fresh tyvars at each call site.
-                        if !resolved_bound_args.is_empty() {
-                            self.trait_arg_bindings
-                                .insert((tv, *trait_name), resolved_bound_args.clone());
-                        }
+                        impl_level_constraints.push(Pred::bound(
+                            tv,
+                            *trait_name,
+                            resolved_bound_args.clone(),
+                        ));
                         // Round 101 BROKEN: index in the EXPANDED-args
                         // space (see the `expanded_self_args` comment
                         // above), NOT the `target_param_names` space —
@@ -1583,7 +1602,7 @@ impl TypeChecker {
             });
             // The bounds the trait declares for the method, on this
             // impl's variables.
-            let mut declared_bounds: Vec<MethodBound> = Vec::new();
+            let mut declared_bounds: Vec<Pred> = Vec::new();
             let seeded: Option<Type> = declared.map(|(info, ty)| {
                 let mut mapping = seed.clone();
                 for v in free_vars_in(ty) {
@@ -1602,6 +1621,7 @@ impl TypeChecker {
                 declared_bounds = Self::bounds_under(info, method.name, &mapping);
                 substitute_vars(ty, &mapping)
             });
+            let has_declared_type = seeded.is_some();
             let expected = seeded.as_ref().map(|ty| rigidify(ty, &method_rigid));
             let (expected_params, expected_ret) = match &expected {
                 Some(Type::Fun(params, ret)) => (params.clone(), Some((**ret).clone())),
@@ -1683,11 +1703,6 @@ impl TypeChecker {
             //       the method's param_map — which sees BOTH impl-level
             //       binders AND method-local type annos.
             let mut method_constraints = impl_level_constraints.clone();
-            for (tv, bound, args) in &declared_bounds {
-                if !args.is_empty() {
-                    self.trait_arg_bindings.insert((*tv, *bound), args.clone());
-                }
-            }
             method_constraints.extend(declared_bounds);
             for wc in &method.where_clauses {
                 // A bound the resolver resolved to nothing: it reported why.
@@ -1746,11 +1761,41 @@ impl TypeChecker {
                             _ => None,
                         };
                         if let Some(tv) = bounded {
-                            method_constraints.push((tv, *trait_name, resolved_bound_args.clone()));
-                            if !resolved_bound_args.is_empty() {
-                                self.trait_arg_bindings
-                                    .insert((tv, *trait_name), resolved_bound_args.clone());
+                            // The trait's signature is what a caller
+                            // through the trait knows: the impl's method
+                            // may restate a bound the trait or the impl's
+                            // header declares, not add one.
+                            let declared = method_constraints.iter().any(|pred| {
+                                let Pred::Trait { tr, subject, .. } = pred;
+                                tr == trait_name && *subject == Type::Var(tv)
+                            });
+                            if !declared && has_declared_type {
+                                self.errors.push(
+                                    Diagnostic::error(
+                                        Code::InvalidTraitImpl,
+                                        method.span,
+                                        format!(
+                                            "method '{}' of the impl of '{}' for '{}' adds the bound \
+                                             `{}: {}`, which the trait does not declare for it",
+                                            method.name,
+                                            ti.trait_name,
+                                            ti.target_type,
+                                            type_param,
+                                            wc.trait_name
+                                        ),
+                                    )
+                                    .with_help(format!(
+                                        "a call through the trait would not owe it: declare the \
+                                         bound on the method in trait '{}', or on the impl's header",
+                                        ti.trait_name
+                                    )),
+                                );
                             }
+                            method_constraints.push(Pred::bound(
+                                tv,
+                                *trait_name,
+                                resolved_bound_args.clone(),
+                            ));
                         }
                     }
                     None => {
@@ -1781,7 +1826,7 @@ impl TypeChecker {
                     span: method.span,
                     is_auto_derived: ti.is_auto_derived,
                     trait_name: Some(trait_key),
-                    method_constraints: method_constraints.clone(),
+                    preds: method_constraints.clone(),
                 },
             );
 
@@ -1794,10 +1839,7 @@ impl TypeChecker {
                         ret: *ret,
                         names: param_map,
                         rigid: method_rigid,
-                        bounds: method_constraints
-                            .iter()
-                            .map(|(tv, bound, _)| (*tv, *bound))
-                            .collect(),
+                        bounds: method_constraints,
                         complete: true,
                     },
                 );
@@ -1828,7 +1870,7 @@ impl TypeChecker {
                         span: ti.span,
                         is_auto_derived: ti.is_auto_derived,
                         trait_name: Some(trait_key),
-                        method_constraints,
+                        preds: method_constraints,
                     },
                 );
             }
@@ -1837,22 +1879,12 @@ impl TypeChecker {
 
     /// The bounds the trait `info` declares for its method `method`,
     /// with the trait's variables replaced as `mapping` says.
-    fn bounds_under(
-        info: &TraitInfo,
-        method: Symbol,
-        mapping: &HashMap<TyVar, Type>,
-    ) -> Vec<MethodBound> {
+    fn bounds_under(info: &TraitInfo, method: Symbol, mapping: &HashMap<TyVar, Type>) -> Vec<Pred> {
         info.method_bounds
             .get(&method)
             .into_iter()
             .flatten()
-            .filter_map(|(tv, bound, args)| {
-                let Some(Type::Var(tv)) = mapping.get(tv) else {
-                    return None;
-                };
-                let args = args.iter().map(|t| substitute_vars(t, mapping)).collect();
-                Some((*tv, *bound, args))
-            })
+            .map(|pred| pred.substitute(mapping))
             .collect()
     }
 

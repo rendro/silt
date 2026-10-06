@@ -169,27 +169,9 @@ fn module_of(qualified: &str) -> &str {
 
 // ── What the builtin scope is made of ───────────────────────────────
 
-/// Bind the prelude's functions and the types that are values: `print`,
-/// `println` and `panic` (whose result type, `Never`, no signature text
-/// can say), and the descriptors of the primitive and container types.
+/// Bind the types that are values: the descriptors of the primitive and
+/// container types.
 fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
-    // The run time formats the argument with `Display`.
-    for (name, result) in [
-        ("print", Type::Unit),
-        ("println", Type::Unit),
-        ("panic", Type::Never),
-    ] {
-        let (a, av) = checker.fresh_tv();
-        env.define(
-            intern(name),
-            Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![a], Box::new(result)),
-                constraints: vec![(av, TraitKey::builtin("Display"))],
-                optional_last_param: false,
-            },
-        );
-    }
     // A primitive type written as a value is its descriptor, of the type
     // `TypeOf(T)`, not a value of the type: `Int * 2` does not check.
     for name in crate::module::BUILTIN_PRIMITIVE_NAMES {
@@ -230,20 +212,21 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern(name),
             Scheme {
                 vars,
+                preds: vec![],
                 ty: Type::type_of(ty),
-                constraints: vec![],
                 optional_last_param: false,
             },
         );
     }
 }
 
-/// Enter the builtin registry: the prelude's enums and, for each module
-/// that is built, its type declarations and its rows. Each module's text
+/// Enter the builtin registry: the prelude's enums and functions and,
+/// for each module that is built, its type declarations and its rows. Each module's text
 /// is parsed and elaborated as a module's declarations are
 /// (`register_type_decl`, `register_fn_decl`), so a row's parameter
 /// types, `where` bounds and type variables are what its signature
-/// says. A function is bound as `module.name`, a variant by its name.
+/// says. A module's function is bound as `module.name`, the prelude's
+/// and a variant by its name.
 fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
     use crate::builtins::registry::{self, registry};
     let registry = registry();
@@ -320,22 +303,19 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
         }
     }
 
+    checker.registry_rows = true;
+    for decl in registry::parse(registry::PRELUDE_FNS).decls {
+        if let Decl::Fn(f) = decl {
+            checker.register_fn_decl(&f, env);
+        }
+    }
     for module in registry.enabled_modules() {
         for decl in registry::parse(&module.text()).decls {
             let Decl::Fn(f) = decl else {
                 continue;
             };
             let mut scope = TypeEnv::new();
-            let checked = checker.errors.len();
             checker.register_fn_decl(&f, &mut scope);
-            // A builtin's result may be of a type no argument fixes
-            // (`set.new() -> Set(a)`, `channel.new`), which a program's
-            // function cannot be.
-            let mut at = 0;
-            checker.errors.retain(|e| {
-                at += 1;
-                at <= checked || !e.message.contains("in return type is not introduced")
-            });
             let Some(mut scheme) = scope.bindings.remove(&f.name) else {
                 continue;
             };
@@ -364,7 +344,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         span: Span::BUILTIN,
                         is_auto_derived: false,
                         trait_name: Some(key),
-                        method_constraints: Vec::new(),
+                        preds: Vec::new(),
                     },
                 );
             }
@@ -376,9 +356,9 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
         "the builtin registry does not check: {:?}",
         checker.errors
     );
+    checker.registry_rows = false;
     checker.defs = None;
     checker.own_types.clear();
-    checker.trait_arg_bindings.clear();
 }
 
 /// Test-only introspection: collect the auto-derived trait-impl and

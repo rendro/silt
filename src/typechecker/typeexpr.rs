@@ -240,6 +240,11 @@ impl TypeChecker {
                 if self.names_rejected(te.res, *name) {
                     return Type::Error;
                 }
+                // The type of what never returns: only a builtin's
+                // signature says it (`panic`).
+                if self.registry_rows && module.is_none() && name_str == "Never" {
+                    return Type::Never;
+                }
                 let Some(ty) = self.named_type(te.res, *name) else {
                     // Lowercase names in type annotations are type variables
                     // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)

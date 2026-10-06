@@ -37,6 +37,14 @@ pub(super) fn plural<'a>(n: usize, singular: &'a str, plural_form: &'a str) -> &
     if n == 1 { singular } else { plural_form }
 }
 
+/// How a call is written, for what it reports: `f(a)` and `a |> f(b)`
+/// are calls with a written argument list; `a |> f` has none.
+#[derive(Clone, Copy)]
+enum CallForm {
+    Call,
+    BarePipe,
+}
+
 /// The arity rule of every call form — `f(a, b)`, `a |> f(b)` and
 /// `a |> f`: a call supplies exactly as many arguments as the callee has
 /// parameters, or one fewer when the callee's signature declares its last
@@ -186,41 +194,44 @@ impl TypeChecker {
     /// implements `trait_name`: a `where` clause of the declaration being
     /// checked, or a supertrait of one.
     pub(super) fn bound_in_scope(&self, r: RigidId, trait_name: TraitKey) -> bool {
-        self.active_constraints
+        self.bounds
             .get(&r.var)
-            .is_some_and(|traits| traits.contains(&trait_name))
+            .is_some_and(|bounds| bounds.iter().any(|(t, _)| *t == trait_name))
     }
 
-    /// A use of a scheme or of an impl owes `tyvar: trait_name`, with
-    /// the trait arguments `bound_args`. A type that is known is checked
-    /// now. An annotation variable must have the bound declared. A
-    /// variable still unknown is checked when the definitions being
-    /// checked are done (`finalize_deferred_checks`): by then it is
-    /// known, or it is generalised and the bound is its scheme's.
-    pub(super) fn owe_bound(
-        &mut self,
-        tyvar: TyVar,
-        trait_name: TraitKey,
-        bound_args: Vec<Type>,
-        callee_fn_name: Option<Symbol>,
-        span: Span,
-    ) {
-        let resolved = self.apply(&Type::Var(tyvar));
-        match &resolved {
-            Type::Error | Type::Never => {}
-            Type::Var(v) => {
-                self.pending_where_constraints.push(PendingWhereConstraint {
-                    tyvar: *v,
-                    trait_name,
-                    callee_fn_name,
-                    span,
-                    bound_trait_args: bound_args,
-                });
-            }
-            Type::Rigid(r) => self.require_declared_bound(*r, trait_name, callee_fn_name, span),
-            // Recursively walk the matched impl's where clauses against
-            // the resolved type's arguments.
-            _ => self.verify_trait_obligation(trait_name, &bound_args, &resolved, span),
+    /// Put `var: trait_name` (at the trait arguments `args`) in scope,
+    /// and with it each supertrait, at the arguments the trait's
+    /// declaration gives it: `where a: Ordered` with
+    /// `trait Ordered: Equal` makes both traits' methods callable on `a`,
+    /// and `v: Sub(Int)` with `trait Sub(a): Super(a)` says
+    /// `v: Super(Int)`.
+    pub(super) fn declare_bound(&mut self, var: TyVar, trait_name: TraitKey, args: Vec<Type>) {
+        let in_scope = self.bounds.entry(var).or_default();
+        if in_scope.iter().any(|(t, _)| *t == trait_name) {
+            return;
+        }
+        in_scope.push((trait_name, args.clone()));
+        let Some(info) = self.tables.traits.get(&trait_name).cloned() else {
+            return;
+        };
+        for (i, super_name) in info.supertraits.iter().enumerate() {
+            let super_args: Vec<Type> = match info.supertrait_args.get(i) {
+                Some(exprs) if !exprs.is_empty() => {
+                    // LATENT (round 88): a bare parametric type name
+                    // (`Box` where `type Box(a) { ... }`) among the
+                    // supertrait's arguments would silently produce a
+                    // 0-arity type that matches no impl.
+                    for te in exprs.iter() {
+                        self.check_supertrait_arg_parametric_arity(te, &info);
+                    }
+                    exprs
+                        .iter()
+                        .map(|te| resolve_supertrait_arg(te, &info, &args))
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
+            self.declare_bound(var, *super_name, super_args);
         }
     }
 
@@ -253,18 +264,10 @@ impl TypeChecker {
     /// annotation variable `r`, each with its trait and its type: `Self`
     /// is `r`, and the trait's parameters are what the bound says
     /// (`where a: TryInto(Int)`).
-    pub(super) fn bound_methods(
-        &mut self,
-        r: RigidId,
-        field: Symbol,
-    ) -> Vec<(TraitKey, Type, Vec<MethodBound>)> {
-        let trait_names = self
-            .active_constraints
-            .get(&r.var)
-            .cloned()
-            .unwrap_or_default();
-        let mut matches: Vec<(TraitKey, Type, Vec<MethodBound>)> = Vec::new();
-        for trait_name in trait_names {
+    pub(super) fn bound_methods(&mut self, r: RigidId, field: Symbol) -> Vec<(TraitKey, Scheme)> {
+        let in_scope = self.bounds.get(&r.var).cloned().unwrap_or_default();
+        let mut matches: Vec<(TraitKey, Scheme)> = Vec::new();
+        for (trait_name, bound_args) in in_scope {
             let Some(info) = self.tables.traits.get(&trait_name) else {
                 continue;
             };
@@ -273,25 +276,30 @@ impl TypeChecker {
             };
             let mut mapping: HashMap<TyVar, Type> = HashMap::new();
             mapping.insert(info.self_var, Type::Rigid(r));
-            if let Some(bound_args) = self.trait_arg_bindings.get(&(r.var, trait_name))
-                && bound_args.len() == info.param_var_ids.len()
-            {
-                for (&tv, arg) in info.param_var_ids.iter().zip(bound_args) {
+            if bound_args.len() == info.param_var_ids.len() {
+                for (&tv, arg) in info.param_var_ids.iter().zip(&bound_args) {
                     mapping.insert(tv, substitute_vars(arg, &self.rigid_of));
                 }
             }
-            // The method's own bounds: each call owes them.
-            let bounds = info
+            // What the method leaves general (its own type variables)
+            // is new at each call, which owes the method's own bounds.
+            let ty = substitute_vars(method_ty, &mapping);
+            let preds = info
                 .method_bounds
                 .get(&field)
                 .into_iter()
                 .flatten()
-                .map(|(tv, bound, args)| {
-                    let args = args.iter().map(|t| substitute_vars(t, &mapping)).collect();
-                    (*tv, *bound, args)
-                })
+                .map(|pred| pred.substitute(&mapping))
                 .collect();
-            matches.push((trait_name, substitute_vars(method_ty, &mapping), bounds));
+            matches.push((
+                trait_name,
+                Scheme {
+                    vars: free_vars_in(&ty),
+                    preds,
+                    ty,
+                    optional_last_param: false,
+                },
+            ));
         }
         if let Some(t) = self.forced_trait {
             matches.retain(|(n, ..)| *n == t);
@@ -299,35 +307,19 @@ impl TypeChecker {
         matches
     }
 
-    /// The type of a call of a method that a bound gives an annotation
-    /// variable (`bound_methods`): what the method leaves general (its
-    /// own type variables) is fresh at each call, and the call owes the
-    /// method's own bounds on them.
-    pub(super) fn instantiate_bound_method(
+    /// The type of a use of the method `method` at `span`, from its
+    /// scheme: the use owes the scheme's predicates.
+    pub(super) fn instantiate_method(
         &mut self,
-        method_ty: &Type,
-        bounds: &[MethodBound],
+        scheme: &Scheme,
         method: Symbol,
         span: Span,
     ) -> Type {
-        let ty = self.apply(method_ty);
-        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-        for v in free_vars_in(&ty) {
-            mapping.insert(v, self.fresh_var());
-        }
-        for (tv, bound, args) in bounds {
-            let Some(Type::Var(fresh)) = mapping.get(tv).cloned() else {
-                continue;
-            };
-            let args: Vec<Type> = args.iter().map(|t| substitute_vars(t, &mapping)).collect();
-            self.bound_log.push((fresh, *bound));
-            if !args.is_empty() {
-                self.trait_arg_bindings
-                    .insert((fresh, *bound), args.clone());
-            }
-            self.owe_bound(fresh, *bound, args, Some(method), span);
-        }
-        substitute_vars(&ty, &mapping)
+        self.named_use = Some(Origin {
+            span,
+            callee: Some(method),
+        });
+        self.instantiate(scheme)
     }
 
     /// Report a call of `method`, of the trait `trait_name` another module
@@ -380,32 +372,12 @@ impl TypeChecker {
         (!visible_declares).then_some(first)
     }
 
-    /// Dispatch a method lookup through a `MethodEntry`, returning the
-    /// instantiated method type AND plumbing any impl- or method-level
-    /// where-clause constraints into `pending_where_constraints` for
-    /// the finalize-pass check.
-    ///
-    /// Receiver-method syntax (`receiver.method(...)`) goes through
-    /// `method_table` rather than `env`, so prior rounds' fn-call where
-    /// enforcement never fired on it. This helper is the single place
-    /// that lifts method_table dispatch into the same constraint-check
-    /// machinery used by ordinary fn calls: each constraint tyvar gets
-    /// a fresh substitution via `instantiate_method_entry`, and the
-    /// caller's span + active_constraints get snapshotted for finalize.
-    ///
-    /// The `receiver_ty` is unified with the method's first parameter
-    /// (the `self` slot) BEFORE the constraint check, so impl-level
-    /// where clauses see the concrete receiver-element type when the
-    /// caller passes a monomorphic receiver. Without this unification,
-    /// the impl's `a_fresh` TyVar would stay unbound through the rest of
-    /// inference — the Call arm applies args to `params[1..]` only on
-    /// method calls, so the `self` param is the one slot no other path
-    /// touches.
-    ///
-    /// For concrete-receiver call sites, the constraint fires immediately
-    /// via `type_name_for_impl`; for unresolved-tyvar receivers it defers
-    /// via `pending_where_constraints` and resolves during
-    /// `finalize_deferred_checks` after all Calls have unified args.
+    /// The type of `receiver.method` for the impl method `entry`: the
+    /// method's scheme instantiated (`instantiate`), with the receiver
+    /// unified with its `self` parameter, so that what the impl's header
+    /// and the method ask of the receiver's parts is checked against the
+    /// receiver's type; on a part still unknown it waits like any
+    /// predicate owed.
     pub(super) fn dispatch_method_entry(
         &mut self,
         entry: &MethodEntry,
@@ -441,7 +413,12 @@ impl TypeChecker {
         self.method_trait = self
             .forced_trait
             .or_else(|| self.entry_trait(entry, method_name));
-        let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
+        // What the impl and the method ask of the receiver's parts and
+        // of the method's own type variables is owed, and checked once
+        // the receiver is unified with the method's `self` below.
+        let owed_before = self.wanted.len();
+        let scheme = self.method_scheme(entry);
+        let instantiated_ty = self.instantiate_method(&scheme, method_name, span);
         // Reject value-receiver calls on no-self trait methods (`empty`,
         // `default`, etc.). The method has no slot for the receiver, so
         // invoking it via `instance.method()` is meaningless. Point the
@@ -473,41 +450,7 @@ impl TypeChecker {
         {
             self.unify(receiver_ty, self_param, span);
         }
-        for (tv, trait_name, entry_bound_args) in constraints {
-            let resolved = self.apply(&Type::Var(tv));
-            // Prefer the bound's own trait args carried on the
-            // MethodEntry constraint triple — they're the source of
-            // truth for impl- / method-level `where a: Conv(Int)`
-            // clauses. Fall back to the side-channel
-            // `trait_arg_bindings` map for the legacy fn-decl-level
-            // path (round 58) which populates that map directly.
-            // Empty when the trait has no parameters.
-            let bound_args = if !entry_bound_args.is_empty() {
-                entry_bound_args.clone()
-            } else {
-                self.trait_arg_bindings
-                    .get(&(tv, trait_name))
-                    .cloned()
-                    .or_else(|| {
-                        if let Type::Var(v) = &resolved {
-                            self.trait_arg_bindings.get(&(*v, trait_name)).cloned()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default()
-            };
-            // A receiver still unknown may be generalised with the
-            // definition being checked: the bound is then its scheme's.
-            if let Type::Var(v) = &resolved {
-                self.bound_log.push((*v, trait_name));
-                if !bound_args.is_empty() {
-                    self.trait_arg_bindings
-                        .insert((*v, trait_name), bound_args.clone());
-                }
-            }
-            self.owe_bound(tv, trait_name, bound_args, Some(method_name), span);
-        }
+        self.solve_wanted(owed_before);
         self.apply(&instantiated_ty)
     }
 
@@ -547,7 +490,11 @@ impl TypeChecker {
                 // The methods of the variable's bounds. The `where`
                 // clause promises an impl at every call; the call finds
                 // it at run time by the type the descriptor carries.
-                let Some(trait_names) = self.active_constraints.get(&r.var).cloned() else {
+                let Some(trait_names) = self
+                    .bounds
+                    .get(&r.var)
+                    .map(|bounds| bounds.iter().map(|(t, _)| *t).collect::<Vec<TraitKey>>())
+                else {
                     self.error(
                         Code::UnknownMethod,
                         format!(
@@ -593,8 +540,7 @@ impl TypeChecker {
                     return None;
                 }
                 self.method_trait = Some(matches[0].0);
-                let instantiated =
-                    self.instantiate_bound_method(&matches[0].1, &matches[0].2, field, span);
+                let instantiated = self.instantiate_method(&matches[0].1, field, span);
                 Some(self.apply(&instantiated))
             }
             _ => {
@@ -613,7 +559,8 @@ impl TypeChecker {
                     return Some(Type::Error);
                 }
                 self.method_trait = self.entry_trait(&entry, field);
-                let (instantiated, _constraints) = self.instantiate_method_entry(&entry);
+                let scheme = self.method_scheme(&entry);
+                let instantiated = self.instantiate_method(&scheme, field, span);
                 Some(self.apply(&instantiated))
             }
         }
@@ -636,35 +583,6 @@ impl TypeChecker {
             ));
         }
         self.errors.push(d);
-    }
-
-    /// Expand a list of trait names to include all transitive supertraits.
-    ///
-    /// Walks each trait's `supertraits` chain: `[Ordered]` with
-    /// `trait Ordered: Equal` returns `[Ordered, Equal]`. Used when
-    /// populating `active_constraints` so that `where a: Ordered` enables
-    /// the `Equal` methods on `a` inside the body — the FieldAccess arm
-    /// for `Type::Var(v)` only checks methods of traits listed in
-    /// `active_constraints[v]`.
-    ///
-    /// Cycle-safe: a `seen` set prevents infinite loops on pathological
-    /// inputs like `trait A: B { } trait B: A { }`. Cycle behaviour at
-    /// the data level is otherwise unspecified for v0.6 — we don't reject
-    /// cycles, we just don't blow the stack on them.
-    pub(super) fn expand_with_supertraits(&self, traits: &[TraitKey]) -> Vec<TraitKey> {
-        use std::collections::HashSet;
-        let mut expanded = Vec::new();
-        let mut stack: Vec<TraitKey> = traits.to_vec();
-        let mut seen: HashSet<TraitKey> = HashSet::new();
-        while let Some(t) = stack.pop() {
-            if seen.insert(t) {
-                expanded.push(t);
-                if let Some(info) = self.tables.traits.get(&t) {
-                    stack.extend(info.supertraits.iter().copied());
-                }
-            }
-        }
-        expanded
     }
 
     // ── Check function body ─────────────────────────────────────────
@@ -723,59 +641,11 @@ impl TypeChecker {
         }
         let prev_names = std::mem::replace(&mut self.sig_names, sig.names.clone());
 
-        // Populate active constraints so method resolution on type variables
-        // can check trait methods during body inference. Each declared
-        // constraint expands to include the transitive supertrait closure
-        // — `where a: Ordered` with `trait Ordered: Equal` makes both
-        // `Ordered`'s and `Equal`'s methods callable on `a`.
-        //
-        // For parameterized supertraits (`trait Sub(a): Super(a)`), the
-        // enclosing trait's args flow into the supertrait via the name
-        // mapping stored in `supertrait_args` / `params`. When we expand
-        // `v: Sub(Int)` to also register `v: Super`, we substitute the
-        // supertrait reference's arg-list through Sub's param → arg map
-        // and stash the result in `trait_arg_bindings` so later
-        // descriptor method resolution sees Super's concrete args.
-        for (tv, trait_name) in &sig.bounds {
-            for expanded in self.expand_with_supertraits(&[*trait_name]) {
-                let entry = self.active_constraints.entry(*tv).or_default();
-                if !entry.contains(&expanded) {
-                    entry.push(expanded);
-                }
-            }
-            // Propagate supertrait args from the enclosing trait's
-            // bindings to each named supertrait.
-            if let Some(info) = self.tables.traits.get(trait_name).cloned() {
-                let base_args: Vec<Type> = self
-                    .trait_arg_bindings
-                    .get(&(*tv, *trait_name))
-                    .cloned()
-                    .unwrap_or_default();
-                for (i, super_name) in info.supertraits.iter().enumerate() {
-                    let arg_exprs = info.supertrait_args.get(i);
-                    let resolved_args: Vec<Type> = match arg_exprs {
-                        Some(exprs) if !exprs.is_empty() => {
-                            // LATENT (round 88): before resolving, walk each
-                            // supertrait-arg TypeExpr and emit a diagnostic
-                            // when a bare parametric type name (e.g. `Box`
-                            // where `type Box(a) { ... }`) is used without
-                            // its type arguments — the free resolver would
-                            // otherwise silently produce a 0-arity Generic
-                            // that fails to match any impl downstream with
-                            // no user-facing error.
-                            for te in exprs.iter() {
-                                self.check_supertrait_arg_parametric_arity(te, &info);
-                            }
-                            exprs
-                                .iter()
-                                .map(|te| resolve_supertrait_arg(te, &info, &base_args))
-                                .collect()
-                        }
-                        _ => continue,
-                    };
-                    self.trait_arg_bindings
-                        .insert((*tv, *super_name), resolved_args);
-                }
+        // The declared bounds are in scope in the body: a rigid variable
+        // has the methods of its bounds and of their supertraits.
+        for Pred::Trait { tr, args, subject } in &sig.bounds {
+            if let Type::Var(var) = subject {
+                self.declare_bound(*var, *tr, args.clone());
             }
         }
 
@@ -1077,6 +947,151 @@ impl TypeChecker {
         })
     }
 
+    /// Check a call: `callee(args)`, `a |> callee(rest)` (the piped
+    /// value is the first argument) or `a |> callee`. The one call rule:
+    /// the callee is checked first, so its use owes its predicates
+    /// (`instantiate`); each argument is then checked and unified with
+    /// its parameter, left to right, a closure literal against the
+    /// function type its parameter expects; last, the predicates the
+    /// arguments have decided are checked.
+    fn check_call(
+        &mut self,
+        callee: &mut Expr,
+        mut args: Vec<&mut Expr>,
+        span: Span,
+        form: CallForm,
+        env: &mut TypeEnv,
+    ) -> Type {
+        let callee_name = match &callee.kind {
+            ExprKind::Ident(name) => Some(*name),
+            _ => None,
+        };
+        // Option B (parser-recovery cascade fix): the signature of a
+        // parser-recovery stub cannot be trusted; the real error is the
+        // parse failure that produced it. The arguments are still
+        // checked for their own errors.
+        if callee_name.is_some_and(|name| self.recovery_stub_names.contains(&name)) {
+            for arg in args {
+                let _ = self.infer_expr(arg, env);
+            }
+            return self.fresh_var();
+        }
+        // Whether the named callee's signature lets the call leave out
+        // the last argument.
+        let optional_last_param = self.callee_declares_optional_last_param(callee, env);
+
+        let owed_before = self.wanted.len();
+        // Reset the method-dispatch flag so a stale value from an
+        // earlier field access does not leak into this call, and read it
+        // before the arguments are checked (they may overwrite it).
+        self.last_field_access_was_method = false;
+        self.named_use = Self::callee_label(callee).map(|label| Origin {
+            span,
+            callee: Some(label),
+        });
+        let callee_ty = self.infer_expr(callee, env);
+        self.named_use = None;
+        let callee_ty = self.apply(&callee_ty);
+        let is_method_call = self.last_field_access_was_method;
+
+        let result_ty = match &callee_ty {
+            Type::Fun(params, ret) => {
+                // A method call supplies `self` implicitly
+                // (`dispatch_method_entry` has unified it with the
+                // receiver), so the arguments line up with `params[1..]`.
+                let implicit_self = usize::from(is_method_call);
+                for (i, arg) in args.iter_mut().enumerate() {
+                    let param = params.get(i + implicit_self);
+                    if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
+                        && let Type::Fun(expected, _) = self.apply(param)
+                    {
+                        self.expected_closure = Some(expected);
+                    }
+                    let arg_ty = self.infer_expr(arg, env);
+                    self.expected_closure = None;
+                    if let Some(param) = param {
+                        let at = match form {
+                            CallForm::Call => arg.span,
+                            CallForm::BarePipe => span,
+                        };
+                        self.unify(&arg_ty, param, at);
+                    }
+                }
+                // A method has no optional parameter.
+                let optional_last_param = optional_last_param && !is_method_call;
+                if !call_arity_matches(
+                    params.len(),
+                    optional_last_param,
+                    args.len() + implicit_self,
+                ) {
+                    let message = match form {
+                        CallForm::Call => {
+                            let what = match callee_name {
+                                Some(name) => format!("`{name}`"),
+                                None => "function".to_string(),
+                            };
+                            format!(
+                                "{what} expects {}, got {}",
+                                accepted_arity_text(params.len(), optional_last_param),
+                                args.len()
+                            )
+                        }
+                        // B6: `a |> f` supplies one argument; piping into
+                        // a function that needs more without an explicit
+                        // call forgets the remaining ones.
+                        CallForm::BarePipe => format!(
+                            "cannot pipe into function taking {} {}; wrap in a call or use partial application",
+                            params.len(),
+                            plural(params.len(), "argument", "arguments")
+                        ),
+                    };
+                    self.error(Code::ArityMismatch, message, span);
+                }
+                (**ret).clone()
+            }
+            // The callee is of a type still unknown: a function of these
+            // arguments.
+            Type::Var(_) => {
+                let arg_types: Vec<Type> =
+                    args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
+                let ret = self.fresh_var();
+                let fn_ty = Type::Fun(arg_types, Box::new(ret.clone()));
+                self.unify(&callee_ty, &fn_ty, span);
+                ret
+            }
+            other => {
+                for arg in args.iter_mut() {
+                    let _ = self.infer_expr(arg, env);
+                }
+                match (other, form) {
+                    (Type::Error, _) => Type::Error,
+                    (Type::Never, _) => Type::Never,
+                    (_, CallForm::Call) => {
+                        self.error(
+                            Code::TypeMismatch,
+                            format!("`{other}` is not callable"),
+                            span,
+                        );
+                        self.fresh_var()
+                    }
+                    (_, CallForm::BarePipe) => {
+                        self.error(
+                            Code::TypeMismatch,
+                            "pipe operator requires a function on the right-hand side".to_string(),
+                            callee.span,
+                        );
+                        self.fresh_var()
+                    }
+                }
+            }
+        };
+
+        // What the callee's use owes, where the arguments have decided
+        // the subject.
+        self.solve_wanted(owed_before);
+        result_ty
+    }
+
     // ── Expression type inference ───────────────────────────────────
 
     pub(super) fn infer_expr(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
@@ -1107,6 +1122,7 @@ impl TypeChecker {
 
     fn infer_expr_kind(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
         let span = expr.span;
+        self.at = span;
         let ty = match &mut expr.kind {
             ExprKind::Int(_) => Type::Int,
             ExprKind::Float(_) => Type::Float,
@@ -1331,6 +1347,11 @@ impl TypeChecker {
                     .def_scheme(expr.res, env)
                     .or_else(|| env.lookup(name).cloned())
                 {
+                    // A name used as a value owes what a call of it does.
+                    self.named_use.get_or_insert(Origin {
+                        span,
+                        callee: Some(name),
+                    });
                     self.instantiate(&scheme)
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
@@ -1416,8 +1437,8 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         self.method_trait = self.entry_trait(&entry, field);
-                        let scheme = Self::method_scheme(&entry);
-                        let ty = self.instantiate(&scheme);
+                        let scheme = self.method_scheme(&entry);
+                        let ty = self.instantiate_method(&scheme, field, span);
                         let ty = self.apply(&ty);
                         expr.ty = Some(ty.clone());
                         return ty;
@@ -1760,10 +1781,10 @@ impl TypeChecker {
                         // An annotation variable has the methods of its
                         // bounds, and nothing else: no field, no method
                         // of a trait the declaration does not promise.
-                        let trait_names = self
-                            .active_constraints
+                        let trait_names: Vec<TraitKey> = self
+                            .bounds
                             .get(&r.var)
-                            .cloned()
+                            .map(|bounds| bounds.iter().map(|(t, _)| *t).collect())
                             .unwrap_or_default();
                         let matches = self.bound_methods(*r, field);
                         if matches.len() > 1 {
@@ -1780,11 +1801,10 @@ impl TypeChecker {
                                 span,
                             );
                             Type::Error
-                        } else if let Some((trait_name, method_ty, bounds)) = matches.first() {
+                        } else if let Some((trait_name, scheme)) = matches.first() {
                             self.last_field_access_was_method = true;
                             self.method_trait = Some(*trait_name);
-                            let instantiated =
-                                self.instantiate_bound_method(method_ty, bounds, field, span);
+                            let instantiated = self.instantiate_method(scheme, field, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -2166,162 +2186,16 @@ impl TypeChecker {
                 }
             }
 
-            ExprKind::Pipe(lhs, rhs) => {
-                let lhs_span = lhs.span;
-                let arg_type = self.infer_expr(lhs, env);
-
-                // Pipe semantics: a |> f(b) means f(a, b)
-                // If the RHS is a Call, we prepend the pipe LHS as the first argument.
-                // Check if rhs is a Call before mutable borrow
-                let rhs_is_call = matches!(&rhs.kind, ExprKind::Call(..));
-
-                if rhs_is_call {
-                    // Destructure rhs.kind mutably to get at callee and call_args
-                    if let ExprKind::Call(callee, call_args) = &mut rhs.kind {
-                        // Capture callee name for where clause check
-                        let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind {
-                            Some(*n)
-                        } else {
-                            None
-                        };
-                        let callee_label = Self::callee_label(callee);
-                        // Capture arg spans before mutable inference
-                        let arg_spans: Vec<Span> = call_args.iter().map(|a| a.span).collect();
-                        // Same signature fact the Call arm reads: may the
-                        // call leave out the callee's last argument?
-                        let optional_last_param =
-                            self.callee_declares_optional_last_param(callee, env);
-
-                        // If callee is a named function, use instantiate_with_constraints
-                        let (callee_ty, where_constraints) = if callee_fn_name.is_some() {
-                            if let Some(scheme) = self.callee_scheme(callee, env) {
-                                let (ty, constraints) = self.instantiate_with_constraints(&scheme);
-                                let applied = self.apply(&ty);
-                                // Round-101 GAP fix: same stash as the
-                                // `ExprKind::Call` arm's named-callee
-                                // shortcut — without it, LSP hover on the
-                                // callee of a piped call (`add` in
-                                // `1 |> add(2)`) has no type and falls
-                                // back to an enclosing expression's type.
-                                callee.ty = Some(applied.clone());
-                                (applied, constraints)
-                            } else {
-                                let ty = self.infer_expr(callee, env);
-                                (self.apply(&ty), vec![])
-                            }
-                        } else {
-                            let ty = self.infer_expr(callee, env);
-                            (self.apply(&ty), vec![])
-                        };
-
-                        // Infer types for the explicit call args
-                        let explicit_arg_types: Vec<Type> = call_args
-                            .iter_mut()
-                            .map(|a| self.infer_expr(a, env))
-                            .collect();
-
-                        // All args = [pipe_lhs, ...explicit_args]
-                        let mut all_arg_types = vec![arg_type];
-                        all_arg_types.extend(explicit_arg_types);
-
-                        let result_ty = match &callee_ty {
-                            Type::Fun(params, ret) => {
-                                // Arity check — the piped value counts as
-                                // the first argument; the rule is the one
-                                // the Call arm applies.
-                                if !call_arity_matches(
-                                    params.len(),
-                                    optional_last_param,
-                                    all_arg_types.len(),
-                                ) {
-                                    self.error(
-                                        Code::ArityMismatch,
-                                        format!(
-                                            "function expects {}, got {}",
-                                            accepted_arity_text(params.len(), optional_last_param),
-                                            all_arg_types.len()
-                                        ),
-                                        span,
-                                    );
-                                }
-                                let min_len = params.len().min(all_arg_types.len());
-                                for i in 0..min_len {
-                                    let s = if i == 0 { lhs_span } else { arg_spans[i - 1] };
-                                    self.unify(&all_arg_types[i], &params[i], s);
-                                }
-                                *ret.clone()
-                            }
-                            Type::Var(_) => {
-                                let ret = self.fresh_var();
-                                let fn_ty = Type::Fun(all_arg_types.clone(), Box::new(ret.clone()));
-                                self.unify(&callee_ty, &fn_ty, span);
-                                ret
-                            }
-                            _ => self.fresh_var(),
-                        };
-
-                        // The callee's bounds, on its instantiated variables.
-                        for (tyvar, trait_name) in &where_constraints {
-                            let bound_args = self
-                                .trait_arg_bindings
-                                .get(&(*tyvar, *trait_name))
-                                .cloned()
-                                .unwrap_or_default();
-                            self.owe_bound(*tyvar, *trait_name, bound_args, callee_label, span);
-                        }
-
-                        result_ty
-                    } else {
-                        unreachable!()
-                    }
-                } else {
-                    // RHS is a plain function/lambda, not a call
-                    let optional_last_param = self.callee_declares_optional_last_param(rhs, env);
-                    let fn_type = self.infer_expr(rhs, env);
-                    let fn_type = self.apply(&fn_type);
-
-                    match &fn_type {
-                        Type::Fun(params, ret) => {
-                            // B6: `a |> f` is the call `f(a)`: it supplies
-                            // one argument, under the arity rule of every
-                            // call. Piping into a function that needs more
-                            // without an explicit call forgets the
-                            // remaining args.
-                            if !call_arity_matches(params.len(), optional_last_param, 1) {
-                                let n = params.len();
-                                self.error(Code::ArityMismatch,
-                                    format!(
-                                        "cannot pipe into function taking {} {}; wrap in a call or use partial application",
-                                        n,
-                                        plural(n, "argument", "arguments")
-                                    ),
-                                    span,
-                                );
-                            }
-                            if !params.is_empty() {
-                                self.unify(&arg_type, &params[0], span);
-                            }
-                            *ret.clone()
-                        }
-                        Type::Var(_) => {
-                            let ret = self.fresh_var();
-                            let fn_ty = Type::Fun(vec![arg_type], Box::new(ret.clone()));
-                            self.unify(&fn_type, &fn_ty, span);
-                            ret
-                        }
-                        Type::Error => Type::Error,
-                        _ => {
-                            self.error(
-                                Code::TypeMismatch,
-                                "pipe operator requires a function on the right-hand side"
-                                    .to_string(),
-                                rhs.span,
-                            );
-                            self.fresh_var()
-                        }
-                    }
+            // `a |> f(b)` is the call `f(a, b)`, and `a |> f` the call
+            // `f(a)`.
+            ExprKind::Pipe(lhs, rhs) => match &mut rhs.kind {
+                ExprKind::Call(callee, call_args) => {
+                    let mut args: Vec<&mut Expr> = vec![&mut **lhs];
+                    args.extend(call_args.iter_mut());
+                    self.check_call(callee, args, span, CallForm::Call, env)
                 }
-            }
+                _ => self.check_call(rhs, vec![&mut **lhs], span, CallForm::BarePipe, env),
+            },
 
             ExprKind::Range(start, end) => {
                 let start_span = start.span;
@@ -2428,181 +2302,7 @@ impl TypeChecker {
             }
 
             ExprKind::Call(callee, args) => {
-                // Capture callee name and arg spans before mutable inference
-                let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind {
-                    Some(*n)
-                } else {
-                    None
-                };
-                let callee_label = Self::callee_label(callee);
-                // Whether the named callee's signature lets the call leave
-                // out the last argument. Read before the callee is
-                // inferred, which needs the callee mutably.
-                let callee_optional_last_param =
-                    self.callee_declares_optional_last_param(callee, env);
-                let arg_spans: Vec<Span> = args.iter().map(|a| a.span).collect();
-
-                // Option B (parser-recovery cascade fix): if the callee
-                // resolves to a parser-recovery stub, we cannot trust its
-                // signature — the user's real error is the parse failure
-                // that produced the stub, not whatever arity/arg-type
-                // mismatch we'd find here. Skip all checks and return a
-                // fresh TyVar so downstream expressions continue to
-                // typecheck without bogus cascade errors.
-                let is_stub_callee = match callee_fn_name {
-                    Some(name) => self.recovery_stub_names.contains(&name),
-                    None => false,
-                };
-                if is_stub_callee {
-                    // Walk arg expressions for inference side-effects (so
-                    // genuine errors inside the args still fire), but
-                    // discard any arity/arg-type checks against the stub.
-                    for arg in args.iter_mut() {
-                        let _ = self.infer_expr(arg, env);
-                    }
-                    let fresh = self.fresh_var();
-                    expr.ty = Some(self.apply(&fresh));
-                    return fresh;
-                }
-
-                // If callee is a named function, use instantiate_with_constraints
-                // to get where clause constraints with remapped type variables.
-                // Reset the method-dispatch flag so stale values from prior
-                // FieldAccess evaluations don't leak into this Call.
-                self.last_field_access_was_method = false;
-                // Round 64 item 6A: extract qualified module-call name
-                // (`mod.fn`) so the where-clause-aware lookup below
-                // also fires for cross-module calls. Without this, the
-                // FieldAccess arm's `instantiate` call discards the
-                // imported fn's `where` constraints, so the obligation
-                // never reaches `verify_trait_obligation` at the call
-                // site.
-                let (callee_ty, where_constraints) = if callee_fn_name.is_some() {
-                    if let Some(scheme) = self.callee_scheme(callee, env) {
-                        let (ty, constraints) = self.instantiate_with_constraints(&scheme);
-                        let applied = self.apply(&ty);
-                        // Round-101 GAP fix: this named-callee shortcut
-                        // bypasses `infer_expr` on the callee Ident, so
-                        // (unlike every other expression) it carried no
-                        // stashed `expr.ty`. LSP hover on the callee then
-                        // fell back to the enclosing Call's RESULT type
-                        // (`add` in `add(1, 2)` hovered as `Int`, `println`
-                        // as `()`), inconsistent with qualified callees
-                        // like `list.sum`. Mirror the qualified-call branch
-                        // below: stash the instantiated fn type on the
-                        // callee; `resolve_all_types` resolves it to the
-                        // call-site instantiation after inference.
-                        callee.ty = Some(applied.clone());
-                        (applied, constraints)
-                    } else {
-                        let ty = self.infer_expr(callee, env);
-                        (self.apply(&ty), vec![])
-                    }
-                } else if self.callee_module_is_in_scope(callee, env)
-                    && let Some(scheme) = self.callee_scheme(callee, env)
-                {
-                    let (ty, constraints) = self.instantiate_with_constraints(&scheme);
-                    // Mirror the FieldAccess side-effect: pre-set the
-                    // callee's expr.ty to the instantiated type so any
-                    // downstream consumer (LSP type-at-cursor, etc.)
-                    // sees the same type the Call arm consumes here.
-                    callee.ty = Some(self.apply(&ty));
-                    (self.apply(&ty), constraints)
-                } else {
-                    let ty = self.infer_expr(callee, env);
-                    (self.apply(&ty), vec![])
-                };
-
-                // Read the method-dispatch flag BEFORE inferring args
-                // (which may trigger nested FieldAccess and overwrite it).
-                let is_method_call = self.last_field_access_was_method;
-
-                let arg_types: Vec<Type> =
-                    args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
-
-                let result_ty = match &callee_ty {
-                    Type::Fun(params, ret) => {
-                        // Unify argument types with parameter types. For a
-                        // method call the implicit `self` is already bound
-                        // by `dispatch_method_entry` against the receiver,
-                        // so the caller's arguments line up with
-                        // `params[1..]` rather than `params[0..]`. Without
-                        // this offset, `x.pick(Todo)` unifies Todo's type
-                        // against the self slot and produces confusing
-                        // diagnostics whenever self's type differs from
-                        // the first explicit parameter's type.
-                        let param_offset = if is_method_call { 1 } else { 0 };
-                        let remaining_params = params.len().saturating_sub(param_offset);
-                        let min_len = remaining_params.min(arg_types.len());
-                        for i in 0..min_len {
-                            self.unify(&arg_types[i], &params[i + param_offset], arg_spans[i]);
-                        }
-                        // Check arity. A method call (the flag is set by
-                        // `dispatch_method_entry`) supplies `self`
-                        // implicitly, and a method has no optional
-                        // parameter; any other call supplies exactly
-                        // its written arguments.
-                        let implicit_self = usize::from(is_method_call);
-                        let optional_last_param = callee_optional_last_param && !is_method_call;
-                        if !call_arity_matches(
-                            params.len(),
-                            optional_last_param,
-                            arg_types.len() + implicit_self,
-                        ) {
-                            let what = match callee_fn_name {
-                                Some(name) => format!("`{name}`"),
-                                None => "function".to_string(),
-                            };
-                            self.error(
-                                Code::ArityMismatch,
-                                format!(
-                                    "{what} expects {}, got {}",
-                                    accepted_arity_text(params.len(), optional_last_param),
-                                    arg_types.len()
-                                ),
-                                span,
-                            );
-                        }
-                        *ret.clone()
-                    }
-                    Type::Var(_) => {
-                        // The callee is an unresolved type variable - create a function type
-                        let ret = self.fresh_var();
-                        let fn_ty = Type::Fun(arg_types.clone(), Box::new(ret.clone()));
-                        self.unify(&callee_ty, &fn_ty, span);
-                        ret
-                    }
-                    Type::Error => Type::Error,
-                    Type::Never => Type::Never,
-                    _ => {
-                        // Short-circuit cascades when the callee is an
-                        // unresolved tyvar — the mismatch branch above
-                        // already turned it into a Fun; if we got here
-                        // with something else, report the concrete type.
-                        let rendered = match &callee_ty {
-                            Type::Var(_) => "an expression of unknown type".to_string(),
-                            t => format!("`{t}`"),
-                        };
-                        self.error(
-                            Code::TypeMismatch,
-                            format!("{rendered} is not callable"),
-                            span,
-                        );
-                        self.fresh_var()
-                    }
-                };
-
-                // The callee's bounds, on its instantiated variables.
-                for (tyvar, trait_name) in &where_constraints {
-                    let bound_args = self
-                        .trait_arg_bindings
-                        .get(&(*tyvar, *trait_name))
-                        .cloned()
-                        .unwrap_or_default();
-                    self.owe_bound(*tyvar, *trait_name, bound_args, callee_label, span);
-                }
-
-                result_ty
+                self.check_call(callee, args.iter_mut().collect(), span, CallForm::Call, env)
             }
 
             ExprKind::Lambda { params, body } => {
@@ -2611,9 +2311,18 @@ impl TypeChecker {
                 // scope too — `|a, a| ...` must be rejected the same way
                 // `fn f(a, a)` is.
                 self.check_fn_params_duplicate_bindings(params);
+                // The parameter types the place the closure stands in
+                // expects (an argument of a call whose callee is known):
+                // an unannotated parameter has that type before the body
+                // is checked.
+                let expected = self
+                    .expected_closure
+                    .take()
+                    .filter(|expected| expected.len() == params.len());
                 let param_types: Vec<Type> = params
                     .iter_mut()
-                    .map(|p| {
+                    .enumerate()
+                    .map(|(i, p)| {
                         let ty = if let Some(te) = &p.ty {
                             // B2: annotation arity errors carry the
                             // annotation's own span.
@@ -2621,6 +2330,8 @@ impl TypeChecker {
                             let resolved = self.resolve_type_expr(te, &mut self.sig_names.clone());
                             self.current_type_anno_span = prev_type_span;
                             resolved
+                        } else if let Some(expected) = &expected {
+                            expected[i].clone()
                         } else {
                             self.fresh_var()
                         };

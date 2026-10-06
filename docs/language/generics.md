@@ -616,7 +616,7 @@ trait Container for Box {
 }
 ```
 
-Multiple bounds combine with `+`, the same way method-level constraints
+Multiple bounds combine with `+`, the same way `where` bounds
 do: `type Item: Compare + Hash`.
 
 #### Qualified projection: `<T as Trait>::Item`

@@ -117,6 +117,14 @@ trait Foo: NotATrait { ... }
 -- error: trait 'Foo' lists unknown supertrait 'NotATrait'
 ```
 
+A supertrait is given as many type arguments as it has parameters:
+
+```silt
+trait Holds(a) { fn held(self) -> a }
+trait Bad: Holds(Int, String) { ... }
+-- error: trait 'Holds' expects 1 type argument as a supertrait of 'Bad', got 2
+```
+
 Implementing a subtrait without the supertrait fails:
 
 ```silt
@@ -303,24 +311,24 @@ trait Greet for Box(a) where a: Greet, a: Loud {
 }
 ```
 
-### Method-level where clauses
+### An impl's method adds no bound
 
-Method-level `where` clauses on trait-impl methods also work and have
-the same semantics as fn-level `where`. Use them when only **one**
-method in the impl needs the constraint; put it on the impl header
-when every method needs it:
+A bound on the impl's type variable belongs on the impl's header. An
+impl's method has the signature its trait declares, `where` clause
+included: it may restate a bound the trait declares for the method or
+the header declares, and may not add one, because a call through the
+trait (`fn f(x: t) where t: Greet { x.greet() }`) knows only the trait's
+signature and the header:
 
 ```silt
-trait Wrap for Box(a) {
-  fn wrap(self) -> Int { 1 }
+trait Greet for Box(a) {
   fn greet(self) -> String where a: Greet {
     match self { Box(inner) -> inner.greet() }
   }
 }
+-- error: method 'greet' of the impl of 'Greet' for 'Box' adds the bound
+-- `a: Greet`, which the trait does not declare for it
 ```
-
-`Box("hello").wrap()` works (no constraint); `Box("hello").greet()`
-fails at the call site against the method-level `where a: Greet`.
 
 Field access on a type-var field in a record works the same way:
 

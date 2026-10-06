@@ -141,7 +141,7 @@ impl TypeChecker {
                         } else {
                             Type::Fun(field_types, Box::new(result_type))
                         },
-                        constraints: vec![],
+                        preds: vec![],
                         optional_last_param: false,
                     };
                     // The variant's definition's scheme, which a use of it
@@ -169,7 +169,7 @@ impl TypeChecker {
                     let scheme = Scheme {
                         vars: var_ids.clone(),
                         ty: Type::type_of(enum_ty),
-                        constraints: vec![],
+                        preds: vec![],
                         optional_last_param: false,
                     };
                     env.define(td.name, scheme);
@@ -255,7 +255,7 @@ impl TypeChecker {
                     Scheme {
                         vars: vec![],
                         ty: Type::type_of(record_ty),
-                        constraints: vec![],
+                        preds: vec![],
                         optional_last_param: false,
                     }
                 } else {
@@ -276,7 +276,7 @@ impl TypeChecker {
                     Scheme {
                         vars: var_ids,
                         ty: Type::type_of(generic_record),
-                        constraints: vec![],
+                        preds: vec![],
                         optional_last_param: false,
                     }
                 };
@@ -368,7 +368,7 @@ impl TypeChecker {
                     span: dummy_span,
                     is_auto_derived: true,
                     trait_name: None,
-                    method_constraints: Vec::new(),
+                    preds: Vec::new(),
                 },
             );
         }
