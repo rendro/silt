@@ -400,6 +400,12 @@ impl Vm {
             &receiver,
             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
         );
+        // (The compiler checks each function against the globals.)
+        if usize::from(trait_index) >= self.global_slots.trait_count() {
+            return Err(VmError::type_confusion(format!(
+                "the call of method '{method_name}' names a trait the program does not have"
+            )));
+        }
         let method = self
             .global_slots
             .call_method(trait_index, receiver_type, method_name)

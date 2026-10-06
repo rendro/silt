@@ -2828,8 +2828,8 @@ mod type_confusion {
     }
 
     #[test]
-    fn method_call_on_a_type_without_the_method() {
-        confused("no method 'nope' for type 'Int'", |e| {
+    fn method_call_that_names_no_trait_of_the_program() {
+        confused("names a trait the program does not have", |e| {
             push(e, Value::Int(1));
             let method = name(e, "nope");
             e.emit(

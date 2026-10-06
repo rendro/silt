@@ -88,6 +88,11 @@ impl Globals {
         self.methods.get(&(t, ty))?.get(method).copied()
     }
 
+    /// The number of traits a `CallMethod` operand can name.
+    pub fn trait_count(&self) -> usize {
+        self.traits.len()
+    }
+
     /// [`Globals::method`] for a `CallMethod` trait operand.
     pub fn call_method(&self, trait_index: u16, ty: TypeId, method: &str) -> Option<u16> {
         let (t, _) = self.traits.get(trait_index as usize)?;
