@@ -1,0 +1,6 @@
+pub type Person { name: String, age: Int }
+pub fn mk() -> Person { Person { name: "m", age: 1 } }
+pub fn ext(p) { {...p, city: "x"} }
+pub fn keep(p: {name: String, ...r}) -> {name: String, ...r} { p }
+pub fn tag(p: {name: String, ...r}) -> {name: String, seen: Bool, ...r} { {...p, seen: true} }
+pub fn wrap(p) { tag(p) }

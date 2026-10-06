@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot spread a `Person` through 'setname': convert it where its type is known, `{...p}`
+-- stderr-contains: error[type]: cannot spread a `Person` through 'swap'
+-- stderr-contains: 22:27
+-- stderr-contains: 24:16
+-- A function that takes a record apart and puts a field back makes an
+-- anonymous record: given a `Person` it would hand back "a Person"
+-- whose `name` is whatever was put in. A declared record does not
+-- stand for the row of such a function.
+type Person { name: String, age: Int }
+fn greet(p: Person) -> String { "hi {p.name} {p.age}" }
+fn setname(b, x) {
+  let {name, ...rest} = b
+  {...rest, name: x}
+}
+fn swap(b, x) {
+  match b { {name, ...rest} -> {...rest, name: x} }
+}
+fn main() {
+  println(setname({name: "a", age: 2}, 7).name + 1)
+  let y: Person = setname(Person { name: "a", age: 2 }, 7)
+  println(greet(y))
+  println(swap(Person { name: "a", age: 2 }, 7))
+}

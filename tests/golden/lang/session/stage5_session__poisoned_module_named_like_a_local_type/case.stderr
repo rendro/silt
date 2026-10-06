@@ -35,8 +35,8 @@ error[parse]: expected declaration, found =
  6 | import Shape
    | ------------ module 'Shape' is imported here
 
-error[type]: record Shape has no field or method 'describe'
+error[type]: unknown field or method 'describe' on type Shape
  --> main.silt:20:11
     |
  20 |   println(s.describe())
-    |           ^^^^^^^^^^ record Shape has no field or method 'describe'
+    |           ^^^^^^^^^^ unknown field or method 'describe' on type Shape

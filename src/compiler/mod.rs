@@ -1557,25 +1557,15 @@ impl Compiler {
                     ));
                 }
                 if let Some(base) = spread {
-                    // Extend op: compile base, then RecordUpdate-style merge
-                    // (RecordUpdate already supports adding new fields too).
-                    //
-                    // Round 83 originally emitted a sibling `RecordUpdateAnon`
-                    // opcode that rebranded the result's `type_name` to
-                    // `"<anon>"` so a spread of a nominal record would
-                    // compare equal to an anon-record literal of the same
-                    // shape. Round 85 follow-up removed the sibling opcode:
-                    // rounds 84-85 made `Value::PartialEq` / `Value::Ord` /
-                    // `Value::Hash` treat `<anon>` as a wildcard on either
-                    // side, which closes the equality, ordering, and
-                    // hashing surfaces uniformly without a runtime
-                    // rebrand. Locks: tests/lang/round83_anonrec_spread_eq_tests.rs
-                    // (PartialEq), tests/typecheck/round85_anonrec_hash_ord_contract_tests.rs
-                    // (Hash + Ord + Set contract).
+                    // A spread makes a new anonymous record whatever the
+                    // base is: the base's fields as an anonymous record
+                    // (the rest of the base with no field left out),
+                    // then the written fields merged in.
+                    self.in_tail_position = false;
+                    self.compile_expr(base)?;
+                    self.emit(Asm::DestructRecordRest { excluded: &[] }, span)?;
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                    self.compile_operands(
-                        std::iter::once(&**base).chain(fields.iter().map(|(_, val)| val)),
-                    )?;
+                    self.compile_operands(fields.iter().map(|(_, val)| val))?;
                     let fields = self.name_constants(&field_names, span)?;
                     self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
                 } else {
@@ -2453,7 +2443,6 @@ impl Compiler {
             Type::Generic(t, args) if t.id == bt::OPTION && args.len() == 1 => Ok(
                 FieldType::Option(Box::new(self.describe_field_type(&args[0], records)?)),
             ),
-            Type::Record(t, _) => self.describe_named_type(*t, ty, records),
             Type::Generic(t, args) if args.is_empty() => self.describe_named_type(*t, ty, records),
             // Set, Channel, functions, generic records, ...
             _ => unsupported(),

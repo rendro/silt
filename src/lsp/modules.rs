@@ -14,6 +14,7 @@ use crate::source::SourceFile;
 
 use super::Server;
 use super::definitions::build_definitions;
+use super::fields::RecordFields;
 use super::project::path_key;
 use super::state::{DefInfo, Document};
 
@@ -131,12 +132,19 @@ impl Server {
         let source = session.sources().get(target_module.file?)?;
         let (definitions, members) = match session.module_analysis(target) {
             Some(checked) => (
-                build_definitions(&checked.ast, Some(&checked.top_level)),
+                build_definitions(
+                    &checked.ast,
+                    Some(&checked.top_level),
+                    &session.tables().record_fields(),
+                ),
                 members(&checked.ast),
             ),
             None => {
                 let ast = target_module.ast.as_ref()?;
-                (build_definitions(ast, None), members(ast))
+                (
+                    build_definitions(ast, None, &RecordFields::new()),
+                    members(ast),
+                )
             }
         };
         Some(ModuleView {

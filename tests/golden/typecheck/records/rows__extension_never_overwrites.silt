@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot extend the record with field 'age': it has one already
+-- stderr-contains: update the field with `r.{ age: ... }`
+-- `{...p, age: 30}` over an open row needs the row to have no `age`:
+-- checked where a use says what the row is, through an annotated
+-- function, an inferred one and a closure.
+fn ext(p: {name: String, ...r}) -> {name: String, age: Int, ...r} { {...p, age: 30} }
+fn ext2(p) { {...p, age: 30} }
+fn main() {
+  println(ext({name: "A"}).age)
+  println(ext2({name: "A", city: "x"}).city)
+  println(ext({name: "A", age: "old"}).age)
+  println(ext2({name: "A", age: "old"}).age)
+  let e = { p -> {...p, age: 1} }
+  println(e({age: "old"}))
+}

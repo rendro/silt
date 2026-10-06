@@ -1,0 +1,24 @@
+-- The rest of a record pattern is an anonymous record of the fields the
+-- pattern does not name, whatever the record matched is: a declared
+-- record, an anonymous one, or a record behind an open row.
+type Person { name: String, age: Int }
+fn param({name, ...rest}: Person) -> Int { rest.age + 1 }
+fn open(b) {
+  let {name, ...rest} = b
+  rest
+}
+fn main() {
+  let p = Person { name: "a", age: 2 }
+  match p { {name, ...rest} -> {
+    println(rest)
+    println(rest == {age: 2})
+  } }
+  let {name, ...rest} = p
+  println(rest.age + 1)
+  when let {age, ...others} = p else { return }
+  println(others)
+  println(param(p))
+  println(open({name: "a", age: 2, k: true}))
+  let {name: n, ...anon} = {name: "a", age: 2}
+  println(anon)
+}

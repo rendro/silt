@@ -1,0 +1,12 @@
+-- A trait method over an open row: an impl that reads the listed field,
+-- and a default body that gives the record back through the row.
+trait Namer { fn name_of(self, p: {name: String, ...r}) -> String }
+trait Namer for Int { fn name_of(self, p: {name: String, ...r}) -> String { p.name } }
+trait Keep { fn keep(self, p: {name: String, ...r}) -> {name: String, ...r} { p } }
+trait Keep for Int {}
+type Person { name: String, age: Int }
+fn main() {
+  println(1.name_of({name: "a", age: 1}))
+  println(1.keep(Person { name: "b", age: 2 }).age)
+  println(1.keep({name: "c", z: true}).z)
+}

@@ -420,12 +420,14 @@ impl TypeChecker {
             let mut own: Vec<(TyVar, Symbol)> = param_map
                 .iter()
                 .filter_map(|(name, ty)| match ty {
-                    // (A row variable, `{x: Int, ...r}`, is no type.)
-                    Type::Var(v)
-                        if !var_names.iter().any(|(known, _)| known == v)
-                            && !resolve(*name).starts_with("__row__") =>
-                    {
-                        Some((*v, *name))
+                    // (A row variable, `{x: Int, ...r}`, is kept under
+                    // `__row__r`: it is named `r`.)
+                    Type::Var(v) if !var_names.iter().any(|(known, _)| known == v) => {
+                        let name = match resolve(*name).strip_prefix("__row__") {
+                            Some(row) => intern(row),
+                            None => *name,
+                        };
+                        Some((*v, name))
                     }
                     _ => None,
                 })
@@ -1507,12 +1509,13 @@ impl TypeChecker {
         let mut rigid: Vec<RigidId> = Vec::new();
         let mut impl_names: HashMap<Symbol, Type> = HashMap::new();
         for (name, ty) in &impl_param_map {
-            if let Type::Var(var) = ty
-                && !resolve(*name).starts_with("__row__")
-            {
+            if let Type::Var(var) = ty {
                 let id = RigidId {
                     var: *var,
-                    name: *name,
+                    name: match resolve(*name).strip_prefix("__row__") {
+                        Some(row) => intern(row),
+                        None => *name,
+                    },
                 };
                 rigid.push(id);
                 impl_names.insert(*name, Type::Rigid(id));
@@ -1847,8 +1850,10 @@ impl TypeChecker {
     ) -> bool {
         // What the declared bounds say of `var`, supertraits included.
         let outer = self.bounds.remove(&var);
-        for Pred::Trait { tr, args, subject } in declared {
-            if *subject == Type::Var(var) {
+        for pred in declared {
+            if let Pred::Trait { tr, args, subject } = pred
+                && *subject == Type::Var(var)
+            {
                 self.declare_bound(var, *tr, args.clone());
             }
         }

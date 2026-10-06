@@ -55,6 +55,19 @@ impl TypeChecker {
         }
     }
 
+    /// The name of `r` as the module being checked writes it, for a
+    /// hint that spells code: a type of another module with the module
+    /// (`time.Date`); in a REPL cell the types of the earlier cells are
+    /// in scope by name.
+    pub(super) fn written_type(&self, r: TypeRef) -> String {
+        let qualified = self.qualified_type(r);
+        // (An earlier cell's "module" has no name a program writes.)
+        match self.is_cell && qualified.starts_with('<') {
+            true => r.name.to_string(),
+            false => qualified,
+        }
+    }
+
     /// The name of the trait `t` in a message: written with its module
     /// when another trait the session knows has its name (`a.Show`).
     pub(super) fn show_trait(&self, t: TraitKey) -> String {

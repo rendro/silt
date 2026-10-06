@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: anon record has no field 'age'
+-- stderr-contains: error[type]: type mismatch: expected {name: String, ...r}, got {name: String}
+-- The row variable of a trait method's or an impl method's annotation
+-- is fixed inside the body, as in a function's signature.
+trait Namer { fn name_of(self, p: {name: String, ...r}) -> String }
+trait Namer for Bool { fn name_of(self, p: {name: String, ...r}) -> String { "{p.name} {p.age}" } }
+trait Bad { fn bad(self, p: {name: String, ...r}) -> {name: String, ...r} { {name: "x"} } }
+fn main() { println(true.name_of({name: "a", age: 1})) }

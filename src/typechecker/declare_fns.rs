@@ -119,7 +119,12 @@ impl TypeChecker {
             let type_param = &wc.type_param;
             let trait_name = &wc.trait_name;
             let trait_args = &wc.trait_args;
-            if let Some(ty) = param_map.get(type_param) {
+            // (A bound may be on a row variable: `where r: Display`.)
+            let row_key = intern(&format!("__row__{type_param}"));
+            if let Some(ty) = param_map
+                .get(type_param)
+                .or_else(|| param_map.get(&row_key))
+            {
                 let resolved = self.apply(ty);
                 // An unknown trait is reported when the body is checked
                 // (or was, by the resolver); what the variable is bounded
@@ -130,6 +135,31 @@ impl TypeChecker {
                         .is_none_or(|t| !self.tables.traits.contains_key(&t))
                 {
                     self.unknown_bounds.insert(tv);
+                }
+                // A row variable stands for the rest of a record's
+                // fields, not for a type: the one thing a bound can ask
+                // of it is a trait a record has by its fields.
+                let on_row = !param_map.contains_key(type_param);
+                if on_row
+                    && let Some(tr) = self.named_trait(wc.trait_res, *trait_name)
+                    && !["Display", "Equal", "Hash"]
+                        .iter()
+                        .any(|name| tr.is_builtin(name))
+                {
+                    self.errors.push(
+                        Diagnostic::error(
+                            Code::InvalidTypeAnnotation,
+                            wc.trait_name_span,
+                            format!(
+                                "the row variable '{type_param}' cannot be bounded by '{}': it stands for the rest of a record's fields, not for a type that implements a trait",
+                                self.show_trait(tr)
+                            ),
+                        )
+                        .with_help(
+                            "a row can be bounded by Display, Equal or Hash, which a record has when its fields do",
+                        ),
+                    );
+                    continue;
                 }
                 if let Type::Var(tv) = resolved
                     && let Some(trait_name) = self.named_trait(wc.trait_res, *trait_name)
@@ -166,21 +196,30 @@ impl TypeChecker {
             }
         }
 
-        // The annotation variables: rigid in the body. A row variable
-        // (`{name: String, ...r}`) is a variable of the body instead.
+        // The annotation variables: rigid in the body, a row variable
+        // (`{name: String, ...r}`) like any other. (A row variable is
+        // kept under `__row__r`, apart from a type variable `r`.)
         let mut rigid: Vec<RigidId> = Vec::new();
         let mut names: HashMap<Symbol, Type> = HashMap::new();
         let mut body_view: HashMap<TyVar, Type> = HashMap::new();
         for (name, ty) in &param_map {
             let Type::Var(var) = ty else { continue };
-            if resolve(*name).starts_with("__row__") {
-                body_view.insert(*var, self.fresh_var());
-                continue;
-            }
             let id = RigidId {
                 var: *var,
-                name: *name,
+                name: match resolve(*name).strip_prefix("__row__") {
+                    Some(row) => intern(row),
+                    None => *name,
+                },
             };
+            // A declared record may stand for a row variable only if
+            // the body makes no anonymous record from it.
+            if resolve(*name).starts_with("__row__") {
+                self.sig_rows.insert(*var);
+                bounds.push(Pred::Anon {
+                    row: Type::Var(*var),
+                    given: Some(*var),
+                });
+            }
             rigid.push(id);
             names.insert(*name, Type::Rigid(id));
             body_view.insert(*var, Type::Rigid(id));
@@ -200,8 +239,8 @@ impl TypeChecker {
             // A variable only a bound's trait arguments name
             // (`where a: TryInto(b)`) is the scheme's as well.
             let mut scheme_vars = free;
-            for Pred::Trait { args, .. } in &bounds {
-                for v in args.iter().flat_map(free_vars_in) {
+            for pred in &bounds {
+                for v in pred.args().iter().flat_map(free_vars_in) {
                     if !scheme_vars.contains(&v) {
                         scheme_vars.push(v);
                     }

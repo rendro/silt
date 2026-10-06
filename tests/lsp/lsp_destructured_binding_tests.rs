@@ -274,3 +274,85 @@ fn test_goto_def_on_top_level_tuple_destructure_usage() {
 
     client.shutdown();
 }
+
+// ── A declared record: the fields' types are the record's ───────────
+
+#[test]
+fn test_hover_on_declared_record_destructure_binder_and_usage() {
+    // A `let` that destructures a value of a declared record type binds
+    // each field at the field's type, which is the record declaration's
+    // (the value's type names the record; it does not carry the fields).
+    //
+    //   line 0: type Pt { x: Int, name: String }
+    //   line 1: fn main() {
+    //   line 2:   let Pt { x, name } = Pt { x: 1, name: "a" }
+    //   line 3:   println(name)
+    //   line 4: }
+    let source = "type Pt { x: Int, name: String }\nfn main() {\n  let Pt { x, name } = Pt { x: 1, name: \"a\" }\n  println(name)\n}\n";
+
+    let mut client = LspClient::spawn();
+    let uri = unique_uri();
+    client.did_open_and_wait(&uri, source);
+
+    // The binder: `name` in the pattern, line 2 column 14.
+    //   "  let Pt { x, name } = ..."
+    //    0         1
+    //    0123456789012345
+    let binder = hover_value_at(&mut client, &uri, 2, 14)
+        .expect("hover on the binder `name` must return a non-null result");
+    assert!(
+        binder.contains("String"),
+        "hover on the binder `name` must show `String`, got: {binder}"
+    );
+    // The usage: `name` in `println(name)`, line 3 column 10.
+    let usage = hover_value_at(&mut client, &uri, 3, 10)
+        .expect("hover on the usage of `name` must return a non-null result");
+    assert!(
+        usage.contains("String"),
+        "hover on the usage of `name` must show `String`, got: {usage}"
+    );
+    // And the other field, an Int.
+    let x = hover_value_at(&mut client, &uri, 2, 11)
+        .expect("hover on the binder `x` must return a non-null result");
+    assert!(
+        x.contains("Int"),
+        "hover on the binder `x` must show `Int`, got: {x}"
+    );
+
+    client.shutdown();
+}
+
+// ── A rest binder: an anonymous record of the fields not named ──────
+
+#[test]
+fn test_hover_on_rest_binder_of_a_declared_record() {
+    // The rest of a record pattern over a declared record is an
+    // anonymous record of the fields the pattern does not name: never
+    // the declared type.
+    //
+    //   line 0: type Pt { x: Int, name: String }
+    //   line 1: fn main() {
+    //   line 2:   let {x, ...rest} = Pt { x: 1, name: "a" }
+    //   line 3:   println(rest)
+    //   line 4: }
+    let source = "type Pt { x: Int, name: String }\nfn main() {\n  let {x, ...rest} = Pt { x: 1, name: \"a\" }\n  println(rest)\n}\n";
+
+    let mut client = LspClient::spawn();
+    let uri = unique_uri();
+    client.did_open_and_wait(&uri, source);
+
+    // The binder: `rest` in the pattern, line 2 column 13.
+    //   "  let {x, ...rest} = ..."
+    //    0         1
+    //    0123456789012345
+    for (line, col) in [(2, 13), (3, 10)] {
+        let shown = hover_value_at(&mut client, &uri, line, col)
+            .expect("hover on `rest` must return a non-null result");
+        assert!(
+            shown.contains("{name: String}") && !shown.contains("Pt"),
+            "hover on `rest` at {line}:{col} must show `{{name: String}}`, got: {shown}"
+        );
+    }
+
+    client.shutdown();
+}

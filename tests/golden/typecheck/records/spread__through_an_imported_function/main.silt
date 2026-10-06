@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot spread a `Person` through 'shapes.ext': convert it where its type is known, `{...p}`
+-- stderr-contains: error[type]: cannot spread a `Person` through 'shapes.tag'
+-- stderr-contains: error[type]: cannot spread a `Person` through 'shapes.wrap'
+-- stderr-contains: 18:22
+-- stderr-contains: 19:22
+-- stderr-contains: 20:23
+-- stderr-not-contains: 16:
+-- stderr-not-contains: 17:
+-- What a function's body spreads is part of what another module reads
+-- of it: a row its signature writes and its body spreads takes no
+-- declared record, one its body only passes on does.
+import shapes
+fn main() {
+  println(shapes.keep(shapes.mk()))
+  println(shapes.tag({name: "a", k: 1}))
+  println(shapes.ext(shapes.mk()))
+  println(shapes.tag(shapes.mk()))
+  println(shapes.wrap(shapes.mk()))
+}

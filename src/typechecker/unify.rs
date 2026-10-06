@@ -160,6 +160,7 @@ impl TypeChecker {
         self.solve_wanted(self.closed_mark);
         self.close_level();
         self.decide_tries();
+        self.default_rebuilds();
         self.default_selects(false);
     }
 
@@ -209,10 +210,6 @@ impl TypeChecker {
             Type::List(inner) => Type::List(Box::new(self.apply(inner))),
             Type::Range(inner) => Type::Range(Box::new(self.apply(inner))),
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.apply(e)).collect()),
-            Type::Record(name, fields) => {
-                let fields = fields.iter().map(|(n, t)| (*n, self.apply(t))).collect();
-                Type::Record(*name, fields)
-            }
             Type::Generic(name, args) => {
                 let args = args.iter().map(|a| self.apply(a)).collect();
                 Type::Generic(*name, args)
@@ -241,6 +238,7 @@ impl TypeChecker {
                     fields.iter().map(|(n, t)| (*n, self.apply(t))).collect();
                 let new_tail = match tail {
                     RowTail::Closed => RowTail::Closed,
+                    RowTail::Rigid(r) => RowTail::Rigid(*r),
                     RowTail::Var(v) => {
                         if let Some(Some(resolved)) = self.tables.vars.subst.get(*v) {
                             let resolved = self.apply(resolved);
@@ -260,21 +258,10 @@ impl TypeChecker {
                                 // substitute_vars' `Some(Type::Var(w))` arm.
                                 RowTail::Var(w)
                             } else {
-                                // Round 79 LATENT TS-L2: matches
-                                // substitute_vars sibling — keeps the two
-                                // row-tail walks aligned per L2. The
-                                // unifier should never bind a row tail var
-                                // to a non-record, non-Var concrete type;
-                                // catch genuine drift loudly in debug
-                                // builds, release falls through to the
-                                // pre-existing safe fallback.
-                                let _other = &resolved;
-                                debug_assert!(
-                                    false,
-                                    "row tail var bound to non-record concrete type {:?}",
-                                    _other
-                                );
-                                RowTail::Var(*v)
+                                // The row is a nominal record
+                                // (`open_row_is`): the type is that
+                                // record's.
+                                return resolved;
                             }
                         } else {
                             RowTail::Var(*v)
@@ -344,7 +331,7 @@ impl TypeChecker {
     /// Helper: substitute record param vars with the call-site type
     /// args and return the field list. Used by anon×nominal-via-Generic
     /// unification.
-    fn instantiate_record_fields_with_args(
+    pub(super) fn instantiate_record_fields_with_args(
         &mut self,
         name: TypeRef,
         args: &[Type],
@@ -378,8 +365,8 @@ impl TypeChecker {
 
     /// Round 74 Fix #5: canonical wording for the occurs-check
     /// diagnostic emitted from every unification site (main `Var(v) ↔ t`
-    /// arm at line ~1270, plus the five row-unif arms in
-    /// `unify_anon_anon` / `unify_anon_nominal`). Pre-fix: the row-unif
+    /// arm, plus the row-unif arms in `unify_anon_anon` and
+    /// `open_row_is`). Pre-fix: the row-unif
     /// arms emitted the terse `"infinite type"` while the main arm
     /// emitted `"infinite type: the type variable appears inside {t}"`.
     /// Routing all six sites through this helper keeps the diagnostic
@@ -450,7 +437,35 @@ impl TypeChecker {
             .filter(|(k, _)| !f1.contains_key(*k))
             .map(|(k, v)| (*k, v.clone()))
             .collect();
+        // A rigid row is the same fields wherever it is written, and
+        // unknown ones: it is another record's row only if that is the
+        // same rigid row with the same fields listed, or an open row
+        // that lists no field this one does not.
+        let whole = |fields: &BTreeMap<Symbol, Type>, tail: &RowTail| Type::AnonRecord {
+            fields: fields.clone(),
+            tail: tail.clone(),
+        };
         match (tail1, tail2) {
+            (RowTail::Rigid(r1), RowTail::Rigid(r2))
+                if r1 == r2 && only_in_1.is_empty() && only_in_2.is_empty() => {}
+            (RowTail::Rigid(r), RowTail::Var(v)) if only_in_2.is_empty() => {
+                let rest = Type::AnonRecord {
+                    fields: only_in_1,
+                    tail: RowTail::Rigid(r),
+                };
+                self.bind(v, rest, out);
+            }
+            (RowTail::Var(v), RowTail::Rigid(r)) if only_in_1.is_empty() => {
+                let rest = Type::AnonRecord {
+                    fields: only_in_2,
+                    tail: RowTail::Rigid(r),
+                };
+                self.bind(v, rest, out);
+            }
+            (t1 @ RowTail::Rigid(_), t2) | (t1, t2 @ RowTail::Rigid(_)) => {
+                let fault = self.type_mismatch(&whole(&f1, &t1), &whole(&f2, &t2));
+                out.push(fault);
+            }
             (RowTail::Closed, RowTail::Closed) => {
                 // Both must have the same field set.
                 if !only_in_1.is_empty() {
@@ -584,81 +599,62 @@ impl TypeChecker {
         }
     }
 
-    /// Unify an anon record with a nominal record's field list.
-    /// `nominal_fields` is the resolved (instantiated) field list of the
-    /// nominal record. The nominal record is treated as a closed shape.
-    fn unify_anon_nominal(
+    /// The open row `{fields, ...v}` is the nominal record type
+    /// `nominal`: the record has each listed field, at its type, and the
+    /// row variable stands for the rest of it, so the row type is the
+    /// nominal type itself (`apply`).
+    fn open_row_is(
         &mut self,
-        anon_fields: std::collections::BTreeMap<Symbol, Type>,
-        anon_tail: RowTail,
-        nominal_fields: &[(Symbol, Type)],
+        fields: &std::collections::BTreeMap<Symbol, Type>,
+        v: TyVar,
+        nominal: &Type,
         out: &mut Vec<Fault>,
     ) {
-        use std::collections::BTreeMap;
-        let mut nf_map: BTreeMap<Symbol, Type> = BTreeMap::new();
-        for (n, t) in nominal_fields {
-            nf_map.insert(*n, t.clone());
-        }
-        // Unify pairwise on overlapping fields.
-        for (k, av) in anon_fields.iter() {
-            if let Some(nv) = nf_map.get(k) {
-                self.unify_into(av, nv, out);
+        let Type::Generic(name, args) = nominal else {
+            return;
+        };
+        let declared = self.instantiate_record_fields_with_args(*name, args);
+        let mut missing: Vec<String> = Vec::new();
+        for (field, ty) in fields {
+            match declared.iter().find(|(n, _)| n == field) {
+                Some((_, declared_ty)) => self.unify_into(ty, declared_ty, out),
+                None => missing.push(resolve(*field)),
             }
         }
-        let only_in_anon: BTreeMap<Symbol, Type> = anon_fields
-            .iter()
-            .filter(|(k, _)| !nf_map.contains_key(*k))
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        let only_in_nom: BTreeMap<Symbol, Type> = nf_map
-            .iter()
-            .filter(|(k, _)| !anon_fields.contains_key(*k))
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        if !only_in_anon.is_empty() {
-            let names: Vec<String> = only_in_anon
-                .keys()
-                .map(|s| crate::intern::resolve(*s))
-                .collect();
-            out.push(Fault::new(
+        if !missing.is_empty() {
+            let shown = self.written_type(*name);
+            let mut fault = Fault::new(
                 Code::NoSuchField,
                 format!(
-                    "anon record has fields not declared on the nominal record: {}",
-                    names.join(", ")
+                    "record {shown} has no field{} {}",
+                    if missing.len() == 1 { "" } else { "s" },
+                    missing
+                        .iter()
+                        .map(|f| format!("'{f}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
-            ));
+            );
+            // A method of the record is not a field of it: what reads
+            // a record's fields calls a field.
+            if let Some(method) = missing
+                .iter()
+                .find(|f| self.tables.method_table.contains_key(&(*name, intern(f))))
+            {
+                fault.help = Some(format!(
+                    "'{method}' is a method of `{shown}`, and what is asked for here is a record with a field '{method}': a value whose fields are read is a record, and `x.{method}(..)` on it calls a field; annotate it, `p: {shown}`"
+                ));
+            }
+            out.push(fault);
             return;
         }
-        match anon_tail {
-            RowTail::Closed => {
-                if !only_in_nom.is_empty() {
-                    let names: Vec<String> = only_in_nom
-                        .keys()
-                        .map(|s| crate::intern::resolve(*s))
-                        .collect();
-                    out.push(Fault::new(
-                        Code::MissingField,
-                        format!(
-                            "anon record is missing fields the nominal record requires: {}",
-                            names.join(", ")
-                        ),
-                    ));
-                }
-            }
-            RowTail::Var(v) => {
-                let leftover = Type::AnonRecord {
-                    fields: only_in_nom,
-                    tail: RowTail::Closed,
-                };
-                if !occurs_in(v, &leftover) {
-                    self.bind(v, leftover, out);
-                } else {
-                    out.push(Fault::new(
-                        Code::InfiniteType,
-                        Self::infinite_type_message(&leftover),
-                    ));
-                }
-            }
+        if occurs_in(v, nominal) {
+            out.push(Fault::new(
+                Code::InfiniteType,
+                Self::infinite_type_message(nominal),
+            ));
+        } else {
+            self.bind(v, nominal.clone(), out);
         }
     }
 
@@ -883,147 +879,6 @@ impl TypeChecker {
                 }
             }
 
-            (Type::Record(n1, f1), Type::Record(n2, f2)) => {
-                if n1 != n2 {
-                    let (got, expected) = self.show_apart(&t1, &t2);
-                    out.push(Fault::new(
-                        Code::TypeMismatch,
-                        format!("record type mismatch: expected {expected}, got {got}"),
-                    ));
-                } else {
-                    // Unify fields by name. Messages are directional:
-                    // `t1` is the got side, `t2` is the expected side
-                    // (see the tuple/Generic arms above — `unify(t1, t2)`
-                    // treats `t2` as expected, `t1` as got). The symmetric
-                    // "record is missing field" wording was ambiguous
-                    // about which side was at fault; split into distinct
-                    // "unexpected field" (got has a surplus) and
-                    // "missing field" (got is short) diagnostics so the
-                    // caret + message unambiguously identifies the fault.
-                    for (name, t1_inner) in f1 {
-                        if let Some((_, t2_inner)) = f2.iter().find(|(n, _)| n == name) {
-                            self.unify_into(t1_inner, t2_inner, out);
-                        } else {
-                            out.push(Fault::new(Code::NoSuchField,
-                                format!(
-                                    "unexpected field '{name}' in record; type '{n1}' has no such field"
-                                ),
-                            ));
-                        }
-                    }
-                    for (name, _t2_inner) in f2 {
-                        if !f1.iter().any(|(n, _)| n == name) {
-                            out.push(Fault::new(
-                                Code::MissingField,
-                                format!(
-                                    "missing field '{name}' in record; type '{n1}' requires it"
-                                ),
-                            ));
-                        }
-                    }
-                }
-            }
-
-            // Record(name, fields) is compatible with Generic(name, args)
-            (Type::Record(n1, f1), Type::Generic(n2, a2)) if n1 == n2 && !a2.is_empty() => {
-                // B2 (round 60): a parameterless record carries Generic args
-                // here only when the user wrote `Point(Bool)` against a
-                // `type Point { ... }` with no params — `record_param_var_ids`
-                // is absent for parameterless records, so the silent no-op
-                // path swallowed the arity violation. Reject explicitly.
-                if !self.tables.record_param_var_ids.contains_key(n1)
-                    && self.tables.records.contains_key(n1)
-                {
-                    out.push(Fault::new(
-                        Code::ArityMismatch,
-                        format!(
-                            "type argument count mismatch for {n1}: expected 0, got {}",
-                            a2.len()
-                        ),
-                    ));
-                    return;
-                }
-                if let (Some(rec_info), Some(param_var_ids)) = (
-                    self.tables.records.get(n1).cloned(),
-                    self.tables.record_param_var_ids.get(n1).cloned(),
-                ) && param_var_ids.len() == a2.len()
-                {
-                    for (field_name, field_template_ty) in &rec_info.fields {
-                        let substituted =
-                            substitute_enum_params(field_template_ty, &param_var_ids, a2);
-                        if let Some((_, concrete_ty)) = f1.iter().find(|(n, _)| n == field_name) {
-                            self.unify_into(concrete_ty, &substituted, out);
-                        }
-                    }
-                }
-            }
-            (Type::Record(n1, _), Type::Generic(n2, a2)) if n1 == n2 && a2.is_empty() => {
-                // Only allow bare `Generic(name, [])` to match a Record if
-                // the record is actually parameterless. For parameterized
-                // records the Generic side must carry type args — otherwise
-                // silently accepting it would let distinct uses pollute
-                // the shared template TyVars (T1 audit fix).
-                let expected = self
-                    .tables
-                    .record_param_var_ids
-                    .get(n1)
-                    .map(|v| v.len())
-                    .unwrap_or(0);
-                if expected != 0 {
-                    out.push(Fault::new(
-                        Code::ArityMismatch,
-                        format!(
-                            "type argument count mismatch for {n1}: expected {expected}, got 0"
-                        ),
-                    ));
-                }
-            }
-            (Type::Generic(n1, a1), Type::Record(n2, f2)) if n1 == n2 && !a1.is_empty() => {
-                // B2 (round 60) mirror: parameterless record with Generic args.
-                if !self.tables.record_param_var_ids.contains_key(n2)
-                    && self.tables.records.contains_key(n2)
-                {
-                    out.push(Fault::new(
-                        Code::ArityMismatch,
-                        format!(
-                            "type argument count mismatch for {n2}: expected 0, got {}",
-                            a1.len()
-                        ),
-                    ));
-                    return;
-                }
-                if let (Some(rec_info), Some(param_var_ids)) = (
-                    self.tables.records.get(n2).cloned(),
-                    self.tables.record_param_var_ids.get(n2).cloned(),
-                ) && param_var_ids.len() == a1.len()
-                {
-                    for (field_name, field_template_ty) in &rec_info.fields {
-                        let substituted =
-                            substitute_enum_params(field_template_ty, &param_var_ids, a1);
-                        if let Some((_, concrete_ty)) = f2.iter().find(|(n, _)| n == field_name) {
-                            self.unify_into(concrete_ty, &substituted, out);
-                        }
-                    }
-                }
-            }
-            (Type::Generic(n1, a1), Type::Record(n2, _)) if n1 == n2 && a1.is_empty() => {
-                // Mirror image of the Record/Generic arm above.
-                let expected = self
-                    .tables
-                    .record_param_var_ids
-                    .get(n2)
-                    .map(|v| v.len())
-                    .unwrap_or(0);
-                if expected != 0 {
-                    out.push(Fault::new(
-                        Code::ArityMismatch,
-                        format!(
-                            "type argument count mismatch for {n2}: expected {expected}, got 0"
-                        ),
-                    ));
-                }
-            }
-
             // ── Anon record × Anon record ─────────────────────────────
             (
                 Type::AnonRecord {
@@ -1038,44 +893,38 @@ impl TypeChecker {
                 self.unify_anon_anon(f1.clone(), tail1.clone(), f2.clone(), tail2.clone(), out);
             }
 
-            // ── Anon record × Nominal record (widening) ───────────────
-            (
-                Type::AnonRecord {
-                    fields: af,
-                    tail: at,
-                },
-                Type::Record(_, nf),
-            ) => {
-                self.unify_anon_nominal(af.clone(), at.clone(), nf, out);
-            }
-            (
-                Type::Record(_, nf),
-                Type::AnonRecord {
-                    fields: af,
-                    tail: at,
-                },
-            ) => {
-                self.unify_anon_nominal(af.clone(), at.clone(), nf, out);
-            }
-            (
-                Type::AnonRecord {
-                    fields: af,
-                    tail: at,
-                },
-                Type::Generic(name, args),
-            ) if self.tables.records.contains_key(name) => {
-                let nf_inst = self.instantiate_record_fields_with_args(*name, args);
-                self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, out);
-            }
-            (
-                Type::Generic(name, args),
-                Type::AnonRecord {
-                    fields: af,
-                    tail: at,
-                },
-            ) if self.tables.records.contains_key(name) => {
-                let nf_inst = self.instantiate_record_fields_with_args(*name, args);
-                self.unify_anon_nominal(af.clone(), at.clone(), &nf_inst, out);
+            // ── Anon record × nominal record ──────────────────────────
+            // They are different types. A nominal record fits an OPEN
+            // row whose listed fields it has: the row then is the
+            // nominal type itself (`open_row_is`). A closed anonymous
+            // record type is never a nominal one, in either direction.
+            (Type::AnonRecord { fields, tail }, Type::Generic(name, args))
+            | (Type::Generic(name, args), Type::AnonRecord { fields, tail })
+                if self.tables.records.contains_key(name) =>
+            {
+                match tail {
+                    RowTail::Var(v) => {
+                        let nominal = Type::Generic(*name, args.clone());
+                        self.open_row_is(fields, *v, &nominal, out);
+                    }
+                    RowTail::Rigid(_) => out.push(self.type_mismatch(&t1, &t2)),
+                    RowTail::Closed => {
+                        let anon_is_got = matches!(&t1, Type::AnonRecord { .. });
+                        let mut fault = self.type_mismatch(&t1, &t2);
+                        // (As the module writes the type: an imported
+                        // one with its module.)
+                        let shown = self.written_type(*name);
+                        fault.help = Some(match anon_is_got {
+                            true => format!(
+                                "an anonymous record is not a `{shown}`: write `{shown} {{ ... }}`"
+                            ),
+                            false => format!(
+                                "a `{shown}` is not an anonymous record: convert it with a spread, `{{...v}}`, or take an open row, `{{x: T, ...r}}`"
+                            ),
+                        });
+                        out.push(fault);
+                    }
+                }
             }
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
@@ -1196,11 +1045,13 @@ pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
             rigid_in(inner)
         }
         Type::Tuple(elems) => elems.iter().find_map(rigid_in),
-        Type::Record(_, fields) => fields.iter().find_map(|(_, t)| rigid_in(t)),
         Type::Generic(_, args) => args.iter().find_map(rigid_in),
         Type::Map(k, v) => rigid_in(k).or_else(|| rigid_in(v)),
         Type::AssocProj { receiver, .. } => rigid_in(receiver),
-        Type::AnonRecord { fields, .. } => fields.values().find_map(rigid_in),
+        Type::AnonRecord { fields, tail } => match tail {
+            RowTail::Rigid(r) => Some(*r),
+            _ => fields.values().find_map(rigid_in),
+        },
         Type::Int
         | Type::Float
         | Type::Bool
@@ -1220,7 +1071,6 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::List(inner) => occurs_in(var, inner),
         Type::Range(inner) => occurs_in(var, inner),
         Type::Tuple(elems) => elems.iter().any(|e| occurs_in(var, e)),
-        Type::Record(_, fields) => fields.iter().any(|(_, t)| occurs_in(var, t)),
         Type::Generic(_, args) => args.iter().any(|a| occurs_in(var, a)),
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
         Type::Set(inner) => occurs_in(var, inner),

@@ -1,0 +1,12 @@
+-- An update, `p.{ f: e }`, gives a value of the record's own type; a
+-- spread, `{...p, f: e}`, gives an anonymous record.
+type Person { name: String, age: Int }
+fn greet(p: Person) -> String { "{p.name} {p.age}" }
+fn main() {
+  let p = Person { name: "Bob", age: 42 }
+  let older = p.{ age: 43 }
+  println(greet(older))
+  println(older)
+  println({...p, age: 43})
+  println(older == Person { name: "Bob", age: 43 })
+}

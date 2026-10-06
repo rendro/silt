@@ -1663,7 +1663,7 @@ fn main() {
   p.z
 }
             "#,
-        "no field",
+        "unknown field or method 'z' on type Point",
     );
 }
 
