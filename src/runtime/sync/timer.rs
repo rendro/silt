@@ -121,7 +121,7 @@ impl Timer {
 
     /// Carry out every entry whose deadline the clock has reached, and
     /// give their number. If the clock has panicked
-    /// ([`HostIo::clock_failure`]) its time no longer passes, and every
+    /// (`HostIo::clock_failure`) its time no longer passes, and every
     /// entry is carried out: no wait is left that would never end.
     pub fn fire_due(&self, wake: &dyn Wake) -> usize {
         let now = self.now();
