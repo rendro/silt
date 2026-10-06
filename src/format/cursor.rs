@@ -558,11 +558,14 @@ impl<'a> Cursor<'a> {
 
     /// Carry the comment of a skipped token to the next written token.
     /// It ends the line there; behind another comment that ends the
-    /// line, it gets a line of its own.
+    /// line, it gets a line of its own, a `{- -}` comment too: that is
+    /// where it is written, and what the next pass reads.
     fn carry(&mut self, text: String, class: Class) {
         self.carried.push(match class {
+            Class::Inline | Class::EndOfLine(false) | Class::EndOfLine(true) if self.line_ended => {
+                Doc::OwnLine(text)
+            }
             Class::Inline | Class::EndOfLine(false) => Doc::Comment(text),
-            Class::EndOfLine(true) if self.line_ended => Doc::OwnLine(text),
             Class::EndOfLine(true) => {
                 self.line_ended = true;
                 Doc::LineSuffix(text)
