@@ -1,5 +1,5 @@
-error[type]: operator '<' requires Int, Float, String, List, Range, Record, or Variant, got 'Bool'
+error[type]: type mismatch: expected Int, got Bool
  --> binop_mismatch_direction_round100__int_lt_bool_names_bool.silt:4:16
    |
  4 |   let x = (1 < true)
-   |                ^^^^ operator '<' requires Int, Float, String, List, Range, Record, or Variant, got 'Bool'
+   |                ^^^^ type mismatch: expected Int, got Bool

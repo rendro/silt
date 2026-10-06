@@ -1,0 +1,26 @@
+-- What has `Compare` is ordered by `<` and `.compare()`, directly and
+-- through a bound: a tuple part by part, `false` before `true`, `()`
+-- equal to itself.
+import list
+type Pair { t: (Int, Int) }
+fn lt(x: a, y: a) -> Bool where a: Compare { x < y }
+fn cmp(x: a, y: a) -> Int where a: Compare { x.compare(y) }
+fn less(x, y) { x <= y }
+fn main() {
+  println((1, "a") < (1, "b"))
+  println((2, 1) >= (1, 9))
+  println((1, 2).compare((1, 3)))
+  println(false < true)
+  println(true.compare(false))
+  println(() <= ())
+  println(().compare(()))
+  println(lt((1, true), (1, false)))
+  println(cmp((1, (2, "x")), (1, (2, "x"))))
+  println(lt(false, true))
+  println(cmp((), ()))
+  println(less((0, 1), (0, 1)))
+  println(lt(Pair { t: (1, 2) }, Pair { t: (1, 3) }))
+  println(cmp(Pair { t: (2, 0) }, Pair { t: (1, 3) }))
+  println(list.sort([(2, "b"), (1, "z"), (1, "a")]))
+  println(list.sort([true, false, true]))
+}

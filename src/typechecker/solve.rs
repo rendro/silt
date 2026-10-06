@@ -771,7 +771,7 @@ impl TypeChecker {
                             let domain = if trait_name.is_builtin("Equal") {
                                 "a comparable type"
                             } else {
-                                "Int, Float, String, List, Range, Record, or Variant"
+                                "Int, Float, String, Bool, List, Tuple, Record, or Variant"
                             };
                             self.error(
                                 Code::UnsupportedOperation,
@@ -811,7 +811,7 @@ impl TypeChecker {
     /// Whether `trait_name` holds of a type with the head `head` by the
     /// type's structure: the sealed `Equal`, `Compare` and `Hash`
     /// always; `Display` unless an impl of it is written for the head.
-    fn by_structure(&self, trait_name: TraitKey, head: TypeRef) -> bool {
+    pub(super) fn by_structure(&self, trait_name: TraitKey, head: TypeRef) -> bool {
         if ["Equal", "Compare", "Hash"]
             .iter()
             .any(|name| trait_name.is_builtin(name))
@@ -1024,7 +1024,7 @@ impl TypeChecker {
                     let domain = if trait_name.is_builtin("Equal") {
                         "a comparable type"
                     } else {
-                        "Int, Float, String, List, Range, Record, or Variant"
+                        "Int, Float, String, Bool, List, Tuple, Record, or Variant"
                     };
                     format!("operator {op} requires {domain}, got '{resolved}'")
                 };

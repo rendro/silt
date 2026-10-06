@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: error[type]: type 'Tuple' does not implement trait 'Compare'
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
 import list
 fn main() {
   let f = { y -> y }
