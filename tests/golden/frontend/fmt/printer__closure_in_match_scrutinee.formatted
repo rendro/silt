@@ -29,6 +29,21 @@ fn main() {
     _ -> "any"
   }
   println(k)
+  -- Behind a pipeline, a match body that looks like a closure is read
+  -- as one if the expression goes on behind it. The parentheses or the
+  -- line break that keep it the body stay.
+  let p = match (7 |> dbl) {
+    x -> x
+  } |> pick { _ -> 1 }
+  let q = match 7 |> dbl
+  {
+    x -> x
+  } |> pick { _ -> 1 }
+  let r = match 7 |> dbl {
+    14 -> 1
+    _ -> 0
+  }
+  println(p + q + r)
   let m = match 7 |> dbl {
     14 -> 1
     _ -> 0
@@ -40,4 +55,8 @@ fn main() {
 
 fn dbl(n) {
   n * 2
+}
+
+fn pick(n, f) {
+  f(n)
 }
