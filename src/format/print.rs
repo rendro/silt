@@ -1604,13 +1604,31 @@ impl Printer<'_> {
             // `x as (T).f`, `x as (T)(a)` and `x as (T)?` apply to
             // `x as T`: the parentheses stand around that, and the type
             // needs none. (The source has them around the type, or a line
-            // break behind it.) They are laid out as the source's own
-            // would be: with a comment in front of the closing one, they
-            // can break at their inside.
-            (ExprKind::Ascription(..), _) if !wrapped => {
+            // break behind it.) The type's own become these: a comment
+            // at their inside is at the inside of these, and with one in
+            // front of the closing one they can break there, as the
+            // source's own would.
+            (ExprKind::Ascription(value, ty), _) if !wrapped => {
                 // The comments in front stay in front of the parenthesis.
                 let leading = self.cur.leading();
-                let inner = self.expr(head, Ctx::top());
+                let value = self.expr(value, Ctx::top().left(prec::AS));
+                let keyword = self.tok(Token::As);
+                let around_type = self.cur.wrappers(ty.span.end);
+                // A comment behind the type's opening parenthesis stays
+                // between it and the type: the type keeps its own then.
+                let ty = if self.cur.comments_behind_opening(around_type) {
+                    self.type_expr(ty)
+                } else {
+                    self.cur.skip_n(&Token::LParen, around_type);
+                    let ty = self.bare_type(ty);
+                    let tail = match around_type {
+                        0 => Doc::Nil,
+                        _ => self.dangling(),
+                    };
+                    self.cur.skip_n(&Token::RParen, around_type);
+                    Doc::concat(vec![ty, tail, self.cur.carried()])
+                };
+                let inner = Doc::concat(vec![value, space(), keyword, space(), ty]);
                 let (open, close) = (Doc::text("("), Doc::text(")"));
                 let wrapped = if self.cur.comment_behind_last_token() {
                     parenthesized(open, inner, close)

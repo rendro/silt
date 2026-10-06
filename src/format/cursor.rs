@@ -590,6 +590,16 @@ impl<'a> Cursor<'a> {
             .count()
     }
 
+    /// Whether a comment stands directly behind one of the `count`
+    /// opening parentheses at the cursor.
+    pub fn comments_behind_opening(&self, count: usize) -> bool {
+        self.tokens
+            .iter()
+            .skip(self.pos + 1)
+            .take(count)
+            .any(|tok| tok.comments.start != tok.comments.end)
+    }
+
     /// Whether a comment stands directly inside one of the `count`
     /// nested pairs of parentheses at the cursor: behind an opening one
     /// or in front of a closing one. There a line break is allowed that

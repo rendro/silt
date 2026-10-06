@@ -1,7 +1,10 @@
 -- cmd: fmt
 -- A call, a field access or a `?` behind `x as (T)` applies to `x as T`.
 -- The canonical spelling has the parentheses around that, and none
--- around the type; a line break behind the type is not needed.
+-- around the type; a line break behind the type is not needed. A
+-- comment in front of the type's closing parenthesis is then in front
+-- of the new one; one behind its opening parenthesis keeps the type's
+-- own, so that it stays between `as` and the type.
 type P { x: Int }
 
 fn unwrap(r: Result(Int, String)) -> Result(Int, String) {
@@ -29,5 +32,9 @@ fn main() {
     -- above the ascription
     p as (P).x
   let q = f as (Fn(Int) -> Int {- in the type -})(1)
-  println("{o} {q} {g} {h} {i} {j} {k} {l.x} {m} {n} {unwrap(Ok(1))}")
+  let s = f as ({- behind the opening one -} Fn(Int) -> Int)(1)
+  let t = f as (Fn(Int) -> Int
+    -- on its own line
+  )(1)
+  println("{s} {t} {o} {q} {g} {h} {i} {j} {k} {l.x} {m} {n} {unwrap(Ok(1))}")
 }
