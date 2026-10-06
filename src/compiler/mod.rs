@@ -3661,7 +3661,7 @@ fn main() {
 
     #[test]
     fn test_compile_question_mark() {
-        let fns = compile("fn f(x) { x? }");
+        let fns = compile("fn f(x: Option(Int)) { Some(x?) }");
         let f = find_fn(&fns, "f");
         assert!(has_op(f.chunk(), Op::QuestionMark));
     }

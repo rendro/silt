@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
 -- Port of repros/type_soundness/c5.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: unsupported operation: cannot compare Fn and Fn
 fn pick(flag, a, b) {
   match flag {
     true -> a < b

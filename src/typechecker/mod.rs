@@ -13,7 +13,6 @@ mod builtin_env;
 mod declare_fns;
 mod declare_traits;
 mod declare_types;
-mod deferred;
 mod derive_gates;
 mod derive_synth;
 mod env;
@@ -59,11 +58,12 @@ pub use unify::*;
 /// so would shadow the compiler's TraitInfo (different method names,
 /// different signatures) and produce nonsensical cascade errors when
 /// the preregistered impls get revalidated against the user's body.
-pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display", "Error"];
+pub(super) const BUILTIN_TRAIT_NAMES: &[&str] =
+    &["Equal", "Compare", "Hash", "Display", "Error", "Number"];
 
 /// The built-in traits a program cannot implement by hand: they are
 /// derived structurally (see `reject_sealed_trait_impls`).
-pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash"];
+pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Number"];
 
 /// Subset of [`BUILTIN_TRAIT_NAMES`] that is auto-derived for every
 /// primitive and builtin container. `Error` is intentionally excluded:
@@ -97,21 +97,6 @@ pub struct TypeChecker {
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
     pub(super) unknown_receiver: Option<(Type, Symbol)>,
-    /// Deferred checks for numeric operations on type variables (B5 / B2).
-    /// Each entry is `(operand_type, op_description, span)`. Re-examined after
-    /// all function bodies are inferred: if the operand is still a Var, we
-    /// emit an error.
-    pub(super) pending_numeric_checks: Vec<(Type, &'static str, Span)>,
-    /// Deferred checks for `?` applied to a then-unresolved type variable
-    /// (round 93). Each entry is `(inner_type, result_type,
-    /// enclosing_return_type, span)`. Re-examined after all function bodies
-    /// are inferred: if the inner type resolved to Result/Option, the
-    /// enclosing fn/lambda return type is constrained exactly like the
-    /// concrete inline path; if it resolved to anything else concrete, the
-    /// usual "'?' requires Result or Option" diagnostic fires. Still-Var
-    /// inners stay lenient (polymorphic templates — same rationale as
-    /// `pending_numeric_checks`).
-    pub(super) pending_question_marks: Vec<(Type, Type, Option<Type>, Span)>,
     /// Spans of `?` uses in the current fn/lambda body (round 93). When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -274,8 +259,6 @@ impl TypeChecker {
             current_return_type: None,
             callee_position: false,
             unknown_receiver: None,
-            pending_numeric_checks: Vec::new(),
-            pending_question_marks: Vec::new(),
             current_qmark_spans: Vec::new(),
             recovery_stub_names: std::collections::HashSet::new(),
             current_type_anno_span: None,
@@ -584,20 +567,6 @@ impl TypeChecker {
                     .filter(|w| waits(&w.origin.span))
                     .cloned(),
             );
-            self.pending_numeric_checks.extend(
-                waiting
-                    .numeric_checks
-                    .iter()
-                    .filter(|(.., span)| waits(span))
-                    .cloned(),
-            );
-            self.pending_question_marks.extend(
-                waiting
-                    .question_marks
-                    .iter()
-                    .filter(|(.., span)| waits(span))
-                    .cloned(),
-            );
         }
         self.taken_up = self.waiting_files();
     }
@@ -657,14 +626,6 @@ impl TypeChecker {
                 .into_iter()
                 .filter(|w| !w.solved && own(&w.origin.span))
                 .collect(),
-            numeric_checks: std::mem::take(&mut self.pending_numeric_checks)
-                .into_iter()
-                .filter(|(.., span)| own(span))
-                .collect(),
-            question_marks: std::mem::take(&mut self.pending_question_marks)
-                .into_iter()
-                .filter(|(.., span)| own(span))
-                .collect(),
         };
         self.tables.waiting.insert(self.module, waiting);
     }
@@ -707,12 +668,7 @@ impl TypeChecker {
 
     /// The files of what is waiting: each REPL cell is a file of its own.
     fn waiting_files(&self) -> std::collections::HashSet<crate::source::FileId> {
-        self.wanted
-            .iter()
-            .map(|w| w.origin.span.file)
-            .chain(self.pending_numeric_checks.iter().map(|(.., s)| s.file))
-            .chain(self.pending_question_marks.iter().map(|(.., s)| s.file))
-            .collect()
+        self.wanted.iter().map(|w| w.origin.span.file).collect()
     }
 
     /// Report each top-level `let` whose type the module's check leaves
@@ -1003,7 +959,7 @@ impl TypeChecker {
         }
         // What the bodies left for later: a variable they could not
         // decide may be decided now.
-        self.finalize_deferred_checks();
+        self.solve_wanted(0);
 
         // Generalise. What a `let` that is not a value leaves unknown
         // stays unknown for everything that mentions it.
@@ -1184,7 +1140,7 @@ impl TypeChecker {
     fn check_method_body(&mut self, method: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
         self.enter_level();
         self.check_body(method, sig, env);
-        self.finalize_deferred_checks();
+        self.solve_wanted(0);
         self.exit_level();
         self.settle_bounds();
     }

@@ -226,6 +226,24 @@ impl TypeChecker {
         }
     }
 
+    /// The operator `op` at `span` needs its operand's type, still
+    /// unknown or an annotation variable, to implement the builtin trait
+    /// `tr`: `+` needs `Number`, `==` `Equal`, `<` `Compare`.
+    pub(super) fn want_operand(&mut self, tr: &str, operand: &Type, op: &'static str, span: Span) {
+        self.want(
+            Pred::Trait {
+                tr: TraitKey::builtin(tr),
+                args: Vec::new(),
+                subject: operand.clone(),
+            },
+            Origin {
+                span,
+                callee: None,
+                op: Some(op),
+            },
+        );
+    }
+
     /// Report that the declaration being checked does not declare
     /// `r: trait_name(args)`, which the use `origin` in it needs, unless
     /// it does. The bound it declares for the trait is the only one `r`
@@ -368,6 +386,7 @@ impl TypeChecker {
         self.named_use = Some(Origin {
             span,
             callee: Some(method),
+            op: None,
         });
         self.instantiate(scheme)
     }
@@ -1039,6 +1058,7 @@ impl TypeChecker {
         self.named_use = Self::callee_label(callee).map(|label| Origin {
             span,
             callee: Some(label),
+            op: None,
         });
         self.callee_position = true;
         self.unknown_receiver = None;
@@ -1063,6 +1083,7 @@ impl TypeChecker {
                 Origin {
                     span: callee.span,
                     callee: Some(name),
+                    op: None,
                 },
             );
             return result;
@@ -1244,7 +1265,20 @@ impl TypeChecker {
                         let expr_span = e.span;
                         let t = self.infer_expr(e, env);
                         let resolved = self.apply(&t);
-                        if let Some(type_name) = self.type_name_for_impl(&resolved)
+                        if matches!(resolved, Type::Var(_) | Type::Rigid(_)) {
+                            self.want(
+                                Pred::Trait {
+                                    tr: TraitKey::builtin("Display"),
+                                    args: Vec::new(),
+                                    subject: resolved,
+                                },
+                                Origin {
+                                    span: expr_span,
+                                    callee: None,
+                                    op: None,
+                                },
+                            );
+                        } else if let Some(type_name) = self.type_name_for_impl(&resolved)
                             && !self
                                 .tables
                                 .trait_impl_set
@@ -1458,6 +1492,7 @@ impl TypeChecker {
                     self.named_use.get_or_insert(Origin {
                         span,
                         callee: Some(name),
+                        op: None,
                     });
                     self.instantiate(&scheme)
                 } else if name == intern("self") {
@@ -2064,12 +2099,8 @@ impl TypeChecker {
                                     // B2: enforce numeric-only operand domain.
                                     let resolved = self.apply(&lt);
                                     match &resolved {
-                                        Type::Var(_) => {
-                                            self.pending_numeric_checks.push((
-                                                resolved.clone(),
-                                                op_str,
-                                                span,
-                                            ));
+                                        Type::Var(_) | Type::Rigid(_) => {
+                                            self.want_operand("Number", &resolved, op_str, span);
                                         }
                                         _ if !is_valid_arith_operand(&resolved) => {
                                             self.error(
@@ -2109,12 +2140,8 @@ impl TypeChecker {
                             // B2: enforce numeric-only operand domain.
                             let resolved = self.apply(&lt);
                             match &resolved {
-                                Type::Var(_) => {
-                                    self.pending_numeric_checks.push((
-                                        resolved.clone(),
-                                        "'/'",
-                                        span,
-                                    ));
+                                Type::Var(_) | Type::Rigid(_) => {
+                                    self.want_operand("Number", &resolved, "'/'", span);
                                 }
                                 _ if !is_valid_arith_operand(&resolved) => {
                                     self.error(
@@ -2172,17 +2199,9 @@ impl TypeChecker {
                             // AnonRecord via Value's PartialEq.
                             let resolved = self.apply(&lt);
                             match &resolved {
-                                Type::Var(_) => {
-                                    // Defer — may resolve later.
-                                    self.pending_numeric_checks.push((
-                                        resolved.clone(),
-                                        if is_equality {
-                                            "'=='/'!='"
-                                        } else {
-                                            "ordering comparison"
-                                        },
-                                        span,
-                                    ));
+                                Type::Var(_) | Type::Rigid(_) => {
+                                    let tr = if is_equality { "Equal" } else { "Compare" };
+                                    self.want_operand(tr, &resolved, op_str, span);
                                 }
                                 _ if !is_valid_compare_operand(&resolved, is_equality) => {
                                     let domain = if is_equality {
@@ -2235,16 +2254,9 @@ impl TypeChecker {
                         let resolved = self.apply(&t);
                         match &resolved {
                             Type::Int | Type::Float => {}
-                            Type::Error | Type::Never | Type::Rigid(_) => {}
-                            Type::Var(_) => {
-                                // B5: unresolved — defer until after all bodies are
-                                // inferred. If still a Var at that point, it's an
-                                // ambiguity error.
-                                self.pending_numeric_checks.push((
-                                    resolved.clone(),
-                                    "unary '-'",
-                                    operand_span,
-                                ));
+                            Type::Error | Type::Never => {}
+                            Type::Var(_) | Type::Rigid(_) => {
+                                self.want_operand("Number", &resolved, "unary '-'", operand_span);
                             }
                             _ => {
                                 self.error(
@@ -2332,26 +2344,21 @@ impl TypeChecker {
                     // failed to load): nothing more to say.
                     Type::Error => Type::Error,
                     Type::Var(_) => {
-                        // BROKEN (round 93): this arm used to stay lenient
-                        // and DROP the obligation entirely, which made
-                        // `{ x -> x? + 1 }` piped through list.map
-                        // typecheck while the VM propagated the Err value
-                        // into a List(Int) — a statically-clean program
-                        // crashing at runtime. Defer the check instead:
-                        // once all bodies are inferred, the inner type has
-                        // either resolved (validate exactly like the
-                        // concrete arms above, constraining the enclosing
-                        // fn/lambda return type) or is genuinely
-                        // polymorphic (stay lenient — same rationale as
-                        // `pending_numeric_checks`). See
-                        // `finalize_deferred_checks`.
+                        // The operand's type is unknown: the `?` waits
+                        // for it (`Goal::Try`).
                         let result_ty = self.fresh_var();
-                        self.pending_question_marks.push((
-                            inner_ty.clone(),
-                            result_ty.clone(),
-                            self.current_return_type.clone(),
-                            span,
-                        ));
+                        self.want_goal(
+                            Goal::Try {
+                                operand: inner_ty.clone(),
+                                ok: result_ty.clone(),
+                                ret: self.current_return_type.clone(),
+                            },
+                            Origin {
+                                span,
+                                callee: None,
+                                op: None,
+                            },
+                        );
                         result_ty
                     }
                     _ => {
@@ -2715,7 +2722,11 @@ impl TypeChecker {
                                     field: *field_name,
                                     value,
                                 },
-                                Origin { span, callee: None },
+                                Origin {
+                                    span,
+                                    callee: None,
+                                    op: None,
+                                },
                             );
                         }
                     }

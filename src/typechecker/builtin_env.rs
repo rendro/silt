@@ -66,7 +66,7 @@ impl BuiltinEnv {
             }
         }
         checker.check_decl_bodies(&mut impls, &mut scope);
-        checker.finalize_deferred_checks();
+        checker.solve_wanted(0);
         debug_assert!(
             checker.errors.is_empty(),
             "the builtin derived impls check: {:?}",

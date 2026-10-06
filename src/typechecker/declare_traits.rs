@@ -655,15 +655,18 @@ impl TypeChecker {
             _ => true,
         });
         for (trait_name, span) in errors {
-            self.error(
-                Code::InvalidTraitImpl,
+            let message = if resolve(trait_name) == "Number" {
+                "trait 'Number' cannot be implemented by hand: it is the types arithmetic \
+                 is on, Int and Float"
+                    .to_string()
+            } else {
                 format!(
                     "trait '{trait_name}' cannot be implemented by hand: it is derived \
                      structurally for every type whose fields support it — remove this \
                      impl; Equal, Compare and Hash are derived"
-                ),
-                span,
-            );
+                )
+            };
+            self.error(Code::InvalidTraitImpl, message, span);
         }
     }
 

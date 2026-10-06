@@ -1,9 +1,9 @@
--- A polymorphic `<` on variants with function payloads fails at run time.
+-- A polymorphic `<` on variants with function payloads is rejected.
 -- exit: 1
--- stderr-contains: does not implement Compare
+-- stderr-contains: does not implement trait 'Compare'
 -- stderr-contains: 'Fn'
 type W(a) { Wrap(a), Nope }
-fn lt(a: x, b: x) -> Bool { a < b }
+fn lt(a: x, b: x) -> Bool where x: Compare { a < b }
 fn main() {
   println(lt(Wrap({ y -> y }), Wrap({ y -> y })))
 }
