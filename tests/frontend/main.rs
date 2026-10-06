@@ -2,6 +2,7 @@
 //!
 //! One test binary; each module was a separate test crate before.
 
+mod docs_fmt_check_tests;
 mod examples_fmt_check_tests;
 mod fmt_property;
 mod fmt_property_sample_tests;

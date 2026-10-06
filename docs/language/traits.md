@@ -36,10 +36,23 @@ type for `Self`. The impl may leave the annotations out; what it does
 write must agree with the trait:
 
 ```silt
-trait Scale { fn scale(self, by: Int) -> Int }
+trait Scale {
+  fn scale(self, by: Int) -> Int
+}
 
-trait Scale for Int  { fn scale(self, by) { self * by } }      -- by: Int, returns Int
-trait Scale for Bool { fn scale(self, by) { "no" } }           -- ERROR: expected Int, got String
+-- by: Int, returns Int
+trait Scale for Int {
+  fn scale(self, by) {
+    self * by
+  }
+}
+
+-- ERROR: expected Int, got String
+trait Scale for Bool {
+  fn scale(self, by) {
+    "no"
+  }
+}
 ```
 
 A method's own `where` clause is part of its signature too
