@@ -649,7 +649,7 @@ impl Compiler {
         self.in_tail_position = true;
         self.compile_expr(&method.body)?;
         self.in_tail_position = false;
-        self.emit(Asm::Return, span)?;
+        self.emit_body_return(span)?;
 
         let (func, _) = self.end_function(span)?;
         let vm_closure = Arc::new(VmClosure {
@@ -694,8 +694,7 @@ impl Compiler {
                 self.compile_expr(&fn_decl.body)?;
                 self.in_tail_position = false;
 
-                // Emit Return (may be dead code if body ends with a tail call).
-                self.emit(Asm::Return, span)?;
+                self.emit_body_return(span)?;
 
                 // Pop the context, recovering the compiled function.
                 let (func, _) = self.end_function(span)?;
@@ -1086,6 +1085,16 @@ impl Compiler {
         }
     }
 
+    /// Emit the `Return` of a function's body, whose value is on the
+    /// stack; nothing where the body has returned on every way already
+    /// (it ends in a tail call, a `return`, a panic).
+    fn emit_body_return(&mut self, span: Span) -> Result<(), Diagnostic> {
+        if self.emitter().reachable() {
+            self.emit(Asm::Return, span)?;
+        }
+        Ok(())
+    }
+
     /// Compile `expr`: at height `h`, code that leaves the expression's
     /// value in slot `h` and the frame one value higher. In tail
     /// position the locals of the expression's scopes may still be under
@@ -1368,7 +1377,7 @@ impl Compiler {
                 self.in_tail_position = true;
                 self.compile_expr(body)?;
                 self.in_tail_position = false;
-                self.emit(Asm::Return, span)?;
+                self.emit_body_return(span)?;
 
                 let (func, upvalue_descs) = self.end_function(span)?;
 
@@ -2667,6 +2676,17 @@ impl Compiler {
             "compiler bug: missing function context",
         ))?;
         let function = ctx.emitter.finish(ctx.upvalues.len())?;
+        // What the code names of the globals is there.
+        crate::bytecode::verify::verify_globals(&function, &self.globals).map_err(|error| {
+            Diagnostic::error(
+                Code::CompilerBug,
+                span,
+                format!(
+                    "compiler bug: function '{}' is malformed {error}",
+                    function.name()
+                ),
+            )
+        })?;
         Ok((function, ctx.upvalues))
     }
 
