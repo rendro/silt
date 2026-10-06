@@ -239,7 +239,7 @@ pub fn disassemble_function(func: &Function, globals: &Globals) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::{Asm, Emitter, NO_TRAIT, Op, UpvalueDesc, VmClosure};
+    use crate::bytecode::{Asm, Emitter, Op, UpvalueDesc, VmClosure};
     use crate::source::Span;
     use std::sync::Arc;
 
@@ -478,7 +478,7 @@ mod tests {
                 Asm::CallMethod {
                     method,
                     argc: 1,
-                    of: NO_TRAIT,
+                    of: 0,
                 },
                 span(),
             )

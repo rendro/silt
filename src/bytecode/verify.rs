@@ -294,7 +294,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::bytecode::{Asm, Emitter, NO_TRAIT, Op, VmClosure};
+    use crate::bytecode::{Asm, Emitter, Op, VmClosure};
     use crate::source::Span;
 
     // Hand-built functions: the bytes are written here, not by the
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn bad_13_method_call_without_a_receiver() {
-        let [lo, hi] = NO_TRAIT.to_le_bytes();
+        let [lo, hi] = 0u16.to_le_bytes();
         let code = vec![op(Op::CallMethod), 0, 0, 0, lo, hi, op(Op::Return)];
         assert_eq!(
             rejected(code, vec![Value::String("foo".into())]),

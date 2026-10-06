@@ -400,33 +400,10 @@ impl Vm {
             &receiver,
             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
         );
-        if trait_index == crate::bytecode::NO_TRAIT
-            && self.global_slots.ambiguous(
-                receiver_type,
-                method_name,
-                !matches!(receiver, Value::Record(..) | Value::Variant(..)),
-            )
-        {
-            return Err(VmError::new(format!(
-                "ambiguous method '{method_name}' for type '{}': two traits provide it, \
-                 and this call names neither; add a `where` bound for the receiver",
-                crate::types::canonical::dispatch_type_name(&receiver)
-            )));
-        }
-        // A call that names no trait is a call of the function a
-        // record's field holds, when the record has the field:
-        // the checker reads `r.f(x)` as the field before any
-        // method of the name (and names the trait when it means
-        // a method).
-        let field_call = trait_index == crate::bytecode::NO_TRAIT
-            && matches!(&receiver, Value::Record(_, fields) if fields.contains_key(method_name));
-        let method = if field_call {
-            None
-        } else {
-            self.global_slots
-                .call_method(trait_index, receiver_type, method_name)
-                .and_then(|slot| self.globals.get(slot as usize).cloned().flatten())
-        };
+        let method = self
+            .global_slots
+            .call_method(trait_index, receiver_type, method_name)
+            .and_then(|slot| self.globals.get(slot as usize).cloned().flatten());
         if let Some(func) = method {
             // In tail position a method that is a closure takes the
             // current frame over, as a tail-called function does.
@@ -454,26 +431,19 @@ impl Vm {
             let entered = self.call_value(func, argc, receiver_slot)?;
             return Ok(self.entered(entered));
         }
-        // Try built-in trait methods (display, equal, compare)
-        if !field_call
-            && let Some(result) =
-                self.dispatch_trait_method(&receiver, method_name, &self.stack[receiver_slot + 1..])
-        {
-            self.stack.truncate(receiver_slot);
-            self.push(result?);
-        } else if let Value::Record(_, ref fields) = receiver
-            && let Some(callable) = fields.get(method_name).cloned()
-        {
-            // A record's field that holds a function: the
-            // receiver's slot is the function's.
-            let argc = self.stack.len() - receiver_slot - 1;
-            let entered = self.call_value(callable, argc, receiver_slot)?;
-            return Ok(self.entered(entered));
-        } else {
-            return Err(VmError::type_confusion(format!(
-                "no method '{method_name}' for type '{}'",
-                crate::types::canonical::dispatch_type_name(&receiver)
-            )));
+        // A builtin trait's method the type has natively (display,
+        // equal, compare, hash).
+        match self.dispatch_trait_method(&receiver, method_name, &self.stack[receiver_slot + 1..]) {
+            Some(result) => {
+                self.stack.truncate(receiver_slot);
+                self.push(result?);
+            }
+            None => {
+                return Err(VmError::type_confusion(format!(
+                    "no method '{method_name}' for type '{}'",
+                    crate::types::canonical::dispatch_type_name(&receiver)
+                )));
+            }
         }
 
         Ok(DispatchResult::Continue)

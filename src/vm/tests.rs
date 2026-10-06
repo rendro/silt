@@ -2644,7 +2644,7 @@ mod type_confusion {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::bytecode::{NO_TRAIT, VmClosure};
+    use crate::bytecode::VmClosure;
     use crate::diagnostic::Code;
 
     /// Emit the push of `value`.
@@ -2836,7 +2836,7 @@ mod type_confusion {
                 Asm::CallMethod {
                     method,
                     argc: 1,
-                    of: NO_TRAIT,
+                    of: 0,
                 },
                 span(),
             )

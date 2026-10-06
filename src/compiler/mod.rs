@@ -795,7 +795,7 @@ impl Compiler {
                     self.compile_method(format!("{type_name}.{}", method.name), method)?;
                     let slot = self
                         .globals
-                        .method(Some(t), ty, &resolve(method.name))
+                        .method(t, ty, &resolve(method.name))
                         .ok_or_else(|| checker_missed(span, "an impl method with no slot"))?;
                     self.emit(Asm::SetGlobal { slot }, span)?;
                     self.emit(Asm::Pop, span)?;
@@ -1879,7 +1879,7 @@ impl Compiler {
             }
             // One impl's method: a call of its global, like a function's.
             Some(Selection::Impl { tr, ty })
-                if let Some(slot) = self.globals.method(Some(tr), ty, &resolve(method)) =>
+                if let Some(slot) = self.globals.method(tr, ty, &resolve(method)) =>
             {
                 self.emit(Asm::GetGlobal { slot }, span)?;
                 self.compile_operands(with_receiver)?;
@@ -2292,8 +2292,8 @@ impl Compiler {
         let of = self.globals.trait_index(t, resolve(name)).ok_or_else(|| {
             let limit = Limit {
                 what: "traits whose methods a program calls",
-                count: usize::from(u16::MAX) + 1,
-                max: usize::from(u16::MAX),
+                count: usize::from(u16::MAX) + 2,
+                max: usize::from(u16::MAX) + 1,
             };
             limit_diagnostic(limit, span)
         })?;
@@ -2353,8 +2353,9 @@ impl Compiler {
                 name: def.name,
             },
         );
-        self.globals
-            .method(self.res_trait(expr.res), ty.id, &resolve(*field))
+        // (The checker wrote the method's trait on the access.)
+        self.res_trait(expr.res)
+            .and_then(|t| self.globals.method(t, ty.id, &resolve(*field)))
             .map(Some)
             .ok_or_else(|| {
                 checker_missed(
