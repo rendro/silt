@@ -58,9 +58,10 @@ pub(crate) trait Native: Send {
 pub(crate) enum Step {
     /// It is finished, with this value.
     Done(Value),
-    /// Call `callee` with `args`; the value it returns is the frame's
-    /// next input.
-    Call { callee: Value, args: Vec<Value> },
+    /// Call `callee` with the top `argc` values of the stack, which
+    /// are above a slot of the call's own; the value it returns is the
+    /// frame's next input. Made by [`Vm::call`].
+    Call { callee: Value, argc: usize },
     /// Go on as this frame, whose value is the builtin's.
     Run(Box<dyn Native>),
     /// The task's slice ends here, and the frame is resumed when the

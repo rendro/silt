@@ -6,7 +6,7 @@
 
 use parking_lot::{Condvar, Mutex};
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
@@ -348,6 +348,11 @@ pub struct Scheduler {
 
 struct SchedulerInner {
     run_queue: Mutex<VecDeque<Task>>,
+    /// The slot of each task that is parked, by the task's id: where
+    /// `shutdown` finds the tasks that wait for something and drops
+    /// them. The entry of a task is replaced when it parks again and
+    /// removed when it is requeued or cancelled.
+    parked: Mutex<HashMap<usize, std::sync::Weak<Mutex<Option<Task>>>>>,
     condvar: Condvar,
     shutdown: AtomicBool,
     /// Number of tasks that haven't yet completed (active + blocked + queued).
@@ -494,6 +499,7 @@ impl Scheduler {
         Scheduler {
             inner: Arc::new(SchedulerInner {
                 run_queue: Mutex::new(VecDeque::new()),
+                parked: Mutex::new(HashMap::new()),
                 condvar: Condvar::new(),
                 shutdown: AtomicBool::new(false),
                 live_tasks: AtomicUsize::new(0),
@@ -711,8 +717,19 @@ impl Scheduler {
         // Detach the workers.
         drop(self.workers.lock().take());
         // The tasks are dropped after the queue's lock is released.
-        let waiting: Vec<Task> = self.inner.run_queue.lock().drain(..).collect();
+        let mut waiting: Vec<Task> = self.inner.run_queue.lock().drain(..).collect();
         self.inner.condvar.notify_all();
+        // The parked tasks never run again either. Each is taken out of
+        // its slot, so the waker that fires later finds nothing, and
+        // its handle lets go of the cleanup that holds the slot.
+        let parked: Vec<_> = self.inner.parked.lock().drain().collect();
+        for (_, slot) in parked {
+            let task = slot.upgrade().and_then(|slot| slot.lock().take());
+            if let Some(task) = task {
+                task.handle.clear_cancel_cleanup();
+                waiting.push(task);
+            }
+        }
         drop(waiting);
     }
 }
@@ -843,6 +860,17 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 let reason = vm.take_block_reason();
                 let task_slot: Arc<Mutex<Option<Task>>> =
                     Arc::new(Mutex::new(Some(Task { id, vm, handle })));
+                if reason.is_some() {
+                    inner.parked.lock().insert(id, Arc::downgrade(&task_slot));
+                    // A program that ended while this slice ran did not
+                    // see the task parked: it is dropped here.
+                    if inner.shutdown.load(Ordering::SeqCst) {
+                        inner.parked.lock().remove(&id);
+                        let task = task_slot.lock().take();
+                        drop(task);
+                        continue;
+                    }
+                }
 
                 // Track whether this block is on external I/O. The wake
                 // graph models I/O parks as `ParkEdge::Io` (always-fuel),
@@ -1606,6 +1634,7 @@ fn make_cancel_cleanup<G: Send + 'static>(
         let Some(task) = parked else {
             return;
         };
+        inner.parked.lock().remove(&task_id);
         // Step 3: release a cleanup that a park arm installed after
         // `complete` had taken this closure out of the handle.
         task.handle.clear_cancel_cleanup();
@@ -1966,9 +1995,15 @@ fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
     if was_io {
         inner.watchdog.remove(task.id);
     }
+    inner.parked.lock().remove(&task.id);
     // Clear the stale cancel-cleanup so it won't run when the task
     // completes normally.
     task.handle.clear_cancel_cleanup();
+    // The program has ended: the task never runs again.
+    if inner.shutdown.load(Ordering::SeqCst) {
+        drop(task);
+        return;
+    }
     // Wake graph: drop the parked edge for this task. If the task was
     // parked on Recv(ch), this clears the corresponding entry in
     // ch_recv_listeners — important because a future BFS would

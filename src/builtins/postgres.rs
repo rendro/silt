@@ -2032,15 +2032,12 @@ impl Native for Transact {
         "postgres.transact"
     }
 
-    fn resume(&mut self, _vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         let Some(tx_id) = self.tx_id else {
             return Ok(Step::Done(input));
         };
         if let Some(callee) = self.callback.take() {
-            return Ok(Step::Call {
-                callee,
-                args: vec![make_tx_handle(tx_id)],
-            });
+            return Ok(vm.call(callee, [make_tx_handle(tx_id)]));
         }
         self.tx_id = None;
         Ok(Step::Done(end_tx(tx_id, Some(input))))

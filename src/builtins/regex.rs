@@ -134,9 +134,9 @@ fn replace_all_with(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
             out: String::new(),
             last_end: 0,
         },
-        |state, item| {
+        |state, item, stack| {
             let (start, end) = span(item);
-            vec![Value::String(state.text[start..end].to_string())]
+            stack.push(Value::String(state.text[start..end].to_string()));
         },
         |state, item, replacement| {
             let Value::String(replacement) = replacement else {
