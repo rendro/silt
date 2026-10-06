@@ -17,7 +17,7 @@ with `{expr}` interpolation.
 | `chars` | `(String) -> List(String)` | Split string into single-character strings |
 | `contains` | `(String, String) -> Bool` | Check if substring exists |
 | `ends_with` | `(String, String) -> Bool` | Check suffix |
-| `from` | `(a) -> String` | Convert any value to its display string |
+| `from` | `(a) -> String where a: Display` | Convert any value to its display string |
 | `from_char_code` | `(Int) -> String` | Character from Unicode code point |
 | `index_of` | `(String, String) -> Option(Int)` | Character index of first occurrence |
 | `byte_length` | `(String) -> Int` | Length in bytes |
@@ -119,7 +119,7 @@ fn main() {
 ## `string.from`
 
 ```
-string.from(x: a) -> String
+string.from(x: a) -> String where a: Display
 ```
 
 Converts any value to its display string representation. This is the

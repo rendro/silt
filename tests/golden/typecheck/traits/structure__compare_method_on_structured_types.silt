@@ -1,0 +1,10 @@
+-- `.compare()`, `.equal()` and `.hash()` are there for every type that
+-- has the trait by its structure.
+type Pt { x: Int, y: Int }
+fn main() {
+  println(Some(1).compare(Some(2)))
+  println(Ok(2).compare(Ok(1)))
+  println(None.equal(Some(1)))
+  println(Pt { x: 1, y: 2 }.compare(Pt { x: 1, y: 3 }))
+  println(Some((1, "a")).hash() == Some((1, "a")).hash())
+}

@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: function expects 1 argument
+-- stderr-contains: method `display` expects 0 arguments, got 1
 fn main() {
   println("hello".display("extra"))
 }

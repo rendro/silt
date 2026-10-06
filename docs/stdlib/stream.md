@@ -53,7 +53,7 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 | `drop_while` | `(Channel(a), Fn(a) -> Bool) -> Channel(a)` |
 | `chunks` | `(Channel(a), Int) -> Channel(List(a))` |
 | `scan` | `(Channel(a), b, Fn(b, a) -> b) -> Channel(b)` |
-| `dedup` | `(Channel(a)) -> Channel(a)` |
+| `dedup` | `(Channel(a)) -> Channel(a) where a: Equal` |
 | `buffered` | `(Channel(a), Int) -> Channel(a)` |
 
 ### Combinators

@@ -1,0 +1,7 @@
+-- `r.x` is the field `x`, though a trait declares a method `x`.
+trait HasX { fn x(self) -> Int }
+fn getx(r) { r.x }
+fn main() {
+  println(getx({ x: 1 }))
+  println(getx({ x: "s", y: 2 }))
+}

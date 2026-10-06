@@ -1,0 +1,30 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'String' does not implement trait 'Greet'
+-- The part is decided after the use: the channel's element type by the
+-- comparison below it.
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+type Box(a) { Box(a) }
+trait Greet for Box(a) where a: Greet { fn greet(self) -> String { match self { Box(i) -> i.greet() } } }
+trait Greet for List(a) where a: Greet {
+  fn greet(self) -> String {
+    match self {
+      [x, ..r] -> x.greet()
+      _ -> "e"
+    }
+  }
+}
+fn hello(x: a) -> String where a: Greet { x.greet() }
+import channel
+fn main() {
+  let ch = channel.new(2)
+  channel.send(ch, [])
+  match channel.receive(ch) {
+    channel.Message(m) -> {
+      println(hello(Box(Box(m))))
+      println(m == ["s"])
+    }
+    _ -> ()
+  }
+}

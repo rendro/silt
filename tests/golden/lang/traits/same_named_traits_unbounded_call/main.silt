@@ -1,9 +1,8 @@
 -- exit: 1
--- A method call in a polymorphic function with no bound for the
--- receiver names no trait. Where two traits provide the method for the
--- receiver's type, it is ambiguous when it runs, rather than calling
--- whichever impl was installed last.
--- stderr-contains: error[runtime]: ambiguous method 'show' for type 'Int': two traits provide it
+-- A method call on a receiver of unknown type means the one trait in
+-- sight that declares the method. Where two do, the receiver needs an
+-- annotation.
+-- stderr-contains: error[type]: ambiguous method 'show' on type 'Int': provided by traits a.Show, b.Show
 import a
 import b
 fn main() {

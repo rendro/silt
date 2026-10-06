@@ -1,0 +1,42 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot load module 'nosuchmodule'
+-- stderr-not-contains: error[type]
+-- A value of a module that failed to load has no type, and nothing is
+-- asked of it: no method, operator, `?`, update or bound, directly, out
+-- of a pattern, through a function or a closure. The one error is the
+-- import's.
+import nosuchmodule
+trait Show { fn show(self) -> String }
+trait Show for Int { fn show(self) -> String { "i" } }
+fn pass(x) { x }
+fn main() {
+  match nosuchmodule.connect("x") {
+    Ok(c) -> println(c.name)
+    Err(e) -> println(e.message())
+  }
+  let v = nosuchmodule.thing()
+  println(v.show())
+  println(pass(v).show())
+  println(v + 1)
+  println(-v)
+  println(v == v)
+  println(v < v)
+  println("{v}")
+  let w = v.{ a: 1 }
+  println(#{ v: 1 })
+  match nosuchmodule.pair() { (a, b) -> println(a.show() + b) }
+  let (p, q) = nosuchmodule.pair()
+  println(p.show())
+  let f = { -> nosuchmodule.thing() }
+  println(f().show())
+  let xs = [nosuchmodule.thing()]
+  match xs {
+    [h, ..t] -> println(h.show())
+    _ -> ()
+  }
+}
+fn g() -> Result(Int, String) {
+  let o = nosuchmodule.opt()?
+  Ok(o.show().length)
+}

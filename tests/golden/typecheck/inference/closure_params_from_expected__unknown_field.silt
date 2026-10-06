@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: unknown field or method 'nam' on type P
+-- A closure literal passed to a function has the parameter types the
+-- function expects before its body is checked: `p` is a `P` at `p.nam`.
+type P { name: String }
+fn apply(f: Fn(P) -> Int, x: P) -> Int { f(x) }
+fn main() { println(apply({ p -> p.nam }, P { name: "a" })) }

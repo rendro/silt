@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'Hash'
 -- Port of repros/type_soundness/w12.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: list.sort: type 'Fn' does not implement Compare
 import list
 import map
 fn keyed(k: a) -> Map(a, Int) where a: Hash { #{ k: 1 } }

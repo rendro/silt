@@ -16,6 +16,10 @@ list.filter(xs, { x -> x > 0 })
 xs |> list.filter { x -> x > 0 }
 ```
 
+The right side is a call like any other, so the rule is the same when it
+is a method call: the piped value is the first argument the call writes,
+after the receiver. `5 |> acc.add()` is `acc.add(5)`.
+
 Without pipes, function composition nests inside-out. With pipes, it reads
 top-to-bottom:
 

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: does not implement trait 'Equal'
+-- A function seventy boxes deep is found.
+type Box(a) { Box(a) }
+fn main() {
+  let f = { n -> n }
+  let b = Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(f))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+  println(b == b)
+}

@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: trait Greet { fn greet(self) -> String }\ntrait Greet for Int { fn greet(self) -> String { "int" } }\nfn hello(x: a) -> String where a: Greet { x.greet() }\nimport channel\nlet ch = channel.new(4)\nfn f() {\n  match channel.try_receive(ch) {\n    channel.Message(m) -> println(hello(m))\n    _ -> println("none")\n  }\n}\nfn f() { println("new f") }\nchannel.send(ch, "s")\nf()\n:quit\n
+-- stderr-not-contains: error
+-- A check that waits in a function's body goes with the function: once
+-- `f` is defined again and nothing refers to the old one, the channel
+-- may carry what the old `f` could not take.

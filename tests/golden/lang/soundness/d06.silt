@@ -1,7 +1,6 @@
 -- cmd: check
--- exit: 0
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: type 'Fn' does not implement Equal (after printing the function with its record)
+-- exit: 1
+-- stderr-contains: error[type]: type variable `Self` is not known to implement trait 'Equal'
 -- A default body interpolates, compares and orders `self`; the impl is
 -- for a record that holds a function.
 type F { f: Fn(Int) -> Int }

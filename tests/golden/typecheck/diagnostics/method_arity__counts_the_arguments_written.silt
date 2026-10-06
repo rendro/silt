@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method `add` expects 1 argument, got 2
+-- stderr-contains: error[type]: method `add` expects 1 argument, got 0
+-- stderr-not-contains: expects 2 arguments
+-- A method's receiver is not one of the arguments its call writes; a
+-- piped value is.
+trait Adder { fn add(self, x: Int) -> Int }
+trait Adder for Int { fn add(self, x: Int) -> Int { self + x } }
+fn main() {
+  println(5 |> 3.add(1))
+  println(3.add(1, 2))
+  println(3.add())
+}

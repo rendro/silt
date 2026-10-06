@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: does not implement Compare
+-- stderr-contains: error[type]: type '(Int, Fn(Int) -> Int)' does not implement trait 'Compare': part #2 is of type 'Fn(Int) -> Int', which does not
 import list
 fn main() {
   let f = { y -> y }

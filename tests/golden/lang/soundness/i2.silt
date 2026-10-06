@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: error[type]: type 'W(Fn(Int) -> Int)' does not implement trait 'Hash': variant 'W' payload #1 is of type 'Fn(Int) -> Int', which does not
 -- Port of repros/type_soundness/i2.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes and `run` prints
--- the lengths: a map or set literal does not ask its keys for `Hash` yet
 -- (only `map.length`'s bound, which a reader of a map does not owe,
 -- rejected the program before).
 import map

@@ -2,7 +2,7 @@
 -- exit: 1
 -- A parameter annotated with a type variable has the bounds its `where`
 -- clauses declare and no other, also when the return type is left out.
--- stderr-contains: enclosing function does not declare constraint required by call to 'hello': `b: Greet`
+-- stderr-contains: error[type]: type variable `b` is not known to implement trait 'Greet', which 'hello' needs
 -- stderr-contains: no field or method 'greet' on a value of type `c`: the type variable has no trait bound
 -- stderr-contains: add `where c: SomeTrait`
 trait Greet { fn greet(self) -> String }

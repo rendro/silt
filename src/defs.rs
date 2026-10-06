@@ -199,7 +199,7 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
 /// The builtin traits, in the order of their ids: the `k`th is
 /// `TraitId(DefId(builtin_types().len() + k))`. The builtin definitions
 /// enter them right after the builtin types.
-pub const BUILTIN_TRAITS: &[&str] = &["Compare", "Display", "Equal", "Error", "Hash"];
+pub const BUILTIN_TRAITS: &[&str] = &["Compare", "Display", "Equal", "Error", "Hash", "Number"];
 
 /// The builtin trait whose method `method` is (`display` of Display,
 /// `message` of Error); `None` for any other name.

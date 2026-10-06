@@ -1,0 +1,39 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: main.silt
+-- A module with errors is reported where the errors are; what a
+-- program takes from it raises nothing more.
+import broken
+trait Show { fn show(self) -> String }
+trait Show for Int { fn show(self) -> String { "i" } }
+fn pass(x) { x }
+fn main() {
+  match broken.connect("x") {
+    Ok(c) -> println(c.name)
+    Err(e) -> println(e.message())
+  }
+  let v = broken.thing()
+  println(v.show())
+  println(pass(v).show())
+  println(v + 1)
+  println(-v)
+  println(v == v)
+  println(v < v)
+  println("{v}")
+  let w = v.{ a: 1 }
+  println(#{ v: 1 })
+  match broken.pair() { (a, b) -> println(a.show() + b) }
+  let (p, q) = broken.pair()
+  println(p.show())
+  let f = { -> broken.thing() }
+  println(f().show())
+  let xs = [broken.thing()]
+  match xs {
+    [h, ..t] -> println(h.show())
+    _ -> ()
+  }
+}
+fn g() -> Result(Int, String) {
+  let o = broken.opt()?
+  Ok(o.show().length)
+}

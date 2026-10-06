@@ -4,7 +4,7 @@
 -- stdout-contains: val=[1, 2, 3]
 -- stdout-contains: val=P {
 type P { name: String, age: Int }
-fn show(x: a) -> String { "val={x}" }
+fn show(x: a) -> String where a: Display { "val={x}" }
 fn main() {
   println(show(42))
   println(show("hi"))

@@ -18,14 +18,14 @@ Functions for working with immutable, ordered maps (`Map(k, v)`). Maps use
 | `each` | `(Map(a, b), Fn(a, b) -> ()) -> ()` | Iterate over all entries |
 | `entries` | `(Map(a, b)) -> List((a, b))` | All key-value pairs as tuples |
 | `filter` | `(Map(a, b), Fn(a, b) -> Bool) -> Map(a, b)` | Keep entries matching predicate |
-| `from_entries` | `(List((a, b))) -> Map(a, b)` | Build map from tuple list |
+| `from_entries` | `(List((a, b))) -> Map(a, b) where a: Hash` | Build map from tuple list |
 | `get` | `(Map(a, b), a) -> Option(b) where a: Hash` | Look up value by key |
 | `keys` | `(Map(a, b)) -> List(a)` | All keys as a list |
 | `length` | `(Map(a, b)) -> Int` | Number of entries |
-| `map` | `(Map(a, b), Fn(a, b) -> (c, d)) -> Map(c, d)` | Transform all entries |
+| `map` | `(Map(a, b), Fn(a, b) -> (c, d)) -> Map(c, d) where c: Hash` | Transform all entries |
 | `merge` | `(Map(a, b), Map(a, b)) -> Map(a, b) where a: Hash` | Merge two maps (right wins) |
 | `set` | `(Map(a, b), a, b) -> Map(a, b) where a: Hash` | Insert or update a key |
-| `update` | `(Map(a, b), a, b, Fn(b) -> b) -> Map(a, b)` | Update existing or insert default |
+| `update` | `(Map(a, b), a, b, Fn(b) -> b) -> Map(a, b) where a: Hash` | Update existing or insert default |
 | `values` | `(Map(a, b)) -> List(b)` | All values as a list |
 
 
@@ -126,7 +126,7 @@ fn main() {
 ## `map.from_entries`
 
 ```
-map.from_entries(entries: List((a, b))) -> Map(a, b)
+map.from_entries(entries: List((a, b))) -> Map(a, b) where a: Hash
 ```
 
 Builds a map from a list of `(key, value)` tuples. Later entries overwrite
@@ -201,7 +201,7 @@ fn main() {
 ## `map.map`
 
 ```
-map.map(m: Map(a, b), f: Fn(a, b) -> (c, d)) -> Map(c, d)
+map.map(m: Map(a, b), f: Fn(a, b) -> (c, d)) -> Map(c, d) where c: Hash
 ```
 
 Transforms each entry. The callback must return a `(key, value)` tuple.
@@ -260,7 +260,7 @@ fn main() {
 ## `map.update`
 
 ```
-map.update(m: Map(a, b), key: a, default: b, f: Fn(b) -> b) -> Map(a, b)
+map.update(m: Map(a, b), key: a, default: b, f: Fn(b) -> b) -> Map(a, b) where a: Hash
 ```
 
 If `key` exists, applies `f` to the current value. If `key` does not exist,

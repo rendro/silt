@@ -491,6 +491,15 @@ pub type Result(a, e) { Ok(a), Err(e) }
 pub type Option(a) { Some(a), None }
 ";
 
+/// The functions of the prelude, each a row's header: called by their
+/// bare names. What they run is the VM's (`Vm::dispatch_builtin`), which
+/// formats the argument with `Display`.
+pub const PRELUDE_FNS: &str = "\
+fn print(value: a) -> () where a: Display
+fn println(value: a) -> () where a: Display
+fn panic(message: a) -> Never where a: Display
+";
+
 /// Every builtin module, and what is derived from all of them at once.
 pub struct Registry {
     pub modules: Vec<Module>,

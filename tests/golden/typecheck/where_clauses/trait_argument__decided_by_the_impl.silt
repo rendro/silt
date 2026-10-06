@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected String, got Int
+-- A type has one impl of a trait, so a bound's trait argument that is
+-- still unknown is the impl's: `s(3, y)` makes `y` a String, and `w`
+-- a function of a String.
+trait Conv(to) { fn conv(self) -> to }
+trait Conv(String) for Int { fn conv(self) -> String { "an int" } }
+fn s(x: a, y: b) -> b where a: Conv(b) { x.conv() }
+fn w(y) { s(3, y) }
+fn main() { println(w(1) + 1) }

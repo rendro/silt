@@ -21,7 +21,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `any` | `(List(a), Fn(a) -> Bool) -> Bool` | True if predicate holds for at least one element |
 | `append` | `(List(a), a) -> List(a)` | Add an element to the end |
 | `concat` | `(List(a), List(a)) -> List(a)` | Concatenate two lists |
-| `contains` | `(List(a), a) -> Bool` | Check if element is in list |
+| `contains` | `(List(a), a) -> Bool where a: Equal` | Check if element is in list |
 | `drop` | `(List(a), Int) -> List(a)` | Remove first n elements |
 | `each` | `(List(a), Fn(a) -> ()) -> ()` | Call function for each element (side effects) |
 | `enumerate` | `(List(a)) -> List((Int, a))` | Pair each element with its index |
@@ -33,15 +33,15 @@ channel-backed lazy pipelines over the same combinator names.
 | `fold` | `(List(a), b, Fn(b, a) -> b) -> b` | Reduce to a single value |
 | `fold_until` | `(List(a), b, Fn(b, a) -> Step(b)) -> b` | Fold with early termination |
 | `get` | `(List(a), Int) -> Option(a)` | Element at index, or None |
-| `group_by` | `(List(a), Fn(a) -> b) -> Map(b, List(a))` | Group elements by key function |
+| `group_by` | `(List(a), Fn(a) -> b) -> Map(b, List(a)) where b: Hash` | Group elements by key function |
 | `head` | `(List(a)) -> Option(a)` | First element, or None |
-| `index_of` | `(List(a), a) -> Option(Int)` | Index of first matching element, or None |
+| `index_of` | `(List(a), a) -> Option(Int) where a: Equal` | Index of first matching element, or None |
 | `intersperse` | `(List(a), a) -> List(a)` | Insert separator between elements |
 | `last` | `(List(a)) -> Option(a)` | Last element, or None |
 | `length` | `(List(a)) -> Int` | Number of elements |
 | `map` | `(List(a), Fn(a) -> b) -> List(b)` | Transform each element |
-| `max_by` | `(List(a), Fn(a) -> b) -> Option(a)` | Element with largest key, or None |
-| `min_by` | `(List(a), Fn(a) -> b) -> Option(a)` | Element with smallest key, or None |
+| `max_by` | `(List(a), Fn(a) -> b) -> Option(a) where b: Compare` | Element with largest key, or None |
+| `min_by` | `(List(a), Fn(a) -> b) -> Option(a) where b: Compare` | Element with smallest key, or None |
 | `prepend` | `(List(a), a) -> List(a)` | Add an element to the front |
 | `product` | `(List(Int)) -> Int` | Product of a list of ints (1 on empty) |
 | `product_float` | `(List(Float)) -> Float` | Product of a list of floats (1.0 on empty) |
@@ -49,14 +49,14 @@ channel-backed lazy pipelines over the same combinator names.
 | `reverse` | `(List(a)) -> List(a)` | Reverse element order |
 | `scan` | `(List(a), b, Fn(b, a) -> b) -> List(b)` | Prefix fold; returns all intermediate accumulators |
 | `set` | `(List(a), Int, a) -> List(a)` | Return new list with element at index replaced |
-| `sort` | `(List(a)) -> List(a)` | Sort in natural order |
-| `sort_by` | `(List(a), Fn(a) -> b) -> List(a)` | Sort by key function |
+| `sort` | `(List(a)) -> List(a) where a: Compare` | Sort in natural order |
+| `sort_by` | `(List(a), Fn(a) -> b) -> List(a) where b: Compare` | Sort by key function |
 | `sum` | `(List(Int)) -> Int` | Sum a list of ints (0 on empty) |
 | `sum_float` | `(List(Float)) -> Float` | Sum a list of floats (0.0 on empty) |
 | `tail` | `(List(a)) -> List(a)` | All elements except the first |
 | `take` | `(List(a), Int) -> List(a)` | Keep first n elements |
 | `unfold` | `(a, Fn(a) -> Option((b, a))) -> List(b)` | Build a list from a seed |
-| `unique` | `(List(a)) -> List(a)` | Remove duplicates, preserving first occurrence |
+| `unique` | `(List(a)) -> List(a) where a: Equal` | Remove duplicates, preserving first occurrence |
 | `zip` | `(List(a), List(b)) -> List((a, b))` | Pair elements from two lists |
 
 
@@ -137,7 +137,7 @@ fn main() {
 ## `list.contains`
 
 ```
-list.contains(xs: List(a), elem: a) -> Bool
+list.contains(xs: List(a), elem: a) -> Bool where a: Equal
 ```
 
 Returns `true` if `elem` is in the list (by value equality).
@@ -375,7 +375,7 @@ fn main() {
 ## `list.group_by`
 
 ```
-list.group_by(xs: List(a), f: Fn(a) -> b) -> Map(b, List(a))
+list.group_by(xs: List(a), f: Fn(a) -> b) -> Map(b, List(a)) where b: Hash
 ```
 
 Groups elements by the result of applying `f`. Returns a map from keys to lists
@@ -412,7 +412,7 @@ fn main() {
 ## `list.index_of`
 
 ```
-list.index_of(xs: List(a), target: a) -> Option(Int)
+list.index_of(xs: List(a), target: a) -> Option(Int) where a: Equal
 ```
 
 Returns `Some(index)` of the first element equal to `target` (by value
@@ -505,7 +505,7 @@ fn main() {
 ## `list.max_by`
 
 ```
-list.max_by(xs: List(a), key: Fn(a) -> b) -> Option(a)
+list.max_by(xs: List(a), key: Fn(a) -> b) -> Option(a) where b: Compare
 ```
 
 Returns `Some(element)` whose `key` result is largest, or `None` if the list
@@ -528,7 +528,7 @@ fn main() {
 ## `list.min_by`
 
 ```
-list.min_by(xs: List(a), key: Fn(a) -> b) -> Option(a)
+list.min_by(xs: List(a), key: Fn(a) -> b) -> Option(a) where b: Compare
 ```
 
 Returns `Some(element)` whose `key` result is smallest, or `None` if the list
@@ -662,7 +662,7 @@ fn main() {
 ## `list.sort`
 
 ```
-list.sort(xs: List(a)) -> List(a)
+list.sort(xs: List(a)) -> List(a) where a: Compare
 ```
 
 Returns a new list sorted in natural (ascending) order.
@@ -703,7 +703,7 @@ fn main() {
 ## `list.sort_by`
 
 ```
-list.sort_by(xs: List(a), key: Fn(a) -> b) -> List(a)
+list.sort_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Compare
 ```
 
 Returns a new list sorted by the result of applying the key function to each
@@ -823,7 +823,7 @@ fn main() {
 ## `list.unique`
 
 ```
-list.unique(xs: List(a)) -> List(a)
+list.unique(xs: List(a)) -> List(a) where a: Equal
 ```
 
 Removes duplicate elements, preserving the order of first occurrences.

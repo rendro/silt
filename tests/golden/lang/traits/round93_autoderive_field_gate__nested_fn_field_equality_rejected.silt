@@ -1,8 +1,7 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'Outer' cannot derive 'Equal'
+-- stderr-contains: error[type]: type 'Outer' does not implement trait 'Equal': field 'i' > field 'f' is of type 'Fn(Int) -> Int', which does not
 -- stderr-contains: field 'i'
--- stderr-contains: 'Inner'
 type Inner { f: Fn(Int) -> Int }
 type Outer { i: Inner }
 fn main() {

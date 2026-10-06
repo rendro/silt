@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot infer the record type whose field 'age' this update sets
+-- stderr-contains: help: annotate the record
+-- An update of a record whose type nothing decides is not general: the
+-- record needs an annotation.
+type Rec { name: String, age: Int }
+fn bump(r, n) { r.{ age: n } }
+fn main() {
+  let r = Rec { name: "alice", age: 30 }
+  println(bump(r, 31).age)
+}

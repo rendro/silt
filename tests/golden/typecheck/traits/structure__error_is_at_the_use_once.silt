@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- The type is declared without complaint; each use that needs a trait
+-- it lacks is one error, at the use, with the way down to the function.
+type H { f: Fn(Int) -> Int }
+type Box(a) { Box(a) }
+type E { X(Option(Fn(Int) -> Int)), Y(Box(H)), Z }
+fn main() {
+  let h = H { f: { n -> n } }
+  println(Y(Box(h)))
+  println(Z == Z)
+  println([Box(h)].display())
+}

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: 'hello' needs `a: Greet`, and the type variable of a `let` annotation cannot have a bound
+-- stderr-contains: help: write the type the value is used at in place of `a`, or leave the annotation out
+-- stderr-not-contains: enclosing function
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+fn main() {
+  let f: Fn(a) -> String = hello
+  println(f(3))
+}

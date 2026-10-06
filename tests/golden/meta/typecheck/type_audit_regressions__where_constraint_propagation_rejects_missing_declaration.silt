@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: enclosing function does not declare constraint required by call to 'show': `a: Showable`
+-- stderr-contains: error[type]: type variable `a` is not known to implement trait 'Showable', which 'show' needs
 trait Showable {
   fn present(self) -> String
 }

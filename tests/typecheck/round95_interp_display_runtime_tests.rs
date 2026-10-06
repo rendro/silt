@@ -58,14 +58,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[test]
-fn polymorphic_interp_of_tcp_listener_errors_at_runtime() {
-    // `tcp.listen` on an ephemeral local port yields a `TcpListener`
-    // (an opaque resource left explicitly unprintable). Interpolating it
-    // through the polymorphic `show` must error rather than silently
-    // rendering `val=<tcp-listener:0>`.
+fn polymorphic_interp_of_tcp_listener_is_rejected() {
+    // `tcp.listen` yields a `TcpListener` (an opaque resource left
+    // explicitly unprintable). Interpolating it through the bounded
+    // `show` is an error, not `val=<tcp-listener:0>`.
     let src = r#"
 import tcp
-fn show(x: a) -> String { "val={x}" }
+fn show(x: a) -> String where a: Display { "val={x}" }
 fn main() {
   match tcp.listen("127.0.0.1:0") {
     Ok(l) -> println(show(l))
@@ -78,10 +77,10 @@ fn main() {
         .run_trial();
     let err = outcome
         .error_message
-        .expect("expected a runtime Display error, got clean exit");
+        .expect("expected a Display error, got clean exit");
     assert!(
-        err.contains("does not implement Display") && err.contains("'TcpListener'"),
-        "expected a Display runtime error naming TcpListener, got: {err}"
+        err.contains("does not implement trait 'Display'") && err.contains("'TcpListener'"),
+        "expected a Display error naming TcpListener, got: {err}"
     );
 }
 

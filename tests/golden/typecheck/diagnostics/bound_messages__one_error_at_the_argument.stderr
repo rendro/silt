@@ -1,0 +1,36 @@
+error[type]: type variable `a` is not known to implement trait 'Display'
+ --> bound_messages__one_error_at_the_argument.silt:9:29
+   |
+ 9 | fn show(x: a) -> String { "{x}" }
+   |                             ^ type variable `a` is not known to implement trait 'Display'
+  = help: add `where a: Display`
+
+error[type]: type 'Fn' does not implement trait 'Equal'
+ --> bound_messages__one_error_at_the_argument.silt:12:18
+    |
+ 12 |   test.assert_eq(f, f)
+    |                  ^ type 'Fn' does not implement trait 'Equal'
+
+error[type]: type mismatch: expected String, got Bool
+ --> bound_messages__one_error_at_the_argument.silt:13:20
+    |
+ 13 |   println(add("a", true))
+    |                    ^^^^ type mismatch: expected String, got Bool
+
+error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Display': element is of type 'Fn(_) -> _', which does not
+ --> bound_messages__one_error_at_the_argument.silt:14:11
+    |
+ 14 |   println(list.sort([f]))
+    |           ^^^^^^^^^^^^^^ type 'List(Fn(_) -> _)' does not implement trait 'Display': element is of type 'Fn(_) -> _', which does not
+
+error[type]: type 'Fn' does not implement trait 'Compare'
+ --> bound_messages__one_error_at_the_argument.silt:14:21
+    |
+ 14 |   println(list.sort([f]))
+    |                     ^^^ type 'Fn' does not implement trait 'Compare'
+
+error[type]: unary '-' requires Int or Float, got 'String'
+ --> bound_messages__one_error_at_the_argument.silt:15:12
+    |
+ 15 |   println(-"s" + 1)
+    |            ^^^ unary '-' requires Int or Float, got 'String'

@@ -1,0 +1,10 @@
+-- The same, used at the type the impl says.
+trait Conv(to) { fn conv(self) -> to }
+trait Conv(String) for Int { fn conv(self) -> String { "an int" } }
+fn s(x: a, y: b) -> b where a: Conv(b) { x.conv() }
+fn w(y) { s(3, y) }
+fn main() {
+  let g = { y -> s(3, y) }
+  println(w("x"))
+  println(g("y"))
+}

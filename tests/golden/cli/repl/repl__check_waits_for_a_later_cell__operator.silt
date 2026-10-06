@@ -1,0 +1,10 @@
+-- cmd: repl
+-- stdin: import channel\nlet ch = channel.new(4)\nfn f() {\n  match channel.receive(ch) {\n    channel.Message(m) -> println(m * m)\n    _ -> ()\n  }\n}\nchannel.send(ch, "s")\nchannel.send(ch, 3)\nf()\n:quit\n
+-- stderr-contains: error[type]: this input gives a value a type an earlier input does not allow: operator '*' requires Int or Float, got 'String'
+-- stderr-contains: --> <repl:4>:1:1
+-- stderr-contains: ::: <repl:3>:3:35
+-- stderr-contains: note: this input is dropped; the earlier one stands
+-- What a cell asks of a type still unknown (the element type of `ch`,
+-- which no cell has decided) is asked of the cell that decides it: the
+-- send of a String is rejected for the `m * m` of the cell before it,
+-- and dropped; the send of an Int is accepted.

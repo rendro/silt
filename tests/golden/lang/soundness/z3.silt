@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
 -- Port of repros/type_soundness/z3.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: type 'Fn' does not implement Display
 type Box(a) { Box(a) }
 fn show(x) { "{x}" }
 fn show2(x) { x.display() }

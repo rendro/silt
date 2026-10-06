@@ -1,4 +1,4 @@
 -- Positive control: polymorphic `<` on fn-free records.
 type P { x: Int, name: String }
-fn lt(a: t, b: t) -> Bool { a < b }
+fn lt(a: t, b: t) -> Bool where t: Compare { a < b }
 fn main() { println(lt(P{x: 1, name: "a"}, P{x: 2, name: "b"})) }

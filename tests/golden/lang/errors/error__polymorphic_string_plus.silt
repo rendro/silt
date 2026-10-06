@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'String' does not implement trait 'Number'
+-- `+` on a value of unknown type bounds it by `Number`: `add` is
+-- `(a, a) -> a where a: Number`, and each call owes the bound.
+fn add(a, b) { a + b }
+fn main() {
+  println(add(1, 2))
+  println(add(1.5, 2.5))
+  println(add("a", "b"))
+}

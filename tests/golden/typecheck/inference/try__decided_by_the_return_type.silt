@@ -1,0 +1,15 @@
+-- `?` on a value of unknown type is decided by the function's return
+-- type once that is known: a Result with the function's error type, or
+-- an Option.
+fn step(x) -> Result(Int, String) { Ok(x? + 1) }
+fn opt(x) { Some(x? + 1) }
+fn g(r: Result(Int, String)) -> Result(Int, String) {
+  let h = { x -> Ok(x? + 1) }
+  h(r)
+}
+fn main() {
+  println(step(Ok(1)))
+  println(step(Err("e")))
+  println(opt(Some(1)))
+  println(g(Ok(1)))
+}

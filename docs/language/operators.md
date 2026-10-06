@@ -201,6 +201,10 @@ let bob = User { name: "bob", age: 30 }
 let older = bob.{ age: bob.age + 1 }
 ```
 
+An update needs to know its record's type: in a function whose parameter
+has no annotation and that nothing else decides, annotate it
+(`fn older(u: User) { u.{ age: u.age + 1 } }`).
+
 ## See Also
 
 - [Bindings and Functions](bindings-and-functions.md) — where operators appear in expression position

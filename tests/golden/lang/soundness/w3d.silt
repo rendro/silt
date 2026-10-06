@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'Compare'
 -- Port of repros/type_soundness/w3d.silt, in brace closures, without its last line.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: list.sort: type 'Fn' does not implement Compare
 import list
 fn smallest(xs: List(a)) -> List(a) where a: Compare { list.sort(xs) }
 fn run(f, x) { f(x) }
