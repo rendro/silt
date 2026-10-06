@@ -140,6 +140,20 @@ impl Globals {
         self.defaults.get(&(t, method.to_string())).copied()
     }
 
+    /// The default methods of the trait `t`, each with its slot, by
+    /// name: whatever declared the trait (the program, a module it
+    /// imports, an earlier REPL entry, the builtins).
+    pub fn default_methods(&self, t: TraitId) -> Vec<(String, u16)> {
+        let mut methods: Vec<(String, u16)> = self
+            .defaults
+            .iter()
+            .filter(|((of, _), _)| *of == t)
+            .map(|((_, method), slot)| (method.clone(), *slot))
+            .collect();
+        methods.sort();
+        methods
+    }
+
     /// The slot of the default method `method` of the trait `t`, named
     /// `name`: a new one the first time.
     pub fn add_default_method(&mut self, t: TraitId, method: &str, name: String) -> Option<u16> {

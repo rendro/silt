@@ -345,26 +345,7 @@ impl Compiler {
         globals: &mut Globals,
     ) -> Result<HashMap<(crate::session::ModuleId, Symbol), u16>, Diagnostic> {
         let mut own = HashMap::new();
-        // The default methods of each trait, in the trait's order.
-        let mut defaults: HashMap<crate::defs::TraitId, Vec<Symbol>> = HashMap::new();
         let builtin_defaults = crate::typechecker::builtin_default_methods();
-        for (t, method) in &builtin_defaults {
-            defaults.entry(*t).or_default().push(method.name);
-        }
-        for unit in &self.units.modules {
-            for decl in &unit.program.decls {
-                if let Decl::Trait(t) = decl
-                    && let Some(id) = self.declared_trait(unit.id, t.name)
-                {
-                    defaults.entry(id).or_default().extend(
-                        t.methods
-                            .iter()
-                            .filter(|m| !m.is_signature_only)
-                            .map(|m| m.name),
-                    );
-                }
-            }
-        }
         if !self.builtin_impls_installed {
             for (t, method) in &builtin_defaults {
                 let trait_name = self.units.defs.get(t.0).name;
@@ -378,7 +359,7 @@ impl Compiler {
             }
             for decl in crate::typechecker::builtin_derived_impls().iter() {
                 if let Decl::TraitImpl(ti) = decl {
-                    self.assign_method_slots(ti, &defaults, globals)?;
+                    self.assign_method_slots(ti, globals)?;
                 }
             }
         }
@@ -431,7 +412,7 @@ impl Compiler {
             }
             for decl in &unit.program.decls {
                 if let Decl::TraitImpl(ti) = decl {
-                    self.assign_method_slots(ti, &defaults, globals)?;
+                    self.assign_method_slots(ti, globals)?;
                 }
             }
         }
@@ -439,11 +420,12 @@ impl Compiler {
     }
 
     /// Give a global slot to each method the impl `ti` writes; a default
-    /// method of the trait (`defaults`) it leaves out is the trait's.
+    /// method of the trait it leaves out is the trait's, whose slot the
+    /// trait's declaration got (in this program, or in an earlier REPL
+    /// entry).
     fn assign_method_slots(
         &self,
         ti: &crate::ast::TraitImpl,
-        defaults: &HashMap<crate::defs::TraitId, Vec<Symbol>>,
         globals: &mut Globals,
     ) -> Result<(), Diagnostic> {
         let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti)) else {
@@ -460,12 +442,13 @@ impl Compiler {
                 )
                 .ok_or_else(|| too_many_globals(globals.len() + 1, method.span))?;
         }
-        for method in defaults.get(&t).into_iter().flatten() {
-            if ti.methods.iter().any(|written| written.name == *method) {
-                continue;
-            }
-            if let Some(slot) = globals.default_method(t, &resolve(*method)) {
-                globals.default_for(t, ty, &resolve(*method), slot);
+        for (method, slot) in globals.default_methods(t) {
+            if !ti
+                .methods
+                .iter()
+                .any(|written| resolve(written.name) == method)
+            {
+                globals.default_for(t, ty, &method, slot);
             }
         }
         Ok(())
