@@ -271,7 +271,8 @@ channel.try_receive(ch: Channel(a)) -> ChannelResult(a)
 ```
 
 Non-blocking receive. Returns `Message(value)` if a value is immediately
-available, `Empty` if the channel is open but has no data, or `Closed` if the
+available (in the buffer, or held by a sender that waits on a rendezvous
+channel), `Empty` if the channel is open but has no data, or `Closed` if the
 channel is closed and empty.
 
 ```silt
@@ -337,23 +338,17 @@ the result is kept: a later `task.join` still returns it, or raises it if the
 task failed. Cancelling a
 task that has already failed also dismisses that failure: it is not
 reported as unjoined, does not make `silt run` exit 1 and does not fail
-the test that spawned it. This is **not**
-a synchronous stop
-signal — treat it as a cooperative request, not a hard stop:
+the test that spawned it. The cancel does not wait for the task to stop:
 
-- If the task is **currently parked** (blocked on a channel, `task.join`,
-  `time.sleep`, or a timer), the pending wake registrations are torn down and
-  the task will not be resumed. The handle resolves to `Err("cancelled")`.
-- If the task is **currently running**, the handle's result is set
-  immediately, but the running slice continues executing until its next
-  cooperative yield point or natural completion. Any side effects the slice
-  performs before it next parks — writes, spawns, channel sends, I/O — run to
-  completion. Its own final result is then discarded (first-writer-wins).
-- If the task is **queued but not yet running** (spawned but not yet
-  scheduled), the behaviour matches the running case: the handle's result
-  is set immediately, but if the scheduler later picks up the task it may
-  run a slice before its result is discarded. This is the same documented
-  first-writer-wins behaviour — `task.cancel` is not a hard stop.
+- If the task is **currently parked** (blocked on a channel, a select,
+  `task.join`, `time.sleep`, or I/O), its wait ends without taking or
+  sending anything, and the task is dropped.
+- If the task is **currently running**, it runs no further than the end of
+  its current slice (a few thousand steps); side effects of that slice still
+  happen. If the slice reaches a blocking operation, the task ends there
+  instead of waiting.
+- If the task is **queued but not yet running**, it is dropped without
+  running again.
 
 `task.join` on a cancelled handle does **not** return `Err("cancelled")`
 as a value — it raises the failure as a runtime error of the form

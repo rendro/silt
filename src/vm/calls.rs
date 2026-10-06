@@ -38,35 +38,6 @@ pub(super) enum Entered {
     Code,
     /// A builtin's frame is on top, not resumed yet.
     Native,
-    /// A builtin's frame is on top and the task's slice ends (see
-    /// [`Step::Park`]).
-    Parked,
-}
-
-/// A builtin that asked to be called again when the task next runs: it
-/// found nothing to take (an empty channel, an I/O call that has not
-/// finished) and said what the task waits for.
-struct Retry {
-    name: String,
-    args: Vec<Value>,
-}
-
-impl Native for Retry {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
-        match vm.dispatch_builtin(&self.name, &self.args) {
-            Err(e) if e.is_yield => {
-                if let Some(args) = vm.retry_args.take() {
-                    self.args = args;
-                }
-                Ok(Step::Park)
-            }
-            other => other,
-        }
-    }
 }
 
 impl Vm {
@@ -191,17 +162,9 @@ impl Vm {
                 self.push_native_frame(native);
                 Ok(Entered::Native)
             }
-            Ok(Step::Call { .. } | Step::Park) => Err(VmError::new(format!(
-                "internal VM error: the builtin '{name}' calls or parks without a frame"
+            Ok(Step::Call { .. } | Step::Park(_) | Step::Yield) => Err(VmError::new(format!(
+                "internal VM error: the builtin '{name}' calls or waits without a frame"
             ))),
-            Err(e) if e.is_yield => {
-                let args = self.retry_args.take().unwrap_or_else(|| args.to_vec());
-                self.push_native_frame(Box::new(Retry {
-                    name: name.to_string(),
-                    args,
-                }));
-                Ok(Entered::Parked)
-            }
             Err(e) => Err(e),
         }
     }

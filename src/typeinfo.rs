@@ -330,7 +330,6 @@ pub mod ty {
     /// can name: ids past any definition.
     pub const STREAM_ERROR: TypeId = TypeId(DefId(u32::MAX));
     pub const MAP_ERROR: TypeId = TypeId(DefId(u32::MAX - 1));
-    pub const RECV_TIMEOUT: TypeId = TypeId(DefId(u32::MAX - 2));
     pub const NOTIFICATION: TypeId = TypeId(DefId(u32::MAX - 3));
 }
 
@@ -569,7 +568,6 @@ fn marker_types() -> &'static [Arc<TypeInfo>] {
         vec![
             variant(ty::STREAM_ERROR, "__StreamTypeError__", 1),
             variant(ty::MAP_ERROR, "__MapMapTypeError__", 0),
-            record(ty::RECV_TIMEOUT, "__recv_timeout_resume__"),
             record(ty::NOTIFICATION, "Notification"),
         ]
     })

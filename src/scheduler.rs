@@ -5,15 +5,15 @@
 //! drives it:
 //!
 //! - a task made by `task.spawn` is run slice by slice by the workers;
-//! - the program itself (`fn main`, a test, a REPL entry) and the
-//!   callbacks of a stream stage or an HTTP handler are run by their
-//!   own thread (`Scheduler::enter`).
+//! - the program itself (`fn main`, a test, a REPL entry), a stream
+//!   stage and an HTTP handler are run by their own thread
+//!   (`Scheduler::enter`).
 //!
 //! Each of them waits in the same place, the registry of parked tasks
-//! ([`Parking`]): a spawned task is taken off its worker and put back
-//! on the run queue when its wait ends; a thread waits where it is
-//! (`Scheduler::block_thread`) and, where there are no workers, runs
-//! the queued tasks while it does.
+//! ([`Parking`]), for the same thing, a [`Wait`]: a spawned task is
+//! taken off its worker and put back on the run queue when its wait
+//! ends; a thread waits where it is (`Scheduler::block_thread`) and,
+//! where there are no workers, runs the queued tasks while it does.
 //!
 //! # Deadlock
 //!
@@ -33,12 +33,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use crate::runtime::channel::{Channel, Waker, WakerRegistration};
-use crate::runtime::completion::{IoCompletion, IoWakerRegistration};
-use crate::runtime::handle::{JoinWakerRegistration, TaskHandle};
-use crate::runtime::sync::{self, Arm, Parking, Resumed, TaskId, Wait};
+use crate::runtime::handle::TaskHandle;
+use crate::runtime::sync::{self, Channel, Fired, Parking, Resumed, Source, Stuck, TaskId, Wait};
 use crate::value::Value;
-use crate::vm::{BlockReason, HostIo, SelectOpKind, Vm, VmError};
+use crate::vm::{HostIo, Vm, VmError};
 
 #[doc(hidden)]
 pub mod test_support;
@@ -98,9 +96,9 @@ fn parse_duration(s: &str) -> Option<Duration> {
     }
 }
 
-/// Source of an I/O watchdog deadline — determines the error message
-/// the watchdog fires. `Global` comes from `SILT_IO_TIMEOUT`; `Task`
-/// comes from a scoped `task.deadline(dur, fn)` block.
+/// Which deadline ended a wait for I/O: it is named in the error.
+/// `Global` comes from `SILT_IO_TIMEOUT`; `Task` comes from a scoped
+/// `task.deadline(dur, fn)` block.
 #[derive(Clone, Copy)]
 pub(crate) enum DeadlineSource {
     Global,
@@ -119,132 +117,6 @@ impl DeadlineSource {
     }
 }
 
-/// An entry in the I/O watchdog registry. When the watchdog thread
-/// scans and finds an entry whose `deadline <= now`, it fires
-/// `completion.complete(Err(...))` to unblock the task with a timeout
-/// error. The `Weak` reference ensures a dropped task's completion
-/// doesn't keep the watchdog holding memory.
-struct WatchdogEntry {
-    task: TaskId,
-    completion: Weak<IoCompletion>,
-    /// A reading of the host clock.
-    deadline: Duration,
-    source: DeadlineSource,
-}
-
-/// Registry of in-flight I/O operations watched for timeout. Populated
-/// whenever a task blocks on I/O with an effective deadline — either
-/// from `SILT_IO_TIMEOUT` (global) or `task.deadline` (per-task scope).
-pub(crate) struct WatchdogRegistry {
-    entries: Mutex<Vec<WatchdogEntry>>,
-    /// How frequently the watchdog thread scans the registry.
-    /// Controlled by `SILT_IO_WATCHDOG_INTERVAL`, defaulted below.
-    interval: Duration,
-    shutdown: AtomicBool,
-    /// Whether its thread runs.
-    started: Mutex<bool>,
-}
-
-impl WatchdogRegistry {
-    fn new(interval: Duration) -> Self {
-        Self {
-            entries: Mutex::new(Vec::new()),
-            interval,
-            shutdown: AtomicBool::new(false),
-            started: Mutex::new(false),
-        }
-    }
-
-    fn add(
-        &self,
-        task: TaskId,
-        completion: &Arc<IoCompletion>,
-        deadline: Duration,
-        source: DeadlineSource,
-    ) {
-        self.entries.lock().push(WatchdogEntry {
-            task,
-            completion: Arc::downgrade(completion),
-            deadline,
-            source,
-        });
-    }
-
-    fn remove(&self, task: TaskId) {
-        let mut entries = self.entries.lock();
-        if let Some(pos) = entries.iter().position(|e| e.task == task) {
-            entries.swap_remove(pos);
-        }
-    }
-
-    /// Scan the registry for entries overdue at `now`, a reading of the
-    /// host clock. For each one, fire an
-    /// `Err("...")` into the completion (no-op if the real I/O already
-    /// wrote a result — `IoCompletion::complete` is first-writer-wins).
-    /// Returns the number of timeouts fired for test introspection.
-    ///
-    /// The firing happens *outside* the `entries` lock: `completion.complete`
-    /// drains registered wakers synchronously, and the I/O waker's requeue
-    /// path calls back into `WatchdogRegistry::remove` — which re-acquires
-    /// `self.entries.lock()`. Holding the lock across the completion would
-    /// deadlock the watchdog thread on the same parking_lot mutex. So we
-    /// drain overdue entries into a local vec under the lock, release the
-    /// lock, then fire completions.
-    fn scan_and_fire(&self, now: Duration) -> usize {
-        let to_fire: Vec<(Weak<IoCompletion>, &'static str)> = {
-            let mut entries = self.entries.lock();
-            let mut drained = Vec::new();
-            entries.retain(|entry| {
-                if now < entry.deadline {
-                    return true; // not overdue, keep watching
-                }
-                drained.push((entry.completion.clone(), entry.source.message()));
-                false // remove from registry regardless (won't fire again)
-            });
-            drained
-        }; // lock released here
-        let mut fired = 0;
-        for (weak_completion, msg) in to_fire {
-            if let Some(completion) = weak_completion.upgrade() {
-                // Phases 1-3 of the stdlib error redesign: each blocking
-                // builtin registers its own `timeout_err` factory on the
-                // `IoCompletion` so a deadline-cancelled op surfaces the
-                // typed variant the caller's signature declares (e.g.
-                // `Err(TcpTimeout)` for tcp.*, `Err(HttpTimeout)` for
-                // http.*, `Err(IoUnknown(msg))` for io/fs). The watchdog
-                // just calls the factory and stuffs the result into the
-                // completion — it remains module-agnostic.
-                let err_value = completion.build_timeout_err(msg);
-                if completion.complete(err_value) {
-                    fired += 1;
-                }
-            }
-        }
-        fired
-    }
-}
-
-/// Watchdog worker loop. Wakes every `interval` (of real time), scans
-/// registry, fires timeouts on the entries overdue on the host clock.
-/// Exits cleanly on shutdown signal.
-fn watchdog_loop(registry: Arc<WatchdogRegistry>, io: HostIo) {
-    while !registry.shutdown.load(Ordering::SeqCst) {
-        thread::sleep(registry.interval);
-        if registry.shutdown.load(Ordering::SeqCst) {
-            return;
-        }
-        // If the clock has panicked, every watched wait ends now: the
-        // task runs into the clock's failure at its next builtin call.
-        let now = io.monotonic();
-        let now = if io.clock_failure().is_some() {
-            Duration::MAX
-        } else {
-            now
-        };
-        registry.scan_and_fire(now);
-    }
-}
-
 /// Result of running a task's VM for one time slice.
 pub(crate) enum SliceResult {
     /// Time slice expired; task is still runnable.
@@ -254,7 +126,7 @@ pub(crate) enum SliceResult {
     /// Task failed with an error.
     Failed(VmError),
     /// The task waits for this.
-    Blocked(BlockReason),
+    Blocked(Wait),
 }
 
 /// A lightweight task scheduled on the M:N thread pool.
@@ -267,20 +139,14 @@ pub struct Task {
 /// The scheduler of one program.
 pub struct Scheduler {
     inner: Arc<Inner>,
-    /// The worker threads and the watchdog, started by the first task.
+    /// The worker threads, started by the first task.
     workers: Mutex<Option<Vec<thread::JoinHandle<()>>>>,
 }
 
-/// Who waits in the registry of parked tasks, with what wakes it.
-struct Sleeper {
-    who: Who,
-    /// Dropped when the wait ends, however it ends.
-    bridge: Bridge,
-}
-
+/// Who waits in the registry of parked tasks.
 // Nearly every sleeper is a task.
 #[allow(clippy::large_enum_variant)]
-enum Who {
+enum Sleeper {
     /// A spawned task: it goes back on the run queue.
     Task(Task),
     /// A thread that runs silt code of its own: it is told.
@@ -291,14 +157,6 @@ enum Who {
 #[derive(Default)]
 struct ThreadPark {
     resumed: Mutex<Option<Resumed>>,
-}
-
-/// The wait of the program's own thread, for the deadlock report.
-#[derive(Clone)]
-struct MainWait {
-    id: TaskId,
-    /// `channel receive with no counterparty`.
-    what: &'static str,
 }
 
 struct Inner {
@@ -316,16 +174,13 @@ struct Inner {
     live: AtomicUsize,
     /// The spawned tasks among them, for `MAX_TASKS`.
     spawned: AtomicUsize,
-    /// What can end a wait from outside the tasks: timers that are
-    /// pending, I/O operations in flight. See [`External`].
+    /// What can end a wait from outside the tasks, besides the timer:
+    /// I/O operations in flight. See [`External`].
     external: AtomicUsize,
     parking: Parking<Sleeper>,
-    /// How many parked tasks have a wait that a stream stage can end,
-    /// whose thread the scheduler does not count: a receive on the
-    /// stage's output, or a send on its input. While there is one, no
-    /// verdict is given.
-    stream_waits: AtomicUsize,
-    main_wait: Mutex<Option<MainWait>>,
+    /// The wait of the program's own thread, while it waits: who gets
+    /// the verdict.
+    main_wait: Mutex<Option<TaskId>>,
     /// The verdict, between the check that gave it and the program's
     /// thread that raises it.
     deadlock: Mutex<Option<VmError>>,
@@ -334,14 +189,13 @@ struct Inner {
     /// Whether the thread that runs the program knows this scheduler
     /// (`StartedSchedulers`).
     registered: AtomicBool,
-    /// Always-on I/O watchdog registry. Entries are added only when an
-    /// I/O block has an effective deadline (from SILT_IO_TIMEOUT or
-    /// task.deadline). If neither is in effect for a given block, no
-    /// entry is added and the wait is indefinite.
-    watchdog: Arc<WatchdogRegistry>,
-    /// Global I/O timeout from `SILT_IO_TIMEOUT`. When set, every I/O
-    /// block registers with `now + global_io_timeout` as its deadline
-    /// unless a tighter task.deadline is in effect.
+    /// The thread that fires the timer waits here for the next
+    /// deadline, or for an earlier one to be armed.
+    timer_lock: Mutex<TimerThread>,
+    timer_wake: Condvar,
+    /// Global I/O timeout from `SILT_IO_TIMEOUT`. When set, every wait
+    /// for I/O ends after it, unless a tighter task.deadline is in
+    /// effect.
     global_io_timeout: Option<Duration>,
     /// Tasks that ended with an error, kept for the report of failures
     /// that nobody joined. See `report_unjoined_failures`.
@@ -350,57 +204,20 @@ struct Inner {
     io: HostIo,
 }
 
-/// The wakers a parked task has on the channels, handles and
-/// completions of its wait. Each completes the cell the task is parked
-/// on; the builtin that parked then runs again and takes what it
-/// finds.
-struct Bridge {
-    inner: Arc<Inner>,
-    registrations: Vec<Registration>,
-    channels: Vec<Arc<Channel>>,
-    /// Counted in `Inner::stream_waits`.
-    stream: bool,
-    /// The task's entry in the I/O watchdog.
-    watched: Option<TaskId>,
-}
-
-#[allow(dead_code)] // held for their `Drop`
-enum Registration {
-    Channel(WakerRegistration),
-    Join(JoinWakerRegistration),
-    Io(IoWakerRegistration),
-}
-
-impl Bridge {
-    /// The wait ended by a wake: the builtin runs again and takes what
-    /// it was woken for, so nothing is passed on.
-    fn woken(mut self) {
-        self.channels.clear();
-    }
-}
-
-impl Drop for Bridge {
-    fn drop(&mut self) {
-        self.registrations.clear();
-        if self.stream {
-            self.inner.stream_waits.fetch_sub(1, Ordering::SeqCst);
-        }
-        if let Some(task) = self.watched {
-            self.inner.watchdog.remove(task);
-        }
-        // A channel wakes one waiter for each value and each free
-        // place. A task that was cancelled may have been woken for one
-        // it does not take: the next waiter is woken for it.
-        for channel in &self.channels {
-            channel.rewake_waiters();
-        }
-    }
+/// The thread that fires the timer.
+#[derive(PartialEq)]
+enum TimerThread {
+    /// No deadline has needed it yet.
+    Idle,
+    Running,
+    /// It could not be started: the threads that wait fire the timer.
+    Unavailable,
 }
 
 /// Something outside the tasks that can end a wait, for as long as it
-/// lives: a pending timer, an I/O operation in flight, a thread that
-/// serves the program. While one exists the program is not deadlocked.
-/// It is dropped after the last thing it does for a task has returned.
+/// lives: an I/O operation in flight, a thread that serves the
+/// program. While one exists the program is not deadlocked. It is
+/// dropped after the last thing it does for a task has returned.
 pub(crate) struct External(Arc<Inner>);
 
 impl Drop for External {
@@ -410,14 +227,35 @@ impl Drop for External {
     }
 }
 
+thread_local! {
+    /// Whether the thread is counted as running silt code: it is a
+    /// worker in a slice, or holds a [`Running`].
+    static COUNTED: Cell<bool> = const { Cell::new(false) };
+}
+
 /// A thread that is running silt code of its own, from
-/// [`Scheduler::enter`] until it is dropped.
-pub(crate) struct Running(Arc<Inner>);
+/// [`Scheduler::enter`] until it is dropped: it counts as a task.
+pub(crate) struct Running {
+    inner: Arc<Inner>,
+    /// False for a guard taken on a thread that was counted already.
+    counts: bool,
+}
+
+impl Running {
+    /// The calling thread takes over a guard that another thread took
+    /// for it ([`Scheduler::enter_for_thread`]).
+    pub(crate) fn adopt(&self) {
+        COUNTED.with(|counted| counted.set(true));
+    }
+}
 
 impl Drop for Running {
     fn drop(&mut self) {
-        self.0.live.fetch_sub(1, Ordering::SeqCst);
-        self.0.check_stuck();
+        if self.counts {
+            let _ = COUNTED.try_with(|counted| counted.set(false));
+            self.inner.live.fetch_sub(1, Ordering::SeqCst);
+            self.inner.check_stuck();
+        }
     }
 }
 
@@ -429,21 +267,6 @@ impl Scheduler {
         let global_io_timeout = std::env::var("SILT_IO_TIMEOUT")
             .ok()
             .and_then(|s| parse_duration(&s));
-        // Watchdog scan interval: env override, else a reasonable default.
-        // When SILT_IO_TIMEOUT is set, scale to timeout/4 (capped at 1s).
-        // Without SILT_IO_TIMEOUT, task.deadline is the only consumer —
-        // default to 100ms so sub-second deadlines fire promptly.
-        // Floored at 10ms to avoid pathological busy-scanning.
-        let interval = std::env::var("SILT_IO_WATCHDOG_INTERVAL")
-            .ok()
-            .and_then(|s| parse_duration(&s))
-            .unwrap_or_else(|| {
-                global_io_timeout
-                    .map(|t| (t / 4).min(Duration::from_secs(1)))
-                    .unwrap_or(Duration::from_millis(100))
-            })
-            .max(Duration::from_millis(10));
-        let watchdog = Arc::new(WatchdogRegistry::new(interval));
         let timer = sync::Timer::new(io.clone());
         let inner = Arc::new_cyclic(|inner: &Weak<Inner>| {
             let ready = inner.clone();
@@ -462,12 +285,12 @@ impl Scheduler {
                         inner.ready(sleeper, resumed);
                     }
                 }),
-                stream_waits: AtomicUsize::new(0),
                 main_wait: Mutex::new(None),
                 deadlock: Mutex::new(None),
                 next_thread_wait: AtomicU64::new(0),
                 registered: AtomicBool::new(false),
-                watchdog,
+                timer_lock: Mutex::new(TimerThread::Idle),
+                timer_wake: Condvar::new(),
                 global_io_timeout,
                 failed_tasks: Mutex::new(FailedTasks::default()),
                 io,
@@ -520,27 +343,7 @@ impl Scheduler {
         }
         self.inner.has_workers.store(true, Ordering::SeqCst);
         *guard = Some(handles);
-        drop(guard);
-        self.ensure_watchdog();
         Ok(())
-    }
-
-    /// Start the thread that ends the I/O waits whose deadline has
-    /// passed, if it does not run yet.
-    fn ensure_watchdog(&self) {
-        static NAME: &str = "silt-io-watchdog";
-        let mut started = self.inner.watchdog.started.lock();
-        if *started || self.inner.shutdown.load(Ordering::SeqCst) {
-            return;
-        }
-        let registry = self.inner.watchdog.clone();
-        let io = self.inner.io.clone();
-        // Without the thread a deadline does not end an I/O wait; the
-        // operation still ends by itself.
-        *started = thread::Builder::new()
-            .name(NAME.into())
-            .spawn(move || watchdog_loop(registry, io))
-            .is_ok();
     }
 
     /// Report on the host's stderr every task of this scheduler that failed and
@@ -590,25 +393,74 @@ impl Scheduler {
                     .push(Arc::downgrade(&self.inner));
             });
         }
-        // A cancel of the task ends its wait, if it waits.
-        let inner = Arc::downgrade(&self.inner);
-        let id = TaskId(task.id as u64);
-        task.handle.set_cancel_cleanup(Box::new(move || {
-            if let Some(inner) = inner.upgrade() {
-                inner.parking.cancel(id);
-            }
-        }));
         self.inner.spawned.fetch_add(1, Ordering::SeqCst);
         self.inner.live.fetch_add(1, Ordering::SeqCst);
         self.inner.enqueue(task);
         Ok(())
     }
 
+    /// What every operation on a channel or a cell is given: it hands
+    /// the tasks whose wait the operation ended back to this scheduler.
+    pub(crate) fn wake(&self) -> &dyn sync::Wake {
+        &self.inner.parking
+    }
+
+    /// `task.cancel` of the task `handle`: it runs no further, and if
+    /// it waits, its wait ends without taking or sending anything.
+    pub(crate) fn cancel(&self, handle: &TaskHandle) {
+        // The flag first: a task that is about to park reads it.
+        handle.cancel(self.wake());
+        self.inner.parking.cancel(TaskId(handle.id as u64));
+    }
+
+    /// Close `channel` when the clock reads `deadline`.
+    pub(crate) fn close_at(&self, deadline: Duration, channel: Arc<Channel>) {
+        self.inner.parking.timer().close_at(deadline, channel);
+        self.inner.timer_armed();
+    }
+
+    /// When a wait for I/O that starts now ends without a result: the
+    /// earlier of `SILT_IO_TIMEOUT` from now and the task deadline.
+    pub(crate) fn io_deadline(
+        &self,
+        task_deadline: Option<Duration>,
+    ) -> Option<(Duration, DeadlineSource)> {
+        let global = self
+            .inner
+            .global_io_timeout
+            .and_then(|timeout| self.inner.io.deadline_after(timeout))
+            .map(|deadline| (deadline, DeadlineSource::Global));
+        let task = task_deadline.map(|deadline| (deadline, DeadlineSource::Task));
+        match (global, task) {
+            (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
+        }
+    }
+
     /// The calling thread starts to run silt code of its own: it counts
-    /// as a task until the guard is dropped.
+    /// as a task until the guard is dropped. Nothing changes for a
+    /// thread that counts already.
     pub(crate) fn enter(&self) -> Running {
+        let counts = !COUNTED.with(|counted| counted.replace(true));
+        if counts {
+            self.inner.live.fetch_add(1, Ordering::SeqCst);
+        }
+        Running {
+            inner: self.inner.clone(),
+            counts,
+        }
+    }
+
+    /// [`Scheduler::enter`] for a thread that is about to be started:
+    /// it counts from now, so that nobody finds the program deadlocked
+    /// before the thread runs. The thread calls [`Running::adopt`].
+    pub(crate) fn enter_for_thread(&self) -> Running {
         self.inner.live.fetch_add(1, Ordering::SeqCst);
-        Running(self.inner.clone())
+        Running {
+            inner: self.inner.clone(),
+            counts: true,
+        }
     }
 
     /// See [`External`].
@@ -617,61 +469,78 @@ impl Scheduler {
         External(self.inner.clone())
     }
 
-    /// The calling thread, which runs silt code of its own
-    /// ([`Scheduler::enter`]), waits for `reason`: it returns when the
-    /// builtin that parked is to run again. `deadline` is the task
-    /// deadline in effect. `main` says that the thread is the
-    /// program's: it gets the error when the program is deadlocked.
-    pub(crate) fn block_thread(
+    /// Send `value` on `channel` from a thread, which waits while there
+    /// is no receiver and no room. `false` when the channel is closed,
+    /// or the program has ended: the value was not sent.
+    pub(crate) fn send_wait(&self, channel: &Arc<Channel>, value: Value) -> bool {
+        let value = match channel.try_send(value, self.wake()) {
+            sync::TrySend::Sent => return true,
+            sync::TrySend::Closed(_) => return false,
+            sync::TrySend::Full(value) => value,
+        };
+        let wait = Wait::new(vec![sync::Arm::Send(channel.clone(), value)]);
+        matches!(
+            self.block_thread(wait, false),
+            Ok(Fired::Arm(_, sync::Outcome::Sent))
+        )
+    }
+
+    /// Receive from `channel` on a thread, which waits while the
+    /// channel is empty: a value, or `None` when the channel is closed
+    /// and empty, or the program has ended. `main` as for
+    /// [`Scheduler::block_thread`], whose error is returned.
+    pub(crate) fn receive_wait(
         &self,
-        reason: BlockReason,
-        deadline: Option<Duration>,
+        channel: &Arc<Channel>,
         main: bool,
-    ) -> Result<(), VmError> {
-        let inner = &self.inner;
-        if matches!(reason, BlockReason::Io(_)) {
-            self.ensure_watchdog();
+    ) -> Result<Option<Value>, VmError> {
+        match channel.try_receive(self.wake()) {
+            sync::TryReceive::Value(value) => return Ok(Some(value)),
+            sync::TryReceive::Closed(_) => return Ok(None),
+            sync::TryReceive::Empty => {}
         }
+        let wait = Wait::new(vec![sync::Arm::Recv(channel.clone())]);
+        Ok(match self.block_thread(wait, main)? {
+            Fired::Arm(_, sync::Outcome::Received(value)) => Some(value),
+            _ => None,
+        })
+    }
+
+    /// The calling thread waits for `wait` and gets how it ended. It
+    /// counts as a task while it waits, if it does not already (a
+    /// thread after [`Scheduler::enter`], a worker in a slice). `main` says that the
+    /// thread is the program's own: it gets the error when the program
+    /// is deadlocked. The other error is that the program has ended.
+    pub(crate) fn block_thread(&self, wait: Wait, main: bool) -> Result<Fired, VmError> {
+        let inner = &self.inner;
+        let _counted = self.enter();
         // The names of spawned tasks count up from 0.
         let id = TaskId(u64::MAX - inner.next_thread_wait.fetch_add(1, Ordering::Relaxed));
         if main {
-            let what = match &reason {
-                BlockReason::Receive(_) => "channel receive with no counterparty",
-                BlockReason::Send(_) => "channel send with no counterparty",
-                BlockReason::Select(_) => "channel select with no counterparty",
-                BlockReason::Join(_) | BlockReason::Io(_) => "task.join with no progress possible",
-            };
-            *inner.main_wait.lock() = Some(MainWait { id, what });
+            *inner.main_wait.lock() = Some(id);
         }
-        let (bridge, wait) = inner.bridge(id, &reason, deadline);
+        let timed = wait.deadline.is_some();
         let park = Arc::new(ThreadPark::default());
-        let sleeper = Sleeper {
-            who: Who::Thread(park.clone()),
-            bridge,
-        };
+        let sleeper = Sleeper::Thread(park.clone());
         let resumed = match inner.parking.park(id, sleeper, wait, || false) {
-            Some((sleeper, resumed)) => {
-                if let Resumed::Fired(_) = resumed {
-                    sleeper.bridge.woken();
-                }
-                resumed
-            }
+            Some((_, resumed)) => resumed,
             None => {
+                if timed {
+                    inner.timer_armed();
+                }
                 inner.check_stuck();
                 inner.wait_thread(&park)
             }
         };
-        if main {
-            *inner.main_wait.lock() = None;
-        }
         // The verdict is the program's thread's.
         let verdict = if main {
+            *inner.main_wait.lock() = None;
             inner.deadlock.lock().take()
         } else {
             None
         };
         match resumed {
-            Resumed::Fired(_) => Ok(()),
+            Resumed::Fired(fired) => Ok(fired),
             Resumed::Cancelled => Err(match verdict {
                 Some(verdict) => {
                     // A task that failed is the usual reason why the
@@ -715,17 +584,15 @@ impl Inner {
 
     /// The wait of `sleeper` has ended.
     fn ready(&self, sleeper: Sleeper, resumed: Resumed) {
-        let Sleeper { who, bridge } = sleeper;
-        match resumed {
-            Resumed::Fired(_) => bridge.woken(),
-            Resumed::Cancelled => drop(bridge),
-        }
-        match who {
-            Who::Task(task) => match resumed {
-                Resumed::Fired(_) => self.enqueue(task),
+        match sleeper {
+            Sleeper::Task(mut task) => match resumed {
+                Resumed::Fired(fired) => {
+                    task.vm.woken = Some(fired);
+                    self.enqueue(task);
+                }
                 Resumed::Cancelled => self.end_task(task),
             },
-            Who::Thread(park) => {
+            Sleeper::Thread(park) => {
                 *park.resumed.lock() = Some(resumed);
                 // With the queue's lock, the thread is either before
                 // its look at `resumed` or waiting.
@@ -735,95 +602,9 @@ impl Inner {
         }
     }
 
-    /// Register what wakes a task that waits for `reason`, and give
-    /// the wait that those wakers end.
-    fn bridge(
-        self: &Arc<Self>,
-        id: TaskId,
-        reason: &BlockReason,
-        task_deadline: Option<Duration>,
-    ) -> (Bridge, Wait) {
-        let cell = sync::Cell::<()>::new();
-        let waker = || -> Waker {
-            let (cell, inner) = (cell.clone(), self.clone());
-            Box::new(move || {
-                let _ = cell.complete((), &inner.parking);
-            })
-        };
-        let mut bridge = Bridge {
-            inner: self.clone(),
-            registrations: Vec::new(),
-            channels: Vec::new(),
-            stream: false,
-            watched: None,
-        };
-        let stream = Cell::new(false);
-        let receive = |bridge: &mut Bridge, channel: &Arc<Channel>| {
-            if crate::builtins::concurrency::is_stream_fed(channel) {
-                stream.set(true);
-            }
-            let registration = channel.register_recv_waker_guard(waker());
-            bridge
-                .registrations
-                .push(Registration::Channel(registration));
-            bridge.channels.push(channel.clone());
-        };
-        let send = |bridge: &mut Bridge, channel: &Arc<Channel>| {
-            if channel.is_read_by_stream() {
-                stream.set(true);
-            }
-            let registration = channel.register_send_waker_guard(waker());
-            bridge
-                .registrations
-                .push(Registration::Channel(registration));
-            bridge.channels.push(channel.clone());
-        };
-        match reason {
-            BlockReason::Receive(channel) => receive(&mut bridge, channel),
-            BlockReason::Send(channel) => send(&mut bridge, channel),
-            BlockReason::Select(ops) => {
-                for (channel, kind) in ops {
-                    match kind {
-                        SelectOpKind::Receive => receive(&mut bridge, channel),
-                        SelectOpKind::Send => send(&mut bridge, channel),
-                    }
-                }
-            }
-            BlockReason::Join(handle) => {
-                let registration = handle.register_join_waker_guard(waker());
-                bridge.registrations.push(Registration::Join(registration));
-            }
-            BlockReason::Io(completion) => {
-                // The I/O wait ends at the earlier of the global and
-                // the task's deadline.
-                let now = self.io.monotonic();
-                let global = self
-                    .global_io_timeout
-                    .and_then(|t| now.checked_add(t))
-                    .map(|d| (d, DeadlineSource::Global));
-                let task = task_deadline.map(|d| (d, DeadlineSource::Task));
-                let effective = match (global, task) {
-                    (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
-                    (Some(x), None) | (None, Some(x)) => Some(x),
-                    (None, None) => None,
-                };
-                if let Some((deadline, source)) = effective {
-                    self.watchdog.add(id, completion, deadline, source);
-                    bridge.watched = Some(id);
-                }
-                let registration = completion.register_waker_guard(waker());
-                bridge.registrations.push(Registration::Io(registration));
-            }
-        }
-        if stream.get() {
-            bridge.stream = true;
-            self.stream_waits.fetch_add(1, Ordering::SeqCst);
-        }
-        (bridge, Wait::new(vec![Arm::Cell(cell)]))
-    }
-
     /// The calling thread waits until its wait has ended. Where no
-    /// worker runs the queue, it does.
+    /// worker runs the queue, it does; where no thread fires the
+    /// timer, it does.
     fn wait_thread(self: &Arc<Self>, park: &ThreadPark) -> Resumed {
         let mut queue = self.queue.lock();
         loop {
@@ -838,28 +619,89 @@ impl Inner {
                 queue = self.queue.lock();
                 continue;
             }
-            self.threads.wait(&mut queue);
+            let timer = self.parking.timer();
+            let next = match *self.timer_lock.lock() {
+                TimerThread::Unavailable => timer.real_wait(),
+                TimerThread::Idle | TimerThread::Running => None,
+            };
+            match next {
+                None => self.threads.wait(&mut queue),
+                Some(next) => {
+                    let _ = self.threads.wait_for(&mut queue, next);
+                    drop(queue);
+                    if timer.fire_due(&self.parking) > 0 {
+                        self.check_stuck();
+                    }
+                    queue = self.queue.lock();
+                }
+            }
+        }
+    }
+
+    /// A deadline was put in the timer: the thread that fires the
+    /// timer is started, or told to look again.
+    fn timer_armed(self: &Arc<Self>) {
+        let mut thread = self.timer_lock.lock();
+        if *thread == TimerThread::Idle {
+            let inner = self.clone();
+            let started = thread::Builder::new()
+                .name("silt-timer".into())
+                .spawn(move || timer_loop(inner));
+            *thread = match started {
+                Ok(_) => TimerThread::Running,
+                Err(_) => TimerThread::Unavailable,
+            };
+        }
+        match *thread {
+            TimerThread::Running => {
+                self.timer_wake.notify_one();
+            }
+            // A thread that waits may wait for longer than up to the
+            // new deadline.
+            _ => {
+                drop(thread);
+                let _queue = self.queue.lock();
+                self.threads.notify_all();
+            }
         }
     }
 
     /// Run a task for one slice, and do what its end asks for.
     fn run_slice(self: &Arc<Self>, task: Task) {
+        /// How often in a row a task whose wait was over at once goes
+        /// on without giving way.
+        const GO_ON: usize = 16;
+        let mut task = task;
+        for _ in 0..GO_ON {
+            match self.run_once(task) {
+                Some(again) => task = again,
+                None => return,
+            }
+        }
+        self.enqueue(task);
+    }
+
+    /// One slice of a task. `Some` when the slice ended in a wait that
+    /// was over at once: the task has its result and can go on.
+    fn run_once(self: &Arc<Self>, task: Task) -> Option<Task> {
         let Task { id, mut vm, handle } = task;
         // A task that was cancelled runs no further.
-        if handle.is_finished() {
+        if handle.is_cancelled() {
             self.end_task(Task { id, vm, handle });
-            return;
+            return None;
         }
         // The tasks that this slice spawns belong to the owner of this
         // task. See `set_task_owner`.
         let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(handle.owner())));
+        let counted = COUNTED.with(|counted| counted.replace(true));
         let result = vm.execute_slice(time_slice());
+        COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
 
         match result {
             SliceResult::Yielded => self.enqueue(Task { id, vm, handle }),
             SliceResult::Completed(value) => {
-                handle.complete(Ok(value));
+                handle.complete(Ok(value), &self.parking);
                 self.end_task(Task { id, vm, handle });
             }
             SliceResult::Failed(error) => {
@@ -867,58 +709,106 @@ impl Inner {
                 // program ends, so it is recorded here. `fail` returns
                 // false if the task had been cancelled before: its
                 // handle keeps the cancellation as its result then.
-                if handle.fail(vm.enrich_error(error)) {
+                if handle.fail(vm.enrich_error(error), &self.parking) {
                     record_failed_task(self, &handle);
                 }
                 self.end_task(Task { id, vm, handle });
             }
-            SliceResult::Blocked(reason) => {
-                let pid = TaskId(id as u64);
-                let (bridge, wait) = self.bridge(pid, &reason, vm.current_deadline);
+            SliceResult::Blocked(wait) => {
+                let wait = wait.cancel(Some(handle.cancel_flag()));
+                let timed = wait.deadline.is_some();
                 let cancelled = handle.clone();
-                let sleeper = Sleeper {
-                    who: Who::Task(Task { id, vm, handle }),
-                    bridge,
-                };
-                let back = self
-                    .parking
-                    .park(pid, sleeper, wait, || cancelled.is_finished());
+                let sleeper = Sleeper::Task(Task { id, vm, handle });
+                let back = self.parking.park(TaskId(id as u64), sleeper, wait, || {
+                    cancelled.is_cancelled()
+                });
                 match back {
+                    Some((Sleeper::Task(mut task), Resumed::Fired(fired))) => {
+                        task.vm.woken = Some(fired);
+                        return Some(task);
+                    }
                     Some((sleeper, resumed)) => self.ready(sleeper, resumed),
-                    None => self.check_stuck(),
+                    None => {
+                        if timed {
+                            self.timer_armed();
+                        }
+                        self.check_stuck();
+                    }
                 }
             }
         }
+        None
     }
 
     /// Give the verdict if the program is deadlocked: its own thread
     /// waits, and so does every other task, with nothing pending
     /// outside.
     fn check_stuck(&self) {
-        if self.external.load(Ordering::SeqCst) > 0 || self.stream_waits.load(Ordering::SeqCst) > 0
-        {
+        if self.external.load(Ordering::SeqCst) > 0 {
             return;
         }
         // Without the program's thread waiting there is nobody to tell.
-        let Some(main) = self.main_wait.lock().clone() else {
+        let Some(main) = *self.main_wait.lock() else {
             return;
         };
         let stuck = self.parking.stuck(
             || self.live.load(Ordering::SeqCst),
-            || self.external.load(Ordering::SeqCst) + self.stream_waits.load(Ordering::SeqCst),
+            || self.external.load(Ordering::SeqCst),
         );
         let Some(stuck) = stuck else {
             return;
         };
-        if !stuck.iter().any(|stuck| stuck.task == main.id) {
+        let Some(own) = stuck.iter().find(|stuck| stuck.task == main) else {
             return;
+        };
+        let what = match own.on.as_slice() {
+            [Source::Recv(_)] => "channel receive with no counterparty",
+            [Source::Send(_)] => "channel send with no counterparty",
+            [Source::Cell(_)] => "task.join with no progress possible",
+            _ => "channel select with no counterparty",
+        };
+        let mut verdict = VmError::new(format!("deadlock on main thread: {what}"));
+        for line in waits_of_the_others(&stuck, main) {
+            verdict = verdict.with_help(line);
         }
-        *self.deadlock.lock() = Some(VmError::new(format!(
-            "deadlock on main thread: {}",
-            main.what
-        )));
-        self.parking.cancel(main.id);
+        *self.deadlock.lock() = Some(verdict);
+        self.parking.cancel(main);
     }
+}
+
+/// What each parked task besides the program's own waits on, one line
+/// each, for the deadlock report.
+fn waits_of_the_others(stuck: &[Stuck], main: TaskId) -> Vec<String> {
+    /// How many tasks are listed.
+    const LISTED: usize = 8;
+    let others: Vec<&Stuck> = stuck.iter().filter(|stuck| stuck.task != main).collect();
+    let mut lines: Vec<String> = others
+        .iter()
+        .take(LISTED)
+        .map(|stuck| {
+            let on: Vec<String> = stuck
+                .on
+                .iter()
+                .map(|source| match source {
+                    Source::Recv(channel) => format!("to receive from <channel:{}>", channel.id()),
+                    Source::Send(channel) => format!("to send to <channel:{}>", channel.id()),
+                    Source::Cell(_) => "for a task to end".to_string(),
+                })
+                .collect();
+            // A task of `task.spawn` has its handle's number; a thread
+            // (a stream stage, an HTTP handler) has none.
+            let who = if stuck.task.0 < u64::MAX / 2 {
+                format!("task <handle:{}>", stuck.task.0)
+            } else {
+                "a stream stage or handler".to_string()
+            };
+            format!("{who} waits {}", on.join(", or "))
+        })
+        .collect();
+    if others.len() > LISTED {
+        lines.push(format!("{} more tasks wait", others.len() - LISTED));
+    }
+    lines
 }
 
 /// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).
@@ -936,8 +826,8 @@ fn time_slice() -> usize {
 impl Scheduler {
     /// End the scheduler with the program that used it: report the
     /// failures that nobody joined (nobody can join a task of it any
-    /// more), tell the workers and the watchdog to end, and drop the
-    /// tasks that wait for a worker or for anything else. A task
+    /// more), tell the workers and the timer thread to end, and drop
+    /// the tasks that wait for a worker or for anything else. A task
     /// submitted later is refused.
     ///
     /// The threads are not waited for: each ends when the slice it is
@@ -946,7 +836,10 @@ impl Scheduler {
         let inner = &self.inner;
         let _ = report_unjoined_failures(inner);
         inner.shutdown.store(true, Ordering::SeqCst);
-        inner.watchdog.shutdown.store(true, Ordering::SeqCst);
+        {
+            let _timer = inner.timer_lock.lock();
+            inner.timer_wake.notify_all();
+        }
         // Detach the workers.
         drop(self.workers.lock().take());
         // The tasks are dropped after the queue's lock is released.
@@ -956,8 +849,9 @@ impl Scheduler {
             inner.end_task(task);
         }
         // The parked tasks never run again either: each comes off
-        // every queue, and its frames are abandoned. A thread that
-        // waits is told that the program is gone.
+        // every queue and out of the timer, and its frames are
+        // abandoned. A thread that waits is told that the program is
+        // gone.
         for (_, sleeper) in inner.parking.shutdown() {
             inner.ready(sleeper, Resumed::Cancelled);
         }
@@ -1002,6 +896,35 @@ fn worker_loop(inner: Arc<Inner>) {
             }
         };
         inner.run_slice(task);
+    }
+}
+
+/// The thread that fires the timer: wait for the next deadline, or for
+/// an earlier one to be armed, and end the waits that are due.
+fn timer_loop(inner: Arc<Inner>) {
+    let timer = inner.parking.timer().clone();
+    loop {
+        {
+            let mut thread = inner.timer_lock.lock();
+            if inner.shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            match timer.real_wait() {
+                None => inner.timer_wake.wait(&mut thread),
+                Some(wait) if wait.is_zero() => {}
+                Some(wait) => {
+                    let _ = inner.timer_wake.wait_for(&mut thread, wait);
+                }
+            }
+        }
+        if inner.shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+        // A deadline that ended nobody's wait (a channel that closed
+        // unheard) may have been the last thing pending.
+        if timer.fire_due(&inner.parking) > 0 {
+            inner.check_stuck();
+        }
     }
 }
 

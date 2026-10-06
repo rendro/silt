@@ -6,10 +6,10 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, 
 
 use super::common::value_kind;
 use crate::bytecode::record_type_matches;
-use crate::runtime::completion::IoCompletion;
+use crate::runtime::sync::Wait;
 use crate::typeinfo::{bv, ty};
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{Step, Vm, VmError};
 
 /// Compute (year, month, day) from Unix epoch seconds.
 /// Uses Howard Hinnant's civil_from_days algorithm (public domain).
@@ -414,7 +414,54 @@ pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
 // ── Time dispatch ───────────────────────────────────────────────────
 
 /// Dispatch `time.<name>(args)`.
-pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    match name {
+        "sleep" => sleep(vm, args),
+        _ => time_plain(vm, name, args).map(Step::Done),
+    }
+}
+
+/// `time.sleep(duration)`.
+fn sleep(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::new(
+            "time.sleep takes 1 argument (duration)".into(),
+        ));
+    }
+    let dur_ns = extract_duration(&args[0])?;
+    if dur_ns <= 0 {
+        return Ok(Step::Done(Value::Unit));
+    }
+    let duration = std::time::Duration::from_nanos(dur_ns as u64);
+    // The program's own thread asks the clock to sleep (`Clock::sleep`),
+    // for no longer than up to the task deadline in effect.
+    if !vm.spawned {
+        let left = match vm.current_deadline {
+            Some(deadline) => duration.min(deadline.saturating_sub(vm.runtime.io.monotonic())),
+            None => duration,
+        };
+        vm.runtime.io.sleep(left);
+        return Ok(Step::Done(Value::Unit));
+    }
+    // A task waits for the clock to reach the end of the sleep, or the
+    // task deadline if that comes first: time.sleep returns Unit, not a
+    // Result, so a deadline only ends the sleep.
+    let end =
+        vm.runtime.io.deadline_after(duration).ok_or_else(|| {
+            VmError::new("cannot start a timer: the duration is out of range".into())
+        })?;
+    if let Some(failure) = vm.runtime.io.clock_failure() {
+        return Err(VmError::new(failure));
+    }
+    let end = vm
+        .current_deadline
+        .map_or(end, |deadline| end.min(deadline));
+    let wait = Wait::new(Vec::new()).deadline(Some(end));
+    Ok(vm.park("time.sleep", wait, |_, _| Ok(Step::Done(Value::Unit))))
+}
+
+/// The `time` functions that do not wait.
+fn time_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "now" => {
             if !args.is_empty() {
@@ -915,53 +962,6 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             })?;
             let leap = (y32 % 4 == 0 && y32 % 100 != 0) || (y32 % 400 == 0);
             Ok(Value::Bool(leap))
-        }
-
-        "sleep" => {
-            if args.len() != 1 {
-                return Err(VmError::new(
-                    "time.sleep takes 1 argument (duration)".into(),
-                ));
-            }
-            let dur_ns = extract_duration(&args[0])?;
-            if dur_ns <= 0 {
-                return Ok(Value::Unit);
-            }
-            // The program's own thread asks the clock to sleep
-            // (`Clock::sleep`), for no longer than up to the task
-            // deadline in effect.
-            if !vm.spawned {
-                let mut duration = std::time::Duration::from_nanos(dur_ns as u64);
-                if let Some(deadline) = vm.current_deadline {
-                    duration = duration.min(deadline.saturating_sub(vm.runtime.io.monotonic()));
-                }
-                vm.runtime.io.sleep(duration);
-                return Ok(Value::Unit);
-            }
-            // Called again after the park: the sleep is over, or the
-            // task waits on. The deadline check of the I/O builtins is
-            // not made: time.sleep returns Unit, not a Result, so a
-            // deadline that has passed only ends the sleep.
-            if let Some(completion) = vm.pending_io.take() {
-                if let Some(_result) = completion.try_get() {
-                    return Ok(Value::Unit); // sleep completed
-                }
-                // Still pending — re-park.
-                return Err(vm.park_on_completion(args, completion));
-            }
-            if vm
-                .current_deadline
-                .is_some_and(|d| vm.runtime.io.monotonic() >= d)
-            {
-                return Ok(Value::Unit); // deadline already past; nothing to sleep for
-            }
-            // The timer thread ends the sleep, and the task waits.
-            let completion = IoCompletion::new();
-            vm.runtime.timer.schedule_completion(
-                std::time::Duration::from_nanos(dur_ns as u64),
-                completion.clone(),
-            )?;
-            Err(vm.park_on_completion(args, completion))
         }
 
         _ => Err(VmError::new(format!("unknown time function: {name}"))),

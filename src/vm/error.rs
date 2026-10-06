@@ -8,8 +8,6 @@ pub struct VmError {
     pub message: String,
     /// What to do about it, one line each: the diagnostic's help.
     pub help: Vec<String>,
-    /// If true, this error signals a cooperative yield, not a real error.
-    pub is_yield: bool,
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
     pub type_confusion: bool,
@@ -24,7 +22,6 @@ impl VmError {
         VmError {
             message,
             help: Vec::new(),
-            is_yield: false,
             type_confusion: false,
             span: None,
             call_stack: Vec::new(),
@@ -42,17 +39,6 @@ impl VmError {
         VmError {
             type_confusion: true,
             ..VmError::new(message.into())
-        }
-    }
-
-    pub(crate) fn yield_signal() -> Self {
-        VmError {
-            message: String::new(),
-            help: Vec::new(),
-            is_yield: true,
-            type_confusion: false,
-            span: None,
-            call_stack: Vec::new(),
         }
     }
 

@@ -26,8 +26,9 @@ postgres = ["dep:postgres", "dep:r2d2", "dep:r2d2_postgres", "dep:fallible-itera
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = []
 tcp-tls = ["tcp", "dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
-# Exposes what tests outside the crate read of the I/O pool and of the
-# wakers of a handle or a completion. Always enabled under `cfg(test)`.
+# Exposes what tests outside the crate read of the I/O pool (its size,
+# what a panicking operation completes with). Always enabled under
+# `cfg(test)`.
 test-hooks = []
 
 [[bench]]

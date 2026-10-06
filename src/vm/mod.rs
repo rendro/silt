@@ -15,7 +15,7 @@ pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::Runtime;
-pub(crate) use runtime::{BlockReason, CallFrame, Frame, Native, SelectOpKind, Step};
+pub(crate) use runtime::{CallFrame, ErrFactory, Frame, Native, Step};
 
 /// Test-only: report the worker count of the I/O pool attached to this
 /// VM. Used by the `SILT_IO_POOL_SIZE` env-knob integration tests to
@@ -54,21 +54,19 @@ pub fn default_io_pool_size() -> usize {
     runtime::default_io_pool_size()
 }
 
-/// Test-only: submit a panicking closure to this VM's I/O pool with a
-/// caller-supplied `IoCompletion` (whose `timeout_err` factory shapes
-/// the resulting `Err` Value), block until the completion fires, and
-/// return the resulting `Value`. Used by the round-76 lock test for
-/// the IoPool worker-panic recovery path: pre-fix, a worker panic
-/// produced an untyped `Err(String)` that bypassed every typed match
-/// arm; post-fix it routes through `IoCompletion::build_timeout_err`
-/// with a "panic: " prefix so the result is the same typed shape the
-/// scheduler watchdog produces on a deadline cancel.
+/// Test-only: run a panicking operation on this VM's I/O pool, wait
+/// for it, and return the value it completes with: `failure` of the
+/// panic's message, with a "panic: " prefix. `failure` is the typed
+/// error of a builtin module, so the value has the shape that module's
+/// callers match on.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn submit_panicking_io_for_test(vm: &Vm, completion: Arc<IoCompletion>) -> Value {
-    let c = vm.runtime.io_pool.submit_with(completion, || {
+pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(&str) -> Value) -> Value {
+    let op = vm.runtime.io_pool.submit(failure, || {
         panic!("synthetic IO worker panic for round-76 lock");
     });
-    c.wait()
+    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+    let _ = vm.runtime.scheduler.block_thread(wait, false);
+    op.cell.get().cloned().expect("the operation has ended")
 }
 
 use regex::Regex;
@@ -77,11 +75,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::bytecode::{Function, Globals, VmClosure};
-use crate::runtime::completion::IoCompletion;
+use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
 use crate::value::Value;
-use runtime::{IoPool, RegexCache, TimerManager};
+use runtime::{IoOp, IoPool, RegexCache};
 
 /// Start an OS thread that runs silt callbacks outside the scheduler: a
 /// stream stage or an HTTP handler. It gets the stack of a scheduler
@@ -142,22 +140,16 @@ pub struct Vm {
     next_task_id: Arc<AtomicU64>,
 
     // ── M:N scheduler state ─────────────────────────────────────
-    /// Set by channel/task ops when they need to park this task.
-    /// Consumed by execute_slice to return SliceResult::Blocked.
-    pub(crate) block_reason: Option<BlockReason>,
-    /// The arguments a builtin that parked is called with when the task
-    /// runs again (see [`Vm::park_with_reason`]).
-    pub(crate) retry_args: Option<Vec<Value>>,
+    /// How the wait of the builtin's frame on top ended, between the
+    /// end of the wait and the frame's resumption ([`Step::Park`]).
+    pub(crate) woken: Option<Fired>,
     /// True for the VM of a task made by `task.spawn`.
     pub(crate) spawned: bool,
-    /// The I/O completion the builtin that parked waits for; it takes
-    /// it back when it is called again.
-    pub(crate) pending_io: Option<Arc<IoCompletion>>,
     /// Scoped deadline in effect for this task, as a reading of the
     /// host clock ([`Clock::monotonic`]). Set by
-    /// `task.deadline(dur, fn)` for the duration of the callback; the
-    /// scheduler's I/O watchdog consults this when the task parks on
-    /// I/O, and I/O builtins check it at entry so a call made past the
+    /// `task.deadline(dur, fn)` for the duration of the callback; a
+    /// wait for I/O ends at it ([`Vm::io`]), and I/O builtins check it
+    /// at entry so a call made past the
     /// deadline returns `Err(...)` immediately without submitting to
     /// the I/O pool. Nested `task.deadline` calls use the earlier
     /// deadline (monotonic tightening); each one's frame holds the
@@ -208,17 +200,6 @@ fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
     Ok(Value::Float(if f == 0.0 { 0.0 } else { f }))
 }
 
-/// Build the task-deadline-exceeded `Err` Value that I/O builtins
-/// return when the current task.deadline has already elapsed at entry.
-/// Shape matches the watchdog-fired timeout so silt-side match arms
-/// don't have to distinguish between "timed out at entry" and "timed
-/// out while parked". Single source of truth for the message text
-/// lives on `scheduler::DeadlineSource`.
-///
-/// Phase 1 of the stdlib error redesign: wrapped in `IoUnknown(msg)`
-/// so the outer `Err` payload has the typed `IoError` shape every io/fs
-/// signature now returns. Users can still substring-match on the
-/// message via `e.message()`.
 impl Vm {
     /// If the current task.deadline has already elapsed, build an `Err`
     /// Value via the caller's factory; otherwise return `None`. I/O
@@ -227,10 +208,7 @@ impl Vm {
     /// I/O pool. The factory determines which typed error variant the
     /// caller's signature expects (io uses `IoUnknown`, tcp uses
     /// `TcpTimeout`, etc.).
-    pub(crate) fn deadline_exceeded_with(
-        &self,
-        timeout_err: &(dyn Fn(&str) -> Value + Sync),
-    ) -> Option<Value> {
+    pub(crate) fn deadline_exceeded_with(&self, timeout_err: ErrFactory) -> Option<Value> {
         let deadline = self.current_deadline?;
         if self.runtime.io.monotonic() >= deadline {
             Some(timeout_err(
@@ -241,151 +219,53 @@ impl Vm {
         }
     }
 
-    /// Run the shared I/O builtin entry guard:
-    ///   1. If a pending I/O completion exists (we're resuming after a
-    ///      yield), consume it — return `Ok(Some(result))` if ready,
-    ///      else re-park via yield.
-    ///   2. If the current task.deadline has already elapsed (fresh
-    ///      call, no pending), return `Ok(Some(Err(timeout)))`.
-    ///   3. Otherwise `Ok(None)` — caller proceeds with a fresh submit
-    ///      (or main-thread sync call).
+    /// The step of the I/O builtin `name` that runs the blocking
+    /// operation `op` on the I/O pool and waits for its value, which
+    /// is the builtin's: already `Ok(_)` or `Err(_)`.
     ///
-    /// The `args` slice is pushed back onto the stack on re-park so the
-    /// CallBuiltin opcode can re-read them when the task resumes. The
-    /// re-park branch routes through
-    /// [`park_on_completion`](Self::park_on_completion) so the
-    /// pending_io / block_reason / args-pushback protocol lives in
-    /// exactly one place.
-    ///
-    /// The `timeout_err` factory shapes the typed `Err` variant emitted
-    /// when `current_deadline` has already elapsed at entry. Modules
-    /// with non-IoError error types (tcp, http, ...) pass their own
-    /// factory so a deadline-at-entry surfaces the right typed variant
-    /// rather than the generic `Err(IoUnknown(_))`. Most callers should
-    /// use [`submit_io_or_run`](Self::submit_io_or_run) which calls
-    /// this internally; direct callers exist only when post-guard
-    /// logic must run before the actual submit (e.g. tcp.read's
-    /// closed-stream check).
-    pub(crate) fn io_entry_guard_with(
+    /// The wait ends at the earlier of the task deadline in effect
+    /// and `SILT_IO_TIMEOUT`, with `timeout_err` of the reason: the
+    /// typed error the builtin's signature declares. With the task
+    /// deadline already past, nothing is run.
+    pub(crate) fn io(
         &mut self,
-        args: &[Value],
-        timeout_err: &(dyn Fn(&str) -> Value + Sync),
-    ) -> Result<Option<Value>, VmError> {
-        if let Some(completion) = self.pending_io.take() {
-            if let Some(result) = completion.try_get() {
-                return Ok(Some(result));
-            }
-            return Err(self.park_on_completion(args, completion));
-        }
+        name: &'static str,
+        timeout_err: ErrFactory,
+        op: impl FnOnce() -> Value + Send + 'static,
+    ) -> Result<Step, VmError> {
         if let Some(err) = self.deadline_exceeded_with(timeout_err) {
-            return Ok(Some(err));
+            return Ok(Step::Done(err));
         }
-        Ok(None)
+        self.io_started(name, timeout_err, op)
     }
 
-    /// Park the current scheduled task with the given block reason:
-    /// the builtin is called again, with `args`, when the task next
-    /// runs. Returns the signal of that as a `VmError`, which the
-    /// caller returns as its error (`return Err(...)`) and the call of
-    /// the builtin takes ([`Vm::enter_builtin`]).
-    ///
-    /// This is the **single** place that parks a builtin. Every park
-    /// site — IO completions (`park_on_completion`), channel
-    /// send/receive/select, task join — routes through here.
-    ///
-    /// The caller is responsible for setting up whatever wakes the
-    /// task: a completion handle on `pending_io`, a waker
-    /// registered on a channel, a join slot on a task handle, etc.
-    pub(crate) fn park_with_reason(
+    /// [`Vm::io`] for a caller that has looked at the task deadline
+    /// itself ([`Vm::deadline_exceeded_with`]) and done something
+    /// between that and the operation.
+    pub(crate) fn io_started(
         &mut self,
-        args: &[Value],
-        reason: crate::vm::runtime::BlockReason,
-    ) -> VmError {
-        self.block_reason = Some(reason);
-        self.retry_args = Some(args.to_vec());
-        VmError::yield_signal()
-    }
-
-    /// Park the current scheduled task on an IO completion handle.
-    /// Sets `pending_io` so the entry-guard's resume branch picks
-    /// up this completion, then delegates to
-    /// [`park_with_reason`](Self::park_with_reason) for the
-    /// shared block_reason / args-pushback / yield sequence.
-    ///
-    /// The completion must already be wired so that something will
-    /// call `completion.complete(_)` to wake the task — typically a
-    /// closure submitted to `runtime.io_pool` or a deadline
-    /// scheduled on `runtime.timer`.
-    pub(crate) fn park_on_completion(
-        &mut self,
-        args: &[Value],
-        completion: Arc<IoCompletion>,
-    ) -> VmError {
-        use crate::vm::runtime::BlockReason;
-        self.pending_io = Some(completion.clone());
-        self.park_with_reason(args, BlockReason::Io(completion))
-    }
-
-    /// One-shot "submit to the IO pool, park on yield, run synchronously
-    /// on the main thread" helper for IO-pool-backed builtins.
-    ///
-    /// Encapsulates the entire entry-guard / submit / park / sync-fallback
-    /// dance in a single call so every IO builtin uses the same code path
-    /// and the args-pushback on re-park is the helper's responsibility,
-    /// not the caller's. Adding a new IO builtin reduces to picking the
-    /// right `(completion_factory, timeout_err)` pair and writing the
-    /// closure body — no manual completion-state mutation, no manual
-    /// args-pushback loop.
-    ///
-    /// `op` runs on a worker thread when called from a scheduled task,
-    /// or synchronously on the main thread otherwise. It must produce
-    /// the typed `Value` result already wrapped in `Ok(_)` / `Err(_)`
-    /// variants.
-    ///
-    /// Builtins with non-IoPool parking (channel send/receive, timer
-    /// sleeps, postgres listen workers) handle their own park sequence —
-    /// they call [`park_on_completion`](Self::park_on_completion) for
-    /// the timer-backed case and never touch this helper.
-    ///
-    /// Builtins that need to inject logic *between* the entry guard and
-    /// the submit (e.g. tcp.read's "drain pending completion before
-    /// reporting closed-stream") call [`io_entry_guard_with`] themselves
-    /// for the resume gate, then call
-    /// [`run_or_submit_io`](Self::run_or_submit_io) with the
-    /// already-guarded `args` for the submit-or-sync half.
-    pub(crate) fn submit_io_or_run<F>(
-        &mut self,
-        args: &[Value],
-        completion: Arc<IoCompletion>,
-        timeout_err: &(dyn Fn(&str) -> Value + Sync),
-        op: F,
-    ) -> Result<Value, VmError>
-    where
-        F: FnOnce() -> Value + Send + 'static,
-    {
-        if let Some(r) = self.io_entry_guard_with(args, timeout_err)? {
-            return Ok(r);
-        }
-        self.run_or_submit_io(args, completion, op)
-    }
-
-    /// Submit-or-run half of [`submit_io_or_run`] without the entry
-    /// guard. Use when the caller has already run
-    /// [`io_entry_guard_with`] and wants to interleave additional
-    /// post-guard checks (e.g. tcp.read's closed-stream check, which
-    /// must happen *after* the resume gate so a pending completion
-    /// wins over a racing close) before the actual submit.
-    pub(crate) fn run_or_submit_io<F>(
-        &mut self,
-        args: &[Value],
-        completion: Arc<IoCompletion>,
-        op: F,
-    ) -> Result<Value, VmError>
-    where
-        F: FnOnce() -> Value + Send + 'static,
-    {
-        let c = self.runtime.io_pool.submit_with(completion, op);
-        Err(self.park_on_completion(args, c))
+        name: &'static str,
+        timeout_err: ErrFactory,
+        op: impl FnOnce() -> Value + Send + 'static,
+    ) -> Result<Step, VmError> {
+        let IoOp { cell, in_flight } = self.runtime.io_pool.submit(timeout_err, op);
+        let (deadline, source) = match self.runtime.scheduler.io_deadline(self.current_deadline) {
+            Some((deadline, source)) => (Some(deadline), source),
+            None => (None, crate::scheduler::DeadlineSource::Task),
+        };
+        let wait = Wait::new(vec![Arm::Cell(cell.clone())]).deadline(deadline);
+        Ok(self.park(name, wait, move |_, fired| {
+            Ok(Step::Done(match (fired, cell.get()) {
+                (Fired::Arm(..), Some(value)) => value.clone(),
+                // The operation goes on without a waiter: it no longer
+                // counts as pending for the program.
+                _ => {
+                    let abandoned = in_flight.lock().take();
+                    drop(abandoned);
+                    timeout_err(source.message())
+                }
+            }))
+        }))
     }
 
     /// A VM whose programs write to the output of `io` and read its
@@ -400,7 +280,6 @@ impl Vm {
         let scheduler = Arc::new(Scheduler::new(io.clone()));
         Vm {
             runtime: Arc::new(Runtime {
-                timer: TimerManager::new(io.clone(), scheduler.clone()),
                 io_pool: IoPool::new(
                     runtime::resolve_io_pool_size(),
                     io.clone(),
@@ -421,10 +300,8 @@ impl Vm {
             types: Arc::new(TypeTable::default()),
             next_channel_id: Arc::new(AtomicU64::new(0)),
             next_task_id: Arc::new(AtomicU64::new(0)),
-            block_reason: None,
-            retry_args: None,
+            woken: None,
             spawned: false,
-            pending_io: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
@@ -494,10 +371,8 @@ impl Vm {
             types: self.types.clone(),
             next_channel_id: self.next_channel_id.clone(),
             next_task_id: self.next_task_id.clone(),
-            block_reason: None,
-            retry_args: None,
+            woken: None,
             spawned: false,
-            pending_io: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
@@ -507,6 +382,14 @@ impl Vm {
     /// The scheduler of the program.
     pub(crate) fn scheduler(&self) -> &Arc<Scheduler> {
         &self.runtime.scheduler
+    }
+
+    /// Whether this is the VM that runs the program itself (`fn main`,
+    /// a test, a REPL entry), not one of a task, a stream stage or a
+    /// handler: its thread gets the error when the program is
+    /// deadlocked.
+    pub(crate) fn is_program(&self) -> bool {
+        self.owns_runtime
     }
 
     /// Allocate a new unique channel ID.
@@ -652,7 +535,7 @@ impl Vm {
     /// `middle` and `main` both tail-called) would render a single-frame
     /// stack that drops both intermediate names. See F10 in audit round 17.
     pub(crate) fn enrich_error(&self, mut err: VmError) -> VmError {
-        if err.is_yield || err.span.is_some() {
+        if err.span.is_some() {
             return err;
         }
         // Capture span from current frame's IP position.

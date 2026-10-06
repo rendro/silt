@@ -1,13 +1,14 @@
 //! What a task waits for, and the park that starts the wait.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use super::cell::Completion;
 use super::channel::{Channel, TryReceive, TrySend};
 use super::queue::{Waiter, Wakes};
 use super::timer::{Timer, TimerId};
-use super::token::{Fired, Outcome, Resumed, TaskId, Token, Wake};
+use super::token::{Fired, Outcome, Resumed, TaskId, Token, Wake, is_set};
 use crate::value::Value;
 
 /// One thing a wait can end on.
@@ -30,6 +31,16 @@ pub struct Wait {
     /// A reading of the clock's monotonic time (see
     /// [`Timer::deadline_after`]).
     pub deadline: Option<Duration>,
+    /// The arm that is tried first; the others follow in their order,
+    /// around the end. A `select` picks it at random, so that of
+    /// several arms that are ready none is always the one taken.
+    pub first: usize,
+    /// The cancel flag of the task that waits. Whoever cancels the
+    /// task sets it first. From then on no arm of the wait is
+    /// completed, by the task or for it: a cancelled task takes
+    /// nothing and sends nothing, even while it is on its way into the
+    /// wait.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Wait {
@@ -37,11 +48,21 @@ impl Wait {
         Wait {
             arms,
             deadline: None,
+            first: 0,
+            cancel: None,
         }
     }
 
     pub fn deadline(self, deadline: Option<Duration>) -> Wait {
         Wait { deadline, ..self }
+    }
+
+    pub fn first(self, first: usize) -> Wait {
+        Wait { first, ..self }
+    }
+
+    pub fn cancel(self, cancel: Option<Arc<AtomicBool>>) -> Wait {
+        Wait { cancel, ..self }
     }
 }
 
@@ -68,21 +89,28 @@ pub enum Park {
     Ready(Fired),
     /// The task is on the queues of its arms.
     Parked(Parked),
+    /// The task's cancel flag is set: nothing was completed.
+    Cancelled,
 }
 
 /// Start the wait `wait` of `task`.
 ///
-/// The arms are tried in their order, and the first that can be
-/// completed now is completed: the wait is over. If none can and the
+/// The arms are tried in their order, from [`Wait::first`] on, and the
+/// first that can be completed now is completed: the wait is over. If none can and the
 /// deadline has passed, the wait ends with [`Fired::Deadline`].
 /// Otherwise the task is queued on every arm and in `timer`; see the
 /// [module documentation](super) for what the scheduler does with the
 /// [`Parked`].
 ///
-/// A task that is cancelled must not get here: the scheduler checks
-/// its flag before it calls `park`.
+/// With the task's cancel flag set ([`Wait::cancel`]) nothing is
+/// tried: the result is [`Park::Cancelled`].
 pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Park {
-    let Wait { arms, deadline } = wait;
+    let Wait {
+        arms,
+        deadline,
+        first,
+        cancel,
+    } = wait;
     let mut payloads = Vec::with_capacity(arms.len());
     let mut sources = Vec::with_capacity(arms.len());
     for arm in arms {
@@ -112,9 +140,17 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     };
     let mut states: Vec<_> = channels.iter().map(|c| c.state.lock()).collect();
 
+    // Read under the locks: an operation on one of the channels that
+    // comes after the cancel finds that this task took nothing.
+    if is_set(&cancel) {
+        return Park::Cancelled;
+    }
+
     let mut wakes = Wakes::default();
     let mut ready = None;
-    for (arm, source) in sources.iter().enumerate() {
+    let count = sources.len();
+    for arm in (0..count).map(|i| (first + i) % count) {
+        let source = &sources[arm];
         let outcome = match source {
             Source::Recv(channel) => match states[lock_of(channel)].receive(&mut wakes) {
                 TryReceive::Value(value) => Some(Outcome::Received(value)),
@@ -148,7 +184,7 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
         return Park::Ready(fired);
     }
 
-    let token = Token::new(task);
+    let token = Token::new(task, cancel);
     for (arm, source) in sources.iter().enumerate() {
         let waiter = Waiter {
             token: token.clone(),

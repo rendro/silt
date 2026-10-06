@@ -1,0 +1,31 @@
+-- repeat: 100
+-- A task waits in `channel.send` on a channel without a buffer. Its
+-- value is there to be taken: `try_receive` takes it, and the send
+-- returns.
+import channel
+import task
+import time
+
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn({ ->
+    channel.send(ch, 7)
+    "sent"
+  })
+  let got = loop tries = 5000 {
+    match channel.try_receive(ch) {
+      channel.Message(v) -> "Message({v})"
+      channel.Closed -> "Closed"
+      channel.Sent -> "Sent"
+      channel.Empty -> match tries {
+        0 -> "Empty"
+        _ -> {
+          time.sleep(time.ms(1))
+          loop(tries - 1)
+        }
+      }
+    }
+  }
+  println(got)
+  println(task.join(h))
+}
