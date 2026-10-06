@@ -9,7 +9,7 @@ use crate::runtime::channel::{Channel, TryReceiveResult, TrySendResult};
 use crate::runtime::handle::TaskHandle;
 use crate::typeinfo::{bv, ty};
 use crate::value::Value;
-use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
+use crate::vm::{BlockReason, Native, SelectOpKind, Step, Vm, VmError};
 
 /// Build the canonical closed-channel-send VmError (message wording is
 /// pinned by tests in `tests/lang/error_tests.rs` and `tests/heavy/integration.rs`,
@@ -35,7 +35,86 @@ pub fn call_channel_error_trait(name: &str, args: &[Value]) -> Result<Value, VmE
 }
 
 /// Dispatch `channel.<name>(args)`.
-pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    match name {
+        "each" => {
+            if args.len() != 2 {
+                return Err(VmError::new(
+                    "channel.each takes 2 arguments (channel, function)".into(),
+                ));
+            }
+            let Value::Channel(ch) = &args[0] else {
+                return Err(VmError::new(
+                    "channel.each requires a channel as first argument".into(),
+                ));
+            };
+            Ok(Step::Run(Box::new(Each {
+                ch: ch.clone(),
+                callback: args[1].clone(),
+                called: false,
+            })))
+        }
+        _ => channel_plain(vm, name, args).map(Step::Done),
+    }
+}
+
+/// `channel.each(ch, f)`: `f` is called with each message of `ch` until
+/// the channel is closed.
+struct Each {
+    ch: Arc<Channel>,
+    callback: Value,
+    /// The input is the value of a call of the callback.
+    called: bool,
+}
+
+impl Each {
+    fn call(&mut self, message: Value) -> Step {
+        self.called = true;
+        Step::Call {
+            callee: self.callback.clone(),
+            args: vec![message],
+        }
+    }
+}
+
+impl Native for Each {
+    fn name(&self) -> &str {
+        "channel.each"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+        if std::mem::take(&mut self.called) && vm.is_scheduled_task {
+            // After each message, give way to the other tasks.
+            return Ok(Step::Park);
+        }
+        match self.ch.try_receive() {
+            TryReceiveResult::Value(message) => Ok(self.call(message)),
+            TryReceiveResult::Closed => Ok(Step::Done(Value::Unit)),
+            // Channel empty -- park via scheduler or block.
+            TryReceiveResult::Empty if vm.is_scheduled_task => {
+                vm.block_reason = Some(BlockReason::Receive(self.ch.clone()));
+                Ok(Step::Park)
+            }
+            // Main thread: wait through the same deadlock-aware
+            // protocol as `channel.receive` (no-scheduler fast
+            // path, wake-graph park/unpark, starvation BFS,
+            // confirm-stable gate): with no counterparty that could
+            // ever send, this reports "deadlock on main thread" as
+            // receive/send/select/join do. Locked by
+            // `tests/concurrency/main_thread_each_deadlock_tests.rs`.
+            TryReceiveResult::Empty => match main_thread_wait_for_receive(&self.ch, vm)? {
+                Value::Variant(tag, mut vals) if tag.is(bv::MESSAGE) => {
+                    Ok(self.call(vals.pop().unwrap_or(Value::Unit)))
+                }
+                Value::Variant(tag, _) if tag.is(bv::CLOSED) => Ok(Step::Done(Value::Unit)),
+                _ => unreachable!("main_thread_wait_for_receive returns Message or Closed"),
+            },
+        }
+    }
+}
+
+/// The `channel` functions that call no function.
+fn channel_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "new" => {
             let capacity = match args.len() {
@@ -442,111 +521,6 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 .schedule(std::time::Duration::from_millis(ms), ch.clone())?;
             Ok(Value::Channel(ch))
         }
-        "each" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "channel.each takes 2 arguments (channel, function)".into(),
-                ));
-            }
-            let Value::Channel(ch) = &args[0] else {
-                return Err(VmError::new(
-                    "channel.each requires a channel as first argument".into(),
-                ));
-            };
-            let ch = ch.clone();
-            let callback = args[1].clone();
-            // If we have a suspended callback from a previous yield (e.g. IO
-            // inside the callback), resume it before processing new messages.
-            if vm.suspended_invoke.is_some() {
-                match vm.resume_suspended_invoke() {
-                    Ok(_) => {
-                        // Callback completed; fall through to continue the loop.
-                        // Yield for round-robin if scheduled.
-                        if vm.is_scheduled_task {
-                            for arg in args {
-                                vm.push(arg.clone());
-                            }
-                            return Err(VmError::yield_signal());
-                        }
-                    }
-                    Err(e) if e.is_yield => {
-                        // Still yielding — re-push our args and propagate.
-                        for arg in args {
-                            vm.push(arg.clone());
-                        }
-                        return Err(e);
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            loop {
-                match ch.try_receive() {
-                    TryReceiveResult::Value(val) => {
-                        match vm.invoke_callable(&callback, &[val]) {
-                            Ok(_) => {}
-                            Err(e) if e.is_yield => {
-                                // The callback yielded (e.g. IO inside the callback).
-                                // Re-push channel.each args so CallBuiltin re-executes us.
-                                for arg in args {
-                                    vm.push(arg.clone());
-                                }
-                                return Err(e);
-                            }
-                            Err(e) => return Err(e),
-                        }
-                        // After each message, yield to scheduler for round-robin.
-                        if vm.is_scheduled_task {
-                            // Re-push args so the CallBuiltin re-executes channel.each.
-                            for arg in args {
-                                vm.push(arg.clone());
-                            }
-                            return Err(VmError::yield_signal());
-                        }
-                    }
-                    TryReceiveResult::Closed => {
-                        return Ok(Value::Unit);
-                    }
-                    TryReceiveResult::Empty => {
-                        // Channel empty -- park via scheduler or block.
-                        if vm.is_scheduled_task {
-                            return Err(vm.park_with_reason(args, BlockReason::Receive(ch)));
-                        }
-                        // Main thread: wait through the same deadlock-aware
-                        // protocol as `channel.receive` (no-scheduler fast
-                        // path, wake-graph park/unpark, starvation BFS,
-                        // confirm-stable gate). A bare `ch.receive_blocking()`
-                        // here was an infinite condvar wait with no deadlock
-                        // detection: with no counterparty that could ever
-                        // send, the process hung forever where receive/send/
-                        // select/join all report "deadlock on main thread"
-                        // (same class as the round-2 `channel.select` fix —
-                        // `each` was the arm left behind). Locked by
-                        // `tests/concurrency/main_thread_each_deadlock_tests.rs`.
-                        match main_thread_wait_for_receive(&ch, vm)? {
-                            Value::Variant(tag, mut vals) if tag.is(bv::MESSAGE) => {
-                                let val = vals.pop().unwrap_or(Value::Unit);
-                                match vm.invoke_callable(&callback, &[val]) {
-                                    Ok(_) => {}
-                                    Err(e) if e.is_yield => {
-                                        for arg in args {
-                                            vm.push(arg.clone());
-                                        }
-                                        return Err(e);
-                                    }
-                                    Err(e) => return Err(e),
-                                }
-                            }
-                            Value::Variant(tag, _) if tag.is(bv::CLOSED) => {
-                                return Ok(Value::Unit);
-                            }
-                            _ => unreachable!(
-                                "main_thread_wait_for_receive returns Message or Closed"
-                            ),
-                        }
-                    }
-                }
-            }
-        }
         _ => Err(VmError::new(format!("unknown channel function: {name}"))),
     }
 }
@@ -572,32 +546,14 @@ fn spawn_with_deadline(
     let mut child_vm = vm.spawn_child();
     child_vm.current_deadline = deadline;
 
+    // A target without threads runs the task to its end here.
     #[cfg(target_arch = "wasm32")]
-    {
-        use crate::vm::CallFrame;
-        let child_handle = handle.clone();
-        child_vm.stack = vec![Value::Unit];
-        child_vm.frames = vec![CallFrame {
-            closure: child_closure,
-            ip: 0,
-            base_slot: 1,
-        }];
-        match child_vm.execute() {
-            Ok(val) => child_handle.complete(Ok(val)),
-            Err(e) => child_handle.complete(Err(child_vm.enrich_error(e))),
-        }
-    }
+    handle.complete(child_vm.call_blocking(&Value::VmClosure(child_closure), &[]));
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         use crate::scheduler::Task;
-        use crate::vm::CallFrame;
-        child_vm.stack = vec![Value::Unit];
-        child_vm.frames = vec![CallFrame {
-            closure: child_closure,
-            ip: 0,
-            base_slot: 1,
-        }];
+        child_vm.start_task(child_closure);
         child_vm.is_scheduled_task = true;
 
         let scheduler = vm.get_or_create_scheduler();
@@ -614,7 +570,84 @@ fn spawn_with_deadline(
 }
 
 /// Dispatch `task.<name>(args)`.
-pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    match name {
+        "deadline" => {
+            if args.len() != 2 {
+                return Err(VmError::new(
+                    "task.deadline takes 2 arguments (duration, fn)".into(),
+                ));
+            }
+            let dur_ns = crate::builtins::time::extract_duration(&args[0])?;
+            if dur_ns < 0 {
+                return Err(VmError::new(
+                    "task.deadline: duration must be non-negative".into(),
+                ));
+            }
+            Ok(Step::Run(Box::new(Deadline {
+                after: Duration::from_nanos(dur_ns as u64),
+                callback: Some(args[1].clone()),
+                outer: None,
+            })))
+        }
+        _ => task_plain(vm, name, args).map(Step::Done),
+    }
+}
+
+/// `task.deadline(dur, fn)`: runs `fn` with a scoped wall-clock
+/// deadline of `dur` from now. I/O inside the callback is watched by
+/// the scheduler's I/O watchdog; if the deadline elapses while parked
+/// on I/O, the in-flight I/O is cancelled with `Err("I/O timeout
+/// (task.deadline exceeded)")`. I/O builtins also check at entry and
+/// return the same Err immediately if the deadline is already past.
+///
+/// Pure-CPU work inside the callback is NOT interrupted — this matches
+/// Go's context.WithDeadline semantics.
+///
+/// A nested task.deadline tightens the deadline (earliest wins); a
+/// looser inner deadline cannot extend an outer one. The deadline stays
+/// in effect while the task is parked inside the callback.
+struct Deadline {
+    after: Duration,
+    /// The function, until it is called.
+    callback: Option<Value>,
+    /// The deadline that was in effect outside, while the callback
+    /// runs.
+    outer: Option<Option<Duration>>,
+}
+
+impl Native for Deadline {
+    fn name(&self) -> &str {
+        "task.deadline"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        if let Some(callee) = self.callback.take() {
+            let outer = vm.current_deadline;
+            self.outer = Some(outer);
+            // Tighten: earliest of current and new wins.
+            vm.current_deadline = match (outer, vm.runtime.io.deadline_after(self.after)) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (None, x) | (x, None) => x,
+            };
+            return Ok(Step::Call {
+                callee,
+                args: Vec::new(),
+            });
+        }
+        self.abandon(vm);
+        Ok(Step::Done(input))
+    }
+
+    fn abandon(&mut self, vm: &mut Vm) {
+        if let Some(outer) = self.outer.take() {
+            vm.current_deadline = outer;
+        }
+    }
+}
+
+/// The `task` functions that call no function.
+fn task_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "spawn" => {
             if args.len() != 1 {
@@ -729,75 +762,6 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 .io
                 .deadline_after(Duration::from_nanos(dur_ns as u64));
             spawn_with_deadline(vm, closure, deadline)
-        }
-        "deadline" => {
-            // task.deadline(dur, fn) — runs `fn` with a scoped wall-clock
-            // deadline of `dur` from now. I/O inside the callback is
-            // watched by the scheduler's I/O watchdog; if the deadline
-            // elapses while parked on I/O, the in-flight I/O is
-            // cancelled with `Err("I/O timeout (task.deadline exceeded)")`.
-            // I/O builtins also check at entry and return the same Err
-            // immediately if the deadline is already past.
-            //
-            // Pure-CPU work inside the callback is NOT interrupted — this
-            // matches Go's context.WithDeadline semantics. If you need to
-            // bound CPU work, have the callback periodically yield via
-            // I/O.
-            //
-            // Synchronously-nested task.deadline tightens the deadline
-            // (earliest wins); a looser inner deadline cannot extend an
-            // outer one. Resumption across yields is supported for the
-            // common single-scope case.
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "task.deadline takes 2 arguments (duration, fn)".into(),
-                ));
-            }
-            // First entry sets up the scope; a resume (when this same
-            // CallBuiltin is re-executed after the callback yielded)
-            // must not push again. `suspended_invoke.is_some()` is the
-            // signal that we're resuming a paused invoke_callable.
-            let is_resume = vm.suspended_invoke.is_some();
-            if !is_resume {
-                let dur_ns = crate::builtins::time::extract_duration(&args[0])?;
-                if dur_ns < 0 {
-                    return Err(VmError::new(
-                        "task.deadline: duration must be non-negative".into(),
-                    ));
-                }
-                let new_deadline = vm
-                    .runtime
-                    .io
-                    .deadline_after(Duration::from_nanos(dur_ns as u64));
-                let prev = vm.current_deadline;
-                vm.deadline_stack.push(prev);
-                // Tighten: earliest of current and new wins.
-                let effective = match (prev, new_deadline) {
-                    (Some(a), Some(b)) if a <= b => Some(a),
-                    (Some(_), Some(b)) => Some(b),
-                    (None, x) | (x, None) => x,
-                };
-                vm.current_deadline = effective;
-            }
-            let result = vm.invoke_callable_resumable(&args[1], &[], args);
-            match &result {
-                Err(e) if e.is_yield => {
-                    // Leave the deadline installed across the park so
-                    // the scheduler's I/O watchdog registration and the
-                    // I/O builtin's entry check both observe it.
-                }
-                _ => {
-                    // Scope ending — pop the deadline we pushed. An empty
-                    // stack here means push/pop got unbalanced (a bug in
-                    // the scope-entry logic or is_resume detection), so
-                    // surface it loudly rather than silently clearing.
-                    vm.current_deadline = vm
-                        .deadline_stack
-                        .pop()
-                        .expect("deadline_stack underflow — push/pop unbalanced in task.deadline");
-                }
-            }
-            result
         }
         _ => Err(VmError::new(format!("unknown task function: {name}"))),
     }

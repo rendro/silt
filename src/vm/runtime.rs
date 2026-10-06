@@ -12,7 +12,7 @@ use crate::runtime::completion::IoCompletion;
 use crate::runtime::handle::TaskHandle;
 use crate::value::Value;
 
-use super::{HostIo, VmError};
+use super::{HostIo, Vm, VmError};
 
 // ── Call frame ────────────────────────────────────────────────────
 
@@ -28,90 +28,45 @@ pub(crate) struct CallFrame {
 /// `Vm::pop_frame`, and the `Op::TailCall` dispatcher.
 pub(crate) const TCO_ELIDED_CAP: usize = 32;
 
-// ── Suspended invocation (for yield inside invoke_callable) ─────
+// ── Frames ───────────────────────────────────────────────────────
 
-/// The state of an `invoke_callable` that was interrupted by a yield (e.g.
-/// an IO builtin yielding inside a callback passed to `channel.each`).
-/// Stored on the VM so the caller can resume the callback instead of
-/// re-running it from scratch.
-///
-/// Every callable that yields inside `invoke_callable` leaves exactly one
-/// of these behind, whatever kind of callable it is. Callers rely on that:
-/// they read `suspended_invoke.is_some()` as "my callback is mid-call" and
-/// hand the state to `resume_suspended_invoke`.
-pub(crate) enum SuspendedInvoke {
-    /// A closure whose body was interrupted.
-    Closure {
-        /// The extra call frames that were pushed by invoke_callable.
-        frames: Vec<CallFrame>,
-        /// The stack values above `func_slot` (includes locals,
-        /// temporaries, and any args re-pushed by the yielding builtin).
-        stack: Vec<Value>,
-        /// The stack index where the callback's "function slot" dummy
-        /// lives.
-        func_slot: usize,
-    },
-    /// A builtin passed as a function value (`list.map(chans,
-    /// channel.receive)`) that yielded. A builtin has no frames to save:
-    /// it is resumed by calling it again.
-    Builtin {
-        /// Qualified name of the builtin (e.g. "channel.receive").
-        name: String,
-        /// The arguments to call it with on resume: the ones the builtin
-        /// re-pushed when it yielded, which it may have rewritten to
-        /// carry its own resume state.
-        args: Vec<Value>,
-    },
+/// One frame of a VM: a silt function being run, or a builtin that
+/// calls back into silt code or waits.
+pub(crate) enum Frame {
+    Code(CallFrame),
+    Native(Box<dyn Native>),
 }
 
-// ── Suspended higher-order builtin iteration ────────────────────
+/// A builtin that does not finish in one go: it calls silt functions
+/// (`list.map`), or waits (`channel.each`). It is a state machine and a
+/// frame of the VM, so a call it makes is a frame above it in the one
+/// instruction loop, never a loop of its own on the host stack.
+pub(crate) trait Native: Send {
+    /// The builtin's name, `list.map`.
+    fn name(&self) -> &str;
 
-/// Accumulator shapes for higher-order builtins that have been suspended
-/// mid-iteration because their callback yielded.
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum BuiltinAcc {
-    /// No accumulator (e.g. `each`).
-    Unit,
-    /// A growing list of values (e.g. `map`, `filter`, `flat_map`, `set.map`).
-    List(Vec<Value>),
-    /// A running fold value (e.g. `fold`, `fold_until`).
-    Fold(Value),
-    /// Sort-key/item pairs (e.g. `sort_by`).
-    SortPairs(Vec<(Value, Value)>),
-    /// Group-by accumulator.
-    Groups(std::collections::BTreeMap<Value, Vec<Value>>),
-    /// Map entries accumulator (e.g. `map.filter`, `map.map`).
-    MapEntries(std::collections::BTreeMap<Value, Value>),
-    /// Best (key, item) so far for min_by/max_by; `None` until first item.
-    Best(Option<(Value, Value)>),
-    /// Scan accumulator: running value + accumulating prefix list.
-    Scan(Value, Vec<Value>),
-    /// Generic "current state" carrier (e.g. `list.unfold`'s state seed,
-    /// `stream.fold`'s running accumulator).  Items grow into the optional
-    /// `Vec<Value>` (used by `unfold` for the result list; `stream.fold`
-    /// uses just the `Value`).
-    State(Value, Vec<Value>),
+    /// Go on. `input` is unit the first time and after the frame
+    /// parked; after a [`Step::Call`], the value the call returned.
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError>;
+
+    /// The frame is dropped because an error passes through it: undo
+    /// what the builtin did to the VM for the time of its call.
+    fn abandon(&mut self, _vm: &mut Vm) {}
 }
 
-/// State for a higher-order builtin whose callback yielded mid-iteration.
-///
-/// When a callback (e.g. `io.read_file` inside a `list.map`) yields, the
-/// builtin stashes its partial state here and re-pushes its own args so the
-/// outer `CallBuiltin` opcode will re-dispatch it on resume.  The builtin
-/// then picks up from `next_index` using `acc` as its running accumulator.
-pub(crate) struct SuspendedBuiltin {
-    /// Qualified name of the builtin (e.g. "list.map") for validation.
-    pub(crate) name: String,
-    /// The materialized list of items being iterated over.  Stored as a
-    /// `Vec<Value>` rather than re-iterating the original collection so that
-    /// Range and lazy iterators work correctly across yields.
-    pub(crate) items: Vec<Value>,
-    /// Index of the next item to process (0-indexed into `items`).
-    pub(crate) next_index: usize,
-    /// The callback value (closure or BuiltinFn).
-    pub(crate) callback: Value,
-    /// The accumulator so far.
-    pub(crate) acc: BuiltinAcc,
+/// What a builtin, or a [`Native`] frame, does next.
+pub(crate) enum Step {
+    /// It is finished, with this value.
+    Done(Value),
+    /// Call `callee` with `args`; the value it returns is the frame's
+    /// next input.
+    Call { callee: Value, args: Vec<Value> },
+    /// Go on as this frame, whose value is the builtin's.
+    Run(Box<dyn Native>),
+    /// The task's slice ends here, and the frame is resumed when the
+    /// task runs again. `Vm::block_reason` says what the task waits
+    /// for; with none it only gives way to the other tasks.
+    Park,
 }
 
 // ── Block reason (for M:N scheduler) ────────────────────────────

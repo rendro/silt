@@ -611,7 +611,7 @@ fn do_http_serve_inner(
                 let request_val = make_http_request_value(method, &path, &query, headers, body);
 
                 // Run the user's handler on the per-request child VM
-                match request_vm.invoke_callable(&handler, &[request_val]) {
+                match request_vm.call_blocking(&handler, &[request_val]) {
                     Ok(response_val) => {
                         send_http_response(&request_vm.runtime.io, &response_val, req);
                     }

@@ -1,0 +1,54 @@
+-- timeout: 120
+-- A task that parks deep inside functions that builtins call goes on
+-- where it was: the cost of a park does not grow with the depth. A
+-- recursion that parks at every level takes about twice as long when it
+-- is twice as deep (it took four times as long when every park unwound
+-- and rebuilt the calls in progress).
+import channel
+import int
+import list
+import task
+import time
+
+fn echo(asks, answers) {
+  channel.each(asks) { n -> channel.send(answers, n) }
+}
+
+fn down(n, asks, answers) {
+  match n {
+    0 -> 0
+    _ -> list.fold([n], 0) { acc, x ->
+      channel.send(asks, x)
+      channel.receive(answers)
+      acc + 1 + down(x - 1, asks, answers)
+    }
+  }
+}
+
+fn timed(n) {
+  let asks = channel.new(0)
+  let answers = channel.new(0)
+  let server = task.spawn({ -> echo(asks, answers) })
+  let started = time.now()
+  let depth = task.join(task.spawn({ -> down(n, asks, answers) }))
+  let took = time.now().epoch_ns - started.epoch_ns
+  channel.close(asks)
+  task.join(server)
+  match depth == n {
+    true -> took
+    false -> panic("wrong depth {depth}")
+  }
+}
+
+fn best(n) {
+  list.fold(1..3, timed(n)) { least, _ -> int.min(least, timed(n)) }
+}
+
+fn main() {
+  let short = best(4000)
+  let long = best(8000)
+  println(match long < short * 3 {
+    true -> "twice the depth, about twice the time"
+    false -> "depth 4000: {short / 1000000} ms, depth 8000: {long / 1000000} ms"
+  })
+}

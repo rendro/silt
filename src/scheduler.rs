@@ -64,28 +64,25 @@ const MAX_TASKS: usize = 100_000;
 
 /// Stack size of every scheduler worker thread, in bytes.
 ///
-/// A task runs on a worker's native stack, and silt recursion that goes
-/// through a builtin (a callback passed to `list.map`, a trait method
-/// called from a builtin) nests native frames. The platform default for
-/// a spawned thread (2 MiB) overflows at depths that the same code
-/// handles on the main thread, and a native stack overflow aborts the
-/// whole process.
+/// A silt call takes a frame of the VM and no native stack, however it
+/// is made. What still recurses on the worker's native stack is the
+/// work on a value that is nested deeply (comparing, printing or
+/// dropping a list of lists of lists ...): a program can build one as
+/// deep as it can recurse, and the platform default for a spawned
+/// thread (2 MiB) overflows on values the main thread handles. A
+/// native stack overflow aborts the whole process.
 ///
 /// On 64-bit targets the value equals the main thread's reserve
-/// (`SILT_STACK_SIZE` in `src/main.rs`, 256 MiB), so a program has the
-/// same depth available inside `task.spawn` as outside of it. The size
-/// is a reservation of address space: memory is committed page by page
-/// as the stack grows, so a worker that never recurses deeply costs
-/// what it cost before. There are `max(cores, 2)` workers; on a
+/// (`SILT_STACK_SIZE` in `src/main.rs`, 256 MiB), so a program can
+/// work on the same values inside `task.spawn` as outside of it. The
+/// size is a reservation of address space: memory is committed page by
+/// page as the stack grows, so a worker that never recurses deeply
+/// costs what it cost before. There are `max(cores, 2)` workers; on a
 /// 64-core machine they reserve 16 GiB of a 128 TiB address space.
 ///
 /// On 32-bit targets the address space is the limit (2 to 4 GiB for
 /// everything), so workers get 16 MiB there: 8 times the default, and
 /// 64 workers still fit.
-///
-/// The worker passes the same value to the VM as its native stack
-/// budget, which is what the VM's recursion-depth guard measures
-/// against.
 pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
     256 * 1024 * 1024
 } else {
@@ -534,9 +531,8 @@ impl Scheduler {
         let mut handles = Vec::with_capacity(num_workers + 1);
         // Workers reserve `WORKER_STACK_BYTES`. Where the system refuses
         // a reservation that large (an address-space limit, strict
-        // overcommit), the first worker falls back to the default stack
-        // and its default budget, and the rest follow it; tasks then
-        // nest less deeply but the program runs.
+        // overcommit), the first worker falls back to the default stack,
+        // and the rest follow it; the program runs.
         let mut stack_bytes = Some(WORKER_STACK_BYTES);
         while handles.len() < num_workers {
             let inner = self.inner.clone();
@@ -544,12 +540,7 @@ impl Scheduler {
             if let Some(bytes) = stack_bytes {
                 builder = builder.stack_size(bytes);
             }
-            let spawned = builder.spawn(move || {
-                if let Some(bytes) = stack_bytes {
-                    crate::vm::set_native_stack_budget(bytes);
-                }
-                worker_loop(inner);
-            });
+            let spawned = builder.spawn(move || worker_loop(inner));
             match spawned {
                 Ok(handle) => handles.push(handle),
                 Err(_) if handles.is_empty() && stack_bytes.is_some() => stack_bytes = None,
@@ -2010,11 +2001,11 @@ mod tests {
             function: Arc::new(program.functions[0].clone()),
             upvalues: vec![],
         });
-        vm.frames.push(CallFrame {
+        vm.frames.push(crate::vm::Frame::Code(CallFrame {
             closure,
             ip: 0,
             base_slot: 0,
-        });
+        }));
         vm
     }
 

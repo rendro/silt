@@ -2243,17 +2243,16 @@ fn test_scheduler_task_failure_propagates() {
 
 // ── Higher-order builtin suspension tests (G4) ───────────────────────
 //
-// These tests exercise `iterate_builtin` / `iterate_builtin_with_acc` in
-// src/builtins/collections.rs when the user callback yields control back
-// to the scheduler (via `task.join(task.spawn(...))`). They verify that
-// the builtin's internal state — especially the `BuiltinAcc::Fold`
-// accumulator — survives a suspension and resume cleanly.
+// These tests exercise the iteration frame of the higher-order builtins
+// (`vm::iterate`) when the task parks inside the user callback (via
+// `task.join(task.spawn(...))`). They verify that the frame's state —
+// especially a fold's running value — is the same when the task goes
+// on.
 
 #[test]
 fn test_scheduler_list_fold_with_yielding_callback() {
-    // list.fold's accumulator must round-trip across a suspension. If the
-    // BuiltinAcc::Fold state is corrupted during suspend/resume, the sum
-    // will be wrong (likely 0 or a partial value).
+    // list.fold's accumulator must round-trip across a suspension. If it
+    // were lost, the sum would be wrong (likely 0 or a partial value).
     let result = run_vm(
         r#"
             import task
@@ -2462,7 +2461,8 @@ fn test_builtin_panic_converted_to_vm_error() {
     let mut vm = Vm::new(crate::HostIo::process());
     let err = vm
         .dispatch_builtin("__test_panic_builtin.boom", &[])
-        .expect_err("expected VmError from panicking builtin");
+        .err()
+        .expect("expected VmError from panicking builtin");
     let msg = format!("{err}");
     assert!(
         msg.contains("builtin module") && msg.contains("panicked"),
@@ -2495,7 +2495,8 @@ fn test_println_rejects_wrong_arity() {
     // println with 0 args
     let err = vm
         .dispatch_builtin("println", &[])
-        .expect_err("expected VmError for println with 0 args");
+        .err()
+        .expect("expected VmError for println with 0 args");
     let msg = format!("{err}");
     assert!(
         msg.contains("println takes 1 argument, got 0"),
@@ -2505,7 +2506,8 @@ fn test_println_rejects_wrong_arity() {
     // println with 2 args
     let err = vm
         .dispatch_builtin("println", &[Value::Int(1), Value::Int(2)])
-        .expect_err("expected VmError for println with 2 args");
+        .err()
+        .expect("expected VmError for println with 2 args");
     let msg = format!("{err}");
     assert!(
         msg.contains("println takes 1 argument, got 2"),
@@ -2515,7 +2517,8 @@ fn test_println_rejects_wrong_arity() {
     // print with 0 args
     let err = vm
         .dispatch_builtin("print", &[])
-        .expect_err("expected VmError for print with 0 args");
+        .err()
+        .expect("expected VmError for print with 0 args");
     let msg = format!("{err}");
     assert!(
         msg.contains("print takes 1 argument, got 0"),
@@ -2525,7 +2528,8 @@ fn test_println_rejects_wrong_arity() {
     // print with 2 args
     let err = vm
         .dispatch_builtin("print", &[Value::Int(1), Value::Int(2)])
-        .expect_err("expected VmError for print with 2 args");
+        .err()
+        .expect("expected VmError for print with 2 args");
     let msg = format!("{err}");
     assert!(
         msg.contains("print takes 1 argument, got 2"),

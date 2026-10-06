@@ -1,0 +1,18 @@
+-- repeat: 20
+-- A builtin that waits, passed to a builtin that calls it: the task
+-- parks in `channel.receive` under `list.map`, three times, and each
+-- message is taken once.
+import channel
+import list
+import task
+
+fn main() {
+  let a = channel.new(0)
+  let b = channel.new(0)
+  let c = channel.new(0)
+  let reader = task.spawn({ -> list.map([a, b, c], channel.receive) })
+  channel.send(a, 1)
+  channel.send(b, 2)
+  channel.send(c, 3)
+  println(task.join(reader))
+}

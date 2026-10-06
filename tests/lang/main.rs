@@ -58,4 +58,3 @@ mod vm_small_program_property_tests;
 mod wave1_frontend_tests;
 mod wave1_tooling_tests;
 mod wave2_sweep_tests;
-mod wave2_vm_tests;

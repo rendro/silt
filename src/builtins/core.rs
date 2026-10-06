@@ -2,7 +2,7 @@
 
 use crate::typeinfo::{BuiltinVariant, bv};
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{Step, Vm, VmError, call_then};
 
 /// Shape of a two-variant ADT (Result or Option) for the dedup helpers
 /// below. `ok_tag` is the "present/success" variant (carries one field);
@@ -29,8 +29,8 @@ const OPTION_SHAPE: AdtShape = AdtShape {
     err_tag: bv::NONE,
 };
 
-/// Dispatch the shared two-variant ADT operations (`unwrap_or`, `is_ok`/
-/// `is_some`, `is_err`/`is_none`, `map_ok`/`map`, `flat_map`). Returns
+/// Dispatch the shared two-variant ADT operations that call no function
+/// (`unwrap_or`, `is_ok`/`is_some`, `is_err`/`is_none`). Returns
 /// `Ok(Some(value))` if the name matched and we produced a value,
 /// `Ok(None)` if the name was not one of the shared ops (caller should
 /// try module-specific ops), or `Err(VmError)` for arity/type errors.
@@ -39,13 +39,11 @@ const OPTION_SHAPE: AdtShape = AdtShape {
 /// ~40 lines of arm template per shared op. Collapsing to one helper
 /// honors silt's "one way to do things" principle (see MEMORY.md).
 fn dispatch_shared_adt_op(
-    vm: &mut Vm,
     shape: &AdtShape,
     name: &str,
     args: &[Value],
     is_ok_name: &str,
     is_err_name: &str,
-    map_name: &str,
 ) -> Result<Option<Value>, VmError> {
     let module = shape.module;
     let adt_name = shape.adt_name;
@@ -88,65 +86,71 @@ fn dispatch_shared_adt_op(
             matches!(&args[0], Value::Variant(tag, _) if tag.is(err_tag)),
         )));
     }
-    if name == map_name {
-        if args.len() != 2 {
-            return Err(VmError::new(format!(
-                "{module}.{map_name} takes 2 arguments"
-            )));
-        }
-        return match &args[0] {
-            Value::Variant(tag, fields) if tag.is(ok_tag) && fields.len() == 1 => {
-                let new_val = vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)?;
-                Ok(Some(Value::variant(ok_tag, vec![new_val])))
-            }
-            other @ Value::Variant(tag, _) if tag.is(err_tag) => Ok(Some(other.clone())),
-            _ => Err(VmError::new(format!(
-                "{module}.{map_name} requires a{} {adt_name}",
-                if adt_name == "Option" { "n" } else { "" }
-            ))),
-        };
-    }
-    if name == "flat_map" {
-        if args.len() != 2 {
-            return Err(VmError::new(format!("{module}.flat_map takes 2 arguments")));
-        }
-        return match &args[0] {
-            Value::Variant(tag, fields) if tag.is(ok_tag) && fields.len() == 1 => {
-                let v = vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)?;
-                Ok(Some(v))
-            }
-            other @ Value::Variant(tag, _) if tag.is(err_tag) => Ok(Some(other.clone())),
-            _ => Err(VmError::new(format!(
-                "{module}.flat_map requires a{} {adt_name}",
-                if adt_name == "Option" { "n" } else { "" }
-            ))),
-        };
-    }
     Ok(None)
 }
 
+/// The shared operations that call a function on the present value:
+/// `map_ok`/`map`, which wraps the result again, and `flat_map`, which
+/// does not. `None` if `name` is neither.
+fn shared_adt_call(shape: &AdtShape, name: &str, args: &[Value]) -> Result<Option<Step>, VmError> {
+    let (adt_name, ok_tag, err_tag) = (shape.adt_name, shape.ok_tag, shape.err_tag);
+    let (full, wraps) = match (shape.module, name) {
+        ("result", "map_ok") => ("result.map_ok", true),
+        ("option", "map") => ("option.map", true),
+        ("result", "flat_map") => ("result.flat_map", false),
+        ("option", "flat_map") => ("option.flat_map", false),
+        _ => return Ok(None),
+    };
+    if args.len() != 2 {
+        return Err(VmError::new(format!("{full} takes 2 arguments")));
+    }
+    match &args[0] {
+        Value::Variant(tag, fields) if tag.is(ok_tag) && fields.len() == 1 => Ok(Some(call_then(
+            full,
+            args[1].clone(),
+            vec![fields[0].clone()],
+            move |result| match wraps {
+                true => Ok(Value::variant(ok_tag, vec![result])),
+                false => Ok(result),
+            },
+        ))),
+        other @ Value::Variant(tag, _) if tag.is(err_tag) => Ok(Some(Step::Done(other.clone()))),
+        _ => Err(VmError::new(format!(
+            "{full} requires a{} {adt_name}",
+            if adt_name == "Option" { "n" } else { "" }
+        ))),
+    }
+}
+
 /// Dispatch `result.<name>(args)`.
-pub fn call_result(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    if let Some(v) =
-        dispatch_shared_adt_op(vm, &RESULT_SHAPE, name, args, "is_ok", "is_err", "map_ok")?
-    {
+pub(crate) fn call_result(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    if let Some(step) = shared_adt_call(&RESULT_SHAPE, name, args)? {
+        return Ok(step);
+    }
+    if name == "map_err" {
+        if args.len() != 2 {
+            return Err(VmError::new("result.map_err takes 2 arguments".into()));
+        }
+        return match &args[0] {
+            other @ Value::Variant(tag, _) if tag.is(bv::OK) => Ok(Step::Done(other.clone())),
+            Value::Variant(tag, fields) if tag.is(bv::ERR) && fields.len() == 1 => Ok(call_then(
+                "result.map_err",
+                args[1].clone(),
+                vec![fields[0].clone()],
+                |new_val| Ok(Value::variant(bv::ERR, vec![new_val])),
+            )),
+            _ => Err(VmError::new("result.map_err requires a Result".into())),
+        };
+    }
+    result_plain(name, args).map(Step::Done)
+}
+
+/// The `result` functions that call no function.
+fn result_plain(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(v) = dispatch_shared_adt_op(&RESULT_SHAPE, name, args, "is_ok", "is_err")? {
         return Ok(v);
     }
     match name {
-        "map_err" => {
-            if args.len() != 2 {
-                return Err(VmError::new("result.map_err takes 2 arguments".into()));
-            }
-            match &args[0] {
-                other @ Value::Variant(tag, _) if tag.is(bv::OK) => Ok(other.clone()),
-                Value::Variant(tag, fields) if tag.is(bv::ERR) && fields.len() == 1 => {
-                    let new_val =
-                        vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)?;
-                    Ok(Value::variant(bv::ERR, vec![new_val]))
-                }
-                _ => Err(VmError::new("result.map_err requires a Result".into())),
-            }
-        }
         "flatten" => {
             if args.len() != 1 {
                 return Err(VmError::new("result.flatten takes 1 argument".into()));
@@ -171,10 +175,16 @@ pub fn call_result(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
 }
 
 /// Dispatch `option.<name>(args)`.
-pub fn call_option(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    if let Some(v) =
-        dispatch_shared_adt_op(vm, &OPTION_SHAPE, name, args, "is_some", "is_none", "map")?
-    {
+pub(crate) fn call_option(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
+    if let Some(step) = shared_adt_call(&OPTION_SHAPE, name, args)? {
+        return Ok(step);
+    }
+    option_plain(name, args).map(Step::Done)
+}
+
+/// The `option` functions that call no function.
+fn option_plain(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(v) = dispatch_shared_adt_op(&OPTION_SHAPE, name, args, "is_some", "is_none")? {
         return Ok(v);
     }
     match name {
