@@ -276,7 +276,7 @@ pub struct UpvalueDesc {
     /// If false, captures an upvalue from the enclosing closure (transitive).
     pub is_local: bool,
     /// The slot index (local slot or parent upvalue index).
-    pub index: u8,
+    pub index: usize,
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────
@@ -458,12 +458,13 @@ impl Function {
     /// not (a test of how closures compare or print).
     pub fn returning_unit(name: String, arity: u8) -> Self {
         let span = Span::BUILTIN;
-        let mut emitter = Emitter::new(name, arity);
-        emitter
-            .emit(Asm::Unit, span)
-            .and_then(|()| emitter.emit(Asm::Return, span))
-            .and_then(|()| emitter.finish(0))
-            .expect("the code of a function that returns unit is well-formed")
+        let build = || {
+            let mut emitter = Emitter::new(name, usize::from(arity), span)?;
+            emitter.emit(Asm::Unit, span)?;
+            emitter.emit(Asm::Return, span)?;
+            emitter.finish(0)
+        };
+        build().expect("the code of a function that returns unit is well-formed")
     }
 
     /// The function's name (for debugging and stack traces).
@@ -517,13 +518,14 @@ impl Function {
 /// `Span::BUILTIN`.
 pub(crate) fn call_global_script(slot: u16, name: &str) -> Function {
     let span = Span::BUILTIN;
-    let mut emitter = Emitter::new(format!("<call:{name}>"), 0);
-    emitter
-        .emit(Asm::GetGlobal { slot }, span)
-        .and_then(|()| emitter.emit(Asm::Call { argc: 0 }, span))
-        .and_then(|()| emitter.emit(Asm::Return, span))
-        .and_then(|()| emitter.finish(0))
-        .expect("the code of a call of a global is well-formed")
+    let build = || {
+        let mut emitter = Emitter::new(format!("<call:{name}>"), 0, span)?;
+        emitter.emit(Asm::GetGlobal { slot }, span)?;
+        emitter.emit(Asm::Call { argc: 0 }, span)?;
+        emitter.emit(Asm::Return, span)?;
+        emitter.finish(0)
+    };
+    build().expect("the code of a call of a global is well-formed")
 }
 
 /// A runtime closure: a compiled function + captured upvalues.

@@ -1,0 +1,34 @@
+-- repeat: 100
+-- stderr-not-contains: deadlock
+-- 40 senders push 25 jobs each through a channel of capacity 10 to 4
+-- workers, which push the results through another: every job arrives
+-- once (the sum of 1..1000 doubled).
+import channel
+import list
+import task
+
+fn main() {
+  let jobs = channel.new(10)
+  let results = channel.new(10)
+  let senders = 0..39 |> list.map { s -> task.spawn({ ->
+    1..25 |> list.each { j -> channel.send(jobs, s * 25 + j) }
+  }) }
+  let workers = 1..4 |> list.map { _ -> task.spawn({ ->
+    channel.each(jobs) { n -> channel.send(results, n * 2) }
+  }) }
+  let sum = loop left = 1000, acc = 0 {
+    match left {
+      0 -> acc
+      _ -> match channel.receive(results) {
+        channel.Message(v) -> loop(left - 1, acc + v)
+        channel.Closed -> acc
+        channel.Empty -> acc
+        channel.Sent -> acc
+      }
+    }
+  }
+  senders |> list.each { h -> task.join(h) }
+  channel.close(jobs)
+  workers |> list.each { h -> task.join(h) }
+  println("sum={sum}")
+}

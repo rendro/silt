@@ -193,7 +193,7 @@ thread in the task scheduler's pool. The type system enforces this. Use
 
 A `Vm` is made with a `HostIo`: where the program's output goes, and the
 clock it reads. It is set once, when the `Vm` is made, and holds for the
-program's main thread and for every task.
+program's own code and for every task.
 
 ```rust
 let out = Buffer::new();
@@ -255,15 +255,14 @@ pub trait Clock: Send + Sync {
 | The program | reads |
 |-------------|-------|
 | `time.now`, `time.today`, the timestamp in `uuid.v7`, the seed of `math.random` (at its first call) | `now` |
-| `time.sleep` outside a task | `sleep` |
+| `time.sleep` outside a task | `sleep`, for no longer than a `task.deadline` around it allows |
 | `time.sleep` in a task, `channel.timeout`, `channel.recv_timeout` | `monotonic`: the wait ends when the reading reaches its deadline |
-| `task.deadline`, `task.spawn_until`, `SILT_IO_TIMEOUT` | `monotonic`: I/O started after the deadline fails at once, and a task parked on I/O is cancelled when the reading passes the deadline |
+| `task.deadline`, `task.spawn_until`, `SILT_IO_TIMEOUT` | `monotonic`: I/O started after the deadline fails at once, and a wait for I/O ends when the reading reaches the deadline |
 
 The runtime's own threads wait in real time between two readings of an
-embedder's clock. A task's sleep and the channel timeouts end within a
-millisecond of the moment the clock reaches the deadline. A deadline
-that cancels a parked task's I/O is noticed at the scheduler's next scan
-(every 100 ms by default; `SILT_IO_WATCHDOG_INTERVAL` sets it). Everything that
+embedder's clock. A task's sleep, the channel timeouts and a deadline
+that ends a task's wait for I/O end within a millisecond of the moment
+the clock reaches the deadline. Everything that
 is not the program's own waiting stays in real time: the scheduler's
 time slices, the socket timeouts of `http` and `tcp`, and how long I/O
 takes.

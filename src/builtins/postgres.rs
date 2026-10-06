@@ -36,28 +36,19 @@ use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
 
 use super::common::{ok, value_kind};
-use crate::runtime::channel::{Channel, TrySendResult};
-use crate::runtime::completion::IoCompletion;
+use crate::runtime::sync::{Channel, Close};
+use crate::scheduler::Scheduler;
 use crate::typeinfo::{bv, ty};
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{Native, Step, Vm, VmError};
 
 /// Factory: deadline-cancelled postgres op surfaces as `Err(PgTimeout)`
 /// rather than the default `Err(IoUnknown(_))`. Used by every postgres.*
-/// builtin that submits to the io_pool or calls into
-/// `io_entry_guard_with`. The message text is dropped because
+/// builtin that runs on the I/O pool. The message text is dropped because
 /// `PgTimeout` is a nullary variant; `e.message()` still produces a
 /// helpful string via the trait impl.
 fn pg_timeout_err(_msg: &str) -> Value {
     Value::variant(bv::ERR, vec![Value::variant(bv::PG_TIMEOUT, vec![])])
-}
-
-/// Build a fresh `IoCompletion` whose watchdog-timeout factory is
-/// `pg_timeout_err`. Every postgres.* builtin that uses
-/// `io_pool.submit_with` goes through this so a deadline-cancelled op
-/// surfaces a typed `PgError` variant rather than `IoError::IoUnknown`.
-fn pg_completion() -> Arc<IoCompletion> {
-    IoCompletion::with_timeout_err(Arc::new(pg_timeout_err))
 }
 
 // ── TLS-capable pool/conn wrappers ──────────────────────────────────
@@ -1361,69 +1352,17 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value 
 /// in-flight buffer at steady state.
 const STREAM_CHANNEL_CAPACITY: usize = 256;
 
-/// Blocking send from a non-VM thread (io_pool worker). Uses the
-/// channel's existing send-waker machinery backed by a local condvar,
-/// with a short periodic poll so the cancellation path (`is_closed`)
-/// stays responsive if the channel closes while we're parked. Returns
-/// `true` on successful send, `false` if the channel closed before
-/// the value was accepted (i.e. the consumer cancelled).
-///
-/// `try_send` takes the value by value, so we clone on each attempt
-/// — cheap for Value since the heavy payloads are Arc-backed.
-///
-/// At most one send waker of this call is registered at a time, and
-/// none is left behind when it returns. Each wait registers its waker
-/// through a `WakerRegistration` guard that is dropped, and so
-/// deregistered, when the wait ends. A waker left in the channel's queue
-/// would be chosen by a later receive in place of a sender that is
-/// really waiting (a parked task, or the main thread), which would then
-/// miss its wake-up.
-fn channel_send_blocking_retry(ch: &Arc<Channel>, val: Value) -> bool {
-    use parking_lot::{Condvar, Mutex as PLMutex};
-    use std::time::Duration;
-
-    let pair = Arc::new((PLMutex::new(false), Condvar::new()));
-    loop {
-        match ch.try_send(val.clone()) {
-            TrySendResult::Sent => return true,
-            TrySendResult::Closed => return false,
-            TrySendResult::Full => {}
-        }
-        let pair2 = pair.clone();
-        // Deregisters the waker when it is dropped: at the end of this
-        // iteration, or on a return below. If the waker has fired, it
-        // is no longer in the queue and the drop does nothing.
-        let _registration = ch.register_send_waker_guard(Box::new(move || {
-            let (lock, cvar) = &*pair2;
-            *lock.lock() = true;
-            cvar.notify_one();
-        }));
-        // Re-check after registering: avoid a lost wakeup if space
-        // opened between try_send and register_send_waker_guard.
-        match ch.try_send(val.clone()) {
-            TrySendResult::Sent => return true,
-            TrySendResult::Closed => return false,
-            TrySendResult::Full => {}
-        }
-        {
-            let (lock, cvar) = &*pair;
-            let mut notified = lock.lock();
-            if !*notified {
-                cvar.wait_for(&mut notified, Duration::from_millis(50));
-            }
-            *notified = false;
-        }
-        if ch.is_closed() {
-            return false;
-        }
-    }
-}
-
 /// Run the streaming query inside the io_pool. Owns the executor for
 /// its whole lifetime — for tx executors that means the inner
 /// `Mutex<PinnedConn>` is locked here until the stream finishes, so
 /// concurrent tx queries block until we're done. Documented contract.
-fn do_stream_worker(target: ExecutorRef, sql: String, params: Vec<SqlParam>, ch: Arc<Channel>) {
+fn do_stream_worker(
+    target: ExecutorRef,
+    sql: String,
+    params: Vec<SqlParam>,
+    ch: Arc<Channel>,
+    scheduler: Arc<Scheduler>,
+) {
     // If the consumer already cancelled before we even started, bail
     // without touching the DB.
     if ch.is_closed() {
@@ -1433,7 +1372,7 @@ fn do_stream_worker(target: ExecutorRef, sql: String, params: Vec<SqlParam>, ch:
 
     // Helper: send a single wrapped row or error; stop if the channel
     // was closed by the consumer. Returns `true` to keep going.
-    let send_or_stop = |v: Value| -> bool { channel_send_blocking_retry(&ch, v) };
+    let send_or_stop = |v: Value| -> bool { scheduler.send_wait(&ch, v) };
 
     let pump = |client: &mut postgres::Client, sql: &str, bind: &[&(dyn ToSql + Sync)]| match client
         .query_raw(sql, bind.iter().copied())
@@ -1480,7 +1419,7 @@ fn do_stream_worker(target: ExecutorRef, sql: String, params: Vec<SqlParam>, ch:
     // End of stream: always close, even if we already sent an Err
     // (close after Err signals "no more items" so the consumer's
     // channel.receive returns Closed on the next pull).
-    ch.close();
+    ch.close(Close::default(), scheduler.wake());
 }
 
 // ── Cursor workers (postgres.cursor / .cursor_next / .cursor_close) ─
@@ -1593,7 +1532,7 @@ fn do_cursor_close(cursor_id: u64) -> Value {
 /// (three short strings) so 64 is a generous buffer without costing
 /// meaningful memory; the slow consumer just pauses the worker via
 /// backpressure, and if the consumer goes away entirely
-/// `channel_send_blocking_retry` aborts on close.
+/// the worker's send ends on close.
 const LISTEN_CHANNEL_CAPACITY: usize = 64;
 
 /// Poll tick for the listener worker's notification iterator. Upper
@@ -1640,7 +1579,12 @@ fn notification_to_record(n: &postgres::Notification) -> Value {
 /// dropped back into the pool. LISTEN was already issued before this
 /// function starts (see `listen`'s io-pool closure); we just pump
 /// notifications until the channel closes or the connection errors out.
-fn do_listen_worker(mut conn: PinnedConn, channel_name: String, ch: Arc<Channel>) {
+fn do_listen_worker(
+    mut conn: PinnedConn,
+    channel_name: String,
+    ch: Arc<Channel>,
+    scheduler: Arc<Scheduler>,
+) {
     use std::time::Duration;
 
     let tick = Duration::from_millis(LISTEN_POLL_TICK_MS);
@@ -1659,7 +1603,7 @@ fn do_listen_worker(mut conn: PinnedConn, channel_name: String, ch: Arc<Channel>
             match iter.next() {
                 Ok(Some(n)) => {
                     let rec = notification_to_record(&n);
-                    if !channel_send_blocking_retry(&ch, rec) {
+                    if !scheduler.send_wait(&ch, rec) {
                         break 'outer;
                     }
                 }
@@ -1683,7 +1627,7 @@ fn do_listen_worker(mut conn: PinnedConn, channel_name: String, ch: Arc<Channel>
     // checkout anyway.
     let unlisten_sql = format!("UNLISTEN {channel_name}");
     let _ = conn.client_mut().batch_execute(&unlisten_sql);
-    ch.close();
+    ch.close(Close::default(), scheduler.wake());
     // `conn` drops here → returns to the pool.
 }
 
@@ -1751,26 +1695,26 @@ pub fn call_pg_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError>
 
 // ── Public dispatch ─────────────────────────────────────────────────
 
-pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
     match name {
+        "transact" => transact(args),
         "connect" => connect(vm, args),
         "connect_with" => connect_with(vm, args),
         "query" => query(vm, args),
         "execute" => execute(vm, args),
-        "transact" => transact(vm, args),
-        "close" => close(vm, args),
-        "stream" => stream(vm, args),
+        "close" => close(vm, args).map(Step::Done),
+        "stream" => stream(vm, args).map(Step::Done),
         "cursor" => cursor_open(vm, args),
         "cursor_next" => cursor_next(vm, args),
         "cursor_close" => cursor_close(vm, args),
         "listen" => listen(vm, args),
         "notify" => notify(vm, args),
-        "uuidv7" => uuidv7(vm, args),
+        "uuidv7" => uuidv7(vm, args).map(Step::Done),
         other => Err(VmError::new(format!("unknown postgres function: {other}"))),
     }
 }
 
-fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 1 {
         return Err(VmError::new(
             "postgres.connect takes 1 argument (url)".into(),
@@ -1784,16 +1728,13 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     };
 
     let url = url.clone();
-    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
-        do_connect(url)
-    })
+    vm.io("postgres", pg_timeout_err, move || do_connect(url))
 }
 
 /// Test-only re-export of `pg_timeout_err` so integration tests can
-/// lock the typed-timeout shape without needing a live DB or
-/// constructing the runtime watchdog path. Returns the exact `Value`
-/// that the io_pool watchdog and the entry-guard deadline branch
-/// surface for a deadline-cancelled postgres op.
+/// lock the typed-timeout shape without needing a live DB. Returns the
+/// exact `Value` a postgres operation gives when its deadline passes,
+/// before it starts or while the task waits for it.
 #[doc(hidden)]
 pub fn pg_timeout_err_for_tests(msg: &str) -> Value {
     pg_timeout_err(msg)
@@ -1854,7 +1795,7 @@ fn parse_connect_opts(v: &Value) -> Result<ConnectOpts, String> {
     Ok(out)
 }
 
-fn connect_with(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn connect_with(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new(
             "postgres.connect_with takes 2 arguments (url, opts)".into(),
@@ -1868,16 +1809,16 @@ fn connect_with(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     };
     let opts = match parse_connect_opts(&args[1]) {
         Ok(o) => o,
-        Err(msg) => return Ok(err(other_error(msg))),
+        Err(msg) => return Ok(Step::Done(err(other_error(msg)))),
     };
 
     let url = url.clone();
-    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+    vm.io("postgres", pg_timeout_err, move || {
         do_connect_with(url, opts)
     })
 }
 
-fn query(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn query(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 3 {
         return Err(VmError::new(
             "postgres.query takes 3 arguments (target, sql, params)".into(),
@@ -1885,7 +1826,7 @@ fn query(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let target = match resolve_executor(&args[0]) {
         Ok(t) => t,
-        Err(v) => return Ok(err(v)),
+        Err(v) => return Ok(Step::Done(err(v))),
     };
     let Value::String(sql) = &args[1] else {
         return Err(VmError::new(format!(
@@ -1905,16 +1846,16 @@ fn query(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         .collect::<Result<Vec<_>, String>>()
     {
         Ok(p) => p,
-        Err(msg) => return Ok(err(other_error(msg))),
+        Err(msg) => return Ok(Step::Done(err(other_error(msg)))),
     };
 
     let sql = sql.clone();
-    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+    vm.io("postgres", pg_timeout_err, move || {
         do_query(target, sql, params)
     })
 }
 
-fn execute(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn execute(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 3 {
         return Err(VmError::new(
             "postgres.execute takes 3 arguments (target, sql, params)".into(),
@@ -1922,7 +1863,7 @@ fn execute(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let target = match resolve_executor(&args[0]) {
         Ok(t) => t,
-        Err(v) => return Ok(err(v)),
+        Err(v) => return Ok(Step::Done(err(v))),
     };
     let Value::String(sql) = &args[1] else {
         return Err(VmError::new(format!(
@@ -1942,11 +1883,11 @@ fn execute(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         .collect::<Result<Vec<_>, String>>()
     {
         Ok(p) => p,
-        Err(msg) => return Ok(err(other_error(msg))),
+        Err(msg) => return Ok(Step::Done(err(other_error(msg)))),
     };
 
     let sql = sql.clone();
-    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+    vm.io("postgres", pg_timeout_err, move || {
         do_execute(target, sql, params)
     })
 }
@@ -1956,115 +1897,109 @@ fn execute(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 ///
 /// Lifecycle
 /// ---------
-/// 1. Fresh entry (args[0] is `PgPool`, no suspended invoke):
-///    checkout a conn from the pool, run `BEGIN`, register the conn in
-///    the tx registry, mint a `PgTx` handle, and invoke the callback
-///    with it. The original args we re-push on yield are
-///    `[PgTx(id), callback]` — so if the callback yields and this
-///    builtin is re-dispatched, `args[0]` carries the tx id forward.
+/// 1. The call (args[0] is a `PgPool`): check out a conn from the pool,
+///    run `BEGIN`, register the conn in the tx registry, mint a `PgTx`
+///    handle. The builtin goes on as a frame ([`Transact`]) that calls
+///    the callback with the handle.
 ///
-/// 2. Resume (suspended_invoke set): re-enter the callback via
-///    `invoke_callable_resumable` without re-running BEGIN. The tx id
-///    comes from args[0].
+/// 2. Completion, when the callback has returned:
+///    - `Ok(_)` → `COMMIT` on the pinned conn.
+///    - `Err(_)` → `ROLLBACK`.
+///    - a non-Result value → `COMMIT`, wrap as `Ok`.
 ///
-/// 3. Completion:
-///    - Callback returned `Ok(_)` → `COMMIT` on the pinned conn.
-///    - Callback returned `Err(_)` → `ROLLBACK`.
-///    - Callback returned a non-Result value → `COMMIT`, wrap as `Ok`.
-///    - Callback returned a hard VM error → `ROLLBACK` and propagate.
-///    - Callback yielded → propagate (tx stays registered).
+///    An error of the program inside the callback drops the frame,
+///    which rolls back.
 ///
 ///    The pinned conn is dropped after commit/rollback, returning it
 ///    to the pool. COMMIT errors are surfaced as the function's Err;
 ///    the callback's return value is discarded in that edge case.
 ///
-/// Nested transact is not supported — re-entering with `args[0]` as a
-/// `PgTx` returns an Err telling the caller to use `SAVEPOINT` manually.
-/// That's reserved for a v2 nested-tx API.
-fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+/// Nested transact is not supported — calling it with a `PgTx` returns
+/// an Err telling the caller to use `SAVEPOINT` manually. That's
+/// reserved for a v2 nested-tx API.
+fn transact(args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new(
             "postgres.transact takes 2 arguments (pool, callback)".into(),
         ));
     }
-    let callback = args[1].clone();
-    let is_resume = vm.suspended_invoke.is_some();
-
-    // Resolve (or mint) the tx id for this invocation. On fresh entry
-    // we expect a `PgPool`; we open a conn, BEGIN, and register. On
-    // resume we expect the synthetic `PgTx` handle that the previous
-    // yield re-pushed onto the stack.
-    let tx_id: u64 = if is_resume {
-        // Resumption: args[0] must be the PgTx we pushed last time.
-        match &args[0] {
-            Value::Variant(tag, _) if tag.is(bv::PG_TX) => extract_tx_id(&args[0])?,
-            _ => {
-                return Err(VmError::new(
-                    "postgres.transact: internal VM error: resume without PgTx handle".into(),
-                ));
-            }
-        }
-    } else {
-        // Nested transact: the outer caller already handed us a PgTx.
-        // We don't model SAVEPOINTs yet — surface an Err so the caller
-        // can fall back to raw SQL.
-        if let Value::Variant(tag, _) = &args[0]
-            && tag.is(bv::PG_TX)
-        {
-            return Ok(err(other_error(
-                "postgres.transact: nested transactions are not supported — \
-                 issue SAVEPOINT manually via postgres.execute on the PgTx"
-                    .to_string(),
-            )));
-        }
-        let pool = match extract_pool(&args[0]) {
-            Ok(p) => p,
-            Err(v) => return Ok(err(v)),
-        };
-        let mut conn = match pool.get() {
-            Ok(c) => c,
-            Err(e) => return Ok(err(pool_error_value(&e))),
-        };
-        if let Err(e) = conn.client_mut().batch_execute("BEGIN") {
-            return Ok(err(pg_error_to_variant(&e)));
-        }
-        insert_tx(conn)
-    };
-
-    // Build the "effective args" that we'll both pass to the callback
-    // and re-push on yield. args[0] becomes the PgTx handle — so on
-    // resumption the same dispatch lands back in the `is_resume` arm.
-    let tx_handle = make_tx_handle(tx_id);
-    let effective_args = [tx_handle.clone(), callback.clone()];
-
-    let cb_result =
-        vm.invoke_callable_resumable(&callback, std::slice::from_ref(&tx_handle), &effective_args);
-
-    // If the callback yielded, we must NOT unregister the tx: the next
-    // re-entry (via CallBuiltin re-dispatch) will resume it. Propagate
-    // the yield unchanged; the scheduler will re-enter us later.
-    if let Err(e) = &cb_result
-        && e.is_yield
+    // Nested transact: the outer caller already handed us a PgTx.
+    // We don't model SAVEPOINTs yet — surface an Err so the caller
+    // can fall back to raw SQL.
+    if let Value::Variant(tag, _) = &args[0]
+        && tag.is(bv::PG_TX)
     {
-        return cb_result;
+        return Ok(Step::Done(err(other_error(
+            "postgres.transact: nested transactions are not supported — \
+             issue SAVEPOINT manually via postgres.execute on the PgTx"
+                .to_string(),
+        ))));
+    }
+    let pool = match extract_pool(&args[0]) {
+        Ok(p) => p,
+        Err(v) => return Ok(Step::Done(err(v))),
+    };
+    let mut conn = match pool.get() {
+        Ok(c) => c,
+        Err(e) => return Ok(Step::Done(err(pool_error_value(&e)))),
+    };
+    if let Err(e) = conn.client_mut().batch_execute("BEGIN") {
+        return Ok(Step::Done(err(pg_error_to_variant(&e))));
+    }
+    Ok(Step::Run(Box::new(Transact {
+        tx_id: Some(insert_tx(conn)),
+        callback: Some(args[1].clone()),
+    })))
+}
+
+/// A transaction whose callback is running.
+struct Transact {
+    /// The registered transaction, until it is committed or rolled
+    /// back.
+    tx_id: Option<u64>,
+    /// The callback, until it is called.
+    callback: Option<Value>,
+}
+
+impl Native for Transact {
+    fn name(&self) -> &str {
+        "postgres.transact"
     }
 
-    // Callback finished (normally, or with a hard error). Pull the conn
-    // out of the tx registry and finalise it.
-    let cell = match remove_tx(tx_id) {
-        Some(c) => c,
-        None => {
-            // Shouldn't happen — the registry entry was valid on entry
-            // and nothing else removes it. If it does, surface the
-            // callback's result as-is and skip commit/rollback.
-            return cb_result;
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        let Some(tx_id) = self.tx_id else {
+            return Ok(Step::Done(input));
+        };
+        if let Some(callee) = self.callback.take() {
+            return Ok(vm.call(callee, [make_tx_handle(tx_id)]));
         }
+        self.tx_id = None;
+        Ok(Step::Done(end_tx(tx_id, Some(input))))
+    }
+
+    fn abandon(&mut self, _vm: &mut Vm) {
+        if let Some(tx_id) = self.tx_id.take() {
+            end_tx(tx_id, None);
+        }
+    }
+}
+
+/// End the transaction `tx_id`: commit or roll back as the callback's
+/// value `returned` says, or roll back when the callback failed with
+/// an error of the program (`None`). The value is `postgres.transact`'s.
+fn end_tx(tx_id: u64, returned: Option<Value>) -> Value {
+    // Pull the conn out of the tx registry and finalise it.
+    let Some(cell) = remove_tx(tx_id) else {
+        // Shouldn't happen — the registry entry was valid on entry
+        // and nothing else removes it. If it does, surface the
+        // callback's result as-is and skip commit/rollback.
+        return returned.unwrap_or(Value::Unit);
     };
     // We are the last owner of `cell`. Moving the conn out of the
     // `Arc<Mutex<...>>` requires unwrapping both layers. `Arc::try_unwrap`
     // can fail if a racing query on the io_pool thread still holds a
     // reference — that's a logic bug (all query submits for this tx
-    // should have completed by now since we're not yielding). In the
+    // should have completed by now: the callback has returned). In the
     // rare race, fall back to locking in-place and running COMMIT /
     // ROLLBACK against the locked cell without reclaiming ownership.
     let finalise = |sql: &str, cell: Arc<Mutex<PinnedConn>>| -> Option<Value> {
@@ -2096,35 +2031,22 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     // clean "not registered" error rather than racing with the reap.
     drain_cursors_for_tx(tx_id);
 
-    match cb_result {
-        Ok(v) => match &v {
-            Value::Variant(tag, _) if tag.is(bv::OK) => {
-                if let Some(e) = finalise("COMMIT", cell) {
-                    Ok(e)
-                } else {
-                    Ok(v)
-                }
-            }
+    match returned {
+        Some(v) => match &v {
+            Value::Variant(tag, _) if tag.is(bv::OK) => finalise("COMMIT", cell).unwrap_or(v),
             Value::Variant(tag, _) if tag.is(bv::ERR) => {
                 let _ = finalise("ROLLBACK", cell);
-                Ok(v)
+                v
             }
-            _ => {
-                // Callback didn't return Result(_, _). Treat as Ok and
-                // forward the raw value, but COMMIT first so the user's
-                // statements persist. Mirrors what most pg wrappers do
-                // for callbacks that return a non-Result type.
-                if let Some(e) = finalise("COMMIT", cell) {
-                    Ok(e)
-                } else {
-                    Ok(ok(v))
-                }
-            }
+            // Callback didn't return Result(_, _). Treat as Ok and
+            // forward the raw value, but COMMIT first so the user's
+            // statements persist. Mirrors what most pg wrappers do
+            // for callbacks that return a non-Result type.
+            _ => finalise("COMMIT", cell).unwrap_or_else(|| ok(v)),
         },
-        Err(e) => {
-            // Hard VM error in the callback — roll back and propagate.
+        None => {
             let _ = finalise("ROLLBACK", cell);
-            Err(e)
+            Value::Unit
         }
     }
 }
@@ -2132,7 +2054,7 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 /// `postgres.stream(target, sql, params)` — returns a bounded silt
 /// `Channel` of `Result(Map(String, Value), PgError)` row wrappers.
 ///
-/// Why is this not routed through `io_entry_guard`? The worker is
+/// The caller does not wait for the worker, which is
 /// long-lived: it produces many rows over time, not a single result.
 /// We submit it to the io_pool and return the channel immediately,
 /// without parking the caller. Backpressure is via the channel's
@@ -2172,21 +2094,22 @@ fn stream(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     // Mint the channel up-front so we can hand the caller an owned
     // Arc while the worker holds its own clone.
     let ch_id = vm.next_channel_id();
-    let channel = Arc::new(Channel::new(ch_id, STREAM_CHANNEL_CAPACITY));
+    let channel = Channel::new(ch_id, STREAM_CHANNEL_CAPACITY);
     let worker_channel = channel.clone();
 
     // Fire-and-forget: submit to io_pool. The completion's return
     // value is unused (we return the channel, not a completion).
     let sql = sql.clone();
-    let _completion = vm.runtime.io_pool.submit_with(pg_completion(), move || {
-        do_stream_worker(target, sql, params, worker_channel);
+    let scheduler = vm.scheduler().clone();
+    let _op = vm.runtime.io_pool.submit(pg_timeout_err, move || {
+        do_stream_worker(target, sql, params, worker_channel, scheduler);
         Value::Unit
     });
 
     Ok(ok(Value::Channel(channel)))
 }
 
-fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 4 {
         return Err(VmError::new(
             "postgres.cursor takes 4 arguments (tx, sql, params, batch_size)".into(),
@@ -2197,28 +2120,28 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Value::Variant(tag, _) if tag.is(bv::PG_TX) => match extract_tx_id(&args[0]) {
             Ok(id) => id,
             Err(e) => {
-                return Ok(err(other_error(e.message)));
+                return Ok(Step::Done(err(other_error(e.message))));
             }
         },
         Value::Variant(tag, _) if tag.is(bv::PG_POOL) => {
-            return Ok(err(other_error(
+            return Ok(Step::Done(err(other_error(
                 "postgres.cursor requires PgTx, got PgPool (cursors live inside a transaction)"
                     .to_string(),
-            )));
+            ))));
         }
         other => {
-            return Ok(err(other_error(format!(
+            return Ok(Step::Done(err(other_error(format!(
                 "postgres.cursor requires PgTx, got {}",
                 value_kind(other)
-            ))));
+            )))));
         }
     };
     let cell = match lookup_tx(tx_id) {
         Some(c) => c,
         None => {
-            return Ok(err(pg_connect(format!(
+            return Ok(Step::Done(err(pg_connect(format!(
                 "postgres: tx handle {tx_id} is not registered (transaction ended)"
-            ))));
+            )))));
         }
     };
     let Value::String(sql) = &args[1] else {
@@ -2236,9 +2159,9 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let batch_size = match &args[3] {
         Value::Int(n) if *n >= 1 => *n as u64,
         Value::Int(_) => {
-            return Ok(err(other_error(
+            return Ok(Step::Done(err(other_error(
                 "postgres.cursor: batch_size must be >= 1".to_string(),
-            )));
+            ))));
         }
         other => {
             return Err(VmError::new(format!(
@@ -2253,16 +2176,16 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         .collect::<Result<Vec<_>, String>>()
     {
         Ok(p) => p,
-        Err(msg) => return Ok(err(other_error(msg))),
+        Err(msg) => return Ok(Step::Done(err(other_error(msg)))),
     };
 
     let sql = sql.clone();
-    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+    vm.io("postgres", pg_timeout_err, move || {
         do_cursor_open(tx_id, cell, sql, params, batch_size)
     })
 }
 
-fn cursor_next(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn cursor_next(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 1 {
         return Err(VmError::new(
             "postgres.cursor_next takes 1 argument (cursor)".into(),
@@ -2270,15 +2193,15 @@ fn cursor_next(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let cursor_id = match extract_cursor_id(&args[0]) {
         Ok(id) => id,
-        Err(v) => return Ok(err(v)),
+        Err(v) => return Ok(Step::Done(err(v))),
     };
 
-    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+    vm.io("postgres", pg_timeout_err, move || {
         do_cursor_next(cursor_id)
     })
 }
 
-fn cursor_close(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn cursor_close(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 1 {
         return Err(VmError::new(
             "postgres.cursor_close takes 1 argument (cursor)".into(),
@@ -2286,10 +2209,10 @@ fn cursor_close(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let cursor_id = match extract_cursor_id(&args[0]) {
         Ok(id) => id,
-        Err(v) => return Ok(err(v)),
+        Err(v) => return Ok(Step::Done(err(v))),
     };
 
-    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+    vm.io("postgres", pg_timeout_err, move || {
         do_cursor_close(cursor_id)
     })
 }
@@ -2327,7 +2250,7 @@ fn uuidv7(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 /// failure — surface as an immediate `Err(PgError)` rather than a
 /// channel that silently closes. The long-lived worker is spawned only
 /// after LISTEN succeeds.
-fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn listen(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new(
             "postgres.listen takes 2 arguments (pool, channel_name)".into(),
@@ -2335,7 +2258,7 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let pool = match extract_pool(&args[0]) {
         Ok(p) => p,
-        Err(v) => return Ok(err(v)),
+        Err(v) => return Ok(Step::Done(err(v))),
     };
     let Value::String(channel_name) = &args[1] else {
         return Err(VmError::new(format!(
@@ -2344,23 +2267,23 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         )));
     };
     if !is_valid_ident(channel_name) {
-        return Ok(err(other_error(format!(
+        return Ok(Step::Done(err(other_error(format!(
             "postgres.listen: channel name {channel_name:?} must be a valid SQL identifier \
              (letters, digits, underscore; cannot start with digit)"
-        ))));
+        )))));
     }
 
     // Mint the silt-side channel up front so we can hand the caller an
     // owned Arc synchronously.
     let ch_id = vm.next_channel_id();
-    let channel = Arc::new(Channel::new(ch_id, LISTEN_CHANNEL_CAPACITY));
+    let channel = Channel::new(ch_id, LISTEN_CHANNEL_CAPACITY);
 
     // LISTEN happens on the io_pool so it doesn't block the VM thread,
     // but we still wait for its completion before returning so LISTEN
     // errors propagate cleanly. Use the same entry-guard dance as
     // query/execute to park-and-resume the scheduled task.
-    if let Some(r) = vm.io_entry_guard_with(args, &pg_timeout_err)? {
-        return Ok(r);
+    if let Some(r) = vm.deadline_exceeded_with(pg_timeout_err) {
+        return Ok(Step::Done(r));
     }
 
     // Blocking work we submit to io_pool: checkout + LISTEN. On success
@@ -2384,20 +2307,21 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         // The worker owns `conn` for its whole lifetime; on exit the
         // conn drops back into the pool.
         let worker_ch = worker_channel.clone();
-        let _listener_completion = runtime.io_pool.submit_with(pg_completion(), move || {
-            do_listen_worker(conn, channel_name_owned, worker_ch);
+        let scheduler = runtime.scheduler.clone();
+        let _op = runtime.io_pool.submit(pg_timeout_err, move || {
+            do_listen_worker(conn, channel_name_owned, worker_ch, scheduler);
             Value::Unit
         });
         ok(Value::Channel(worker_channel))
     };
 
-    vm.run_or_submit_io(args, pg_completion(), work)
+    vm.io_started("postgres", pg_timeout_err, work)
 }
 
 /// `postgres.notify(executor, channel_name, payload)` — fire a NOTIFY.
 /// Accepts either a pool or tx executor. Uses `SELECT pg_notify($1, $2)`
 /// so channel names are bind-parameter safe.
-fn notify(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn notify(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 3 {
         return Err(VmError::new(
             "postgres.notify takes 3 arguments (executor, channel_name, payload)".into(),
@@ -2405,7 +2329,7 @@ fn notify(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     let target = match resolve_executor(&args[0]) {
         Ok(t) => t,
-        Err(v) => return Ok(err(v)),
+        Err(v) => return Ok(Step::Done(err(v))),
     };
     let Value::String(channel_name) = &args[1] else {
         return Err(VmError::new(format!(
@@ -2422,7 +2346,7 @@ fn notify(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 
     let channel_name = channel_name.clone();
     let payload = payload.clone();
-    vm.submit_io_or_run(args, pg_completion(), &pg_timeout_err, move || {
+    vm.io("postgres", pg_timeout_err, move || {
         do_notify(target, channel_name, payload)
     })
 }
@@ -2433,62 +2357,6 @@ fn notify(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
 mod tests {
     use super::*;
 
-    /// A stream send that has to wait for room keeps at most one send
-    /// waker registered, leaves none behind when it returns, and so
-    /// cannot take the wake-up of a sender that registers after it.
-    ///
-    /// Before, each 50 ms poll of the wait registered another waker and
-    /// none was removed: after the send, the stale wakers stood first in
-    /// the queue, and a receive woke one of them instead of the waiting
-    /// sender. The sleep below lets the send wait through several polls;
-    /// nothing is asserted about time.
-    #[test]
-    fn blocking_stream_send_leaves_no_send_waker_behind() {
-        use crate::runtime::channel::TryReceiveResult;
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::time::Duration;
-
-        let ch = Arc::new(Channel::new(1, 1));
-        assert!(matches!(ch.try_send(Value::Int(1)), TrySendResult::Sent));
-        let sender_ch = ch.clone();
-        let sender =
-            std::thread::spawn(move || channel_send_blocking_retry(&sender_ch, Value::Int(2)));
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(
-            ch.send_waker_queue_len() <= 1,
-            "a waiting send keeps at most one waker registered, found {}",
-            ch.send_waker_queue_len()
-        );
-        assert!(matches!(
-            ch.try_receive(),
-            TryReceiveResult::Value(Value::Int(1))
-        ));
-        assert!(sender.join().expect("sender thread"), "the send completes");
-        assert_eq!(
-            ch.send_waker_queue_len(),
-            0,
-            "the send left a waker in the channel's queue"
-        );
-
-        // The buffer is full again (it holds 2). The next receive must
-        // wake the sender that waits now.
-        let woken = Arc::new(AtomicBool::new(false));
-        let woken_by_waker = woken.clone();
-        let _registration = ch.register_send_waker_guard(Box::new(move || {
-            woken_by_waker.store(true, Ordering::SeqCst);
-        }));
-        assert!(matches!(
-            ch.try_receive(),
-            TryReceiveResult::Value(Value::Int(2))
-        ));
-        assert!(
-            woken.load(Ordering::SeqCst),
-            "the receive woke a stale waker instead of the waiting sender"
-        );
-    }
-
-    /// URL-parsing unit: `sslmode=verify-full` + `sslrootcert` get
-    /// stripped cleanly and the remaining params are preserved.
     #[test]
     fn strip_ssl_params_preserves_rest() {
         let url = "postgres://u:p@h/db?connect_timeout=5&sslmode=verify-full&sslrootcert=/tmp/ca.pem&application_name=x";

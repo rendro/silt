@@ -1,0 +1,13 @@
+-- exit: 1
+-- stderr-contains: deadlock on main thread: channel select with no counterparty
+-- A select that offers to send on a channel and to receive from the
+-- same one is not its own counterparty: with nobody else, it is a
+-- deadlock.
+import channel
+
+fn main() {
+  let ch = channel.new(0)
+  match channel.select([channel.Recv(ch), channel.Send(ch, 1)]) {
+    _ -> println("unreachable")
+  }
+}

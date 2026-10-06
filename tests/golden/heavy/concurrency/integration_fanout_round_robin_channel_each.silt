@@ -1,19 +1,12 @@
--- repeat: 3
--- Verify that when multiple workers use channel.each on the same
--- channel, messages are distributed across workers rather than all
--- going to the first one.
+-- repeat: 20
+-- When several workers use channel.each on the same channel, a message
+-- goes to a worker that is free, not always to the first one.
 --
--- The jobs channel uses capacity 1, which forces each `channel.send`
--- in `main` to block until some worker has actually taken the prior
--- message. That back-pressure is what makes the distribution
--- statistically stable across workers — without it, one eager worker
--- could drain a fully-buffered channel before the others even start.
--- Extract the result list
+-- Each worker holds on to its job until the program opens the gate, so
+-- a worker that has a job cannot take the next: the first three jobs
+-- go to three different workers, whatever the scheduling. The other
+-- three are sent once the gate is open.
 -- Count messages per worker (100-series = w1, 200-series = w2, 300-series = w3)
--- All 6 messages must be processed; fan-out means more than one
--- worker must actually participate. If a single worker drained the
--- channel, the "round-robin" claim would be false and this test would
--- previously have silently passed.
 import io
 import channel
 import list
@@ -22,21 +15,25 @@ import task
 fn program() {
   let jobs = channel.new(1)
   let results = channel.new(32)
+  let gate = channel.new(0)
 
   let w1 = task.spawn({ ->
     channel.each(jobs) { n ->
+      let _ = channel.receive(gate)
       channel.send(results, 100 + n)
     }
   })
 
   let w2 = task.spawn({ ->
     channel.each(jobs) { n ->
+      let _ = channel.receive(gate)
       channel.send(results, 200 + n)
     }
   })
 
   let w3 = task.spawn({ ->
     channel.each(jobs) { n ->
+      let _ = channel.receive(gate)
       channel.send(results, 300 + n)
     }
   })
@@ -44,7 +41,10 @@ fn program() {
   channel.send(jobs, 1)
   channel.send(jobs, 2)
   channel.send(jobs, 3)
+  -- The buffer holds one job; a fourth send returns only when a worker
+  -- has taken the third. Then every worker has a job.
   channel.send(jobs, 4)
+  channel.close(gate)
   channel.send(jobs, 5)
   channel.send(jobs, 6)
   channel.close(jobs)
@@ -65,7 +65,7 @@ fn program() {
   -- Results are tagged by worker: 1xx from w1, 2xx from w2, 3xx from w3.
   -- Fan-out means more than one worker took a job.
   let active_workers = values |> list.map { v -> v / 100 } |> set.from_list |> set.length
-  (list.length(values), active_workers >= 2)
+  (list.length(values), active_workers)
 }
 
 fn main() {

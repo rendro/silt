@@ -43,9 +43,6 @@
 
 #![cfg(feature = "test-hooks")]
 
-use std::sync::Arc;
-
-use silt::runtime::completion::IoCompletion;
 use silt::typeinfo::bv;
 use silt::value::Value;
 use silt::vm::{Vm, submit_panicking_io_for_test};
@@ -75,8 +72,7 @@ fn synthetic_typed_factory(msg: &str) -> Value {
 #[test]
 fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
     let vm = Vm::new(silt::HostIo::process());
-    let completion = IoCompletion::with_timeout_err(Arc::new(synthetic_typed_factory));
-    let result = submit_panicking_io_for_test(&vm, completion);
+    let result = submit_panicking_io_for_test(&vm, synthetic_typed_factory);
 
     // Post-fix shape: Err(SyntheticTypedTimeout("panic: <msg>")).
     // Pre-fix shape: Err(String("<msg>")) — fails the outer-arm
@@ -102,8 +98,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
 
     assert_eq!(
         typed_tag, "SyntheticTypedTimeout",
-        "panic recovery must route through IoCompletion::build_timeout_err \
-         (the caller-supplied factory), so the inner tag must be the one \
+        "panic recovery must route through the caller-supplied factory, so the inner tag must be the one \
          this test installed. Got tag: {}",
         typed_tag
     );
@@ -125,39 +120,4 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
         "carried message must include the original panic payload. Got: {:?}",
         msg
     );
-}
-
-/// Belt-and-suspenders: also exercise the default (`IoCompletion::new()`)
-/// factory path, which produces `Err(IoUnknown(msg))`. This is the path
-/// the io/fs family of builtins actually uses, so a regression here
-/// would silently break user code that pattern-matches `Err(IoUnknown)`.
-#[test]
-fn iopool_worker_panic_with_default_completion_produces_io_unknown() {
-    let vm = Vm::new(silt::HostIo::process());
-    let completion = IoCompletion::new();
-    let result = submit_panicking_io_for_test(&vm, completion);
-
-    let inner = match &result {
-        Value::Variant(tag, args) if tag.is(bv::ERR) && args.len() == 1 => &args[0],
-        other => panic!("expected Err(_), got {:?}", other),
-    };
-
-    match inner {
-        Value::Variant(tag, args) if tag.is(bv::IO_UNKNOWN) && args.len() == 1 => match &args[0] {
-            Value::String(s) => {
-                assert!(
-                    s.starts_with("panic: "),
-                    "expected 'panic: ' prefix; got {:?}",
-                    s
-                );
-            }
-            other => panic!("expected String inside IoUnknown, got {:?}", other),
-        },
-        Value::String(_) => panic!(
-            "REGRESSION: default IoCompletion panic recovery produced legacy \
-             untyped Err(String) shape. Got: {:?}",
-            inner
-        ),
-        other => panic!("expected IoUnknown variant, got {:?}", other),
-    }
 }

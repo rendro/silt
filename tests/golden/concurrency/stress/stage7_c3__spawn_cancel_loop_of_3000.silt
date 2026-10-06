@@ -1,0 +1,22 @@
+-- repeat: 100
+-- stderr-not-contains: deadlock
+-- 3,000 tasks are spawned and cancelled at once, each before or while
+-- it parks on a channel nobody sends to. None is left on the channel:
+-- a send finds no receiver.
+import channel
+import task
+
+fn main() {
+  let never = channel.new(0)
+  loop left = 3000 {
+    match left {
+      0 -> ()
+      _ -> {
+        let h = task.spawn({ -> channel.receive(never) })
+        task.cancel(h)
+        loop(left - 1)
+      }
+    }
+  }
+  println("sent={channel.try_send(never, 1)}")
+}
