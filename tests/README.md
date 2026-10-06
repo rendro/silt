@@ -52,6 +52,7 @@ cargo nextest run --all-features --test heavy -E 'test(fmt_property)'      # eve
 | `SILT_FMT_FAILED=<dir>` | keep each input that failed as a file in the directory |
 | `SILT_FMT_STRESS=<count>` | (`heavy`) run `random_comments`: that many inputs with 2 to 12 comments each at random sites |
 | `SILT_FMT_SEED=<n>` | (`heavy`) the seed of those random sites (default 1) |
+| `SILT_FMT_ONLY=<text>` | only the inputs whose name holds the text: one file with every mutant of it (`SILT_FMT_ONLY=fmt/printer__pipelines SILT_FMT_FULL=1`) |
 
 A passing test prints nothing under nextest; add `--success-output
 immediate` to see the counts, or read the report file.

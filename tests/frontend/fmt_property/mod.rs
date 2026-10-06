@@ -184,7 +184,18 @@ fn inputs_under(
                 .replace('\\', "/");
             Some(Input { name, class, text })
         })
+        .filter(|input| wanted(&input.name))
         .collect()
+}
+
+/// Whether the input called `name` is run: every input, or with
+/// `SILT_FMT_ONLY=<text>` those whose name holds the text (to work on
+/// one file with every mutant of it).
+fn wanted(name: &str) -> bool {
+    match std::env::var("SILT_FMT_ONLY") {
+        Ok(only) => name.contains(&only),
+        Err(_) => true,
+    }
 }
 
 /// `examples/**/*.silt`.
@@ -252,6 +263,10 @@ pub fn doc_snippets() -> Vec<Input> {
                 None if line.trim() == "```silt" => block = Some((i + 2, String::new())),
                 None => {}
                 Some((first_line, code)) if line.trim() == "```" => {
+                    if !wanted(&file) {
+                        block = None;
+                        continue;
+                    }
                     out.push(Input {
                         name: format!("{file}:{first_line}"),
                         class: "docs",

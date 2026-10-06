@@ -61,6 +61,8 @@ pub struct Cursor<'a> {
     /// A comment that ends its line was written or carried since the
     /// last token: a second one cannot follow it on that line.
     line_ended: bool,
+    /// Where the token written last ends in the source.
+    last_written_end: u32,
     /// The first thing the printer asked for that the source does not
     /// hold. Once set, the printer's result is not used.
     pub error: Option<Mismatch>,
@@ -115,6 +117,7 @@ impl<'a> Cursor<'a> {
             pos: 0,
             next_comment: 0,
             carried: Vec::new(),
+            last_written_end: 0,
             error: None,
         }
     }
@@ -146,10 +149,12 @@ impl<'a> Cursor<'a> {
         self.tok().span.start
     }
 
-    /// Whether a comment that stands at or behind byte `from` of the
-    /// source is written already.
-    pub fn written_behind(&self, from: u32) -> bool {
-        let first = self.comments.partition_point(|c| c.span.start < from);
+    /// Whether a comment that stands behind the token written last is
+    /// written already: it is in front of whatever is written next.
+    pub fn comment_behind_last_token(&self) -> bool {
+        let first = self
+            .comments
+            .partition_point(|c| c.span.start < self.last_written_end);
         (first as u32) < self.next_comment
     }
 
@@ -422,6 +427,7 @@ impl<'a> Cursor<'a> {
         let text = self.text_of(tok);
         self.skipped_open.clear();
         self.line_ended = false;
+        self.last_written_end = tok.span.end;
         self.step();
         match tok.kind {
             // The span of the rest of a string starts behind the brace

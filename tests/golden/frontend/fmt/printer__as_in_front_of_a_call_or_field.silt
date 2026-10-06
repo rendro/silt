@@ -7,7 +7,9 @@ type P { x: Int }
 fn unwrap(r: Result(Int, String)) -> Result(Int, String) {
   let a = r as (Result(Int, String))?
   let b = (r as Result(Int, String))?
-  Ok(a + b)
+  let c = r as (Result(Int, String) -- behind the type
+  )?
+  Ok(a + b + c)
 }
 
 fn main() {
@@ -23,5 +25,9 @@ fn main() {
   let m = {- the function -} f as (Fn(Int) -> Int)(1)
   let n = -- the record
     p as (P).x
-  println("{g} {h} {i} {j} {k} {l.x} {m} {n} {unwrap(Ok(1))}")
+  let o =
+    -- above the ascription
+    p as (P).x
+  let q = f as (Fn(Int) -> Int {- in the type -})(1)
+  println("{o} {q} {g} {h} {i} {j} {k} {l.x} {m} {n} {unwrap(Ok(1))}")
 }

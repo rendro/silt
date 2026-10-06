@@ -1573,17 +1573,19 @@ impl Printer<'_> {
             // `x as T`: the parentheses stand around that, and the type
             // needs none. (The source has them around the type, or a line
             // break behind it.) They are laid out as the source's own
-            // would be: with a comment at their inside, they can break
-            // there.
-            (ExprKind::Ascription(_, ty), _) if !wrapped => {
-                let comment_ahead = self.cur.comment_ahead();
+            // would be: with a comment in front of the closing one, they
+            // can break at their inside.
+            (ExprKind::Ascription(..), _) if !wrapped => {
+                // The comments in front stay in front of the parenthesis.
+                let leading = self.cur.leading();
                 let inner = self.expr(head, Ctx::top());
                 let (open, close) = (Doc::text("("), Doc::text(")"));
-                if comment_ahead || self.cur.written_behind(ty.span.end) {
+                let wrapped = if self.cur.comment_behind_last_token() {
                     parenthesized(open, inner, close)
                 } else {
                     Doc::concat(vec![open, inner, close])
-                }
+                };
+                Doc::concat(vec![leading, wrapped])
             }
             // `1.f`; a space only where the lexer would read the two as
             // one number.
