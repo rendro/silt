@@ -263,7 +263,7 @@ fn check(
                 chunk.closure(f).function.upvalue_count()
             ));
         }
-        Instr::CallMethod { argc: 0, .. } => {
+        Instr::CallMethod { argc: 0, .. } | Instr::TailCallMethod { argc: 0, .. } => {
             return fail(format!("`{op}` has no receiver"));
         }
         _ => {}

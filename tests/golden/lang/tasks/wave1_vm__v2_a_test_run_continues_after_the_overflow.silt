@@ -7,15 +7,12 @@
 -- stderr-contains: PASS wave1_vm__v2_a_test_run_continues_after_the_overflow.silt::test_b_moderate_recursion_afterwards
 import test
 
--- (The method is called on a value of a bounded type variable: the VM
--- finds it by the value's type and runs it in a nested loop.)
 trait Deep { fn go(self) -> Int }
-fn next(x: a) -> Int where a: Deep { x.go() }
 trait Deep for Int {
   fn go(self) -> Int {
     match self {
       0 -> 0
-      _ -> 1 + next(self - 1)
+      _ -> 1 + (self - 1).go()
     }
   }
 }

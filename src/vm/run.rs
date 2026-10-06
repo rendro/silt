@@ -324,6 +324,160 @@ impl Vm {
         }
     }
 
+    /// Run `closure` in the current frame, with the `argc` values from
+    /// the stack's slot `args_at` on as its arguments: a tail call.
+    fn reuse_frame(&mut self, closure: Arc<VmClosure>, args_at: usize, argc: usize) {
+        let base = self.frame().base_slot;
+        for i in 0..argc {
+            self.stack[base + i] = self.stack[args_at + i].clone();
+        }
+        self.stack.truncate(base + argc);
+        // Record the caller that's about to be overwritten so
+        // `enrich_error` can still surface the logical call
+        // stack for runtime errors. The caller's name comes
+        // from its closure's function name; the caller's span
+        // points at the tail-call site (the op just before
+        // `frame.ip`, which `fetch` has stepped past it).
+        // Bounded by TCO_ELIDED_CAP entries per depth — on
+        // overflow we drop the oldest caller at this depth.
+        // The existing `render_call_stack` head/tail truncation
+        // then surfaces the remaining chain with a "... (N more
+        // frames)" marker for long chains.
+        //
+        // Lock: tests/lang/callback_frame_capture_tests.rs
+        // `test_tail_call_chain_preserves_caller_frames_in_call_stack`
+        // and `test_tail_call_chain_ring_buffer_caps_diagnostic_chain`.
+        let depth = self.frames.len().saturating_sub(1);
+        let (caller_name, caller_span) = {
+            let frame = self.frame();
+            let caller_ip = frame.ip.saturating_sub(1);
+            (
+                frame.closure.function.name().to_string(),
+                frame.closure.function.chunk().span_at(caller_ip),
+            )
+        };
+        // The entries of this depth are the log's last ones.
+        let at_depth = self
+            .tco_elided
+            .iter()
+            .rev()
+            .take_while(|(d, _, _)| *d == depth)
+            .count();
+        if at_depth >= crate::vm::runtime::TCO_ELIDED_CAP {
+            self.tco_elided.remove(self.tco_elided.len() - at_depth);
+        }
+        self.tco_elided.push((depth, caller_name, caller_span));
+        let frame = self.frame_mut();
+        frame.closure = closure;
+        frame.ip = 0;
+    }
+
+    /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
+    /// named by the constant `method`, of the trait `trait_index` names,
+    /// for the type of the receiver, the first of the top `argc`
+    /// values.
+    fn call_method(
+        &mut self,
+        method: crate::bytecode::Const,
+        argc: usize,
+        trait_index: u16,
+        tail: bool,
+    ) -> Result<DispatchResult, VmError> {
+        // As for a builtin's name: the method's stays in the
+        // constants.
+        let closure = self.frame().closure.clone();
+        let method_name = closure.function.chunk().string(method);
+        let receiver_slot = self.stack.len() - argc;
+        let receiver = self.stack[receiver_slot].clone();
+        let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
+        // Descriptor-as-receiver (e.g. `Int.default()`,
+        // `body.decode(Todo)` where the descriptor is piped in) is
+        // a dispatch key, not a value argument. The method's
+        // compiled body never has a slot for it — skip it when
+        // assembling the argument vector.
+        let descriptor_receiver = matches!(
+            &receiver,
+            Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
+        );
+        if trait_index == crate::bytecode::NO_TRAIT
+            && self.global_slots.ambiguous(
+                receiver_type,
+                method_name,
+                !matches!(receiver, Value::Record(..) | Value::Variant(..)),
+            )
+        {
+            return Err(VmError::new(format!(
+                "ambiguous method '{method_name}' for type '{}': two traits provide it, \
+                 and this call names neither; add a `where` bound for the receiver",
+                crate::types::canonical::dispatch_type_name(&receiver)
+            )));
+        }
+        // A call that names no trait is a call of the function a
+        // record's field holds, when the record has the field:
+        // the checker reads `r.f(x)` as the field before any
+        // method of the name (and names the trait when it means
+        // a method).
+        let field_call = trait_index == crate::bytecode::NO_TRAIT
+            && matches!(&receiver, Value::Record(_, fields) if fields.contains_key(method_name));
+        let method = if field_call {
+            None
+        } else {
+            self.global_slots
+                .call_method(trait_index, receiver_type, method_name)
+                .and_then(|slot| self.globals.get(slot as usize).cloned().flatten())
+        };
+        if let Some(func) = method {
+            // In tail position a method that is a closure takes the
+            // current frame over, as a tail-called function does.
+            if tail && let Value::VmClosure(closure) = &func {
+                let args_at = receiver_slot + usize::from(descriptor_receiver);
+                let argc = self.stack.len() - args_at;
+                if argc != closure.function.arity() {
+                    return Err(VmError::type_confusion(format!(
+                        "function '{}' expects {} arguments, got {}",
+                        closure.function.name(),
+                        closure.function.arity(),
+                        argc
+                    )));
+                }
+                self.reuse_frame(closure.clone(), args_at, argc);
+                return Ok(DispatchResult::Continue);
+            }
+            // The method's frame starts above a slot of its own,
+            // as a called function's does: the descriptor's, or
+            // one made below the receiver.
+            if !descriptor_receiver {
+                self.stack.insert(receiver_slot, Value::Unit);
+            }
+            let argc = self.stack.len() - receiver_slot - 1;
+            let entered = self.call_value(func, argc, receiver_slot)?;
+            return Ok(self.entered(entered));
+        }
+        // Try built-in trait methods (display, equal, compare)
+        if !field_call
+            && let Some(result) =
+                self.dispatch_trait_method(&receiver, method_name, &self.stack[receiver_slot + 1..])
+        {
+            self.stack.truncate(receiver_slot);
+            self.push(result?);
+        } else if let Value::Record(_, ref fields) = receiver
+            && let Some(callable) = fields.get(method_name).cloned()
+        {
+            // A record's field that holds a function: the
+            // receiver's slot is the function's.
+            let argc = self.stack.len() - receiver_slot - 1;
+            let entered = self.call_value(callable, argc, receiver_slot)?;
+            return Ok(self.entered(entered));
+        } else {
+            return Err(VmError::type_confusion(format!(
+                "no method '{method_name}' for type '{}'",
+                crate::types::canonical::dispatch_type_name(&receiver)
+            )));
+        }
+
+        Ok(DispatchResult::Continue)
+    }
+
     /// Run the instruction `instr`, which [`Vm::fetch`] has stepped
     /// past.
     pub(super) fn dispatch_one(&mut self, instr: Instr) -> Result<DispatchResult, VmError> {
@@ -547,49 +701,7 @@ impl Vm {
                             argc
                         )));
                     }
-                    let base = self.frame().base_slot;
-                    for i in 0..argc {
-                        self.stack[base + i] = self.stack[func_slot + 1 + i].clone();
-                    }
-                    self.stack.truncate(base + argc);
-                    // Record the caller that's about to be overwritten so
-                    // `enrich_error` can still surface the logical call
-                    // stack for runtime errors. The caller's name comes
-                    // from its closure's function name; the caller's span
-                    // points at the tail-call site (the op just before
-                    // `frame.ip`, which `fetch` has stepped past it).
-                    // Bounded by TCO_ELIDED_CAP entries per depth — on
-                    // overflow we drop the oldest caller at this depth.
-                    // The existing `render_call_stack` head/tail truncation
-                    // then surfaces the remaining chain with a "... (N more
-                    // frames)" marker for long chains.
-                    //
-                    // Lock: tests/lang/callback_frame_capture_tests.rs
-                    // `test_tail_call_chain_preserves_caller_frames_in_call_stack`
-                    // and `test_tail_call_chain_ring_buffer_caps_diagnostic_chain`.
-                    let depth = self.frames.len().saturating_sub(1);
-                    let (caller_name, caller_span) = {
-                        let frame = self.frame();
-                        let caller_ip = frame.ip.saturating_sub(1);
-                        (
-                            frame.closure.function.name().to_string(),
-                            frame.closure.function.chunk().span_at(caller_ip),
-                        )
-                    };
-                    // The entries of this depth are the log's last ones.
-                    let at_depth = self
-                        .tco_elided
-                        .iter()
-                        .rev()
-                        .take_while(|(d, _, _)| *d == depth)
-                        .count();
-                    if at_depth >= crate::vm::runtime::TCO_ELIDED_CAP {
-                        self.tco_elided.remove(self.tco_elided.len() - at_depth);
-                    }
-                    self.tco_elided.push((depth, caller_name, caller_span));
-                    let frame = self.frame_mut();
-                    frame.closure = closure;
-                    frame.ip = 0;
+                    self.reuse_frame(closure, func_slot + 1, argc);
                 } else {
                     let entered = self.call_value(func_val, argc, func_slot)?;
                     return Ok(self.entered(entered));
@@ -1055,89 +1167,11 @@ impl Vm {
                 let msg = self.pop();
                 return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
             }
-            Instr::CallMethod {
-                method,
-                argc,
-                of: trait_index,
-            } => {
-                // As for a builtin's name: the method's stays in the
-                // constants.
-                let closure = self.frame().closure.clone();
-                let method_name = closure.function.chunk().string(method);
-                let receiver_slot = self.stack.len() - argc;
-                let receiver = self.stack[receiver_slot].clone();
-                let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
-                // Descriptor-as-receiver (e.g. `Int.default()`,
-                // `body.decode(Todo)` where the descriptor is piped in) is
-                // a dispatch key, not a value argument. The method's
-                // compiled body never has a slot for it — skip it when
-                // assembling the argument vector.
-                let descriptor_receiver = matches!(
-                    &receiver,
-                    Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
-                );
-                if trait_index == crate::bytecode::NO_TRAIT
-                    && self.global_slots.ambiguous(
-                        receiver_type,
-                        method_name,
-                        !matches!(receiver, Value::Record(..) | Value::Variant(..)),
-                    )
-                {
-                    return Err(VmError::new(format!(
-                        "ambiguous method '{method_name}' for type '{}': two traits provide it, \
-                         and this call names neither; add a `where` bound for the receiver",
-                        crate::types::canonical::dispatch_type_name(&receiver)
-                    )));
-                }
-                // A call that names no trait is a call of the function a
-                // record's field holds, when the record has the field:
-                // the checker reads `r.f(x)` as the field before any
-                // method of the name (and names the trait when it means
-                // a method).
-                let field_call = trait_index == crate::bytecode::NO_TRAIT
-                    && matches!(&receiver, Value::Record(_, fields) if fields.contains_key(method_name));
-                let method = if field_call {
-                    None
-                } else {
-                    self.global_slots
-                        .call_method(trait_index, receiver_type, method_name)
-                        .and_then(|slot| self.globals.get(slot as usize).cloned().flatten())
-                };
-                if let Some(func) = method {
-                    // The method's frame starts above a slot of its own,
-                    // as a called function's does: the descriptor's, or
-                    // one made below the receiver.
-                    if !descriptor_receiver {
-                        self.stack.insert(receiver_slot, Value::Unit);
-                    }
-                    let argc = self.stack.len() - receiver_slot - 1;
-                    let entered = self.call_value(func, argc, receiver_slot)?;
-                    return Ok(self.entered(entered));
-                }
-                // Try built-in trait methods (display, equal, compare)
-                if !field_call
-                    && let Some(result) = self.dispatch_trait_method(
-                        &receiver,
-                        method_name,
-                        &self.stack[receiver_slot + 1..],
-                    )
-                {
-                    self.stack.truncate(receiver_slot);
-                    self.push(result?);
-                } else if let Value::Record(_, ref fields) = receiver
-                    && let Some(callable) = fields.get(method_name).cloned()
-                {
-                    // A record's field that holds a function: the
-                    // receiver's slot is the function's.
-                    let argc = self.stack.len() - receiver_slot - 1;
-                    let entered = self.call_value(callable, argc, receiver_slot)?;
-                    return Ok(self.entered(entered));
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "no method '{method_name}' for type '{}'",
-                        crate::types::canonical::dispatch_type_name(&receiver)
-                    )));
-                }
+            Instr::CallMethod { method, argc, of } => {
+                return self.call_method(method, argc, of, false);
+            }
+            Instr::TailCallMethod { method, argc, of } => {
+                return self.call_method(method, argc, of, true);
             }
             Instr::Slide { slot } => {
                 // Keep the top value, cut the frame back to `slot` values

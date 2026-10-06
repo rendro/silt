@@ -157,7 +157,7 @@ fn disassemble_instruction(
         Instr::CallBuiltin { name, argc } => with_constant_and_count(name, argc),
         // CallMethod: the method name, argc, and the trait whose method
         // it calls (shown after the name when the call names one).
-        Instr::CallMethod { method, argc, of } => {
+        Instr::CallMethod { method, argc, of } | Instr::TailCallMethod { method, argc, of } => {
             let line = with_constant_and_count(method, argc);
             match globals.trait_name(of) {
                 Some(t) => format!("{line} of {t}"),
