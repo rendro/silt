@@ -536,6 +536,27 @@ impl TypeChecker {
         {
             self.unify(receiver_ty, self_param, span);
         }
+        // A method of a structural trait (`.compare()`, `.equal()`,
+        // `.hash()`, a derived `.display()`) is the receiver's when its
+        // parts have the trait too.
+        if let Some(tr) = self.entry_trait(entry, method_name)
+            && let Some(head) = head
+            && crate::defs::builtin_trait_id(&resolve(tr.name)) == Some(tr.id)
+            && self.by_structure(tr, head)
+        {
+            self.want(
+                Pred::Trait {
+                    tr,
+                    args: Vec::new(),
+                    subject: receiver_ty.clone(),
+                },
+                Origin {
+                    span,
+                    callee: Some(method_name),
+                    op: None,
+                },
+            );
+        }
         self.solve_wanted(owed_before);
         self.apply(&instantiated_ty)
     }
@@ -2191,7 +2212,7 @@ impl TypeChecker {
                                 let domain = if is_equality {
                                     "a comparable type"
                                 } else {
-                                    "Int, Float, String, List, Range, Record, or Variant"
+                                    "Int, Float, String, Bool, List, Tuple, Record, or Variant"
                                 };
                                 format!("operator {op_str} requires {domain}, got '{t}'")
                             },
@@ -2213,7 +2234,7 @@ impl TypeChecker {
                                     let domain = if is_equality {
                                         "a comparable type"
                                     } else {
-                                        "Int, Float, String, List, Range, Record, or Variant"
+                                        "Int, Float, String, Bool, List, Tuple, Record, or Variant"
                                     };
                                     self.error(
                                         Code::UnsupportedOperation,
@@ -3748,6 +3769,9 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         Type::Int
         | Type::Float
         | Type::String
+        | Type::Bool
+        | Type::Unit
+        | Type::Tuple(_)
         | Type::List(_)
         | Type::Range(_)
         | Type::Record(..)
@@ -3758,9 +3782,7 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         // Round 92: abstract associated-type projections are "maybe valid"
         // like Type::Var — see is_valid_arith_operand above for rationale.
         Type::AssocProj { .. } => true,
-        Type::Bool | Type::Unit | Type::Tuple(_) | Type::Map(..) | Type::Set(_) if is_equality => {
-            true
-        }
+        Type::Map(..) | Type::Set(_) if is_equality => true,
         // TYPE-GAP (round 81 F1): closed-row anon records compile down to
         // `Value::Record` and Value's PartialEq compares them element-wise
         // (src/value/key.rs), so `==`/`!=` is well-defined for them.
@@ -3768,8 +3790,7 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         // differ on unobserved fields, so the answer would depend on the
         // hidden tail — surface the row variable as the reason rather than
         // silently letting one row's surplus fields decide the result.
-        // Ordering still rejects AnonRecord (the VM's compare() does not
-        // support it, mirroring the Tuple/Map/Set/Bool/Unit treatment).
+        // Ordering still rejects AnonRecord, like Map and Set.
         Type::AnonRecord { fields: _, tail } if is_equality => {
             matches!(tail, RowTail::Closed)
         }

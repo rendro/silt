@@ -4,6 +4,12 @@ error[type]: type 'A' cannot derive 'Display': variant 'X' payload #1 has type '
  9 |   println(A.Y)
    |   ^^^^^^^^^^^^ type 'A' cannot derive 'Display': variant 'X' payload #1 has type 'Option(Fn(Int) -> Int)', which is not printable
 
+error[type]: type 'Option(Fn(Int) -> Int)' cannot derive 'Display': variant 'Some' payload #1 has type 'Fn(Int) -> Int', which is not printable
+ --> span_derived_impl_error_at_type_once.silt:6:1
+   |
+ 6 | type A { X(Option(Fn(Int) -> Int)), Y }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Option(Fn(Int) -> Int)' cannot derive 'Display': variant 'Some' payload #1 has type 'Fn(Int) -> Int', which is not printable
+
 error[type]: type 'Fn' does not implement trait 'Display'
  --> span_derived_impl_error_at_type_once.silt:6:1
    |

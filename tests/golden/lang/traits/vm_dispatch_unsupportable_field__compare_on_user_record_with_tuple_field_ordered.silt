@@ -1,5 +1,5 @@
--- exit: 1
--- stderr-contains: error[type]: type 'Pair' cannot derive 'Compare': field 't' has type '(Int, Int)', which is not comparable
+-- A record with a tuple field is ordered: a tuple has Compare when its
+-- parts do.
 type Pair { t: (Int, Int) }
 fn cmp_gen(x: a, y: a) -> Int where a: Compare { x.compare(y) }
 fn main() {

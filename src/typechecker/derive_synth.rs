@@ -723,9 +723,9 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             .trait_impl_set
             .insert((TraitKey::builtin("Number"), TypeRef::builtin(ty)));
     }
-    // Tuple/Map/Set: Equal/Hash/Display only. (A map and a set have no
-    // order; `<` and `.compare()` do not order tuples.)
-    register_auto_derived_impls_for(checker, &["Tuple", "Map", "Set"], non_ordering_traits);
+    // A tuple has what its parts have; a map and a set have no order.
+    register_auto_derived_impls_for(checker, &["Tuple"], all_auto_traits);
+    register_auto_derived_impls_for(checker, &["Map", "Set"], non_ordering_traits);
     // A channel is equal to itself only (`ch1 == ch2`).
     register_auto_derived_impls_for(checker, &["Channel"], &["Equal"]);
     // ── Built-in enums + records that flow through synth ────────────

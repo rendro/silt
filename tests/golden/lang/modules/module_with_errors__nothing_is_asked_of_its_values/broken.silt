@@ -1,0 +1,4 @@
+pub fn connect(s) { nope_a(s) }
+pub fn thing() { nope_b }
+pub fn pair() { (nope_c, nope_d) }
+pub fn opt() { nope_e }

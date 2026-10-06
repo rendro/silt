@@ -498,8 +498,9 @@ and for `Display` where no impl is written:
 - `Int`, `Float`, `String`, `Bool` and `()` have all four.
 - A function has none. A channel has `Equal` only (it is equal to
   itself).
-- A list has what its elements have. A tuple, a map and a set have
-  `Equal`, `Hash` and `Display` when their parts do, and no `Compare`.
+- A list and a tuple have what their parts have (a tuple is ordered
+  part by part). A map and a set have `Equal`, `Hash` and `Display`
+  when their parts do, and no `Compare`.
 - A record or an enum has a trait when every field and payload does, at
   the type's arguments: `Option(Int)` has `Compare`, `Option(Fn(Int) ->
   Int)` has none of them. A closed anonymous record (`{a: Int}`) has

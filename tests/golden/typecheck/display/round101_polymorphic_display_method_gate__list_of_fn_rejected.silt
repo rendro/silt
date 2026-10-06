@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
+-- `.display()` on a list is the list's when its elements have Display:
+-- a list of functions has none, as for `println`.
+fn main() {
+  let f = { y -> y }
+  println([f].display())
+}

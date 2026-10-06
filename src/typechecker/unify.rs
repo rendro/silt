@@ -728,6 +728,12 @@ impl TypeChecker {
         };
 
         match (&t1, &t2) {
+            // A type still unknown that meets what has no type (a value
+            // of a module that failed to load, an expression already
+            // reported) has none either: nothing more is asked of it.
+            (Type::Var(v), Type::Error) | (Type::Error, Type::Var(v)) => {
+                self.bind(*v, Type::Error, out);
+            }
             (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)
