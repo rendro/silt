@@ -63,10 +63,8 @@ pub(super) struct TraitInfo {
     /// Parallel to `supertraits`: the TypeExpr args supplied to each
     /// supertrait reference. For `trait Sub(a): Super(a)` the entry for
     /// `Super` is `[TypeExpr::Named("a")]`. Empty when the supertrait
-    /// is referenced without args. The `expand_with_supertraits_args`
-    /// path uses these to propagate the enclosing trait's args into
-    /// the supertrait's `trait_arg_bindings` during where-clause
-    /// activation. Arg-less entries keep the bare-name behaviour.
+    /// is referenced without args. `declare_bound` gives a variable
+    /// bounded by this trait the supertrait's bound at these arguments.
     pub(super) supertrait_args: Vec<Vec<TypeExpr>>,
     /// The methods, each with its type: a complete signature, in which
     /// `Self` is `self_var` and the trait's parameters are
@@ -77,7 +75,7 @@ pub(super) struct TraitInfo {
     /// variables, with the bound's trait arguments. They are part of the
     /// method's signature: in force in its default body and in every
     /// impl's body, and owed by every call.
-    pub(super) method_bounds: HashMap<Symbol, Vec<MethodBound>>,
+    pub(super) method_bounds: HashMap<Symbol, Vec<Pred>>,
     /// The variable `Self` is in the methods' types.
     pub(super) self_var: TyVar,
     /// The name of each variable the trait's declaration writes: `Self`,
@@ -113,10 +111,6 @@ pub(super) struct TraitInfo {
     pub(super) defined_in: Symbol,
 }
 
-/// A bound on a type variable of a method: the variable, the trait and
-/// the trait's arguments.
-pub(super) type MethodBound = (TyVar, TraitKey, Vec<Type>);
-
 /// Information about a single associated-type declaration inside a
 /// trait. Bounds are stored as `(trait_name, trait_args)` pairs — the
 /// `trait_args` are the AST `TypeExpr`s captured at decl time and
@@ -140,28 +134,11 @@ pub(crate) struct MethodEntry {
     /// for auto-derived entries (Showable on every type, etc.) that
     /// don't participate in user-visible coherence rules.
     pub(super) trait_name: Option<TraitKey>,
-    /// Trait constraints that must hold at every call site of this
-    /// method. Accumulated from:
-    ///
-    /// (a) impl-level `where` clauses on the trait-impl header
-    ///     (`trait Greet for Box(a) where a: Greet { ... }`) — attached
-    ///     to every method in the impl.
-    /// (b) method-level `where` clauses on individual impl methods
-    ///     (`fn greet(self) -> String where a: Greet { ... }`) — where
-    ///     `a` is either an impl-level binder or a method param binder.
-    ///
-    /// TyVars here live in the same TyVar space as `method_type`, so
-    /// `instantiate_method_entry` can substitute both through a shared
-    /// mapping. Empty for auto-derived entries and for impls with no
-    /// where clauses (which is every impl today prior to this feature).
-    ///
-    /// The third tuple slot carries the trait args for parameterized
-    /// trait bounds — `where a: TryInto(Int)` stores `[Int]` so
-    /// `verify_trait_obligation` can reject mismatched impls (e.g.
-    /// `TryInto(Float) for ...` against a `where a: TryInto(Int)` bound).
-    /// Empty for parameterless traits and the legacy parameterless
-    /// where-clause path.
-    pub(super) method_constraints: Vec<(TyVar, TraitKey, Vec<Type>)>,
+    /// What every use of the method owes, on the variables of
+    /// `method_type`: the `where` clauses of the impl's header
+    /// (`trait Greet for Box(a) where a: Greet`) and the bounds the
+    /// trait declares for the method. None for a derived impl's.
+    pub(super) preds: Vec<Pred>,
 }
 
 /// What the checks of one session share: the type variables, the

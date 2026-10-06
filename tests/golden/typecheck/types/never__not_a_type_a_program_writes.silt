@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: unknown type 'Never'
+-- `Never` is the result type of the builtin `panic`; a program cannot
+-- write it.
+fn boom() -> Never { panic("x") }
+fn main() { boom() }

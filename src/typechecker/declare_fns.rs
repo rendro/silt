@@ -90,7 +90,7 @@ impl TypeChecker {
         let ret_type = if let Some(te) = &f.return_type {
             let resolved = self.resolve_type_expr(te, &mut param_map);
             for name in param_map.keys() {
-                if !pre_return_keys.contains(name) {
+                if !pre_return_keys.contains(name) && !self.registry_rows {
                     let n = resolve(*name);
                     self.error(Code::InvalidTypeAnnotation,
                         format!(
@@ -111,11 +111,10 @@ impl TypeChecker {
         let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type.clone()));
         let mut bounds: Vec<Pred> = Vec::new();
 
-        // Resolve where clauses to (TyVar, trait_name) using param_map.
-        // Type variables must be introduced via explicit type annotations in the signature.
-        // Trait args (for parameterized traits like `a: TryInto(b)`) are
-        // resolved through `param_map` and stashed in `trait_arg_bindings`
-        // so descriptor method resolution can substitute them later.
+        // Each where clause is a predicate of the scheme. Its type
+        // variable must be one the signature's annotations write; its
+        // trait arguments (`a: TryInto(b)`) are resolved through
+        // `param_map`.
         for wc in &f.where_clauses {
             let type_param = &wc.type_param;
             let trait_name = &wc.trait_name;

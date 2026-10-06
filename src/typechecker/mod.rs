@@ -245,6 +245,10 @@ pub struct TypeChecker {
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
+    /// Whether the declarations read are rows of the builtin registry.
+    /// A row's text may say what a program's cannot: the type `Never`,
+    /// and a result of a type no parameter fixes (`set.new() -> Set(a)`).
+    pub(super) registry_rows: bool,
     /// What the checks of a session share; see [`Tables`]. Moved in
     /// for one module's check and out again after it.
     pub(super) tables: Tables,
@@ -301,6 +305,7 @@ impl TypeChecker {
             unresolved_impl_methods: std::collections::HashSet::new(),
             is_cell: false,
             signatures_only: false,
+            registry_rows: false,
             tables: Tables::default(),
         }
     }

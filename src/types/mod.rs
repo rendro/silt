@@ -515,6 +515,15 @@ pub enum Pred {
 }
 
 impl Pred {
+    /// `var` implements the trait `tr` at `args`: a `where` bound.
+    pub fn bound(var: TyVar, tr: TraitKey, args: Vec<Type>) -> Pred {
+        Pred::Trait {
+            tr,
+            args,
+            subject: Type::Var(var),
+        }
+    }
+
     /// The predicate with its type variables replaced as `mapping` says.
     pub fn substitute(&self, mapping: &HashMap<TyVar, Type>) -> Pred {
         match self {

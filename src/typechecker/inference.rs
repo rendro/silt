@@ -268,9 +268,9 @@ impl TypeChecker {
         &mut self,
         r: RigidId,
         field: Symbol,
-    ) -> Vec<(TraitKey, Type, Vec<MethodBound>)> {
+    ) -> Vec<(TraitKey, Scheme)> {
         let in_scope = self.bounds.get(&r.var).cloned().unwrap_or_default();
-        let mut matches: Vec<(TraitKey, Type, Vec<MethodBound>)> = Vec::new();
+        let mut matches: Vec<(TraitKey, Scheme)> = Vec::new();
         for (trait_name, bound_args) in in_scope {
             let Some(info) = self.tables.traits.get(&trait_name) else {
                 continue;
@@ -285,18 +285,25 @@ impl TypeChecker {
                     mapping.insert(tv, substitute_vars(arg, &self.rigid_of));
                 }
             }
-            // The method's own bounds: each call owes them.
-            let bounds = info
+            // What the method leaves general (its own type variables)
+            // is new at each call, which owes the method's own bounds.
+            let ty = substitute_vars(method_ty, &mapping);
+            let preds = info
                 .method_bounds
                 .get(&field)
                 .into_iter()
                 .flatten()
-                .map(|(tv, bound, args)| {
-                    let args = args.iter().map(|t| substitute_vars(t, &mapping)).collect();
-                    (*tv, *bound, args)
-                })
+                .map(|pred| pred.substitute(&mapping))
                 .collect();
-            matches.push((trait_name, substitute_vars(method_ty, &mapping), bounds));
+            matches.push((
+                trait_name,
+                Scheme {
+                    vars: free_vars_in(&ty),
+                    preds,
+                    ty,
+                    optional_last_param: false,
+                },
+            ));
         }
         if let Some(t) = self.forced_trait {
             matches.retain(|(n, ..)| *n == t);
@@ -304,40 +311,14 @@ impl TypeChecker {
         matches
     }
 
-    /// The type of a call of a method that a bound gives an annotation
-    /// variable (`bound_methods`): what the method leaves general (its
-    /// own type variables) is fresh at each call, and the call owes the
-    /// method's own bounds on them.
-    pub(super) fn instantiate_bound_method(
-        &mut self,
-        method_ty: &Type,
-        bounds: &[MethodBound],
-        method: Symbol,
-        span: Span,
-    ) -> Type {
-        let ty = self.apply(method_ty);
-        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-        for v in free_vars_in(&ty) {
-            mapping.insert(v, self.fresh_var());
-        }
-        for (tv, bound, args) in bounds {
-            let Some(Type::Var(fresh)) = mapping.get(tv).cloned() else {
-                continue;
-            };
-            let args: Vec<Type> = args.iter().map(|t| substitute_vars(t, &mapping)).collect();
-            self.want(
-                Pred::Trait {
-                    tr: *bound,
-                    args,
-                    subject: Type::Var(fresh),
-                },
-                Origin {
-                    span,
-                    callee: Some(method),
-                },
-            );
-        }
-        substitute_vars(&ty, &mapping)
+    /// The type of a use of the method `method` at `span`, from its
+    /// scheme: the use owes the scheme's predicates.
+    pub(super) fn instantiate_method(&mut self, scheme: &Scheme, method: Symbol, span: Span) -> Type {
+        self.named_use = Some(Origin {
+            span,
+            callee: Some(method),
+        });
+        self.instantiate(scheme)
     }
 
     /// Report a call of `method`, of the trait `trait_name` another module
@@ -390,32 +371,12 @@ impl TypeChecker {
         (!visible_declares).then_some(first)
     }
 
-    /// Dispatch a method lookup through a `MethodEntry`, returning the
-    /// instantiated method type AND plumbing any impl- or method-level
-    /// where-clause constraints into `pending_where_constraints` for
-    /// the finalize-pass check.
-    ///
-    /// Receiver-method syntax (`receiver.method(...)`) goes through
-    /// `method_table` rather than `env`, so prior rounds' fn-call where
-    /// enforcement never fired on it. This helper is the single place
-    /// that lifts method_table dispatch into the same constraint-check
-    /// machinery used by ordinary fn calls: each constraint tyvar gets
-    /// a fresh substitution via `instantiate_method_entry`, and the
-    /// caller's span + active_constraints get snapshotted for finalize.
-    ///
-    /// The `receiver_ty` is unified with the method's first parameter
-    /// (the `self` slot) BEFORE the constraint check, so impl-level
-    /// where clauses see the concrete receiver-element type when the
-    /// caller passes a monomorphic receiver. Without this unification,
-    /// the impl's `a_fresh` TyVar would stay unbound through the rest of
-    /// inference — the Call arm applies args to `params[1..]` only on
-    /// method calls, so the `self` param is the one slot no other path
-    /// touches.
-    ///
-    /// For concrete-receiver call sites, the constraint fires immediately
-    /// via `type_name_for_impl`; for unresolved-tyvar receivers it defers
-    /// via `pending_where_constraints` and resolves during
-    /// `finalize_deferred_checks` after all Calls have unified args.
+    /// The type of `receiver.method` for the impl method `entry`: the
+    /// method's scheme instantiated (`instantiate`), with the receiver
+    /// unified with its `self` parameter, so that what the impl's header
+    /// and the method ask of the receiver's parts is checked against the
+    /// receiver's type; on a part still unknown it waits like any
+    /// predicate owed.
     pub(super) fn dispatch_method_entry(
         &mut self,
         entry: &MethodEntry,
@@ -451,7 +412,12 @@ impl TypeChecker {
         self.method_trait = self
             .forced_trait
             .or_else(|| self.entry_trait(entry, method_name));
-        let (instantiated_ty, preds) = self.instantiate_method_entry(entry);
+        // What the impl and the method ask of the receiver's parts and
+        // of the method's own type variables is owed, and checked once
+        // the receiver is unified with the method's `self` below.
+        let owed_before = self.wanted.len();
+        let scheme = self.method_scheme(entry);
+        let instantiated_ty = self.instantiate_method(&scheme, method_name, span);
         // Reject value-receiver calls on no-self trait methods (`empty`,
         // `default`, etc.). The method has no slot for the receiver, so
         // invoking it via `instance.method()` is meaningless. Point the
@@ -483,17 +449,7 @@ impl TypeChecker {
         {
             self.unify(receiver_ty, self_param, span);
         }
-        // What the impl and the method ask of the receiver's parts and
-        // of the method's own type variables.
-        for pred in preds {
-            self.want(
-                pred,
-                Origin {
-                    span,
-                    callee: Some(method_name),
-                },
-            );
-        }
+        self.solve_wanted(owed_before);
         self.apply(&instantiated_ty)
     }
 
@@ -583,8 +539,7 @@ impl TypeChecker {
                     return None;
                 }
                 self.method_trait = Some(matches[0].0);
-                let instantiated =
-                    self.instantiate_bound_method(&matches[0].1, &matches[0].2, field, span);
+                let instantiated = self.instantiate_method(&matches[0].1, field, span);
                 Some(self.apply(&instantiated))
             }
             _ => {
@@ -603,7 +558,8 @@ impl TypeChecker {
                     return Some(Type::Error);
                 }
                 self.method_trait = self.entry_trait(&entry, field);
-                let (instantiated, _constraints) = self.instantiate_method_entry(&entry);
+                let scheme = self.method_scheme(&entry);
+                let instantiated = self.instantiate_method(&scheme, field, span);
                 Some(self.apply(&instantiated))
             }
         }
@@ -1480,8 +1436,8 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         self.method_trait = self.entry_trait(&entry, field);
-                        let scheme = Self::method_scheme(&entry);
-                        let ty = self.instantiate(&scheme);
+                        let scheme = self.method_scheme(&entry);
+                        let ty = self.instantiate_method(&scheme, field, span);
                         let ty = self.apply(&ty);
                         expr.ty = Some(ty.clone());
                         return ty;
@@ -1844,11 +1800,10 @@ impl TypeChecker {
                                 span,
                             );
                             Type::Error
-                        } else if let Some((trait_name, method_ty, bounds)) = matches.first() {
+                        } else if let Some((trait_name, scheme)) = matches.first() {
                             self.last_field_access_was_method = true;
                             self.method_trait = Some(*trait_name);
-                            let instantiated =
-                                self.instantiate_bound_method(method_ty, bounds, field, span);
+                            let instantiated = self.instantiate_method(scheme, field, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;

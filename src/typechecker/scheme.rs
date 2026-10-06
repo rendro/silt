@@ -127,44 +127,6 @@ impl TypeChecker {
         substitute_vars(&scheme.ty, &mapping)
     }
 
-    /// Instantiate a `MethodEntry`'s template type AND its where-clause
-    /// constraints through a single shared substitution, so the returned
-    /// type and predicates use consistent fresh type variables. The
-    /// caller owes the predicates once it has unified the receiver.
-    pub(super) fn instantiate_method_entry(&mut self, entry: &MethodEntry) -> (Type, Vec<Pred>) {
-        let ty = self.apply(&entry.method_type);
-        let mut fvs: Vec<TyVar> = free_vars_in(&ty);
-        for (tv, _, args) in &entry.method_constraints {
-            if !fvs.contains(tv) {
-                fvs.push(*tv);
-            }
-            for arg in args {
-                for v in free_vars_in(arg) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-        }
-        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-        for v in fvs {
-            mapping.insert(v, self.fresh_var());
-        }
-        let preds = entry
-            .method_constraints
-            .iter()
-            .map(|(tv, tr, args)| {
-                Pred::Trait {
-                    tr: *tr,
-                    args: args.clone(),
-                    subject: Type::Var(*tv),
-                }
-                .substitute(&mapping)
-            })
-            .collect();
-        (substitute_vars(&ty, &mapping), preds)
-    }
-
     /// Enter the scheme of each definition the module declares in the
     /// session's tables, from the module's scope `env`: what an importer
     /// of the module reads.
@@ -235,21 +197,13 @@ impl TypeChecker {
         self.tables.schemes.get(&id).cloned()
     }
 
-    /// The scheme of a method called through its type (`Pt.show(p)`):
-    /// its template, generalized over its free type variables, with its
-    /// where-clause constraints.
-    pub(super) fn method_scheme(entry: &MethodEntry) -> Scheme {
-        let preds: Vec<Pred> = entry
-            .method_constraints
-            .iter()
-            .map(|(tv, tr, args)| Pred::Trait {
-                tr: *tr,
-                args: args.clone(),
-                subject: Type::Var(*tv),
-            })
-            .collect();
-        let mut vars = free_vars_in(&entry.method_type);
-        for Pred::Trait { args, subject, .. } in &preds {
+    /// The scheme of an impl's method: its type, general in its type
+    /// variables (the impl's and the method's own), with what the impl's
+    /// header, the trait and the method ask of them.
+    pub(super) fn method_scheme(&self, entry: &MethodEntry) -> Scheme {
+        let ty = self.apply(&entry.method_type);
+        let mut vars = free_vars_in(&ty);
+        for Pred::Trait { args, subject, .. } in &entry.preds {
             for v in args.iter().chain([subject]).flat_map(free_vars_in) {
                 if !vars.contains(&v) {
                     vars.push(v);
@@ -258,8 +212,8 @@ impl TypeChecker {
         }
         Scheme {
             vars,
-            preds,
-            ty: entry.method_type.clone(),
+            preds: entry.preds.clone(),
+            ty,
             optional_last_param: false,
         }
     }

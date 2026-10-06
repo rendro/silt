@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: unknown method 'missing' on type Int
+-- The closure's parameter is the list's element type, known from the
+-- argument before it.
+import list
+fn main() {
+  println(list.map([1, 2], { n -> n.missing }))
+}

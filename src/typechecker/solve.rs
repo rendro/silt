@@ -196,8 +196,7 @@ impl TypeChecker {
             return;
         }
         let Some(type_name) = self.type_name_for_impl(&resolved) else {
-            // Unresolved tyvar — caller is responsible for deferring or
-            // reporting (e.g. via active_constraints or pending_where).
+            // Still unknown: the caller lets it wait (`want`).
             return;
         };
         if !self

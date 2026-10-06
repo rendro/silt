@@ -89,9 +89,8 @@ impl TypeChecker {
                 // The receiver became an annotation variable: it has the
                 // methods of its bounds, and nothing else.
                 Type::Rigid(r) => match self.bound_methods(*r, field).as_slice() {
-                    [(trait_name, method_ty, bounds)] => {
-                        let method_ty =
-                            self.instantiate_bound_method(method_ty, bounds, field, span);
+                    [(trait_name, scheme)] => {
+                        let method_ty = self.instantiate_method(scheme, field, span);
                         self.deferred_method_traits.insert(span, *trait_name);
                         self.unify_deferred_method(&result_ty, &method_ty, span);
                     }
