@@ -1,7 +1,9 @@
 -- A function of another module cannot name this module's `let`s, but
--- it can call the methods of a value it is given: a `let` that hands a
--- `P` to another module is initialised after what the methods of `P`
--- read. A call that hands over nothing of the module's orders nothing.
+-- it can call the methods of a value it is given: a `let` that calls
+-- into another module is initialised after what the module's impls of
+-- that module's traits read. That holds whatever the call hands over
+-- (`cfg` hands over nothing, and is still initialised after `later`):
+-- the rule goes by what is mentioned, not by what the values are.
 import other
 type P { n: Int }
 trait other.Greet for P { fn greet(self) -> String { "p {self.n} {later}" } }

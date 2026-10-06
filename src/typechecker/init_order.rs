@@ -1,30 +1,70 @@
 //! The order a module's top-level `let`s are initialised in.
 //!
-//! A top-level `let` is initialised after every top-level `let` its
-//! initialiser can reach: the ones it names, and the ones the functions
-//! and methods it can reach name. The reach is conservative: a function
-//! that is mentioned counts as called, and a method call whose impl is
-//! chosen where the code runs reaches every impl of the method in the
-//! module. Where nothing orders two `let`s, the one written first runs
-//! first. A `let` that reaches itself has no order: that is an error,
-//! which names the way round.
+//! A top-level `let` is initialised after every top-level `let` whose
+//! value the code that runs to initialise it can read. Where nothing
+//! orders two `let`s, the one written first runs first. A `let` that
+//! reaches itself has no order: that is an error, which names the way
+//! round.
 //!
-//! A function or method of another module cannot name this module's
-//! `let`s, but it can call the methods of a value it is given: a call
-//! of one reaches every method of the module's impls for each of the
-//! module's types its arguments' types mention.
+//! # What can run while a `let` is initialised, and why the reach covers it
 //!
-//! What a `let` holds may be called through it (a closure, a record of
-//! functions), so what reaches a `let` reaches what the `let`'s value
-//! mentions as well. A `let` whose value is a closure literal runs
-//! nothing when it is initialised, so it needs nothing itself.
+//! The reach is a graph over the module's `let`s, functions, impl
+//! methods and default methods, and one more node, [`OUTSIDE`], for all
+//! code the module does not write. A node has an edge to what its
+//! expression *mentions*. The code that runs to initialise `L` is:
+//!
+//! 1. `L`'s initialiser. Every name in it is mentioned, in closures too.
+//! 2. A function, method or closure of the module. To be called it must
+//!    be a value at hand: a closure is written inside code that already
+//!    runs (its body is part of that code's expression); a function is
+//!    named by code that runs; a method is called by code that runs, and
+//!    the call's `Selection` says which (one impl's method, or, for a
+//!    receiver decided where the code runs, every impl of the method in
+//!    the module, and the trait's default); a value stored earlier comes
+//!    out of a `let`, and whatever reaches a `let` reaches all that the
+//!    `let`'s value mentions. A function value that arrives as an
+//!    argument or a field was mentioned by the code that passed or
+//!    stored it, which runs too. So every such body is reached by
+//!    mentions.
+//! 3. Code the module does not write: another module's functions,
+//!    methods and default methods, the builtin traits' default methods,
+//!    the impls of builtin container types. It cannot name this module's
+//!    `let`s. It can call back in two ways only: a function value it is
+//!    handed (covered by 2: someone mentioned it), and a method of a
+//!    trait it knows on a value it is handed. The traits it knows are
+//!    not this module's (a module cannot import one that imports it), so
+//!    such a call lands in an impl this module writes for a trait of
+//!    another module or a builtin trait. [`OUTSIDE`] has an edge to
+//!    every method of every such impl, whatever the values are.
+//!    Outside code may run whenever running code mentions a function,
+//!    a `let` or a host function of another module (called now, or
+//!    stored and called later, or handed to a builtin that calls it);
+//!    calls a method of another module's trait or a builtin trait on a
+//!    receiver decided where the code runs; or calls a method whose
+//!    impl or default method is not this module's. Each of those is an
+//!    edge to [`OUTSIDE`]. The builtin functions themselves call only
+//!    the function values they are given; the sealed traits (Equal,
+//!    Compare, Hash) have no code a program writes.
+//!
+//! Not covered, by design until the formatter calls `Display` impls
+//! (stage 6 step 4a): printing and interpolation call no code a program
+//! writes.
+//!
+//! # What a `let` needs
+//!
+//! A `let` whose value is a plain value (a closure literal; a literal;
+//! a name; a list, tuple, record, map, set or variant made of plain
+//! values) runs nothing when it is initialised: it needs only the
+//! top-level `let`s it names outside closures, whose values it reads.
+//! Any other `let` needs every `let` its initialiser reaches.
 
 use super::order::{Mention, references_in_expr, references_in_pattern};
 use super::*;
 use crate::ast::Selection;
 use crate::defs::{DefId, TraitId, TypeId};
 
-/// A top-level `let`, a function, or a method of an impl or a trait.
+/// A top-level `let`, a function, or a method of an impl or a trait;
+/// or all code the module does not write ([`OUTSIDE`]).
 struct Node<'a> {
     /// As a message names it: `limit`, `area`, `Shape.area`.
     name: String,
@@ -32,70 +72,101 @@ struct Node<'a> {
     let_decl: Option<usize>,
     span: Span,
     /// What it runs: an initialiser, a body (and what its parameters'
-    /// patterns name).
-    body: &'a Expr,
+    /// patterns name). None for [`OUTSIDE`].
+    body: Option<&'a Expr>,
     params: &'a [Param],
 }
 
-/// The named types `ty` mentions.
-fn named_types(ty: &Type, out: &mut Vec<TypeId>) {
+/// The node of all code the module does not write (see the module's
+/// documentation): the first node.
+const OUTSIDE: usize = 0;
+
+/// Whether a value of the type `ty` is made of builtin types only, all
+/// known: a builtin trait's method on it (`[1, 2].display()`) calls no
+/// code a program writes.
+fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
+    let all = |parts: &[Type]| parts.iter().all(|t| builtin_through(checker, t));
     match ty {
+        Type::Var(_) | Type::Rigid(_) => false,
         Type::Generic(name, args) => {
-            if !out.contains(&name.id) {
-                out.push(name.id);
+            checker
+                .def(name.id.0)
+                .is_some_and(|def| def.module.is_builtin())
+                && all(args)
+        }
+        Type::AnonRecord { fields, tail } => {
+            matches!(tail, RowTail::Closed) && fields.values().all(|t| builtin_through(checker, t))
+        }
+        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => {
+            builtin_through(checker, t)
+        }
+        Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
+        Type::Tuple(ts) => all(ts),
+        // (A function inside a value is not called by a method of the
+        // value.)
+        _ => true,
+    }
+}
+
+/// Whether initialising a `let` with the value `expr` runs nothing: the
+/// value restriction's syntactic values, and a map or set literal of
+/// them. The top-level names it reads (outside closures) are added to
+/// `reads`.
+fn plain_value(
+    checker: &TypeChecker,
+    expr: &Expr,
+    reads: &mut Vec<Option<crate::defs::Res>>,
+) -> bool {
+    match &expr.kind {
+        ExprKind::Ident(_) | ExprKind::FieldAccess(..) => {
+            reads.push(expr.res);
+            checker.is_syntactic_value(expr)
+        }
+        ExprKind::Tuple(elems) | ExprKind::SetLit(elems) => {
+            elems.iter().all(|e| plain_value(checker, e, reads))
+        }
+        ExprKind::List(elems) => elems.iter().all(|e| match e {
+            ListElem::Single(e) => plain_value(checker, e, reads),
+            ListElem::Spread(_) => false,
+        }),
+        ExprKind::Map(entries) => entries
+            .iter()
+            .all(|(k, v)| plain_value(checker, k, reads) && plain_value(checker, v, reads)),
+        ExprKind::RecordCreate { fields, .. }
+        | ExprKind::AnonRecord {
+            spread: None,
+            fields,
+        } => fields.iter().all(|(_, e)| plain_value(checker, e, reads)),
+        ExprKind::Call(callee, args) => {
+            checker.is_syntactic_value(expr) && {
+                reads.push(callee.res);
+                args.iter().all(|e| plain_value(checker, e, reads))
             }
-            args.iter().for_each(|t| named_types(t, out));
         }
-        Type::AnonRecord { fields, .. } => fields.values().for_each(|t| named_types(t, out)),
-        Type::Fun(params, ret) => {
-            params.iter().for_each(|t| named_types(t, out));
-            named_types(ret, out);
-        }
-        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => named_types(t, out),
-        Type::Map(k, v) => {
-            named_types(k, out);
-            named_types(v, out);
-        }
-        Type::Tuple(ts) => ts.iter().for_each(|t| named_types(t, out)),
-        _ => {}
+        _ => checker.is_syntactic_value(expr),
     }
 }
 
 impl TypeChecker {
-    /// Whether `callee`, what a call calls, is a function, a `let` or a
-    /// method of another module (not a builtin one: those call only the
-    /// functions they are given).
-    fn calls_another_module(
-        &self,
-        callee: &Expr,
-        of_impl: &HashMap<(TraitId, TypeId, Symbol), usize>,
-    ) -> bool {
-        let foreign = |id: DefId| {
-            self.def(id)
-                .is_some_and(|def| def.module != self.module && !def.module.is_builtin())
-        };
-        match (&callee.kind, callee.sel, callee.res) {
-            // The method of an impl another module writes.
-            (ExprKind::FieldAccess(_, method, _), Some(Selection::Impl { tr, ty }), _) => {
-                !of_impl.contains_key(&(tr, ty, *method)) && (foreign(tr.0) || foreign(ty.0))
-            }
-            (_, None, Some(crate::defs::Res::Def(id))) => foreign(id),
-            _ => false,
-        }
-    }
-
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in. Reports each `let` that reaches itself.
     pub(super) fn init_order(&mut self, decls: &[Decl]) -> Vec<Span> {
-        let mut nodes: Vec<Node> = Vec::new();
+        let mut nodes: Vec<Node> = vec![Node {
+            name: "code outside the module".to_string(),
+            let_decl: None,
+            span: Span::BUILTIN,
+            body: None,
+            params: &[],
+        }];
         let mut by_name: HashMap<Symbol, usize> = HashMap::new();
         // The methods of each impl; of each trait, whatever the impl;
         // and each trait's default methods.
         let mut of_impl: HashMap<(TraitId, TypeId, Symbol), usize> = HashMap::new();
         let mut of_trait: HashMap<(TraitId, Symbol), Vec<usize>> = HashMap::new();
         let mut defaults: HashMap<(TraitId, Symbol), usize> = HashMap::new();
-        // The methods of the module's impls for each type.
-        let mut of_type: HashMap<TypeId, Vec<usize>> = HashMap::new();
+        // The methods of the module's impls of traits it does not
+        // declare: what code outside the module can call.
+        let mut callable_outside: Vec<usize> = Vec::new();
         for (i, decl) in decls.iter().enumerate() {
             match decl {
                 Decl::Fn(f) => {
@@ -104,7 +175,7 @@ impl TypeChecker {
                         name: resolve(f.name),
                         let_decl: None,
                         span: f.span,
-                        body: &f.body,
+                        body: Some(&f.body),
                         params: &f.params,
                     });
                 }
@@ -125,7 +196,7 @@ impl TypeChecker {
                         },
                         let_decl: Some(i),
                         span: *span,
-                        body: value,
+                        body: Some(value),
                         params: &[],
                     });
                 }
@@ -135,7 +206,9 @@ impl TypeChecker {
                     };
                     for m in &ti.methods {
                         of_impl.insert((tr.id, ty.id, m.name), nodes.len());
-                        of_type.entry(ty.id).or_default().push(nodes.len());
+                        if !self.own_traits.values().any(|own| own.id == tr.id) {
+                            callable_outside.push(nodes.len());
+                        }
                         of_trait
                             .entry((tr.id, m.name))
                             .or_default()
@@ -144,7 +217,7 @@ impl TypeChecker {
                             name: format!("{}.{}", ty.name, m.name),
                             let_decl: None,
                             span: m.span,
-                            body: &m.body,
+                            body: Some(&m.body),
                             params: &m.params,
                         });
                     }
@@ -161,7 +234,7 @@ impl TypeChecker {
                             name: format!("{}.{}", t.name, m.name),
                             let_decl: None,
                             span: m.span,
-                            body: &m.body,
+                            body: Some(&m.body),
                             params: &m.params,
                         });
                     }
@@ -186,117 +259,158 @@ impl TypeChecker {
             }
         }
 
-        // What each node mentions, in the order it does.
-        let edges: Vec<Vec<usize>> = nodes
-            .iter()
-            .map(|node| {
-                let mut targets: Vec<usize> = Vec::new();
-                let mut note = |mention: Mention| {
-                    let mut add = |target: usize| {
-                        if !targets.contains(&target) {
-                            targets.push(target);
-                        }
-                    };
-                    if let Some(crate::defs::Res::Def(id)) = mention.res
-                        && let Some(&target) = by_def.get(&id)
-                    {
+        // What each node mentions, in the order it does; for a `let`
+        // that is mentioned by a name, the name (a `let` may bind
+        // several).
+        let own_trait = |tr: TraitId| self.own_traits.values().any(|own| own.id == tr);
+        let mut named: HashMap<(usize, usize), Symbol> = HashMap::new();
+        let mut edges: Vec<Vec<usize>> = Vec::with_capacity(nodes.len());
+        for (from, node) in nodes.iter().enumerate() {
+            let Some(body) = node.body else {
+                edges.push(callable_outside.clone());
+                continue;
+            };
+            let mut targets: Vec<usize> = Vec::new();
+            let mut note = |mention: Mention| {
+                let mut add = |target: usize| {
+                    if !targets.contains(&target) {
+                        targets.push(target);
+                    }
+                };
+                if let Some(crate::defs::Res::Def(id)) = mention.res {
+                    if let Some(&target) = by_def.get(&id) {
                         add(target);
-                    }
-                    // A call of another module's function or method:
-                    // what it is given, it may call the methods of.
-                    let call = match mention.expr.map(|expr| &expr.kind) {
-                        Some(ExprKind::Call(callee, args)) => {
-                            Some((&**callee, args.iter().collect::<Vec<_>>()))
+                        if let Some(def) = self.def(id) {
+                            named.entry((from, target)).or_insert(def.name);
                         }
-                        Some(ExprKind::Pipe(left, right)) => match &right.kind {
-                            ExprKind::Call(callee, args) => Some((
-                                &**callee,
-                                std::iter::once(&**left).chain(args).collect::<Vec<_>>(),
-                            )),
-                            _ => Some((&**right, vec![&**left])),
-                        },
-                        _ => None,
-                    };
-                    if let Some((callee, args)) = call
-                        && self.calls_another_module(callee, &of_impl)
-                    {
-                        let mut given: Vec<TypeId> = Vec::new();
-                        if let ExprKind::FieldAccess(recv, ..) = &callee.kind
-                            && let Some(ty) = &recv.ty
+                    } else if self.def(id).is_some_and(|def| {
+                        // A function or a `let` of another module: its
+                        // code may run.
+                        def.module != self.module
+                            && !def.module.is_builtin()
+                            && matches!(
+                                def.kind,
+                                crate::defs::DefKind::Fn
+                                    | crate::defs::DefKind::Let
+                                    | crate::defs::DefKind::Host
+                            )
+                    }) {
+                        add(OUTSIDE);
+                    }
+                }
+                let Some(Expr {
+                    kind: ExprKind::FieldAccess(recv, method, _),
+                    sel,
+                    res,
+                    ..
+                }) = mention.expr
+                else {
+                    return;
+                };
+                // The method of the impl of `tr` for `ty`: the impl's
+                // own, the trait's default, or code outside the module
+                // (but a builtin trait's method on a value, of the type
+                // `of`, that is builtin through and through: that
+                // calls nothing a program writes).
+                let mut one_impl = |tr: TraitId, ty: TypeId, of: Option<&Type>| match of_impl
+                    .get(&(tr, ty, *method))
+                    .or_else(|| defaults.get(&(tr, *method)))
+                {
+                    Some(&target) => add(target),
+                    None => {
+                        let inert = self.def(tr.0).is_some_and(|def| def.module.is_builtin())
+                            && of.is_some_and(|of| builtin_through(self, &self.apply(of)));
+                        if !inert {
+                            add(OUTSIDE);
+                        }
+                    }
+                };
+                match sel {
+                    Some(Selection::Impl { tr, ty }) => one_impl(*tr, *ty, recv.ty.as_ref()),
+                    // A receiver decided where the code runs: every
+                    // impl of the method in the module, the trait's
+                    // default, and, for a trait of another module or a
+                    // builtin one, impls and defaults outside it.
+                    Some(Selection::Dynamic { tr }) => {
+                        for &target in of_trait.get(&(*tr, *method)).into_iter().flatten() {
+                            add(target);
+                        }
+                        if !own_trait(*tr) {
+                            add(OUTSIDE);
+                        }
+                    }
+                    // (The VM's own method of a builtin trait: it calls
+                    // no code a program writes.)
+                    Some(Selection::Native { .. }) => {}
+                    Some(Selection::Field | Selection::FieldCall) => {}
+                    // `Type.method`: that impl's method.
+                    None => {
+                        if recv.ty.is_none()
+                            && let Some(crate::defs::Res::Def(id)) = res
+                            && let Some(tr) = self.trait_key(*id)
                         {
-                            named_types(ty, &mut given);
-                        }
-                        for arg in args {
-                            if let Some(ty) = &arg.ty {
-                                named_types(ty, &mut given);
-                            }
-                        }
-                        for ty in given {
-                            for &target in of_type.get(&ty).into_iter().flatten() {
-                                add(target);
-                            }
-                        }
-                    }
-                    let Some(Expr {
-                        kind: ExprKind::FieldAccess(recv, method, _),
-                        sel,
-                        res,
-                        ..
-                    }) = mention.expr
-                    else {
-                        return;
-                    };
-                    match sel {
-                        // One impl's method: the impl's own, or the
-                        // trait's default.
-                        Some(Selection::Impl { tr, ty }) => {
-                            if let Some(&target) = of_impl
-                                .get(&(*tr, *ty, *method))
-                                .or_else(|| defaults.get(&(*tr, *method)))
-                            {
-                                add(target);
-                            }
-                        }
-                        Some(Selection::Native { tr } | Selection::Dynamic { tr }) => {
-                            for &target in of_trait.get(&(*tr, *method)).into_iter().flatten() {
-                                add(target);
-                            }
-                        }
-                        Some(Selection::Field | Selection::FieldCall) => {}
-                        // `Type.method`: the methods of that name the
-                        // access's trait has.
-                        None => {
-                            if recv.ty.is_none()
-                                && let Some(crate::defs::Res::Def(id)) = res
-                                && let Some(tr) = self.trait_key(*id)
-                            {
-                                for &target in of_trait.get(&(tr.id, *method)).into_iter().flatten()
-                                {
-                                    add(target);
+                            let ty = match (&recv.kind, recv.res) {
+                                (ExprKind::Ident(name), None) => self.named_type(None, *name),
+                                (_, res) => self.res_type(res),
+                            };
+                            match ty {
+                                Some(ty) => {
+                                    let ty = canonical_head(&self.tables.resolver, ty);
+                                    // (`Int.display`: a type without
+                                    // parameters is all of the value's.)
+                                    let whole = Type::Generic(ty, Vec::new());
+                                    let of = matches!(
+                                        builtin_type_name(ty),
+                                        Some("Int" | "Float" | "Bool" | "String" | "Unit")
+                                    )
+                                    .then_some(&whole);
+                                    one_impl(tr.id, ty.id, of)
+                                }
+                                None => {
+                                    for &target in
+                                        of_trait.get(&(tr.id, *method)).into_iter().flatten()
+                                    {
+                                        add(target);
+                                    }
+                                    add(OUTSIDE);
                                 }
                             }
                         }
                     }
-                };
-                for param in node.params {
-                    references_in_pattern(&param.pattern, &mut note);
                 }
-                references_in_expr(node.body, &mut note);
-                targets
-            })
-            .collect();
+            };
+            for param in node.params {
+                references_in_pattern(&param.pattern, &mut note);
+            }
+            references_in_expr(body, &mut note);
+            edges.push(targets);
+        }
 
-        // The `let`s each `let` reaches through functions and methods,
-        // with the way to each (the functions between, then the `let`).
+        // The `let`s each `let` needs, with the way to each (the
+        // functions between, then the `let`).
         let lets: Vec<usize> = (0..nodes.len())
             .filter(|&n| nodes[n].let_decl.is_some())
             .collect();
         let mut needs: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut ways: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
-        let is_closure = |n: usize| matches!(nodes[n].body.kind, ExprKind::Lambda { .. });
         for &start in &lets {
-            if is_closure(start) {
-                needs.insert(start, Vec::new());
+            // A plain value runs nothing: it needs the `let`s it reads.
+            let mut reads = Vec::new();
+            if let Some(value) = nodes[start].body
+                && plain_value(self, value, &mut reads)
+            {
+                let mut read: Vec<usize> = Vec::new();
+                for res in reads {
+                    if let Some(crate::defs::Res::Def(id)) = res
+                        && let Some(&target) = by_def.get(&id)
+                        && nodes[target].let_decl.is_some()
+                        && !read.contains(&target)
+                    {
+                        ways.insert((start, target), vec![target]);
+                        read.push(target);
+                    }
+                }
+                needs.insert(start, read);
                 continue;
             }
             // (Breadth first: the way found to a `let` is a shortest.)
@@ -322,8 +436,7 @@ impl TypeChecker {
                     ways.insert((start, node), way);
                     reached.push(node);
                     // (What the `let` holds may be called through it:
-                    // the functions its value mentions are reached
-                    // too.)
+                    // what its value mentions is reached too.)
                 }
                 for &target in &edges[node] {
                     if seen.insert(target) {
@@ -371,24 +484,29 @@ impl TypeChecker {
             }
             ring.push(start);
             ring.reverse();
-            let mut names = vec![nodes[start].name.clone()];
+            // The way round, each `let` by the name it is read by (a
+            // `let` may bind several).
+            let mut way: Vec<usize> = vec![start];
             for pair in ring.windows(2) {
-                for &n in &ways[&(pair[0], pair[1])] {
-                    names.push(nodes[n].name.clone());
-                    // (Each `let` on the way is in the ring.)
-                    if nodes[n].let_decl.is_some() {
-                        in_ring.insert(n);
-                    }
-                }
+                way.extend(&ways[&(pair[0], pair[1])]);
             }
-            in_ring.extend(ring);
+            let mut names: Vec<String> = Vec::with_capacity(way.len());
+            for step in way.windows(2) {
+                names.push(match named.get(&(step[0], step[1])) {
+                    Some(name) if nodes[step[1]].let_decl.is_some() => resolve(*name),
+                    _ => nodes[step[1]].name.clone(),
+                });
+            }
+            let own = names.last().cloned().unwrap_or_default();
+            names.insert(0, own.clone());
+            // (Each `let` on the way is in the ring.)
+            in_ring.extend(way.iter().filter(|&&n| nodes[n].let_decl.is_some()));
             self.errors.push(
                 Diagnostic::error(
                     Code::InitCycle,
                     nodes[start].span,
                     format!(
-                        "the top-level `let` '{}' needs its own value to be initialised: {}",
-                        nodes[start].name,
+                        "the top-level `let` '{own}' needs its own value to be initialised: {}",
                         names.join(" -> ")
                     ),
                 )
