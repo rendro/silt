@@ -1,8 +1,10 @@
+-- timeout: 90
 -- A method call whose method is found where the code runs (the receiver
 -- is a bounded type variable, or `self` in a default method) is a tail
 -- call in tail position too: a default method that calls itself a
 -- million levels deep runs in one frame, for each impl that leaves it
--- out. A method that is not a closure (a builtin type's `display`)
+-- out, and so does a `where a: T` function and the method it calls,
+-- calling each other. A method that is not a closure (a builtin type's `display`)
 -- returns its value.
 type C { n: Int }
 trait Walk {
@@ -24,6 +26,14 @@ fn go(x: a, k: Int) -> Int where a: Walk {
   }
 }
 fn last(x: a) -> Int where a: Walk { x.walk(1000000, 0) }
+trait Hop { fn hop(self, k: Int) -> Int }
+trait Hop for C { fn hop(self, k: Int) -> Int { bounce(self, k) } }
+fn bounce(x: a, k: Int) -> Int where a: Hop {
+  match k {
+    0 -> 42
+    _ -> x.hop(k - 1)
+  }
+}
 fn shown(x: a) -> String where a: Display { x.display() }
 fn main() {
   println(C { n: 5 }.walk(1000000, 0))
@@ -32,4 +42,5 @@ fn main() {
   println(C { n: 9 }.show())
   println(shown([1, 2]))
   println(shown(C { n: 1 }))
+  println(bounce(C { n: 1 }, 1000000))
 }

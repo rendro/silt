@@ -139,12 +139,16 @@ it names, and the ones that the functions and methods it mentions read.
 Where nothing orders two of them, the one written first runs first.
 
 ```silt
-let total = base() + 1      -- runs second: `base` reads `start`
+let total = base() + 1 -- runs second: `base` reads `start`
+
 let start = 10
-fn base() -> Int { start * 2 }
+
+fn base() -> Int {
+  start * 2
+}
 
 fn main() {
-  println(total)            -- 21
+  println(total) -- 21
 }
 ```
 
@@ -154,7 +158,11 @@ an error that names the way round:
 
 ```silt
 let a = f()
-fn f() -> Int { b + 1 }
+
+fn f() -> Int {
+  b + 1
+}
+
 let b = a + 1
 -- error: the top-level `let` 'a' needs its own value to be initialised: a -> f -> b -> a
 ```
