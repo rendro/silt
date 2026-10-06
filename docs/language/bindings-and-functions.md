@@ -133,6 +133,35 @@ and a top-level `fn`, `type`, `let` or trait — are an error that names
 both sites. Which declaration a top-level name refers to therefore never
 depends on the order of the declarations.
 
+Nor does the value of a top-level `let`. A top-level `let` is
+initialised after every top-level `let` its value can reach: the ones
+it names, and the ones that the functions and methods it mentions read.
+Where nothing orders two of them, the one written first runs first.
+
+```silt
+let total = base() + 1      -- runs second: `base` reads `start`
+let start = 10
+fn base() -> Int { start * 2 }
+
+fn main() {
+  println(total)            -- 21
+}
+```
+
+The reach is by mention: a function that is named counts as called. A
+top-level `let` that can reach itself has no place in the order, and is
+an error that names the way round:
+
+```silt
+let a = f()
+fn f() -> Int { b + 1 }
+let b = a + 1
+-- error: the top-level `let` 'a' needs its own value to be initialised: a -> f -> b -> a
+```
+
+(A `let` whose value is a closure, `let inc = { x -> x + step }`, runs
+nothing when it is initialised and so needs nothing.)
+
 **Destructuring** works in `let` for irrefutable patterns, the ones that
 match every value of their type: tuples and records, the constructor of a
 single-variant type, an or-pattern whose alternatives cover the type

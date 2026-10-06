@@ -40,4 +40,17 @@ fn main() {
   println(d)
   println(e)
   println(later)
+  show_answer()
 }
+-- What a `let` holds may be called through it: a `let` that calls a
+-- function out of a table is initialised after what that function
+-- reads. A `let` that is a closure needs nothing itself.
+let answer = table.f() + inc(1)
+let table = {f: reads_seed}
+let inc = { x -> x + seed }
+fn reads_seed() -> Int { seed }
+let seed = {
+  println("seed")
+  5
+}
+fn show_answer() { println(answer) }

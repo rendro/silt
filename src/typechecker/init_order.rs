@@ -9,9 +9,10 @@
 //! first. A `let` that reaches itself has no order: that is an error,
 //! which names the way round.
 //!
-//! A `let` whose value is a closure literal runs nothing when it is
-//! initialised, so it needs nothing; what calls it reaches what its body
-//! does, like a function's.
+//! What a `let` holds may be called through it (a closure, a record of
+//! functions), so what reaches a `let` reaches what the `let`'s value
+//! mentions as well. A `let` whose value is a closure literal runs
+//! nothing when it is initialised, so it needs nothing itself.
 
 use super::order::{Mention, references_in_expr, references_in_pattern};
 use super::*;
@@ -231,9 +232,9 @@ impl TypeChecker {
                     way.reverse();
                     ways.insert((start, node), way);
                     reached.push(node);
-                    if !is_closure(node) {
-                        continue;
-                    }
+                    // (What the `let` holds may be called through it:
+                    // the functions its value mentions are reached
+                    // too.)
                 }
                 for &target in &edges[node] {
                     if seen.insert(target) {
@@ -264,8 +265,8 @@ impl TypeChecker {
                         back = true;
                         break 'search;
                     }
-                    if !from.contains_key(&next) {
-                        from.insert(next, at);
+                    if let std::collections::hash_map::Entry::Vacant(unseen) = from.entry(next) {
+                        unseen.insert(at);
                         queue.push_back(next);
                     }
                 }
@@ -283,11 +284,13 @@ impl TypeChecker {
             ring.reverse();
             let mut names = vec![nodes[start].name.clone()];
             for pair in ring.windows(2) {
-                names.extend(
-                    ways[&(pair[0], pair[1])]
-                        .iter()
-                        .map(|&n| nodes[n].name.clone()),
-                );
+                for &n in &ways[&(pair[0], pair[1])] {
+                    names.push(nodes[n].name.clone());
+                    // (Each `let` on the way is in the ring.)
+                    if nodes[n].let_decl.is_some() {
+                        in_ring.insert(n);
+                    }
+                }
             }
             in_ring.extend(ring);
             self.errors.push(
