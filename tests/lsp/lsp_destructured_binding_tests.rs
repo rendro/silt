@@ -321,3 +321,38 @@ fn test_hover_on_declared_record_destructure_binder_and_usage() {
 
     client.shutdown();
 }
+
+// ── A rest binder: an anonymous record of the fields not named ──────
+
+#[test]
+fn test_hover_on_rest_binder_of_a_declared_record() {
+    // The rest of a record pattern over a declared record is an
+    // anonymous record of the fields the pattern does not name: never
+    // the declared type.
+    //
+    //   line 0: type Pt { x: Int, name: String }
+    //   line 1: fn main() {
+    //   line 2:   let {x, ...rest} = Pt { x: 1, name: "a" }
+    //   line 3:   println(rest)
+    //   line 4: }
+    let source = "type Pt { x: Int, name: String }\nfn main() {\n  let {x, ...rest} = Pt { x: 1, name: \"a\" }\n  println(rest)\n}\n";
+
+    let mut client = LspClient::spawn();
+    let uri = unique_uri();
+    client.did_open_and_wait(&uri, source);
+
+    // The binder: `rest` in the pattern, line 2 column 13.
+    //   "  let {x, ...rest} = ..."
+    //    0         1
+    //    0123456789012345
+    for (line, col) in [(2, 13), (3, 10)] {
+        let shown = hover_value_at(&mut client, &uri, line, col)
+            .expect("hover on `rest` must return a non-null result");
+        assert!(
+            shown.contains("{name: String}") && !shown.contains("Pt"),
+            "hover on `rest` at {line}:{col} must show `{{name: String}}`, got: {shown}"
+        );
+    }
+
+    client.shutdown();
+}

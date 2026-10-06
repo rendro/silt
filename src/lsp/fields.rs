@@ -171,7 +171,7 @@ pub(super) fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
         // structurally inferred — without this arm, hover/completion
         // never see the fields. Tail status doesn't affect lookup of an
         // explicitly listed field; if the field isn't in `fields` we
-        // simply return `None`, matching the `Type::Record` path.
+        // simply return `None`.
         Type::AnonRecord { fields, .. } => fields.get(&field_name).cloned(),
         Type::Tuple(elems) => resolve(field_name)
             .parse::<usize>()
@@ -184,7 +184,7 @@ pub(super) fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
 /// Look up a field's type, resolving `Type::Generic(record_name, _)`
 /// through the checker's record fields. The typechecker annotates
 /// intermediate nodes of a chained field access like `o.inner.val` with
-/// `Type::Generic(<record_name>, [])` rather than `Type::Record(...)`, so
+/// `Type::Generic(<record_name>, args)`, a declared record's type, so
 /// the bare `get_field_type` cannot resolve anything past the leftmost
 /// dot.
 pub(super) fn get_field_type_resolved(
