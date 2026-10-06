@@ -1,0 +1,85 @@
+-- cmd: fmt
+-- Every kind of declaration, type, pattern and expression in its
+-- loosest spelling: empty lists, optional parentheses and commas,
+-- qualified names, closures in every place.
+import a.{}
+import b.{ x, y }
+
+pub trait T(a): m.S(a) + U where a: m.V + W(Int), a: X {
+  fn f(self) -> <a as m.Q>::Item
+  type Item: A + m.B
+}
+
+trait m.T(Int) for m.Box(a) where a: T(Int) {}
+
+pub let (a, b): (Int,) = (1,)
+
+type A {
+  B,
+  C(Int),
+}
+
+type R(a) {}
+
+pub type F = Fn() -> Fn(Int) -> { x: Int, ...r }
+
+fn g(
+  { x, y: P { z, .. }, ...rest }: R,
+  [],
+  [a, ..b],
+  (),
+  (c,),
+  #{},
+  #{ "k": ^v },
+  -1..-2,
+  1.5..2.5,
+  m.E.V,
+  m.P {},
+  type t,
+) -> Self::Item where t: D {}
+
+fn h() {
+  let f = { x ->
+    {
+      x
+    }
+  }
+  let g = { x -> {} }
+  let h = { x -> }
+  let i = { x ->
+    {
+      let y = x
+      y
+    }
+  }
+  let j = match {
+    _ -> 1
+  }
+  let k = match x {
+    _ when y -> 1
+  }
+  let l = loop {
+    loop()
+  }
+  let m = loop a = {
+    1
+  }, b = (P {}) {
+    loop(a, b)
+  }
+  let n = m.P { x: 1 }.{ x: 2 }
+  let o = { ...p }
+  let p = "a{"b{{ -> 1 }()}c"}d{[1, 2]}"
+  let q = x.a.y?.b
+  let r = (-x)? as m.T(Int)
+  let s = !!x && -(-y) == -(-z)
+  let t = #[]
+  let u = x()(())
+  let v = f { -> 1 }(2) { x -> x }.g { y -> y }?
+  when let P { x } | Q { x } = z else {
+    return ()
+  }
+  when x else {
+    return
+  }
+  return { x: 1 }.x
+}

@@ -1,0 +1,9 @@
+error[parse]: expected '->' or ',' to continue closure parameter list, found b
+ --> comma_list__unclosed_closure_parameter_list.silt:6:17
+   |
+ 6 |   let add = { a b -> a + b }
+   |                 ^ expected '->' or ',' to continue closure parameter list, found b
+ ::: comma_list__unclosed_closure_parameter_list.silt:6:13
+   |
+ 6 |   let add = { a b -> a + b }
+   |             - the closure parameter list starts here

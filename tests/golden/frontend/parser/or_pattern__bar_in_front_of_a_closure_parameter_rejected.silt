@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A `|` continues an or-pattern; a closure's parameters do not start
+-- with one.
+fn main() {
+  let pick = { | Some(n) | Ok(n) -> n }
+  println(pick(Some(1)))
+}

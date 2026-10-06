@@ -27,6 +27,51 @@ The golden cases and their format are described in `golden/README.md`.
 The full repro corpus runs with
 `SILT_GOLDEN_FULL_CORPUS=1 cargo nextest run --all-features --test golden -E 'test(verdict_shard)'`.
 
+## The formatter's property runner
+
+`tests/frontend/fmt_property/mod.rs` formats each input and checks that
+the formatter did not refuse it, that the result parses and holds the
+input's comments, and that a second pass changes nothing. Its inputs are
+the examples, the docs' `silt` snippets, the golden cases, the fuzz
+corpus `fuzz/corpus/fuzz_formatter`, and comment mutants made in the
+test: an input with one `--` or `{- -}` comment in one gap between two
+tokens.
+
+```
+cargo nextest run --all-features --test frontend -E 'test(fmt_property)'   # the examples and a sample of their mutants
+cargo nextest run --all-features --test heavy -E 'test(fmt_property)'      # every input, a sample of the mutants
+```
+
+| Variable | Meaning |
+|---|---|
+| `SILT_FMT_FULL=1` | (`heavy`) a mutant for every gap of every example, snippet and golden case |
+| `SILT_FMT_CORPUS=<dir>` | (`heavy`) also every `.silt` file under the directory |
+| `SILT_FMT_CORPUS_ALL=1` | (`heavy`) every file under that directory, whatever its name (a fuzz corpus) |
+| `SILT_FMT_WORKERS=<n>` | (`heavy`) the number of threads (default: 2, and every CPU for the full sweep) |
+| `SILT_FMT_REPORT=<file>` | append the counts and every failure to the file |
+| `SILT_FMT_FAILED=<dir>` | keep each input that failed as a file in the directory |
+| `SILT_FMT_STRESS=<count>` | (`heavy`) run `random_comments`: that many inputs with 2 to 12 comments each at random sites |
+| `SILT_FMT_SEED=<n>` | (`heavy`) the seed of those random sites (default 1) |
+| `SILT_FMT_ONLY=<text>` | only the inputs whose name holds the text: one file with every mutant of it (`SILT_FMT_ONLY=fmt/printer__pipelines SILT_FMT_FULL=1`) |
+
+A passing test prints nothing under nextest; add `--success-output
+immediate` to see the counts, or read the report file.
+
+No input may fail: a refusal is a defect of the formatter.
+
+The runner also checks that the comments that start a file, up to the
+first empty line or declaration, are the first bytes of the result: the
+golden harness reads a case's directives there.
+
+The full sweep, with other corpora (a fuzz corpus, generated mutants)
+added from outside the tree, and the random comments, in release:
+
+```
+SILT_FMT_FULL=1 SILT_FMT_CORPUS=<dir> SILT_FMT_REPORT=/tmp/fmt.txt \
+  cargo test --release --all-features --test heavy every_input -- --nocapture
+SILT_FMT_STRESS=200000 cargo test --release --all-features --test heavy random_comments -- --nocapture
+```
+
 ## A faster local build
 
 These go in `~/.cargo/config.toml`, not in the repository (CI does not

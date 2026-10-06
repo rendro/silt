@@ -1,0 +1,9 @@
+-- cmd: fmt --check --test-tamper=0x10=>16
+-- exit: 2
+-- requires-feature: debug-build
+-- stderr-contains: error[fmt]: formatting refused
+-- `silt fmt --check` cannot say whether a file it refuses is formatted:
+-- status 2, as for a file that does not parse.
+fn main() {
+  println( 0x10 )
+}

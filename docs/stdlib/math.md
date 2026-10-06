@@ -45,10 +45,11 @@ outside -1..1.
 
 ```silt
 import math
+
 fn main() {
-    let angle = math.acos(1.0)
-    println(angle)  -- 0  (silt's Float display drops the trailing `.0`
-                    --    for integer-valued floats)
+  let angle = math.acos(1.0)
+  println(angle) -- 0  (silt's Float display drops the trailing `.0`
+  --    for integer-valued floats)
 }
 ```
 
@@ -64,9 +65,10 @@ outside -1..1.
 
 ```silt
 import math
+
 fn main() {
-    let angle = math.asin(1.0)
-    println(angle)  -- 1.5707... (pi/2)
+  let angle = math.asin(1.0)
+  println(angle) -- 1.5707... (pi/2)
 }
 ```
 
@@ -81,8 +83,9 @@ Returns the arctangent of `x` in radians.
 
 ```silt
 import math
+
 fn main() {
-    println(math.atan(1.0))  -- 0.7853... (pi/4)
+  println(math.atan(1.0)) -- 0.7853... (pi/4)
 }
 ```
 
@@ -98,8 +101,9 @@ Handles all quadrants correctly.
 
 ```silt
 import math
+
 fn main() {
-    println(math.atan2(1.0, 1.0))  -- 0.7853... (pi/4)
+  println(math.atan2(1.0, 1.0)) -- 0.7853... (pi/4)
 }
 ```
 
@@ -114,9 +118,10 @@ Returns the cosine of `x` (in radians).
 
 ```silt
 import math
+
 fn main() {
-    println(math.cos(0.0))       -- 1
-    println(math.cos(math.pi))   -- -1
+  println(math.cos(0.0)) -- 1
+  println(math.cos(math.pi)) -- -1
 }
 ```
 
@@ -132,8 +137,9 @@ function.
 
 ```silt
 import math
+
 fn main() {
-    println(math.e)  -- 2.718281828459045
+  println(math.e) -- 2.718281828459045
 }
 ```
 
@@ -149,9 +155,10 @@ is too large for a `Float` (`x` above about 709.78).
 
 ```silt
 import math
+
 fn main() {
-    let e_val = math.exp(1.0)
-    println(e_val)  -- 2.718281828459045
+  let e_val = math.exp(1.0)
+  println(e_val) -- 2.718281828459045
 }
 ```
 
@@ -167,9 +174,10 @@ Returns the natural logarithm (base e) of `x`. Raises a runtime error when
 
 ```silt
 import math
+
 fn main() {
-    let ln_e = math.log(math.e)
-    println(ln_e)  -- 1
+  let ln_e = math.log(math.e)
+  println(ln_e) -- 1
 }
 ```
 
@@ -185,9 +193,10 @@ zero or negative.
 
 ```silt
 import math
+
 fn main() {
-    let log_100 = math.log10(100.0)
-    println(log_100)  -- 2
+  let log_100 = math.log10(100.0)
+  println(log_100) -- 2
 }
 ```
 
@@ -202,9 +211,10 @@ Pi, approximately 3.141592653589793. This is a constant, not a function.
 
 ```silt
 import math
+
 fn main() {
-    let circumference = 2.0 * math.pi * 5.0
-    println(circumference)
+  let circumference = 2.0 * math.pi * 5.0
+  println(circumference)
 }
 ```
 
@@ -221,9 +231,10 @@ negative, and when a negative `base` is raised to a fractional `exponent`.
 
 ```silt
 import math
+
 fn main() {
-    let two_to_ten = math.pow(2.0, 10.0)
-    println(two_to_ten)  -- 1024
+  let two_to_ten = math.pow(2.0, 10.0)
+  println(two_to_ten) -- 1024
 }
 ```
 
@@ -238,9 +249,10 @@ Returns a random `Float` in the range [0.0, 1.0). The result is always finite.
 
 ```silt
 import math
+
 fn main() {
-    let r = math.random()
-    println(r)  -- e.g. 0.7291035...
+  let r = math.random()
+  println(r) -- e.g. 0.7291035...
 }
 ```
 
@@ -255,9 +267,10 @@ Returns the sine of `x` (in radians).
 
 ```silt
 import math
+
 fn main() {
-    println(math.sin(0.0))           -- 0
-    println(math.sin(1.5707963))     -- 0.9999999999999997 (approximately 1.0, pi/2)
+  println(math.sin(0.0)) -- 0
+  println(math.sin(1.5707963)) -- 0.9999999999999997 (approximately 1.0, pi/2)
 }
 ```
 
@@ -272,9 +285,10 @@ Returns the square root of `x`. Raises a runtime error for a negative `x`.
 
 ```silt
 import math
+
 fn main() {
-    let root = math.sqrt(4.0)
-    println(root)  -- 2
+  let root = math.sqrt(4.0)
+  println(root) -- 2
 }
 ```
 
@@ -289,8 +303,9 @@ Returns the tangent of `x` (in radians).
 
 ```silt
 import math
+
 fn main() {
-    println(math.tan(0.0))           -- 0
-    println(math.tan(0.7853982))     -- 1.0000000732051062 (approximately 1.0, pi/4)
+  println(math.tan(0.0)) -- 0
+  println(math.tan(0.7853982)) -- 1.0000000732051062 (approximately 1.0, pi/4)
 }
 ```

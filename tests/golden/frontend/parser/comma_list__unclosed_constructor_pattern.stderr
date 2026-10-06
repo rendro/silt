@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue constructor pattern, found b
+ --> comma_list__unclosed_constructor_pattern.silt:9:11
+   |
+ 9 |     Foo(a b) -> a
+   |           ^ expected ')' or ',' to continue constructor pattern, found b
+ ::: comma_list__unclosed_constructor_pattern.silt:9:8
+   |
+ 9 |     Foo(a b) -> a
+   |        - the constructor pattern starts here

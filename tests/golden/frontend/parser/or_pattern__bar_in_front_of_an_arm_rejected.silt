@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A `|` continues an or-pattern; an arm does not start with one.
+fn main() {
+  let kind = match 1 {
+    | 1 -> "one"
+    _ -> "other"
+  }
+  println(kind)
+}

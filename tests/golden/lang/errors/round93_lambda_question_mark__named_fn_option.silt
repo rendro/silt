@@ -1,7 +1,7 @@
 fn find_positive(x: Int) -> Option(Int) {
   match x > 0 {
-    true -> Some(x),
-    false -> None,
+    true -> Some(x)
+    false -> None
   }
 }
 

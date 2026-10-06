@@ -6,7 +6,7 @@ silt ships six libfuzzer targets:
 |--------------------|----------------------------------------------------|
 | `fuzz_lexer`       | `Lexer::tokenize` + span/offset invariants         |
 | `fuzz_parser`      | `Parser::parse_program` (must not panic)           |
-| `fuzz_formatter`   | `formatter::format` + round-trip invariants        |
+| `fuzz_formatter`   | `format::format`: never refused, a fixed point     |
 | `fuzz_roundtrip`   | parse → format → parse (must preserve structure)   |
 | `fuzz_typechecker` | the session's analysis + diagnostic well-formedness |
 | `fuzz_compiler`    | `Compiler::compile_program` on clean programs + disassembly decode |

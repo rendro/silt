@@ -15,8 +15,7 @@ fn fizzbuzz(n) {
 }
 
 fn main() {
-  1..21
-  |> list.each { n -> println(fizzbuzz(n)) }
+  1..21 |> list.each { n -> println(fizzbuzz(n)) }
 }
 ```
 
@@ -25,7 +24,11 @@ fn main() {
 The only way to branch. Define your types, then match on their shape. The compiler verifies every case is handled.
 
 ```silt
-type Shape { Circle(Int), Square(Int), Triangle(Int, Int) }
+type Shape {
+  Circle(Int),
+  Square(Int),
+  Triangle(Int, Int),
+}
 
 fn area(s: Shape) -> Int {
   match s {
@@ -48,12 +51,8 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let w1 = task.spawn({ ->
-    channel.each(ch) { msg -> println("w1: {msg}") }
-  })
-  let w2 = task.spawn({ ->
-    channel.each(ch) { msg -> println("w2: {msg}") }
-  })
+  let w1 = task.spawn { -> channel.each(ch) { msg -> println("w1: {msg}") } }
+  let w2 = task.spawn { -> channel.each(ch) { msg -> println("w2: {msg}") } }
 
   list.each(1..100) { n -> channel.send(ch, n) }
   channel.close(ch)
@@ -71,7 +70,9 @@ Every function that can fail returns a Result. The `?` operator propagates error
 import io
 import json
 
-type Config { name: String }
+type Config {
+  name: String,
+}
 
 fn main() {
   match io.read_file("settings.json") {
@@ -95,10 +96,14 @@ Built-in HTTP client and server. Pattern matching replaces routing frameworks. R
 import http
 import json
 
-type Todo { id: Int, title: String, done: Bool }
+type Todo {
+  id: Int,
+  title: String,
+  done: Bool,
+}
 
 fn main() {
-  http.serve(8080, { req ->
+  http.serve(8080) { req ->
     match (req.method, http.segments(req.path)) {
       (http.GET, ["todos"]) -> {
         let todos = [
@@ -107,15 +112,13 @@ fn main() {
         ]
         http.Response { status: 200, body: json.stringify(todos), headers: #{} }
       }
-      (http.POST, ["todos"]) ->
-        match json.parse(req.body, Todo) {
-          Ok(todo) -> http.Response { status: 201, body: json.stringify(todo), headers: #{} }
-          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
-        }
-      _ ->
-        http.Response { status: 404, body: "Not found", headers: #{} }
+      (http.POST, ["todos"]) -> match json.parse(req.body, Todo) {
+        Ok(todo) -> http.Response { status: 201, body: json.stringify(todo), headers: #{} }
+        Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+      }
+      _ -> http.Response { status: 404, body: "Not found", headers: #{} }
     }
-  })
+  }
 }
 ```
 
@@ -136,7 +139,7 @@ fn greet(user) {
 fn main() {
   let u = User { name: "alice", age: 30 }
   println(greet(u))
-  println(greet(u.{ age: 31 }))  -- record update
+  println(greet(u.{ age: 31 })) -- record update
 }
 ```
 

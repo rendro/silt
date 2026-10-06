@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue anon record pattern, found y
+ --> comma_list__unclosed_anon_record_pattern.silt:8:11
+   |
+ 8 |     {x: a y: b} -> a
+   |           ^ expected '}' or ',' to continue anon record pattern, found y
+ ::: comma_list__unclosed_anon_record_pattern.silt:8:5
+   |
+ 8 |     {x: a y: b} -> a
+   |     - the anon record pattern starts here

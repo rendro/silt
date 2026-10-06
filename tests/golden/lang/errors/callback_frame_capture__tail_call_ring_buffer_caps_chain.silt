@@ -1,7 +1,7 @@
 -- exit: 1
 fn count(n) {
   match n <= 0 {
-    true -> 1 / 0,
+    true -> 1 / 0
     false -> count(n - 1)
   }
 }

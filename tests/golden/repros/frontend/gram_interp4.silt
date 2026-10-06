@@ -1,7 +1,10 @@
 -- verdict: same
 fn main() {
   let x = 5
-  let s = match x { 5 -> "five", _ -> "other" }
+  let s = match x {
+    5 -> "five"
+    _ -> "other"
+  }
   println(s)
   println("{#{"k": 1}}")
 }

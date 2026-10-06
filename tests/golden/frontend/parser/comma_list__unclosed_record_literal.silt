@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A record literal with a missing comma or closer: the message names the list
+-- and labels where it starts.
+type P { x: Int, y: Int }
+
+fn main() {
+  let p = P { x: 1 y: 2 }
+}

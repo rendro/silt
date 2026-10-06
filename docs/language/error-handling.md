@@ -64,7 +64,7 @@ type:
 import io
 
 fn read_head(path: String) -> Result(String, io.IoError) {
-  let content = io.read_file(path)?     -- Err(IoError) propagates
+  let content = io.read_file(path)? -- Err(IoError) propagates
   Ok(content)
 }
 ```
@@ -78,10 +78,12 @@ needed:
 import io
 import result
 
-type Wrap { Wrap(io.IoError) }
+type Wrap {
+  Wrap(io.IoError),
+}
 
 fn load(path: String) -> Result(String, Wrap) {
-  let raw = io.read_file(path) |> result.map_err({ e -> Wrap(e) })?
+  let raw = io.read_file(path) |> result.map_err { e -> Wrap(e) }?
   Ok(raw)
 }
 
@@ -121,12 +123,15 @@ The canonical pattern: declare an `AppError` enum, lift each call via
 `result.map_err`, and let `?` propagate uniformly:
 
 ```silt
+import http
 import io
 import json
-import http
 import result
 
-type Config { api_url: String, api_key: String }
+type Config {
+  api_url: String,
+  api_key: String,
+}
 
 type AppError {
   ConfigRead(io.IoError),
@@ -135,9 +140,9 @@ type AppError {
 }
 
 fn load_and_fetch(path: String) -> Result(String, AppError) {
-  let contents = result.map_err(io.read_file(path), { e -> ConfigRead(e) })?
-  let config = result.map_err(json.parse(contents, Config), { e -> ConfigParse(e) })?
-  let resp = result.map_err(http.get(config.api_url), { e -> ApiCall(e) })?
+  let contents = result.map_err(io.read_file(path)) { e -> ConfigRead(e) }?
+  let config = result.map_err(json.parse(contents, Config)) { e -> ConfigParse(e) }?
+  let resp = result.map_err(http.get(config.api_url)) { e -> ApiCall(e) }?
   Ok(resp.body)
 }
 ```
@@ -207,7 +212,7 @@ type. This lets them appear in any expression position:
 fn get_or_die(opt) {
   match opt {
     Some(v) -> v
-    None -> panic("expected a value")   -- Never unifies with v's type
+    None -> panic("expected a value") -- Never unifies with v's type
   }
 }
 ```
@@ -215,13 +220,13 @@ fn get_or_die(opt) {
 ## Result and Option Utilities
 
 ```silt
-result.map_ok(Ok(1), { x -> x + 1 })        -- Ok(2)
-result.flat_map(Ok(1), { x -> Ok(x + 1) })   -- Ok(2)
-result.unwrap_or(Err("x"), 0)                  -- 0
+result.map_ok(Ok(1)) { x -> x + 1 } -- Ok(2)
+result.flat_map(Ok(1)) { x -> Ok(x + 1) } -- Ok(2)
+result.unwrap_or(Err("x"), 0) -- 0
 
-option.map(Some(1), { x -> x + 1 })          -- Some(2)
-option.flat_map(Some(1), { x -> Some(x + 1) })  -- Some(2)
-option.unwrap_or(None, 0)                      -- 0
+option.map(Some(1)) { x -> x + 1 } -- Some(2)
+option.flat_map(Some(1)) { x -> Some(x + 1) } -- Some(2)
+option.unwrap_or(None, 0) -- 0
 ```
 
 `result.flat_map` is symmetric with `option.flat_map` -- both take a value

@@ -5,8 +5,8 @@
 //! The `golden_shard_*` tests walk every case, run them in parallel and
 //! report every failure at once. `SILT_GOLDEN_FILTER=<text>` runs only the
 //! cases whose path contains the text; `SILT_BLESS=1` rewrites the
-//! existing `.stdout` and `.stderr` files and `-- verdict:` marks from the
-//! current binary.
+//! existing `.stdout`, `.stderr` and `.formatted` files and `-- verdict:`
+//! marks from the current binary.
 //!
 //! The `verdict_shard_*` tests run the cases that carry a `-- verdict:`
 //! mark through `check`, `run`, `test` and the LSP and compare the static
@@ -14,6 +14,7 @@
 //! under `repros/` is verdict-only; a fixed sample of it runs by default,
 //! all of it with `SILT_GOLDEN_FULL_CORPUS=1`.
 
+mod fmt;
 mod lsp;
 mod soundness;
 mod verdict;
@@ -69,6 +70,9 @@ fn feature_enabled(name: &str) -> Result<bool, String> {
         "tcp-tls" => cfg!(feature = "tcp-tls"),
         "postgres" => cfg!(feature = "postgres"),
         "postgres-tls" => cfg!(feature = "postgres-tls"),
+        // Not a cargo feature: the binary is a debug build, which has
+        // the test hook `silt fmt --test-tamper`.
+        "debug-build" => cfg!(debug_assertions),
         other => {
             return Err(format!(
                 "unknown feature {other:?} in `-- requires-feature:` / `-- without-feature:`"
@@ -339,7 +343,10 @@ fn copy_dir(from: &Path, to: &Path) {
 
 fn run_case(case: &Case) -> Output {
     let scratch = scratch_copy(case);
-    let out = run_in(case, &scratch);
+    let mut out = run_in(case, &scratch);
+    if fmt::is_fmt_case(case) {
+        out.harness_error = fmt::check(case, &scratch, &out, &|| run_in(case, &scratch));
+    }
     let _ = std::fs::remove_dir_all(&scratch);
     out
 }
@@ -504,20 +511,16 @@ fn judge(case: &Case, out: &Output, bless: bool) -> Vec<String> {
 
 /// The error diagnostics in `stderr` that render without a ` --> ` line:
 /// every diagnostic has a span, so every one shows where it is. Headers
-/// indented under a test result line count too. An `error[fmt]` refusal
-/// is not a diagnostic about the program and is left out. The verdict
-/// mode applies this to `check`'s stderr of every verdict case, the
-/// repro corpus included.
+/// indented under a test result line count too. The verdict mode applies
+/// this to `check`'s stderr of every verdict case, the repro corpus
+/// included.
 fn unlocated_errors(stderr: &str) -> Vec<String> {
     let lines: Vec<&str> = stderr.lines().collect();
     let mut problems = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let Some((true, kind, _)) = verdict::header(line.trim_start()) else {
+        let Some((true, _, _)) = verdict::header(line.trim_start()) else {
             continue;
         };
-        if kind == "fmt" {
-            continue;
-        }
         let located = lines
             .get(i + 1)
             .is_some_and(|next| next.trim_start().starts_with("--> "));

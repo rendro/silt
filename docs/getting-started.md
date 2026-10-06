@@ -43,7 +43,7 @@ Everything is immutable. `let` binds a name to a value. You can shadow within a 
 ```silt
 fn main() {
   let x = 42
-  let x = x + 1   -- shadows, x is now 43
+  let x = x + 1 -- shadows, x is now 43
   print(x)
 }
 ```
@@ -119,17 +119,22 @@ fn area(shape) {
 Every `.silt` file is a module. Items are private unless marked `pub`. Import a module to use its contents:
 
 ```silt
-import geometry                    -- qualified:  geometry.area(3, 4)
-import geometry.{ area, perim }    -- direct:     area(3, 4)
-import geometry as g               -- aliased:    g.area(3, 4)
+import geometry -- qualified:  geometry.area(3, 4)
+import geometry as g -- aliased:    g.area(3, 4)
+import geometry.{ area, perim } -- direct:     area(3, 4)
 ```
 
 `import` brings in both stdlib modules (`list`, `io`, `channel`, …) and your own files. If `src/geometry.silt` defines a `pub fn area`, then any other file in the package can `import geometry` and call `geometry.area(...)`:
 
 ```silt
 -- src/geometry.silt
-pub fn area(w, h) { w * h }
-fn helper(x) { x * 2 }   -- private: only visible inside geometry.silt
+pub fn area(w, h) {
+  w * h
+}
+
+fn helper(x) {
+  x * 2
+} -- private: only visible inside geometry.silt
 ```
 
 ```silt
@@ -189,11 +194,7 @@ import task
 fn main() {
   let ch = channel.new(10)
 
-  let worker = task.spawn({ ->
-    channel.each(ch) { msg ->
-      println("got: {msg}")
-    }
-  })
+  let worker = task.spawn { -> channel.each(ch) { msg -> println("got: {msg}") } }
 
   channel.send(ch, "hello")
   channel.send(ch, "world")

@@ -77,7 +77,7 @@ allowed:
 ```silt
 fn main() {
   let x = 42
-  let x = x + 1    -- shadowing, not mutation
+  let x = x + 1 -- shadowing, not mutation
   println(x)
 }
 ```
@@ -121,7 +121,7 @@ body:
 ```silt
 fn main() {
   let x = 1
-  let x = x + 1   -- x is now 2; the original 1 is untouched
+  let x = x + 1 -- x is now 2; the original 1 is untouched
   println(x)
 }
 ```
@@ -155,7 +155,9 @@ match xs {
 
 -- `when let` is a statement that binds in the surrounding scope on success;
 -- the `else` branch must diverge (return or panic) so the bindings are sound.
-when let [a, b, c] = xs else { return handle_other_shape() }
+when let [a, b, c] = xs else {
+  return handle_other_shape()
+}
 use(a, b, c)
 ```
 
@@ -177,7 +179,9 @@ fn add(a, b) {
   a + b
 }
 
-fn square(x) { x * x }
+fn square(x) {
+  x * x
+}
 ```
 
 **Parameters** of named functions, trait methods and closures take the same
@@ -187,9 +191,17 @@ annotation. A refutable pattern such as `Some(x)` or `[a, b]` is rejected;
 bind a name and `match` on it in the body instead.
 
 ```silt
-fn add(x: Int, y: Int) { x + y }
-fn first((a, b): (Int, String)) { a }
-fn area(Point { width, height }) { width * height }
+fn add(x: Int, y: Int) {
+  x + y
+}
+
+fn first((a, b): (Int, String)) {
+  a
+}
+
+fn area(Point { width, height }) {
+  width * height
+}
 ```
 
 **Closures** are values that close over their environment. A closure is
@@ -202,7 +214,7 @@ fn make_adder(n) {
   { x -> x + n }
 }
 
-let answer = { -> 42 }   -- no parameters
+let answer = { -> 42 } -- no parameters
 ```
 
 A closure has no return-type annotation; its type is the type of its body:
@@ -241,7 +253,7 @@ expression position without causing type errors:
 fn get_or_die(opt) {
   match opt {
     Some(v) -> v
-    None -> panic("expected a value")   -- Never unifies with v's type
+    None -> panic("expected a value") -- Never unifies with v's type
   }
 }
 ```

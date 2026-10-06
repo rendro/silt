@@ -1,0 +1,23 @@
+-- The rest of a pattern and the row variable of a record type are the
+-- last element of their list, and a comma may follow them as it may
+-- follow any last element.
+type User { name: String, age: Int }
+
+fn name_of(r: {name: String, ...r,}) -> String {
+  r.name
+}
+
+fn main() {
+  match [1, 2, 3] {
+    [first, ..others,] -> println("{first} then {others}")
+    [] -> println("empty")
+  }
+  match User { name: "Ada", age: 36 } {
+    User { name, .., } -> println(name)
+  }
+  let bo = {name: "Bo", age: 7}
+  match bo {
+    {name: n, ...others,} -> println("{n} {others.age}")
+  }
+  println(name_of({name: "Cy", id: 1}))
+}

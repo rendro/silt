@@ -26,17 +26,22 @@ fn main() {
   }
   println("event: {event.name}")
   println("date: {event.date}")
-  let wd = event.date
-  |> time.weekday
+  let wd = event.date |> time.weekday
   println("weekday: {wd}")
   -- Parse JSON with DateTime field
-  let meeting = match json.parse("""{"title": "standup", "start": "2024-03-15T09:00:00"}""", Meeting) {
+  let meeting = match json.parse(
+    """{"title": "standup", "start": "2024-03-15T09:00:00"}""",
+    Meeting,
+  ) {
     Ok(m) -> m
     Err(e) -> panic("parse error: {e.message()}")
   }
   println("meeting: {meeting.title} at {meeting.start}")
   -- Parse JSON with Time field
-  let sched = match json.parse("""{"event": "lunch", "date": "2024-03-15", "time": "12:30:00"}""", Schedule) {
+  let sched = match json.parse(
+    """{"event": "lunch", "date": "2024-03-15", "time": "12:30:00"}""",
+    Schedule,
+  ) {
     Ok(s) -> s
     Err(e) -> panic("parse error: {e.message()}")
   }
@@ -53,14 +58,12 @@ fn main() {
     Err(e) -> panic("parse error: {e.message()}")
   }
   events
-  |> list.each { e ->
-    let day = e.date
-    |> time.weekday
-    println("  {e.name}: {e.date} ({day})")
-  }
+    |> list.each { e ->
+      let day = e.date |> time.weekday
+      println("  {e.name}: {e.date} ({day})")
+    }
   -- Date arithmetic on parsed dates
-  let deadline = event.date
-  |> time.add_days(90)
+  let deadline = event.date |> time.add_days(90)
   println("90 days after launch: {deadline}")
   -- Invalid date in JSON
   let bad = json.parse("""{"name": "oops", "date": "not-a-date"}""", Event)

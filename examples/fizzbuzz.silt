@@ -10,6 +10,5 @@ fn fizzbuzz(n) {
 }
 
 fn main() {
-  1..21
-  |> list.each { n -> println(fizzbuzz(n)) }
+  1..21 |> list.each { n -> println(fizzbuzz(n)) }
 }

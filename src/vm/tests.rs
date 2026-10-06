@@ -1045,7 +1045,10 @@ fn test_chained_pipes_with_closures() {
 fn test_match_int_literal() {
     let result = run_vm(
         r#"
-            fn main() { match 42 { 42 -> "yes" _ -> "no" } }
+            fn main() { match 42 {
+              42 -> "yes"
+              _ -> "no"
+            } }
         "#,
     );
     assert_eq!(result, Value::String("yes".into()));
@@ -1055,7 +1058,10 @@ fn test_match_int_literal() {
 fn test_match_int_fallthrough() {
     let result = run_vm(
         r#"
-            fn main() { match 99 { 42 -> "yes" _ -> "no" } }
+            fn main() { match 99 {
+              42 -> "yes"
+              _ -> "no"
+            } }
         "#,
     );
     assert_eq!(result, Value::String("no".into()));
@@ -1065,7 +1071,10 @@ fn test_match_int_fallthrough() {
 fn test_match_string_literal() {
     let result = run_vm(
         r#"
-            fn main() { match "hello" { "hello" -> 1 _ -> 0 } }
+            fn main() { match "hello" {
+              "hello" -> 1
+              _ -> 0
+            } }
         "#,
     );
     assert_eq!(result, Value::Int(1));
@@ -1075,7 +1084,10 @@ fn test_match_string_literal() {
 fn test_match_bool_literal() {
     let result = run_vm(
         r#"
-            fn main() { match true { true -> "yes" false -> "no" } }
+            fn main() { match true {
+              true -> "yes"
+              false -> "no"
+            } }
         "#,
     );
     assert_eq!(result, Value::String("yes".into()));
@@ -1085,7 +1097,10 @@ fn test_match_bool_literal() {
 fn test_match_float_literal() {
     let result = run_vm(
         r#"
-            fn main() { match 3.14 { 3.14 -> "pi" _ -> "other" } }
+            fn main() { match 3.14 {
+              3.14 -> "pi"
+              _ -> "other"
+            } }
         "#,
     );
     assert_eq!(result, Value::String("pi".into()));
@@ -1096,7 +1111,10 @@ fn test_match_tuple() {
     let result = run_vm(
         r#"
             fn main() {
-                match (1, 2) { (1, y) -> y * 10  _ -> 0 }
+                match (1, 2) {
+                  (1, y) -> y * 10
+                  _ -> 0
+                }
             }
         "#,
     );
@@ -1108,7 +1126,10 @@ fn test_match_tuple_wildcard() {
     let result = run_vm(
         r#"
             fn main() {
-                match (1, 2) { (_, y) -> y + 100  _ -> 0 }
+                match (1, 2) {
+                  (_, y) -> y + 100
+                  _ -> 0
+                }
             }
         "#,
     );
@@ -1120,7 +1141,10 @@ fn test_match_list_exact() {
     let result = run_vm(
         r#"
             fn main() {
-                match [1, 2, 3] { [a, b, c] -> a + b + c  _ -> 0 }
+                match [1, 2, 3] {
+                  [a, b, c] -> a + b + c
+                  _ -> 0
+                }
             }
         "#,
     );
@@ -1132,7 +1156,10 @@ fn test_match_list_exact_mismatch() {
     let result = run_vm(
         r#"
             fn main() {
-                match [1, 2] { [a, b, c] -> a + b + c  _ -> 99 }
+                match [1, 2] {
+                  [a, b, c] -> a + b + c
+                  _ -> 99
+                }
             }
         "#,
     );
@@ -1144,7 +1171,10 @@ fn test_match_list_head_rest() {
     let result = run_vm(
         r#"
             fn main() {
-                match [10, 20, 30] { [h, ..t] -> h  _ -> 0 }
+                match [10, 20, 30] {
+                  [h, ..t] -> h
+                  _ -> 0
+                }
             }
         "#,
     );
@@ -1156,7 +1186,10 @@ fn test_match_list_rest_value() {
     let result = run_vm(
         r#"
             fn main() {
-                match [10, 20, 30] { [_, ..t] -> t  _ -> [] }
+                match [10, 20, 30] {
+                  [_, ..t] -> t
+                  _ -> []
+                }
             }
         "#,
     );
@@ -1171,7 +1204,10 @@ fn test_match_list_empty_rest() {
     let result = run_vm(
         r#"
             fn main() {
-                match [10] { [h, ..t] -> t  _ -> [99] }
+                match [10] {
+                  [h, ..t] -> t
+                  _ -> [99]
+                }
             }
         "#,
     );
@@ -1183,7 +1219,10 @@ fn test_match_constructor_simple() {
     let result = run_vm(
         r#"
             fn main() {
-                match Some(42) { Some(n) -> n  None -> 0 }
+                match Some(42) {
+                  Some(n) -> n
+                  None -> 0
+                }
             }
         "#,
     );
@@ -1195,7 +1234,10 @@ fn test_match_constructor_none() {
     let result = run_vm(
         r#"
             fn main() {
-                match None { Some(n) -> n  None -> 0 }
+                match None {
+                  Some(n) -> n
+                  None -> 0
+                }
             }
         "#,
     );
@@ -1208,7 +1250,10 @@ fn test_match_constructor_ok_err() {
         r#"
             fn main() {
                 let v = Ok(42)
-                match v { Ok(n) -> n  Err(_) -> -1 }
+                match v {
+                  Ok(n) -> n
+                  Err(_) -> -1
+                }
             }
         "#,
     );
@@ -1220,7 +1265,10 @@ fn test_match_nested_constructor_tuple() {
     let result = run_vm(
         r#"
             fn main() {
-                match Some((1, 2)) { Some((a, b)) -> a + b  None -> 0 }
+                match Some((1, 2)) {
+                  Some((a, b)) -> a + b
+                  None -> 0
+                }
             }
         "#,
     );
@@ -1247,7 +1295,10 @@ fn test_match_or_pattern() {
     let result = run_vm(
         r#"
             fn main() {
-                match 2 { 1 | 2 | 3 -> "small" _ -> "big" }
+                match 2 {
+                  1 | 2 | 3 -> "small"
+                  _ -> "big"
+                }
             }
         "#,
     );
@@ -1259,7 +1310,10 @@ fn test_match_or_pattern_no_match() {
     let result = run_vm(
         r#"
             fn main() {
-                match 5 { 1 | 2 | 3 -> "small" _ -> "big" }
+                match 5 {
+                  1 | 2 | 3 -> "small"
+                  _ -> "big"
+                }
             }
         "#,
     );
@@ -1303,7 +1357,10 @@ fn test_match_range() {
     let result = run_vm(
         r#"
             fn main() {
-                match 5 { 1..10 -> "in range" _ -> "out" }
+                match 5 {
+                  1..10 -> "in range"
+                  _ -> "out"
+                }
             }
         "#,
     );
@@ -1315,7 +1372,10 @@ fn test_match_range_boundary() {
     let result = run_vm(
         r#"
             fn main() {
-                match 10 { 1..10 -> "in range" _ -> "out" }
+                match 10 {
+                  1..10 -> "in range"
+                  _ -> "out"
+                }
             }
         "#,
     );
@@ -1327,7 +1387,10 @@ fn test_match_range_out() {
     let result = run_vm(
         r#"
             fn main() {
-                match 11 { 1..10 -> "in range" _ -> "out" }
+                match 11 {
+                  1..10 -> "in range"
+                  _ -> "out"
+                }
             }
         "#,
     );
@@ -1340,7 +1403,11 @@ fn test_guardless_match() {
         r#"
             fn main() {
                 let x = 5
-                match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
+                match {
+                  x > 10 -> "big"
+                  x > 0 -> "positive"
+                  _ -> "other"
+                }
             }
         "#,
     );
@@ -1353,7 +1420,11 @@ fn test_guardless_match_default() {
         r#"
             fn main() {
                 let x = -5
-                match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
+                match {
+                  x > 10 -> "big"
+                  x > 0 -> "positive"
+                  _ -> "other"
+                }
             }
         "#,
     );
@@ -1442,7 +1513,10 @@ fn test_when_bool_guard() {
                 Ok(a / b)
             }
             fn main() {
-                match safe_div(10, 2) { Ok(n) -> n  Err(_) -> -1 }
+                match safe_div(10, 2) {
+                  Ok(n) -> n
+                  Err(_) -> -1
+                }
             }
         "#,
     );
@@ -1458,7 +1532,10 @@ fn test_when_bool_guard_fails() {
                 Ok(a / b)
             }
             fn main() {
-                match safe_div(10, 0) { Ok(n) -> n  Err(_) -> -1 }
+                match safe_div(10, 0) {
+                  Ok(n) -> n
+                  Err(_) -> -1
+                }
             }
         "#,
     );
@@ -1516,7 +1593,10 @@ fn test_match_constructor_wildcard_field() {
     let result = run_vm(
         r#"
             fn main() {
-                match Ok(42) { Ok(_) -> "is ok" Err(_) -> "is err" }
+                match Ok(42) {
+                  Ok(_) -> "is ok"
+                  Err(_) -> "is err"
+                }
             }
         "#,
     );
@@ -1528,7 +1608,10 @@ fn test_match_or_pattern_constructor() {
     let result = run_vm(
         r#"
             fn main() {
-                match None { Some(_) -> "has value"  None -> "empty" }
+                match None {
+                  Some(_) -> "has value"
+                  None -> "empty"
+                }
             }
         "#,
     );
@@ -1557,7 +1640,11 @@ fn test_guardless_match_first_branch() {
         r#"
             fn main() {
                 let x = 50
-                match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
+                match {
+                  x > 10 -> "big"
+                  x > 0 -> "positive"
+                  _ -> "other"
+                }
             }
         "#,
     );
@@ -1703,7 +1790,10 @@ fn test_let_constructor_destructure() {
         r#"
             fn main() {
                 let x = Ok(42)
-                match x { Ok(n) -> n  Err(_) -> 0 }
+                match x {
+                  Ok(n) -> n
+                  Err(_) -> 0
+                }
             }
         "#,
     );
@@ -1970,7 +2060,11 @@ fn test_type_decl_variant_constructors() {
             type Color { Red, Green, Blue }
             fn main() {
                 let c = Red
-                match c { Red -> 1  Green -> 2  Blue -> 3 }
+                match c {
+                  Red -> 1
+                  Green -> 2
+                  Blue -> 3
+                }
             }
         "#,
     );

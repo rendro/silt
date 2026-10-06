@@ -3,7 +3,13 @@ import list
 fn main() {
   let x = 5
   -- expected [50]
-  println(list.append([], [match x { 5 -> 50, _ -> 0 }]))
+  println(list.append([], [match x {
+    5 -> 50
+    _ -> 0
+  }]))
   -- expected 3 (guardless match has no scrutinee local)
-  println(1 + match { x == 5 -> 2, _ -> 0 })
+  println(1 + match {
+    x == 5 -> 2
+    _ -> 0
+  })
 }

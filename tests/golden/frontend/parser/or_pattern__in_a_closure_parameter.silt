@@ -1,0 +1,17 @@
+-- A closure's parameter may be an or-pattern, as a function's may, and
+-- an alternative may start the next line with its `|`.
+import list
+
+type Shape {
+  Circle(Int),
+  Square(Int),
+}
+
+fn main() {
+  let side = { Circle(n) | Square(n) -> n }
+  let twice = { Circle(n)
+    | Square(n) -> n * 2 }
+  println("{side(Square(4))} {twice(Circle(4))}")
+  let sum = [Circle(1), Square(2)] |> list.fold(0) { acc, Circle(n) | Square(n) -> acc + n }
+  println("{sum}")
+}

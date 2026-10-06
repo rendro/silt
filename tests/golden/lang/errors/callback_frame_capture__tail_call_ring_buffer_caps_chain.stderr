@@ -1,7 +1,7 @@
 error[runtime]: division by zero
  --> callback_frame_capture__tail_call_ring_buffer_caps_chain.silt:4:13
    |
- 4 |     true -> 1 / 0,
+ 4 |     true -> 1 / 0
    |             ^^^^^ division by zero
 
 call stack:

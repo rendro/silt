@@ -2,8 +2,17 @@
 fn id(s) { s }
 fn main() {
   let x = 5
-  let y = id(match x { 5 -> "in", _ -> "out" })
+  let y = id(match x {
+    5 -> "in"
+    _ -> "out"
+  })
   println(y)
-  println((match x { 5 -> "in", _ -> "out" }))
-  println("{match x { 5 -> "in", _ -> "out" }}")
+  println((match x {
+    5 -> "in"
+    _ -> "out"
+  }))
+  println("{match x {
+    5 -> "in"
+    _ -> "out"
+  }}")
 }

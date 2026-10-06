@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A anon record type with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn x_of(p: {x: Int y: Int}) -> Int { p.x }
+
+fn main() {}

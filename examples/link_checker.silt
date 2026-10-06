@@ -37,40 +37,40 @@ fn main() {
   println("")
   -- Classify each link and collect counts
   let result = matches
-  |> list.fold((0, 0)) { acc, capture ->
-    let (valid_count, invalid_count) = acc
-    let text = match list.get(capture, 1) {
-      Some(t) -> t
-      None -> ""
-    }
-    let url = match list.get(capture, 2) {
-      Some(u) -> u
-      None -> ""
-    }
-    let status = classify_url(url)
-    match status {
-      "valid" -> {
-        let scheme = match {
-          string.starts_with(url, "https://") -> "HTTPS"
-          string.starts_with(url, "http://") -> "HTTP"
-          string.starts_with(url, "ftp://") -> "FTP"
-          string.starts_with(url, "mailto:") -> "MAILTO"
-          _ -> "UNKNOWN"
-        }
-        println("  [VALID]   [{text}]({url}) -- scheme: {scheme}")
-        (valid_count + 1, invalid_count)
+    |> list.fold((0, 0)) { acc, capture ->
+      let (valid_count, invalid_count) = acc
+      let text = match list.get(capture, 1) {
+        Some(t) -> t
+        None -> ""
       }
-      _ -> {
-        let reason = match {
-          string.is_empty(url) -> "empty URL"
-          _ -> "unsupported scheme"
+      let url = match list.get(capture, 2) {
+        Some(u) -> u
+        None -> ""
+      }
+      let status = classify_url(url)
+      match status {
+        "valid" -> {
+          -- Determine scheme
+          let scheme = match {
+            string.starts_with(url, "https://") -> "HTTPS"
+            string.starts_with(url, "http://") -> "HTTP"
+            string.starts_with(url, "ftp://") -> "FTP"
+            string.starts_with(url, "mailto:") -> "MAILTO"
+            _ -> "UNKNOWN"
+          }
+          println("  [VALID]   [{text}]({url}) -- scheme: {scheme}")
+          (valid_count + 1, invalid_count)
         }
-        println("  [INVALID] [{text}]({url}) -- {reason}")
-        (valid_count, invalid_count + 1)
+        _ -> {
+          let reason = match {
+            string.is_empty(url) -> "empty URL"
+            _ -> "unsupported scheme"
+          }
+          println("  [INVALID] [{text}]({url}) -- {reason}")
+          (valid_count, invalid_count + 1)
+        }
       }
     }
-  }
-  -- Determine scheme
   let (valid, invalid) = result
   println("")
   println("=== Summary ===")

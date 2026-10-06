@@ -4,7 +4,7 @@
 -- A well-typed but incomplete match is still non-exhaustive.
 fn main() {
   let r = match Ok(1) {
-    Ok(v) -> v,
+    Ok(v) -> v
   }
   println(r)
 }

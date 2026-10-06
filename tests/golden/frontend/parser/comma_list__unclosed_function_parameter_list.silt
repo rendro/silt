@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A function parameter list with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn f(a b) { a }
+
+fn main() {}

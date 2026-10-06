@@ -34,27 +34,27 @@ Within a test file, functions are recognized by their name prefix:
 - Any other function name -- ignored by the test runner (available as helpers)
 
 ```silt
-import test
 import string
+import test
 
 fn test_addition() {
-    test.assert_eq(1 + 1, 2)
+  test.assert_eq(1 + 1, 2)
 }
 
 fn test_string_length() {
-    test.assert_eq(string.length("hello"), 5)
+  test.assert_eq(string.length("hello"), 5)
 }
 
 fn skip_test_not_ready_yet() {
-    test.assert(false, "this would fail")
+  test.assert(false, "this would fail")
 }
 
 fn helper(x) {
-    x * 2
+  x * 2
 }
 
 fn test_with_helper() {
-    test.assert_eq(helper(3), 6)
+  test.assert_eq(helper(3), 6)
 }
 ```
 

@@ -1,0 +1,28 @@
+-- cmd: fmt
+-- A list that is broken over lines has a comma behind its last item, in
+-- every list form: also in a list pattern, and behind the rest of a
+-- pattern and the row variable of a record type.
+type Customer { given_name: String, family_name: String, street_address: String, postal_code: String }
+
+fn describe(record: {given_name: String, family_name: String, street_address: String, postal_code: String, ...other_fields}) -> String {
+  record.given_name
+}
+
+fn main() {
+  let numbers = [1, 2, 3, 4, 5, 6]
+  match numbers {
+    [the_first_number, the_second_number, the_third_number, the_fourth_number, the_fifth_number, the_sixth] -> println(the_first_number)
+    [the_first_number, the_second_number, the_third_number, the_fourth_number, ..all_the_remaining_numbers] -> println(the_first_number)
+    [short, ..rest] -> println(short)
+    _ -> println(0)
+  }
+  let customer = Customer { given_name: "Ada", family_name: "Lovelace", street_address: "12 St James's Square", postal_code: "SW1Y" }
+  match customer {
+    Customer { given_name: the_given_name_of_the_customer, family_name: the_family_name_of_the_customer, .. } -> println(the_given_name_of_the_customer)
+  }
+  let anonymous = {given_name: "Bo", family_name: "Diddley", street_address: "1 Main Street", postal_code: "0"}
+  match anonymous {
+    {given_name: the_given_name_of_the_customer, family_name: the_family_name_of_the_customer, ...all_the_other_fields} -> println(the_given_name_of_the_customer)
+  }
+  println(describe(anonymous))
+}

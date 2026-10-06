@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- 2^63 is one more than the largest Int. Only a minus sign directly in
+-- front makes it a literal: here the minus is a subtraction.
+fn main() {
+  let x = 1 - 9223372036854775808
+  println(x)
+}

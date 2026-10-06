@@ -1,0 +1,21 @@
+-- cmd: fmt
+-- A prefix operator in front of the same one has one spelling. `!!x`
+-- needs no parentheses. `--` starts a comment, so a minus in front of a
+-- minus is `-(-x)`: the parentheses stay, and `- -x` gets them. A
+-- comment between the two keeps them apart as written.
+fn main() {
+  let x = 5
+  let t = true
+  let a = - -x
+  let b = -(-x)
+  let c = - - -x
+  let d = -((-x))
+  let e = !(!t)
+  let f = ! !t
+  let g = !!t
+  let h = !(-x == x)
+  let i = 1 - -x
+  let j = - {- between -} -x
+  let k = - -5
+  println("{a} {b} {c} {d} {e} {f} {g} {h} {i} {j} {k}")
+}

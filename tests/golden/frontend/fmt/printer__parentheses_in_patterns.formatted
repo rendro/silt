@@ -1,0 +1,30 @@
+-- cmd: fmt
+-- Parentheses around a pattern are dropped, also around a tuple or an
+-- or-pattern that starts with one; alternatives in parentheses are one
+-- flat list. They stay where the grammar needs them: around a closure
+-- parameter that is not made of names and brackets.
+fn main() {
+  let ((a, b), c) = ((1, 2), 3)
+  let Ok(d) | Err(d) = Ok(1)
+  match (a, b) {
+    (1, x) | (x, 1) -> println(x)
+    (x, _) -> println(x)
+    (_, _) -> println(c + d)
+  }
+  match a {
+    1 | 2 | 3 | 4 -> println("small")
+    _ -> println("other")
+  }
+  match b {
+    1
+      | 2
+      | 3 -- a comment breaks the one list they are
+      | 4 -> println("small")
+    _ -> println("other")
+  }
+  let f = { Ok(v) | Err(v) -> v }
+  let g = { (0), y -> y }
+  let h = { ("s"), (p, q): (Int, Int) -> p + q }
+  let k = { (^a) -> 1 }
+  println("{f(Ok(1))} {g(0, 1)} {h("s", (1, 2))} {k(1)}")
+}

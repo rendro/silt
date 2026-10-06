@@ -1,14 +1,14 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use silt::formatter;
-use silt::fuzz_invariants::{check_format_idempotent, check_formatter_invariants};
+use silt::fuzz_invariants::check_formatter_invariants;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {
         // If the source lexes and parses successfully...
-        let tokens = match Lexer::new(silt::source::FileId::default(), s).tokenize() {
+        let file = silt::source::FileId::default();
+        let tokens = match Lexer::new(file, s).tokenize() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -17,25 +17,17 @@ fuzz_target!(|data: &[u8]| {
         }
 
         // ...then formatting must succeed and the result must still parse.
-        if let Ok(formatted) = formatter::format(s) {
-            let tokens2 = Lexer::new(silt::source::FileId::default(), &formatted)
-                .tokenize()
-                .expect("Formatted code must lex");
-            Parser::new(tokens2, &formatted)
-                .parse_program()
-                .expect("Formatted code must parse");
+        let formatted = silt::format::format(file, s).expect("a program is formatted");
+        let tokens2 = Lexer::new(file, &formatted)
+            .tokenize()
+            .expect("Formatted code must lex");
+        Parser::new(tokens2, &formatted)
+            .parse_program()
+            .expect("Formatted code must parse");
 
-            // Structural invariants: token count (minus whitespace),
-            // delimiter balance, comment-marker count, and parse-
-            // preservation must all be upheld between input and output.
-            check_formatter_invariants(s, &formatted).unwrap_or_else(|err| {
-                panic!("Formatter invariant violated: {err}");
-            });
-
-            // Idempotency: a second pass must produce the same output.
-            check_format_idempotent(s).unwrap_or_else(|err| {
-                panic!("Formatter idempotency violated: {err}");
-            });
-        }
+        // Not refused, and a second pass changes nothing.
+        check_formatter_invariants(s).unwrap_or_else(|err| {
+            panic!("Formatter invariant violated: {err}");
+        });
     }
 });

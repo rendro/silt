@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A list pattern with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn main() {
+  match [1, 2] {
+    [a b] -> a
+    _ -> 0
+  }
+}

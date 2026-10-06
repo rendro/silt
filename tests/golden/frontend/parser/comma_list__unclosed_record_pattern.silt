@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A record pattern with a missing comma or closer: the message names the list
+-- and labels where it starts.
+type P { x: Int, y: Int }
+
+fn main() {
+  match P { x: 1, y: 2 } {
+    P { x y } -> x
+  }
+}

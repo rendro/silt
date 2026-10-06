@@ -46,8 +46,8 @@ fn test_parenthesized_break_parses_and_roundtrips_through_formatter() {
     // guard used to reject it with a fake "syntax error" even though
     // the token stream is perfectly valid ident-in-statement.
     let src = "fn main() {\n  (break)\n}\n";
-    let formatted =
-        silt::formatter::format(src).expect("paren-wrapped break must format without error");
+    let formatted = silt::format::format(silt::source::FileId::default(), src)
+        .expect("paren-wrapped break must format without error");
     // parse_errors drops any typechecker diagnostics; we only care
     // that the *parser* accepts the formatter's output.
     let perrs = parse_errors(&formatted);

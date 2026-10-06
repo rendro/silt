@@ -10,17 +10,35 @@ fn add(a, b) { a + b }
 fn main() {
   let x = 5
   -- expected: "x=5 kind=five"
-  println("x={x} kind={match x { 5 -> "five", _ -> "other" }}")
+  println("x={x} kind={match x {
+    5 -> "five"
+    _ -> "other"
+  }}")
   -- expected: 5 == 5 -> true
-  println(x == match x { 5 -> 5, _ -> 0 })
+  println(x == match x {
+    5 -> 5
+    _ -> 0
+  })
   -- expected P { a: 1, b: 50 }
-  println(P { a: 1, b: match x { 5 -> 50, _ -> 0 } })
+  println(P { a: 1, b: match x {
+    5 -> 50
+    _ -> 0
+  } })
   -- expected "a,five"
-  println(string.join(["a", match x { 5 -> "five", _ -> "other" }], ","))
+  println(string.join(["a", match x {
+    5 -> "five"
+    _ -> "other"
+  }], ","))
   -- expected 1000 + sum(1..3)=6 -> 1006
   println(1000 + loop i = 1, acc = 0 {
-    match i > 3 { true -> acc, false -> loop(i + 1, acc + i) }
+    match i > 3 {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
   })
   -- expected #{"k": 9}
-  println(#{ "k": match x { 5 -> 9, _ -> 0 } })
+  println(#{ "k": match x {
+    5 -> 9
+    _ -> 0
+  } })
 }

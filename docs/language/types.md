@@ -34,7 +34,7 @@ let flags = 0b1010_0001
 -- Scientific notation (always Float)
 let avogadro = 6.022e23
 let tiny = 1e-9
-let hundred = 1e2       -- Float(100.0), not Int
+let hundred = 1e2 -- Float(100.0), not Int
 ```
 
 Scientific notation always produces a `Float`, even when the value is a whole number.
@@ -49,25 +49,25 @@ silt treats silent wrong answers as worse than crashes. The numeric types are de
 `Int` is 64-bit signed. Arithmetic that would overflow is a **runtime error**, not silent wrapping:
 
 ```silt
-9223372036854775807 + 1      -- runtime error: integer overflow
-let min = -9223372036854775807 - 1   -- Int::MIN, the unrepresentable value
-int.abs(min)                  -- runtime error: integer overflow: abs(-9223372036854775808)
+9223372036854775807 + 1 -- runtime error: integer overflow
+let min = -9223372036854775808 -- the smallest Int
+int.abs(min) -- runtime error: integer overflow: abs(-9223372036854775808)
 ```
 
-The lexer rejects `9223372036854775808` directly as a number literal
-(it overflows `Int`); to construct `Int::MIN` you write
-`-9223372036854775807 - 1` because unary `-` is a separate operator,
-not part of the literal.
+The smallest `Int` is written `-9223372036854775808`: the minus sign and
+the digits are one literal there. Without the minus sign,
+`9223372036854775808` is one more than the largest `Int` and is rejected
+(`number literal too large`).
 
 ### Finite floats
 
 A `Float` is always finite: never `NaN`, never infinite. An operation whose result would be `NaN` or infinite is a **runtime error** that names the operation, matching the integer rule:
 
 ```silt
-1.0 / 2.0                -- 0.5
-1.0 / 0.0                -- runtime error: float division by zero
-float.max_value * 2.0    -- runtime error: float overflow
-math.sqrt(-4.0)          -- runtime error: math.sqrt of a negative number: -4
+1.0 / 2.0 -- 0.5
+1.0 / 0.0 -- runtime error: float division by zero
+float.max_value * 2.0 -- runtime error: float overflow
+math.sqrt(-4.0) -- runtime error: math.sqrt of a negative number: -4
 ```
 
 The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum_float` / `list.product_float` overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.
@@ -95,7 +95,11 @@ type Shape {
   Rect(Float, Float),
 }
 
-type Color { Red, Green, Blue }
+type Color {
+  Red,
+  Green,
+  Blue,
+}
 ```
 
 Constructors create values: `Circle(5.0)`, `Rect(3.0, 4.0)`. The compiler
@@ -104,8 +108,15 @@ checks exhaustiveness when you match on them.
 ## Generic Types
 
 ```silt
-type Option(a) { Some(a), None }
-type Result(a, e) { Ok(a), Err(e) }
+type Option(a) {
+  Some(a),
+  None,
+}
+
+type Result(a, e) {
+  Ok(a),
+  Err(e),
+}
 ```
 
 Type parameters are filled in at use: `Option(Int)`, `Result(String, String)`.
@@ -155,15 +166,15 @@ type — there is no `type Foo { ... }` declaration to anchor identity.
 
 ```silt
 let alice = { name: "Alice", age: 30 }
-let bob   = { name: "Bob",   age: 25 }   -- same type as alice
-alice.name   -- "Alice"
+let bob = { name: "Bob", age: 25 } -- same type as alice
+alice.name -- "Alice"
 ```
 
 The type of `alice` is the structural type `{name: String, age: Int}`,
 which can also appear in any annotation:
 
 ```silt
-fn full_name(p: {first: String, last: String}) -> String {
+fn full_name(p: { first: String, last: String }) -> String {
   "{p.first} {p.last}"
 }
 ```
@@ -176,11 +187,13 @@ fields you happen to have." The function only commits to the fields it
 names; the row variable absorbs whatever else the caller passes:
 
 ```silt
-fn first_name(p: {name: String, ...r}) -> String { p.name }
+fn first_name(p: { name: String, ...r }) -> String {
+  p.name
+}
 
 fn main() {
-  println(first_name({name: "Alice", age: 30}))
-  println(first_name({name: "Bob"}))
+  println(first_name({ name: "Alice", age: 30 }))
+  println(first_name({ name: "Bob" }))
 }
 ```
 
@@ -193,12 +206,14 @@ A row variable can be threaded into the return type so the caller's
 extra fields survive the round trip:
 
 ```silt
-fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
+fn id_name(p: { name: String, ...r }) -> { name: String, ...r } {
+  p
+}
 
 fn main() {
-  let q = id_name({name: "Alice", age: 30})
+  let q = id_name({ name: "Alice", age: 30 })
   -- `age` came along with the row
-  println(q.age)       -- 30
+  println(q.age) -- 30
 }
 ```
 
@@ -214,12 +229,17 @@ Nominal records widen to open rows automatically, so a fn taking a
 `name: String` field:
 
 ```silt
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 
-fn name(p: {name: String, ...r}) -> String { p.name }
+fn name(p: { name: String, ...r }) -> String {
+  p.name
+}
 
 fn main() {
-  println(name(Person { name: "Bob", age: 42 }))   -- Bob
+  println(name(Person { name: "Bob", age: 42 })) -- Bob
 }
 ```
 
@@ -227,13 +247,18 @@ The row is then the record itself: what a function gives back through
 the row is still a `Person`, with its methods and patterns.
 
 ```silt
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 
-fn id_name(p: {name: String, ...r}) -> {name: String, ...r} { p }
+fn id_name(p: { name: String, ...r }) -> { name: String, ...r } {
+  p
+}
 
 fn main() {
-  let q = id_name(Person { name: "Bob", age: 42 })   -- q is a Person
-  println(q.age)                                     -- 42
+  let q = id_name(Person { name: "Bob", age: 42 }) -- q is a Person
+  println(q.age) -- 42
 }
 ```
 
@@ -266,7 +291,9 @@ fields do, `Display`, `Equal` and `Hash`, for a function that prints,
 compares for equality or hashes the whole record:
 
 ```silt
-fn show(p: {name: String, ...r}) -> String where r: Display { "{p}" }
+fn show(p: { name: String, ...r }) -> String where r: Display {
+  "{p}"
+}
 ```
 
 Any other bound on a row variable (`where r: Compare`, a trait of the
@@ -293,10 +320,10 @@ attempting to overwrite a field that already exists is rejected:
 
 ```silt
 fn main() {
-  let p = {name: "Alice"}
-  let q = {...p, age: 30}        -- {name: String, age: Int}
-  println(q.name)                -- Alice
-  println(q.age)                 -- 30
+  let p = { name: "Alice" }
+  let q = { ...p, age: 30 } -- {name: String, age: Int}
+  println(q.name) -- Alice
+  println(q.age) -- 30
 }
 ```
 
@@ -307,7 +334,7 @@ row: `fn ext(p) { {...p, age: 30} }` takes any record that has no
 `age`, and a call with one that has is an error at the call:
 
 ```silt
-ext({age: 1})
+ext({ age: 1 })
 -- error: cannot extend the record with field 'age': it has one already
 -- help: a record is extended, never overwritten: update the field with `r.{ age: ... }`
 ```
@@ -320,12 +347,15 @@ or replaces the record's by name. The type of the base may be decided
 anywhere in the function, before the spread or after it:
 
 ```silt
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 
 fn main() {
   let p = Person { name: "Bob", age: 42 }
-  let r = {...p, city: "x"}      -- {name: String, age: Int, city: String}
-  println(r.city)                -- x
+  let r = { ...p, city: "x" } -- {name: String, age: Int, city: String}
+  println(r.city) -- x
 }
 ```
 
@@ -364,15 +394,18 @@ and whatever the record is: the rest of a declared record is an
 anonymous record too, never the declared type.
 
 ```silt
-type Person { name: String, age: Int }
+type Person {
+  name: String,
+  age: Int,
+}
 
 fn main() {
-  let p = {name: "A", age: 30}
+  let p = { name: "A", age: 30 }
   match p {
-    {name: nm} -> println(nm)      -- "A"
+    { name: nm } -> println(nm) -- "A"
   }
-  let {name, ...rest} = Person { name: "B", age: 42 }   -- rest is {age: Int}
-  println(rest.age)                -- 42
+  let { name, ...rest } = Person { name: "B", age: 42 } -- rest is {age: Int}
+  println(rest.age) -- 42
 }
 ```
 
@@ -400,6 +433,10 @@ Fixed-size, heterogeneous:
 let pair = (1, "hello")
 let (x, y) = pair
 ```
+
+Parentheses around one type or one expression only group: `(Int)` is `Int`
+and `(1)` is `1`. A tuple of one element is written with a comma, `(Int,)`
+and `(1,)`; `()` is the unit type and its value.
 
 ## Recursive Types
 

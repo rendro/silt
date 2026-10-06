@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue record pattern, found y
+ --> comma_list__unclosed_record_pattern.silt:9:11
+   |
+ 9 |     P { x y } -> x
+   |           ^ expected '}' or ',' to continue record pattern, found y
+ ::: comma_list__unclosed_record_pattern.silt:9:7
+   |
+ 9 |     P { x y } -> x
+   |       - the record pattern starts here

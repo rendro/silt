@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A set literal with a missing comma or closer: the message names the list
+-- and labels where it starts.
+fn main() {
+  let s = #[1 2]
+}

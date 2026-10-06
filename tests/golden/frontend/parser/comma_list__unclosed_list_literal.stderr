@@ -1,0 +1,9 @@
+error[parse]: expected ']' or ',' to continue list literal, found 2
+ --> comma_list__unclosed_list_literal.silt:6:15
+   |
+ 6 |   let xs = [1 2]
+   |               ^ expected ']' or ',' to continue list literal, found 2
+ ::: comma_list__unclosed_list_literal.silt:6:12
+   |
+ 6 |   let xs = [1 2]
+   |            - the list literal starts here

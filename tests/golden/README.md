@@ -9,6 +9,7 @@ through the built `silt` binary exactly as a user would run it. No Rust.
 tests/golden/<area>/<case>.silt          single-file case
 tests/golden/<area>/<case>.stdout        expected stdout (optional)
 tests/golden/<area>/<case>.stderr        expected stderr (optional)
+tests/golden/<area>/<case>.formatted     what `silt fmt` makes of the file (`-- cmd: fmt` cases)
 tests/golden/<area>/<case>/main.silt     multi-file case: a directory;
 tests/golden/<area>/<case>/*.silt        the other files beside it;
 tests/golden/<area>/<case>/silt.toml     a package, if the case needs one
@@ -17,6 +18,7 @@ tests/golden/<area>/<case>/src/main.silt a package case: silt.toml plus src/main
                                          file, directives are read from src/main.silt
 tests/golden/<area>/<case>/case.stdout   expected output of a directory case
 tests/golden/<area>/<case>/case.stderr
+tests/golden/<area>/<case>/case.formatted
 ```
 
 `<area>` is a directory of your choosing (e.g. `patterns`, `traits`,
@@ -30,14 +32,14 @@ byte-order mark and before any code, each `-- key: value`:
 
 | Directive | Meaning | Default |
 |---|---|---|
-| `-- cmd: run` / `check` / `test` / `fmt --check` / `disasm` / `repl` / `lsp` | the subcommand; for `repl` the file is not passed, and the session comes from `-- stdin:`; for `lsp` see "LSP cases" below | `run` |
+| `-- cmd: run` / `check` / `test` / `fmt` / `fmt --check` / `disasm` / `repl` / `lsp` | the subcommand; for `repl` the file is not passed, and the session comes from `-- stdin:`; for `fmt` see "Format cases" below; for `lsp` see "LSP cases" below | `run` |
 | `-- exit: N` | expected exit status | `0` |
 | `-- stdout-contains: TEXT` | stdout must contain TEXT (repeatable) | — |
 | `-- stderr-contains: TEXT` | stderr must contain TEXT (repeatable) | — |
 | `-- stderr-not-contains: TEXT` | stderr must not contain TEXT (repeatable) | — |
 | `-- stdin: TEXT` | text fed on stdin (`\n` for newlines) | empty |
 | `-- repeat: N` | run N times, every run must pass (timing-sensitive cases) | 1 |
-| `-- requires-feature: NAME` | skip the case unless the cargo feature is enabled (repeatable) | — |
+| `-- requires-feature: NAME` | skip the case unless the cargo feature is enabled (repeatable). `debug-build` is accepted as a name too: the case needs a debug build of `silt` (see "Format cases") | — |
 | `-- without-feature: NAME` | skip the case when the cargo feature is enabled: what a build that lacks it does (repeatable). Such a case runs in the default-features CI job, not under `--all-features` | — |
 | `-- timeout: SECONDS` | kill the case after this long (only for cases that are slow, not to hide a hang) | 20 |
 | `-- verdict: same` / `known-divergent <doors>` | also run the case in verdict mode, see "Verdicts" below | — |
@@ -49,9 +51,8 @@ Comparison:
 - The exit status is always checked.
 - Every error diagnostic in stderr (`error[<kind>]: ...`, indented or not)
   must be followed by its ` --> ` line: every diagnostic has a place.
-  `error[fmt]` refusals are the exception. The verdict mode checks the
-  same in `check`'s stderr of every verdict case, the repro corpus
-  included.
+  The verdict mode checks the same in `check`'s stderr of every verdict
+  case, the repro corpus included.
 - On Windows, the backslashes in a path to a `.silt` file or to a
   package file (`silt.toml`, `silt.lock`) are turned into `/` before the
   comparison, so one expected file serves every platform: write
@@ -74,6 +75,35 @@ Prefer `stderr-contains` for diagnostics, naming the words that matter
 (the error kind and the key phrase), so that unrelated rewording does not
 break the case; use an exact `.stderr` only when the whole message is the
 point (e.g. a snippet/caret layout test).
+
+## Format cases
+
+With `-- cmd: fmt` (the command alone, without `--check`) the harness
+runs `silt fmt` on the case's copy, which rewrites the copy, and then
+looks at the file as well as at the output:
+
+- A case with exit status 0 has a `<case>.formatted` file
+  (`case.formatted` for a directory case, whose `main.silt` is the file
+  that is formatted). The copy must equal it byte for byte, the
+  directive lines included. Then `silt fmt` runs on the copy a second
+  time and must change nothing: every such case is an idempotence test.
+- A case with another exit status (a syntax error, a refusal) has no
+  `.formatted` file: the copy must be unchanged.
+
+`-- cmd: fmt --test-tamper=FROM=>TO` is the case of a refusal: the flag,
+which `silt fmt --help` does not list, replaces the last FROM by TO in the
+printer's result before the formatter checks it, as a defect of the
+printer would. `silt fmt` then refuses, and the case holds what it
+prints. The flag exists in a debug build only (a release binary answers
+"unknown flag"), so such a case says `-- requires-feature: debug-build`
+and is skipped when the suite is built with `--release`.
+
+Stdout, stderr and the exit status are compared as for every case. To
+write the expected file, format a copy and CHECK the result by eye:
+
+```
+cp <case>.silt /tmp/c.silt && $SILT fmt /tmp/c.silt && cp /tmp/c.silt <case>.formatted
+```
 
 ## LSP cases
 
@@ -262,7 +292,7 @@ the case.
 ## Bless mode
 
 `SILT_BLESS=1 cargo test --test golden` rewrites every existing `.stdout`
-/ `.stderr` file and every `-- verdict:` mark from the current binary
+/ `.stderr` / `.formatted` file and every `-- verdict:` mark from the current binary
 (with `SILT_GOLDEN_FULL_CORPUS=1` for the marks of the whole repro
 corpus). Only the integrator uses it,
 after reviewing the diff.

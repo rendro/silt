@@ -50,11 +50,12 @@ fn main() {
     Err(e) -> panic("Failed to parse people: {e.message()}")
   }
   people
-  |> list.each { p ->
-    let bday = next_birthday(p.dob)
-    let days = time.days_between(time.today(), bday)
-    let wd = p.dob
-    |> time.weekday
-    println("{p.name}: born {p.dob} ({wd}), age {age(p.dob)}, next birthday {bday} in {days} days")
-  }
+    |> list.each { p ->
+      let bday = next_birthday(p.dob)
+      let days = time.days_between(time.today(), bday)
+      let wd = p.dob |> time.weekday
+      println(
+        "{p.name}: born {p.dob} ({wd}), age {age(p.dob)}, next birthday {bday} in {days} days",
+      )
+    }
 }

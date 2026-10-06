@@ -7,7 +7,10 @@ fn main() {
   println(takes_ext(2.0))
   let xs = [1.0, 1.0 / 2.0]
   println(xs)
-  let m = match true { true -> 1.0, false -> 1.0 / 2.0 }
+  let m = match true {
+    true -> 1.0
+    false -> 1.0 / 2.0
+  }
   println(m)
   let ys: List(ExtFloat) = [1.0, 2.0]
   println(ys)

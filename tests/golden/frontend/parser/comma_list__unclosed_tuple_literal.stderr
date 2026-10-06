@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue tuple literal, found 3
+ --> comma_list__unclosed_tuple_literal.silt:6:17
+   |
+ 6 |   let t = (1, 2 3)
+   |                 ^ expected ')' or ',' to continue tuple literal, found 3
+ ::: comma_list__unclosed_tuple_literal.silt:6:11
+   |
+ 6 |   let t = (1, 2 3)
+   |           - the tuple literal starts here

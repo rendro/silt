@@ -14,7 +14,10 @@ fn g(x) -> Int {
 }
 fn h(x) {
   when x > 0 else {
-    match x { 0 -> return "zero", _ -> return "neg" }
+    match x {
+      0 -> return "zero"
+      _ -> return "neg"
+    }
   }
   "pos"
 }

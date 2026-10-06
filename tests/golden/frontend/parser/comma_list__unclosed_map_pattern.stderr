@@ -1,0 +1,9 @@
+error[parse]: expected '}' or ',' to continue map pattern, found "b"
+ --> comma_list__unclosed_map_pattern.silt:7:14
+   |
+ 7 |     #{"a": x "b": y} -> x
+   |              ^^^ expected '}' or ',' to continue map pattern, found "b"
+ ::: comma_list__unclosed_map_pattern.silt:7:5
+   |
+ 7 |     #{"a": x "b": y} -> x
+   |     -- the map pattern starts here

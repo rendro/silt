@@ -1,0 +1,31 @@
+-- cmd: fmt
+-- A comment on the line above something that starts with a bracket (a
+-- tuple pattern, a list, alternatives) stands above it and is not in
+-- it: what fits on one line stays on one line.
+fn f(p) {
+  match p {
+    -- zero on the left
+    (0, _) -> "l"
+    -- a list
+    [1, 2] -> "x"
+    -- either
+    (1, 1) | (2, 2) -> "same"
+    (_, 0) -> "r" -- trailing
+    _ -> "n"
+  }
+}
+
+fn main() {
+  -- a tuple statement
+  (1, 2)
+  -- a list statement
+  [1, 2]
+  -- in parentheses
+  (1 + 2) * 3
+  let a = [
+    -- inside the list: it breaks
+    1,
+    2,
+  ]
+  println(f((0, 1)))
+}

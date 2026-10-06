@@ -3,7 +3,10 @@ type Meters = Int
 type Pairs(a) = List((a, a))
 trait Greet { fn greet(self) -> String }
 trait Greet for Meters { fn greet(self) -> String { "m" } }
-fn f(p: Pairs(Int)) -> Int { match p { [(a, b), ..rest] -> a + b, _ -> 0 } }
+fn f(p: Pairs(Int)) -> Int { match p {
+  [(a, b), ..rest] -> a + b
+  _ -> 0
+} }
 fn main() {
   let m: Meters = 5
   println(m.greet())

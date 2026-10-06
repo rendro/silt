@@ -299,7 +299,7 @@ mod tests {
         // Round-101 GAP lock: match-arm Map patterns (`#{\"k\": v}`) and
         // Or patterns (`A(v) | B(v)`) bind `v`; both previously fell to
         // the `_ => {}` catch-all so completion missed the binder.
-        let source = "type T { A(Int), B(Int) }\nfn g(m, x) {\n  let a = match m { #{\"k\": v} -> v, _ -> 0 }\n  let b = match x { A(v2) | B(v2) -> v2 }\n  a + b\n}";
+        let source = "type T { A(Int), B(Int) }\nfn g(m, x) {\n  let a = match m {\n    #{\"k\": v} -> v\n    _ -> 0\n  }\n  let b = match x { A(v2) | B(v2) -> v2 }\n  a + b\n}";
         let program = checked_program(source);
 
         let locals = locals_at_offset(&program, source.len() - 2);

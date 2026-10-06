@@ -8,6 +8,9 @@ trait MyShow { fn my_show(self) -> String }
 trait MyEq for Int { fn my_eq(self, other: Int) -> Bool { self == other } }
 trait MyOrd for Int { fn my_cmp(self, other: Int) -> Int { 0 } }
 fn use_three(x: a, y: a) -> String where a: MyEq + MyOrd + MyShow {
-  match x.my_eq(y) { true -> x.my_show(), false -> "diff" }
+  match x.my_eq(y) {
+    true -> x.my_show()
+    false -> "diff"
+  }
 }
 fn main() { println(use_three(1, 1)) }
