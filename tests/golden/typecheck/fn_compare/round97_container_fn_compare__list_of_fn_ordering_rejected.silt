@@ -1,7 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: cannot derive 'Compare'
--- stderr-contains: element type is not comparable
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
 -- `<` on lists of functions is a compile error.
 fn main() {
   let xs = [{ x -> x }]

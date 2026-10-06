@@ -723,7 +723,8 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             .trait_impl_set
             .insert((TraitKey::builtin("Number"), TypeRef::builtin(ty)));
     }
-    // Tuple/Map/Set: Equal/Hash/Display only.
+    // Tuple/Map/Set: Equal/Hash/Display only. (A map and a set have no
+    // order; `<` and `.compare()` do not order tuples.)
     register_auto_derived_impls_for(checker, &["Tuple", "Map", "Set"], non_ordering_traits);
     // A channel is equal to itself only (`ch1 == ch2`).
     register_auto_derived_impls_for(checker, &["Channel"], &["Equal"]);
@@ -747,16 +748,25 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         register_auto_derived_impls_for(checker, &[ty.name], ty.derives);
     }
 
-    // Bytes: Display only. The generic `dispatch_trait_method` arm at
-    // src/vm/dispatch.rs:309 routes `display` to `display_value`, and
-    // `Value::Bytes` already has a runtime Display impl
-    // (`format_bytes_preview` in src/value/fmt.rs — short hex preview
-    // + length, e.g. `bytes(de ad be ef, length: 4)`). Equal exists as
-    // `bytes.eq(a, b)` but is not auto-derived through the trait
-    // surface; Compare / Hash are intentionally omitted (Bytes is an
-    // opaque resource, not an ordered key type — users wanting to
-    // compare or hash should `bytes.to_hex` first).
+    // Bytes: Display here (`Value::Bytes` prints as a short hex preview
+    // and its length), Equal and Hash below. No Compare: bytes are not
+    // an ordered key type (`bytes.to_hex` first).
     register_auto_derived_impls_for(checker, &["Bytes"], &["Display"]);
+
+    // `==` on a value of an opaque type is the value's own equality (a
+    // handle's identity, the bytes' content).
+    let registry = crate::builtins::registry::registry();
+    let opaque = registry
+        .modules
+        .iter()
+        .flat_map(|module| module.opaque.iter())
+        .map(|(name, _)| *name)
+        .chain(["Bytes"]);
+    for name in opaque {
+        register_auto_derived_impls_for(checker, &[name], &["Equal"]);
+    }
+    // Bytes are a map key and a set element by their content.
+    register_auto_derived_impls_for(checker, &["Bytes"], &["Hash"]);
 
     // TcpListener / TcpStream are registered in BUILTIN_TYPES so the
     // trait-impl-target gate gives an orphan-rule rejection (rather

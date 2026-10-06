@@ -181,24 +181,11 @@ pub struct Tables {
     /// diagnostic in `validate_trait_impls` can point at the impl
     /// block's real source location.
     pub(super) trait_impl_spans: HashMap<(TraitKey, TypeRef), Span>,
-    /// Maps `(trait_name, target_head)` → impl-level where-clause
-    /// obligations expressed as `(target_arg_index, required_trait,
-    /// required_trait_args)` triples. Populated from
-    /// `register_trait_impl` so that constraint resolution at call
-    /// sites can recursively verify that the concrete type arguments
-    /// of the matched impl themselves satisfy the impl's own where
-    /// clauses (e.g. `Box(Box(String)): Greet` with
-    /// `trait Greet for Box(a) where a: Greet` must reject because
-    /// String does not impl Greet, even though `(Greet, Box)` is in
-    /// `trait_impl_set`).
-    ///
-    /// The third tuple slot carries the trait args for parameterized
-    /// bounds — `trait Use for List(a) where a: Conv(Int)` stores
-    /// `[Int]` so the recursive `verify_trait_obligation` step can
-    /// reject `Conv(String) for Int` (a mismatched impl) instead of
-    /// silently accepting any `Conv(*) for Int`. Empty for
-    /// parameterless trait bounds.
-    pub(super) impl_constraints: HashMap<(TraitKey, TypeRef), Vec<(usize, TraitKey, Vec<Type>)>>,
+    /// What each impl's header asks of its type variables
+    /// (`trait Greet for Box(a) where a: Greet`), on the variables of the
+    /// impl's self type (`impl_self_types`): a use that the impl answers
+    /// owes them at the subject's parts (`verify_trait_obligation`).
+    pub(super) impl_preds: HashMap<(TraitKey, TypeRef), Vec<Pred>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`
@@ -399,7 +386,7 @@ impl Tables {
         for key in rows.impls {
             self.trait_impl_set.remove(&key);
             self.trait_impl_spans.remove(&key);
-            self.impl_constraints.remove(&key);
+            self.impl_preds.remove(&key);
             self.impl_trait_args.remove(&key);
             self.impl_self_types.remove(&key);
             self.auto_derive_negatives.remove(&key);

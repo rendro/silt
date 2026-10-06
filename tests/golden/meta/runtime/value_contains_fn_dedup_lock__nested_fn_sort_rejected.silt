@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: does not implement Compare
+-- stderr-contains: error[type]: type 'Box' cannot derive 'Compare': field 'item' has type 'Fn(Int) -> Int', which is not comparable
 import list
 type Box {
   item: Fn(Int) -> Int,

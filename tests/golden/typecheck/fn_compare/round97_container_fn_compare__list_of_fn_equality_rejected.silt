@@ -1,7 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: cannot derive 'Equal'
--- stderr-contains: element type is not equatable
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
 -- `==` on lists of functions is a compile error.
 fn main() {
   let xs = [{ x -> x }]

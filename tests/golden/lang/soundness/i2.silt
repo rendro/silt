@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: which is not hashable
 -- Port of repros/type_soundness/i2.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes and `run` prints
--- the lengths: a map or set literal does not ask its keys for `Hash` yet
 -- (only `map.length`'s bound, which a reader of a map does not owe,
 -- rejected the program before).
 import map

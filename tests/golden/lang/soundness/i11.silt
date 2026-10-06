@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
 -- Port of repros/type_soundness/i11.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: set.contains: type 'Fn' does not implement Compare
 import set
 fn main() {
   let f = { x -> x + 1 }

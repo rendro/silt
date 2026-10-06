@@ -84,12 +84,13 @@ impl TypeChecker {
         scheme
     }
 
-    /// Forget what the scope `exit_level` just left still owes or waits
-    /// to check (`finalize_deferred_checks`), once everything the scope
-    /// defines is generalised: except what is on a variable that is still
-    /// unresolved and belongs to an outer binding (a top-level `let`
-    /// that is not generalised), which is owed, and checked, when a later
-    /// definition decides it.
+    /// Settle what the scope `exit_level` just left still owes or waits
+    /// to decide, once everything the scope defines is generalised. What
+    /// is on a variable that is still unresolved and belongs to an outer
+    /// binding (a top-level `let` that is not generalised) waits on: it
+    /// is decided when a later definition decides the variable. What
+    /// nothing can decide any more is an error, or, for a builtin
+    /// structural trait, fixes its subject to `()`.
     pub(super) fn settle_bounds(&mut self) {
         self.decide_closed();
         let recorded = self.wanted.split_off(self.closed_mark);

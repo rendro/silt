@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'P' cannot derive 'Display': field 'f' has type 'Fn(Int) -> Int', which is not printable
+-- stderr-contains: error[type]: type 'P' cannot derive 'Equal': field 'f' has type 'Fn(Int) -> Int', which is not equatable
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- stderr-contains: which is not comparable
+-- A function has none of the structural traits, at any depth: in a
+-- record's field, an option's payload, a list in a tuple.
+import list
+type P { x: Int, f: Fn(Int) -> Int }
+fn main() {
+  let p = P { x: 1, f: { n -> n } }
+  println(p)
+  println(p == p)
+  let m = #{ ([{ n -> n }], 1): 2 }
+  println(list.sort([Some(p)]))
+}

@@ -1,0 +1,17 @@
+-- A type has `Display`, `Equal` and `Hash` when its parts do: an
+-- anonymous record, a tuple, a list of options, a recursive enum.
+import list
+type Tree { Leaf, Node(Tree, Int, Tree) }
+type Q { x: Int, name: String }
+fn show(x: a) -> String where a: Display { "{x}" }
+fn same(x: a, y: a) -> Bool where a: Equal { x == y }
+fn main() {
+  println({ a: 1, b: "s" })
+  println(show((1, [Some(2), None])))
+  println(same(Node(Leaf, 1, Leaf), Leaf))
+  println(same(Q { x: 1, name: "q" }, Q { x: 1, name: "q" }))
+  println(Some(1) < Some(2))
+  println(list.sort([Some(2), None, Some(1)]))
+  println([])
+  println(None)
+}

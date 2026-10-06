@@ -1,6 +1,6 @@
 -- `.hash()` through a polymorphic wrapper on tuples holding functions fails.
 -- exit: 1
--- stderr-contains: does not implement Hash
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
 -- stderr-contains: 'Fn'
 fn h(a: x) -> Int where x: Hash { a.hash() }
 fn main() {

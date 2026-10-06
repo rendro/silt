@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
+type Box(a) { Box(a) }
+trait Display for Box(a) where a: Display { fn display(self) -> String { match self { Box(v) -> "box of {v}" } } }
+fn show(x: a) -> String where a: Display { x.display() }
+fn main() {
+  println(show([Box({ n -> n })]))
+}

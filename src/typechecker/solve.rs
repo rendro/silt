@@ -751,6 +751,266 @@ impl TypeChecker {
             // Still unknown: the caller lets it wait (`want`).
             return;
         };
+        // Equal, Compare and Hash, and Display where no impl is written,
+        // are what the type's structure says.
+        if self.by_structure(trait_name, type_name) {
+            let mut open = Vec::new();
+            let mut written = Vec::new();
+            let mut assumed = Vec::new();
+            match self.structure_gap(trait_name, &resolved, &mut assumed, &mut open, &mut written) {
+                Some(gap) => {
+                    // An operator's own operand of a type the operator
+                    // is not for: the operator's message.
+                    let message = match origin.op {
+                        Some(op)
+                            if !is_valid_compare_operand(
+                                &resolved,
+                                trait_name.is_builtin("Equal"),
+                            ) && !trait_name.is_builtin("Display") =>
+                        {
+                            let domain = if trait_name.is_builtin("Equal") {
+                                "a comparable type"
+                            } else {
+                                "Int, Float, String, List, Range, Record, or Variant"
+                            };
+                            self.error(
+                                Code::UnsupportedOperation,
+                                format!("operator {op} requires {domain}, got '{resolved}'"),
+                                span,
+                            );
+                            return;
+                        }
+                        _ => gap,
+                    };
+                    self.error(Code::MissingTraitImpl, message, span);
+                }
+                None => {
+                    // A part still unknown, or an annotation variable,
+                    // owes the trait in turn; a part with a written
+                    // `Display` impl is that impl's to answer.
+                    for part in open {
+                        self.want(
+                            Pred::Trait {
+                                tr: trait_name,
+                                args: Vec::new(),
+                                subject: part,
+                            },
+                            origin,
+                        );
+                    }
+                    for part in written {
+                        self.verify_impl(trait_name, &[], &part, origin);
+                    }
+                }
+            }
+            return;
+        }
+        self.verify_impl(trait_name, bound_trait_args, &resolved, origin);
+    }
+
+    /// Whether `trait_name` holds of a type with the head `head` by the
+    /// type's structure: the sealed `Equal`, `Compare` and `Hash`
+    /// always; `Display` unless an impl of it is written for the head.
+    fn by_structure(&self, trait_name: TraitKey, head: TypeRef) -> bool {
+        if ["Equal", "Compare", "Hash"]
+            .iter()
+            .any(|name| trait_name.is_builtin(name))
+        {
+            return true;
+        }
+        trait_name.is_builtin("Display")
+            && self
+                .tables
+                .method_table
+                .get(&(head, intern("display")))
+                .is_none_or(|entry| entry.is_auto_derived)
+    }
+
+    /// Why `ty` does not have the structural trait `tr`, if it does not:
+    /// a function has none of them, a channel only `Equal`; a container,
+    /// a tuple, a record or an enum has one when its head does (`Option`
+    /// has no `Compare`) and each of its parts does. The parts whose
+    /// type is still unknown, or an annotation variable, are added to
+    /// `open`: the trait holds if it holds of them. A recursive type
+    /// holds if its other parts do (`assumed`).
+    fn structure_gap(
+        &self,
+        tr: TraitKey,
+        ty: &Type,
+        assumed: &mut Vec<(TypeRef, Vec<Type>)>,
+        open: &mut Vec<Type>,
+        written: &mut Vec<Type>,
+    ) -> Option<String> {
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+        let lacks = |this: &Self, head: &str| {
+            Some(format!(
+                "type '{head}' does not implement trait '{}'",
+                this.show_trait(tr)
+            ))
+        };
+        let stamped = |this: &Self, head: TypeRef| {
+            let canon = canonical_head(&this.tables.resolver, head);
+            this.tables.trait_impl_set.contains(&(tr, canon))
+        };
+        match &ty {
+            Type::Error | Type::Never | Type::AssocProj { .. } => None,
+            Type::Var(_) | Type::Rigid(_) => {
+                if !open.contains(&ty) {
+                    open.push(ty.clone());
+                }
+                None
+            }
+            Type::Fun(..) => lacks(self, "Fn"),
+            Type::Channel(_) if tr.is_builtin("Equal") => None,
+            Type::List(_)
+            | Type::Range(_)
+            | Type::Set(_)
+            | Type::Map(..)
+            | Type::Tuple(_)
+            | Type::Channel(_)
+            | Type::Int
+            | Type::Float
+            | Type::Bool
+            | Type::String
+            | Type::Unit => {
+                let head = self.type_name_for_impl(&ty).expect("the type has a head");
+                if !stamped(self, head) {
+                    return lacks(self, &resolve(head.name));
+                }
+                let parts: Vec<&Type> = match &ty {
+                    Type::List(t) | Type::Range(t) | Type::Set(t) => vec![&**t],
+                    Type::Map(k, v) => vec![&**k, &**v],
+                    Type::Tuple(ts) => ts.iter().collect(),
+                    _ => Vec::new(),
+                };
+                parts
+                    .into_iter()
+                    .find_map(|part| self.structure_gap(tr, part, assumed, open, written))
+            }
+            Type::AnonRecord { fields, tail } => {
+                if tr.is_builtin("Compare") {
+                    return Some(format!(
+                        "type '{}' does not implement trait '{}'",
+                        self.show_type(&ty),
+                        self.show_trait(tr)
+                    ));
+                }
+                if !matches!(tail, RowTail::Closed) {
+                    return Some(format!(
+                        "type '{}' does not implement trait '{}': its other fields are not known",
+                        self.show_type(&ty),
+                        self.show_trait(tr)
+                    ));
+                }
+                fields
+                    .values()
+                    .find_map(|part| self.structure_gap(tr, part, assumed, open, written))
+            }
+            Type::Record(name, _) | Type::Generic(name, _) => {
+                let head = canonical_head(&self.tables.resolver, *name);
+                // A written `Display` impl answers for its type.
+                if !self.by_structure(tr, head) {
+                    written.push(ty.clone());
+                    return None;
+                }
+                // A type with no fields or variants to look at (a
+                // handle, `Bytes`) has what the builtins say it has.
+                let opaque = !matches!(ty, Type::Record(..))
+                    && !self.tables.records.contains_key(name)
+                    && !self.tables.enums.contains_key(name);
+                if opaque {
+                    return match stamped(self, head) {
+                        true => None,
+                        false => lacks(self, &self.show_type(&Type::Generic(*name, vec![]))),
+                    };
+                }
+                let args = self.type_args_of(&ty);
+                // A recursive type holds if its other parts do. (A type
+                // that recurs at ever larger arguments,
+                // `type N(a) { Z, S(N(List(a))) }`, is taken to hold
+                // past a depth no value of a program reaches.)
+                if assumed.len() > 64 || assumed.iter().any(|(h, a)| *h == head && *a == args) {
+                    return None;
+                }
+                assumed.push((head, args.clone()));
+                // The type's parts, at its arguments.
+                let parts: Vec<(String, Type)> = match &ty {
+                    Type::Record(_, fields) => fields
+                        .iter()
+                        .map(|(n, t)| (format!("field '{n}'"), t.clone()))
+                        .collect(),
+                    _ => {
+                        if let Some(info) = self.tables.records.get(name) {
+                            let mapping: HashMap<TyVar, Type> = self
+                                .tables
+                                .record_param_var_ids
+                                .get(name)
+                                .filter(|ids| ids.len() == args.len())
+                                .map(|ids| ids.iter().copied().zip(args.iter().cloned()).collect())
+                                .unwrap_or_default();
+                            info.fields
+                                .iter()
+                                .map(|(n, t)| {
+                                    (format!("field '{n}'"), substitute_vars(t, &mapping))
+                                })
+                                .collect()
+                        } else if let Some(info) = self.tables.enums.get(name) {
+                            let mapping: HashMap<TyVar, Type> =
+                                if info.param_var_ids.len() == args.len() {
+                                    info.param_var_ids
+                                        .iter()
+                                        .copied()
+                                        .zip(args.iter().cloned())
+                                        .collect()
+                                } else {
+                                    HashMap::new()
+                                };
+                            info.variants
+                                .iter()
+                                .flat_map(|v| {
+                                    v.field_types.iter().enumerate().map(|(i, t)| {
+                                        (
+                                            format!("variant '{}' payload #{}", v.name, i + 1),
+                                            substitute_vars(t, &mapping),
+                                        )
+                                    })
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                };
+                parts.into_iter().find_map(|(what, part)| {
+                    self.structure_gap(tr, &part, assumed, open, written)
+                        .map(|_| {
+                            format!(
+                                "type '{}' cannot derive '{}': {what} has type '{}', which is not {}",
+                                self.show_type(&ty),
+                                self.show_trait(tr),
+                                self.show_type(&self.apply(&part)),
+                                derive_gates::builtin_trait_adjective(tr),
+                            )
+                        })
+                })
+            }
+        }
+    }
+
+    /// Check that `ty` implements `trait_name` by an impl: the one the
+    /// type's head has.
+    fn verify_impl(
+        &mut self,
+        trait_name: TraitKey,
+        bound_trait_args: &[Type],
+        resolved: &Type,
+        origin: Origin,
+    ) {
+        let span = origin.span;
+        let resolved = resolved.clone();
+        let Some(type_name) = self.type_name_for_impl(&resolved) else {
+            return;
+        };
         if !self
             .tables
             .trait_impl_set
@@ -795,19 +1055,17 @@ impl TypeChecker {
             .get(&(trait_name, type_name))
             .cloned()
             .unwrap_or_default();
-        let obligations = self
+        let header = self
             .tables
-            .impl_constraints
+            .impl_preds
             .get(&(trait_name, type_name))
             .cloned()
             .unwrap_or_default();
         let mut own: Vec<TyVar> = impl_self.iter().flat_map(free_vars_in).collect();
         own.extend(impl_trait_args.iter().flat_map(free_vars_in));
-        own.extend(
-            obligations
-                .iter()
-                .flat_map(|(_, _, args)| args.iter().flat_map(free_vars_in)),
-        );
+        for Pred::Trait { args, subject, .. } in &header {
+            own.extend(args.iter().chain([subject]).flat_map(free_vars_in));
+        }
         let mut fresh: HashMap<TyVar, Type> = HashMap::new();
         for v in own {
             fresh.entry(v).or_insert_with(|| self.fresh_var());
@@ -826,6 +1084,8 @@ impl TypeChecker {
         // self type (builtin pre-stamps, auto-derive synthesis) skip the
         // check.
         let obligated_args = self.type_args_of(&resolved);
+        // Whether the impl's variables are the subject's parts by now.
+        let mut linked = false;
         if let Some(impl_self) = &impl_self {
             let impl_self = substitute_vars(impl_self, &fresh);
             let impl_args = self.type_args_of(&impl_self);
@@ -849,6 +1109,7 @@ impl TypeChecker {
                 for (ob, im) in obligated_args.iter().zip(&impl_args) {
                     let _ = self.unify_types(ob, im);
                 }
+                linked = true;
             }
         }
         // The bound's trait arguments are the impl's
@@ -881,22 +1142,13 @@ impl TypeChecker {
                 let _ = self.unify_types(bound_arg, impl_arg);
             }
         }
-        // What the impl's header asks of the subject's arguments is owed
-        // by the same use.
-        for (idx, sub_trait, sub_trait_args) in obligations {
-            if let Some(arg_ty) = obligated_args.get(idx).cloned() {
-                let args: Vec<Type> = sub_trait_args
-                    .iter()
-                    .map(|t| substitute_vars(t, &fresh))
-                    .collect();
-                self.want(
-                    Pred::Trait {
-                        tr: sub_trait,
-                        args,
-                        subject: arg_ty,
-                    },
-                    origin,
-                );
+        // What the impl's header asks of its variables, which are the
+        // subject's parts now, is owed by the same use. (An impl whose
+        // self type is another shape than the subject's, a bare `Tuple`
+        // or `Fn` target, says nothing of the parts.)
+        if linked {
+            for pred in header {
+                self.want(pred.substitute(&fresh), origin);
             }
         }
     }

@@ -3,11 +3,12 @@ use super::*;
 /// Round 93: human adjective for the gated built-in traits, used by
 /// the field-aware auto-derive gate's diagnostics ("... which is not
 /// comparable").
-fn builtin_trait_adjective(trait_sym: TraitKey) -> &'static str {
+pub(super) fn builtin_trait_adjective(trait_sym: TraitKey) -> &'static str {
     match resolve(trait_sym.name).as_str() {
         "Compare" => "comparable",
         "Equal" => "equatable",
         "Hash" => "hashable",
+        "Display" => "printable",
         _ => "supported",
     }
 }
@@ -251,134 +252,6 @@ impl TypeChecker {
             // stamp, exactly like the one-level synthesis gate.
             _ => self.field_type_supports_trait(trait_sym, &ty),
         }
-    }
-
-    /// Round 93: operator-operand violation check for `==`/`!=`
-    /// (`is_equality`) and `<`/`>`/`<=`/`>=` on nominal record / enum
-    /// operands. Returns the diagnostic to emit when the operand's
-    /// type cannot soundly support the Value-level operation.
-    pub(super) fn operand_builtin_trait_violation(
-        &self,
-        ty: &Type,
-        is_equality: bool,
-    ) -> Option<String> {
-        let trait_sym = if is_equality {
-            TraitKey::builtin("Equal")
-        } else {
-            TraitKey::builtin("Compare")
-        };
-        let resolved =
-            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
-        let (name, args) = match &resolved {
-            Type::Generic(name, args) => (*name, args.clone()),
-            // Nominal records normally flow as `Type::Generic`, but a
-            // `Type::Record` form carries its (instantiated) field
-            // types inline — walk them directly.
-            Type::Record(name, fields) => {
-                let canon = canonical_head(&self.tables.resolver, *name);
-                if let Some(msg) = self.tables.auto_derive_negatives.get(&(trait_sym, canon)) {
-                    return Some(msg.clone());
-                }
-                let no_negatives = HashMap::new();
-                return fields.iter().find_map(|(fname, fty)| {
-                    (!self.gate_field_supports_trait(trait_sym, fty, &no_negatives, 0))
-                        .then(|| {
-                        format!(
-                            "type '{}' cannot derive '{}': field '{}' has type '{}', which is not {}",
-                            resolve(name.name),
-                            resolve(trait_sym.name),
-                            resolve(*fname),
-                            self.apply(fty),
-                            builtin_trait_adjective(trait_sym),
-                        )
-                    })
-                });
-            }
-            // Round 97: container HEADS (List/Range/Tuple/Map/Set) pass the
-            // structural shape gate in `is_valid_compare_operand`, but the
-            // Value-level operation recurses into element types — and the VM
-            // fallback for a `Fn`-shaped element is Arc-pointer-address
-            // ordering (ASLR-nondeterministic), exactly the bug round 3 fixed
-            // for bare `Fn` operands and round 93 fixed for nominal fields.
-            // Mirror the round-93 field walk: a container is compare/equality
-            // -valid IFF every element / component / value type is itself
-            // valid. `gate_field_supports_trait` already does this recursion
-            // honestly (and bottoms out at `Type::Fun(..) => false`), so we
-            // reuse it and surface the whole container type as the reason.
-            Type::List(_) | Type::Range(_) | Type::Tuple(_) | Type::Map(..) | Type::Set(_) => {
-                let no_negatives = HashMap::new();
-                return (!self.gate_field_supports_trait(trait_sym, &resolved, &no_negatives, 0))
-                    .then(|| {
-                        format!(
-                            "type '{resolved}' cannot derive '{}': element type is not {}",
-                            resolve(trait_sym.name),
-                            builtin_trait_adjective(trait_sym),
-                        )
-                    });
-            }
-            _ => return None,
-        };
-        let canon = canonical_head(&self.tables.resolver, name);
-        if let Some(msg) = self.tables.auto_derive_negatives.get(&(trait_sym, canon)) {
-            return Some(msg.clone());
-        }
-        // Instantiation walk: substitute the concrete type args into
-        // the declared field / payload types and re-check. This is
-        // the use-site flavour of the declaration-level gate — it
-        // catches `Box(Fn(Int) -> Int)` where `type Box(a) { v: a }`
-        // is conditionally eligible, while leaving phantom params
-        // (`type Tag(a) { name: String }`) unpunished because only
-        // the types that actually appear in fields are walked.
-        let no_negatives = HashMap::new();
-        let check = |fty: &Type| self.gate_field_supports_trait(trait_sym, fty, &no_negatives, 0);
-        if let Some(info) = self.tables.records.get(&name) {
-            let mapping: HashMap<TyVar, Type> = self
-                .tables
-                .record_param_var_ids
-                .get(&name)
-                .filter(|ids| ids.len() == args.len())
-                .map(|ids| ids.iter().copied().zip(args.iter().cloned()).collect())
-                .unwrap_or_default();
-            return info.fields.iter().find_map(|(fname, fty)| {
-                let concrete = substitute_vars(fty, &mapping);
-                (!check(&concrete)).then(|| {
-                    format!(
-                        "type '{resolved}' cannot derive '{}': field '{}' has type '{}', which is not {}",
-                        resolve(trait_sym.name),
-                        resolve(*fname),
-                        self.apply(&concrete),
-                        builtin_trait_adjective(trait_sym),
-                    )
-                })
-            });
-        }
-        if let Some(info) = self.tables.enums.get(&name) {
-            let mapping: HashMap<TyVar, Type> = if info.param_var_ids.len() == args.len() {
-                info.param_var_ids
-                    .iter()
-                    .copied()
-                    .zip(args.iter().cloned())
-                    .collect()
-            } else {
-                HashMap::new()
-            };
-            return info.variants.iter().find_map(|v| {
-                v.field_types.iter().enumerate().find_map(|(i, fty)| {
-                    let concrete = substitute_vars(fty, &mapping);
-                    (!check(&concrete)).then(|| {
-                        format!(
-                            "type '{resolved}' cannot derive '{}': variant '{}' payload #{} has type '{}', which is not {}",
-                            resolve(trait_sym.name),
-                            resolve(v.name),
-                            i + 1,
-                            self.apply(&concrete),
-                            builtin_trait_adjective(trait_sym),
-                        )
-                    })
-                })
-            });
-        }
-        None
     }
 
     /// Round 93: when a `.equal()` / `.compare()` / `.hash()` call
