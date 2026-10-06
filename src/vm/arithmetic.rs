@@ -153,19 +153,13 @@ impl Vm {
     /// first rejecting any operand that transitively contains a
     /// function-shaped leaf (`Vm::value_contains_fn`, src/vm/mod.rs).
     ///
-    /// This is the execution-site backstop for the round-97 typechecker
-    /// gate: the CONCRETE form (`[{ x -> x }] < [{ x -> x }]`) is a
-    /// compile error, but a polymorphic wrapper (`fn lt(a: x, b: x) ->
-    /// Bool { a < b }`) launders a container of functions past
-    /// `pending_numeric_checks` (which skips `Var`-typed operands on the
-    /// documented promise that the VM catches the violation at runtime).
-    /// Without this gate, `Value::cmp` ordered `VmClosure` leaves by
-    /// `Arc::as_ptr` (src/value/key.rs), so the resulting Bool depended on
-    /// heap allocation order — nondeterministic across runs. Bare
-    /// function-shaped operands never reach this helper: they fall to
-    /// `compare()`'s catch-all arm and keep its "cannot compare Fn and
-    /// Fn" wording. Locked by
-    /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
+    /// The checker rejects ordering a value that holds a function
+    /// (`Compare` is decided by structure): this is the backstop at the
+    /// execution site. Without it `Value::cmp` would order `VmClosure`
+    /// leaves by `Arc::as_ptr` (src/value/key.rs), a result that depends
+    /// on heap allocation order. Bare function-shaped operands never
+    /// reach this helper: they fall to `compare()`'s catch-all arm and
+    /// keep its "cannot compare Fn and Fn" wording.
     fn ordering_with_fn_gate(a: &Value, b: &Value) -> Result<std::cmp::Ordering, VmError> {
         if Self::value_contains_fn(a) || Self::value_contains_fn(b) {
             return Err(VmError::type_confusion(

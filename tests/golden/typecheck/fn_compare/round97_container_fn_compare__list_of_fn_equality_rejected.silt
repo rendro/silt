@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
+-- stderr-contains: error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Equal': element is of type 'Fn(_) -> _', which does not
 -- `==` on lists of functions is a compile error.
 fn main() {
   let xs = [{ x -> x }]

@@ -159,7 +159,8 @@ impl TypeChecker {
         self.reopen_level();
         self.solve_wanted(self.closed_mark);
         self.close_level();
-        self.default_selects();
+        self.decide_tries();
+        self.default_selects(false);
     }
 
     /// Make variables as the scope `exit_level` just left did, until

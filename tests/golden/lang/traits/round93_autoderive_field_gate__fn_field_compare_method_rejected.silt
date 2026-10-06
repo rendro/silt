@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'H' cannot derive 'Compare'
+-- stderr-contains: error[type]: type 'H' does not implement trait 'Compare': field 'f' is of type 'Fn(Int) -> Int', which does not
 -- stderr-contains: field 'f'
 -- stderr-contains: Fn(Int) -> Int
 type H { f: Fn(Int) -> Int }

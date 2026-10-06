@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'M' cannot derive 'Compare': field 'm' has type 'Map(String, Int)', which is not comparable
+-- stderr-contains: error[type]: type 'M' does not implement trait 'Compare': field 'm' is of type 'Map(String, Int)', which does not
 type M { m: Map(String, Int) }
 fn mk() -> M { M{m: #{"a": 1}} }
 fn cmp_gen(x: a, y: a) -> Int where a: Compare { x.compare(y) }

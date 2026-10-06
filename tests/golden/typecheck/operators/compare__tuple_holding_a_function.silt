@@ -1,10 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
+-- stderr-contains: error[type]: type '(Int, Fn(_) -> _)' does not implement trait 'Compare': part #2 is of type 'Fn(_) -> _', which does not
 -- A tuple has `Compare` when its parts do: one that holds a function,
 -- a map or a set does not.
--- stderr-contains: error[type]: type 'Map' does not implement trait 'Compare'
--- stderr-contains: error[type]: type 'Set' does not implement trait 'Compare'
 import list
 fn lt(x: a, y: a) -> Bool where a: Compare { x < y }
 fn main() {

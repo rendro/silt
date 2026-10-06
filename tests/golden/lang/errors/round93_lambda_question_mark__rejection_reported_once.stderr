@@ -1,3 +1,10 @@
+error[type]: type mismatch: expected Int, got Result(_, String)
+ --> round93_lambda_question_mark__rejection_reported_once.silt:8:23
+   |
+ 8 |   let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got Result(_, String)
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value
+
 error[type]: type mismatch: expected Result(_, String), got Int
  --> round93_lambda_question_mark__rejection_reported_once.silt:8:45
    |
@@ -7,10 +14,3 @@ error[type]: type mismatch: expected Result(_, String), got Int
    |
  8 |   let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
    |                                             -- this `?` requires this function to return Result(_, String)
-
-error[type]: type mismatch: expected Int, got Result(_, String)
- --> round93_lambda_question_mark__rejection_reported_once.silt:8:23
-   |
- 8 |   let ys: List(Int) = xs |> list.map({ x -> x? + 1 })
-   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got Result(_, String)
-  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value

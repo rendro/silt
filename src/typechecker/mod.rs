@@ -90,6 +90,12 @@ pub struct TypeChecker {
     pub(super) bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
+    /// The types of the module being checked that have a written
+    /// `Display` impl, known before the impls are registered: such a
+    /// type has `Display` by that impl, not by its structure.
+    pub(super) display_written: std::collections::HashSet<TypeRef>,
+    /// The (place, type) pairs a missing trait is reported for.
+    pub(super) lacking: std::collections::HashSet<(Span, String)>,
     /// Whether the expression checked next is the callee of a call:
     /// `x.m` there is a method call, anywhere else a field.
     pub(super) callee_position: bool,
@@ -257,6 +263,8 @@ impl TypeChecker {
             loop_binding_types: None,
             bounds: HashMap::new(),
             current_return_type: None,
+            display_written: std::collections::HashSet::new(),
+            lacking: std::collections::HashSet::new(),
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
@@ -1344,7 +1352,21 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     let rows = tables.added_since(&before);
     tables.rows.insert(module, rows);
     ModuleCheck {
-        diagnostics: checker.errors,
+        diagnostics: {
+            // In source order: a check that waited for a type is
+            // reported where it is, not when it was decided.
+            // (Per file, the files in the order they first come up.)
+            let mut files: Vec<crate::source::FileId> = Vec::new();
+            for d in &checker.errors {
+                if !files.contains(&d.span.file) {
+                    files.push(d.span.file);
+                }
+            }
+            checker
+                .errors
+                .sort_by_key(|d| (files.iter().position(|f| *f == d.span.file), d.span.start));
+            checker.errors
+        },
         top_level,
     }
 }

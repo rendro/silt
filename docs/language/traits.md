@@ -131,7 +131,7 @@ Implementing a subtrait without the supertrait fails:
 type MyInt { v: Int }
 trait Ordered for MyInt { ... }
 -- error: type 'MyInt' implements 'Ordered' but does not implement supertrait 'Equal'
--- (only fires when MyInt cannot derive Equal, e.g. it has a function field)
+-- (only when MyInt has no Equal, e.g. it has a function field)
 ```
 
 ## Default Methods
@@ -434,6 +434,8 @@ decided by what is written, not by which names happen to exist:
 
 - `x.f` is a field: `fn name_of(p) { p.name }` takes any record with a
   field `name`, whatever methods traits declare.
+- `r.f(..)` on a record with a field `f` calls the function the field
+  holds, even if a trait has a method `f` for the record's type.
 - `x.m(..)` means the one trait in sight that declares a method `m`, and
   bounds `x` by it: `fn g(x) { x.greet() }` is `fn g(x: a) -> String
   where a: Greet`. If no trait declares `m`, `x` is a record whose field
@@ -473,7 +475,9 @@ fn largest(x: a, y: a) -> a where a: Compare {
 ```
 
 `?` and a record update (`r.{ f: e }`) are not general: the value they
-apply to needs a type the definition decides, or an annotation.
+apply to needs a type the definition decides, or an annotation. `?`
+takes it from the return type of the function it is in, when that is
+known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
 The auto-derived `Display` formats in constructor syntax (`Circle(5)`).
 Write your own `trait Display for T` to override.
@@ -506,6 +510,12 @@ and for `Display` where no impl is written:
   Int)` has none of them. A closed anonymous record (`{a: Int}`) has
   `Equal`, `Hash` and `Display` when its fields do.
 - A type variable has what its bound says (`where a: Compare`).
+  `Compare` includes `Equal`: what is ordered can be compared with `==`.
+
+Declaring a type never fails for lack of one of these traits: a type may
+hold a function anywhere. The error is at the use that needs the trait
+(`println`, `==`, a map key), and names the way down to the part that
+lacks it.
 
 The standard library declares what it asks of its arguments the same
 way: `list.sort` needs `Compare` of the elements, `list.contains`
@@ -515,8 +525,8 @@ literals), `println` and `string.from` `Display`.
 ```silt
 type Job { name: String, run: Fn(Int) -> Int }
 println(Job { name: "j", run: { n -> n } })
--- error: type 'Job' cannot derive 'Display': field 'run' has type
--- 'Fn(Int) -> Int', which is not printable
+-- error: type 'Job' does not implement trait 'Display': field 'run' is
+-- of type 'Fn(Int) -> Int', which does not
 ```
 
 The `Error` trait has supertrait `Display` and one method,

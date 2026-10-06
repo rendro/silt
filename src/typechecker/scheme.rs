@@ -13,6 +13,45 @@ impl TypeChecker {
         // What the scope owes for a subject it has decided since is
         // checked first: what that leaves owed is on variables.
         self.decide_closed();
+        self.generalize_decided(ty)
+    }
+
+    /// The scheme of a `let` inside a function. A `?`, an update or a
+    /// call of a method several traits declare that still waits for its
+    /// type is not decided here: the function goes on, and a use of the
+    /// `let` may decide it. So the `let` is not general in what such a
+    /// goal mentions.
+    pub(super) fn generalize_local(&mut self, ty: &Type) -> Scheme {
+        self.reopen_level();
+        self.solve_wanted(self.closed_mark);
+        self.close_level();
+        // (A call of a method one trait declares, or none, is decided as
+        // anywhere: the `let` is general in a receiver bounded by the
+        // trait.)
+        self.decide_tries();
+        self.default_selects(true);
+        for i in self.closed_mark..self.wanted.len() {
+            if self.wanted[i].solved {
+                continue;
+            }
+            let mentioned: Vec<Type> = match &self.wanted[i].goal {
+                Goal::Pred(_) => continue,
+                Goal::Select {
+                    recv, args, result, ..
+                } => args.iter().chain([recv, result]).cloned().collect(),
+                Goal::Update { base, value, .. } => vec![base.clone(), value.clone()],
+                Goal::Try { operand, ok, ret } => {
+                    ret.iter().chain([operand, ok]).cloned().collect()
+                }
+            };
+            for ty in mentioned {
+                self.keep_monomorphic(&ty);
+            }
+        }
+        self.generalize_decided(ty)
+    }
+
+    fn generalize_decided(&mut self, ty: &Type) -> Scheme {
         let ty = self.apply(ty);
         let mut vars: Vec<TyVar> = free_vars_in(&ty)
             .into_iter()
@@ -111,7 +150,9 @@ impl TypeChecker {
                             wanted.origin.span,
                             "cannot infer the type `?` is applied to: a Result or an Option",
                         )
-                        .with_help("annotate the value: `x: Result(Int, String)`"),
+                        .with_help(
+                            "annotate the value, or give the function it is in a return type",
+                        ),
                     );
                     continue;
                 }

@@ -2,7 +2,7 @@
 -- A method call on a receiver of unknown type means the one trait in
 -- sight that declares the method. Where two do, the receiver needs an
 -- annotation.
--- stderr-contains: error[type]: ambiguous method 'show' on a value whose type is not known: provided by traits a.Show, b.Show
+-- stderr-contains: error[type]: ambiguous method 'show' on type 'Int': provided by traits a.Show, b.Show
 import a
 import b
 fn main() {

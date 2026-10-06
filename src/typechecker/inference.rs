@@ -226,6 +226,48 @@ impl TypeChecker {
         }
     }
 
+    /// `recv.method` where `method` is the method of a builtin
+    /// structural trait (`compare`, `equal`, `hash`, `display`) and the
+    /// receiver's type has no entry for it in the method table: the
+    /// type has the method when it has the trait by its structure,
+    /// which the access owes.
+    pub(super) fn structural_method(
+        &mut self,
+        recv: &Type,
+        method: Symbol,
+        span: Span,
+    ) -> Option<Type> {
+        let (tr, others, result) = match resolve(method).as_str() {
+            "compare" => ("Compare", 1, Type::Int),
+            "equal" => ("Equal", 1, Type::Bool),
+            "hash" => ("Hash", 0, Type::Int),
+            "display" => ("Display", 0, Type::String),
+            _ => return None,
+        };
+        let tr = TraitKey::builtin(tr);
+        let head = self.type_name_for_impl(&self.apply(recv))?;
+        if !self.by_structure(tr, head) {
+            return None;
+        }
+        self.want(
+            Pred::Trait {
+                tr,
+                args: Vec::new(),
+                subject: recv.clone(),
+            },
+            Origin {
+                span,
+                callee: Some(method),
+                op: None,
+            },
+        );
+        self.last_field_access_was_method = true;
+        self.method_trait = Some(tr);
+        let mut params = vec![recv.clone()];
+        params.extend(std::iter::repeat_n(recv.clone(), others));
+        Some(Type::Fun(params, Box::new(result)))
+    }
+
     /// The map or set literal at `span` hashes values of the type
     /// `key`.
     fn want_hash(&mut self, key: &Type, span: Span) {
@@ -247,6 +289,9 @@ impl TypeChecker {
     /// unknown or an annotation variable, to implement the builtin trait
     /// `tr`: `+` needs `Number`, `==` `Equal`, `<` `Compare`.
     pub(super) fn want_operand(&mut self, tr: &str, operand: &Type, op: &'static str, span: Span) {
+        if matches!(self.apply(operand), Type::Error | Type::Never) {
+            return;
+        }
         self.want(
             Pred::Trait {
                 tr: TraitKey::builtin(tr),
@@ -328,20 +373,20 @@ impl TypeChecker {
             );
             return;
         }
-        let message = match origin.callee {
-            Some(callee) => format!(
-                "enclosing function does not declare constraint required by call to '{callee}': `{}: {bound}`",
-                r.name
-            ),
-            None => format!(
-                "type variable `{}` is not known to implement trait '{bound}'",
-                r.name
-            ),
+        let needs = match (origin.callee, origin.op) {
+            (Some(callee), _) => format!(", which '{callee}' needs"),
+            (None, Some(op)) => format!(", which {op} needs"),
+            (None, None) => String::new(),
         };
-        let mut diagnostic = Diagnostic::error(Code::MissingConstraint, origin.span, message);
-        if origin.callee.is_none() {
-            diagnostic = diagnostic.with_help(format!("add `where {}: {bound}`", r.name));
-        }
+        let diagnostic = Diagnostic::error(
+            Code::MissingConstraint,
+            origin.span,
+            format!(
+                "type variable `{}` is not known to implement trait '{bound}'{needs}",
+                r.name
+            ),
+        )
+        .with_help(format!("add `where {}: {bound}`", r.name));
         self.errors.push(diagnostic);
     }
 
@@ -631,19 +676,8 @@ impl TypeChecker {
                     return None;
                 }
                 if matches.len() > 1 {
-                    let trait_list = matches
-                        .iter()
-                        .map(|(name, ..)| self.show_trait(*name))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.error(
-                        Code::AmbiguousMethod,
-                        format!(
-                            "ambiguous method '{field}' on `type {inner}`: \
-                             provided by multiple traits ({trait_list})"
-                        ),
-                        span,
-                    );
+                    let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
+                    self.ambiguous_method(field, &format!("`type {inner}`"), &traits, span);
                     return None;
                 }
                 self.method_trait = Some(matches[0].0);
@@ -1033,7 +1067,7 @@ impl TypeChecker {
     /// The scheme of a `let` that generalises: `generalize`, and general
     /// in the type variables its annotation introduced (`own`).
     fn generalize_let(&mut self, ty: &Type, own: &[RigidId]) -> Scheme {
-        let mut scheme = self.generalize(ty);
+        let mut scheme = self.generalize_local(ty);
         if !own.is_empty() {
             let (ty, vars) = release_rigid(&scheme.ty, own);
             scheme.ty = ty;
@@ -1133,6 +1167,27 @@ impl TypeChecker {
                 // (`dispatch_method_entry` has unified it with the
                 // receiver), so the arguments line up with `params[1..]`.
                 let implicit_self = usize::from(is_method_call);
+                // What the callee's use owes for a type variable of a
+                // parameter is owed for that argument: a bound that
+                // fails is reported at it.
+                for k in owed_before..self.wanted.len() {
+                    let Goal::Pred(Pred::Trait {
+                        subject: Type::Var(v),
+                        ..
+                    }) = &self.wanted[k].goal
+                    else {
+                        continue;
+                    };
+                    let at = params
+                        .iter()
+                        .skip(implicit_self)
+                        .position(|param| free_vars_in(param).contains(v))
+                        .and_then(|i| args.get(i));
+                    if let (Some(arg), CallForm::Call) = (at, form) {
+                        self.wanted[k].origin.span = arg.span;
+                    }
+                }
+                let mut mismatched = false;
                 for (i, arg) in args.iter_mut().enumerate() {
                     let param = params.get(i + implicit_self);
                     if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
@@ -1147,7 +1202,17 @@ impl TypeChecker {
                             CallForm::Call => arg.span,
                             CallForm::BarePipe => span,
                         };
+                        let reported = self.errors.len();
                         self.unify(&arg_ty, param, at);
+                        mismatched |= self.errors.len() > reported;
+                    }
+                }
+                // An argument of the wrong type is the one thing wrong
+                // with the call: what the callee owes for it is not
+                // asked as well.
+                if mismatched {
+                    for wanted in &mut self.wanted[owed_before..] {
+                        wanted.solved = true;
                     }
                 }
                 // A method has no optional parameter.
@@ -1712,16 +1777,10 @@ impl TypeChecker {
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
-                        } else if let Some(msg) =
-                            self.method_auto_derive_violation(*rec_name, field)
+                        } else if let Some(method_ty) = self.structural_method(&obj_ty, field, span)
                         {
-                            // Round 93: the field-aware auto-derive gate
-                            // removed this type's provisional `.equal()` /
-                            // `.compare()` / `.hash()` entry — name the
-                            // offending field instead of a generic
-                            // "no field or method".
-                            self.error(Code::NotDerivable, msg, span);
-                            Type::Error
+                            expr.ty = Some(method_ty.clone());
+                            return method_ty;
                         } else {
                             // GAP (round 26 L5): append a did-you-mean
                             // hint when a near edit-distance field
@@ -1794,15 +1853,11 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        // Round 93: the field-aware auto-derive gate
-                        // removed this type's provisional `.equal()` /
-                        // `.compare()` / `.hash()` entry — name the
-                        // offending field instead of a generic
-                        // "unknown method".
-                        if let Some(msg) = self.method_auto_derive_violation(*type_name, field) {
-                            self.error(Code::NotDerivable, msg, span);
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
+                        // A method of a structural trait the type has
+                        // no entry for (`Some(1).compare(Some(2))`).
+                        if let Some(method_ty) = self.structural_method(&obj_ty, field, span) {
+                            expr.ty = Some(method_ty.clone());
+                            return method_ty;
                         }
                         // GAP (round 35 F7): thread did-you-mean suggestion
                         // through the Generic/named-record field-access
@@ -1958,16 +2013,11 @@ impl TypeChecker {
                             .unwrap_or_default();
                         let matches = self.bound_methods(*r, field);
                         if matches.len() > 1 {
-                            let trait_list = matches
-                                .iter()
-                                .map(|(name, ..)| self.show_trait(*name))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            self.error(
-                                Code::AmbiguousMethod,
-                                format!(
-                                    "ambiguous method '{field}': provided by multiple traits ({trait_list})"
-                                ),
+                            let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
+                            self.ambiguous_method(
+                                field,
+                                &format!("a value of type `{}`", r.name),
+                                &traits,
                                 span,
                             );
                             Type::Error
@@ -2072,186 +2122,35 @@ impl TypeChecker {
                 let rt = self.infer_expr(rhs, env);
 
                 match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
+                    // An operator is its trait: the operands have one
+                    // type, which owes it (`Number`, `Equal`, `Compare`).
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod | BinOp::Div => {
                         let op_str = match op {
                             BinOp::Add => "'+'",
                             BinOp::Sub => "'-'",
                             BinOp::Mul => "'*'",
                             BinOp::Mod => "'%'",
-                            _ => unreachable!(),
+                            _ => "'/'",
                         };
-                        let resolved_l = self.apply(&lt);
-                        let resolved_r = self.apply(&rt);
-                        match (&resolved_l, &resolved_r) {
-                            // An operand already in error (e.g. the left
-                            // side of `a + "b" + "c"`) was reported once;
-                            // stay quiet. `Type::Error` keeps an ascribed
-                            // let from re-reporting the result.
-                            (Type::Error, Type::String) | (Type::String, Type::Error) => {
-                                Type::Error
-                            }
-                            (Type::String, _) | (_, Type::String) => {
-                                self.error(
-                                    Code::UnsupportedOperation,
-                                    arith_operand_message(op_str, &Type::String),
-                                    span,
-                                );
-                                Type::Error
-                            }
-                            _ => {
-                                // Round 100: `unify_binop_operands` emits at
-                                // most ONE correctly-directed diagnostic —
-                                // the left operand establishes the
-                                // expectation, and a lone out-of-domain
-                                // operand gets the operator-domain message
-                                // instead of a misdirected mismatch (see its
-                                // doc comment). F1 (round 67): the
-                                // operand-domain check below is skipped when
-                                // it errored (the second domain message
-                                // would be noise). Also return `Type::Error`
-                                // on unify failure so an outer ascribed-let
-                                // (`let n: Int = s - 1`) hits the
-                                // cascade-suppression branch in `unify`
-                                // (`mod.rs:1387`) and doesn't re-emit
-                                // (G2, round 60).
-                                let unify_errored = self.unify_binop_operands(
-                                    &lt,
-                                    &rt,
-                                    lhs_span,
-                                    rhs_span,
-                                    is_valid_arith_operand,
-                                    |t| arith_operand_message(op_str, t),
-                                );
-                                if !unify_errored {
-                                    // B2: enforce numeric-only operand domain.
-                                    let resolved = self.apply(&lt);
-                                    match &resolved {
-                                        Type::Var(_) | Type::Rigid(_) => {
-                                            self.want_operand("Number", &resolved, op_str, span);
-                                        }
-                                        _ if !is_valid_arith_operand(&resolved) => {
-                                            self.error(
-                                                Code::UnsupportedOperation,
-                                                arith_operand_message(op_str, &resolved),
-                                                span,
-                                            );
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                if unify_errored { Type::Error } else { lt }
-                            }
+                        // (`Type::Error` on a reported operand keeps an
+                        // ascribed `let` from reporting the result again.)
+                        match self
+                            .check_operator("Number", op_str, &lt, &rt, lhs_span, rhs_span, span)
+                        {
+                            true => lt,
+                            false => Type::Error,
                         }
-                    }
-                    BinOp::Div => {
-                        // Round 100 (+ F1 round 72): mirror the
-                        // `+`/`-`/`*`/`%` arm — `unify_binop_operands`
-                        // emits at most one correctly-directed
-                        // diagnostic, so the operand-domain check
-                        // below is skipped when it errored (the
-                        // second message would be redundant noise).
-                        // Also return `Type::Error` on unify
-                        // failure so an outer ascribed-let
-                        // (`let n: Int = b / 1`) hits the
-                        // cascade-suppression branch in `unify`
-                        // (`mod.rs:1387`).
-                        let unify_errored = self.unify_binop_operands(
-                            &lt,
-                            &rt,
-                            lhs_span,
-                            rhs_span,
-                            is_valid_arith_operand,
-                            |t| arith_operand_message("'/'", t),
-                        );
-                        if !unify_errored {
-                            // B2: enforce numeric-only operand domain.
-                            let resolved = self.apply(&lt);
-                            match &resolved {
-                                Type::Var(_) | Type::Rigid(_) => {
-                                    self.want_operand("Number", &resolved, "'/'", span);
-                                }
-                                _ if !is_valid_arith_operand(&resolved) => {
-                                    self.error(
-                                        Code::UnsupportedOperation,
-                                        arith_operand_message("'/'", &resolved),
-                                        span,
-                                    );
-                                }
-                                _ => {}
-                            }
-                        }
-                        if unify_errored { Type::Error } else { lt }
                     }
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
-                        let is_equality = matches!(op, BinOp::Eq | BinOp::Neq);
-                        let op_str = match op {
-                            BinOp::Eq => "'=='",
-                            BinOp::Neq => "'!='",
-                            BinOp::Lt => "'<'",
-                            BinOp::Gt => "'>'",
-                            BinOp::Leq => "'<='",
-                            BinOp::Geq => "'>='",
-                            _ => unreachable!(),
+                        let (tr, op_str) = match op {
+                            BinOp::Eq => ("Equal", "'=='"),
+                            BinOp::Neq => ("Equal", "'!='"),
+                            BinOp::Lt => ("Compare", "'<'"),
+                            BinOp::Gt => ("Compare", "'>'"),
+                            BinOp::Leq => ("Compare", "'<='"),
+                            _ => ("Compare", "'>='"),
                         };
-                        // Round 100 (+ F1 round 72): `unify_binop_operands`
-                        // emits at most one correctly-directed diagnostic,
-                        // so the operand-domain check below is skipped when
-                        // it errored (the second message would be redundant
-                        // noise — mirrors the Add/Sub/Div arms). For Eq/Neq
-                        // this is defensive: today the domain check passes
-                        // for most cases (e.g. Bool is a valid equality
-                        // operand) so the dual diagnostic doesn't surface,
-                        // but apply uniformly to close the latent door.
-                        let unify_errored = self.unify_binop_operands(
-                            &lt,
-                            &rt,
-                            lhs_span,
-                            rhs_span,
-                            |t| is_valid_compare_operand(t, is_equality),
-                            |t| {
-                                let domain = if is_equality {
-                                    "a comparable type"
-                                } else {
-                                    "Int, Float, String, Bool, List, Tuple, Record, or Variant"
-                                };
-                                format!("operator {op_str} requires {domain}, got '{t}'")
-                            },
-                        );
-                        if !unify_errored {
-                            // B3: enforce comparison operand domain. The VM's
-                            // compare() (src/vm/arithmetic.rs) only supports
-                            // Int/Float/String/List/Range/Record/Variant
-                            // for ordering. Equality additionally supports
-                            // Tuple/Map/Set/Bool/Unit/Channel and closed-row
-                            // AnonRecord via Value's PartialEq.
-                            let resolved = self.apply(&lt);
-                            match &resolved {
-                                Type::Var(_) | Type::Rigid(_) => {
-                                    let tr = if is_equality { "Equal" } else { "Compare" };
-                                    self.want_operand(tr, &resolved, op_str, span);
-                                }
-                                _ if !is_valid_compare_operand(&resolved, is_equality) => {
-                                    let domain = if is_equality {
-                                        "a comparable type"
-                                    } else {
-                                        "Int, Float, String, Bool, List, Tuple, Record, or Variant"
-                                    };
-                                    self.error(
-                                        Code::UnsupportedOperation,
-                                        format!(
-                                            "operator {op_str} requires {domain}, got '{resolved}'"
-                                        ),
-                                        span,
-                                    );
-                                }
-                                // A type of the operator's shape: its
-                                // parts must support it too.
-                                _ => {
-                                    let tr = if is_equality { "Equal" } else { "Compare" };
-                                    self.want_operand(tr, &resolved, op_str, span);
-                                }
-                            }
-                        }
+                        self.check_operator(tr, op_str, &lt, &rt, lhs_span, rhs_span, span);
                         Type::Bool
                     }
                     BinOp::And | BinOp::Or => {
@@ -2268,22 +2167,12 @@ impl TypeChecker {
                 let t = self.infer_expr(operand, env);
                 match op {
                     UnaryOp::Neg => {
-                        let resolved = self.apply(&t);
-                        match &resolved {
-                            Type::Int | Type::Float => {}
-                            Type::Error | Type::Never => {}
-                            Type::Var(_) | Type::Rigid(_) => {
-                                self.want_operand("Number", &resolved, "unary '-'", operand_span);
-                            }
-                            _ => {
-                                self.error(
-                                    Code::UnsupportedOperation,
-                                    format!("unary '-' requires Int or Float, got '{}'", resolved),
-                                    operand_span,
-                                );
-                            }
+                        let reported = self.errors.len();
+                        self.want_operand("Number", &t, "unary '-'", operand_span);
+                        match self.errors.len() == reported {
+                            true => t,
+                            false => Type::Error,
                         }
-                        t
                     }
                     UnaryOp::Not => {
                         self.unify(&t, &Type::Bool, operand_span);
@@ -3523,70 +3412,81 @@ impl TypeChecker {
         }
     }
 
-    /// Round 100: unify the operand types of a binary operator with a
-    /// correctly-DIRECTED diagnostic.
-    ///
-    /// `unify(t1, t2)` renders "type mismatch: expected {t2}, got {t1}",
-    /// and the old `unify(&lt, &rt, span)` call in the binop arms
-    /// therefore cast the not-yet-read RIGHT operand as the expectation
-    /// whenever the right operand was the offender (`1 + true` said
-    /// "expected Bool, got Int"). The left operand is inferred first
-    /// and establishes the expectation, so this helper passes it as the
-    /// "expected" side and anchors the diagnostic at the right
-    /// operand's span.
-    ///
-    /// Additionally (inverting the round-67 F1 priority): when the
-    /// unification fails AND exactly one resolved operand is outside
-    /// the operator's domain (`in_domain`), the generic mismatch is
-    /// replaced with the operand-domain message (`domain_msg`) aimed at
-    /// the offender's span — that message names the true offender
-    /// regardless of side, where mismatch wording would misfire for a
-    /// left-side offender (`true + 1`). `chain_hint` guidance is
-    /// preserved on the replacement (`opt + 1` still explains `?` /
-    /// `flat_map`). Exactly one diagnostic is emitted either way,
-    /// preserving the round-67 single-diagnostic invariant
-    /// (tests/lang/binop_single_diagnostic_round67_tests.rs).
-    ///
-    /// Returns `true` if a diagnostic was emitted; callers skip their
-    /// follow-up operand-domain check and return `Type::Error` so outer
-    /// ascriptions hit the cascade-suppression branch in `unify` (the
-    /// round-60 G2 contract).
-    fn unify_binop_operands(
+    /// Check `l op r`: the operands have one type, and it has the
+    /// operator's trait `tr`. `false` if an error is reported for the
+    /// operands' types.
+    #[allow(clippy::too_many_arguments)]
+    fn check_operator(
         &mut self,
+        tr: &'static str,
+        op: &'static str,
         lt: &Type,
         rt: &Type,
         lhs_span: Span,
         rhs_span: Span,
-        in_domain: impl Fn(&Type) -> bool,
-        domain_msg: impl Fn(&Type) -> std::string::String,
+        span: Span,
     ) -> bool {
-        let Err(mismatch) = self.unify_types(rt, lt) else {
-            return false;
-        };
-        // The domain predicates treat `Var` / `AssocProj` / `Error` as
-        // "maybe valid", so the replacement below only fires when the
-        // offender is a RESOLVED out-of-domain type.
-        let resolved_l = self.apply(lt);
-        let resolved_r = self.apply(rt);
-        let l_bad = !in_domain(&resolved_l);
-        let r_bad = !in_domain(&resolved_r);
-        if l_bad != r_bad {
-            let (offender, other, offender_span) = if l_bad {
-                (&resolved_l, &resolved_r, lhs_span)
+        // The left operand is read first and says what the right one is
+        // expected to be.
+        if let Err(mismatch) = self.unify_types(rt, lt) {
+            // When exactly one operand is of a type the operator is not
+            // for, that operand is what is wrong, whichever side it is
+            // on (`true + 1`): the operator's message, at it.
+            let resolved_l = self.apply(lt);
+            let resolved_r = self.apply(rt);
+            let l_bad = !self.operand_fits(tr, &resolved_l);
+            let r_bad = !self.operand_fits(tr, &resolved_r);
+            if l_bad != r_bad {
+                let (offender, other, offender_span) = if l_bad {
+                    (&resolved_l, &resolved_r, lhs_span)
+                } else {
+                    (&resolved_r, &resolved_l, rhs_span)
+                };
+                let mut d = Diagnostic::error(
+                    Code::UnsupportedOperation,
+                    offender_span,
+                    operator_message(tr, op, offender),
+                );
+                d.help.extend(Self::chain_hint(offender, other));
+                self.errors.push(d);
             } else {
-                (&resolved_r, &resolved_l, rhs_span)
-            };
-            let mut d = Diagnostic::error(
-                Code::UnsupportedOperation,
-                offender_span,
-                domain_msg(offender),
-            );
-            d.help.extend(Self::chain_hint(offender, other));
-            self.errors.push(d);
-        } else {
-            self.report_mismatch(mismatch, rhs_span);
+                self.report_mismatch(mismatch, rhs_span);
+            }
+            return false;
         }
-        true
+        let errors = self.errors.len();
+        self.want_operand(tr, lt, op, span);
+        self.errors.len() == errors
+    }
+
+    /// Whether a value of the type `ty` can be an operand of an
+    /// operator of the builtin trait `tr`, as far as the type itself
+    /// says (its parts are the judgement's to check).
+    fn operand_fits(&self, tr: &str, ty: &Type) -> bool {
+        let tr = TraitKey::builtin(tr);
+        let Some(head) = self.type_name_for_impl(ty) else {
+            return true;
+        };
+        if self.by_structure(tr, head) {
+            let mut walk = super::solve::Walk::default();
+            return self
+                .structure_gap(tr, ty, &mut walk, 0)
+                .is_none_or(|gap| !gap.is_whole());
+        }
+        matches!(ty, Type::Error | Type::Never | Type::AssocProj { .. })
+            || self.tables.trait_impl_set.contains(&(tr, head))
+    }
+}
+
+/// What is said of an operand of the type `ty` that the operator `op`,
+/// of the builtin trait `tr`, is not for.
+pub(super) fn operator_message(tr: &str, op: &str, ty: &Type) -> String {
+    match tr {
+        "Number" => arith_operand_message(op, ty),
+        "Equal" => format!("operator {op} requires a comparable type, got '{ty}'"),
+        _ => format!(
+            "operator {op} requires Int, Float, String, Bool, List, Tuple, Record, or Variant, got '{ty}'"
+        ),
     }
 }
 
@@ -3725,84 +3625,18 @@ pub(super) fn resolve_supertrait_arg(
     }
 }
 
-/// Returns true if the given type is a valid operand for arithmetic operators.
-/// Type variables and `Type::Error` are treated as "maybe valid" (caller handles
-/// the Var case via deferred checks).
-pub(super) fn is_valid_arith_operand(ty: &Type) -> bool {
-    match ty {
-        Type::Int | Type::Float | Type::Error | Type::Never => true,
-        // An annotation variable is "maybe valid", as an unknown type is,
-        // until operators are bounds a `where` clause can declare.
-        Type::Var(_) | Type::Rigid(_) => true,
-        // Round 92: an abstract associated-type projection (`<a as T>::Item`
-        // with the receiver still a where-bound type variable) is "maybe
-        // valid" exactly like Type::Var — the concrete type is only known
-        // once a trait impl binds it, and the concrete check fires at the
-        // instantiation site (or as a VM operator error) just as for Var.
-        Type::AssocProj { .. } => true,
-        _ => false,
-    }
-}
-
 /// The operand-domain diagnostic for an arithmetic operator (`op_str` is
 /// the quoted operator, e.g. `'+'`). A String operand of `+` also names
 /// the way to build strings: interpolation.
 pub(super) fn arith_operand_message(op_str: &str, ty: &Type) -> String {
-    let msg = format!("operator {op_str} requires Int or Float, got '{ty}'");
+    let msg = match op_str.starts_with("unary") {
+        true => format!("{op_str} requires Int or Float, got '{ty}'"),
+        false => format!("operator {op_str} requires Int or Float, got '{ty}'"),
+    };
     if op_str == "'+'" && matches!(ty, Type::String) {
         format!("{msg}; build strings with interpolation, e.g. \"{{a}}{{b}}\"")
     } else {
         msg
-    }
-}
-
-/// Returns true if the given type is a valid operand for comparison operators.
-/// `is_equality` widens the domain to include types supported by Value's
-/// PartialEq implementation but not `Value::cmp` (Tuple, Map, Set, Bool, Unit).
-/// Type variables and `Type::Error` are treated as "maybe valid".
-///
-/// This is the operator's SHAPE check only, for its message: whether
-/// the type's parts support the operator too is the trait judgement's
-/// to say (`Equal` for `==`, `Compare` for `<`), which the operator owes.
-pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
-    match ty {
-        Type::Int
-        | Type::Float
-        | Type::String
-        | Type::Bool
-        | Type::Unit
-        | Type::Tuple(_)
-        | Type::List(_)
-        | Type::Range(_)
-        | Type::Record(..)
-        | Type::Generic(..)
-        | Type::Error
-        | Type::Never => true,
-        Type::Var(_) | Type::Rigid(_) => true,
-        // Round 92: abstract associated-type projections are "maybe valid"
-        // like Type::Var — see is_valid_arith_operand above for rationale.
-        Type::AssocProj { .. } => true,
-        Type::Map(..) | Type::Set(_) if is_equality => true,
-        // TYPE-GAP (round 81 F1): closed-row anon records compile down to
-        // `Value::Record` and Value's PartialEq compares them element-wise
-        // (src/value/key.rs), so `==`/`!=` is well-defined for them.
-        // Open rows are rejected even on equality: two open-row values may
-        // differ on unobserved fields, so the answer would depend on the
-        // hidden tail — surface the row variable as the reason rather than
-        // silently letting one row's surplus fields decide the result.
-        // Ordering still rejects AnonRecord, like Map and Set.
-        Type::AnonRecord { fields: _, tail } if is_equality => {
-            matches!(tail, RowTail::Closed)
-        }
-        // TYPE-LATENT-1 (round 82): Channel handles support identity-based
-        // equality at runtime (`Value::Channel(a) == Value::Channel(b)` iff
-        // `a.id == b.id`, see src/value/key.rs). Without this arm the
-        // typechecker rejected `ch1 == ch2` even though the VM produces a
-        // well-defined Bool. Ordering is still rejected: Channel ids are
-        // identity tokens, not a meaningful well-order — same shape as
-        // Tuple/Map/Set/Bool/Unit/AnonRecord above.
-        Type::Channel(_) if is_equality => true,
-        _ => false,
     }
 }
 

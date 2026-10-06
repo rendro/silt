@@ -3,7 +3,7 @@
 -- sight that declares the method: with a program trait that declares
 -- `display` beside the builtin `Display`, the receiver needs an
 -- annotation.
--- stderr-contains: error[type]: ambiguous method 'display' on a value whose type is not known: provided by traits Describe, Display
+-- stderr-contains: error[type]: ambiguous method 'display' on type 'Int': provided by traits Describe, prelude.Display
 trait Describe { fn display(self) -> String }
 trait Describe for Int { fn display(self) -> String { "described {self}" } }
 fn main() {

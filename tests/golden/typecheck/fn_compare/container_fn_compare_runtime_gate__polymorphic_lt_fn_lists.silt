@@ -1,7 +1,6 @@
 -- A polymorphic `<` on lists of functions fails at the execution site.
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
--- stderr-contains: 'Fn'
+-- stderr-contains: error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Compare': element is of type 'Fn(_) -> _', which does not
 fn lt(a: x, b: x) -> Bool where x: Compare { a < b }
 fn main() {
   let xs = [{ y -> y }]
