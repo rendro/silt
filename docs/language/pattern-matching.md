@@ -162,7 +162,8 @@ starts with its `|`:
 
 ```silt
 match day {
-  "Saturday" | "Sunday" -> "weekend"
+  "Saturday"
+  | "Sunday" -> "weekend"
   _ -> "weekday"
 }
 ```
