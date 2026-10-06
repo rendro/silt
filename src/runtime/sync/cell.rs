@@ -9,6 +9,8 @@ use super::queue::{Waiter, Wakes};
 use super::token::{Fired, Outcome, Token, Wake};
 
 pub struct Cell<T> {
+    /// What the cell is, for a report of who waits for it.
+    label: Option<String>,
     value: OnceLock<T>,
     /// Set before the queue is drained, read under the queue's lock by
     /// whoever joins the queue: a waiter is either drained or sees the
@@ -19,6 +21,7 @@ pub struct Cell<T> {
 impl<T> Default for Cell<T> {
     fn default() -> Self {
         Cell {
+            label: None,
             value: OnceLock::new(),
             waiters: Mutex::new(Vec::new()),
         }
@@ -28,6 +31,14 @@ impl<T> Default for Cell<T> {
 impl<T> Cell<T> {
     pub fn new() -> Arc<Cell<T>> {
         Arc::new(Cell::default())
+    }
+
+    /// A cell that says what it is: `task <handle:3>`.
+    pub fn labelled(label: String) -> Arc<Cell<T>> {
+        Arc::new(Cell {
+            label: Some(label),
+            ..Cell::default()
+        })
     }
 
     /// Set the value and wake every waiter. When the cell is already
@@ -58,6 +69,9 @@ pub trait Completion: Send + Sync {
     /// How many open waits are parked here.
     fn waiting(&self) -> usize;
 
+    /// What the cell is, if it says.
+    fn label(&self) -> Option<&str>;
+
     #[doc(hidden)]
     fn enqueue(&self, waiter: Waiter, wakes: &mut Wakes);
 
@@ -73,6 +87,10 @@ impl<T: Send + Sync> Completion for Cell<T> {
     fn waiting(&self) -> usize {
         let waiters = self.waiters.lock();
         waiters.iter().filter(|w| w.token.is_waiting()).count()
+    }
+
+    fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     fn enqueue(&self, waiter: Waiter, wakes: &mut Wakes) {

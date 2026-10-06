@@ -135,6 +135,9 @@ enum Threads<T> {
     /// Not started: nothing has needed them yet.
     Idle,
     Running(std::sync::mpsc::Sender<T>),
+    /// None could be started (a platform without threads): the work
+    /// is done by the thread that asks for it.
+    Unavailable,
     /// The VM is gone ([`Runtime::shutdown`]): they have been told to
     /// end and are not started again.
     Stopped,
@@ -225,6 +228,9 @@ impl IoPool {
     /// Start the workers. An error if not one could be started; if some
     /// could, the pool runs with those.
     fn start(&self) -> Result<std::sync::mpsc::Sender<IoJob>, std::io::Error> {
+        if self.num_workers == 0 {
+            return Err(std::io::Error::other("the pool has no threads"));
+        }
         let (tx, rx) = std::sync::mpsc::channel::<IoJob>();
         let rx = Arc::new(parking_lot::Mutex::new(rx));
         let mut started = 0;
@@ -262,9 +268,11 @@ impl IoPool {
     }
 
     /// Run the blocking operation `f` on a worker. Its value completes
-    /// the cell that is returned. If `f` panics, or no worker can run
-    /// it, the cell is completed with `failure` of the reason: the
-    /// error the builtin's signature declares.
+    /// the cell that is returned. Where no worker thread can be
+    /// started, `f` runs on the calling thread before this returns. If
+    /// `f` panics, or the VM is gone, the cell is completed with
+    /// `failure` of the reason: the error the builtin's signature
+    /// declares.
     pub(crate) fn submit(
         &self,
         failure: ErrFactory,
@@ -295,7 +303,7 @@ impl IoPool {
             let done = in_flight.lock().take();
             drop(done);
         });
-        // Nothing can run the operation: it fails.
+        // The VM is gone: the operation fails.
         let fail = |why: &dyn std::fmt::Display| {
             let err = failure(&format!("cannot run an I/O operation: {why}"));
             let _ = op.cell.complete(err, self.scheduler.wake());
@@ -304,17 +312,20 @@ impl IoPool {
         };
         let mut workers = self.workers.lock();
         if let Threads::Idle = *workers {
-            match self.start() {
-                Ok(tx) => *workers = Threads::Running(tx),
-                Err(e) => {
-                    drop(workers);
-                    fail(&e);
-                    return op;
-                }
-            }
+            *workers = match self.start() {
+                Ok(tx) => Threads::Running(tx),
+                Err(_) => Threads::Unavailable,
+            };
         }
         let sent = match &*workers {
             Threads::Running(tx) => tx.send(job),
+            // Without threads the operation runs here, and its value
+            // is there when the caller looks.
+            Threads::Unavailable => {
+                drop(workers);
+                job();
+                return op;
+            }
             Threads::Idle | Threads::Stopped => {
                 drop(workers);
                 fail(&VM_GONE);
@@ -486,6 +497,35 @@ mod tests {
             // SAFETY: see acquire().
             unsafe { std::env::remove_var("SILT_IO_POOL_SIZE") };
         }
+    }
+
+    /// Where no thread can be started (a pool of no workers stands in
+    /// for a platform without threads), an operation runs on the thread
+    /// that submits it: its value is there when `submit` returns, a
+    /// panic in it is the typed failure, and nothing stays pending.
+    #[test]
+    fn without_threads_an_operation_runs_on_the_caller() {
+        fn failure(msg: &str) -> Value {
+            Value::String(msg.to_string())
+        }
+        let io = HostIo::process();
+        let scheduler = Arc::new(Scheduler::new(io.clone()));
+        let pool = IoPool::new(0, io, scheduler);
+        let here = std::thread::current().id();
+
+        let op = pool.submit(failure, move || {
+            assert_eq!(std::thread::current().id(), here);
+            Value::Int(7)
+        });
+        assert!(matches!(op.cell.get(), Some(Value::Int(7))));
+        assert!(op.in_flight.lock().is_none());
+
+        let op = pool.submit(failure, || panic!("no such file"));
+        match op.cell.get() {
+            Some(Value::String(msg)) => assert_eq!(msg, "panic: no such file"),
+            other => panic!("expected the typed failure, got {other:?}"),
+        }
+        assert!(op.in_flight.lock().is_none());
     }
 
     #[test]

@@ -1732,10 +1732,9 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
 }
 
 /// Test-only re-export of `pg_timeout_err` so integration tests can
-/// lock the typed-timeout shape without needing a live DB or
-/// constructing the runtime watchdog path. Returns the exact `Value`
-/// that the io_pool watchdog and the entry-guard deadline branch
-/// surface for a deadline-cancelled postgres op.
+/// lock the typed-timeout shape without needing a live DB. Returns the
+/// exact `Value` a postgres operation gives when its deadline passes,
+/// before it starts or while the task waits for it.
 #[doc(hidden)]
 pub fn pg_timeout_err_for_tests(msg: &str) -> Value {
     pg_timeout_err(msg)

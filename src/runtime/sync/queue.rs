@@ -22,17 +22,24 @@ impl Waiter {
     }
 }
 
-/// The tasks to wake once the locks are released.
+/// The tasks to wake once the locks are released. Nearly every
+/// operation wakes one at most.
 #[derive(Default)]
-pub struct Wakes(Vec<TaskId>);
+pub struct Wakes {
+    first: Option<TaskId>,
+    more: Vec<TaskId>,
+}
 
 impl Wakes {
     pub(super) fn push(&mut self, task: TaskId) {
-        self.0.push(task);
+        match self.first {
+            None => self.first = Some(task),
+            Some(_) => self.more.push(task),
+        }
     }
 
     pub(super) fn send(self, wake: &dyn Wake) {
-        for task in self.0 {
+        for task in self.first.into_iter().chain(self.more) {
             wake.wake(task);
         }
     }

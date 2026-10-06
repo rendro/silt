@@ -135,7 +135,7 @@ always gets at least one timer tick of wait.
 
 This uses the shared timer thread that backs `channel.timeout` and `time.sleep`
 -- no per-call OS thread. Cancelling the surrounding `task.spawn` handle
-cleans up both the channel-side waker registration and the timer registration.
+takes the task off the channel and out of the timer.
 
 `ChannelError` implements the built-in `Error` trait, so `e.message()`
 renders either variant as a string:

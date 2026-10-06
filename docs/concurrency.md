@@ -293,13 +293,11 @@ rather than a `ChannelResult(a)`:
 - `Err(ChannelTimeout)` -- `dur` elapsed with no value and no close.
 - `Err(ChannelClosed)` -- the channel is closed and its buffer is empty.
 
-A value already sitting in the buffer wins over an expired timer: the
-non-blocking path is always tried first, so a ready value is never
-preempted by the deadline. A `Duration` of zero gives try-receive semantics
-(no timer is scheduled): on a rendezvous channel it returns
-`Err(ChannelTimeout)` even while a sender is parked, because a parked sender
-hands its value only to a receiver that waits. With a positive duration the
-call waits as a receiver, and a parked sender hands its value over.
+A value that is there wins over an expired timer: one in the buffer, or one
+held by a sender that waits on a rendezvous channel. The non-blocking path
+is always tried first, so a ready value is never preempted by the deadline.
+A `Duration` of zero gives try-receive semantics (no timer is scheduled): it
+returns such a value, and `Err(ChannelTimeout)` when there is none.
 Negative durations are an error. Positive sub-millisecond durations are
 rounded up to one millisecond, so the caller always waits at least one timer
 tick.

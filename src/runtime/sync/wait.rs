@@ -106,11 +106,16 @@ pub enum Park {
 /// tried: the result is [`Park::Cancelled`].
 pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Park {
     let Wait {
-        arms,
+        mut arms,
         deadline,
         first,
         cancel,
     } = wait;
+    // The usual wait: one send or one receive.
+    if arms.len() == 1 && !matches!(arms[0], Arm::Cell(_)) {
+        let arm = arms.pop().expect("one arm");
+        return park_one(task, arm, deadline, cancel, timer, wake);
+    }
     let mut payloads = Vec::with_capacity(arms.len());
     let mut sources = Vec::with_capacity(arms.len());
     for arm in arms {
@@ -219,6 +224,85 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     })
 }
 
+/// [`park`] for a wait whose one arm is on a channel: the same steps,
+/// with one lock and nothing to sort.
+fn park_one(
+    task: TaskId,
+    arm: Arm,
+    deadline: Option<Duration>,
+    cancel: Option<Arc<AtomicBool>>,
+    timer: &Arc<Timer>,
+    wake: &dyn Wake,
+) -> Park {
+    let expired = deadline.is_some_and(|deadline| timer.now() >= deadline);
+    let mut wakes = Wakes::default();
+    let (source, token) = match arm {
+        Arm::Recv(channel) => {
+            let mut state = channel.state.lock();
+            if is_set(&cancel) {
+                return Park::Cancelled;
+            }
+            let outcome = match state.receive(&mut wakes) {
+                TryReceive::Value(value) => Some(Outcome::Received(value)),
+                TryReceive::Closed(close) => Some(Outcome::Closed(close)),
+                TryReceive::Empty => None,
+            };
+            let ready = match outcome {
+                Some(outcome) => Some(Fired::Arm(0, outcome)),
+                None => expired.then_some(Fired::Deadline),
+            };
+            if let Some(fired) = ready {
+                drop(state);
+                wakes.send(wake);
+                return Park::Ready(fired);
+            }
+            let token = Token::new(task, cancel);
+            state.recvq.push_back(Waiter {
+                token: token.clone(),
+                arm: 0,
+                payload: None,
+            });
+            drop(state);
+            (Source::Recv(channel), token)
+        }
+        Arm::Send(channel, value) => {
+            let mut state = channel.state.lock();
+            if is_set(&cancel) {
+                return Park::Cancelled;
+            }
+            let (outcome, value) = match state.send(value, &mut wakes) {
+                TrySend::Sent => (Some(Outcome::Sent), None),
+                TrySend::Closed(close) => (Some(Outcome::Closed(close)), None),
+                TrySend::Full(value) => (None, Some(value)),
+            };
+            let ready = match outcome {
+                Some(outcome) => Some(Fired::Arm(0, outcome)),
+                None => expired.then_some(Fired::Deadline),
+            };
+            if let Some(fired) = ready {
+                drop(state);
+                wakes.send(wake);
+                return Park::Ready(fired);
+            }
+            let token = Token::new(task, cancel);
+            state.sendq.push_back(Waiter {
+                token: token.clone(),
+                arm: 0,
+                payload: value,
+            });
+            drop(state);
+            (Source::Send(channel), token)
+        }
+        Arm::Cell(_) => unreachable!("the one arm is on a channel"),
+    };
+    let timer = deadline.map(|deadline| (timer.clone(), timer.fire_at(deadline, token.clone())));
+    Park::Parked(Parked {
+        token,
+        sources: vec![source],
+        timer,
+    })
+}
+
 /// A task's place on the queues of its wait. The task owns it while it
 /// waits; dropping it takes the task off every queue and out of the
 /// timer.
@@ -271,7 +355,13 @@ impl Drop for Parked {
     fn drop(&mut self) {
         // A task that is dropped while it waits takes nothing more.
         self.token.abandon();
-        for source in &self.sources {
+        // The queue of the arm that ended the wait has let go of the
+        // token already: for a wait with one arm that is all.
+        let ended_by = self.token.ended_by();
+        for (arm, source) in self.sources.iter().enumerate() {
+            if ended_by == Some(arm) {
+                continue;
+            }
             match source {
                 Source::Recv(channel) | Source::Send(channel) => channel.forget(&self.token),
                 Source::Cell(cell) => cell.forget(&self.token),

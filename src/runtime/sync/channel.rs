@@ -62,6 +62,9 @@ pub(super) struct State {
     /// is open is here only while the buffer is full (always, for
     /// capacity 0).
     pub(super) sendq: VecDeque<Waiter>,
+    /// How many waiters whose wait has ended were left on the queues
+    /// since they were last swept ([`Channel::forget`]).
+    stale: usize,
 }
 
 impl State {
@@ -147,6 +150,7 @@ impl Channel {
                 closed: None,
                 recvq: VecDeque::new(),
                 sendq: VecDeque::new(),
+                stale: 0,
             }),
         })
     }
@@ -214,10 +218,31 @@ impl Channel {
         (state.recvq.len(), state.sendq.len())
     }
 
-    /// Take `token` off both queues.
+    /// The wait of `token` has ended otherwise than by an operation on
+    /// this channel (its task was cancelled or dropped, its deadline
+    /// passed, another arm of its select was completed): its waiters
+    /// here are of no use any more.
+    ///
+    /// On short queues they are taken off at once. On long ones that
+    /// would cost the length of the queue each time, so they stay,
+    /// where every operation passes over them, and are swept out
+    /// together once they are half of what is queued: leaving a queue
+    /// costs a constant on average, however many wait.
     pub(super) fn forget(&self, token: &Arc<Token>) {
+        /// Up to this many waiters, a queue is searched.
+        const SHORT: usize = 32;
         let mut state = self.state.lock();
-        state.recvq.retain(|waiter| !waiter.is(token));
-        state.sendq.retain(|waiter| !waiter.is(token));
+        let queued = state.recvq.len() + state.sendq.len();
+        if queued <= SHORT {
+            state.recvq.retain(|waiter| !waiter.is(token));
+            state.sendq.retain(|waiter| !waiter.is(token));
+            return;
+        }
+        state.stale += 1;
+        if state.stale * 2 >= queued {
+            state.recvq.retain(|waiter| waiter.token.is_waiting());
+            state.sendq.retain(|waiter| waiter.token.is_waiting());
+            state.stale = 0;
+        }
     }
 }

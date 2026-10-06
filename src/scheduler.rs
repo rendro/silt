@@ -153,19 +153,45 @@ enum Sleeper {
     Thread(Arc<ThreadPark>),
 }
 
-/// Where a thread that waits finds how its wait ended.
-#[derive(Default)]
+/// Where a thread that waits finds how its wait ended, and sleeps
+/// until it has.
 struct ThreadPark {
-    resumed: Mutex<Option<Resumed>>,
+    state: Mutex<ThreadState>,
+    wake: Condvar,
+    /// The spawned task whose slice the thread runs, if it is a
+    /// worker's.
+    task: Option<usize>,
+    /// Who the code on the thread belongs to (`set_task_owner`).
+    owner: u64,
+}
+
+#[derive(Default)]
+struct ThreadState {
+    resumed: Option<Resumed>,
+    /// There may be something to do for the thread while it waits: a
+    /// task to run where there are no workers, a deadline to keep
+    /// where there is no timer thread.
+    poked: bool,
+}
+
+/// What the scheduler says of a parked task in a deadlock report.
+struct Who {
+    /// The handle's number, for a spawned task; `None` for a thread
+    /// that is no worker's (a stream stage, an HTTP handler).
+    task: Option<usize>,
+    owner: u64,
 }
 
 struct Inner {
-    queue: Mutex<VecDeque<Task>>,
+    queue: Mutex<RunQueue>,
+    /// The length of the queue, for a look without its lock.
+    queued: AtomicUsize,
+    /// How many workers look for a task without sleeping.
+    spinning: AtomicUsize,
     /// The workers wait here for a task.
     work: Condvar,
-    /// The threads that wait in [`Scheduler::block_thread`] wait here,
-    /// with the queue's lock.
-    threads: Condvar,
+    /// The threads that wait in [`Scheduler::block_thread`].
+    waiting_threads: Mutex<Vec<Arc<ThreadPark>>>,
     shutdown: AtomicBool,
     /// Whether worker threads run the queue.
     has_workers: AtomicBool,
@@ -204,6 +230,14 @@ struct Inner {
     io: HostIo,
 }
 
+/// The tasks that wait for a worker.
+#[derive(Default)]
+struct RunQueue {
+    tasks: VecDeque<Task>,
+    /// How many workers sleep until a task comes.
+    sleepers: usize,
+}
+
 /// The thread that fires the timer.
 #[derive(PartialEq)]
 enum TimerThread {
@@ -231,6 +265,8 @@ thread_local! {
     /// Whether the thread is counted as running silt code: it is a
     /// worker in a slice, or holds a [`Running`].
     static COUNTED: Cell<bool> = const { Cell::new(false) };
+    /// The spawned task whose slice the thread is running.
+    static RUNNING_TASK: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
 /// A thread that is running silt code of its own, from
@@ -271,9 +307,11 @@ impl Scheduler {
         let inner = Arc::new_cyclic(|inner: &Weak<Inner>| {
             let ready = inner.clone();
             Inner {
-                queue: Mutex::new(VecDeque::new()),
+                queue: Mutex::default(),
+                queued: AtomicUsize::new(0),
+                spinning: AtomicUsize::new(0),
                 work: Condvar::new(),
-                threads: Condvar::new(),
+                waiting_threads: Mutex::new(Vec::new()),
                 shutdown: AtomicBool::new(false),
                 has_workers: AtomicBool::new(false),
                 live: AtomicUsize::new(0),
@@ -520,7 +558,12 @@ impl Scheduler {
             *inner.main_wait.lock() = Some(id);
         }
         let timed = wait.deadline.is_some();
-        let park = Arc::new(ThreadPark::default());
+        let park = Arc::new(ThreadPark {
+            state: Mutex::default(),
+            wake: Condvar::new(),
+            task: RUNNING_TASK.with(|task| task.get()),
+            owner: current_task_owner(),
+        });
         let sleeper = Sleeper::Thread(park.clone());
         let resumed = match inner.parking.park(id, sleeper, wait, || false) {
             Some((_, resumed)) => resumed,
@@ -565,11 +608,90 @@ impl Inner {
             self.end_task(task);
             return;
         }
-        queue.push_back(task);
+        queue.tasks.push_back(task);
+        self.queued.store(queue.tasks.len(), Ordering::SeqCst);
         if self.has_workers.load(Ordering::SeqCst) {
-            self.work.notify_one();
+            // A worker that looks for a task finds this one, without
+            // anybody being woken.
+            if queue.sleepers > 0 && self.spinning.load(Ordering::SeqCst) == 0 {
+                self.work.notify_one();
+            }
         } else {
-            self.threads.notify_all();
+            drop(queue);
+            self.poke_threads();
+        }
+    }
+
+    /// The next task for a worker; `None` when the scheduler has shut
+    /// down. A worker that finds no task looks on for a moment before
+    /// it sleeps: in a program whose tasks wake each other, the next
+    /// one comes within microseconds, and putting a thread to sleep
+    /// and waking it costs more than that.
+    fn next_task(&self) -> Option<Task> {
+        /// How many workers look on at a time.
+        const LOOKING: usize = 2;
+        loop {
+            {
+                let mut queue = self.queue.lock();
+                if self.shutdown.load(Ordering::SeqCst) {
+                    return None;
+                }
+                if let Some(task) = self.pop(&mut queue) {
+                    return Some(task);
+                }
+            }
+            if more_than_one_core() {
+                let looks = self.spinning.fetch_add(1, Ordering::SeqCst) < LOOKING;
+                let mut found = false;
+                if looks {
+                    let until = std::time::Instant::now() + SPIN;
+                    while !found && std::time::Instant::now() < until {
+                        found = self.queued.load(Ordering::SeqCst) > 0
+                            || self.shutdown.load(Ordering::SeqCst);
+                        std::hint::spin_loop();
+                    }
+                }
+                self.spinning.fetch_sub(1, Ordering::SeqCst);
+                if found {
+                    continue;
+                }
+            }
+            // A task queued since the look above is found here: who
+            // queued it saw this worker looking and woke nobody.
+            let mut queue = self.queue.lock();
+            if self.shutdown.load(Ordering::SeqCst) {
+                return None;
+            }
+            if let Some(task) = self.pop(&mut queue) {
+                return Some(task);
+            }
+            queue.sleepers += 1;
+            self.work.wait(&mut queue);
+            queue.sleepers -= 1;
+        }
+    }
+
+    /// Take the first task off the queue. If more are left and nobody
+    /// is on the way to them, a sleeping worker is woken.
+    fn pop(&self, queue: &mut RunQueue) -> Option<Task> {
+        let task = queue.tasks.pop_front()?;
+        self.queued.store(queue.tasks.len(), Ordering::SeqCst);
+        if !queue.tasks.is_empty()
+            && queue.sleepers > 0
+            && self.spinning.load(Ordering::SeqCst) == 0
+        {
+            self.work.notify_one();
+        }
+        Some(task)
+    }
+
+    /// Tell the threads that wait that there may be something for
+    /// them to do.
+    fn poke_threads(&self) {
+        let threads = self.waiting_threads.lock().clone();
+        for thread in threads {
+            thread.state.lock().poked = true;
+            thread.wake.notify_one();
         }
     }
 
@@ -593,11 +715,8 @@ impl Inner {
                 Resumed::Cancelled => self.end_task(task),
             },
             Sleeper::Thread(park) => {
-                *park.resumed.lock() = Some(resumed);
-                // With the queue's lock, the thread is either before
-                // its look at `resumed` or waiting.
-                let _queue = self.queue.lock();
-                self.threads.notify_all();
+                park.state.lock().resumed = Some(resumed);
+                park.wake.notify_one();
             }
         }
     }
@@ -605,35 +724,84 @@ impl Inner {
     /// The calling thread waits until its wait has ended. Where no
     /// worker runs the queue, it does; where no thread fires the
     /// timer, it does.
-    fn wait_thread(self: &Arc<Self>, park: &ThreadPark) -> Resumed {
-        let mut queue = self.queue.lock();
-        loop {
-            if let Some(resumed) = park.resumed.lock().take() {
-                return resumed;
+    fn wait_thread(self: &Arc<Self>, park: &Arc<ThreadPark>) -> Resumed {
+        // Most waits of a thread are short: its counterpart is a task
+        // that answers within microseconds. Looking for the answer for
+        // that long first saves putting the thread to sleep and waking
+        // it, which costs more than the wait.
+        // Not while tasks wait for a worker: then the processors are
+        // busy, and the answer is not next.
+        let idle = || self.queued.load(Ordering::SeqCst) <= 1;
+        if self.has_workers.load(Ordering::SeqCst) && more_than_one_core() && idle() {
+            let until = std::time::Instant::now() + SPIN;
+            loop {
+                if let Some(resumed) = park.state.lock().resumed.take() {
+                    return resumed;
+                }
+                if std::time::Instant::now() >= until {
+                    break;
+                }
+                std::hint::spin_loop();
             }
-            if !self.has_workers.load(Ordering::SeqCst)
-                && let Some(task) = queue.pop_front()
-            {
-                drop(queue);
-                self.run_slice(task);
-                queue = self.queue.lock();
-                continue;
+        }
+        // From here the thread can be told that there is something to
+        // do for it.
+        self.waiting_threads.lock().push(park.clone());
+        let resumed = self.sleep_thread(park);
+        self.waiting_threads
+            .lock()
+            .retain(|other| !Arc::ptr_eq(other, park));
+        resumed
+    }
+
+    fn sleep_thread(self: &Arc<Self>, park: &ThreadPark) -> Resumed {
+        loop {
+            // What there is to do for a thread that waits.
+            if !self.has_workers.load(Ordering::SeqCst) {
+                let task = self.pop(&mut self.queue.lock());
+                if let Some(task) = task {
+                    self.run_slice(task);
+                    if let Some(resumed) = park.state.lock().resumed.take() {
+                        return resumed;
+                    }
+                    continue;
+                }
             }
             let timer = self.parking.timer();
             let next = match *self.timer_lock.lock() {
                 TimerThread::Unavailable => timer.real_wait(),
                 TimerThread::Idle | TimerThread::Running => None,
             };
-            match next {
-                None => self.threads.wait(&mut queue),
-                Some(next) => {
-                    let _ = self.threads.wait_for(&mut queue, next);
-                    drop(queue);
-                    if timer.fire_due(&self.parking) > 0 {
-                        self.check_stuck();
-                    }
-                    queue = self.queue.lock();
+            if next.is_some_and(|next| next.is_zero()) {
+                if timer.fire_due(&self.parking) > 0 {
+                    self.check_stuck();
                 }
+                if let Some(resumed) = park.state.lock().resumed.take() {
+                    return resumed;
+                }
+                continue;
+            }
+            // A poke since the look above is not lost: it is noted
+            // under the lock that the sleep gives up.
+            let mut state = park.state.lock();
+            if let Some(resumed) = state.resumed.take() {
+                return resumed;
+            }
+            if !state.poked {
+                match next {
+                    None => park.wake.wait(&mut state),
+                    Some(next) => {
+                        let _ = park.wake.wait_for(&mut state, next);
+                    }
+                }
+            }
+            state.poked = false;
+            if let Some(resumed) = state.resumed.take() {
+                return resumed;
+            }
+            drop(state);
+            if next.is_some() && timer.fire_due(&self.parking) > 0 {
+                self.check_stuck();
             }
         }
     }
@@ -660,8 +828,7 @@ impl Inner {
             // new deadline.
             _ => {
                 drop(thread);
-                let _queue = self.queue.lock();
-                self.threads.notify_all();
+                self.poke_threads();
             }
         }
     }
@@ -694,7 +861,9 @@ impl Inner {
         // task. See `set_task_owner`.
         let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(handle.owner())));
         let counted = COUNTED.with(|counted| counted.replace(true));
+        let running = RUNNING_TASK.with(|task| task.replace(Some(id)));
         let result = vm.execute_slice(time_slice());
+        RUNNING_TASK.with(|task| task.set(running));
         COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
 
@@ -744,7 +913,12 @@ impl Inner {
     /// waits, and so does every other task, with nothing pending
     /// outside.
     fn check_stuck(&self) {
-        if self.external.load(Ordering::SeqCst) > 0 {
+        // A first look without a lock. A deadlock stays one, so the
+        // event that completes it (this is called after each) sees it
+        // here too.
+        if self.external.load(Ordering::SeqCst) > 0
+            || self.parking.waiting() != self.live.load(Ordering::SeqCst)
+        {
             return;
         }
         // Without the program's thread waiting there is nobody to tell.
@@ -754,6 +928,16 @@ impl Inner {
         let stuck = self.parking.stuck(
             || self.live.load(Ordering::SeqCst),
             || self.external.load(Ordering::SeqCst),
+            |sleeper| match sleeper {
+                Sleeper::Task(task) => Who {
+                    task: Some(task.id),
+                    owner: task.handle.owner(),
+                },
+                Sleeper::Thread(park) => Who {
+                    task: park.task,
+                    owner: park.owner,
+                },
+            },
         );
         let Some(stuck) = stuck else {
             return;
@@ -768,7 +952,7 @@ impl Inner {
             _ => "channel select with no counterparty",
         };
         let mut verdict = VmError::new(format!("deadlock on main thread: {what}"));
-        for line in waits_of_the_others(&stuck, main) {
+        for line in waits_of_the_others(&stuck, main, own.who.owner) {
             verdict = verdict.with_help(line);
         }
         *self.deadlock.lock() = Some(verdict);
@@ -777,11 +961,16 @@ impl Inner {
 }
 
 /// What each parked task besides the program's own waits on, one line
-/// each, for the deadlock report.
-fn waits_of_the_others(stuck: &[Stuck], main: TaskId) -> Vec<String> {
+/// each, for the deadlock report. Only the tasks of `owner` are
+/// listed: in a test run, those of the test that is deadlocked, not
+/// what earlier tests left parked.
+fn waits_of_the_others(stuck: &[Stuck<Who>], main: TaskId, owner: u64) -> Vec<String> {
     /// How many tasks are listed.
     const LISTED: usize = 8;
-    let others: Vec<&Stuck> = stuck.iter().filter(|stuck| stuck.task != main).collect();
+    let others: Vec<&Stuck<Who>> = stuck
+        .iter()
+        .filter(|stuck| stuck.task != main && stuck.who.owner == owner)
+        .collect();
     let mut lines: Vec<String> = others
         .iter()
         .take(LISTED)
@@ -792,15 +981,15 @@ fn waits_of_the_others(stuck: &[Stuck], main: TaskId) -> Vec<String> {
                 .map(|source| match source {
                     Source::Recv(channel) => format!("to receive from <channel:{}>", channel.id()),
                     Source::Send(channel) => format!("to send to <channel:{}>", channel.id()),
-                    Source::Cell(_) => "for a task to end".to_string(),
+                    Source::Cell(cell) => match cell.label() {
+                        Some(label) => format!("for {label} to end"),
+                        None => "for a task to end".to_string(),
+                    },
                 })
                 .collect();
-            // A task of `task.spawn` has its handle's number; a thread
-            // (a stream stage, an HTTP handler) has none.
-            let who = if stuck.task.0 < u64::MAX / 2 {
-                format!("task <handle:{}>", stuck.task.0)
-            } else {
-                "a stream stage or handler".to_string()
+            let who = match stuck.who.task {
+                Some(id) => format!("task <handle:{id}>"),
+                None => "a stream stage or handler".to_string(),
             };
             format!("{who} waits {}", on.join(", or "))
         })
@@ -809,6 +998,14 @@ fn waits_of_the_others(stuck: &[Stuck], main: TaskId) -> Vec<String> {
         lines.push(format!("{} more tasks wait", others.len() - LISTED));
     }
     lines
+}
+
+/// How long a thread looks for the end of its wait before it sleeps.
+const SPIN: Duration = Duration::from_micros(50);
+
+fn more_than_one_core() -> bool {
+    static MORE: OnceLock<bool> = OnceLock::new();
+    *MORE.get_or_init(|| thread::available_parallelism().is_ok_and(|n| n.get() > 1))
 }
 
 /// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).
@@ -843,7 +1040,8 @@ impl Scheduler {
         // Detach the workers.
         drop(self.workers.lock().take());
         // The tasks are dropped after the queue's lock is released.
-        let waiting: Vec<Task> = inner.queue.lock().drain(..).collect();
+        let waiting: Vec<Task> = inner.queue.lock().tasks.drain(..).collect();
+        inner.queued.store(0, Ordering::SeqCst);
         inner.work.notify_all();
         for task in waiting {
             inner.end_task(task);
@@ -882,19 +1080,7 @@ impl Drop for Scheduler {
 
 /// A worker: take a task off the queue, run it for a slice, again.
 fn worker_loop(inner: Arc<Inner>) {
-    loop {
-        let task = {
-            let mut queue = inner.queue.lock();
-            loop {
-                if inner.shutdown.load(Ordering::SeqCst) {
-                    return;
-                }
-                if let Some(task) = queue.pop_front() {
-                    break task;
-                }
-                inner.work.wait(&mut queue);
-            }
-        };
+    while let Some(task) = inner.next_task() {
         inner.run_slice(task);
     }
 }
