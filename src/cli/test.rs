@@ -273,9 +273,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             // this test. Those that still wait are dropped. After an
             // error of the test function nothing is waited for: its
             // tasks are stopped where they are.
-            match outcome {
-                Ok(_) => vm.settle(),
-                Err(_) => vm.stop_tasks(),
+            match &outcome {
+                Ok(value) if returned_err(value).is_none() => vm.settle(),
+                // Raised, or returned as `Err`.
+                _ => vm.stop_tasks(),
             }
             // The failures of the test's tasks are reported under its
             // result line.

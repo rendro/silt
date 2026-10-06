@@ -213,9 +213,9 @@ pub(crate) fn vm_run_file(path: &str) {
     let mut vm = Vm::new(silt::HostIo::process());
     let run_result = vm.run_program(&program);
     // `main` has returned; the program ends when its tasks can do no
-    // more. (After an error of `main` nothing is waited for: the
-    // program has failed.)
-    if run_result.is_ok() {
+    // more. After an error of `main`, raised or returned as `Err`,
+    // nothing is waited for: the program has failed.
+    if matches!(&run_result, Ok(value) if returned_err(value).is_none()) {
         vm.settle();
     }
     // The program has ended. The tasks that failed and that nobody

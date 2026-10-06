@@ -471,8 +471,8 @@ fn main() {
 }
 ```
 
-If `main` fails with a runtime error, the program has failed: nothing is
-waited for. Under `silt test`, each test ends in the same way, for the
+If `main` fails, with a runtime error or by returning `Err`, the program
+has failed: nothing is waited for. Under `silt test`, each test ends in the same way, for the
 tasks that the test spawned (see
 [Testing](language/testing.md#spawned-tasks)).
 

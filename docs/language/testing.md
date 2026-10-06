@@ -133,8 +133,8 @@ test's result, so:
 - a task left waiting for something nobody will give is dropped with its
   test, and is neither waited for nor reported by a later test.
 
-A test whose function fails (a failed assertion, a `panic`) is not waited
-for: its tasks are stopped where they are, as a program's are when `main`
+A test whose function fails (a failed assertion, a `panic`, a returned
+`Err`) is not waited for: its tasks are stopped where they are, as a program's are when `main`
 fails. A ticker that the test would have cancelled on its last line does
 not keep the run going.
 
