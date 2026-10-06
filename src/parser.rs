@@ -3848,7 +3848,17 @@ impl<'src> Parser<'src> {
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
             arms.push(self.parse_match_arm(guardless)?);
-            // Arms are separated by line breaks, as statements are.
+            // Arms are separated by line breaks, as statements are. A
+            // comma behind an arm is what other languages write there.
+            if self.at(&Token::Comma) {
+                let comma = self.span();
+                return Err(Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    comma,
+                    "match arms are separated by line breaks, not by commas: remove the ','",
+                )
+                .with_fix("remove the comma", vec![(comma, String::new())]));
+            }
             if !self.at_newline() && !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
                 return Err(self.same_line_err("match arm"));
             }
