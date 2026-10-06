@@ -249,7 +249,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // nobody joined fails the file.
         let setup_failures = owners.take_task_failures(setup_owner, &mut counts);
         if !setup_failures.is_empty() {
-            owners.fail_file(setup_owner, &setup_failures, &mut counts);
+            owners.fail_file(setup_owner, setup_failures, &mut counts);
         }
 
         // Run each selected test function
@@ -336,6 +336,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 counts.passed += 1;
             }
         }
+        // The file's own tasks: one report for the file.
+        owners.report_file(setup_owner, &mut counts);
     }
 
     // `--filter` ruled every file out: say so instead of printing a
@@ -396,9 +398,9 @@ struct TestFile {
 struct TaskOwner {
     /// Index of the file in `TaskOwners::files`.
     file: usize,
-    /// For a file's top-level code: true once the file has been
-    /// counted as failed for a task of it.
-    failed: bool,
+    /// For a file's top-level code: the reports of its tasks that
+    /// failed and that nobody joined, until the file is reported.
+    task_failures: Vec<String>,
 }
 
 /// Who spawned the tasks of a `silt test` run, so that the failure of a
@@ -423,7 +425,7 @@ impl TaskOwners {
     fn add_owner(&mut self, file: usize) -> u64 {
         self.owners.push(TaskOwner {
             file,
-            failed: false,
+            task_failures: Vec::new(),
         });
         self.owners.len() as u64
     }
@@ -435,8 +437,8 @@ impl TaskOwners {
     ///
     /// The tasks of every earlier test have ended or were dropped with
     /// it, so a failure of another owner is one of a task of the
-    /// file's top-level code, which was woken by the test: it is
-    /// reported here, as a failure of the file.
+    /// file's top-level code, which was woken by the test: it is kept
+    /// for the report of the file.
     fn take_task_failures(&mut self, current: u64, counts: &mut Counts) -> Vec<String> {
         let taken = silt::scheduler::take_unjoined_failures();
         // The reports per owner tag, in the order in which the tasks
@@ -475,33 +477,45 @@ impl TaskOwners {
             if tag == current {
                 current_reports = owner_reports;
             } else {
-                self.fail_file(tag, &owner_reports, counts);
+                self.fail_file(tag, owner_reports, counts);
             }
         }
         current_reports
     }
 
-    /// Report the failures of tasks of the top-level code tagged
-    /// `tag`, and count its file as failed, once.
-    fn fail_file(&mut self, tag: u64, reports: &[String], counts: &mut Counts) {
-        let owner = owner_index(tag).and_then(|index| self.owners.get_mut(index));
-        match owner {
-            Some(owner) => {
-                let path = self.files[owner.file].path.as_str();
-                eprintln!("  FAIL {path} (a task spawned by the file's top-level code failed)");
-                if !owner.failed {
-                    counts.file_errors += 1;
-                }
-                owner.failed = true;
-            }
+    /// Keep the failures of tasks of the top-level code tagged `tag`
+    /// for the report of its file ([`TaskOwners::report_file`]).
+    fn fail_file(&mut self, tag: u64, reports: Vec<String>, counts: &mut Counts) {
+        match owner_index(tag).and_then(|index| self.owners.get_mut(index)) {
+            Some(owner) => owner.task_failures.extend(reports),
             // Every task of the run is spawned under a tag of this
             // run: this is a failure that nothing can be charged with.
             None => {
                 eprintln!("  FAIL a task that no test can be named for failed");
                 counts.file_errors += 1;
+                for report in &reports {
+                    eprint_indented(report);
+                }
             }
         }
-        for report in reports {
+    }
+
+    /// The file whose top-level code is tagged `tag` has run its last
+    /// test: if tasks of the top-level code failed, at any time, and
+    /// nobody joined them, the file has failed. It is said once, with
+    /// every report.
+    fn report_file(&mut self, tag: u64, counts: &mut Counts) {
+        let Some(owner) = owner_index(tag).and_then(|index| self.owners.get_mut(index)) else {
+            return;
+        };
+        let reports = std::mem::take(&mut owner.task_failures);
+        if reports.is_empty() {
+            return;
+        }
+        let path = self.files[owner.file].path.as_str();
+        eprintln!("  FAIL {path} (a task spawned by the file's top-level code failed)");
+        counts.file_errors += 1;
+        for report in &reports {
             eprint_indented(report);
         }
     }

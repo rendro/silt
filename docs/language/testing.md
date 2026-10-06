@@ -145,7 +145,7 @@ serves every test of the file, and a test that waits for its answer is not
 deadlocked. A test has ended when neither its own tasks nor the file's can
 do more. If a task of the top-level code fails and nobody joins it, the file
 has failed: `FAIL <file> (a task spawned by the file's top-level code
-failed)`, with the report under it.
+failed)`, once, after the file's last test, with the reports under it.
 
 ## Exit Code
 

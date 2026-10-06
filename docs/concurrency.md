@@ -517,7 +517,10 @@ more than one frame. The rules:
 - **Every failure counts.** The report is made when the program has ended
   (see [When a program ends](#when-a-program-ends)): a task that fails
   after `main` has returned still makes the run fail, every time. The
-  example above does not have to wait for its task.
+  example above does not have to wait for its task. (A stage of a stream
+  is different: its failure goes to whoever reads the stream, and is not
+  reported if nobody does. See
+  [stream](stdlib/stream.md#design-notes).)
 - **A deadlock shows its cause.** When `main` is told
   `deadlock on main thread`, the failures reported with it are usually the
   reason: a producer that failed before it sent.

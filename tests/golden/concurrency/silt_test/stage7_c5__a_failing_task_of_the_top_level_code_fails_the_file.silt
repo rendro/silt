@@ -7,7 +7,7 @@
 -- stderr-contains: deadlock on main thread: channel send with no counterparty
 -- stderr-contains: 2 tests: 1 passed, 1 failed, 0 skipped
 -- A task of the file's top-level code that a test makes fail is a
--- failure of the file, reported once the test that woke it has ended;
+-- failure of the file, reported after the file's last test;
 -- the test itself is judged by what it did. The next test, which
 -- needs the task, is deadlocked, and told so at once.
 import channel
