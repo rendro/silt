@@ -318,10 +318,37 @@ impl Vm {
     /// to end the program where it is.
     ///
     /// The tasks waited for are those of the current owner
-    /// ([`crate::scheduler::set_task_owner`]).
+    /// ([`Vm::set_task_owner`]).
     pub fn settle(&mut self) {
         self.runtime.scheduler.settle();
         self.report_unjoined_failures();
+    }
+
+    /// Set the owner tag of the tasks that this VM's own code spawns
+    /// from now on (`fn main`, a test function; not the code of a
+    /// task). A task spawned by a task gets the owner of the task that
+    /// spawns it, so one tag covers every task that descends from the
+    /// tasks spawned under it. 0, the default, means no owner.
+    ///
+    /// The owner is whose tasks the VM asks about: a deadlock is one
+    /// of the owner's tasks, [`Vm::settle`] waits for them and no
+    /// others, and the report of a task's failure carries the tag
+    /// ([`crate::scheduler::UnjoinedFailure::owner`]). `silt test`
+    /// sets one tag per test, and so judges each test by its own
+    /// tasks. The tag is the VM's: two VMs do not see each other's.
+    pub fn set_task_owner(&mut self, owner: u64) {
+        self.runtime.scheduler.set_owner(owner, 0);
+    }
+
+    /// [`Vm::set_task_owner`], for code that runs while the tasks of
+    /// `outer` are still there and may work for it: a test, and the
+    /// tasks that the top-level code of its file left waiting. Those
+    /// count with the owner's when the VM waits: it is not deadlocked
+    /// while one of them can go on, and [`Vm::settle`] waits for them
+    /// too. They are not dropped with the owner's, and their failures
+    /// stay theirs.
+    pub fn set_task_owner_within(&mut self, owner: u64, outer: u64) {
+        self.runtime.scheduler.set_owner(owner, outer);
     }
 
     /// End the program whose own code has failed: stop its tasks
@@ -339,7 +366,7 @@ impl Vm {
     /// wait stay, for code that this VM runs next and that may wake
     /// them. `silt test` calls this after a file's top-level code, the
     /// tasks of which may serve the file's tests
-    /// ([`crate::scheduler::set_task_owner_within`]).
+    /// ([`Vm::set_task_owner_within`]).
     pub fn wait_until_idle(&mut self) {
         self.runtime.scheduler.wait_until_idle();
         self.report_unjoined_failures();

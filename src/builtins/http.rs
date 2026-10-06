@@ -704,6 +704,8 @@ fn do_http_serve_inner(
     // The server ends with the wait of the task that serves: when that
     // task is cancelled, or dropped at the end of the program, the
     // accept loop is told to end.
+    // The tasks of the requests belong to whoever serves.
+    let owner = vm.scheduler().current_owner();
     let stopped = Arc::new(AtomicBool::new(false));
     let stop = StopServer(server.clone(), stopped.clone());
     std::thread::spawn(move || {
@@ -738,10 +740,7 @@ fn do_http_serve_inner(
             // Each accepted request is handled by a task of its own.
             inflight.fetch_add(1, Ordering::AcqRel);
             let id = template_vm.next_task_id();
-            let task_handle = Arc::new(TaskHandle::with_owner(
-                id,
-                crate::scheduler::current_task_owner(),
-            ));
+            let task_handle = Arc::new(TaskHandle::with_owner(id, owner));
             let request = Arc::new(Mutex::new(Some(req)));
             let mut request_vm = template_vm.spawn_child();
             request_vm.spawned = true;

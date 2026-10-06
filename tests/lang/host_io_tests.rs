@@ -169,6 +169,51 @@ fn main() {
     assert_eq!(err.contents(), report);
 }
 
+/// The owner tag is the VM's. Two VMs on two threads, each with a tag
+/// of its own, do not see each other's: `settle` on one waits for its
+/// own sleeping task, whatever the other's tag is at that moment.
+#[test]
+fn the_owner_of_tasks_is_the_vms_own() {
+    let source = r#"
+import channel
+import list
+import task
+import time
+
+fn main() {
+  let never = channel.new(0)
+  let _parked = 1..3 |> list.map { _ -> task.spawn { -> channel.receive(never) } }
+  let _sleeps = task.spawn { ->
+    time.sleep(time.ms(1))
+    println("slept")
+  }
+  println("main")
+}
+"#;
+    let program = Arc::new(compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}")));
+    let threads: Vec<_> = (1..=2u64)
+        .map(|tag| {
+            let program = program.clone();
+            thread::spawn(move || {
+                for run in 0..100 {
+                    let out = Buffer::new();
+                    let mut vm = Vm::new(HostIo::buffer(&out));
+                    vm.set_task_owner(tag);
+                    let result = vm.run_program(&program).map_err(|e| e.message);
+                    vm.settle();
+                    assert_eq!(result, Ok(Value::Unit), "tag {tag}, run {run}");
+                    assert_eq!(out.contents(), "main\nslept\n", "tag {tag}, run {run}");
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread
+            .join()
+            .expect("every settle waited for its own VM's tasks");
+    }
+}
+
 /// A task that fails after `run_program` has returned is reported when
 /// the VM is dropped, if it has failed by then.
 #[test]

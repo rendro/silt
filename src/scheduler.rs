@@ -17,9 +17,9 @@
 //!
 //! # Deadlock, and the end of a program
 //!
-//! Tasks are counted by owner (`set_task_owner`): the program, or one
+//! Tasks are counted by owner (`Vm::set_task_owner`): the program, or one
 //! test of a test run, with which the tasks of its file's top-level
-//! code count (`set_task_owner_within`). The tasks of an owner have
+//! code count (`Vm::set_task_owner_within`). The tasks of an owner have
 //! come to a stop when each has ended or waits, none of the waits
 //! will end by itself (it has no deadline, and it is not on a channel
 //! that a timer will close), and no I/O operation that one of them
@@ -154,7 +154,7 @@ struct Task {
     group: Arc<Group>,
 }
 
-/// The tasks of one owner (`set_task_owner`): the program, or one
+/// The tasks of one owner (`Vm::set_task_owner`): the program, or one
 /// test of a test run. Whether a program is deadlocked, and whether it
 /// has ended, is asked of its own tasks: what an earlier test left
 /// behind does not count.
@@ -203,7 +203,7 @@ struct ThreadPark {
     /// worker's.
     task: Option<usize>,
     /// The tasks that the code on the thread counts with: those of
-    /// its owner (`set_task_owner`).
+    /// its owner (`Vm::set_task_owner`).
     group: Arc<Group>,
 }
 
@@ -244,6 +244,12 @@ struct Inner {
     deadlock: Mutex<Option<VmError>>,
     /// The names of the waits of threads.
     next_thread_wait: AtomicU64,
+    /// The owner tag of the tasks spawned outside any task
+    /// (`Scheduler::set_owner`).
+    owner: AtomicU64,
+    /// The owner tag of the tasks that are there besides those of
+    /// `owner`; 0 for none.
+    outer: AtomicU64,
     /// Whether the thread that runs the program knows this scheduler
     /// (`StartedSchedulers`).
     registered: AtomicBool,
@@ -286,7 +292,7 @@ struct Main {
     /// The tasks of the owner it runs code for.
     group: Arc<Group>,
     /// The tasks that are there besides, and count with them
-    /// (`set_task_owner_within`).
+    /// (`Vm::set_task_owner_within`).
     outer: Option<Arc<Group>>,
     waits: MainWaits,
 }
@@ -295,7 +301,7 @@ impl Main {
     /// The thread that calls is the program's own, and `group` its
     /// owner's tasks.
     fn of_this_thread(inner: &Inner, group: Arc<Group>, waits: MainWaits) -> Main {
-        let outer = PROGRAM_TASK_OUTER.load(Ordering::SeqCst);
+        let outer = inner.outer.load(Ordering::SeqCst);
         Main {
             group,
             outer: (outer != 0).then(|| inner.group_of(outer)),
@@ -399,6 +405,8 @@ impl Scheduler {
                 main: Mutex::new(None),
                 deadlock: Mutex::new(None),
                 next_thread_wait: AtomicU64::new(0),
+                owner: AtomicU64::new(0),
+                outer: AtomicU64::new(0),
                 registered: AtomicBool::new(false),
                 timer_lock: Mutex::new(TimerThread::Idle),
                 timer_wake: Condvar::new(),
@@ -563,7 +571,7 @@ impl Scheduler {
     /// thread that counts already.
     pub(crate) fn enter(&self) -> Running {
         let counted = (!COUNTED.with(|counted| counted.replace(true))).then(|| {
-            let group = self.inner.group(current_task_owner());
+            let group = self.inner.group(self.inner.current_owner());
             group.live.fetch_add(1, Ordering::SeqCst);
             group
         });
@@ -573,9 +581,23 @@ impl Scheduler {
         }
     }
 
+    /// The owner tag of the tasks spawned from now on outside any task
+    /// (by the thread that runs the program), and, if it is not 0,
+    /// that of the tasks that count with them. See
+    /// [`Vm::set_task_owner`] and [`Vm::set_task_owner_within`].
+    pub(crate) fn set_owner(&self, owner: u64, outer: u64) {
+        self.inner.outer.store(outer, Ordering::SeqCst);
+        self.inner.owner.store(owner, Ordering::SeqCst);
+    }
+
+    /// The owner tag of a task spawned here and now.
+    pub(crate) fn current_owner(&self) -> u64 {
+        self.inner.current_owner()
+    }
+
     /// See [`External`]. It counts for the owner of the code that asks.
     pub(crate) fn external(&self) -> External {
-        let group = self.inner.group(current_task_owner());
+        let group = self.inner.group(self.inner.current_owner());
         group.external.fetch_add(1, Ordering::SeqCst);
         External(self.inner.clone(), group)
     }
@@ -585,7 +607,7 @@ impl Scheduler {
     /// has ended or waits, and no sleep, timeout or I/O operation of theirs
     /// is pending. The tasks that still wait then are dropped; they
     /// could never be woken. Called by the thread that ran the code,
-    /// for the owner it ran it for (`set_task_owner`): a test waits
+    /// for the owner it ran it for (`Vm::set_task_owner`): a test waits
     /// for its own tasks only.
     pub(crate) fn settle(&self) {
         let _ = self.wait_for(MainWaits::Settling);
@@ -603,7 +625,7 @@ impl Scheduler {
     /// stays to be reported; I/O that they started is not waited for.
     /// Called like [`Scheduler::settle`], for the same owner.
     pub(crate) fn stop_tasks(&self) {
-        let group = self.inner.group(current_task_owner());
+        let group = self.inner.group(self.inner.current_owner());
         // The flag first: a task on its way into a wait reads it.
         group.stopped.store(true, Ordering::SeqCst);
         self.drop_waiting(&group);
@@ -636,7 +658,7 @@ impl Scheduler {
     /// `waits` says for what. Gives the owner's tasks.
     fn wait_for(&self, waits: fn(Arc<ThreadPark>) -> MainWaits) -> Arc<Group> {
         let inner = &self.inner;
-        let group = inner.group(current_task_owner());
+        let group = inner.group(inner.current_owner());
         let park = Arc::new(ThreadPark {
             state: Mutex::default(),
             wake: Condvar::new(),
@@ -681,7 +703,7 @@ impl Scheduler {
     pub(crate) fn block_thread(&self, wait: Wait, main: bool) -> Result<Fired, VmError> {
         let inner = &self.inner;
         let _counted = self.enter();
-        let group = inner.group(current_task_owner());
+        let group = inner.group(inner.current_owner());
         // The names of spawned tasks count up from 0.
         let id = TaskId(u64::MAX - inner.next_thread_wait.fetch_add(1, Ordering::Relaxed));
         if main {
@@ -737,6 +759,16 @@ impl Scheduler {
 }
 
 impl Inner {
+    /// The owner tag of a task spawned here and now: that of the task
+    /// whose slice the thread runs, or the one set for the program.
+    fn current_owner(&self) -> u64 {
+        RUNNING_TASK_OWNER
+            .try_with(|owner| owner.get())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| self.owner.load(Ordering::SeqCst))
+    }
+
     /// The tasks of `owner`. A thread keeps the group it asked for
     /// last: nearly every call is for the same owner as the one
     /// before. (A group stays for as long as its scheduler.)
@@ -1042,7 +1074,7 @@ impl Inner {
             return None;
         }
         // The tasks that this slice spawns belong to the owner of this
-        // task. See `set_task_owner`.
+        // task. See `Vm::set_task_owner`.
         let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(task.handle.owner())));
         let counted = COUNTED.with(|counted| counted.replace(true));
         let running = RUNNING_TASK.with(|running| running.replace(Some(task.id)));
@@ -1516,57 +1548,10 @@ thread_local! {
 
 // ── Who spawned a task, and the failures that nobody joined ─────────
 
-/// The owner tag of the tasks spawned outside any task. See
-/// `set_task_owner`.
-static PROGRAM_TASK_OWNER: AtomicU64 = AtomicU64::new(0);
-
-/// The owner tag of the tasks that are there besides those of
-/// `PROGRAM_TASK_OWNER`; 0 for none. See `set_task_owner_within`.
-static PROGRAM_TASK_OUTER: AtomicU64 = AtomicU64::new(0);
-
 thread_local! {
     /// On a worker thread, while it runs a slice of a task: the owner
     /// tag of that task.
     static RUNNING_TASK_OWNER: Cell<Option<u64>> = const { Cell::new(None) };
-}
-
-/// Set the owner tag of the tasks spawned from now on outside any task:
-/// by the thread that runs the program, or by a thread that runs a
-/// stream stage or an HTTP handler. A task spawned by a task gets the
-/// owner of the task that spawns it, so one tag covers every task that
-/// descends from the tasks spawned under it.
-///
-/// A report of a task's failure carries the owner tag
-/// (`UnjoinedFailure::owner`). `silt test` sets one tag per test, and
-/// so charges the failure of a task to the test that spawned it. 0, the
-/// default, means no owner.
-///
-/// The owner is also whose tasks the program's thread waits on: a
-/// deadlock is one of the owner's tasks, and [`Vm::settle`] waits for
-/// them and no others.
-pub fn set_task_owner(owner: u64) {
-    PROGRAM_TASK_OUTER.store(0, Ordering::SeqCst);
-    PROGRAM_TASK_OWNER.store(owner, Ordering::SeqCst);
-}
-
-/// [`set_task_owner`], for code that runs while the tasks of `outer`
-/// are still there and may work for it: a test, and the tasks that the
-/// top-level code of its file left waiting. Those count with the
-/// owner's when the program's thread waits: it is not deadlocked while
-/// one of them can go on, and [`Vm::settle`] waits for them too. They
-/// are not dropped with the owner's, and their failures stay theirs.
-pub fn set_task_owner_within(owner: u64, outer: u64) {
-    PROGRAM_TASK_OUTER.store(outer, Ordering::SeqCst);
-    PROGRAM_TASK_OWNER.store(owner, Ordering::SeqCst);
-}
-
-/// The owner tag of a task spawned here and now. See `set_task_owner`.
-pub(crate) fn current_task_owner() -> u64 {
-    RUNNING_TASK_OWNER
-        .try_with(|owner| owner.get())
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| PROGRAM_TASK_OWNER.load(Ordering::SeqCst))
 }
 
 /// What the report of a failure that nobody joined advises.
@@ -1595,7 +1580,7 @@ fn collected_failures() -> &'static Mutex<FailedTasks> {
 pub struct UnjoinedFailure {
     /// The id of the task, as `<handle:N>` shows it.
     pub task_id: usize,
-    /// The owner tag the task was spawned under. See `set_task_owner`.
+    /// The owner tag the task was spawned under. See `Vm::set_task_owner`.
     pub owner: u64,
     /// The error the task ended with, as the task raised it.
     pub error: VmError,
@@ -1730,8 +1715,6 @@ mod tests {
     /// owner left on the same scheduler (a task asleep for an hour, a
     /// task that waits) neither delays it nor is counted in it.
     ///
-    /// The owner tag is the process's: this test relies on having
-    /// the process to itself, as under nextest.
     #[test]
     fn a_deadlock_is_asked_of_the_tasks_of_one_owner() {
         let compile = |source: &str| {
@@ -1765,13 +1748,12 @@ fn main() {
         );
         let out = Timed::default();
         let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()));
-        super::set_task_owner(1);
+        vm.set_task_owner(1);
         let first = vm.run_program(&leaves_tasks);
-        super::set_task_owner(2);
+        vm.set_task_owner(2);
         let before = Instant::now();
         let second = vm.run_program(&deadlocked);
         let took = before.elapsed();
-        super::set_task_owner(0);
         assert_eq!(first.map_err(|e| e.message), Ok(Value::Unit));
         let error = second.expect_err("the second program is deadlocked");
         assert_eq!(

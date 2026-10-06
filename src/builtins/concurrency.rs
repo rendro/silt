@@ -382,7 +382,7 @@ fn spawn_with_deadline(
     // runs this, or the owner the front end set for the program.
     let handle = Arc::new(TaskHandle::with_owner(
         task_id,
-        crate::scheduler::current_task_owner(),
+        vm.scheduler().current_owner(),
     ));
 
     let mut child_vm = vm.spawn_child();

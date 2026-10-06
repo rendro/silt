@@ -222,9 +222,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             entry: file,
         });
         let setup_owner = owners.add_owner(file_index);
-        silt::scheduler::set_task_owner(setup_owner);
 
         let mut vm = Vm::new(silt::HostIo::process());
+        vm.set_task_owner(setup_owner);
         let setup = vm.run_program(&program);
         // The top-level code has ended when its tasks can do no more.
         // Those that wait then stay: a test may be what they wait for.
@@ -266,7 +266,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             let owner = owners.add_owner(file_index);
             // The tasks of the file's top-level code are still there,
             // and may work for the test.
-            silt::scheduler::set_task_owner_within(owner, setup_owner);
+            vm.set_task_owner_within(owner, setup_owner);
             let outcome = vm.call_test(test);
             // The test has ended when its tasks can do no more: one
             // that fails after the test function has returned fails
@@ -403,7 +403,7 @@ struct TaskOwner {
 
 /// Who spawned the tasks of a `silt test` run, so that the failure of a
 /// task can be charged to the test that spawned it. The owner tag of an
-/// owner, as the scheduler carries it (`silt::scheduler::set_task_owner`),
+/// owner, as the scheduler carries it (`Vm::set_task_owner`),
 /// is its index in `owners` plus one; 0 is no owner.
 #[derive(Default)]
 struct TaskOwners {
