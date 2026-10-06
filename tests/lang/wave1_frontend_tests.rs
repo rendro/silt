@@ -331,6 +331,7 @@ fn main() {
 /// would; how the refusal reads is the golden case
 /// `cli/fmt/cli_fmt__refusal_is_a_diagnostic`.)
 #[test]
+#[cfg(debug_assertions)] // the flag exists in a debug build only
 fn fmt_formats_the_other_files_when_one_is_refused() {
     let ws = Workspace::new("two_files");
     let refused = "fn main() {\n  println( 0x10 )\n}\n";

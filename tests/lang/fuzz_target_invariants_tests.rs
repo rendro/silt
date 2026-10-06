@@ -118,8 +118,11 @@ fn lexer_invariants_reject_token_after_eof() {
 // Formatter invariants
 // --------------------------------------------------------------------
 
+// `format_with` is not part of a release build.
+
 /// The formatter, with `tamper` applied to its result before it checks
 /// it: what a defect of the printer would hand to the check.
+#[cfg(debug_assertions)]
 fn tampered(
     tamper: fn(String) -> String,
 ) -> impl Fn(&str) -> Result<String, silt::diagnostic::Diagnostic> {
@@ -141,6 +144,7 @@ fn formatter_invariants_ignore_what_is_not_a_program() {
 }
 
 #[test]
+#[cfg(debug_assertions)]
 fn formatter_invariants_reject_a_result_that_does_not_parse() {
     let err = check_formatter_invariants_of(SOURCE, tampered(|out| out.replace("[1, 2]", "[1, 2")))
         .unwrap_err();
@@ -148,6 +152,7 @@ fn formatter_invariants_reject_a_result_that_does_not_parse() {
 }
 
 #[test]
+#[cfg(debug_assertions)]
 fn formatter_invariants_reject_a_dropped_comment() {
     for tamper in [
         (|out| out.replace("-- about f\n", "")) as fn(String) -> String,
@@ -159,6 +164,7 @@ fn formatter_invariants_reject_a_dropped_comment() {
 }
 
 #[test]
+#[cfg(debug_assertions)]
 fn formatter_invariants_reject_another_program() {
     for tamper in [
         // Parentheses that grouped.

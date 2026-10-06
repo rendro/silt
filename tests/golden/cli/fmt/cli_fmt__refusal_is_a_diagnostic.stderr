@@ -1,7 +1,7 @@
 error[fmt]: formatting refused: the result would spell `0x10` in function `main` another way
- --> cli_fmt__refusal_is_a_diagnostic.silt:8:12
+ --> cli_fmt__refusal_is_a_diagnostic.silt:9:12
    |
- 8 |   println( 0x10 )
+ 9 |   println( 0x10 )
    |            ^^^^ formatting refused: the result would spell `0x10` in function `main` another way
   = note: the text was left unchanged
   = note: this is a defect in `silt fmt`, not in your program; until it is fixed, moving the comment onto a line of its own or simplifying the expression usually lets the file format

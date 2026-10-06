@@ -61,7 +61,20 @@ pub struct Refusal {
 /// literal the same way, and it holds the same comments in the same
 /// order. A refusal is a defect of the formatter.
 pub fn format(file: FileId, source: &str) -> Result<String, Diagnostic> {
-    format_with(file, source, |text| text)
+    on_own_stack(file, source, |text| text)
+}
+
+/// `format`, with `tamper` applied to the printer's result before the
+/// oracle sees it: the way to test that a wrong result is refused and
+/// not returned. Not part of a release build.
+#[doc(hidden)]
+#[cfg(any(test, debug_assertions))]
+pub fn format_with(
+    file: FileId,
+    source: &str,
+    tamper: impl FnOnce(String) -> String + Send + 'static,
+) -> Result<String, Diagnostic> {
+    on_own_stack(file, source, tamper)
 }
 
 /// A refusal as a diagnostic: at its place, or at the first token.
@@ -94,12 +107,9 @@ fn refused(file: FileId, lexed: &Lexed, refusal: Refusal) -> Diagnostic {
 #[cfg(not(target_arch = "wasm32"))]
 const STACK: usize = 256 << 20;
 
-/// `format`, with `tamper` applied to the printer's result before the
-/// oracle sees it: the way to test that a wrong result is refused and
-/// not returned.
-#[doc(hidden)]
+/// Lex, parse, print and check on the formatter's thread.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn format_with(
+fn on_own_stack(
     file: FileId,
     source: &str,
     tamper: impl FnOnce(String) -> String + Send + 'static,
@@ -147,9 +157,8 @@ pub fn format_with(
 }
 
 /// On wasm32 there are no threads to give a stack to.
-#[doc(hidden)]
 #[cfg(target_arch = "wasm32")]
-pub fn format_with(
+fn on_own_stack(
     file: FileId,
     source: &str,
     tamper: impl FnOnce(String) -> String + Send + 'static,

@@ -39,7 +39,7 @@ byte-order mark and before any code, each `-- key: value`:
 | `-- stderr-not-contains: TEXT` | stderr must not contain TEXT (repeatable) | — |
 | `-- stdin: TEXT` | text fed on stdin (`\n` for newlines) | empty |
 | `-- repeat: N` | run N times, every run must pass (timing-sensitive cases) | 1 |
-| `-- requires-feature: NAME` | skip the case unless the cargo feature is enabled (repeatable) | — |
+| `-- requires-feature: NAME` | skip the case unless the cargo feature is enabled (repeatable). `debug-build` is accepted as a name too: the case needs a debug build of `silt` (see "Format cases") | — |
 | `-- without-feature: NAME` | skip the case when the cargo feature is enabled: what a build that lacks it does (repeatable). Such a case runs in the default-features CI job, not under `--all-features` | — |
 | `-- timeout: SECONDS` | kill the case after this long (only for cases that are slow, not to hide a hang) | 20 |
 | `-- verdict: same` / `known-divergent <doors>` | also run the case in verdict mode, see "Verdicts" below | — |
@@ -94,7 +94,9 @@ looks at the file as well as at the output:
 which `silt fmt --help` does not list, replaces the last FROM by TO in the
 printer's result before the formatter checks it, as a defect of the
 printer would. `silt fmt` then refuses, and the case holds what it
-prints.
+prints. The flag exists in a debug build only (a release binary answers
+"unknown flag"), so such a case says `-- requires-feature: debug-build`
+and is skipped when the suite is built with `--release`.
 
 Stdout, stderr and the exit status are compared as for every case. To
 write the expected file, format a copy and CHECK the result by eye:

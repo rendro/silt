@@ -70,6 +70,9 @@ fn feature_enabled(name: &str) -> Result<bool, String> {
         "tcp-tls" => cfg!(feature = "tcp-tls"),
         "postgres" => cfg!(feature = "postgres"),
         "postgres-tls" => cfg!(feature = "postgres-tls"),
+        // Not a cargo feature: the binary is a debug build, which has
+        // the test hook `silt fmt --test-tamper`.
+        "debug-build" => cfg!(debug_assertions),
         other => {
             return Err(format!(
                 "unknown feature {other:?} in `-- requires-feature:` / `-- without-feature:`"

@@ -19,11 +19,12 @@ pub(crate) fn dispatch(args: &[String]) {
     for arg in &args[2..] {
         if arg == "--check" {
             check_mode = true;
-        } else if let Some(swap) = arg.strip_prefix("--test-tamper=") {
-            // Not in the help: for the test of how a refusal is shown.
-            // `FROM=>TO` replaces the last FROM by TO in the printer's
-            // result before the formatter checks it, as a defect of the
-            // printer would.
+        } else if cfg!(debug_assertions) && arg.starts_with("--test-tamper=") {
+            // Only in a debug build, and not in the help: for the test
+            // of how a refusal is shown. `FROM=>TO` replaces the last
+            // FROM by TO in the printer's result before the formatter
+            // checks it, as a defect of the printer would.
+            let swap = &arg["--test-tamper=".len()..];
             let Some((from, to)) = swap.split_once("=>") else {
                 eprintln!("silt fmt: --test-tamper takes FROM=>TO");
                 process::exit(1);
@@ -186,6 +187,7 @@ fn format_source(source: &str, path: &str, tamper: Option<&Tamper>) -> Result<St
     let file = sources.add(SourceName::Path(path.into()), source.into());
     let result = match tamper {
         None => silt::format::format(file, source),
+        #[cfg(debug_assertions)]
         Some((from, to)) => {
             let (from, to) = (from.clone(), to.clone());
             silt::format::format_with(file, source, move |mut text| {
@@ -195,6 +197,9 @@ fn format_source(source: &str, path: &str, tamper: Option<&Tamper>) -> Result<St
                 text
             })
         }
+        // The flag that sets it does not exist in a release build.
+        #[cfg(not(debug_assertions))]
+        Some(_) => silt::format::format(file, source),
     };
     result.map_err(|diagnostic| silt::diagnostic::render_human(&sources, &diagnostic))
 }
