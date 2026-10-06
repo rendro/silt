@@ -177,82 +177,19 @@ impl TypeChecker {
     /// block.  If the binding IS used later, the polymorphic type is acceptable
     /// because the use site will instantiate it concretely.
     pub(super) fn check_unresolved_let_types(&mut self, program: &Program) {
-        // Top-level Decl::Let
-        //
-        // Mirror the in-block heuristic: if the bound name is referenced by any
-        // subsequent top-level decl (subsequent `let` value, or any function /
-        // trait impl method body in the program, since those are hoisted at
-        // module scope), the downstream use will pin the type and we skip the
-        // error. Only flag bindings whose type is still ambiguous AND that
-        // nothing else references.
-        for (i, decl) in program.decls.iter().enumerate() {
-            if let Decl::Let {
-                pattern,
-                value,
-                ty,
-                span,
-                ..
-            } = decl
-                && ty.is_none()
-                && value
-                    .ty
-                    .as_ref()
-                    .map(|t| self.is_bare_type_var(t))
-                    .unwrap_or(false)
-            {
-                // Skip the cascade if the value expression itself already
-                // produced an error — fixing that root cause would also
-                // resolve the inference failure, so the "cannot infer"
-                // follow-up is misleading (round 62 G4).
-                if self.value_already_errored(value) {
-                    continue;
-                }
-
-                let bound_names = collect_pattern_vars(pattern);
-                if bound_names.is_empty() {
-                    self.error(
-                        Code::AmbiguousType,
-                        "cannot infer the type of this expression — \
-                         add an annotation, e.g. `let x: SomeType = ...`"
-                            .to_string(),
-                        *span,
-                    );
-                    continue;
-                }
-
-                // Check whether any later decl references any bound name.
-                // Subsequent `Decl::Let` values are checked in source order,
-                // while function / trait impl method bodies are always checked
-                // because they are hoisted — a function defined before this
-                // let may still reference it at runtime.
-                let used_elsewhere = bound_names.iter().any(|name| {
-                    program
-                        .decls
-                        .iter()
-                        .enumerate()
-                        .any(|(j, other)| Self::decl_references_name(other, *name, i, j))
-                });
-
-                if !used_elsewhere {
-                    let first = resolve(bound_names[0]);
-                    self.error(
-                        Code::AmbiguousType,
-                        format!(
-                            "cannot infer the type of `{first}` — \
-                             add an annotation, e.g. `let {first}: SomeType = ...`"
-                        ),
-                        *span,
-                    );
-                }
-            }
-        }
-
+        // (A top-level `let` whose type stays unknown is reported by
+        // `report_unknown_let_types`.)
         // Function bodies and trait impl method bodies
         for decl in &program.decls {
             match decl {
                 Decl::Fn(f) => self.check_unresolved_in_expr(&f.body),
                 Decl::TraitImpl(ti) => {
                     for m in &ti.methods {
+                        self.check_unresolved_in_expr(&m.body);
+                    }
+                }
+                Decl::Trait(t) => {
+                    for m in t.methods.iter().filter(|m| !m.is_signature_only) {
                         self.check_unresolved_in_expr(&m.body);
                     }
                 }
@@ -559,29 +496,6 @@ impl TypeChecker {
         }
     }
 
-    /// Check whether a top-level decl references `name`, relative to a
-    /// self-referential `Decl::Let` at index `self_idx`. `other_idx` is the
-    /// index of the decl being inspected.
-    ///
-    /// Function bodies (including trait impl methods) are always inspected
-    /// because functions are module-scoped and effectively hoisted — a
-    /// function defined before the let can still reference it at runtime.
-    /// Other top-level `Decl::Let` bindings only count when they come *after*
-    /// the self decl, matching the in-block "subsequent statements" rule.
-    fn decl_references_name(decl: &Decl, name: Symbol, self_idx: usize, other_idx: usize) -> bool {
-        match decl {
-            Decl::Fn(f) => Self::expr_references_name(&f.body, name),
-            Decl::TraitImpl(ti) => ti
-                .methods
-                .iter()
-                .any(|m| Self::expr_references_name(&m.body, name)),
-            Decl::Let { value, .. } => {
-                other_idx > self_idx && Self::expr_references_name(value, name)
-            }
-            Decl::Trait(_) | Decl::Type(_) | Decl::Import(..) => false,
-        }
-    }
-
     // ── Post-inference type resolution ─────────────────────────────────
 
     /// After all passes, walk the AST and resolve any remaining type variables
@@ -595,6 +509,11 @@ impl TypeChecker {
                         self.resolve_expr_types(&mut m.body);
                     }
                 }
+                Decl::Trait(t) => {
+                    for m in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
+                        self.resolve_expr_types(&mut m.body);
+                    }
+                }
                 Decl::Let { value, .. } => self.resolve_expr_types(value),
                 _ => {}
             }
@@ -602,142 +521,149 @@ impl TypeChecker {
     }
 
     fn resolve_expr_types(&self, expr: &mut Expr) {
-        if let Some(ty) = &expr.ty {
-            expr.ty = Some(self.apply(ty));
+        each_expr_mut(expr, &mut |expr| {
+            if let Some(ty) = &expr.ty {
+                expr.ty = Some(self.apply(ty));
+            }
+            // A method call resolved in the deferred pass: its trait.
+            if matches!(expr.kind, ExprKind::FieldAccess(..))
+                && let Some(t) = self.deferred_method_traits.get(&expr.span)
+            {
+                expr.res = Some(crate::defs::Res::Def(t.id.0));
+            }
+        });
+    }
+}
+
+/// Call `f` with `expr` and then with each expression inside it.
+pub(super) fn each_expr_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
+    f(expr);
+    match &mut expr.kind {
+        ExprKind::Binary(l, _, r) => {
+            each_expr_mut(l, f);
+            each_expr_mut(r, f);
         }
-        // A method call resolved in the deferred pass: its trait.
-        if matches!(expr.kind, ExprKind::FieldAccess(..))
-            && let Some(t) = self.deferred_method_traits.get(&expr.span)
-        {
-            expr.res = Some(crate::defs::Res::Def(t.id.0));
+        ExprKind::Unary(_, e)
+        | ExprKind::QuestionMark(e)
+        | ExprKind::Ascription(e, _)
+        | ExprKind::Return(Some(e)) => {
+            each_expr_mut(e, f);
         }
-        match &mut expr.kind {
-            ExprKind::Binary(l, _, r) => {
-                self.resolve_expr_types(l);
-                self.resolve_expr_types(r);
+        ExprKind::Call(callee, args) => {
+            each_expr_mut(callee, f);
+            for a in args {
+                each_expr_mut(a, f);
             }
-            ExprKind::Unary(_, e)
-            | ExprKind::QuestionMark(e)
-            | ExprKind::Ascription(e, _)
-            | ExprKind::Return(Some(e)) => {
-                self.resolve_expr_types(e);
-            }
-            ExprKind::Call(callee, args) => {
-                self.resolve_expr_types(callee);
-                for a in args {
-                    self.resolve_expr_types(a);
-                }
-            }
-            ExprKind::List(elems) => {
-                for elem in elems {
-                    match elem {
-                        ListElem::Single(e) => self.resolve_expr_types(e),
-                        ListElem::Spread(e) => self.resolve_expr_types(e),
-                    }
-                }
-            }
-            ExprKind::Tuple(elems) => {
-                for e in elems {
-                    self.resolve_expr_types(e);
-                }
-            }
-            ExprKind::Map(pairs) => {
-                for (k, v) in pairs {
-                    self.resolve_expr_types(k);
-                    self.resolve_expr_types(v);
-                }
-            }
-            ExprKind::SetLit(elems) => {
-                for e in elems {
-                    self.resolve_expr_types(e);
-                }
-            }
-            ExprKind::Lambda { body, .. } => {
-                self.resolve_expr_types(body);
-            }
-            ExprKind::Match {
-                expr: scrutinee,
-                arms,
-            } => {
-                if let Some(s) = scrutinee {
-                    self.resolve_expr_types(s);
-                }
-                for arm in arms {
-                    if let Some(ref mut guard) = arm.guard {
-                        self.resolve_expr_types(guard);
-                    }
-                    self.resolve_expr_types(&mut arm.body);
-                }
-            }
-            ExprKind::Block(stmts) => {
-                for stmt in stmts {
-                    match stmt {
-                        Stmt::Let { value, .. } => self.resolve_expr_types(value),
-                        Stmt::When {
-                            expr, else_body, ..
-                        } => {
-                            self.resolve_expr_types(expr);
-                            self.resolve_expr_types(else_body);
-                        }
-                        Stmt::WhenBool {
-                            condition,
-                            else_body,
-                        } => {
-                            self.resolve_expr_types(condition);
-                            self.resolve_expr_types(else_body);
-                        }
-                        Stmt::Expr(e) => self.resolve_expr_types(e),
-                    }
-                }
-            }
-            ExprKind::Pipe(l, r) => {
-                self.resolve_expr_types(l);
-                self.resolve_expr_types(r);
-            }
-            ExprKind::Range(l, r) => {
-                self.resolve_expr_types(l);
-                self.resolve_expr_types(r);
-            }
-            ExprKind::FieldAccess(e, _, _) => self.resolve_expr_types(e),
-            ExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields {
-                    self.resolve_expr_types(e);
-                }
-            }
-            ExprKind::RecordUpdate { expr, fields } => {
-                self.resolve_expr_types(expr);
-                for (_, e) in fields {
-                    self.resolve_expr_types(e);
-                }
-            }
-            ExprKind::AnonRecord { spread, fields } => {
-                if let Some(s) = spread {
-                    self.resolve_expr_types(s);
-                }
-                for (_, e) in fields {
-                    self.resolve_expr_types(e);
-                }
-            }
-            ExprKind::StringInterp(parts) => {
-                for part in parts {
-                    if let StringPart::Expr(e) = part {
-                        self.resolve_expr_types(e);
-                    }
-                }
-            }
-            ExprKind::Loop { bindings, body } => {
-                for (_, _, e) in bindings {
-                    self.resolve_expr_types(e);
-                }
-                self.resolve_expr_types(body);
-            }
-            ExprKind::Recur(args) => {
-                for a in args {
-                    self.resolve_expr_types(a);
-                }
-            }
-            _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
         }
+        ExprKind::List(elems) => {
+            for elem in elems {
+                match elem {
+                    ListElem::Single(e) => each_expr_mut(e, f),
+                    ListElem::Spread(e) => each_expr_mut(e, f),
+                }
+            }
+        }
+        ExprKind::Tuple(elems) => {
+            for e in elems {
+                each_expr_mut(e, f);
+            }
+        }
+        ExprKind::Map(pairs) => {
+            for (k, v) in pairs {
+                each_expr_mut(k, f);
+                each_expr_mut(v, f);
+            }
+        }
+        ExprKind::SetLit(elems) => {
+            for e in elems {
+                each_expr_mut(e, f);
+            }
+        }
+        ExprKind::Lambda { body, .. } => {
+            each_expr_mut(body, f);
+        }
+        ExprKind::Match {
+            expr: scrutinee,
+            arms,
+        } => {
+            if let Some(s) = scrutinee {
+                each_expr_mut(s, f);
+            }
+            for arm in arms {
+                if let Some(ref mut guard) = arm.guard {
+                    each_expr_mut(guard, f);
+                }
+                each_expr_mut(&mut arm.body, f);
+            }
+        }
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Let { value, .. } => each_expr_mut(value, f),
+                    Stmt::When {
+                        expr, else_body, ..
+                    } => {
+                        each_expr_mut(expr, f);
+                        each_expr_mut(else_body, f);
+                    }
+                    Stmt::WhenBool {
+                        condition,
+                        else_body,
+                    } => {
+                        each_expr_mut(condition, f);
+                        each_expr_mut(else_body, f);
+                    }
+                    Stmt::Expr(e) => each_expr_mut(e, f),
+                }
+            }
+        }
+        ExprKind::Pipe(l, r) => {
+            each_expr_mut(l, f);
+            each_expr_mut(r, f);
+        }
+        ExprKind::Range(l, r) => {
+            each_expr_mut(l, f);
+            each_expr_mut(r, f);
+        }
+        ExprKind::FieldAccess(e, _, _) => each_expr_mut(e, f),
+        ExprKind::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                each_expr_mut(e, f);
+            }
+        }
+        ExprKind::RecordUpdate { expr, fields } => {
+            each_expr_mut(expr, f);
+            for (_, e) in fields {
+                each_expr_mut(e, f);
+            }
+        }
+        ExprKind::AnonRecord { spread, fields } => {
+            if let Some(s) = spread {
+                each_expr_mut(s, f);
+            }
+            for (_, e) in fields {
+                each_expr_mut(e, f);
+            }
+        }
+        ExprKind::StringInterp(parts) => {
+            for part in parts {
+                if let StringPart::Expr(e) = part {
+                    each_expr_mut(e, f);
+                }
+            }
+        }
+        ExprKind::Loop { bindings, body } => {
+            for (_, _, e) in bindings {
+                each_expr_mut(e, f);
+            }
+            each_expr_mut(body, f);
+        }
+        ExprKind::Recur(args) => {
+            for a in args {
+                each_expr_mut(a, f);
+            }
+        }
+        _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
     }
 }
 

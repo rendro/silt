@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A trait method declared without a return type returns `()`, in every
+-- impl.
+-- stderr-contains: type mismatch: expected (), got String
+-- stderr-contains: trait_sig__no_return_type_is_unit.silt:8:32
+trait Sz { fn sz(self) }
+trait Sz for Int { fn sz(self) { "str" } }
+fn main() { println(1.sz()) }

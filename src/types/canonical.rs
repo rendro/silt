@@ -326,6 +326,7 @@ impl Resolver {
             | Type::String
             | Type::Unit
             | Type::Var(_)
+            | Type::Rigid(_)
             | Type::Error
             | Type::Never => None,
         }
@@ -480,6 +481,7 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
         | Type::String
         | Type::Unit
         | Type::Var(_)
+        | Type::Rigid(_)
         | Type::Error
         | Type::Never => ty.clone(),
     }
@@ -570,6 +572,7 @@ pub fn canonical_name(ty: &Type) -> String {
         // visible rather than silently producing "" (which collides
         // with the empty-name case in lookup tables).
         Type::Var(_) => "_".to_string(),
+        Type::Rigid(r) => r.name.to_string(),
         Type::Error => "_".to_string(),
         Type::Never => "Never".to_string(),
         // An unreduced AssocProj has no dispatch head — it is an
@@ -640,6 +643,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         Type::Fun(_, _) => "Fn",
         Type::Record(name, _) | Type::Generic(name, _) => return Some(*name),
         Type::Var(_)
+        | Type::Rigid(_)
         | Type::Error
         | Type::Never
         | Type::AssocProj { .. }

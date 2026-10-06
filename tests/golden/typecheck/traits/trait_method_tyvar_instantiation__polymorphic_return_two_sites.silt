@@ -1,20 +1,20 @@
--- A trait method with a polymorphic return typechecks at two constrained sites with different types, and each dispatches to its impl.
-trait Container {
+-- A trait method whose return type is the trait's parameter typechecks at two constrained sites with different types, and each dispatches to its impl.
+trait Container(a) {
   fn get_val(self) -> a
 }
 
 type IntBox { v: Int }
 type StrBox { v: String }
 
-trait Container for IntBox {
+trait Container(Int) for IntBox {
   fn get_val(self) -> Int { self.v }
 }
-trait Container for StrBox {
+trait Container(String) for StrBox {
   fn get_val(self) -> String { self.v }
 }
 
-fn use_int(c: x) -> Int where x: Container { c.get_val() }
-fn use_str(c: y) -> String where y: Container { c.get_val() }
+fn use_int(c: x) -> Int where x: Container(Int) { c.get_val() }
+fn use_str(c: y) -> String where y: Container(String) { c.get_val() }
 
 fn main() {
   let a = IntBox { v: 42 }

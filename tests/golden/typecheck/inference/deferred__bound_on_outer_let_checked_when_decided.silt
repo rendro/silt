@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- The message type of a top-level channel is unknown where `drain` is
+-- checked; the bound `shout` puts on it is checked once `main` decides it.
+-- stderr-contains: type 'String' does not implement trait 'Loud'
+-- stderr-contains: deferred__bound_on_outer_let_checked_when_decided.silt:14:
+import channel
+trait Loud { fn loud(self) -> String }
+trait Loud for Int { fn loud(self) -> String { "int!" } }
+fn shout(x: a) -> String where a: Loud { x.loud() }
+let ch = channel.new(4)
+fn drain() {
+  match channel.receive(ch) {
+    channel.Message(m) -> shout(m)
+    _ -> "closed"
+  }
+}
+fn main() {
+  channel.send(ch, "s")
+  println(drain())
+}

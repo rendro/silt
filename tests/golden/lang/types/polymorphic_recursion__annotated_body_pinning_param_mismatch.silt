@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: polymorphic signature
+-- stderr-contains: type mismatch: expected a, got Int
 fn f(x: a) -> Int {
   let _ = f(0)
   x + 1

@@ -64,18 +64,7 @@ const SKIP: &[&str] = &[
 /// pre-existing warnings that represent known limitations. Each entry
 /// below is a deliberate exception; anything outside this list must be
 /// warning-free or the test fails.
-const WARN_ALLOWLIST: &[&str] = &[
-    // The `match expr` blocks in `fn eval`, `fn simplify`, `fn depth`,
-    // `fn node_count`, `fn to_rpn` and the trait `Display` for `Expr`
-    // cover every `Expr` variant, but the type checker's pattern
-    // exhaustiveness analysis hits a recursion-depth limit on the
-    // recursive `Expr` type and emits a `warning[type]` regardless.
-    // Adding `_ -> ...` arms does not silence the warning (verified
-    // against line 230 which already has `_ -> "other"`). This is a
-    // known type-checker limitation tracked in src/ — the example
-    // itself is correct.
-    "expr_eval.silt",
-];
+const WARN_ALLOWLIST: &[&str] = &[];
 
 fn silt_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_silt"))

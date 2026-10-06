@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- An operator, a method call and `?` on a value whose type a top-level
+-- `let` leaves unknown are checked when a later function decides it.
+-- stderr-contains: operator '*' requires Int or Float, got 'String'
+-- stderr-contains: requires Int or Float, got 'String'
+-- stderr-contains: unknown field or method 'loud' on type String
+-- stderr-contains: '?' operator requires Result or Option type, got 'String'
+import channel
+trait Loud { fn loud(self) -> String }
+trait Loud for Int { fn loud(self) -> String { "int!" } }
+let ch = channel.new(4)
+fn get() {
+  match channel.receive(ch) {
+    channel.Message(m) -> m
+    _ -> panic("closed")
+  }
+}
+fn dbl() {
+  let m = get()
+  m * m
+}
+fn neg() { -get() }
+fn loud() { get().loud() }
+fn q() {
+  let v = get()?
+  Ok(v)
+}
+fn main() {
+  channel.send(ch, "s")
+  println(dbl())
+  println(neg())
+  println(loud())
+  println(q())
+}

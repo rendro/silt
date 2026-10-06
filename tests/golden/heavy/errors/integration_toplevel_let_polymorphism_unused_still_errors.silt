@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: cannot infer the type
+-- stderr-contains: the type of top-level let 'a' is not fully known here
 -- A top-level let whose type cannot be determined and which is never
 -- referenced anywhere should still be reported as an error.
-fn id(x) { x }
+fn never() { never() }
 
-let a = id(5)
+let a = never()

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- An unannotated wrapper of a bounded function has the bound in its own
+-- inferred type: the caller that breaks it is reported, not the wrapper.
+-- stderr-contains: type 'String' does not implement trait 'Greet'
+-- stderr-contains: bound_inferred_through_wrappers.silt:15:
+-- stderr-not-contains: enclosing function
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+fn wrap(x) { hello(x) }
+fn wrap2(x) { wrap(x) }
+fn main() {
+  println(wrap2(1))
+  println(wrap2("s"))
+}

@@ -1,9 +1,42 @@
 use super::*;
 
+/// What a function's declaration says of its type, as its body sees it:
+/// each annotation variable is rigid, each part the declaration leaves
+/// out is a variable the body decides.
+#[derive(Debug, Clone)]
+pub(crate) struct FnSig {
+    pub(super) params: Vec<Type>,
+    pub(super) ret: Type,
+    /// The annotation variables, by name: an annotation in the body that
+    /// writes one of the names means the same variable.
+    pub(super) names: HashMap<Symbol, Type>,
+    /// The annotation variables.
+    pub(super) rigid: Vec<RigidId>,
+    /// The bounds the `where` clauses declare, each on the variable an
+    /// annotation variable is in the function's scheme.
+    pub(super) bounds: Vec<(TyVar, TraitKey)>,
+    /// Whether the declaration leaves nothing out: every parameter and
+    /// the result are annotated, and no annotation has a hole (a generic
+    /// type written without its arguments). The function's scheme is
+    /// then known before any body is checked.
+    pub(super) complete: bool,
+}
+
+impl FnSig {
+    /// The function's type, as its body sees it.
+    pub(super) fn ty(&self) -> Type {
+        Type::Fun(self.params.clone(), Box::new(self.ret.clone()))
+    }
+}
+
 impl TypeChecker {
     // ── Register function declarations ──────────────────────────────
 
-    pub(super) fn register_fn_decl(&mut self, f: &FnDecl, env: &mut TypeEnv) {
+    /// Read the signature of `f`. A function with a complete signature
+    /// (see [`FnSig::complete`]) is bound in `env` with its scheme; any
+    /// other is bound when its body is checked, in the order the
+    /// definitions refer to each other.
+    pub(super) fn register_fn_decl(&mut self, f: &FnDecl, env: &mut TypeEnv) -> FnSig {
         // Recovery-stub special case (Option B): record the name and bind
         // its signature just like a real fn, so downstream references in
         // unrelated code do not cascade into "undefined variable" errors.
@@ -75,26 +108,8 @@ impl TypeChecker {
         };
         self.current_type_anno_span = prev_type_span;
 
-        let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type));
-        let mut scheme = self.generalize(env, &fn_type);
-        // Round 64 item 6B (annotated polymorphic recursion): record
-        // whether the user's signature is fully annotated. A `Data`
-        // parameter is annotated iff it carries an explicit `ty`;
-        // `Type` parameters are annotated by construction (the binder
-        // itself is the annotation). The return type is annotated iff
-        // `return_type` is Some. When both hold for every parameter
-        // and the return, the narrowing pass in `check_program` will
-        // skip this fn — keeping its scheme polymorphic across all
-        // recursive call sites in its own body.
-        if !f.is_recovery_stub {
-            let all_params_annotated = f
-                .params
-                .iter()
-                .all(|p| matches!(p.kind, ParamKind::Type) || p.ty.is_some());
-            if all_params_annotated && f.return_type.is_some() {
-                self.fully_annotated_fn_names.insert(f.name);
-            }
-        }
+        let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type.clone()));
+        let mut bounds: Vec<(TyVar, TraitKey)> = Vec::new();
 
         // Resolve where clauses to (TyVar, trait_name) using param_map.
         // Type variables must be introduced via explicit type annotations in the signature.
@@ -107,11 +122,20 @@ impl TypeChecker {
             let trait_args = &wc.trait_args;
             if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
-                // An unknown trait is reported when the body is checked.
+                // An unknown trait is reported when the body is checked
+                // (or was, by the resolver); what the variable is bounded
+                // by is then not known.
+                if let Type::Var(tv) = resolved
+                    && self
+                        .named_trait(wc.trait_res, *trait_name)
+                        .is_none_or(|t| !self.tables.traits.contains_key(&t))
+                {
+                    self.unknown_bounds.insert(tv);
+                }
                 if let Type::Var(tv) = resolved
                     && let Some(trait_name) = self.named_trait(wc.trait_res, *trait_name)
                 {
-                    scheme.constraints.push((tv, trait_name));
+                    bounds.push((tv, trait_name));
                     if !trait_args.is_empty() {
                         let resolved_args: Vec<Type> = trait_args
                             .iter()
@@ -143,6 +167,57 @@ impl TypeChecker {
             }
         }
 
-        env.define(f.name, scheme);
+        // The annotation variables: rigid in the body. A row variable
+        // (`{name: String, ...r}`) is a variable of the body instead.
+        let mut rigid: Vec<RigidId> = Vec::new();
+        let mut names: HashMap<Symbol, Type> = HashMap::new();
+        let mut body_view: HashMap<TyVar, Type> = HashMap::new();
+        for (name, ty) in &param_map {
+            let Type::Var(var) = ty else { continue };
+            if resolve(*name).starts_with("__row__") {
+                body_view.insert(*var, self.fresh_var());
+                continue;
+            }
+            let id = RigidId {
+                var: *var,
+                name: *name,
+            };
+            rigid.push(id);
+            names.insert(*name, Type::Rigid(id));
+            body_view.insert(*var, Type::Rigid(id));
+        }
+        rigid.sort_by_key(|r| r.var);
+        let annotated = f
+            .params
+            .iter()
+            .all(|p| matches!(p.kind, ParamKind::Type) || p.ty.is_some())
+            && f.return_type.is_some();
+        let free = free_vars_in(&fn_type);
+        // A recovery stub and a host function have no body: what they
+        // leave out is never decided, so it is general.
+        let bodiless = f.is_recovery_stub || self.signatures_only;
+        let complete = bodiless || (annotated && free.iter().all(|v| body_view.contains_key(v)));
+        if complete {
+            env.define(
+                f.name,
+                Scheme {
+                    vars: free,
+                    ty: fn_type,
+                    constraints: bounds.clone(),
+                    optional_last_param: false,
+                },
+            );
+        }
+        FnSig {
+            params: param_types
+                .iter()
+                .map(|t| substitute_vars(t, &body_view))
+                .collect(),
+            ret: substitute_vars(&ret_type, &body_view),
+            names,
+            rigid,
+            bounds,
+            complete,
+        }
     }
 }

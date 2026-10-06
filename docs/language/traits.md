@@ -29,6 +29,23 @@ trait Greet for Shape {
 Circle(5.0).greet()   -- "hi from a circle of radius 5"
 ```
 
+A trait declares complete signatures: every parameter but `self` has a
+type annotation, and a method declared without a return type returns
+`()`. An impl's method has the types its trait declares, with the impl's
+type for `Self`. The impl may leave the annotations out; what it does
+write must agree with the trait:
+
+```silt
+trait Scale { fn scale(self, by: Int) -> Int }
+
+trait Scale for Int  { fn scale(self, by) { self * by } }      -- by: Int, returns Int
+trait Scale for Bool { fn scale(self, by) { "no" } }           -- ERROR: expected Int, got String
+```
+
+A method's own `where` clause is part of its signature too
+(`fn shw(self, x: a) -> String where a: Display`): it holds in the
+default body and in every impl's body, and every call owes it.
+
 (`Greet` is a fresh trait local to this snippet. Silt's `Display`
 trait is built in and cannot be redeclared, so doc snippets that
 illustrate trait *declaration* use a fresh local name; impls of the
@@ -113,8 +130,12 @@ trait Ordered for MyInt { ... }
 
 A trait method can carry a body inside the trait declaration itself. The
 body is the **default** implementation: any impl that omits the method
-inherits it as if the impl had pasted the body in directly. Impls remain
-free to override the default.
+has it. Impls remain free to override the default.
+
+A default body is checked once, in the trait. There `self` is a value of
+some implementing type the trait does not know, so the body may use what
+the trait and its supertraits promise (their methods) and nothing else:
+not a field that the implementing types happen to have.
 
 ```silt
 trait Show {
@@ -224,9 +245,16 @@ Rules:
 - **Binders must be distinct.** `trait X for Pair(a, a)` is a parse error.
 - **Arity must match the target.** `trait X for Box(a, b)` on the 1-param
   `Box(T)` is a type error.
-- **The bare form still works.** `trait X for Box { ... }` is equivalent
-  to `trait X for Box(_)` — useful when the method bodies never observe
-  the element type.
+- **The bare form still works.** `trait X for Box { ... }` is an impl for
+  every `Box(a)`, like `trait X for Box(a)` without a name for `a` —
+  useful when the method bodies never observe the element type.
+
+In the methods of an impl the header's type variables stand for any
+type, as a function's do (see
+[Generics](generics.md#a-type-variable-is-any-type)): a body cannot take
+the `a` of `Box(a)` for an `Int`. To implement a trait for one
+instantiation only, name it with an alias (`type Ints = List(Int)`,
+`trait Sum for Ints`).
 
 ### Impl-level where clauses
 

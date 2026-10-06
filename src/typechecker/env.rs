@@ -2,18 +2,24 @@ use super::*;
 
 // ── Type environment ────────────────────────────────────────────────
 
-/// A typing environment mapping names to type schemes.
+/// A typing environment mapping names to type schemes: one top-level
+/// scope (a module's, or the builtin one) and a stack of local frames
+/// over it, one for each function body, closure, block and match arm
+/// being checked. A frame is pushed and popped; no scope is copied.
 #[derive(Debug, Clone)]
 pub(crate) struct TypeEnv {
+    /// The top-level scope's names.
     pub(super) bindings: HashMap<Symbol, Scheme>,
-    /// The enclosing scope. Shared, not copied: a child scope is made for
-    /// every block and lambda, and the outermost scope holds every
-    /// builtin name.
+    /// The enclosing scope: for a module's scope, the builtin one,
+    /// which every check shares.
     pub(super) parent: Option<Rc<TypeEnv>>,
-    /// Whether no scheme of this scope or its parents has a free type
-    /// variable: true of the builtin scope, whose schemes are all
-    /// generalized, so `free_vars` need not walk it.
-    pub(super) closed: bool,
+    /// The local names in scope, each with the schemes it is bound to
+    /// from the outermost frame in: the last is the one in scope.
+    locals: HashMap<Symbol, Vec<Scheme>>,
+    /// The local names in the order they were bound.
+    log: Vec<Symbol>,
+    /// Where in `log` each open frame starts.
+    frames: Vec<usize>,
 }
 
 impl TypeEnv {
@@ -21,29 +27,58 @@ impl TypeEnv {
         TypeEnv {
             bindings: HashMap::new(),
             parent: None,
-            closed: false,
+            locals: HashMap::new(),
+            log: Vec::new(),
+            frames: Vec::new(),
         }
     }
 
-    pub(super) fn child(&self) -> Self {
-        TypeEnv::child_of(Rc::new(self.clone()))
-    }
-
-    /// An empty scope inside `parent`.
+    /// An empty top-level scope inside `parent`.
     pub(super) fn child_of(parent: Rc<TypeEnv>) -> Self {
         TypeEnv {
-            bindings: HashMap::new(),
             parent: Some(parent),
-            closed: false,
+            ..TypeEnv::new()
         }
     }
 
+    /// Open a local frame: what is defined until the matching `pop` is
+    /// in scope until then.
+    pub(super) fn push(&mut self) {
+        self.frames.push(self.log.len());
+    }
+
+    /// Close the innermost frame and return what it bound, in the order
+    /// it was bound.
+    pub(super) fn pop(&mut self) -> Vec<(Symbol, Scheme)> {
+        let start = self.frames.pop().expect("a frame is open");
+        let mut bound = Vec::with_capacity(self.log.len() - start);
+        for name in self.log.drain(start..).rev() {
+            let stack = self.locals.get_mut(&name).expect("a bound local");
+            let scheme = stack.pop().expect("a bound local");
+            if stack.is_empty() {
+                self.locals.remove(&name);
+            }
+            bound.push((name, scheme));
+        }
+        bound.reverse();
+        bound
+    }
+
+    /// Bind `name` in the innermost open frame, or in the top-level
+    /// scope when none is open.
     pub(super) fn define(&mut self, name: Symbol, scheme: Scheme) {
-        self.bindings.insert(name, scheme);
+        if self.frames.is_empty() {
+            self.bindings.insert(name, scheme);
+        } else {
+            self.locals.entry(name).or_default().push(scheme);
+            self.log.push(name);
+        }
     }
 
     pub(super) fn lookup(&self, name: Symbol) -> Option<&Scheme> {
-        if let Some(s) = self.bindings.get(&name) {
+        if let Some(s) = self.locals.get(&name).and_then(|stack| stack.last()) {
+            Some(s)
+        } else if let Some(s) = self.bindings.get(&name) {
             Some(s)
         } else if let Some(ref parent) = self.parent {
             parent.lookup(name)
@@ -52,43 +87,16 @@ impl TypeEnv {
         }
     }
 
-    /// Collect all in-scope names into `out`. Walks the scope chain from
-    /// innermost (self) to outermost (root), inserting each `Symbol`
-    /// once. Used by the "did you mean ...?" suggestion path so the type
-    /// checker can enumerate candidate names to match against a typo.
+    /// Collect all in-scope names into `out`: the local ones, the
+    /// top-level scope's and its parents', each `Symbol` once. Used by
+    /// the "did you mean ...?" suggestion path so the type checker can
+    /// enumerate candidate names to match against a typo.
     pub(super) fn collect_names(&self, out: &mut BTreeSet<Symbol>) {
-        for k in self.bindings.keys() {
+        for k in self.locals.keys().chain(self.bindings.keys()) {
             out.insert(*k);
         }
         if let Some(ref parent) = self.parent {
             parent.collect_names(out);
         }
-    }
-
-    /// Collect all free type variables in the environment.
-    pub(super) fn free_vars(&self, checker: &TypeChecker) -> Vec<TyVar> {
-        let mut fvs = Vec::new();
-        if self.closed {
-            return fvs;
-        }
-        for scheme in self.bindings.values() {
-            let ty = checker.apply(&scheme.ty);
-            let mut ty_fvs = free_vars_in(&ty);
-            // Remove the scheme's own quantified variables
-            ty_fvs.retain(|v| !scheme.vars.contains(v));
-            for v in ty_fvs {
-                if !fvs.contains(&v) {
-                    fvs.push(v);
-                }
-            }
-        }
-        if let Some(ref parent) = self.parent {
-            for v in parent.free_vars(checker) {
-                if !fvs.contains(&v) {
-                    fvs.push(v);
-                }
-            }
-        }
-        fvs
     }
 }

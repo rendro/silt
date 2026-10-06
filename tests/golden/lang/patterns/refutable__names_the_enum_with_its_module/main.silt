@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: constructor 'Tok' is only one of 2 variants of enum 'mb.Tok'
+-- Two modules have a type `Tok`: the message says which one is meant.
+import ma
+import mb
+fn a1(ma.Tok(n)) -> Int { n }
+fn b1(mb.Tok(n)) -> Int { n }
+fn main() {
+  println(a1(ma.Tok(1)) + b1(mb.Tok(2)))
+}

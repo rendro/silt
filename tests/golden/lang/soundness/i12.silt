@@ -1,7 +1,10 @@
 -- cmd: check
--- exit: 1
--- stderr-contains: type 'Fn' does not implement trait 'Hash'
+-- exit: 0
 -- Port of repros/type_soundness/i12.silt, in brace closures.
+-- A hole, pending in repros/SOUNDNESS.tsv. `check` passes and `run` prints
+-- the lengths: a map or set literal does not ask its keys for `Hash` yet
+-- (only `map.length`'s bound, which a reader of a map does not owe,
+-- rejected the program before).
 import map
 fn put(m, k, v) { map.set(m, k, v) }
 fn mk(k) { #{ k: 1 } }

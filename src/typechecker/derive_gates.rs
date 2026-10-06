@@ -212,7 +212,9 @@ impl TypeChecker {
             self.tables.trait_impl_set.contains(&key)
         };
         match &ty {
-            Type::Error | Type::Never | Type::Var(_) | Type::AssocProj { .. } => true,
+            Type::Error | Type::Never | Type::Var(_) | Type::Rigid(_) | Type::AssocProj { .. } => {
+                true
+            }
             // Functions support none of Equal/Compare/Hash: the
             // Value-level fallbacks are Arc-pointer identity (equal),
             // Arc-pointer ADDRESS ordering (compare — ASLR-

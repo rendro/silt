@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: undefined variable 'x' in pin pattern
+-- A pin is the value of a name from outside the pattern: `(x, ^x)` does
+-- not compare the two elements.
+fn f(p: (Int, Int)) -> String {
+  match p {
+    (x, ^x) -> "same {x}"
+    _ -> "diff"
+  }
+}
+fn main() {
+  println(f((1, 1)))
+}

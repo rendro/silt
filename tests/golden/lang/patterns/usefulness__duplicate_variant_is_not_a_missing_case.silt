@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: duplicate variant 'A' in enum 'E'
+-- stderr-not-contains: non-exhaustive
+-- stderr-not-contains: refutable
+-- A variant declared twice is one error, at the declaration: no match is
+-- asked for an arm for the second, and the one variant of `One` stays
+-- irrefutable.
+type E { A, B, A }
+type One { Only(Int), Only(Int) }
+fn f(e: E) -> Int {
+  match e {
+    A -> 1
+    B -> 2
+  }
+}
+fn g(Only(n): One) -> Int { n }
+fn main() {
+  println(f(B))
+}

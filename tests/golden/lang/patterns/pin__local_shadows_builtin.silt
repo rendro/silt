@@ -1,0 +1,10 @@
+-- A pin compares with the name in scope: a local that shadows a builtin
+-- function is the local.
+fn main() {
+  let println = 3
+  let r = match 3 {
+    ^println -> "pinned"
+    _ -> "other"
+  }
+  print(r)
+}

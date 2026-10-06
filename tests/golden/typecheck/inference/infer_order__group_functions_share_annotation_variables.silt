@@ -1,0 +1,56 @@
+-- Functions that call each other, with parameters annotated by type
+-- variables and no return types: inside the group `a` and `b` are one
+-- variable, and each function stays general in it.
+trait Loud { fn loud(self) -> String }
+trait Loud for Int { fn loud(self) -> String { "i" } }
+type Tree(a) { Leaf(a), Node(List(Tree(a))) }
+fn ev(x: a, n: Int) {
+  match n {
+    0 -> [x]
+    _ -> od(x, n - 1)
+  }
+}
+fn od(y: b, n: Int) {
+  match n {
+    0 -> []
+    _ -> ev(y, n - 1)
+  }
+}
+fn size(t: Tree(a)) {
+  match t {
+    Leaf(_) -> 1
+    Node(ts) -> size_all(ts)
+  }
+}
+fn size_all(ts: List(Tree(b))) {
+  match ts {
+    [] -> 0
+    [h, ..r] -> size(h) + size_all(r)
+  }
+}
+fn say(x: a, n: Int) where a: Loud {
+  match n {
+    0 -> x.loud()
+    _ -> echo(x, n - 1)
+  }
+}
+fn echo(y: b, n: Int) where b: Loud {
+  match n {
+    0 -> ""
+    _ -> say(y, n - 1)
+  }
+}
+let relay = { x -> relay_helper(x) }
+fn relay_helper(x: q) {
+  let _ = [relay]
+  x
+}
+fn main() {
+  println(ev(1, 2))
+  println(od("s", 3))
+  println(size(Node([Leaf(1), Leaf(2)])))
+  println(size_all([Leaf("s")]))
+  println(say(1, 2))
+  println(relay(1))
+  println(relay("s"))
+}

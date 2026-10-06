@@ -58,6 +58,14 @@ pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Ty
                     find_type_in_expr(&method.body, cursor, &mut best);
                 }
             }
+            // A default method's body is typed where it is written: in
+            // the trait. (The copy an impl that omits the method gets
+            // carries no types.)
+            Decl::Trait(t) => {
+                for method in &t.methods {
+                    find_type_in_expr(&method.body, cursor, &mut best);
+                }
+            }
             _ => {}
         }
     }

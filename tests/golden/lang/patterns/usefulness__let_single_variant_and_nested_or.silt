@@ -1,0 +1,22 @@
+-- Irrefutable is "the pattern alone is exhaustive": a constructor of an
+-- enum with one variant, an or-pattern of all variants inside a tuple
+-- inside a record, a list pattern that takes any length.
+import list
+
+type Wrap { Wrap(Int) }
+type Side { Left(Int), Right(Int) }
+type Pair { side: Side, tag: (Wrap, Bool) }
+fn total(Wrap(a), (Left(b) | Right(b), _)) -> Int {
+  a + b
+}
+fn main() {
+  let Wrap(x) = Wrap(4)
+  let Pair { side: Left(n) | Right(n), tag: (Wrap(w), true | false) } =
+    Pair { side: Right(2), tag: (Wrap(30), false) }
+  let [..all] = [1, 2, 3]
+  let add = { (Wrap(p), Left(q) | Right(q)) -> p + q }
+  println(x + n + w)
+  println(list.length(all))
+  println(total(Wrap(1), (Left(2), "s")))
+  println(add((Wrap(5), Right(6))))
+}
