@@ -2,6 +2,7 @@
 
 use parking_lot::{Mutex, MutexGuard};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::channel::Close;
 use super::queue::Wakes;
@@ -71,13 +72,18 @@ enum State {
 /// later one finds it no longer waiting and passes over it.
 pub struct Token {
     task: TaskId,
+    /// The cancel flag of the task ([`Wait::cancel`](super::Wait)).
+    /// Once it is set nobody completes an arm for the task: its wait
+    /// ends only by the cancel.
+    cancel: Option<Arc<AtomicBool>>,
     state: Mutex<State>,
 }
 
 impl Token {
-    pub(super) fn new(task: TaskId) -> Arc<Token> {
+    pub(super) fn new(task: TaskId, cancel: Option<Arc<AtomicBool>>) -> Arc<Token> {
         Arc::new(Token {
             task,
+            cancel,
             state: Mutex::new(State::Armed),
         })
     }
@@ -97,6 +103,9 @@ impl Token {
     /// found the token on, completes the operation, and then calls
     /// [`Claim::fire`].
     pub(super) fn claim(&self) -> Option<Claim<'_>> {
+        if is_set(&self.cancel) {
+            return None;
+        }
         let state = self.state.lock();
         matches!(*state, State::Armed | State::Parked).then_some(Claim {
             task: self.task,
@@ -159,6 +168,13 @@ impl Token {
             State::Taken => unreachable!("the result of a wait is taken once"),
         }
     }
+}
+
+/// Whether a task's cancel flag is set.
+pub(super) fn is_set(cancel: &Option<Arc<AtomicBool>>) -> bool {
+    cancel
+        .as_ref()
+        .is_some_and(|flag| flag.load(Ordering::SeqCst))
 }
 
 /// A token whose wait only the holder can end.

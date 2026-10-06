@@ -92,7 +92,9 @@ impl<T: Send> Parking<T> {
     /// `cancelled` reads the task's cancel flag. Whoever cancels a task
     /// sets the flag first and then calls [`Parking::cancel`]; with
     /// that order a cancel is never lost between the two, and a task
-    /// whose flag is set when it gets here completes no arm.
+    /// whose flag is set when it gets here completes no arm. A wait
+    /// that carries the flag itself ([`Wait::cancel`]) also has no arm
+    /// completed for it from the moment the flag is set.
     pub fn park(
         &self,
         id: TaskId,
@@ -105,6 +107,7 @@ impl<T: Send> Parking<T> {
         }
         let parked = match park(id, wait, &self.timer, self) {
             Park::Ready(fired) => return Some((task, Resumed::Fired(fired))),
+            Park::Cancelled => return Some((task, Resumed::Cancelled)),
             Park::Parked(parked) => parked,
         };
         let token = parked.token().clone();

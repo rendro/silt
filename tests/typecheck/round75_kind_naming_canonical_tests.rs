@@ -49,8 +49,8 @@ use std::sync::Arc;
 
 use silt::builtins::value_kind;
 use silt::bytecode::{Function, VmClosure};
-use silt::runtime::channel::Channel;
 use silt::runtime::handle::TaskHandle;
+use silt::runtime::sync::Channel;
 use silt::value::Value;
 use silt::vm::Vm;
 
@@ -158,7 +158,7 @@ fn build_all_variants() -> AllVariants {
         variant_constructor: Value::VariantConstructor(bv::SOME.tag()),
         type_descriptor: Value::TypeDescriptor(point_type()),
         primitive_descriptor: Value::PrimitiveDescriptor("Int".to_string()),
-        channel: Value::Channel(Arc::new(Channel::new(0, 0))),
+        channel: Value::Channel(Channel::new(0, 0)),
         handle: Value::Handle(Arc::new(TaskHandle::new(0))),
         bytes: Value::Bytes(Arc::new(vec![1, 2, 3])),
         tcp_listener: Value::TcpListener(Arc::new(tcp_listener_handle)),

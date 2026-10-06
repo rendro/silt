@@ -25,7 +25,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type IoError { IoNotFound(String), IoPermissionDenied(String), IoAlreadyExists(String), IoInvalidInput(String), IoInterrupted, IoUnexpectedEof, IoWriteZero, IoUnknown(String) }\n\
             ",
             error: "IoError",
-            call: io::call,
+            steps: io::call,
             rows: [
                 u("fn args() -> List(String)", "Command-line arguments"),
                 u("fn inspect(x: a) -> String", "Debug representation of any value"),
@@ -371,7 +371,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type TimeError { TimeParseFormat(String), TimeOutOfRange(String) }\n\
             ",
             error: "TimeError",
-            call: time::call_time,
+            steps: time::call_time,
             rows: [
                 u("fn now() -> Instant", "Current UTC time as nanosecond epoch"),
                 u("fn today() -> Date", "Current local date"),
@@ -414,7 +414,7 @@ pub(super) fn modules() -> Vec<Module> {
             ",
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
             error: "HttpError",
-            call: http::call_http,
+            steps: http::call_http,
             rows: [
                 u("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request").feature("http", cfg!(feature = "http")),
                 u("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers").feature("http", cfg!(feature = "http")),
@@ -551,7 +551,7 @@ pub(super) fn modules() -> Vec<Module> {
             ",
             opaque: [("TcpListener", 0), ("TcpStream", 0)],
             error: "TcpError",
-            call: tcp::call,
+            steps: tcp::call,
             rows: [
                 u("fn accept(listener: TcpListener) -> Result(TcpStream, TcpError)", "Wait for an incoming connection (cooperative I/O)"),
                 u("fn close(stream: TcpStream) -> ()", "Mark the stream as closed; future ops error"),

@@ -11,6 +11,7 @@ use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
 use super::{Vm, VmError};
+use crate::runtime::sync::Wait;
 
 /// Gate the language-level `==` / `!=` operators against function-shaped
 /// values, returning the canonical surface name (`"Fn"`) to name in the
@@ -72,8 +73,6 @@ pub(super) enum DispatchResult {
     Return(Value),
     /// A builtin's frame is on top, not resumed yet.
     Native,
-    /// A builtin's frame is on top and the task's slice ends.
-    Parked,
 }
 
 /// How a run of the instruction loop ended ([`Vm::run_frames`]).
@@ -82,8 +81,8 @@ pub(super) enum Slice {
     Done(Value),
     /// The budget is used up; the frames can go on.
     OutOfBudget,
-    /// A builtin's frame parked (see [`Step::Park`]).
-    Parked,
+    /// A builtin's frame waits for this (see [`Step::Park`]).
+    Parked(Wait),
 }
 
 impl Vm {
@@ -161,7 +160,6 @@ impl Vm {
                     budget = left;
                     end
                 }
-                DispatchResult::Parked => Some(Slice::Parked),
             };
             if let Some(end) = end {
                 return Ok(end);
@@ -207,9 +205,13 @@ impl Vm {
                     self.frames.push(Frame::Native(next));
                     Entered::Native
                 }
-                Ok(Step::Park) => {
+                Ok(Step::Park(wait)) => {
                     self.frames.push(Frame::Native(native));
-                    Entered::Parked
+                    return Ok(Some(Slice::Parked(wait)));
+                }
+                Ok(Step::Yield) => {
+                    self.frames.push(Frame::Native(native));
+                    return Ok(Some(Slice::OutOfBudget));
                 }
                 Ok(Step::Call { callee, argc }) => {
                     self.frames.push(Frame::Native(native));
@@ -225,7 +227,6 @@ impl Vm {
                 Entered::Value(result) => result,
                 Entered::Native => Value::Unit,
                 Entered::Code => return Ok(None),
-                Entered::Parked => return Ok(Some(Slice::Parked)),
             };
         }
     }
@@ -261,7 +262,6 @@ impl Vm {
             match vm.call_with(callee.clone(), args.to_vec())? {
                 Entered::Value(value) => Ok(Slice::Done(value)),
                 Entered::Code | Entered::Native => vm.run_frames(floor, usize::MAX),
-                Entered::Parked => Ok(Slice::Parked),
             }
         });
         self.finish_run(run, floor, stack_floor)
@@ -280,15 +280,18 @@ impl Vm {
         let scheduler = self.runtime.scheduler.clone();
         let _running = scheduler.enter();
         let mut run = start(self)?;
-        while let Slice::Parked = run {
-            // With no reason the frame only gave way to other tasks,
-            // which a thread of its own has no need to.
-            if let Some(reason) = self.block_reason.take() {
-                scheduler.block_thread(reason, self.current_deadline, self.owns_runtime)?;
+        loop {
+            match run {
+                Slice::Done(_) => return Ok(run),
+                // The frame gave way to other tasks, which a thread
+                // of its own has no need to.
+                Slice::OutOfBudget => {}
+                Slice::Parked(wait) => {
+                    self.woken = Some(scheduler.block_thread(wait, self.is_program())?);
+                }
             }
             run = self.run_frames(floor, usize::MAX)?;
         }
-        Ok(run)
     }
 
     /// The value of a run to the end, or its error with the call stack
@@ -301,7 +304,7 @@ impl Vm {
     ) -> Result<Value, VmError> {
         let error = match run {
             Ok(Slice::Done(value)) => return Ok(value),
-            Ok(Slice::OutOfBudget | Slice::Parked) => {
+            Ok(Slice::OutOfBudget | Slice::Parked(_)) => {
                 VmError::new("internal VM error: a run to the end stopped before it".into())
             }
             Err(e) => e,
@@ -322,11 +325,7 @@ impl Vm {
         match self.run_frames(0, max_steps) {
             Ok(Slice::Done(value)) => SliceResult::Completed(value),
             Ok(Slice::OutOfBudget) => SliceResult::Yielded,
-            Ok(Slice::Parked) => match self.block_reason.take() {
-                Some(reason) => SliceResult::Blocked(reason),
-                // The frame only gave way to the other tasks.
-                None => SliceResult::Yielded,
-            },
+            Ok(Slice::Parked(wait)) => SliceResult::Blocked(wait),
             Err(e) => SliceResult::Failed(e),
         }
     }
@@ -341,7 +340,6 @@ impl Vm {
             }
             Entered::Code => DispatchResult::Continue,
             Entered::Native => DispatchResult::Native,
-            Entered::Parked => DispatchResult::Parked,
         }
     }
 

@@ -181,11 +181,9 @@ impl HostIo {
     /// The same output, with `clock` instead of the system clock.
     ///
     /// The runtime's own threads still wait in real time: a task's
-    /// `time.sleep`, a `channel.timeout` and a `channel.recv_timeout`
-    /// end within a millisecond of the moment `clock` reaches their
-    /// deadline, and a `task.deadline` that cancels a task's pending
-    /// I/O is noticed at the scheduler's next scan (every 100 ms unless
-    /// `SILT_IO_WATCHDOG_INTERVAL` says otherwise).
+    /// `time.sleep`, a `channel.timeout`, a `channel.recv_timeout` and
+    /// a wait for I/O under a `task.deadline` end within a millisecond
+    /// of the moment `clock` reaches their deadline.
     pub fn clock(self, clock: impl Clock + 'static) -> HostIo {
         HostIo {
             clock: Arc::new(clock),

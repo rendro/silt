@@ -2,10 +2,9 @@
 //! I/O integration.
 //!
 //! Blocking ops (`accept`, `connect`, `read`, `read_exact`, `write`)
-//! follow the same pattern as `io.read_file`: check `vm.io_entry_guard`,
-//! submit to `vm.runtime.io_pool`, return a yield signal so the scheduler
-//! can run other tasks while this one waits. On wake, the entry guard
-//! polls completion and resumes.
+//! follow the same pattern as `io.read_file`: the operation runs on the
+//! I/O pool and the task waits for its value (`Vm::io`), so the
+//! scheduler runs other tasks meanwhile.
 //!
 //! Stream payload type is `Value::Bytes` from PR 1 — read returns Bytes,
 //! write accepts Bytes. The `TcpStreamHandle` wraps `Box<dyn ReadWrite>`
@@ -24,28 +23,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 
 use super::common::ok;
-use crate::runtime::completion::IoCompletion;
 use crate::runtime::handle::{ReadWrite, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{Step, Vm, VmError};
 
 /// Factory: deadline-cancelled tcp op surfaces as `Err(TcpTimeout)`
 /// rather than the default `Err(IoUnknown(_))`. Used by every tcp.*
-/// builtin that submits to the io_pool or calls into
-/// `io_entry_guard_with`. The message text is dropped because
+/// builtin that runs on the I/O pool. The message text is dropped because
 /// `TcpTimeout` is a nullary variant; `e.message()` still produces a
 /// helpful string via the trait impl.
 fn tcp_timeout_err(_msg: &str) -> Value {
     Value::variant(bv::ERR, vec![Value::variant(bv::TCP_TIMEOUT, vec![])])
-}
-
-/// Build a fresh `IoCompletion` whose watchdog-timeout factory is
-/// `tcp_timeout_err`. Every tcp.* builtin that uses `io_pool.submit`
-/// goes through this so a deadline-cancelled op surfaces a typed
-/// `TcpError` variant.
-fn tcp_completion() -> Arc<IoCompletion> {
-    IoCompletion::with_timeout_err(Arc::new(tcp_timeout_err))
 }
 
 /// Dispatch the builtin `trait Error for TcpError` method table.
@@ -64,17 +53,17 @@ pub fn call_tcp_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError
     })
 }
 
-pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
     match name {
-        "listen" => listen(vm, args),
+        "listen" => listen(vm, args).map(Step::Done),
         "accept" => accept(vm, args),
         "connect" => connect(vm, args),
         "read" => read(vm, args),
         "read_exact" => read_exact(vm, args),
         "write" => write(vm, args),
-        "close" => close(args),
-        "peer_addr" => peer_addr(args),
-        "set_nodelay" => set_nodelay(args),
+        "close" => close(args).map(Step::Done),
+        "peer_addr" => peer_addr(args).map(Step::Done),
+        "set_nodelay" => set_nodelay(args).map(Step::Done),
         #[cfg(feature = "tcp-tls")]
         "connect_tls" => tls::connect_tls(vm, args),
         #[cfg(feature = "tcp-tls")]
@@ -108,8 +97,8 @@ mod tls {
     use crate::typeinfo::bv;
 
     use super::{
-        ReadWrite, TcpStreamHandle, Value, Vm, VmError, require_bytes, require_listener,
-        require_string, tcp_completion, tcp_timeout_err,
+        ReadWrite, Step, TcpStreamHandle, Value, Vm, VmError, require_bytes, require_listener,
+        require_string, tcp_timeout_err,
     };
 
     /// `connect_tls(addr, hostname) -> Result(TcpStream, String)`. Opens a
@@ -117,32 +106,29 @@ mod tls {
     /// `webpki-roots` for trust anchors. The returned stream wraps a
     /// `rustls::StreamOwned<ClientConnection, TcpStream>` behind the same
     /// `TcpStreamHandle` as plain TCP.
-    pub fn connect_tls(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+    pub fn connect_tls(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         if args.len() != 2 {
             return Err(VmError::new("tcp.connect_tls takes 2 arguments".into()));
         }
         let addr = require_string(&args[0], "tcp.connect_tls")?.to_string();
         let hostname = require_string(&args[1], "tcp.connect_tls")?.to_string();
         let next_id = vm.next_tcp_id();
-        vm.submit_io_or_run(
-            args,
-            tcp_completion(),
-            &tcp_timeout_err,
-            move || match do_connect_tls(&addr, &hostname, next_id) {
+        vm.io("tcp", tcp_timeout_err, move || {
+            match do_connect_tls(&addr, &hostname, next_id) {
                 Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
                 Err(e) => Value::variant(
                     bv::ERR,
                     vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
                 ),
-            },
-        )
+            }
+        })
     }
 
     /// `accept_tls(listener, cert_pem, key_pem) -> Result(TcpStream, String)`.
     /// Waits for an incoming TCP connection then performs the TLS server
     /// handshake using the supplied PEM-encoded cert chain + private key.
     /// Returned stream is the same opaque `TcpStream` handle as plain TCP.
-    pub fn accept_tls(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+    pub fn accept_tls(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         if args.len() != 3 {
             return Err(VmError::new("tcp.accept_tls takes 3 arguments".into()));
         }
@@ -150,18 +136,15 @@ mod tls {
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls")?;
         let next_id = vm.next_tcp_id();
-        vm.submit_io_or_run(
-            args,
-            tcp_completion(),
-            &tcp_timeout_err,
-            move || match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
+        vm.io("tcp", tcp_timeout_err, move || {
+            match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
                 Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
                 Err(e) => Value::variant(
                     bv::ERR,
                     vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
                 ),
-            },
-        )
+            }
+        })
     }
 
     /// `accept_tls_mtls(listener, cert_pem, key_pem, client_ca_pem)
@@ -172,7 +155,7 @@ mod tls {
     /// If the client does not present a cert, or the presented cert does
     /// not chain to the supplied CA bundle, the handshake fails and the
     /// call returns `Err(msg)`.
-    pub fn accept_tls_mtls(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+    pub fn accept_tls_mtls(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         if args.len() != 4 {
             return Err(VmError::new("tcp.accept_tls_mtls takes 4 arguments".into()));
         }
@@ -181,7 +164,7 @@ mod tls {
         let key_pem = require_bytes(&args[2], "tcp.accept_tls_mtls")?;
         let client_ca_pem = require_bytes(&args[3], "tcp.accept_tls_mtls")?;
         let next_id = vm.next_tcp_id();
-        vm.submit_io_or_run(args, tcp_completion(), &tcp_timeout_err, move || {
+        vm.io("tcp", tcp_timeout_err, move || {
             match do_accept_tls_mtls(
                 &listener.listener,
                 &cert_pem,
@@ -667,17 +650,14 @@ fn set_nodelay(args: &[Value]) -> Result<Value, VmError> {
 
 // ── Cooperative I/O ops ────────────────────────────────────────────────
 
-fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 1 {
         return Err(VmError::new("tcp.accept takes 1 argument".into()));
     }
     let listener = require_listener(&args[0], "tcp.accept")?.clone();
     let next_id = vm.next_tcp_id();
-    vm.submit_io_or_run(
-        args,
-        tcp_completion(),
-        &tcp_timeout_err,
-        move || match listener.listener.accept() {
+    vm.io("tcp", tcp_timeout_err, move || {
+        match listener.listener.accept() {
             Ok((stream, _addr)) => {
                 let shutdown_sock = stream.try_clone().ok();
                 let reader_socket = raw_socket_of(&stream);
@@ -691,21 +671,18 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 Value::variant(bv::OK, vec![Value::TcpStream(handle)])
             }
             Err(e) => tcp_io_err(&e),
-        },
-    )
+        }
+    })
 }
 
-fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 1 {
         return Err(VmError::new("tcp.connect takes 1 argument".into()));
     }
     let addr = require_string(&args[0], "tcp.connect")?.to_string();
     let next_id = vm.next_tcp_id();
-    vm.submit_io_or_run(
-        args,
-        tcp_completion(),
-        &tcp_timeout_err,
-        move || match TcpStream::connect(&addr) {
+    vm.io("tcp", tcp_timeout_err, move || {
+        match TcpStream::connect(&addr) {
             Ok(stream) => {
                 let shutdown_sock = stream.try_clone().ok();
                 let reader_socket = raw_socket_of(&stream);
@@ -719,32 +696,32 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 Value::variant(bv::OK, vec![Value::TcpStream(handle)])
             }
             Err(e) => tcp_io_err(&e),
-        },
-    )
+        }
+    })
 }
 
-fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn read(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new("tcp.read takes 2 arguments".into()));
     }
     let stream = require_stream(&args[0], "tcp.read")?.clone();
     let max = require_int(&args[1], "tcp.read")?;
     if max < 0 {
-        return Ok(err(format!("max must be non-negative, got {max}")));
+        return Ok(Step::Done(err(format!(
+            "max must be non-negative, got {max}"
+        ))));
     }
     let max = max as usize;
-    // Drain any already-pending completion first so a close() that
-    // races with an in-flight read surfaces the read's actual result
-    // (typically Ok(empty) = EOF after shutdown) rather than the
-    // synthetic "stream is closed" error below. Only reject fresh
-    // calls on a stream closed before we submitted anything.
-    if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {
-        return Ok(r);
+    // A close() that races with a read in flight surfaces the read's
+    // actual result (typically Ok(empty) = EOF after shutdown). Only a
+    // call on a stream that was closed before is rejected here.
+    if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+        return Ok(Step::Done(r));
     }
     if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err_closed());
+        return Ok(Step::Done(err_closed()));
     }
-    vm.run_or_submit_io(args, tcp_completion(), move || {
+    vm.io_started("tcp", tcp_timeout_err, move || {
         let mut buf = vec![0u8; max];
         let mut guard = stream.inner.lock();
         match guard.read(&mut buf) {
@@ -767,25 +744,23 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     })
 }
 
-fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new("tcp.read_exact takes 2 arguments".into()));
     }
     let stream = require_stream(&args[0], "tcp.read_exact")?.clone();
     let n = require_int(&args[1], "tcp.read_exact")?;
     if n < 0 {
-        return Ok(err(format!("n must be non-negative, got {n}")));
+        return Ok(Step::Done(err(format!("n must be non-negative, got {n}"))));
     }
     let n = n as usize;
-    // See `read`: io_entry_guard before closed-check so a pending
-    // completion wins over a racing close().
-    if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {
-        return Ok(r);
+    if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+        return Ok(Step::Done(r));
     }
     if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err_closed());
+        return Ok(Step::Done(err_closed()));
     }
-    vm.run_or_submit_io(args, tcp_completion(), move || {
+    vm.io_started("tcp", tcp_timeout_err, move || {
         let mut buf = vec![0u8; n];
         let mut guard = stream.inner.lock();
         match guard.read_exact(&mut buf) {
@@ -795,21 +770,19 @@ fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     })
 }
 
-fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+fn write(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if args.len() != 2 {
         return Err(VmError::new("tcp.write takes 2 arguments".into()));
     }
     let stream = require_stream(&args[0], "tcp.write")?.clone();
     let buf = require_bytes(&args[1], "tcp.write")?;
-    // See `read`: io_entry_guard before closed-check so a pending
-    // completion wins over a racing close().
-    if let Some(r) = vm.io_entry_guard_with(args, &tcp_timeout_err)? {
-        return Ok(r);
+    if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+        return Ok(Step::Done(r));
     }
     if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err_closed());
+        return Ok(Step::Done(err_closed()));
     }
-    vm.run_or_submit_io(args, tcp_completion(), move || {
+    vm.io_started("tcp", tcp_timeout_err, move || {
         let mut guard = stream.inner.lock();
         match guard.write_all(&buf) {
             Ok(()) => match guard.flush() {

@@ -2925,8 +2925,8 @@ mod type_confusion {
 
 mod abandon {
     use super::*;
-    use crate::runtime::channel::Channel;
     use crate::runtime::handle::TaskHandle;
+    use crate::runtime::sync::{Arm, Channel, Wait};
     use crate::scheduler::Task;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
@@ -2943,12 +2943,9 @@ mod abandon {
             "test.probe"
         }
 
-        fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+        fn resume(&mut self, _vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
             match &self.park_on {
-                Some(ch) => {
-                    vm.block_reason = Some(BlockReason::Receive(ch.clone()));
-                    Ok(Step::Park)
-                }
+                Some(ch) => Ok(Step::Park(Wait::new(vec![Arm::Recv(ch.clone())]))),
                 None => Err(VmError::new("the probe failed".into())),
             }
         }
@@ -3001,10 +2998,10 @@ mod abandon {
     /// Wait until the task of a parking probe is parked.
     fn parked(ch: &Channel) {
         let limit = Instant::now() + Duration::from_secs(10);
-        while ch.recv_waker_queue_len() == 0 && Instant::now() < limit {
+        while ch.waiting().0 == 0 && Instant::now() < limit {
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(ch.recv_waker_queue_len() > 0, "the task did not park");
+        assert!(ch.waiting().0 > 0, "the task did not park");
     }
 
     #[test]
@@ -3022,7 +3019,9 @@ mod abandon {
     fn an_error_in_a_task_abandons_the_frame_once() {
         let mut main = Vm::new(crate::HostIo::process());
         let (handle, abandoned) = spawn_probe(&mut main, None);
-        let err = handle.join().unwrap_err();
+        let wait = Wait::new(vec![Arm::Cell(handle.done())]);
+        main.scheduler().block_thread(wait, false).unwrap();
+        let err = handle.try_get().unwrap().unwrap_err();
         handle.mark_joined();
         assert_eq!(err.message, "the probe failed");
         assert_eq!(settled(&abandoned), 1);
@@ -3033,13 +3032,12 @@ mod abandon {
     #[test]
     fn a_cancel_of_a_parked_task_abandons_the_frame_once() {
         let mut main = Vm::new(crate::HostIo::process());
-        let ch = Arc::new(Channel::new(main.next_channel_id(), 0));
+        let ch = Channel::new(main.next_channel_id(), 0);
         let (handle, abandoned) = spawn_probe(&mut main, Some(ch.clone()));
         parked(&ch);
         assert_eq!(abandoned.load(Ordering::SeqCst), 0);
         // What `task.cancel` does.
-        handle.complete(Err(VmError::new("cancelled".to_string())));
-        handle.mark_joined();
+        main.scheduler().cancel(&handle);
         assert_eq!(settled(&abandoned), 1);
         drop(main);
         assert_eq!(settled(&abandoned), 1);
@@ -3048,7 +3046,7 @@ mod abandon {
     #[test]
     fn the_end_of_the_program_abandons_the_frame_of_a_parked_task_once() {
         let mut main = Vm::new(crate::HostIo::process());
-        let ch = Arc::new(Channel::new(main.next_channel_id(), 0));
+        let ch = Channel::new(main.next_channel_id(), 0);
         let (handle, abandoned) = spawn_probe(&mut main, Some(ch.clone()));
         parked(&ch);
         assert_eq!(abandoned.load(Ordering::SeqCst), 0);

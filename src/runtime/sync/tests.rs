@@ -455,12 +455,33 @@ fn a_cancelled_select_is_taken_off_every_queue_and_out_of_the_timer() {
     assert_eq!(d.woken(), [1]);
 }
 
+#[test]
+fn a_select_tries_its_arms_from_the_first_it_names() {
+    let d = Double::new();
+    let (a, b) = (Channel::new(0, 1), Channel::new(1, 1));
+    for round in 0..4 {
+        assert!(matches!(a.try_send(Value::Int(10), &d), TrySend::Sent));
+        assert!(matches!(b.try_send(Value::Int(20), &d), TrySend::Sent));
+        let fired = d
+            .block(1, select_recv(&a, &b).first(round))
+            .expect("both arms are ready");
+        let (other, expected) = if round % 2 == 0 {
+            (&b, (0, 10))
+        } else {
+            (&a, (1, 20))
+        };
+        assert_eq!(received(fired), expected);
+        assert!(try_value(other, &d).is_some());
+    }
+}
+
 // ── Between park and commit ─────────────────────────────────────────
 
 fn park_only(d: &Double, task: u64, wait: Wait) -> Parked {
     match park(TaskId(task), wait, &d.timer, d) {
         Park::Parked(parked) => parked,
         Park::Ready(fired) => panic!("expected a park, got {fired:?}"),
+        Park::Cancelled => panic!("expected a park, got a cancel"),
     }
 }
 
@@ -690,6 +711,53 @@ fn a_clock_that_panicked_ends_every_timed_wait() {
         Ok(Resumed::Fired(Fired::Deadline))
     ));
     assert_eq!(timer.pending(), 0);
+}
+
+// ── The cancel flag ─────────────────────────────────────────────────
+
+#[test]
+fn a_wait_whose_flag_is_set_completes_no_arm() {
+    use std::sync::atomic::AtomicBool;
+
+    let d = Double::new();
+    let ch = Channel::new(0, 1);
+    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
+    let flag = Arc::new(AtomicBool::new(true));
+    let wait = recv(&ch).cancel(Some(flag));
+    assert!(matches!(
+        park(TaskId(1), wait, &d.timer, &d),
+        Park::Cancelled
+    ));
+    assert_eq!((ch.len(), ch.queued()), (1, (0, 0)));
+}
+
+#[test]
+fn nothing_is_completed_for_a_waiter_once_its_flag_is_set() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    let cell = Cell::<i64>::new();
+    let flag = Arc::new(AtomicBool::new(false));
+    let wait = Wait::new(vec![Arm::Recv(ch.clone()), Arm::Cell(cell.clone())])
+        .deadline(d.timer.deadline_after(MS))
+        .cancel(Some(flag.clone()));
+    assert!(d.block(1, wait).is_none());
+    assert!(d.block(2, recv(&ch)).is_none());
+
+    // The canceller has set the flag and not yet ended the wait: the
+    // value passes the task and reaches the next receiver, and neither
+    // the cell nor the deadline ends its wait.
+    flag.store(true, Ordering::SeqCst);
+    assert!(matches!(ch.try_send(Value::Int(5), &d), TrySend::Sent));
+    assert!(cell.complete(1, &d).is_ok());
+    assert_eq!(d.advance(2 * MS), 1);
+    assert_eq!(d.woken(), [2]);
+    assert_eq!(received(resumed(&d, 2)), (0, 5));
+
+    assert!(d.cancel(1));
+    assert_eq!(d.woken(), [1]);
+    assert!(matches!(d.resume(1), Resumed::Cancelled));
 }
 
 // ── The parked tasks ────────────────────────────────────────────────
@@ -959,6 +1027,7 @@ fn selects_on_threads_deliver_every_value_once() {
             let parked = match park(TaskId(task as u64), wait, timer, self) {
                 Park::Ready(fired) => return fired,
                 Park::Parked(parked) => parked,
+                Park::Cancelled => panic!("nobody cancels"),
             };
             if parked.commit() {
                 while !self.woken[task].swap(false, Ordering::SeqCst) {

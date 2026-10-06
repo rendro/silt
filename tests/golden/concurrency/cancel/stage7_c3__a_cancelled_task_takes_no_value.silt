@@ -1,0 +1,43 @@
+-- repeat: 100
+-- timeout: 30
+-- A task that is cancelled while it runs goes no further than the end
+-- of its slice: it never reaches its receives, and the two values in
+-- the buffer stay.
+import channel
+import task
+import time
+
+fn spin(n) {
+  match n {
+    0 -> ()
+    _ -> spin(n - 1)
+  }
+}
+
+fn main() {
+  let buf = channel.new(2)
+  channel.send(buf, 1)
+  channel.send(buf, 2)
+  let started = channel.new(1)
+  let taken = channel.new(2)
+  let h = task.spawn({ ->
+    channel.send(started, ())
+    spin(10000)
+    loop {
+      match channel.receive(buf) {
+        channel.Message(v) -> {
+          channel.send(taken, v)
+          loop()
+        }
+        channel.Closed -> ()
+        channel.Empty -> ()
+        channel.Sent -> ()
+      }
+    }
+  })
+  let _ = channel.receive(started)
+  task.cancel(h)
+  time.sleep(time.ms(250))
+  println("taken: {channel.try_receive(taken)}")
+  println("left: {channel.try_receive(buf)} {channel.try_receive(buf)}")
+}

@@ -1,0 +1,38 @@
+-- repeat: 100
+-- stderr-not-contains: deadlock
+-- Two tasks send on two channels without a buffer, and one select
+-- receives from either. Exactly one send returns; the other sender
+-- still holds its value until it is received.
+import channel
+import task
+import time
+
+fn main() {
+  let a = channel.new(0)
+  let b = channel.new(0)
+  let returned = channel.new(2)
+  let ha = task.spawn({ ->
+    channel.send(a, 1)
+    channel.send(returned, 1)
+  })
+  let hb = task.spawn({ ->
+    channel.send(b, 2)
+    channel.send(returned, 2)
+  })
+  let (first, other) = match channel.select([channel.Recv(a), channel.Recv(b)]) {
+    (_, channel.Message(1)) -> (1, b)
+    (_, channel.Message(2)) -> (2, a)
+    _ -> panic("the select received nothing")
+  }
+  let one = channel.receive(returned)
+  time.sleep(time.ms(20))
+  let none = channel.try_receive(returned)
+  let second = channel.receive(other)
+  let two = channel.receive(returned)
+  task.join(ha)
+  task.join(hb)
+  println(one == channel.Message(first))
+  println(none)
+  println(second == channel.Message(3 - first))
+  println(two == channel.Message(3 - first))
+}
