@@ -1524,8 +1524,15 @@ impl Printer<'_> {
             (false, _) => Doc::Nil,
         };
         // A closure that is the only argument between the parentheses
-        // hugs them.
-        let hug = inside == 1 && is_closure(&args[0]) && !in_the_way;
+        // hugs them, unless a comment stands beside it: whether the
+        // source has it between parentheses or not, the result is the
+        // same.
+        let beside = count == 1
+            && (self
+                .cur
+                .comments_between(callee.span.end, args[0].span.start)
+                || self.cur.comments_between(args[0].span.end, call.span.end));
+        let hug = inside == 1 && is_closure(&args[0]) && !in_the_way && !beside;
         let mut items = Vec::new();
         for (i, arg) in args[..inside].iter().enumerate() {
             // The source closes its parentheses in front of a closure

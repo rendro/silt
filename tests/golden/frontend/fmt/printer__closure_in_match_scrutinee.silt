@@ -17,6 +17,14 @@ fn main() {
     _ -> "more"
   }
   println(n)
+  -- With a comment beside it the closure does not hug the parentheses,
+  -- so that a second pass, which finds it between them, agrees.
+  let k = match [1, 2] |> list.filter {- keep -} { x -> -- the large ones
+    x > 1
+  } |> list.length {
+    _ -> "any"
+  }
+  println(k)
   let m = match 7 |> dbl {
     14 -> 1
     _ -> 0
