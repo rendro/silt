@@ -1,14 +1,29 @@
 -- repeat: 20
 -- A task that is still at work when `main` returns goes on to its
--- end: its output is the program's.
-import list
+-- end: its output is the program's. (The order is not a matter of
+-- timing: the first worker starts when `main` has printed its line,
+-- and each of the others when the one before it has printed.)
+import channel
 import task
 import time
 
-fn main() {
-  let _workers = 1..3 |> list.map { i -> task.spawn({ ->
-    time.sleep(time.ms(10 * i))
+fn worker(i, start, done) {
+  task.spawn({ ->
+    let _ = channel.receive(start)
+    time.sleep(time.ms(5))
     println("worker {i} done")
-  }) }
+    channel.close(done)
+  })
+}
+
+fn main() {
+  let start = channel.new(0)
+  let first = channel.new(0)
+  let second = channel.new(0)
+  let third = channel.new(0)
+  let _one = worker(1, start, first)
+  let _two = worker(2, first, second)
+  let _three = worker(3, second, third)
   println("main returns")
+  channel.close(start)
 }
