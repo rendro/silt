@@ -28,12 +28,9 @@
 //! 3. **Arithmetic on tyvars unifies them.** `fn add(a, b) { a + b }`
 //!    reaches `BinOp::Add` with `lt = Var(M1), rt = Var(M2)`, then
 //!    calls `self.unify(&lt, &rt, span)` (see
-//!    `src/typechecker/inference.rs`). The two vars merge but never
-//!    pick up a "Numeric" constraint — they stay polymorphic. The
-//!    `pending_numeric_checks` deferred-check list intentionally
-//!    SKIPS still-Var operands at finalize (line ~788) precisely
-//!    because the function template's body is meant to remain
-//!    polymorphic.
+//!    `src/typechecker/inference.rs`). The two vars merge and owe
+//!    the bound `Number`, which the function's scheme carries: the
+//!    body stays general over Int and Float.
 //!
 //! 4. **Defaulting would harm useful polymorphism.** `let plus = add`
 //!    binds `plus: forall a. (a, a) -> a` today, allowing both

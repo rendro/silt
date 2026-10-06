@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch: expected Int, got String
+-- The closure comes first: its parameter type is the callee's, so the
+-- method is known in its body and the body's type is checked there.
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int { f(x) }
+fn main() { println(apply({ n -> n.greet() }, 3)) }

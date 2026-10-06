@@ -1,9 +1,8 @@
 -- A polymorphic `<` on generic records holding functions fails at run time.
 -- exit: 1
--- stderr-contains: does not implement Compare
--- stderr-contains: 'Fn'
+-- stderr-contains: error[type]: type 'Box' does not implement trait 'Compare': field 'v' is of type 'Fn(_) -> _', which does not
 type Box(a) { v: a }
-fn lt(a: x, b: x) -> Bool { a < b }
+fn lt(a: x, b: x) -> Bool where x: Compare { a < b }
 fn main() {
   println(lt(Box{v: { y -> y }}, Box{v: { y -> y }}))
 }

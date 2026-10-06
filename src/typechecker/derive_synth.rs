@@ -64,6 +64,11 @@ impl TypeChecker {
             }
         }
 
+        self.display_written = user_display_impls
+            .iter()
+            .map(|ty| canonical_head(&self.tables.resolver, *ty))
+            .collect();
+
         let compare_sym = TraitKey::builtin("Compare");
         let equal_sym = TraitKey::builtin("Equal");
         let hash_sym = TraitKey::builtin("Hash");
@@ -565,12 +570,19 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
             span: dummy_span,
             doc: None,
         },
-        // trait Compare { fn compare(self, other: Self) -> Int }
+        // trait Compare: Equal { fn compare(self, other: Self) -> Int }
+        // What is ordered can be compared for equality.
         TraitDecl {
             name: intern("Compare"),
             name_span: dummy_span,
             params: Vec::new(),
-            supertraits: Vec::new(),
+            supertraits: vec![TraitRef {
+                module: None,
+                name: intern("Equal"),
+                args: Vec::new(),
+                span: dummy_span,
+                res: None,
+            }],
             param_where_clauses: Vec::new(),
             methods: vec![sig_only_method(
                 "compare",
@@ -602,6 +614,19 @@ fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "Bool",
                 dummy_span,
             )],
+            assoc_types: Vec::new(),
+            is_pub: true,
+            span: dummy_span,
+            doc: None,
+        },
+        // trait Number {}: the types arithmetic is on, Int and Float.
+        TraitDecl {
+            name: intern("Number"),
+            name_span: dummy_span,
+            params: Vec::new(),
+            supertraits: Vec::new(),
+            param_where_clauses: Vec::new(),
+            methods: Vec::new(),
             assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
@@ -703,8 +728,18 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         all_auto_traits,
     );
     register_auto_derived_impls_for(checker, &["List"], all_auto_traits);
-    // Tuple/Map/Set: Equal/Hash/Display only.
-    register_auto_derived_impls_for(checker, &["Tuple", "Map", "Set"], non_ordering_traits);
+    // Arithmetic is on Int and Float.
+    for ty in ["Int", "Float"] {
+        checker
+            .tables
+            .trait_impl_set
+            .insert((TraitKey::builtin("Number"), TypeRef::builtin(ty)));
+    }
+    // A tuple has what its parts have; a map and a set have no order.
+    register_auto_derived_impls_for(checker, &["Tuple"], all_auto_traits);
+    register_auto_derived_impls_for(checker, &["Map", "Set"], non_ordering_traits);
+    // A channel is equal to itself only (`ch1 == ch2`).
+    register_auto_derived_impls_for(checker, &["Channel"], &["Equal"]);
     // ── Built-in enums + records that flow through synth ────────────
     //
     // Each stamp below tells `synthesize_auto_derive_impls` which
@@ -725,16 +760,25 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         register_auto_derived_impls_for(checker, &[ty.name], ty.derives);
     }
 
-    // Bytes: Display only. The generic `dispatch_trait_method` arm at
-    // src/vm/dispatch.rs:309 routes `display` to `display_value`, and
-    // `Value::Bytes` already has a runtime Display impl
-    // (`format_bytes_preview` in src/value/fmt.rs — short hex preview
-    // + length, e.g. `bytes(de ad be ef, length: 4)`). Equal exists as
-    // `bytes.eq(a, b)` but is not auto-derived through the trait
-    // surface; Compare / Hash are intentionally omitted (Bytes is an
-    // opaque resource, not an ordered key type — users wanting to
-    // compare or hash should `bytes.to_hex` first).
+    // Bytes: Display here (`Value::Bytes` prints as a short hex preview
+    // and its length), Equal and Hash below. No Compare: bytes are not
+    // an ordered key type (`bytes.to_hex` first).
     register_auto_derived_impls_for(checker, &["Bytes"], &["Display"]);
+
+    // `==` on a value of an opaque type is the value's own equality (a
+    // handle's identity, the bytes' content).
+    let registry = crate::builtins::registry::registry();
+    let opaque = registry
+        .modules
+        .iter()
+        .flat_map(|module| module.opaque.iter())
+        .map(|(name, _)| *name)
+        .chain(["Bytes"]);
+    for name in opaque {
+        register_auto_derived_impls_for(checker, &[name], &["Equal"]);
+    }
+    // Bytes are a map key and a set element by their content.
+    register_auto_derived_impls_for(checker, &["Bytes"], &["Hash"]);
 
     // TcpListener / TcpStream are registered in BUILTIN_TYPES so the
     // trait-impl-target gate gives an orphan-rule rejection (rather
@@ -811,7 +855,7 @@ pub(super) fn register_auto_derived_impls_for(
                     span: dummy_span,
                     is_auto_derived: true,
                     trait_name: None,
-                    method_constraints: Vec::new(),
+                    preds: Vec::new(),
                 },
             );
         }

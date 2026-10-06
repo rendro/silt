@@ -1,8 +1,7 @@
 -- A polymorphic `!=` on tuples holding functions fails at run time.
 -- exit: 1
--- stderr-contains: does not implement Equal
--- stderr-contains: 'Fn'
-fn neq(a: x, b: x) -> Bool { a != b }
+-- stderr-contains: error[type]: type '(Int, Fn(_) -> _)' does not implement trait 'Equal': part #2 is of type 'Fn(_) -> _', which does not
+fn neq(a: x, b: x) -> Bool where x: Equal { a != b }
 fn main() {
   let a = (1, { y -> y })
   let b = (1, { y -> y })

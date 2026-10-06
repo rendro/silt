@@ -1,0 +1,5 @@
+error[type]: type 'A' does not implement trait 'Display': variant 'X' payload #1 > variant 'Some' payload #1 is of type 'Fn(Int) -> Int', which does not
+ --> span_structural_error_at_the_use_once.silt:9:11
+   |
+ 9 |   println(A.Y)
+   |           ^^^ type 'A' does not implement trait 'Display': variant 'X' payload #1 > variant 'Some' payload #1 is of type 'Fn(Int) -> Int', which does not

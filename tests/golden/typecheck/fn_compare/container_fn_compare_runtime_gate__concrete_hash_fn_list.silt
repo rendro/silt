@@ -1,7 +1,6 @@
 -- A concrete `.hash()` on a list of functions fails at run time.
 -- exit: 1
--- stderr-contains: does not implement Hash
--- stderr-contains: 'Fn'
+-- stderr-contains: error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Hash': element is of type 'Fn(_) -> _', which does not
 fn main() {
   let xs = [{ y -> y }]
   println(xs.hash())

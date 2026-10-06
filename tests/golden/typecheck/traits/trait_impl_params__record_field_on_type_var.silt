@@ -1,8 +1,8 @@
 type Cell(T) { value: T }
 trait Peek { fn peek(self) -> Int }
 trait Peek for Int { fn peek(self) -> Int { self } }
-trait Peek for Cell(a) {
-  fn peek(self) -> Int where a: Peek { self.value.peek() }
+trait Peek for Cell(a) where a: Peek {
+  fn peek(self) -> Int { self.value.peek() }
 }
 fn main() {
   let c = Cell { value: 42 }

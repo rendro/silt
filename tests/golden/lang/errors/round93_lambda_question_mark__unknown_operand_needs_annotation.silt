@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot infer the type `?` is applied to: a Result or an Option
+-- stderr-contains: help: annotate the value, or give the function it is in a return type
+-- `?` on a value nothing decides, in a function whose return type
+-- nothing decides either, is not general.
+fn unwrap_plus(r) {
+  let v = r?
+  v
+}
+
+fn main() {
+  println(unwrap_plus(Ok(1)))
+}

@@ -1,9 +1,0 @@
--- exit: 1
--- stderr-contains: type 'Point' does not implement trait 'Compare'
-type Point { n: Int, t: (Int, Int), }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
-fn main() {
-    let p = Point { n: 1, t: (0, 0) }
-    let q = Point { n: 2, t: (0, 0) }
-    println(cmp_gen(p, q))
-}

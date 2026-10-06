@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'Tree(Fn(_) -> _)' cannot derive 'Equal'
+-- stderr-contains: error[type]: type 'Tree(Fn(_) -> _)' does not implement trait 'Equal': variant 'Node' payload #2 is of type 'Fn(_) -> _', which does not
 -- Port of repros/type_soundness/i8.silt, in brace closures.
 type Tree(a) { Leaf, Node(Tree(a), a, Tree(a)) }
 fn main() {

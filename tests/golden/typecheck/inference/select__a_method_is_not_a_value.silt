@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method 'add' is not a value: a method is called
+-- stderr-contains: help: call it, `x.add(..)`, or pass a closure that does, `{ x -> x.add(..) }`
+trait Adder { fn add(self, x: Int) -> Int }
+trait Adder for Int { fn add(self, x: Int) -> Int { self + x } }
+fn main() {
+  let m = 3.add
+  println(m(3, 4))
+}

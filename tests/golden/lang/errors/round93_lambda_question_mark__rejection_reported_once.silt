@@ -1,6 +1,7 @@
 -- cmd: check
 -- exit: 1
--- The lambda-? rejection is reported exactly once.
+-- The `?` of a lambda whose body is no Result is reported once, at the
+-- body; the list of Results the map then gives does not fit the annotation.
 import list
 fn main() {
   let xs = [Ok(1), Err("bad"), Ok(3)]

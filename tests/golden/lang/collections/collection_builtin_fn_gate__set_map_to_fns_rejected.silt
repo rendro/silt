@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- set.map to a set of functions is rejected: a set hashes its elements.
+-- (No program can build a set of functions any more, so the set
+-- operations never see one.)
+import set
+fn main() {
+  let s = set.map(set.from_list([1, 2]), { x -> { y -> y + x } })
+  let u = set.union(s, s)
+  println(set.length(u))
+}

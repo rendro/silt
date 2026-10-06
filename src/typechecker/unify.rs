@@ -143,13 +143,35 @@ impl TypeChecker {
     /// what `generalize` quantifies.
     pub(super) fn enter_level(&mut self) {
         self.tables.vars.level += 1;
-        self.bound_marks.push(self.bound_log.len());
+        self.wanted_marks.push(self.wanted.len());
     }
 
     /// Leave the scope `enter_level` entered.
     pub(super) fn exit_level(&mut self) {
         self.tables.vars.level -= 1;
-        self.closed_mark = self.bound_marks.pop().expect("a level is open");
+        self.closed_mark = self.wanted_marks.pop().expect("a level is open");
+    }
+
+    /// Decide what the scope `exit_level` just left can decide: what it
+    /// owes for a type it has decided since, and the calls on receivers
+    /// that are its to generalise (`default_selects`).
+    pub(super) fn decide_closed(&mut self) {
+        self.reopen_level();
+        self.solve_wanted(self.closed_mark);
+        self.close_level();
+        self.decide_tries();
+        self.default_selects(false);
+    }
+
+    /// Make variables as the scope `exit_level` just left did, until
+    /// `close_level`: what is decided for the scope after it has ended
+    /// is the scope's.
+    pub(super) fn reopen_level(&mut self) {
+        self.tables.vars.level += 1;
+    }
+
+    pub(super) fn close_level(&mut self) {
+        self.tables.vars.level -= 1;
     }
 
     /// Keep the unresolved variables of `ty` out of every later
@@ -306,14 +328,11 @@ impl TypeChecker {
         let owners = self.group_rigid.entry(r1.var).or_default();
         owners.extend(owners2);
         // What either's `where` clauses declare holds of the one variable.
-        if let Some(traits) = self.active_constraints.get(&r2.var).cloned() {
-            let merged = self.active_constraints.entry(r1.var).or_default();
-            for t in traits {
-                if !merged.contains(&t) {
-                    merged.push(t);
-                }
-                if let Some(args) = self.trait_arg_bindings.get(&(r2.var, t)).cloned() {
-                    self.trait_arg_bindings.entry((r1.var, t)).or_insert(args);
+        if let Some(bounds) = self.bounds.get(&r2.var).cloned() {
+            let merged = self.bounds.entry(r1.var).or_default();
+            for bound in bounds {
+                if !merged.iter().any(|(t, _)| *t == bound.0) {
+                    merged.push(bound);
                 }
             }
         }
@@ -710,6 +729,12 @@ impl TypeChecker {
         };
 
         match (&t1, &t2) {
+            // A type still unknown that meets what has no type (a value
+            // of a module that failed to load, an expression already
+            // reported) has none either: nothing more is asked of it.
+            (Type::Var(v), Type::Error) | (Type::Error, Type::Var(v)) => {
+                self.bind(*v, Type::Error, out);
+            }
             (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)

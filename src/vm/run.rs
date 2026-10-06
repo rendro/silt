@@ -17,34 +17,15 @@ use crate::runtime::sync::Wait;
 /// values, returning the canonical surface name (`"Fn"`) to name in the
 /// error if the value cannot participate in equality, or `None` if it can.
 ///
-/// silt does NOT statically enforce inferred trait bounds on polymorphic
-/// templates: `pending_numeric_checks` (src/typechecker/inference.rs)
-/// skips operands whose type is still a `Var`, on the documented promise
-/// that "the VM catches it at runtime with a clean operator-domain
-/// diagnostic." Ordering honors that promise (`compare()`'s catch-all in
-/// src/vm/arithmetic.rs errors on function-shaped values) and so does
-/// string-interpolation Display (the `Op::DisplayValue` gate). Equality was
-/// the lone bypass: a polymorphic `fn eq(x: a, y: a) -> Bool { x == y }`
-/// called with two functions used to silently return a `Bool` — `PartialEq
-/// for Value` does `Arc::ptr_eq` on closures and name-equality on builtins
-/// (src/value/key.rs) — instead of erroring like the concrete `f == g`, which
-/// `is_valid_compare_operand` rejects at compile time (`Type::Fun` falls in
-/// its `_ => false` arm).
-///
-/// The rejected set is the values that are, or transitively CONTAIN, a
-/// function-shaped leaf — everything the typechecker's equality gate
-/// rejects for a concrete operand. The bare shapes (round 96) are the
-/// direct `Type::Fun` values; the recursion (via `Vm::value_contains_fn`,
-/// src/vm/mod.rs) mirrors the round-97 container gate, whose
-/// `operand_builtin_trait_violation` walker rejects the concrete forms
-/// (`[{ x -> x }] == [{ x -> x }]`, tuples/records/variants wrapping
-/// functions) at compile time. Without the recursion, laundering the same
-/// values through a polymorphic wrapper (`fn eq(a: x, b: x) -> Bool
-/// { a == b }`) silently produced an `Arc::ptr_eq`-based Bool. Channel /
-/// Handle / TcpListener / TcpStream are deliberately NOT rejected: they
-/// are equatable by identity at runtime and the typechecker accepts them
-/// (`Type::Channel` and `Type::Generic(..)` in
-/// `is_valid_compare_operand`), keeping the runtime and compile-time
+/// The checker rejects `==` on a value that is, or holds, a function
+/// (`Equal` is decided by structure, for a concrete operand and through
+/// a bound alike): this is the backstop at the execution site, where
+/// `PartialEq for Value` would answer with `Arc::ptr_eq` on closures and
+/// name-equality on builtins (src/value/key.rs). The recursion is
+/// `Vm::value_contains_fn` (src/vm/mod.rs). Channel / Handle /
+/// TcpListener / TcpStream are deliberately NOT rejected: they are
+/// equatable by identity at runtime and have `Equal` in the checker,
+/// keeping the runtime and compile-time
 /// layers in parity. Rust-level collection keying / dedup uses `PartialEq
 /// for Value` directly, not this operator path (see
 /// tests/typecheck/round74_hash_eq_ord_contract_tests.rs) — but the silt-visible
@@ -1108,10 +1089,20 @@ impl Vm {
                         crate::types::canonical::dispatch_type_name(&receiver)
                     )));
                 }
-                let method = self
-                    .global_slots
-                    .call_method(trait_index, receiver_type, method_name)
-                    .and_then(|slot| self.globals.get(slot as usize).cloned().flatten());
+                // A call that names no trait is a call of the function a
+                // record's field holds, when the record has the field:
+                // the checker reads `r.f(x)` as the field before any
+                // method of the name (and names the trait when it means
+                // a method).
+                let field_call = trait_index == crate::bytecode::NO_TRAIT
+                    && matches!(&receiver, Value::Record(_, fields) if fields.contains_key(method_name));
+                let method = if field_call {
+                    None
+                } else {
+                    self.global_slots
+                        .call_method(trait_index, receiver_type, method_name)
+                        .and_then(|slot| self.globals.get(slot as usize).cloned().flatten())
+                };
                 if let Some(func) = method {
                     // The method's frame starts above a slot of its own,
                     // as a called function's does: the descriptor's, or
@@ -1124,11 +1115,13 @@ impl Vm {
                     return Ok(self.entered(entered));
                 }
                 // Try built-in trait methods (display, equal, compare)
-                if let Some(result) = self.dispatch_trait_method(
-                    &receiver,
-                    method_name,
-                    &self.stack[receiver_slot + 1..],
-                ) {
+                if !field_call
+                    && let Some(result) = self.dispatch_trait_method(
+                        &receiver,
+                        method_name,
+                        &self.stack[receiver_slot + 1..],
+                    )
+                {
                     self.stack.truncate(receiver_slot);
                     self.push(result?);
                 } else if let Value::Record(_, ref fields) = receiver

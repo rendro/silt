@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: trait 'Holds' expects 1 type argument as a supertrait of 'Bad', got 2
+-- stderr-contains: error[type]: trait 'Holds' expects 1 type argument as a supertrait of 'Bare', got 0
+-- stderr-not-contains: 'Fine'
+-- A supertrait is given as many type arguments as it has parameters:
+-- checked where the trait is declared, whether or not a `where` clause
+-- names the trait.
+trait Holds(a) { fn held(self) -> a }
+trait Bad: Holds(Int, String) { fn bad(self) -> Int }
+trait Bare: Holds { fn bare(self) -> Int }
+trait Fine: Holds(Int) { fn fine(self) -> Int }
+fn main() { println(1) }

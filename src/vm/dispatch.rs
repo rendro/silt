@@ -337,6 +337,8 @@ impl Vm {
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
                     // (src/typechecker/mod.rs:8173). All units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
+                    // A tuple is ordered part by part.
+                    (Value::Tuple(_), Value::Tuple(_)) => receiver.cmp(other),
                     _ => {
                         return Some(Err(VmError::new(format!(
                             "compare() not supported between {} and {}",
@@ -369,13 +371,8 @@ impl Vm {
                 // Execution-site backstop mirroring the `"equal"` /
                 // `"compare"` arms above: a receiver that is, or
                 // transitively contains, a function-shaped leaf has no
-                // Hash impl (`gate_field_supports_trait`,
-                // src/typechecker/mod.rs: "Functions support none of
-                // Equal/Compare/Hash"). The `(Hash, List)` auto-derive
-                // stamp is registered unconditionally
-                // (`register_auto_derived_impls_for`,
-                // src/typechecker/mod.rs) without walking element types,
-                // so `[{ y -> y }].hash()` reaches this arm — and the
+                // Hash (the checker rejects `[{ y -> y }].hash()`; a
+                // function has none of the structural traits). The
                 // std `Hash` impl on `Value` hashes every closure as a
                 // constant discriminant tag ("not meaningfully
                 // hashable", src/value/key.rs), so two distinct closures

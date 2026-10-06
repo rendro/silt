@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: type 'Doc' does not implement trait 'Compare'
+-- stderr-contains: error[type]: type 'Doc' does not implement trait 'Compare': field 'meta' is of type 'Map(String, Int)', which does not
 type Doc { meta: Map(String, Int) }
 fn cmp_gen(x: a, y: a) -> Int where a: Compare { x.compare(y) }
 fn main() {

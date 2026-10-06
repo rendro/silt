@@ -1,7 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: cannot derive 'Equal'
--- stderr-contains: element type is not equatable
+-- stderr-contains: error[type]: type '(Int, Fn(_) -> _)' does not implement trait 'Equal': part #2 is of type 'Fn(_) -> _', which does not
 -- `==` on tuples holding a function is a compile error.
 fn main() {
   let a = (1, { x -> x })

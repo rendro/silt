@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
+-- stderr-contains: error[type]: type variable `a` is not known to implement trait 'Equal'
+-- `println(Some(x))` needs `Display` of `x`: a function general in `x`
+-- owes it; an annotation variable needs the bound declared.
+type Box(a) { Box(a) }
+fn show(x) { println(Some(x)) }
+fn same(x: Box(a), y: Box(a)) -> Bool { x == y }
+fn main() {
+  show(1)
+  show({ n -> n })
+}

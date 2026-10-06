@@ -1,8 +1,7 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
 -- Port of repros/type_soundness/b1.silt, in brace closures.
--- A hole, pending in repros/SOUNDNESS.tsv. `check` passes; `run` stops with
--- error[runtime]: type 'Fn' does not implement Equal
 fn lt(a, b) { a < b }
 fn eq(a, b) { a == b }
 fn add(a, b) { a + b }

@@ -713,15 +713,10 @@ impl Vm {
     /// execution-site Compare/Equal gates, the sibling of
     /// `value_implements_display` above.
     ///
-    /// silt does NOT statically enforce inferred trait bounds on
-    /// polymorphic templates: `pending_numeric_checks`
-    /// (src/typechecker/inference.rs) skips operands whose type is still
-    /// a `Var`, on the documented promise that the VM catches the
-    /// violation at the execution site. Round 97 made the CONCRETE
-    /// container forms (`[{ x -> x }] < [{ x -> x }]`) a compile error
-    /// (`operand_builtin_trait_violation` recurses into element types),
-    /// but a polymorphic wrapper (`fn lt(a: x, b: x) -> Bool { a < b }`
-    /// called with lists of lambdas) still launders a container of
+    /// The checker rejects comparing or ordering a value that holds a
+    /// function, for a concrete operand and through a bound alike
+    /// (`Equal` and `Compare` are decided by structure). Without a
+    /// runtime backstop such
     /// functions past the typechecker. Without a runtime backstop such
     /// values fell into `Value::cmp` / `PartialEq for Value`, which order
     /// closures by `Arc::as_ptr` (src/value/key.rs) — an ASLR-nondeterministic

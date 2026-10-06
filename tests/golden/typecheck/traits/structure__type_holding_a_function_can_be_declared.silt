@@ -1,0 +1,21 @@
+-- Declaring a type never fails because it lacks a structural trait: a
+-- function may be held anywhere in it. The values are used for what
+-- they do have.
+type H { f: Fn(Int) -> Int }
+type A { fs: List(Fn(Int) -> Int) }
+type B { p: (Int, Fn(Int) -> Int) }
+type C { m: Map(String, Fn(Int) -> Int) }
+type D { h: H, hs: List(H), o: Option(H) }
+type Box(a) { Box(a) }
+type E { X(Option(Fn(Int) -> Int)), Y(Box(H)), Z }
+fn main() {
+  let h = H { f: { n -> n + 1 } }
+  let d = D { h: h, hs: [h], o: Some(h) }
+  let e = Y(Box(h))
+  match e {
+    Y(Box(inner)) -> println((inner.f)(1) + (d.h.f)(2))
+    _ -> println(0)
+  }
+  let a = A { fs: [{ n -> n * 2 }] }
+  match a.fs { [g, ..rest] -> println(g(21)), _ -> println(0) }
+}

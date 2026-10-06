@@ -14,7 +14,7 @@ pub(crate) struct FnSig {
     pub(super) rigid: Vec<RigidId>,
     /// The bounds the `where` clauses declare, each on the variable an
     /// annotation variable is in the function's scheme.
-    pub(super) bounds: Vec<(TyVar, TraitKey)>,
+    pub(super) bounds: Vec<Pred>,
     /// Whether the declaration leaves nothing out: every parameter and
     /// the result are annotated, and no annotation has a hole (a generic
     /// type written without its arguments). The function's scheme is
@@ -90,7 +90,7 @@ impl TypeChecker {
         let ret_type = if let Some(te) = &f.return_type {
             let resolved = self.resolve_type_expr(te, &mut param_map);
             for name in param_map.keys() {
-                if !pre_return_keys.contains(name) {
+                if !pre_return_keys.contains(name) && !self.registry_rows {
                     let n = resolve(*name);
                     self.error(Code::InvalidTypeAnnotation,
                         format!(
@@ -109,13 +109,12 @@ impl TypeChecker {
         self.current_type_anno_span = prev_type_span;
 
         let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type.clone()));
-        let mut bounds: Vec<(TyVar, TraitKey)> = Vec::new();
+        let mut bounds: Vec<Pred> = Vec::new();
 
-        // Resolve where clauses to (TyVar, trait_name) using param_map.
-        // Type variables must be introduced via explicit type annotations in the signature.
-        // Trait args (for parameterized traits like `a: TryInto(b)`) are
-        // resolved through `param_map` and stashed in `trait_arg_bindings`
-        // so descriptor method resolution can substitute them later.
+        // Each where clause is a predicate of the scheme. Its type
+        // variable must be one the signature's annotations write; its
+        // trait arguments (`a: TryInto(b)`) are resolved through
+        // `param_map`.
         for wc in &f.where_clauses {
             let type_param = &wc.type_param;
             let trait_name = &wc.trait_name;
@@ -135,15 +134,15 @@ impl TypeChecker {
                 if let Type::Var(tv) = resolved
                     && let Some(trait_name) = self.named_trait(wc.trait_res, *trait_name)
                 {
-                    bounds.push((tv, trait_name));
-                    if !trait_args.is_empty() {
-                        let resolved_args: Vec<Type> = trait_args
-                            .iter()
-                            .map(|te| self.resolve_type_expr(te, &mut param_map))
-                            .collect();
-                        self.trait_arg_bindings
-                            .insert((tv, trait_name), resolved_args);
-                    }
+                    let args: Vec<Type> = trait_args
+                        .iter()
+                        .map(|te| self.resolve_type_expr(te, &mut param_map))
+                        .collect();
+                    bounds.push(Pred::Trait {
+                        tr: trait_name,
+                        args,
+                        subject: Type::Var(tv),
+                    });
                 }
             } else {
                 let first_param_name = f
@@ -198,12 +197,22 @@ impl TypeChecker {
         let bodiless = f.is_recovery_stub || self.signatures_only;
         let complete = bodiless || (annotated && free.iter().all(|v| body_view.contains_key(v)));
         if complete {
+            // A variable only a bound's trait arguments name
+            // (`where a: TryInto(b)`) is the scheme's as well.
+            let mut scheme_vars = free;
+            for Pred::Trait { args, .. } in &bounds {
+                for v in args.iter().flat_map(free_vars_in) {
+                    if !scheme_vars.contains(&v) {
+                        scheme_vars.push(v);
+                    }
+                }
+            }
             env.define(
                 f.name,
                 Scheme {
-                    vars: free,
+                    vars: scheme_vars,
+                    preds: bounds.clone(),
                     ty: fn_type,
-                    constraints: bounds.clone(),
                     optional_last_param: false,
                 },
             );

@@ -1,0 +1,17 @@
+error[type]: type 'E' does not implement trait 'Display': variant 'X' payload #1 > variant 'Some' payload #1 is of type 'Fn(Int) -> Int', which does not
+ --> structure__error_is_at_the_use_once.silt:10:11
+    |
+ 10 |   println(Y(Box(h)))
+    |           ^^^^^^^^^ type 'E' does not implement trait 'Display': variant 'X' payload #1 > variant 'Some' payload #1 is of type 'Fn(Int) -> Int', which does not
+
+error[type]: type 'E' does not implement trait 'Equal': variant 'X' payload #1 > variant 'Some' payload #1 is of type 'Fn(Int) -> Int', which does not
+ --> structure__error_is_at_the_use_once.silt:11:11
+    |
+ 11 |   println(Z == Z)
+    |           ^^^^^^ type 'E' does not implement trait 'Equal': variant 'X' payload #1 > variant 'Some' payload #1 is of type 'Fn(Int) -> Int', which does not
+
+error[type]: type 'List(Box(H))' does not implement trait 'Display': element > variant 'Box' payload #1 > field 'f' is of type 'Fn(Int) -> Int', which does not
+ --> structure__error_is_at_the_use_once.silt:12:11
+    |
+ 12 |   println([Box(h)].display())
+    |           ^^^^^^^^^^^^^^^^ type 'List(Box(H))' does not implement trait 'Display': element > variant 'Box' payload #1 > field 'f' is of type 'Fn(Int) -> Int', which does not

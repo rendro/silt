@@ -1,3 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: method 'greet' of the impl of 'Greet' for 'Box' adds the bound `a: Greet`, which the trait does not declare for it
+-- stderr-contains: or on the impl's header
 type Box(T) { Box(T) }
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int-greet" } }

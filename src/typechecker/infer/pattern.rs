@@ -148,6 +148,14 @@ impl TypeChecker {
             unverified: false,
         };
         let pat = self.type_pattern(pattern, expected, env, &mut cx);
+        // What is matched has no type (it comes from a module that failed
+        // to load, or an expression already reported): neither has what
+        // the pattern binds, so that nothing is asked of it.
+        if matches!(self.apply(expected), Type::Error) {
+            for name in collect_pattern_vars(pattern) {
+                env.define(name, Scheme::mono(Type::Error));
+            }
+        }
         if let PatternMode::Binding(site) = mode {
             // Irrefutability is judged for a pattern that type checked:
             // one that did not has its diagnostic. So has a name in the

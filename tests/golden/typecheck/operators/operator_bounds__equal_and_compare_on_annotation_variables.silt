@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type variable `a` is not known to implement trait 'Equal'
+-- stderr-contains: error[type]: type variable `b` is not known to implement trait 'Compare'
+-- stderr-contains: error[type]: type variable `c` is not known to implement trait 'Display'
+-- `==`, `<` and interpolation on a value of an annotation variable's
+-- type need the bound declared.
+fn same(x: a, y: a) -> Bool { x == y }
+fn less(x: b, y: b) -> Bool { x < y }
+fn show(x: c) -> String { "{x}" }
+fn main() { println(1) }

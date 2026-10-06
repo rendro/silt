@@ -30,7 +30,8 @@ fn builtin_traits_registered_via_user_path() {
     );
 
     // Each sig-only trait still has the pre-unification field shape:
-    //   no params, no supertraits, no where-clauses, no default bodies.
+    //   no params, no supertraits but Compare's, no where-clauses, no
+    //   default bodies.
     for entry in &fp {
         let (
             name,
@@ -44,10 +45,16 @@ fn builtin_traits_registered_via_user_path() {
             param_where_clauses_count,
         ) = entry;
         assert_eq!(*params_count, 0, "{name}: params should be empty");
-        assert_eq!(*supertraits_count, 0, "{name}: supertraits should be empty");
+        // (`Compare` has the supertrait `Equal`: what is ordered can be
+        // compared for equality.)
+        let supertraits = usize::from(name == "Compare");
         assert_eq!(
-            *supertrait_args_count, 0,
-            "{name}: supertrait_args should be empty"
+            *supertraits_count, supertraits,
+            "{name}: supertraits should be {supertraits}"
+        );
+        assert_eq!(
+            *supertrait_args_count, supertraits,
+            "{name}: supertrait_args should be {supertraits}"
         );
         assert_eq!(
             *param_where_clauses_count, 0,

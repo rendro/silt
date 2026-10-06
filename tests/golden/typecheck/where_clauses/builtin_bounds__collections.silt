@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Equal'
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
+-- The builtins declare what they ask of their elements and keys:
+-- list.sort Compare, list.contains Equal, set.from_list and map keys
+-- Hash, string.from Display. Passed as values too.
+import list
+import map
+import set
+import string
+fn apply(f, x) { f(x) }
+fn main() {
+  let f = { n -> n }
+  println(apply(list.sort, [f]))
+  println(list.contains([f], f))
+  println(set.from_list([f]))
+  println(map.from_entries([(f, 1)]))
+  println(string.from(f))
+}

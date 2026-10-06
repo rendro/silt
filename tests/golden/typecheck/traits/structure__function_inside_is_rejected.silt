@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: type 'P' does not implement trait 'Display': field 'f' is of type 'Fn(Int) -> Int', which does not
+-- A function has none of the structural traits, at any depth: in a
+-- record's field, an option's payload, a list in a tuple.
+import list
+type P { x: Int, f: Fn(Int) -> Int }
+fn main() {
+  let p = P { x: 1, f: { n -> n } }
+  println(p)
+  println(p == p)
+  let m = #{ ([{ n -> n }], 1): 2 }
+  println(list.sort([Some(p)]))
+}
