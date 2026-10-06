@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot infer the type this use of 'hello' needs to implement trait 'Greet'
+-- Nothing decides the type the bound is on, and no definition is
+-- general in it: which impl is meant is unknown.
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+type Box(a) { Box(a) }
+trait Greet for Box(a) where a: Greet { fn greet(self) -> String { match self { Box(i) -> i.greet() } } }
+fn hello(x: a) -> String where a: Greet { x.greet() }
+import list
+fn main() { println(list.length(list.map([], hello))) }

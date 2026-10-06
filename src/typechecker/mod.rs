@@ -159,6 +159,9 @@ pub struct TypeChecker {
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
+    /// The type variables `let` annotations introduced: no `where`
+    /// clause can bound one.
+    pub(super) let_vars: std::collections::HashSet<TyVar>,
     /// The annotation variables with a `where` clause whose trait is
     /// unknown (reported): what bounds them is not known, so a method
     /// call or a bound owed on one is not reported as well.
@@ -282,6 +285,7 @@ impl TypeChecker {
             expected_closure: None,
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
+            let_vars: std::collections::HashSet::new(),
             unknown_bounds: std::collections::HashSet::new(),
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),
@@ -521,29 +525,138 @@ impl TypeChecker {
     /// type still unknown: if the cell decides the type, their checks are
     /// its to pass. (They stay the earlier cells' in the session's
     /// tables: a cell that fails is forgotten, and the next one takes
-    /// them up again.)
-    fn take_up_waiting(&mut self) {
+    /// them up again.) A check in the body of a definition nothing can
+    /// run any more is not taken up: the cell or an earlier one has
+    /// defined its name again, and no definition still in reach refers
+    /// to it.
+    fn take_up_waiting(&mut self, program: &Program, earlier: &[(Symbol, crate::defs::DefId)]) {
+        // What is in reach: the names this cell leaves as they were,
+        // what the cell itself refers to, and what those refer to.
+        let own = self.cell_decls(program);
+        let redefined: Vec<Symbol> = program
+            .decls
+            .iter()
+            .filter(|decl| matches!(decl, Decl::Fn(_) | Decl::Let { .. }))
+            .flat_map(crate::parser::top_level_binders)
+            .map(|(name, _, _)| name)
+            .collect();
+        let mut live: std::collections::HashSet<crate::defs::DefId> = earlier
+            .iter()
+            .filter(|(name, _)| !redefined.contains(name))
+            .map(|(_, id)| *id)
+            .collect();
+        live.extend(own.iter().flat_map(|decl| decl.refers.iter().copied()));
+        loop {
+            let reached: Vec<crate::defs::DefId> = self
+                .tables
+                .waiting
+                .values()
+                .flat_map(|cell| &cell.decls)
+                .filter(|decl| decl.defs.iter().any(|id| live.contains(id)))
+                .flat_map(|decl| decl.refers.iter().copied())
+                .filter(|id| !live.contains(id))
+                .collect();
+            if reached.is_empty() {
+                break;
+            }
+            live.extend(reached);
+        }
         for (module, waiting) in &self.tables.waiting {
             if *module == self.module {
                 continue;
             }
-            self.wanted.extend(waiting.wanted.iter().cloned());
-            self.pending_field_accesses
-                .extend(waiting.field_accesses.iter().cloned());
-            self.pending_numeric_checks
-                .extend(waiting.numeric_checks.iter().cloned());
-            self.pending_question_marks
-                .extend(waiting.question_marks.iter().cloned());
+            // A check outside every definition is of an expression the
+            // cell ran: it waits on.
+            let waits = |span: &Span| {
+                waiting
+                    .decls
+                    .iter()
+                    .filter(|decl| decl.span.start <= span.start && span.end <= decl.span.end)
+                    .all(|decl| decl.defs.iter().any(|id| live.contains(id)))
+            };
+            self.wanted.extend(
+                waiting
+                    .wanted
+                    .iter()
+                    .filter(|w| waits(&w.origin.span))
+                    .cloned(),
+            );
+            self.pending_field_accesses.extend(
+                waiting
+                    .field_accesses
+                    .iter()
+                    .filter(|(.., span)| waits(span))
+                    .cloned(),
+            );
+            self.pending_numeric_checks.extend(
+                waiting
+                    .numeric_checks
+                    .iter()
+                    .filter(|(.., span)| waits(span))
+                    .cloned(),
+            );
+            self.pending_question_marks.extend(
+                waiting
+                    .question_marks
+                    .iter()
+                    .filter(|(.., span)| waits(span))
+                    .cloned(),
+            );
         }
         self.taken_up = self.waiting_files();
     }
 
+    /// The functions and `let`s of the cell `program`, each with what it
+    /// defines and what its body refers to.
+    fn cell_decls(&self, program: &Program) -> Vec<CellDecl> {
+        let Some(defs) = &self.defs else {
+            return Vec::new();
+        };
+        let mut decls = Vec::new();
+        for decl in &program.decls {
+            let (span, body) = match decl {
+                Decl::Fn(f) => (f.span, &f.body),
+                Decl::Let { span, value, .. } => (*span, value),
+                _ => continue,
+            };
+            let names: Vec<Symbol> = crate::parser::top_level_binders(decl)
+                .into_iter()
+                .map(|(name, _, _)| name)
+                .collect();
+            let own: Vec<crate::defs::DefId> = defs
+                .of_module(self.module)
+                .iter()
+                .copied()
+                .filter(|id| names.contains(&defs.get(*id).name))
+                .collect();
+            let mut refers = Vec::new();
+            order::references_in_expr(body, &mut |res| {
+                if let Some(crate::defs::Res::Def(id)) = res
+                    && !refers.contains(&id)
+                {
+                    refers.push(id);
+                }
+            });
+            decls.push(CellDecl {
+                span: Span {
+                    file: span.file,
+                    start: span.start.min(body.span.start),
+                    end: span.end.max(body.span.end),
+                },
+                defs: own,
+                refers,
+            });
+        }
+        decls
+    }
+
     /// Leave what this cell's own checks still wait for to the cells
     /// after it.
-    fn leave_waiting(&mut self) {
+    fn leave_waiting(&mut self, program: &Program) {
         let earlier = std::mem::take(&mut self.taken_up);
         let own = |span: &Span| !earlier.contains(&span.file);
         let waiting = Waiting {
+            decls: self.cell_decls(program),
             wanted: std::mem::take(&mut self.wanted)
                 .into_iter()
                 .filter(|w| !w.solved && own(&w.origin.span))
@@ -562,6 +675,42 @@ impl TypeChecker {
                 .collect(),
         };
         self.tables.waiting.insert(self.module, waiting);
+    }
+
+    /// A check an earlier cell left waiting that this cell fails is this
+    /// cell's error: it is reported at the cell, which is the input
+    /// dropped, with the earlier cell's check as a label.
+    fn report_at_cell(&mut self, program: &Program) {
+        // (The cell's first declarations are the session's: the imports
+        // of what the earlier cells bind.)
+        let Some(at) = program
+            .decls
+            .iter()
+            .map(|decl| match decl {
+                Decl::Fn(f) => f.span,
+                Decl::Let { span, .. } => *span,
+                Decl::Type(t) => t.span,
+                Decl::Trait(t) => t.span,
+                Decl::TraitImpl(t) => t.span,
+                Decl::Import(_, span) => *span,
+            })
+            .rfind(|span| span.file != Span::BUILTIN.file && !self.taken_up.contains(&span.file))
+        else {
+            return;
+        };
+        for error in &mut self.errors {
+            if error.span.file == at.file || !self.taken_up.contains(&error.span.file) {
+                continue;
+            }
+            let earlier = std::mem::replace(&mut error.span, at);
+            let check = std::mem::take(&mut error.message);
+            error.message =
+                format!("this input gives a value a type an earlier input does not allow: {check}");
+            error.labels.insert(0, (earlier, check));
+            error
+                .notes
+                .push("this input is dropped; the earlier one stands".to_string());
+        }
     }
 
     /// The files of what is waiting: each REPL cell is a file of its own.
@@ -1207,11 +1356,12 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         }
     }
     if checker.is_cell {
-        checker.take_up_waiting();
+        checker.take_up_waiting(program, earlier);
     }
     let env = checker.check_program_in(program, env);
     if checker.is_cell {
-        checker.leave_waiting();
+        checker.report_at_cell(program);
+        checker.leave_waiting(program);
     }
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);

@@ -10,6 +10,9 @@ impl TypeChecker {
     /// `fn wrap(x) { constrained_fn(x) }`) are the scheme's: each use of
     /// it owes them again.
     pub(super) fn generalize(&mut self, ty: &Type) -> Scheme {
+        // What the scope owes for a subject it has decided since is
+        // checked first: what that leaves owed is on variables.
+        self.solve_wanted(self.closed_mark);
         let ty = self.apply(ty);
         let mut vars: Vec<TyVar> = free_vars_in(&ty)
             .into_iter()
@@ -21,13 +24,14 @@ impl TypeChecker {
                 if self.wanted[i].solved {
                     continue;
                 }
-                let Pred::Trait { tr, args, subject } = &self.wanted[i].pred;
+                let Pred::Trait { tr, args, subject } = &self.wanted[i].pred.clone();
                 let Type::Var(subject) = self.apply(subject) else {
                     continue;
                 };
                 if !vars.contains(&subject) {
                     continue;
                 }
+                self.wanted[i].in_scheme = true;
                 let pred = Pred::Trait {
                     tr: *tr,
                     args: args.iter().map(|t| self.apply(t)).collect(),
@@ -86,9 +90,31 @@ impl TypeChecker {
     pub(super) fn settle_bounds(&mut self) {
         let recorded = self.wanted.split_off(self.closed_mark);
         for wanted in recorded {
-            let Pred::Trait { subject, .. } = &wanted.pred;
-            if !wanted.solved && self.waits_for_outer(subject) {
+            let Pred::Trait { tr, args, subject } = &wanted.pred;
+            if wanted.solved {
+                continue;
+            }
+            if self.waits_for_outer(subject) {
                 self.wanted.push(wanted);
+            } else if !wanted.in_scheme
+                && crate::defs::builtin_trait_id(&resolve(tr.name)) != Some(tr.id)
+                && matches!(self.apply(subject), Type::Var(_))
+            {
+                // Nothing decides the subject, and no definition is
+                // general in it: which impl the use means is unknown.
+                let bound = self.show_bound(*tr, args);
+                let what = match wanted.origin.callee {
+                    Some(callee) => format!("this use of '{callee}'"),
+                    None => "this".to_string(),
+                };
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousType,
+                        wanted.origin.span,
+                        format!("cannot infer the type {what} needs to implement trait '{bound}'"),
+                    )
+                    .with_help("annotate the value it is given"),
+                );
             }
         }
         let mut fields = std::mem::take(&mut self.pending_field_accesses);

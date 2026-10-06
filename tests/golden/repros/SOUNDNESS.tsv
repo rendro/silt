@@ -368,6 +368,9 @@ repros/typechecker_arch/t_where_hof.silt	holds	reject E0314	TCA-4: a `where` bou
 repros/typechecker_arch/t_where_paren.silt	-	obsolete	`[f, ..]` is not a pattern; with `..rest` it is type_soundness/w3c
 repros/typechecker_arch/t_where_pipe_call.silt	holds	reject E0314	control: a `where` bound at `x |> f()`
 repros/typechecker_arch/t_where_pipe_plain.silt	holds	reject E0314	TCA-4: a `where` bound lost at `x |> f`
+repros/typechecker_arch/t_tm_as_value.silt	pending:3b	output	a trait method taken as a value (`let m = true.sh`) and called with its receiver
+repros/typechecker_arch/t_method_value_generic_impl.silt	pending:3b	output	a method of a generic impl taken as a value
+repros/typechecker_arch/t_method_value_hof3.silt	pending:3b	output	a method taken as a value and passed to list.map
 lang/soundness/a5.silt	holds	reject E0301	a closure parameter's annotation is enforced
 lang/soundness/b1.silt	pending:3b	reject E0314	TS-2.4: `==` and `<` on closures through polymorphic functions
 lang/soundness/c1.silt	holds	reject E0314	control for b1: the same with a declared Compare bound

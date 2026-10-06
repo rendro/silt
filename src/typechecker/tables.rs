@@ -270,10 +270,26 @@ pub struct Tables {
 /// to them.
 #[derive(Clone, Default)]
 pub(super) struct Waiting {
+    /// The cell's functions and `let`s. A check in the body of one
+    /// waits for as long as something can still run that body.
+    pub(super) decls: Vec<CellDecl>,
     pub(super) wanted: Vec<super::solve::Wanted>,
     pub(super) field_accesses: Vec<(Type, Symbol, Type, Span)>,
     pub(super) numeric_checks: Vec<(Type, &'static str, Span)>,
     pub(super) question_marks: Vec<(Type, Type, Option<Type>, Span)>,
+}
+
+/// A function or a `let` of a REPL cell.
+#[derive(Clone)]
+pub(super) struct CellDecl {
+    /// Where it is, from its first token to the end of its body.
+    pub(super) span: Span,
+    /// What it defines.
+    pub(super) defs: Vec<crate::defs::DefId>,
+    /// The definitions its body refers to: a cell is bound to what its
+    /// names meant when it was entered, so a function an earlier cell
+    /// defined runs for as long as one that refers to it does.
+    pub(super) refers: Vec<crate::defs::DefId>,
 }
 
 /// What one module's check added to the session's [`Tables`].

@@ -1,0 +1,13 @@
+-- An impl's method may restate what the trait's bound implies: a
+-- supertrait of it.
+trait Greet { fn greet(self) -> String }
+trait Two: Greet { fn two(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Two for Int { fn two(self) -> String { "2" } }
+trait Sh { fn sh(self, x: a) -> String where a: Two }
+trait Sh for Bool { fn sh(self, x: a) -> String where a: Greet { x.greet() } }
+trait Sh for Int { fn sh(self, x: a) -> String { "{x.greet()}{x.two()}" } }
+fn main() {
+  println(true.sh(1))
+  println(1.sh(1))
+}

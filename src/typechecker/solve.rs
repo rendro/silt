@@ -10,6 +10,9 @@ pub(crate) struct Wanted {
     pub(super) origin: Origin,
     /// Whether it is checked already.
     pub(super) solved: bool,
+    /// Whether a scheme has it: its subject is a variable a definition
+    /// is general in (`generalize`), so each use of that owes it.
+    pub(super) in_scheme: bool,
 }
 
 /// Where a predicate is owed, and what asked for it.
@@ -29,38 +32,49 @@ impl TypeChecker {
     /// predicate is the scheme's (`generalize`), or it belongs to an
     /// outer binding and waits on.
     pub(super) fn want(&mut self, pred: Pred, origin: Origin) {
-        let Pred::Trait { subject, .. } = &pred;
-        let known = !matches!(self.apply(subject), Type::Var(_));
         self.wanted.push(Wanted {
             pred,
             origin,
             solved: false,
+            in_scheme: false,
         });
-        if known {
-            self.solve_wanted(self.wanted.len() - 1);
-        }
+        self.solve_wanted(self.wanted.len() - 1);
     }
 
     /// Check each predicate owed since `from` whose subject is known by
-    /// now.
+    /// now. What the impl that answers one asks of the subject's parts
+    /// (`trait Greet for Box(a) where a: Greet`) is owed in turn, by the
+    /// same use: checked here if the part is known, waiting like any
+    /// predicate if it is not.
     pub(super) fn solve_wanted(&mut self, from: usize) {
-        for i in from..self.wanted.len() {
-            if self.wanted[i].solved {
-                continue;
+        let mut i = from;
+        while i < self.wanted.len() {
+            if !self.wanted[i].solved {
+                let Pred::Trait { tr, args, subject } = self.wanted[i].pred.clone();
+                let origin = self.wanted[i].origin;
+                let subject = self.apply(&subject);
+                if matches!(subject, Type::Var(_)) {
+                    i += 1;
+                    continue;
+                }
+                self.wanted[i].solved = true;
+                self.verify_trait_obligation(tr, &args, &subject, origin);
             }
-            let Pred::Trait { tr, args, subject } = self.wanted[i].pred.clone();
-            let origin = self.wanted[i].origin;
-            let subject = self.apply(&subject);
-            match &subject {
-                Type::Var(_) => continue,
-                Type::Error | Type::Never => {}
-                Type::Rigid(r) => self.require_declared_bound(*r, tr, origin.callee, origin.span),
-                // Recursively walk the matched impl's where clauses
-                // against the subject's arguments.
-                _ => self.verify_trait_obligation(tr, &args, &subject, origin.span),
-            }
-            self.wanted[i].solved = true;
+            i += 1;
         }
+    }
+
+    /// The bound `tr(args)` as a message shows it: `Greet`, `Conv(Int)`.
+    pub(super) fn show_bound(&self, tr: TraitKey, args: &[Type]) -> String {
+        let name = self.show_trait(tr);
+        if args.is_empty() {
+            return name;
+        }
+        let args: Vec<String> = args
+            .iter()
+            .map(|t| self.show_type(&self.apply(t)))
+            .collect();
+        format!("{name}({})", args.join(", "))
     }
 
     /// Where the scheme being instantiated is used: the use that named
@@ -152,47 +166,35 @@ impl TypeChecker {
         }
     }
 
-    /// Recursively verify that `ty` implements `trait_name`, walking the
-    /// matched impl's own where clauses against `ty`'s positional type
-    /// arguments. Emits `"type 'X' does not implement trait 'Y'"` once for
-    /// each unsatisfied obligation in the chain.
+    /// Check that `ty`, whose head is known, implements `trait_name` at
+    /// `bound_trait_args`, for the use `origin`: the one answer to "does
+    /// this type implement this trait". Reports
+    /// `type 'X' does not implement trait 'Y'` if not.
     ///
-    /// This is the fix for the nested-where-clause propagation bug:
-    /// `Box(Box(String)): Greet` with `trait Greet for Box(a) where a: Greet`
-    /// previously typechecked because `(Greet, Box)` was in `trait_impl_set`.
-    /// Now we additionally consult `impl_constraints` and recurse into the
-    /// impl's `(target_arg_index, required_trait)` obligations against the
-    /// matched `ty`'s type arguments.
-    ///
-    /// Recursion terminates because each step strips one layer of type
-    /// wrapping; finite types finish in O(depth).
+    /// A trait has at most one impl for a type's head, so the impl that
+    /// answers is known from the head alone, and what it says decides
+    /// what is still unknown of the subject and of the bound: the impl's
+    /// self type and trait arguments, with new variables for the impl's
+    /// own, are unified with the subject's and the bound's (`s(3, y)`
+    /// for `where a: Conv(b)` and `trait Conv(String) for Int` makes `y`
+    /// a `String`). What the impl's header asks of its variables is owed
+    /// by the same use (`want`): a part of the subject still unknown
+    /// waits, and is generalised with the definition or decided later.
     pub(super) fn verify_trait_obligation(
         &mut self,
         trait_name: TraitKey,
         bound_trait_args: &[Type],
         ty: &Type,
-        span: Span,
+        origin: Origin,
     ) {
+        let span = origin.span;
         let resolved = self.apply(ty);
         if matches!(resolved, Type::Error | Type::Never) {
             return;
         }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
-            if !self.bound_in_scope(r, trait_name) {
-                self.errors.push(
-                    Diagnostic::error(
-                        Code::MissingConstraint,
-                        span,
-                        format!(
-                            "type variable `{}` is not known to implement trait '{}'",
-                            r.name,
-                            self.show_trait(trait_name)
-                        ),
-                    )
-                    .with_help(format!("add `where {}: {}`", r.name, trait_name.name)),
-                );
-            }
+            self.require_declared_bound(r, trait_name, bound_trait_args, origin);
             return;
         }
         let Some(type_name) = self.type_name_for_impl(&resolved) else {
@@ -209,130 +211,145 @@ impl TypeChecker {
                 format!(
                     "type '{}' does not implement trait '{}'",
                     self.show_type(&Type::Generic(type_name, vec![])),
-                    self.show_trait(trait_name)
+                    self.show_bound(trait_name, bound_trait_args)
                 ),
                 span,
             );
             return;
         }
-        // Head-key membership alone is not enough: an alias-expanded impl
-        // can carry CONCRETE self-type args (`type Bytes2 = List(Int)`;
-        // `trait Total for Bytes2` registers under head "List" with
-        // self_type `List(Int)`), yet the membership check above matches
-        // any `List(T)`. Compare the obligated type's positional args
-        // against the stored impl self type's, with defer-on-Var logic —
-        // generic impls (`for List(a)`) store `Var` args and keep matching
-        // everything; only concrete-vs-concrete mismatches reject. A
-        // length mismatch means the two sides describe differently shaped
-        // representations of the same head (e.g. a `Record` receiver
-        // against a `Generic` impl form); skip conservatively — the
-        // method-entry unify at direct dispatch sites still guards those.
-        // Impls without a stored self type (builtin pre-stamps,
-        // auto-derive synthesis) skip the check, preserving prior
-        // behavior.
-        //
-        // Round 104 BROKEN: the per-slot walk must be consistency-
-        // tracking, not stateless. A NON-LINEAR impl self type repeats
-        // the same binder across slots — `type Pair(a) = (a, a)` expands
-        // to `(Var a', Var a')`, ditto `Square(a) = Map(a, a)` — and the
-        // old independent `zip(..).any(|(ob, im)| !trait_arg_compatible)`
-        // deferred `(Int, Fn)` against `Var a'` slot by slot, losing the
-        // constraint that BOTH slots are the SAME `a'`. The bound
-        // verified, and the Fn in slot 1 died at the runtime Display
-        // gate. `impl_self_args_consistent` threads a binding map across
-        // the slots so a repeated binder must see equal types.
-        if let Some(impl_self) = self
+        // The impl, with new variables for its own: its self type, its
+        // trait arguments and what its header asks.
+        let impl_self = self
             .tables
             .impl_self_types
             .get(&(trait_name, type_name))
+            .cloned();
+        let impl_trait_args = self
+            .tables
+            .impl_trait_args
+            .get(&(trait_name, type_name))
             .cloned()
-        {
-            let obligated_args = self.type_args_of(&resolved);
+            .unwrap_or_default();
+        let obligations = self
+            .tables
+            .impl_constraints
+            .get(&(trait_name, type_name))
+            .cloned()
+            .unwrap_or_default();
+        let mut own: Vec<TyVar> = impl_self.iter().flat_map(free_vars_in).collect();
+        own.extend(impl_trait_args.iter().flat_map(free_vars_in));
+        own.extend(
+            obligations
+                .iter()
+                .flat_map(|(_, _, args)| args.iter().flat_map(free_vars_in)),
+        );
+        let mut fresh: HashMap<TyVar, Type> = HashMap::new();
+        for v in own {
+            fresh.entry(v).or_insert_with(|| self.fresh_var());
+        }
+        // Head-key membership alone is not enough: an alias-expanded impl
+        // can carry CONCRETE self-type args (`type Bytes2 = List(Int)`;
+        // `trait Total for Bytes2` registers under head "List" with
+        // self_type `List(Int)`). The subject's positional args are
+        // compared with the impl self type's: a concrete mismatch is
+        // reported; a repeated binder of a NON-LINEAR impl self type
+        // (`type Pair(a) = (a, a)`) must see equal types
+        // (`impl_self_args_consistent`). A length mismatch means the two
+        // sides describe differently shaped representations of the same
+        // head (a `Record` receiver against a `Generic` impl form, the
+        // bare `Tuple`/`Fn` wildcard): skipped. Impls without a stored
+        // self type (builtin pre-stamps, auto-derive synthesis) skip the
+        // check.
+        let obligated_args = self.type_args_of(&resolved);
+        if let Some(impl_self) = &impl_self {
+            let impl_self = substitute_vars(impl_self, &fresh);
             let impl_args = self.type_args_of(&impl_self);
-            if obligated_args.len() == impl_args.len()
-                && !self.impl_self_args_consistent(&obligated_args, &impl_args)
-            {
-                let (obligated, only) = self.show_apart(&resolved, &impl_self);
-                self.error(
-                    Code::MissingTraitImpl,
-                    format!(
-                        "type '{}' does not implement trait '{}': the only impl is for '{}'",
-                        obligated,
-                        self.show_trait(trait_name),
-                        only
-                    ),
-                    span,
-                );
-                return;
+            if obligated_args.len() == impl_args.len() {
+                if !self.impl_self_args_consistent(&obligated_args, &impl_args) {
+                    let (obligated, only) = self.show_apart(&resolved, &impl_self);
+                    self.error(
+                        Code::MissingTraitImpl,
+                        format!(
+                            "type '{}' does not implement trait '{}': the only impl is for '{}'",
+                            obligated,
+                            self.show_bound(trait_name, bound_trait_args),
+                            only
+                        ),
+                        span,
+                    );
+                    return;
+                }
+                // The only impl is this one: what it says of the
+                // subject's parts holds.
+                for (ob, im) in obligated_args.iter().zip(&impl_args) {
+                    let _ = self.unify_types(ob, im);
+                }
             }
         }
-        // Parameterized-trait verification: if the bound carries trait
-        // args (e.g. `where a: TryInto(Int)`) and the matched impl also
-        // registered its own args (`trait TryInto(Float) for String`),
-        // the two arg lists must be positionally compatible. Concrete
-        // mismatches reject — this is the soundness hole closed in
-        // round 58. Bare `verify_trait_obligation(trait, &[], ty, ..)`
-        // (supertrait chains, old call sites) keeps the fast path.
-        if !bound_trait_args.is_empty()
-            && let Some(impl_args) = self
-                .tables
-                .impl_trait_args
-                .get(&(trait_name, type_name))
-                .cloned()
-            && impl_args.len() == bound_trait_args.len()
-        {
-            for (bound_arg, impl_arg) in bound_trait_args.iter().zip(impl_args.iter()) {
+        // The bound's trait arguments are the impl's
+        // (`where a: TryInto(Int)` against `trait TryInto(Float) for
+        // String` is a mismatch). A bare bound (supertrait chains) says
+        // nothing of them.
+        if !bound_trait_args.is_empty() && impl_trait_args.len() == bound_trait_args.len() {
+            let impl_trait_args: Vec<Type> = impl_trait_args
+                .iter()
+                .map(|t| substitute_vars(t, &fresh))
+                .collect();
+            for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
                 let b = self.apply(bound_arg);
                 let i = self.apply(impl_arg);
                 if !self.trait_arg_compatible(&b, &i) {
                     self.error(
                         Code::MissingTraitImpl,
                         format!(
-                            "type '{}' does not implement trait '{}({})': \
-                             the matched impl is '{}({})'",
+                            "type '{}' does not implement trait '{}': the matched impl is '{}'",
                             self.show_type(&Type::Generic(type_name, vec![])),
-                            self.show_trait(trait_name),
-                            bound_trait_args
-                                .iter()
-                                .map(|t| format!("{t}"))
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            resolve(trait_name.name),
-                            impl_args
-                                .iter()
-                                .map(|t| format!("{t}"))
-                                .collect::<Vec<_>>()
-                                .join(", "),
+                            self.show_bound(trait_name, bound_trait_args),
+                            self.show_bound(trait_name, &impl_trait_args),
                         ),
                         span,
                     );
                     return;
                 }
             }
-        }
-        // Walk the matched impl's own where clauses against the actual
-        // type arguments. Clone the obligation list so the recursive
-        // `self.error` call doesn't conflict with the borrow.
-        let Some(obligations) = self
-            .tables
-            .impl_constraints
-            .get(&(trait_name, type_name))
-            .cloned()
-        else {
-            return;
-        };
-        let args = self.type_args_of(&resolved);
-        for (idx, sub_trait, sub_trait_args) in obligations {
-            if let Some(arg_ty) = args.get(idx).cloned() {
-                // Thread the bound's own trait args so parameterized
-                // sub-bounds (`where a: Conv(Int)`) reject impls whose
-                // trait args don't match. Resolve any tyvars first so
-                // recursion sees concrete forms when available.
-                let resolved_sub_args: Vec<Type> =
-                    sub_trait_args.iter().map(|t| self.apply(t)).collect();
-                self.verify_trait_obligation(sub_trait, &resolved_sub_args, &arg_ty, span);
+            for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
+                let _ = self.unify_types(bound_arg, impl_arg);
             }
         }
+        // What the impl's header asks of the subject's arguments is owed
+        // by the same use.
+        for (idx, sub_trait, sub_trait_args) in obligations {
+            if let Some(arg_ty) = obligated_args.get(idx).cloned() {
+                let args: Vec<Type> = sub_trait_args
+                    .iter()
+                    .map(|t| substitute_vars(t, &fresh))
+                    .collect();
+                self.want(
+                    Pred::Trait {
+                        tr: sub_trait,
+                        args,
+                        subject: arg_ty,
+                    },
+                    origin,
+                );
+            }
+        }
+    }
+
+    /// Check, where an impl is declared, that `ty` implements
+    /// `trait_name` at `args`, as far as the declaration says what `ty`
+    /// is: what would be owed for one of the impl's own variables is the
+    /// impl's uses' to owe, not the declaration's.
+    pub(super) fn verify_declared(
+        &mut self,
+        trait_name: TraitKey,
+        args: &[Type],
+        ty: &Type,
+        span: Span,
+    ) {
+        let owed = self.wanted.len();
+        self.verify_trait_obligation(trait_name, args, ty, Origin { span, callee: None });
+        self.wanted.truncate(owed);
     }
 
     /// Consistency-tracking variant of the per-slot compatibility walk

@@ -151,7 +151,7 @@ fn strongly_connected(nodes: &[usize], edges: &[Vec<usize>]) -> Vec<Component> {
 }
 
 /// Call `note` with what each name written in `expr` resolves to.
-fn references_in_expr(expr: &Expr, note: &mut impl FnMut(Option<crate::defs::Res>)) {
+pub(super) fn references_in_expr(expr: &Expr, note: &mut impl FnMut(Option<crate::defs::Res>)) {
     note(expr.res);
     match &expr.kind {
         ExprKind::Int(_)

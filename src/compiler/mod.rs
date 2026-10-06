@@ -1163,97 +1163,8 @@ impl Compiler {
             }
 
             ExprKind::Call(callee, args) => {
-                // Argument count is encoded as a `u8` in all four
-                // call emission paths below (CallBuiltin, CallMethod,
-                // a global's Call, plain Call). Wrapping via
-                // `.len() as u8` used to let a 256-argument call
-                // compile with argc=0, and the VM would then
-                // misinterpret an unrelated stack value as the
-                // callee. Reject at compile time here — the method-
-                // call path adds the receiver so the limit is 254
-                // explicit arguments in that case.
-                if args.len() > u8::MAX as usize {
-                    return Err(Diagnostic::error(
-                        Code::CompileLimit,
-                        span,
-                        format!(
-                            "call has {} arguments; silt calls are limited to 255",
-                            args.len()
-                        ),
-                    ));
-                }
-                if let Some(variant) = self.variant_value(callee) {
-                    // A variant's constructor: `Circle(r)`,
-                    // `Shape.Circle(r)`, `channel.Message(v)`,
-                    // `m.Shape.Circle(r)`.
-                    let idx = self.add_constant(variant, span)?;
-                    self.emit(Asm::Constant { k: idx }, span)?;
-                    self.compile_operands(args)?;
-                    let argc = args.len();
-                    self.emit_call(argc, tail, span)?;
-                } else if let Some(builtin_name) = self.builtin_module_function(callee) {
-                    // A builtin module's function: `list.map(...)`.
-                    self.check_decode_target(&builtin_name, args.last(), span)?;
-                    self.compile_operands(args)?;
-                    let argc = args.len();
-                    let name_idx = self.add_constant(Value::String(builtin_name), span)?;
-                    self.emit(
-                        Asm::CallBuiltin {
-                            name: name_idx,
-                            argc,
-                        },
-                        span,
-                    )?;
-                } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
-                    if self.builtin_trait_method_of_builtin_type(callee) && !args.is_empty() {
-                        // `Int.display(1)`: a builtin trait's method of a
-                        // builtin type, which is native, not a global; the
-                        // first argument is the receiver.
-                        self.compile_operands(args)?;
-                        self.emit_call_method(*method, args.len(), callee.res, span)?;
-                    } else if let Some(slot) = self.qualified_type_member(callee)? {
-                        // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
-                        // through its type.
-                        self.emit(Asm::GetGlobal { slot }, span)?;
-                        self.compile_operands(args)?;
-                        let argc = args.len();
-                        self.emit_call(argc, tail, span)?;
-                    } else if let Some(def) = self.value_def(callee.res) {
-                        // A module's function: `m.f(1)`.
-                        self.emit_global_value(def, span)?;
-                        self.compile_operands(args)?;
-                        let argc = args.len();
-                        self.emit_call(argc, tail, span)?;
-                    } else {
-                        // Method call on a value: expr.method(args)
-                        // Compile receiver as first argument. The
-                        // receiver takes one slot of the 255-argument
-                        // budget so the explicit-arg cap is 254 here.
-                        if args.len() >= u8::MAX as usize {
-                            return Err(Diagnostic::error(
-                                Code::CompileLimit,
-                                span,
-                                format!(
-                                    "method call has {} arguments (plus receiver); silt calls are limited to 255",
-                                    args.len()
-                                ),
-                            ));
-                        }
-                        self.compile_operands(std::iter::once(&**receiver).chain(args))?;
-                        let argc = args.len() + 1; // receiver + args
-                        self.emit_call_method(*method, argc, callee.res, span)?;
-                    }
-                } else {
-                    // Normal function call. A decoder imported by name
-                    // (`import json.{ parse }`) is checked like
-                    // `json.parse(..)`.
-                    if let Some(builtin_name) = self.builtin_function(callee.res) {
-                        self.check_decode_target(&builtin_name, args.last(), span)?;
-                    }
-                    self.compile_operands(std::iter::once(&**callee).chain(args))?;
-                    let argc = args.len();
-                    self.emit_call(argc, tail, span)?;
-                }
+                let args: Vec<&Expr> = args.iter().collect();
+                self.compile_call(callee, &args, span, tail)?;
             }
 
             // A variant: `EnumName.Variant`, `time.Monday`, `m.Color.Red`.
@@ -1893,6 +1804,109 @@ impl Compiler {
 
     // ── Pipe compilation ─────────────────────────────────────────
 
+    /// Compile the call of `callee` with `args`: `f(a, b)`, and
+    /// `a |> f(b)`, which is the same call (`compile_pipe`).
+    fn compile_call(
+        &mut self,
+        callee: &Expr,
+        args: &[&Expr],
+        span: Span,
+        tail: bool,
+    ) -> Result<(), Diagnostic> {
+        // Argument count is encoded as a `u8` in all four
+        // call emission paths below (CallBuiltin, CallMethod,
+        // a global's Call, plain Call). Wrapping via
+        // `.len() as u8` used to let a 256-argument call
+        // compile with argc=0, and the VM would then
+        // misinterpret an unrelated stack value as the
+        // callee. Reject at compile time here — the method-
+        // call path adds the receiver so the limit is 254
+        // explicit arguments in that case.
+        if args.len() > u8::MAX as usize {
+            return Err(Diagnostic::error(
+                Code::CompileLimit,
+                span,
+                format!(
+                    "call has {} arguments; silt calls are limited to 255",
+                    args.len()
+                ),
+            ));
+        }
+        if let Some(variant) = self.variant_value(callee) {
+            // A variant's constructor: `Circle(r)`,
+            // `Shape.Circle(r)`, `channel.Message(v)`,
+            // `m.Shape.Circle(r)`.
+            let idx = self.add_constant(variant, span)?;
+            self.emit(Asm::Constant { k: idx }, span)?;
+            self.compile_operands(args.iter().copied())?;
+            let argc = args.len();
+            self.emit_call(argc, tail, span)?;
+        } else if let Some(builtin_name) = self.builtin_module_function(callee) {
+            // A builtin module's function: `list.map(...)`.
+            self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+            self.compile_operands(args.iter().copied())?;
+            let argc = args.len();
+            let name_idx = self.add_constant(Value::String(builtin_name), span)?;
+            self.emit(
+                Asm::CallBuiltin {
+                    name: name_idx,
+                    argc,
+                },
+                span,
+            )?;
+        } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
+            if self.builtin_trait_method_of_builtin_type(callee) && !args.is_empty() {
+                // `Int.display(1)`: a builtin trait's method of a
+                // builtin type, which is native, not a global; the
+                // first argument is the receiver.
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call_method(*method, args.len(), callee.res, span)?;
+            } else if let Some(slot) = self.qualified_type_member(callee)? {
+                // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
+                // through its type.
+                self.emit(Asm::GetGlobal { slot }, span)?;
+                self.compile_operands(args.iter().copied())?;
+                let argc = args.len();
+                self.emit_call(argc, tail, span)?;
+            } else if let Some(def) = self.value_def(callee.res) {
+                // A module's function: `m.f(1)`.
+                self.emit_global_value(def, span)?;
+                self.compile_operands(args.iter().copied())?;
+                let argc = args.len();
+                self.emit_call(argc, tail, span)?;
+            } else {
+                // Method call on a value: expr.method(args)
+                // Compile receiver as first argument. The
+                // receiver takes one slot of the 255-argument
+                // budget so the explicit-arg cap is 254 here.
+                if args.len() >= u8::MAX as usize {
+                    return Err(Diagnostic::error(
+                        Code::CompileLimit,
+                        span,
+                        format!(
+                            "method call has {} arguments (plus receiver); silt calls are limited to 255",
+                            args.len()
+                        ),
+                    ));
+                }
+                self.compile_operands(std::iter::once(&**receiver).chain(args.iter().copied()))?;
+                let argc = args.len() + 1; // receiver + args
+                self.emit_call_method(*method, argc, callee.res, span)?;
+            }
+        } else {
+            // Normal function call. A decoder imported by name
+            // (`import json.{ parse }`) is checked like
+            // `json.parse(..)`.
+            if let Some(builtin_name) = self.builtin_function(callee.res) {
+                self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+            }
+            self.compile_operands(std::iter::once(callee).chain(args.iter().copied()))?;
+            let argc = args.len();
+            self.emit_call(argc, tail, span)?;
+        }
+        Ok(())
+    }
+
     fn compile_pipe(
         &mut self,
         left: &Expr,
@@ -1900,16 +1914,8 @@ impl Compiler {
         span: Span,
         tail: bool,
     ) -> Result<(), Diagnostic> {
-        // val |> f(args) -> f(val, args)
-        // val |> f       -> f(val)
-        //
-        // For builtins (CallBuiltin): val first, then args — the builtin
-        // reads them positionally, no callee on the stack.
-        //
-        // For non-builtins (Call): callee first, then val, then args — Call
-        // pops callee + N args.  Compiling callee before val avoids needing
-        // a hidden local to stash the pipe value, which previously leaked a
-        // ghost stack slot and corrupted record field assignments.
+        // `val |> f(args)` is the call `f(val, args)`, and `val |> f` the
+        // call `f(val)`.
         match &right.kind {
             ExprKind::Call(callee, args) => {
                 // The piped value takes one slot, so the explicit-arg
@@ -1924,36 +1930,11 @@ impl Compiler {
                         ),
                     ));
                 }
-                if let Some(builtin_name) = self.builtin_module_function(callee) {
-                    // With a piped value the type argument of a decoding
-                    // builtin is still the last explicit argument.
-                    self.check_decode_target(&builtin_name, args.last(), span)?;
-                    // Builtins: val on stack first, then args
-                    self.compile_operands(std::iter::once(left).chain(args))?;
-                    let argc = args.len() + 1;
-                    let name_idx = self.add_constant(Value::String(builtin_name), span)?;
-                    self.emit(
-                        Asm::CallBuiltin {
-                            name: name_idx,
-                            argc,
-                        },
-                        span,
-                    )?;
-                } else {
-                    if let Some(builtin_name) = self.builtin_function(callee.res) {
-                        self.check_decode_target(&builtin_name, args.last(), span)?;
-                    }
-                    // Non-builtin: callee first, then val, then args
-                    self.compile_operands([&**callee, left].into_iter().chain(args))?;
-                    let argc = args.len() + 1;
-                    self.emit_call(argc, tail, span)?;
-                }
+                // The call `callee(left, args..)`.
+                let args: Vec<&Expr> = std::iter::once(left).chain(args).collect();
+                self.compile_call(callee, &args, span, tail)?;
             }
-            _ => {
-                // val |> f: callee first, then val
-                self.compile_operands([right, left])?;
-                self.emit_call(1, tail, span)?;
-            }
+            _ => self.compile_call(right, &[left], span, tail)?,
         }
         Ok(())
     }
