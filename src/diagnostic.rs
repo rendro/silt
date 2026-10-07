@@ -174,7 +174,8 @@ codes! {
     /// An impl that breaks a trait rule: a missing or undeclared method,
     /// a hand-written impl of a derived trait, ...
     InvalidTraitImpl = "E0331", Type;
-    /// An impl of a foreign trait for a foreign type.
+    /// An impl written in a module that declares neither its trait
+    /// nor its type.
     ImplElsewhere = "E0332", Type;
     DuplicateDeclaration = "E0333", Type;
     /// A record, enum or alias declaration that is not well-formed.

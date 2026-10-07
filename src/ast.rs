@@ -581,8 +581,8 @@ pub struct FnDecl {
     /// landing zones. The LSP rename / references / definition /
     /// document-highlight handlers need the *identifier* range so that
     /// rename edits replace the name and not the keyword. For
-    /// synthesized FnDecls (auto-derive, recovery stubs, builtin trait
-    /// signatures) this falls back to `span`.
+    /// synthesized FnDecls (recovery stubs, builtin trait signatures)
+    /// this falls back to `span`.
     pub name_span: Span,
     /// True when this declaration was synthesized by parser error recovery
     /// (Option B: salvage the header and emit a stub so downstream references

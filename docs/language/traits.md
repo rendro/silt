@@ -88,10 +88,10 @@ cannot be redefined.)
 
 Implementing `Cmp2` on a type requires that type to also implement `Eq2`
 (four of silt's six built-in traits — `Equal`, `Hash`, `Compare`,
-`Display` — are auto-derived for every user-defined type and the
-displayable builtins, so the obligation is satisfied automatically;
-channels and function values are the exception — they do not implement
-`Display`. The fifth built-in, `Error`, is not auto-derived).
+`Display` — are structural: the language answers them for every type
+made of types that have them, so for most types the obligation holds
+without an impl; a type that holds a function has none of the four. The
+fifth built-in, `Error`, is implemented by hand).
 
 Multiple supertraits separate with `+`:
 
@@ -497,19 +497,20 @@ type.
 ## Built-in Traits
 
 silt ships **six** built-in traits. Four of them — `Equal`, `Hash`,
-`Compare`, `Display` — are **automatically derived** for every
-user-defined type. `Error` is built-in but is **not** auto-derived.
-`Number` is the types arithmetic is on, `Int` and `Float`, and nothing
-else.
+`Compare`, `Display` — are **structural**: the language answers them
+itself, for every type made of types that have them (what that means
+for each kind of type is listed below). Of the four only `Display` may
+be written by hand. `Error` is implemented by hand. `Number` is the
+types arithmetic is on, `Int` and `Float`, and nothing else.
 
-| Trait     | Purpose                          | Auto-derived? |
-|-----------|----------------------------------|---------------|
-| `Display` | Convert to human-readable string | yes           |
-| `Equal`   | Equality comparison              | yes           |
-| `Hash`    | Hash value for maps/sets         | yes           |
-| `Compare` | Order comparison                 | yes           |
-| `Error`   | Error reporting (`message()`)    | no            |
-| `Number`  | `+ - * / %` and unary `-`        | Int and Float only |
+| Trait     | Purpose                          | Who has it | An impl may be written |
+|-----------|----------------------------------|------------|------------------------|
+| `Display` | Convert to human-readable string | by structure | yes: it replaces the structural one |
+| `Equal`   | Equality comparison              | by structure | no (an error) |
+| `Hash`    | Hash value for maps/sets         | by structure | no (an error) |
+| `Compare` | Order comparison; includes `Equal` | by structure | no (an error) |
+| `Error`   | Error reporting (`message()`)    | types with an impl | yes |
+| `Number`  | `+ - * / %` and unary `-`        | Int and Float only | no |
 
 Operators are these traits: `==` and `!=` need `Equal`, `<` `>` `<=`
 `>=` need `Compare`, interpolation and `println` need `Display`,
@@ -531,10 +532,15 @@ apply to needs a type the definition decides, or an annotation. `?`
 takes it from the return type of the function it is in, when that is
 known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
-The auto-derived `Display` formats in constructor syntax: `Circle(5)`
+The structural `Display` formats in constructor syntax: `Circle(5)`
 for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
-order the type declares them. Write your own `trait Display for T` to
-override it. There is one `Display`: `println`, `print`, interpolation,
+order the type declares them (`{x: 1, y: 2}` for an anonymous record,
+its fields in the order of their names). Write your own
+`trait Display for T` to replace it, in the module that declares `T`
+(see [Where an Impl Is Written](#where-an-impl-is-written)): a
+`Display` impl for a type of another module, or for a built-in type, is
+an error. A type that holds a function has no structural `Display`, and
+may be given a written one. There is one `Display`: `println`, `print`, interpolation,
 `.display()`, `string.from` and a panic's message all show a value the
 same way, and all use the impl you wrote, wherever a value of the type
 is inside what is shown (`println([t])`, `"{Some(t)}"`, a field of a
@@ -559,8 +565,14 @@ fn main() {
 }
 ```
 
-`Equal`, `Hash` and `Compare` are **sealed**: they are always derived
-structurally from a type's fields (a type gets them when every field
+`io.inspect` and the texts of failed assertions (`test.assert_eq` and
+the like) are for the person debugging: they write the structure of a
+value in silt syntax, strings quoted, and do not call written `Display`
+impls (`io.inspect(t)` is `Temp {degrees: 21}`). They write a record's
+fields in the same order as `println`.
+
+`Equal`, `Hash` and `Compare` are **sealed**: they always come
+from a type's structure (a type gets them when every field
 supports them), and `==`, `<`, `.equal()`, `.compare()`, `.hash()` and
 map keys use exactly that structure. A record is ordered by its fields
 in the order the type declares them, an enum by its variants in the
