@@ -1,0 +1,27 @@
+import t
+import x
+
+pub type Y {
+  n: Int,
+}
+
+trait t.T for Y {
+  fn m(self) -> String {
+    "{self.n}{unit}"
+  }
+}
+
+trait Display for Y {
+  fn display(self) -> String {
+    "Y{self.n}{unit}"
+  }
+}
+
+pub let own = x.f(Y { n: 0 })
+
+pub let own_shown = x.shown(Y { n: 0 })
+
+let unit = {
+  println("unit")
+  "!"
+}
