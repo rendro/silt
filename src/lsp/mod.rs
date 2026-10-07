@@ -48,6 +48,7 @@ mod inlay_hints;
 mod local_bindings;
 mod locals;
 mod modules;
+mod names;
 mod preload;
 mod project;
 mod references;

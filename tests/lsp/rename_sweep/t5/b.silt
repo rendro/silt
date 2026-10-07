@@ -1,0 +1,5 @@
+import   geo -- the geo module
+{- import geo2 -}
+pub fn fb() -> Int {
+  geo.mk(2)
+}

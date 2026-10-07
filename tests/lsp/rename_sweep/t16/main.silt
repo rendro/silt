@@ -1,0 +1,31 @@
+type Side {
+  Left(Int),
+  Right(Int),
+}
+
+type Alias = Side
+
+type Pair(a) {
+  fst: a,
+  snd: a,
+}
+
+fn flip(s: Alias) -> Side {
+  match s {
+    Side.Left(n) -> Side.Right(n)
+    Side.Right(n) -> Side.Left(n)
+  }
+}
+
+fn pair(p: Pair(Side)) -> List(Side) {
+  [p.fst, p.snd]
+}
+
+fn main() {
+  let s = flip(Side.Left(1))
+  let ps = pair(Pair { fst: s, snd: Left(2) })
+  match ps {
+    [Right(a), Left(b)] -> println(a + b)
+    _ -> println(0)
+  }
+}

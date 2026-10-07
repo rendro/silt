@@ -1,0 +1,8 @@
+pub type Shape {
+  Dot,
+  Box(Int),
+}
+
+pub trait Area {
+  fn area(self) -> Int
+}

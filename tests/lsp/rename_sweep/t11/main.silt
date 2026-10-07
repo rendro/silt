@@ -1,0 +1,68 @@
+import list
+
+type Tree(a) {
+  Leaf,
+  Node(Tree(a), a, Tree(a)),
+}
+
+type Box {
+  w: Int,
+}
+
+trait Sized {
+  fn size(self) -> Int
+}
+
+trait Named: Sized {
+  fn name(self) -> String
+  fn both(self, other: Self) -> Int {
+    self.size() + other.size()
+  }
+}
+
+trait Sized for Box {
+  fn size(self) -> Int {
+    self.w
+  }
+}
+
+trait Named for Box {
+  fn name(self) -> String {
+    "box"
+  }
+}
+
+let (first, second) = (1, 2)
+let base = first + second
+
+fn depth(t: Tree(a)) -> Int {
+  match t {
+    Leaf -> 0
+    Node(l, _, r) -> 1 + depth(l) + depth(r)
+  }
+}
+
+fn describe(x: t) -> String where t: Named + Sized {
+  let n = 1
+  let s = "äö€😀 {x.name()} 😀 {x.size() + n} 😀 {n}"
+  "{s} {n}"
+}
+
+fn locals() -> Int {
+  let base = base + 1
+  let wrap = Some
+  let xs = list.map([1, 2], wrap)
+  let mk = Node
+  let tree = mk(Leaf, base, Leaf)
+  list.length(xs) + depth(tree) + base
+}
+
+fn main() {
+  let b = Box { w: 3 }
+  println(describe(b))
+  println(b.both(Box { w: 4 }) + locals() + second)
+  let Box { w } = b
+  println(w)
+  let Box { w: width } = b
+  println(width)
+}

@@ -1,0 +1,18 @@
+import shapes
+import shapes.{ Area }
+
+trait Area for shapes.Shape {
+  fn area(self) -> Int {
+    match self {
+      shapes.Dot -> 0
+      shapes.Box(w) -> w * w
+    }
+  }
+}
+
+pub fn total(xs: List(shapes.Shape)) -> Int {
+  match xs {
+    [] -> 0
+    [x, ..rest] -> x.area() + total(rest)
+  }
+}

@@ -31,6 +31,7 @@ mod lsp_tier2_tests;
 mod lsp_type_def_impl_tests;
 mod lsp_uri_encoding_tests;
 mod lsp_workspace_tests;
+mod rename_sweep_tests;
 mod round100_lsp_rename_record_shorthand_binder_tests;
 mod round101_lsp_hover_callee_signature_tests;
 mod round101_lsp_rename_nested_shorthand_binder_tests;

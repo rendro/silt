@@ -2004,7 +2004,8 @@ impl<'src> Parser<'src> {
             self.advance();
             let receiver = self.parse_type_expr()?;
             self.expect(&Token::As)?;
-            let (trait_module, trait_name, _) = self.parse_qualified_name("trait name")?;
+            let (trait_module, trait_name, trait_name_span) =
+                self.parse_qualified_name("trait name")?;
             self.expect(&Token::Gt)?;
             self.expect(&Token::ColonColon)?;
             let (assoc_name, _) = self.expect_ident()?;
@@ -2013,6 +2014,7 @@ impl<'src> Parser<'src> {
                     receiver: Box::new(receiver),
                     trait_module,
                     trait_name,
+                    trait_name_span: Some(trait_name_span),
                     assoc_name,
                 },
                 start,
@@ -2147,6 +2149,7 @@ impl<'src> Parser<'src> {
                         receiver: Box::new(recv),
                         trait_module: None,
                         trait_name,
+                        trait_name_span: None,
                         assoc_name,
                     },
                     start,

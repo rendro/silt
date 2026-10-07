@@ -1,0 +1,99 @@
+-- cmd: lsp
+-- lsp: rename 31:7 Sizable
+-- lsp: rename 50:5 resize
+-- lsp: definition 50:5
+-- lsp: definition 50:18
+-- lsp: definition 98:88
+-- lsp: rename 32:12 me
+-- lsp: rename 54:13 width
+-- lsp: rename 55:3 width
+-- lsp: rename 60:10 m
+-- lsp: definition 60:27
+-- lsp: rename 65:7 n
+-- lsp: rename 65:7 total
+-- lsp: rename 66:13 n
+-- lsp: rename 65:7 println
+-- lsp: rename 65:7 _
+-- lsp: rename 72:9 inner
+-- lsp: references 75:3
+-- lsp: references 79:8
+-- lsp: rename 92:24 Holder
+-- A rename edits what the name means and nothing else. A method name at
+-- a call is no name of its trait (and has no rename); its definition is
+-- the method. `self` is not renamed. A field written without its value
+-- is written out. The binders of an or-pattern's alternatives are one
+-- binding. A new name that is taken where the old one is written is
+-- refused. A block ends its `let`s. `<T as Trait>::Item` names the trait.
+type Box {
+  w: Int,
+}
+
+trait Sized {
+  fn scale(self, by: Int) -> Int {
+    self.size() * by
+  }
+  fn size(self) -> Int
+}
+
+trait Sized for Box {
+  fn size(self) -> Int {
+    self.w
+  }
+}
+
+type Side {
+  Left(Int),
+  Right(Int),
+}
+
+fn twice(x: a) -> Int where a: Sized {
+  x.scale(2) + x.size()
+}
+
+fn unbox(b: Box) -> Int {
+  let Box { w } = b
+  w + Box { w: w }.w
+}
+
+fn either(s: Side) -> Int {
+  match s {
+    Left(n) | Right(n) -> n + 1
+  }
+}
+
+fn scopes(n: Int) -> Int {
+  let m = n + 1
+  let f = { k -> k + m }
+  f(n)
+}
+
+fn blocks(n: Int) -> Int {
+  let r = {
+    let n = n * 2
+    n + 1
+  }
+  n + r
+}
+
+fn loops(n: Int) -> Int {
+  loop n = n + 1 {
+    match n > 5 {
+      true -> n
+      false -> loop(n + 1)
+    }
+  }
+}
+
+trait Container {
+  type Item
+  fn first(self) -> Self::Item
+}
+
+fn head(c: t) -> <t as Container>::Item where t: Container {
+  c.first()
+}
+
+fn main() {
+  let b = Box { w: 3 }
+  println(twice(b) + unbox(b) + either(Left(1)) + scopes(1) + blocks(1) + loops(1) + b.size())
+}

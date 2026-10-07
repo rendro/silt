@@ -822,6 +822,7 @@ impl ShapeWriter {
                 receiver,
                 trait_module,
                 trait_name,
+                trait_name_span: _,
                 assoc_name,
             } => {
                 self.open("projection");

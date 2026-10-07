@@ -1,0 +1,7 @@
+import impls
+import shapes.{ Shape, Box, Dot }
+
+fn main() {
+  let xs: List(Shape) = [Box(2), Dot]
+  println(impls.total(xs))
+}

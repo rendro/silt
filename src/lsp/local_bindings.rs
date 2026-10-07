@@ -132,7 +132,9 @@ fn collect_local_bindings_in_expr(
     match &expr.kind {
         ExprKind::Block(stmts) => {
             // Each `let x = v` in a block is visible from that point to the
-            // end of the block.
+            // end of the block: its own closing brace, wherever the
+            // block stands.
+            let scope_end = scope_end.min(expr.span.end as usize);
             for stmt in stmts.iter() {
                 match stmt {
                     Stmt::Let { pattern, value, .. } => {
@@ -213,18 +215,20 @@ fn collect_local_bindings_in_expr(
             bindings: loop_bindings,
             body,
         } => {
-            let body_start = body.span.start as usize;
+            // A binder is visible behind its own initial value: in the
+            // later ones, and in the body.
             let body_end = body.span.end as usize;
             for (name, name_span, init) in loop_bindings {
+                collect_local_bindings_in_expr(init, scope_end, bindings, records);
                 bindings.push(LocalBinding {
                     name: *name,
                     binding_offset: name_span.start as usize,
                     binding_len: resolve(*name).len(),
-                    scope_start: body_start,
+                    scope_start: init.span.end as usize,
                     scope_end: body_end,
                     ty: init.ty.clone(),
+                    same_as: None,
                 });
-                collect_local_bindings_in_expr(init, scope_end, bindings, records);
             }
             collect_local_bindings_in_expr(body, body_end, bindings, records);
         }
@@ -255,6 +259,7 @@ fn collect_pattern_bindings(
                 scope_start: visible_from,
                 scope_end,
                 ty: expr_ty.cloned(),
+                same_as: None,
             });
         }
         PatternKind::Tuple(pats) => {
@@ -269,9 +274,25 @@ fn collect_pattern_bindings(
                 collect_pattern_bindings(p, visible_from, inner, scope_end, bindings, records);
             }
         }
+        // The alternatives bind the same names: the binders of the first
+        // are the bindings, those of the others are further sites of them.
         PatternKind::Or(pats) => {
-            for p in pats {
+            let before = bindings.len();
+            for (i, p) in pats.iter().enumerate() {
+                let first_of_this = bindings.len();
                 collect_pattern_bindings(p, visible_from, expr_ty, scope_end, bindings, records);
+                if i == 0 {
+                    continue;
+                }
+                for k in first_of_this..bindings.len() {
+                    let canonical = bindings[before..first_of_this]
+                        .iter()
+                        .find(|b| b.name == bindings[k].name)
+                        .map(LocalBinding::id);
+                    if bindings[k].same_as.is_none() {
+                        bindings[k].same_as = canonical;
+                    }
+                }
             }
         }
         PatternKind::Constructor {
@@ -326,6 +347,7 @@ fn collect_pattern_bindings(
                         scope_start: visible_from,
                         scope_end,
                         ty: lookup_field_ty(*name),
+                        same_as: None,
                     });
                 }
             }
@@ -362,6 +384,7 @@ fn collect_pattern_bindings(
                         scope_start: visible_from,
                         scope_end,
                         ty: lookup_field_ty(*name),
+                        same_as: None,
                     });
                 }
             }
@@ -389,6 +412,7 @@ fn collect_pattern_bindings(
                     scope_start: visible_from,
                     scope_end,
                     ty,
+                    same_as: None,
                 });
             }
         }

@@ -7,8 +7,9 @@ use super::conversions::position_to_offset;
 
 impl Server {
     /// Where the name under the cursor is declared: a local's binder, a
-    /// definition's name in its file (see `workspace.rs`). Nothing for
-    /// one of silt's own names.
+    /// definition's name in its file, a method's declaration in the impl
+    /// or the trait (see `workspace.rs`). Nothing for one of silt's own
+    /// names.
     pub(super) fn goto_definition(
         &self,
         params: lsp_types::GotoDefinitionParams,
@@ -17,6 +18,10 @@ impl Server {
         let pos = params.text_document_position_params.position;
         let doc = self.documents.get(uri)?;
         let cursor = position_to_offset(&doc.source, &pos);
+        // A method name at a call: the method the checker selected.
+        if let Some(location) = self.method_declaration_at(uri, cursor) {
+            return Some(GotoDefinitionResponse::Scalar(location));
+        }
         let (_, target) = self.target_at(uri, cursor)?;
         let mut locations = self.declarations_of(uri, &target);
         match locations.len() {

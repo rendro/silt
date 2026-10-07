@@ -11,6 +11,7 @@ use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
 use super::local_bindings::nearest_local_binding_for;
 use super::modules::{qualified_access_at, qualifier_at};
+use super::workspace::Named;
 
 impl Server {
     // ── Hover ──────────────────────────────────────────────────────
@@ -47,20 +48,8 @@ impl Server {
         if let Some(binding) = find_local_binding_at_offset(&doc.locals, cursor)
             && let Some(ref ty) = binding.ty
         {
-            // When this local binding also matches a top-level decl
-            // with a doc comment (e.g. `let x = 42` at file scope), we
-            // surface the doc alongside the type. Per-param doc is
-            // phase-2; phase-1 only the top-level decl binding
-            // inherits docs.
-            let doc_text = doc
-                .definitions
-                .get(&binding.name)
-                .and_then(|d| d.doc.clone());
-            let mut value = format!("```silt\n{ty}\n```");
-            if let Some(d) = doc_text {
-                value.push_str("\n\n---\n\n");
-                value.push_str(&d);
-            }
+            // A local has no documentation of its own.
+            let value = format!("```silt\n{ty}\n```");
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -101,7 +90,16 @@ impl Server {
         // the expression-walk result, falling back to the definition type
         // when the expression type still has unresolved variables.
         let ident_at_cursor = find_ident_at_offset(program, cursor);
-        let def_entry = ident_at_cursor.and_then(|name| doc.definitions.get(&name));
+        // What the name means decides whose type and documentation it
+        // has: a definition's (of this file or of the module that
+        // declares it), none for a local, the builtin docs for one of
+        // silt's own names. A local that is spelled like a function is
+        // not that function.
+        let named = self.named_at(uri, cursor);
+        let def_entry = match &named {
+            Named::Definition(info) => Some(info),
+            Named::Local | Named::Other => None,
+        };
 
         let ty = {
             let def_ty = def_entry
@@ -114,43 +112,34 @@ impl Server {
         };
 
         // The doc comment of what the cursor names, rendered below the
-        // signature with the LSP `\n---\n` separator: a definition of
-        // this file; a member of an imported module (`m.f`, or `f` from
-        // `import m.{ f }`), from the session's view of that module; else
-        // the builtin docs, for stdlib names (`println`, `list.map`).
+        // signature with the LSP `\n---\n` separator: the definition's,
+        // from the module that declares it (this file, or the one `m.f`
+        // or an item of `import m.{ f }` comes from); the builtin docs,
+        // for one of silt's own names (`println`, `list.map`).
         let qualified = qualified_access_at(program, cursor);
-        let doc_text = def_entry
-            .and_then(|def| def.doc.clone())
-            .or_else(|| {
-                let (module, member) = qualified?;
-                let view = self.imported_module(doc, module)?;
-                view.definitions.get(&member)?.doc.clone()
-            })
-            .or_else(|| {
-                let name = ident_at_cursor?;
-                let view = self.item_module(doc, name)?;
-                view.definitions.get(&name)?.doc.clone()
-            })
-            .or_else(|| {
-                if let Some(name) = ident_at_cursor
-                    && let Some(d) = self.builtin_docs.get(&resolve(name))
-                {
-                    return Some(d.clone());
-                }
-                let (module, member) = qualified?;
-                let (module, member) = (resolve(module), resolve(member));
-                if let Some(d) = self.builtin_docs.get(&format!("{module}.{member}")) {
-                    return Some(d.clone());
-                }
-                // A builtin module's type or variant (`io.IoNotFound`,
-                // `time.Weekday`) is documented under its bare name.
-                let owner = crate::module::builtin_variant_module(&member)
-                    .or_else(|| crate::module::builtin_type_module(&member));
-                if owner == Some(module.as_str()) {
-                    return self.builtin_docs.get(&member).cloned();
-                }
-                None
-            });
+        let doc_text = def_entry.and_then(|def| def.doc.clone()).or_else(|| {
+            if !matches!(named, Named::Other) {
+                return None;
+            }
+            if let Some(name) = ident_at_cursor
+                && let Some(d) = self.builtin_docs.get(&resolve(name))
+            {
+                return Some(d.clone());
+            }
+            let (module, member) = qualified?;
+            let (module, member) = (resolve(module), resolve(member));
+            if let Some(d) = self.builtin_docs.get(&format!("{module}.{member}")) {
+                return Some(d.clone());
+            }
+            // A builtin module's type or variant (`io.IoNotFound`,
+            // `time.Weekday`) is documented under its bare name.
+            let owner = crate::module::builtin_variant_module(&member)
+                .or_else(|| crate::module::builtin_type_module(&member));
+            if owner == Some(module.as_str()) {
+                return self.builtin_docs.get(&member).cloned();
+            }
+            None
+        });
 
         // If neither a type nor a doc is available, no hover.
         if ty.is_none() && doc_text.is_none() {

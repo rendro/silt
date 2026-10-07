@@ -1,0 +1,4 @@
+-- doc of other.mk
+pub fn mk(s: String) -> String {
+  s
+}

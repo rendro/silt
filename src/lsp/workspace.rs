@@ -20,21 +20,18 @@ use std::path::PathBuf;
 
 use lsp_types::{Location, SymbolInformation, SymbolKind, Uri};
 
-use crate::ast::{
-    Decl, Expr, ExprKind, FnDecl, ImportTarget, Pattern, PatternKind, Program, Stmt, TraitRef,
-    TypeBody, TypeDecl, TypeExpr, TypeExprKind, WhereClause,
-};
-use crate::defs::{DefId, DefKind, DefTable, Res};
+use crate::ast::{Decl, FnDecl, ImportTarget, PatternKind, Program, Selection, TypeBody, TypeDecl};
+use crate::defs::{DefId, DefKind, Res};
 use crate::intern::{Symbol, resolve as resolve_sym};
-use crate::session::{ImportResolution, ModuleId, Session};
+use crate::session::{ModuleId, Session};
 use crate::source::{SourceFile, Span};
 
 use super::Server;
-use super::ast_walk::visit_expr_children;
 use super::conversions::span_to_range;
-use super::local_bindings::{find_local_binding_at_offset, nearest_local_binding_for};
+use super::local_bindings::nearest_local_binding_for;
+use super::names::{DefUse, Names};
 use super::project::{path_key, project_dir};
-use super::state::{Document, LocalBinding};
+use super::state::{DefInfo, Document};
 
 /// A definition, named the same way in every session.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -59,16 +56,6 @@ pub(super) enum Target {
     /// The local binding of the document whose name starts at this byte
     /// (see `local_bindings.rs`).
     Local(usize),
-}
-
-impl Target {
-    /// Whether a rename may edit it: a local, or a definition of a file.
-    pub(super) fn is_renameable(&self) -> bool {
-        match self {
-            Target::Defs(keys) => keys.iter().all(|key| matches!(key, DefKey::At { .. })),
-            Target::Local(_) => true,
-        }
-    }
 }
 
 /// Whether byte `cursor` is in `span` or directly behind it.
@@ -109,60 +96,65 @@ fn def_of_key(session: &Session, key: &DefKey) -> Option<DefId> {
     }
 }
 
-/// The definitions the item `item` of `import module.{ item }` in module
-/// `importer` names: a value, a type, or both.
-fn import_item_defs(
-    session: &Session,
-    importer: ModuleId,
-    module: Symbol,
-    item: Symbol,
-) -> Vec<DefId> {
-    use crate::typechecker::names::Binding;
-    let target = session
-        .graph()
-        .module(importer)
-        .imports
-        .iter()
-        .find_map(|import| match import.resolution {
-            ImportResolution::Module(id) if import.name == module => Some(id),
-            _ => None,
-        });
-    let Some(exports) = target
-        .and_then(|id| session.module_analysis(id))
-        .map(|analysis| &analysis.scope.exports)
-    else {
-        return Vec::new();
-    };
-    [exports.values.get(&item), exports.types.get(&item)]
-        .into_iter()
-        .filter_map(|binding| match binding {
-            Some(Binding::Def(id)) => Some(*id),
-            _ => None,
-        })
-        .collect()
+/// What a name under the cursor is, for hover.
+pub(super) enum Named {
+    /// A definition of a file, with what its module knows of it.
+    Definition(DefInfo),
+    /// A local binding.
+    Local,
+    /// Anything else: one of silt's own names, a field, no name at all.
+    Other,
+}
+
+/// A place that names a target.
+pub(super) struct Place {
+    pub(super) location: Location,
+    /// The name is a record field written without its value or pattern
+    /// (`P { x }`): a rename writes the field out, `P { x: new }`.
+    pub(super) punned: bool,
+}
+
+/// The 1-based line of byte `at` of `source`.
+fn line_of(source: &SourceFile, at: u32) -> u32 {
+    span_to_range(
+        &Span {
+            file: crate::source::FileId::default(),
+            start: at,
+            end: at,
+        },
+        source,
+    )
+    .start
+    .line
+        + 1
 }
 
 impl Server {
+    /// The names of the open document `doc`, with its session and module.
+    fn names_of<'a>(&'a self, doc: &'a Document) -> Option<(Names<'a>, &'a Session, ModuleId)> {
+        let program = doc.program.as_ref()?;
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        Some((Names::of(program, session, module.id), session, module.id))
+    }
+
     /// What the name at byte `cursor` of the open document `uri` means,
     /// with the span of the name as written there.
     pub(super) fn target_at(&self, uri: &Uri, cursor: usize) -> Option<(Span, Target)> {
         let doc = self.documents.get(uri)?;
-        let program = doc.program.as_ref()?;
-        let module = doc.module.as_ref()?;
-        let session = &self.projects.get(&module.project)?.session;
-        let uses = Uses::of(program, session, module.id);
-        let here: Vec<&(Span, DefId)> = uses
+        let (names, session, module) = self.names_of(doc)?;
+        let here: Vec<&DefUse> = names
             .defs
             .iter()
-            .filter(|(span, _)| holds(*span, cursor))
+            .filter(|used| holds(used.span, cursor))
             .collect();
-        if let Some((span, _)) = here.first() {
-            let keys = here.iter().map(|(_, id)| def_key(session, *id)).collect();
-            return Some((*span, Target::Defs(keys)));
+        if let Some(first) = here.first() {
+            let keys = here.iter().map(|used| def_key(session, used.id)).collect();
+            return Some((first.span, Target::Defs(keys)));
         }
         // The name of a declaration of this module.
         let defs = session.defs();
-        let declared = defs.of_module(module.id).iter().copied().find_map(|id| {
+        let declared = defs.of_module(module).iter().copied().find_map(|id| {
             let def = defs.get(id);
             (def.span.is_in_source() && holds(def.span, cursor))
                 .then(|| (def.span, Target::Defs(vec![def_key(session, id)])))
@@ -170,65 +162,130 @@ impl Server {
         if declared.is_some() {
             return declared;
         }
-        let local = uses.locals.iter().find(|l| holds(l.span, cursor))?;
+        let local = names.locals.iter().find(|l| holds(l.span, cursor))?;
         Some((local.span, Target::Local(local.binding(&doc.locals)?)))
+    }
+
+    /// What the name at byte `cursor` of the open document `uri` is: for
+    /// a definition, its type and documentation as the module that
+    /// declares it has them.
+    pub(super) fn named_at(&self, uri: &Uri, cursor: usize) -> Named {
+        let Some((_, target)) = self.target_at(uri, cursor) else {
+            return Named::Other;
+        };
+        let keys = match target {
+            Target::Local(_) => return Named::Local,
+            Target::Defs(keys) => keys,
+        };
+        let info = keys.iter().find_map(|key| {
+            let DefKey::At { name, .. } = key else {
+                return None;
+            };
+            self.projects.values().find_map(|project| {
+                let session = &project.session;
+                let def = session.defs().get(def_of_key(session, key)?);
+                let checked = session.module_analysis(def.module)?;
+                // A variant is known under its own name, as its type is.
+                super::definitions::build_definitions(
+                    &checked.ast,
+                    Some(&checked.top_level),
+                    &session.tables().record_fields(),
+                )
+                .remove(name)
+            })
+        });
+        match info {
+            Some(info) => Named::Definition(info),
+            None => Named::Other,
+        }
+    }
+
+    /// Why `target`, found in the document `uri`, cannot be renamed, if
+    /// it cannot: it is one of silt's own names, or `self`.
+    pub(super) fn not_renameable(&self, uri: &Uri, target: &Target) -> Option<String> {
+        match target {
+            Target::Defs(keys) => keys
+                .iter()
+                .any(|key| matches!(key, DefKey::Builtin(_)))
+                .then(|| "is a builtin and cannot be renamed".to_string()),
+            Target::Local(binding) => {
+                let doc = self.documents.get(uri)?;
+                let local = doc.locals.iter().find(|b| b.binding_offset == *binding)?;
+                (resolve_sym(local.name) == "self").then(|| {
+                    "is the receiver of a method and cannot be renamed: a method's first \
+                     parameter is `self`"
+                        .to_string()
+                })
+            }
+        }
     }
 
     /// Every place that names `target`, which was found in the open
     /// document `uri`; with the declaration if `include_definition`.
     /// Sorted by file and position.
+    pub(super) fn places_of(
+        &mut self,
+        uri: &Uri,
+        target: &Target,
+        include_definition: bool,
+    ) -> Vec<Place> {
+        let mut places = match target {
+            Target::Local(binding) => self.local_places(uri, *binding, include_definition),
+            Target::Defs(keys) => {
+                self.check_importers();
+                self.def_places(keys, include_definition)
+            }
+        };
+        let key = |p: &Place| {
+            (
+                p.location.uri.as_str().to_string(),
+                p.location.range.start.line,
+                p.location.range.start.character,
+            )
+        };
+        places.sort_by_key(key);
+        places.dedup_by(|a, b| a.location == b.location);
+        places
+    }
+
+    /// The locations of [`Server::places_of`].
     pub(super) fn references_to(
         &mut self,
         uri: &Uri,
         target: &Target,
         include_definition: bool,
     ) -> Vec<Location> {
-        let mut locations = match target {
-            Target::Local(binding) => self.local_references(uri, *binding, include_definition),
-            Target::Defs(keys) => {
-                self.check_importers(keys);
-                self.def_references(keys, include_definition)
-            }
-        };
-        locations.sort_by(|a, b| {
-            (a.uri.as_str(), a.range.start.line, a.range.start.character).cmp(&(
-                b.uri.as_str(),
-                b.range.start.line,
-                b.range.start.character,
-            ))
-        });
-        locations.dedup();
-        locations
+        self.places_of(uri, target, include_definition)
+            .into_iter()
+            .map(|place| place.location)
+            .collect()
     }
 
-    /// The binder of the local binding at byte `binding` of the document
-    /// `uri`, and the uses that resolve to it.
-    fn local_references(&self, uri: &Uri, binding: usize, include_binder: bool) -> Vec<Location> {
-        let found = || {
-            let doc = self.documents.get(uri)?;
-            let program = doc.program.as_ref()?;
-            let module = doc.module.as_ref()?;
-            let session = &self.projects.get(&module.project)?.session;
-            let uses = Uses::of(program, session, module.id);
-            let ranges: Vec<_> = uses
-                .locals
-                .iter()
-                .filter(|l| include_binder || !l.binder)
-                .filter(|l| l.binding(&doc.locals) == Some(binding))
-                .map(|l| span_to_range(&l.span, &doc.source))
-                .collect();
-            Some(ranges)
+    /// The binders of the local binding `binding` of the document `uri`
+    /// (one per alternative of an or-pattern), and the uses that resolve
+    /// to it.
+    fn local_places(&self, uri: &Uri, binding: usize, include_binders: bool) -> Vec<Place> {
+        let Some(doc) = self.documents.get(uri) else {
+            return Vec::new();
         };
-        found()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|range| Location::new(uri.clone(), range))
+        let Some((names, ..)) = self.names_of(doc) else {
+            return Vec::new();
+        };
+        names
+            .locals
+            .iter()
+            .filter(|l| include_binders || !l.binder)
+            .filter(|l| l.binding(&doc.locals) == Some(binding))
+            .map(|l| Place {
+                location: Location::new(uri.clone(), span_to_range(&l.span, &doc.source)),
+                punned: l.punned,
+            })
             .collect()
     }
 
     /// Where `target` is declared: a local's binder in the document
-    /// `uri`, a definition's name in its file. Nothing for one of silt's
-    /// own.
+    /// `uri` (the first alternative's, of an or-pattern), a definition's
+    /// name in its file. Nothing for one of silt's own.
     pub(super) fn declarations_of(&self, uri: &Uri, target: &Target) -> Vec<Location> {
         match target {
             Target::Local(binding) => {
@@ -254,10 +311,7 @@ impl Server {
                         if def.module.is_builtin() || !def.span.is_in_source() {
                             return None;
                         }
-                        let module = session.graph().module(def.module);
-                        let source = session.sources().get(module.file?)?;
-                        let uri = self.uri_for_path(&module.path)?;
-                        Some(Location::new(uri, span_to_range(&def.span, source)))
+                        self.location_in(session, def.module, def.span)
                     });
                     if let Some(location) = found
                         && !locations.contains(&location)
@@ -270,6 +324,62 @@ impl Server {
         }
     }
 
+    /// `span` of the module `module` of `session` as a location.
+    fn location_in(&self, session: &Session, module: ModuleId, span: Span) -> Option<Location> {
+        let module = session.graph().module(module);
+        let source = session.sources().get(module.file?)?;
+        let uri = self.uri_for_path(&module.path)?;
+        Some(Location::new(uri, span_to_range(&span, source)))
+    }
+
+    /// The declaration of the method whose name at a call holds byte
+    /// `cursor` of the open document `uri`: the method of the impl the
+    /// checker selected, when that impl writes it, else the trait's.
+    pub(super) fn method_declaration_at(&self, uri: &Uri, cursor: usize) -> Option<Location> {
+        let doc = self.documents.get(uri)?;
+        let (names, session, _) = self.names_of(doc)?;
+        let method = names.methods.iter().find(|m| holds(m.span, cursor))?;
+        let (tr, ty) = match method.selection {
+            Selection::Impl { tr, ty } => (tr, Some(ty)),
+            Selection::Native { tr } | Selection::Dynamic { tr } => (tr, None),
+            Selection::Field | Selection::FieldCall => return None,
+        };
+        let named = |methods: &[FnDecl]| {
+            methods
+                .iter()
+                .find(|m| m.name == method.name)
+                .map(|m| m.name_span)
+        };
+        let mut of_trait = None;
+        for module in session.graph().modules() {
+            let Some(analysis) = session.module_analysis(module.id) else {
+                continue;
+            };
+            for decl in &analysis.ast.decls {
+                match decl {
+                    Decl::TraitImpl(ti)
+                        if !ti.is_auto_derived
+                            && ti.trait_res == Some(Res::Def(tr.0))
+                            && ty.is_some_and(|ty| ti.target_res == Some(Res::Def(ty.0))) =>
+                    {
+                        if let Some(span) = named(&ti.methods) {
+                            return self.location_in(session, module.id, span);
+                        }
+                    }
+                    Decl::Trait(t)
+                        if session.defs().get(tr.0).module == module.id
+                            && t.name_span == session.defs().get(tr.0).span =>
+                    {
+                        of_trait = named(&t.methods).map(|span| (module.id, span));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let (module, span) = of_trait?;
+        self.location_in(session, module, span)
+    }
+
     /// The definition of the type `id` of the session of the open
     /// document `doc`, as a target.
     pub(super) fn type_target(&self, doc: &Document, id: crate::defs::TypeId) -> Option<Target> {
@@ -278,47 +388,46 @@ impl Server {
         Some(Target::Defs(vec![def_key(session, id.0)]))
     }
 
-    /// Check the workspace files that import the module of one of
-    /// `keys` and that no session has checked: a file that is not open
-    /// and that no open document imports is only parsed until a query
-    /// needs what its names mean.
-    fn check_importers(&mut self, keys: &[DefKey]) {
-        let stems: HashSet<Symbol> = keys
-            .iter()
-            .filter_map(|key| match key {
-                DefKey::At { path, .. } => path.file_stem(),
-                DefKey::Builtin(_) => None,
-            })
-            .map(|stem| crate::intern::intern(&stem.to_string_lossy()))
-            .collect();
-        let imports_one = |program: &Program| {
+    /// Check the workspace files that no session has checked and that
+    /// import a module of their project or of a dependency: a file that is not open and that no open
+    /// document imports is only parsed until a query needs what its
+    /// names mean. Which module an `import` names is the session's to
+    /// say (a file of the package, a dependency's library), so every
+    /// such file is checked; the reference walk then finds the importers
+    /// by what their names resolve to.
+    fn check_importers(&mut self) {
+        let imports_a_file = |program: &Program| {
             program.decls.iter().any(|decl| match decl {
                 Decl::Import(
                     ImportTarget::Module(m)
                     | ImportTarget::Items(m, _)
                     | ImportTarget::Alias(m, ..),
                     _,
-                ) => stems.contains(m),
+                ) => !crate::module::is_builtin_module(&resolve_sym(*m)),
                 _ => false,
             })
         };
         let importers: Vec<PathBuf> = self
             .documents
             .values()
-            .filter(|doc| !doc.open && doc.program.as_deref().is_some_and(imports_one))
+            .filter(|doc| !doc.open && doc.program.as_deref().is_some_and(imports_a_file))
             .map(|doc| doc.path.clone())
             .collect();
+        // A project of the workspace that has no open document gets a
+        // session for the query; the next analysis drops it again.
         for path in importers {
-            if let Some(project) = self.projects.get_mut(&project_dir(&path)) {
-                project.check_file(&path);
-            }
+            let dir = project_dir(&path);
+            self.projects
+                .entry(dir.clone())
+                .or_insert_with(|| super::project::Project::new(&dir))
+                .check_file(&path);
         }
     }
 
     /// Every place in the checked modules of every session that names
     /// one of `keys`.
-    fn def_references(&self, keys: &[DefKey], include_definition: bool) -> Vec<Location> {
-        let mut locations = Vec::new();
+    fn def_places(&self, keys: &[DefKey], include_definition: bool) -> Vec<Place> {
+        let mut places = Vec::new();
         for project in self.projects.values() {
             let session = &project.session;
             let ids: HashSet<DefId> = keys
@@ -328,32 +437,91 @@ impl Server {
             if ids.is_empty() {
                 continue;
             }
-            let location = |module: ModuleId, span: Span| {
-                let module = session.graph().module(module);
-                let source = session.sources().get(module.file?)?;
-                let uri = self.uri_for_path(&module.path)?;
-                Some(Location::new(uri, span_to_range(&span, source)))
-            };
             for module in session.graph().modules() {
                 let Some(analysis) = session.module_analysis(module.id) else {
                     continue;
                 };
-                for (span, id) in Uses::of(&analysis.ast, session, module.id).defs {
-                    if ids.contains(&id) {
-                        locations.extend(location(module.id, span));
-                    }
+                let names = Names::of(&analysis.ast, session, module.id);
+                for used in names.defs.iter().filter(|used| ids.contains(&used.id)) {
+                    places.extend(self.location_in(session, module.id, used.span).map(
+                        |location| Place {
+                            location,
+                            punned: false,
+                        },
+                    ));
                 }
-            }
-            if include_definition {
+                if !include_definition {
+                    continue;
+                }
                 for id in &ids {
                     let def = session.defs().get(*id);
-                    if def.span.is_in_source() && !def.module.is_builtin() {
-                        locations.extend(location(def.module, def.span));
+                    if def.module == module.id && def.span.is_in_source() {
+                        places.extend(self.location_in(session, module.id, def.span).map(
+                            |location| Place {
+                                location,
+                                punned: names.punned_declarations.contains(&def.span),
+                            },
+                        ));
                     }
                 }
             }
         }
-        locations
+        places
+    }
+
+    /// Why renaming `target`, found in the open document `uri`, to `new`
+    /// would change what a name means, if it would: at a place that
+    /// names the target, `new` already names something else (a local, a
+    /// top-level name of that module, one of silt's own names), so the
+    /// renamed name would be taken for that, or that for it.
+    pub(super) fn rename_clash(&mut self, uri: &Uri, target: &Target, new: &str) -> Option<String> {
+        let new_sym = crate::intern::intern(new);
+        let places = self.places_of(uri, target, true);
+        // One of silt's own names, visible in every module: a builtin
+        // function, type, trait or constructor.
+        let own = crate::module::builtin_free_function_names().contains(&new)
+            || crate::types::builtins::iter_all().any(|ty| ty.name == new)
+            || crate::module::builtin_module_types().contains(&new)
+            || crate::module::all_builtin_constructor_names().any(|name| name == new)
+            || crate::defs::BUILTIN_TRAITS.contains(&new)
+            || self.projects.values().any(|project| {
+                let defs = project.session.defs();
+                defs.of_module(ModuleId::PRELUDE)
+                    .iter()
+                    .any(|id| defs.get(*id).name == new_sym)
+            });
+        if own {
+            return Some(format!("`{new}` is one of silt's own names"));
+        }
+        for place in &places {
+            let Some(doc) = self.documents.get(&place.location.uri) else {
+                continue;
+            };
+            let at =
+                super::conversions::position_to_offset(&doc.source, &place.location.range.start);
+            let file = doc
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if let Some(local) = nearest_local_binding_for(&doc.locals, new_sym, at) {
+                return Some(format!(
+                    "`{new}` is already a local name at {file}:{} (bound at line {})",
+                    place.location.range.start.line + 1,
+                    line_of(&doc.source, local.binding_offset as u32)
+                ));
+            }
+            // A top-level name of the module: a declaration, an import.
+            let top_level = self.checked(doc).and_then(|(session, module)| {
+                let scope = &session.module_analysis(module)?.scope;
+                (scope.values.contains_key(&new_sym) || scope.types.contains_key(&new_sym))
+                    .then_some(())
+            });
+            if top_level.is_some() {
+                return Some(format!("`{new}` is already a top-level name of {file}"));
+            }
+        }
+        None
     }
 
     /// The workspace symbols whose name holds `query`, whatever the
@@ -509,371 +677,6 @@ fn type_symbols(t: &TypeDecl, uri: &Uri, source: &SourceFile, out: &mut Vec<Symb
                 uri,
                 source,
             ));
-        }
-    }
-}
-
-// ── The names a module writes ──────────────────────────────────────
-
-/// A local name as a module writes it: where a pattern, a parameter or
-/// a `loop` binds it, or a use of it.
-struct LocalName {
-    span: Span,
-    name: Symbol,
-    binder: bool,
-}
-
-impl LocalName {
-    /// The binding it is or resolves to, by the byte its name starts
-    /// at, when the document's local bindings have it.
-    fn binding(&self, locals: &[LocalBinding]) -> Option<usize> {
-        let at = self.span.start as usize;
-        let binding = if self.binder {
-            find_local_binding_at_offset(locals, at)
-        } else {
-            nearest_local_binding_for(locals, self.name, at)
-        };
-        binding.map(|b| b.binding_offset)
-    }
-}
-
-/// Every name a module writes that the resolver gave a meaning, apart
-/// from the names its declarations declare (those are the definitions'
-/// own spans).
-struct Uses<'a> {
-    session: &'a Session,
-    module: ModuleId,
-    /// The span of a name as written, and the definition it names.
-    defs: Vec<(Span, DefId)>,
-    /// Each local name: its binders and its uses.
-    locals: Vec<LocalName>,
-    /// The pattern being walked is a top-level `let`'s: its names are
-    /// definitions.
-    declares: bool,
-}
-
-impl<'a> Uses<'a> {
-    fn of(program: &Program, session: &'a Session, module: ModuleId) -> Uses<'a> {
-        let mut uses = Uses {
-            session,
-            module,
-            defs: Vec::new(),
-            locals: Vec::new(),
-            declares: false,
-        };
-        for decl in &program.decls {
-            uses.decl(decl);
-        }
-        uses
-    }
-
-    fn table(&self) -> &'a DefTable {
-        self.session.defs()
-    }
-
-    /// A name at `span` that means `res`.
-    fn name(&mut self, span: Span, res: Option<Res>) {
-        if let Some(Res::Def(id)) = res
-            && span.is_in_source()
-        {
-            self.defs.push((span, id));
-        }
-    }
-
-    /// A local name at `span`.
-    fn local(&mut self, span: Span, name: Symbol, binder: bool) {
-        if self.declares && binder {
-            return;
-        }
-        self.locals.push(LocalName { span, name, binder });
-    }
-
-    fn decl(&mut self, decl: &Decl) {
-        match decl {
-            Decl::Fn(f) => self.fn_decl(f),
-            Decl::TraitImpl(ti) => {
-                if ti.is_auto_derived {
-                    return;
-                }
-                self.name(ti.trait_name_span, ti.trait_res);
-                self.name(ti.target_type_span, ti.target_res);
-                self.where_clauses(&ti.where_clauses);
-                for arg in ti.trait_args.iter().chain(&ti.target_type_args) {
-                    self.type_expr(arg);
-                }
-                for binding in &ti.assoc_type_bindings {
-                    self.type_expr(&binding.ty);
-                }
-                for method in &ti.methods {
-                    self.fn_decl(method);
-                }
-            }
-            Decl::Trait(t) => {
-                for supertrait in &t.supertraits {
-                    self.trait_ref(supertrait);
-                }
-                self.where_clauses(&t.param_where_clauses);
-                for assoc in &t.assoc_types {
-                    for bound in &assoc.bounds {
-                        self.trait_ref(bound);
-                    }
-                }
-                for method in &t.methods {
-                    self.fn_decl(method);
-                }
-            }
-            Decl::Let {
-                value, pattern, ty, ..
-            } => {
-                self.declares = true;
-                self.pattern(pattern);
-                self.declares = false;
-                if let Some(ty) = ty {
-                    self.type_expr(ty);
-                }
-                self.expr(value);
-            }
-            Decl::Type(t) => match &t.body {
-                TypeBody::Record(fields) => {
-                    for field in fields {
-                        self.type_expr(&field.ty);
-                    }
-                }
-                TypeBody::Enum(variants) => {
-                    for variant in variants {
-                        for field in &variant.fields {
-                            self.type_expr(field);
-                        }
-                    }
-                }
-                TypeBody::Alias(ty) => self.type_expr(ty),
-            },
-            // An item of `import m.{ item }` names what `m` exports.
-            Decl::Import(ImportTarget::Items(module, items), _) => {
-                for (item, span) in items {
-                    for id in import_item_defs(self.session, self.module, *module, *item) {
-                        self.name(*span, Some(Res::Def(id)));
-                    }
-                }
-            }
-            Decl::Import(..) => {}
-        }
-    }
-
-    fn fn_decl(&mut self, f: &FnDecl) {
-        for param in &f.params {
-            self.pattern(&param.pattern);
-            if let Some(ty) = &param.ty {
-                self.type_expr(ty);
-            }
-        }
-        if let Some(ty) = &f.return_type {
-            self.type_expr(ty);
-        }
-        self.where_clauses(&f.where_clauses);
-        self.expr(&f.body);
-    }
-
-    fn where_clauses(&mut self, clauses: &[WhereClause]) {
-        for clause in clauses {
-            self.name(clause.trait_name_span, clause.trait_res);
-            for arg in &clause.trait_args {
-                self.type_expr(arg);
-            }
-        }
-    }
-
-    fn trait_ref(&mut self, r: &TraitRef) {
-        self.name(r.span, r.res);
-        for arg in &r.args {
-            self.type_expr(arg);
-        }
-    }
-
-    fn type_expr(&mut self, te: &TypeExpr) {
-        match &te.kind {
-            TypeExprKind::Named { name_span, .. } => self.name(*name_span, te.res),
-            TypeExprKind::Generic {
-                name_span, args, ..
-            } => {
-                self.name(*name_span, te.res);
-                for arg in args {
-                    self.type_expr(arg);
-                }
-            }
-            TypeExprKind::Tuple(elems) => {
-                for elem in elems {
-                    self.type_expr(elem);
-                }
-            }
-            TypeExprKind::Function(params, ret) => {
-                for param in params {
-                    self.type_expr(param);
-                }
-                self.type_expr(ret);
-            }
-            TypeExprKind::SelfType => {}
-            TypeExprKind::AssocProj { receiver, .. } => self.type_expr(receiver),
-            TypeExprKind::AnonRecord { fields, .. } => {
-                for (_, ty) in fields {
-                    self.type_expr(ty);
-                }
-            }
-        }
-    }
-
-    fn expr(&mut self, expr: &Expr) {
-        match &expr.kind {
-            ExprKind::Ident(name) => match expr.res {
-                Some(Res::Local) => self.local(expr.span, *name, false),
-                res => self.name(expr.span, res),
-            },
-            // `m.f`, `m.Circle`, `Shape.Circle`: the member's own name.
-            // (The span of a field access is its receiver's.)
-            ExprKind::FieldAccess(_, _, field_span) => self.name(*field_span, expr.res),
-            ExprKind::RecordCreate { name_span, .. } => self.name(*name_span, expr.res),
-            ExprKind::Ascription(_, ty) => self.type_expr(ty),
-            ExprKind::Match { arms, .. } => {
-                for arm in arms {
-                    self.pattern(&arm.pattern);
-                }
-            }
-            ExprKind::Loop { bindings, .. } => {
-                for (name, span, _) in bindings {
-                    self.local(*span, *name, true);
-                }
-            }
-            ExprKind::Lambda { params, .. } => {
-                for param in params {
-                    self.pattern(&param.pattern);
-                    if let Some(ty) = &param.ty {
-                        self.type_expr(ty);
-                    }
-                }
-            }
-            ExprKind::Block(stmts) => {
-                for stmt in stmts {
-                    self.stmt(stmt);
-                }
-                return;
-            }
-            _ => {}
-        }
-        visit_expr_children(expr, |child| self.expr(child));
-    }
-
-    fn stmt(&mut self, stmt: &Stmt) {
-        match stmt {
-            Stmt::Let { value, pattern, ty } => {
-                self.pattern(pattern);
-                if let Some(ty) = ty {
-                    self.type_expr(ty);
-                }
-                self.expr(value);
-            }
-            Stmt::When {
-                expr,
-                else_body,
-                pattern,
-                ..
-            } => {
-                self.pattern(pattern);
-                self.expr(expr);
-                self.expr(else_body);
-            }
-            Stmt::WhenBool {
-                condition,
-                else_body,
-                ..
-            } => {
-                self.expr(condition);
-                self.expr(else_body);
-            }
-            Stmt::Expr(e) => self.expr(e),
-        }
-    }
-
-    fn pattern(&mut self, pattern: &Pattern) {
-        match &pattern.kind {
-            PatternKind::Ident(name) => match pattern.res {
-                Some(res @ Res::Def(_)) => self.name(pattern.span, Some(res)),
-                _ => self.local(pattern.span, *name, true),
-            },
-            PatternKind::Constructor {
-                qualifier,
-                name_span,
-                args,
-                ..
-            } => {
-                self.name(*name_span, pattern.res);
-                // `m.Shape.Circle(r)`, `Shape.Circle(r)`: the segment
-                // that names the variant's enum.
-                if let Some(Res::Def(variant)) = pattern.res
-                    && let DefKind::Variant { ty, .. } = self.table().get(variant).kind
-                {
-                    let enum_name = self.table().get(ty.0).name;
-                    for segment in qualifier.iter().filter(|q| q.name == enum_name) {
-                        self.name(segment.span, Some(Res::Def(ty.0)));
-                    }
-                }
-                for arg in args {
-                    self.pattern(arg);
-                }
-            }
-            PatternKind::Record {
-                name_span, fields, ..
-            } => {
-                self.name(*name_span, pattern.res);
-                self.field_patterns(fields);
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                self.field_patterns(fields);
-                if let Some((name, span)) = rest {
-                    self.local(*span, *name, true);
-                }
-            }
-            PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
-                for p in pats {
-                    self.pattern(p);
-                }
-            }
-            PatternKind::List(pats, rest) => {
-                for p in pats {
-                    self.pattern(p);
-                }
-                if let Some(rest) = rest {
-                    self.pattern(rest);
-                }
-            }
-            PatternKind::Map(entries) => {
-                for (_, p) in entries {
-                    self.pattern(p);
-                }
-            }
-            // `^name` compares with the local `name`: a use of it,
-            // behind the `^`.
-            PatternKind::Pin(name) => {
-                let len = resolve_sym(*name).len() as u32;
-                if pattern.span.end >= pattern.span.start + len {
-                    let span = Span {
-                        start: pattern.span.end - len,
-                        ..pattern.span
-                    };
-                    self.local(span, *name, false);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// The fields of a record pattern: `{ x: p }` matches `p`, the
-    /// shorthand `{ x }` binds `x`.
-    fn field_patterns(&mut self, fields: &[(Symbol, Span, Option<Pattern>)]) {
-        for (name, span, sub) in fields {
-            match sub {
-                Some(sub) => self.pattern(sub),
-                None => self.local(*span, *name, true),
-            }
         }
     }
 }

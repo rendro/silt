@@ -1,0 +1,37 @@
+-- geo: mk and area are mentioned here.
+pub type Shape {
+  Square(Int),
+  Circle(Int),
+}
+
+pub type Point {
+  x: Int,
+  y: Int,
+}
+
+pub let unit = 1
+
+pub fn mk(w: Int) -> Shape {
+  Square(w * unit)
+}
+
+pub fn area(s: Shape) -> Int {
+  match s {
+    Square(w) -> w * w
+    Circle(r) -> 3 * r * r
+  }
+}
+
+pub fn origin() -> Point {
+  Point { x: 0, y: 0 }
+}
+
+pub trait Named {
+  fn name(self) -> String
+}
+
+trait Named for Shape {
+  fn name(self) -> String {
+    "shape mk"
+  }
+}
