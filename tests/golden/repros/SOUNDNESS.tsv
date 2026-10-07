@@ -278,10 +278,10 @@ repros/typechecker_arch/cv1_main_empty	holds	accept	TCA-1: as cv1_main, importin
 repros/typechecker_arch/cv1_main_swapped	holds	accept	TCA-1: as cv1_main_empty, imports swapped
 repros/typechecker_arch/cv2_hello.silt	holds	accept	control (TCA-13 counts its derived functions)
 repros/typechecker_arch/cv2_light.silt	holds	accept	TCA-13: a user variant named like a builtin one
-repros/typechecker_arch/cv2_ver.silt	pending:4a	output	TCA-13: `<` and `.compare` order record fields alike, by declaration
-repros/typechecker_arch/derive_d1.silt	pending:4a	output	TCA-7: derived `.display()` prints as `println` does
-repros/typechecker_arch/derive_d2.silt	pending:4a	output	TCA-7: a user Display impl is what interpolation and `println` print, at any depth
-repros/typechecker_arch/derive_d3.silt	pending:4a	output	TCA-7: as derive_d2, for a record
+repros/typechecker_arch/cv2_ver.silt	holds	output	TCA-13: `<` and `.compare` order record fields alike, by declaration
+repros/typechecker_arch/derive_d1.silt	holds	output	TCA-7: derived `.display()` prints as `println` does
+repros/typechecker_arch/derive_d2.silt	holds	output	TCA-7: a user Display impl is what interpolation and `println` print, at any depth
+repros/typechecker_arch/derive_d3.silt	holds	output	TCA-7: as derive_d2, for a record
 repros/typechecker_arch/derive_d4.silt	holds	reject E0331	TCA-7: Equal and Compare are sealed; a written impl is an error
 repros/typechecker_arch/eff_e1.silt	-	obsolete	effects (removed in stage 4)
 repros/typechecker_arch/eff_e2.silt	-	obsolete	effects (removed in stage 4)

@@ -531,12 +531,40 @@ apply to needs a type the definition decides, or an annotation. `?`
 takes it from the return type of the function it is in, when that is
 known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
-The auto-derived `Display` formats in constructor syntax (`Circle(5)`).
-Write your own `trait Display for T` to override.
+The auto-derived `Display` formats in constructor syntax: `Circle(5)`
+for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
+order the type declares them. Write your own `trait Display for T` to
+override it. There is one `Display`: `println`, `print`, interpolation,
+`.display()`, `string.from` and a panic's message all show a value the
+same way, and all use the impl you wrote, wherever a value of the type
+is inside what is shown (`println([t])`, `"{Some(t)}"`, a field of a
+record).
+
+```silt
+type Temp {
+  degrees: Int,
+}
+
+trait Display for Temp {
+  fn display(self) -> String {
+    "{self.degrees}C"
+  }
+}
+
+fn main() {
+  let t = Temp { degrees: 21 }
+  println(t) -- 21C
+  println([t, t]) -- [21C, 21C]
+  println("{Some(t)}") -- Some(21C)
+}
+```
 
 `Equal`, `Hash` and `Compare` are **sealed**: they are always derived
 structurally from a type's fields (a type gets them when every field
-supports them), and `==`, `<` and map keys use exactly that structure. A
+supports them), and `==`, `<`, `.equal()`, `.compare()`, `.hash()` and
+map keys use exactly that structure. A record is ordered by its fields
+in the order the type declares them, an enum by its variants in the
+order it declares them and then by their payloads. A
 hand-written `trait Equal for T`, `trait Compare for T` or
 `trait Hash for T` is an error:
 
@@ -600,9 +628,8 @@ disagree on dispatch. The rule:
 Built-in traits and built-in types (`List`, `Map`, `Set`, `Option`,
 `Result`, `Range`, …) are stdlib-owned. They count as foreign to your
 package — implementing `Display` for `List(a)` from your own package is
-forbidden. Auto-derived synthetic impls are exempt: the synth pass
-specialises stdlib impls to user-supplied type parameters and never
-races with another package.
+forbidden. (The four auto-derived traits are not impls: every type has
+them by its structure.)
 
 The rule applies to every file silt loads; a stand-alone script is in a
 synthetic `__local__` package. Each REPL input belongs to the package of

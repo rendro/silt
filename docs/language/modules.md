@@ -176,8 +176,9 @@ traits is an error at the call. The builtin traits (`Display`,
 `Compare`, `Equal`, `Hash`, `Error`) are always seen: a trait of the
 program with a method named `display` implemented for `Int` makes
 `5.display()` ambiguous; call it through a `where` bound for the
-trait. A derived impl always calls the builtin trait's methods of its
-fields.
+trait. The auto-derived traits of a type go by the builtin traits of
+its fields, whatever trait of the program has a method of the same
+name.
 
 ## Module names and shadowing
 
