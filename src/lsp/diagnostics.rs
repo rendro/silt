@@ -217,6 +217,8 @@ impl Server {
         if self.pending.is_empty() && self.disk_events.is_empty() {
             return;
         }
+        // What the last queries learned was true of the texts before.
+        self.def_uses = None;
         let pending = std::mem::take(&mut self.pending);
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(self, &pending)));
         if let Err(payload) = outcome {

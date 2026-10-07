@@ -15,7 +15,7 @@
 //! definition, which are checked for the query. A definition is the same
 //! in every session by where it is declared ([`DefKey`]).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use lsp_types::{Location, SymbolInformation, SymbolKind, Uri};
@@ -104,6 +104,22 @@ pub(super) enum Named {
     Local,
     /// Anything else: one of silt's own names, a field, no name at all.
     Other,
+}
+
+/// Every use of a definition in the checked modules of every session,
+/// and the punned declarations, by project directory and module: what a
+/// references or rename query walks the workspace for. It holds until
+/// the next analysis.
+pub(super) struct DefUses {
+    projects: Vec<(PathBuf, Vec<ModuleUses>)>,
+}
+
+struct ModuleUses {
+    module: ModuleId,
+    /// The URI of the module's file.
+    uri: Option<Uri>,
+    uses: Vec<(Span, DefId)>,
+    punned_declarations: Vec<Span>,
 }
 
 /// A place that names a target.
@@ -232,7 +248,10 @@ impl Server {
         let mut places = match target {
             Target::Local(binding) => self.local_places(uri, *binding, include_definition),
             Target::Defs(keys) => {
-                self.check_importers();
+                if self.def_uses.is_none() {
+                    self.check_importers();
+                    self.def_uses = Some(self.walk_def_uses());
+                }
                 self.def_places(keys, include_definition)
             }
         };
@@ -424,11 +443,52 @@ impl Server {
         }
     }
 
+    /// The uses of definitions in every checked module of every session.
+    fn walk_def_uses(&self) -> DefUses {
+        // The URI of each file, an open document's first: looked up once
+        // per module, not once per place.
+        let mut uris: HashMap<&PathBuf, &Uri> = HashMap::new();
+        for (uri, doc) in self.documents.iter().filter(|(_, doc)| !doc.open) {
+            uris.insert(&doc.key, uri);
+        }
+        for (uri, doc) in self.documents.iter().filter(|(_, doc)| doc.open) {
+            uris.insert(&doc.key, uri);
+        }
+        let mut projects = Vec::new();
+        for (dir, project) in &self.projects {
+            let session = &project.session;
+            let mut modules = Vec::new();
+            for module in session.graph().modules() {
+                let Some(analysis) = session.module_analysis(module.id) else {
+                    continue;
+                };
+                let names = Names::of(&analysis.ast, session, module.id);
+                modules.push(ModuleUses {
+                    module: module.id,
+                    uri: uris
+                        .get(&path_key(&module.path))
+                        .map(|uri| (*uri).clone())
+                        .or_else(|| super::path_to_file_uri(&module.path)),
+                    uses: names.defs.iter().map(|used| (used.span, used.id)).collect(),
+                    punned_declarations: names.punned_declarations,
+                });
+            }
+            projects.push((dir.clone(), modules));
+        }
+        DefUses { projects }
+    }
+
     /// Every place in the checked modules of every session that names
-    /// one of `keys`.
+    /// one of `keys`, from what the last walk found.
     fn def_places(&self, keys: &[DefKey], include_definition: bool) -> Vec<Place> {
         let mut places = Vec::new();
-        for project in self.projects.values() {
+        let Some(def_uses) = &self.def_uses else {
+            return places;
+        };
+        for (dir, modules) in &def_uses.projects {
+            let Some(project) = self.projects.get(dir) else {
+                continue;
+            };
             let session = &project.session;
             let ids: HashSet<DefId> = keys
                 .iter()
@@ -437,36 +497,80 @@ impl Server {
             if ids.is_empty() {
                 continue;
             }
-            for module in session.graph().modules() {
-                let Some(analysis) = session.module_analysis(module.id) else {
+            for module in modules {
+                let source = session
+                    .graph()
+                    .module(module.module)
+                    .file
+                    .and_then(|file| session.sources().get(file));
+                let (Some(uri), Some(source)) = (&module.uri, source) else {
                     continue;
                 };
-                let names = Names::of(&analysis.ast, session, module.id);
-                for used in names.defs.iter().filter(|used| ids.contains(&used.id)) {
-                    places.extend(self.location_in(session, module.id, used.span).map(
-                        |location| Place {
-                            location,
-                            punned: false,
-                        },
-                    ));
+                let place = |span: Span, punned: bool| Place {
+                    location: Location::new(uri.clone(), span_to_range(&span, source)),
+                    punned,
+                };
+                for (span, _) in module.uses.iter().filter(|(_, id)| ids.contains(id)) {
+                    places.push(place(*span, false));
                 }
                 if !include_definition {
                     continue;
                 }
                 for id in &ids {
                     let def = session.defs().get(*id);
-                    if def.module == module.id && def.span.is_in_source() {
-                        places.extend(self.location_in(session, module.id, def.span).map(
-                            |location| Place {
-                                location,
-                                punned: names.punned_declarations.contains(&def.span),
-                            },
+                    if def.module == module.module && def.span.is_in_source() {
+                        places.push(place(
+                            def.span,
+                            module.punned_declarations.contains(&def.span),
                         ));
                     }
                 }
             }
         }
         places
+    }
+
+    /// The places of the open document `uri` that name `target`, which
+    /// was found in it, the declaration included: what a highlight
+    /// shows. Nothing but this document is read.
+    pub(super) fn places_in_document(&self, uri: &Uri, target: &Target) -> Vec<Location> {
+        let keys = match target {
+            Target::Local(binding) => {
+                return self
+                    .local_places(uri, *binding, true)
+                    .into_iter()
+                    .map(|place| place.location)
+                    .collect();
+            }
+            Target::Defs(keys) => keys,
+        };
+        let Some(doc) = self.documents.get(uri) else {
+            return Vec::new();
+        };
+        let Some((names, session, module)) = self.names_of(doc) else {
+            return Vec::new();
+        };
+        let ids: HashSet<DefId> = keys
+            .iter()
+            .filter_map(|key| def_of_key(session, key))
+            .collect();
+        let declared = ids.iter().filter_map(|id| {
+            let def = session.defs().get(*id);
+            (def.module == module && def.span.is_in_source()).then_some(def.span)
+        });
+        let mut spans: Vec<Span> = names
+            .defs
+            .iter()
+            .filter(|used| ids.contains(&used.id))
+            .map(|used| used.span)
+            .chain(declared)
+            .collect();
+        spans.sort_by_key(|span| span.start);
+        spans.dedup();
+        spans
+            .into_iter()
+            .map(|span| Location::new(uri.clone(), span_to_range(&span, &doc.source)))
+            .collect()
     }
 
     /// Why renaming `target`, found in the open document `uri`, to `new`
@@ -493,32 +597,54 @@ impl Server {
         if own {
             return Some(format!("`{new}` is one of silt's own names"));
         }
+        // The module of each file, in the session that checked it.
+        let mut modules: HashMap<PathBuf, (&Session, ModuleId)> = HashMap::new();
+        for project in self.projects.values() {
+            let session = &project.session;
+            for module in session.graph().modules() {
+                if session.module_analysis(module.id).is_some() {
+                    modules.insert(path_key(&module.path), (session, module.id));
+                }
+            }
+        }
+        // The places are sorted by file: each file is looked at once.
+        let mut top_level_of: Option<(&Uri, bool)> = None;
         for place in &places {
             let Some(doc) = self.documents.get(&place.location.uri) else {
                 continue;
             };
+            let file = || {
+                doc.path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            };
             let at =
                 super::conversions::position_to_offset(&doc.source, &place.location.range.start);
-            let file = doc
-                .path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
             if let Some(local) = nearest_local_binding_for(&doc.locals, new_sym, at) {
                 return Some(format!(
-                    "`{new}` is already a local name at {file}:{} (bound at line {})",
+                    "`{new}` is already a local name at {}:{} (bound at line {})",
+                    file(),
                     place.location.range.start.line + 1,
                     line_of(&doc.source, local.binding_offset as u32)
                 ));
             }
             // A top-level name of the module: a declaration, an import.
-            let top_level = self.checked(doc).and_then(|(session, module)| {
-                let scope = &session.module_analysis(module)?.scope;
-                (scope.values.contains_key(&new_sym) || scope.types.contains_key(&new_sym))
-                    .then_some(())
-            });
-            if top_level.is_some() {
-                return Some(format!("`{new}` is already a top-level name of {file}"));
+            let taken = match top_level_of {
+                Some((uri, taken)) if *uri == place.location.uri => taken,
+                _ => {
+                    let taken = modules.get(&doc.key).is_some_and(|(session, module)| {
+                        session.module_analysis(*module).is_some_and(|analysis| {
+                            analysis.scope.values.contains_key(&new_sym)
+                                || analysis.scope.types.contains_key(&new_sym)
+                        })
+                    });
+                    top_level_of = Some((&place.location.uri, taken));
+                    taken
+                }
+            };
+            if taken {
+                return Some(format!("`{new}` is already a top-level name of {}", file()));
             }
         }
         None

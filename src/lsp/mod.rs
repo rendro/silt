@@ -110,6 +110,9 @@ struct Server {
     /// The diagnostics last published, per URI. The pull-based
     /// `textDocument/diagnostic` handler answers from it.
     published: HashMap<Uri, Vec<Diagnostic>>,
+    /// What references and rename learned about the workspace, kept
+    /// until the next analysis (a document or a file changed).
+    def_uses: Option<workspace::DefUses>,
 }
 
 impl Server {
@@ -127,6 +130,7 @@ impl Server {
             disk_events: Vec::new(),
             root: None,
             published: HashMap::new(),
+            def_uses: None,
         }
     }
 

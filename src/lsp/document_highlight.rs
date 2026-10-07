@@ -8,7 +8,7 @@ use super::conversions::position_to_offset;
 
 impl Server {
     pub(super) fn document_highlight(
-        &mut self,
+        &self,
         params: lsp_types::DocumentHighlightParams,
     ) -> Option<Vec<DocumentHighlight>> {
         let uri = &params.text_document_position_params.text_document.uri;
@@ -16,11 +16,11 @@ impl Server {
         let doc = self.documents.get(uri)?;
         let cursor = position_to_offset(&doc.source, &pos);
         let (_, target) = self.target_at(uri, cursor)?;
-        // Kind TEXT: a read is not told from a write.
+        // Kind TEXT: a read is not told from a write. Only this document
+        // is read: an editor asks whenever the cursor rests.
         let highlights: Vec<DocumentHighlight> = self
-            .references_to(uri, &target, true)
+            .places_in_document(uri, &target)
             .into_iter()
-            .filter(|loc| loc.uri == *uri)
             .map(|loc| DocumentHighlight {
                 range: loc.range,
                 kind: Some(DocumentHighlightKind::TEXT),

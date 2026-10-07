@@ -8,3 +8,6 @@ mod checker_scaling;
 mod fmt_property;
 mod fmt_property_sweep_tests;
 mod integration;
+mod lsp_workspace_perf;
+#[path = "../lsp/support.rs"]
+mod support;
