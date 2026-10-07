@@ -19,7 +19,7 @@ default features in your `Cargo.toml`.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `accept` | `(TcpListener) -> Result(TcpStream, TcpError)` | Wait for an incoming connection (cooperative I/O) |
-| `close` | `(TcpStream) -> ()` | Mark the stream as closed; future ops error |
+| `close` | `(TcpStream) -> ()` | Shut the connection down: operations in flight on it return, later ones give `Err(TcpClosed)` |
 | `connect` | `(String) -> Result(TcpStream, TcpError)` | Open a TCP connection to `host:port` (cooperative I/O) |
 | `listen` | `(String) -> Result(TcpListener, TcpError)` | Bind a TCP listener to `host:port` |
 | `local_port` | `(TcpListener) -> Int` | The port the listener is bound to: the one the system chose for port `0` |
@@ -122,7 +122,8 @@ same TLS connection until the read returns.
 
 `tcp.close(conn)` shuts the connection down: a `read` or `write` that
 another task has in flight on it returns, and later calls fail with
-`TcpClosed`. Without `tcp.close` the socket is closed when the last
+`TcpClosed`. A closed connection answers nothing: `tcp.peer_addr` and
+`tcp.set_nodelay` give `Err(TcpClosed)` too. Without `tcp.close` the socket is closed when the last
 reference to the connection is gone.
 
 **A read or write that nobody waits for ends its connection.** When a

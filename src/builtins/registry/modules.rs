@@ -553,7 +553,7 @@ pub(super) fn modules() -> Vec<Module> {
             steps: tcp::call,
             rows: [
                 u("fn accept(listener: TcpListener) -> Result(TcpStream, TcpError)", "Wait for an incoming connection (cooperative I/O)"),
-                u("fn close(stream: TcpStream) -> ()", "Mark the stream as closed; future ops error"),
+                u("fn close(stream: TcpStream) -> ()", "Shut the connection down: operations in flight on it return, later ones give `Err(TcpClosed)`"),
                 u("fn connect(addr: String) -> Result(TcpStream, TcpError)", "Open a TCP connection to `host:port` (cooperative I/O)"),
                 u("fn listen(addr: String) -> Result(TcpListener, TcpError)", "Bind a TCP listener to `host:port`"),
                 u("fn local_port(listener: TcpListener) -> Int", "The port the listener is bound to: the one the system chose for port `0`"),

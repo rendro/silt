@@ -693,17 +693,19 @@ impl Scheduler {
         };
         let wait = Wait::new(vec![sync::Arm::Send(channel.clone(), value)]);
         matches!(
-            self.block_thread(wait, false),
+            self.block_thread(wait, Blocks::Thread),
             Ok(Fired::Arm(_, sync::Outcome::Sent))
         )
     }
 
     /// The calling thread waits for `wait` and gets how it ended. It
     /// counts as a task while it waits, if it does not already (a
-    /// thread after [`Scheduler::enter`], a worker in a slice). `main` says that the
-    /// thread is the program's own: it gets the error when the program
-    /// is deadlocked. The other error is that the program has ended.
-    pub(crate) fn block_thread(&self, wait: Wait, main: bool) -> Result<Fired, VmError> {
+    /// thread after [`Scheduler::enter`], a worker in a slice). `who`
+    /// says whether the thread is the program's own: that one gets
+    /// the error when the program is deadlocked. The other error is
+    /// that the program has ended.
+    pub(crate) fn block_thread(&self, wait: Wait, who: Blocks) -> Result<Fired, VmError> {
+        let main = matches!(who, Blocks::Program { .. });
         let inner = &self.inner;
         let _counted = self.enter();
         let group = inner.group(inner.current_owner());
@@ -753,7 +755,14 @@ impl Scheduler {
                     // counterparty of the wait is missing: it is
                     // reported before the verdict.
                     let _ = report_unjoined_failures(inner);
-                    verdict
+                    // A deadline that is in effect did not end the
+                    // wait: the report says what it bounds.
+                    match who {
+                        Blocks::Program { in_deadline: true } => {
+                            verdict.with_help(DEADLINE_DOES_NOT_BOUND)
+                        }
+                        _ => verdict,
+                    }
                 }
                 None => VmError::new("the VM that ran the program has been dropped".into()),
             }),
@@ -1585,9 +1594,19 @@ thread_local! {
     static RUNNING_TASK_OWNER: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
+/// Whose thread waits in [`Scheduler::block_thread`].
+#[derive(Clone, Copy)]
+pub(crate) enum Blocks {
+    /// A thread of the runtime.
+    Thread,
+    /// The program's own, which is told of a deadlock; `in_deadline`
+    /// if a `task.deadline` is in effect for its code.
+    Program { in_deadline: bool },
+}
+
 /// What a deadlock report says when a `task.deadline` is in effect for
 /// the code that waits: the deadline is for I/O and sleeps.
-pub(crate) const DEADLINE_DOES_NOT_BOUND: &str =
+const DEADLINE_DOES_NOT_BOUND: &str =
     "task.deadline does not bound channel waits; use channel.recv_timeout or a channel.timeout arm";
 
 /// What the report of a failure that nobody joined advises.

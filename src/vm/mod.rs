@@ -36,7 +36,10 @@ pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(&str) -> Value) -> Valu
         panic!("synthetic IO worker panic for round-76 lock");
     });
     let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
-    let _ = vm.runtime.scheduler.block_thread(wait, false);
+    let _ = vm
+        .runtime
+        .scheduler
+        .block_thread(wait, crate::scheduler::Blocks::Thread);
     op.cell.get().cloned().expect("the operation has ended")
 }
 
