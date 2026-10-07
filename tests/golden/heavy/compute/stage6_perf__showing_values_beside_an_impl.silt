@@ -1,0 +1,36 @@
+-- timeout: 120
+-- Showing values none of whose parts has a written `Display` impl, in
+-- a program that has one for another type: 150,000 interpolations of a
+-- list of two records. It must cost what it costs in a program with no
+-- impl at all (once every record and variant on the way was looked up
+-- in a table, and a record's fields were collected before they were
+-- written: about a tenth more time, in release).
+import list
+import string
+
+type P {
+  x: Int,
+  y: Int,
+}
+
+type Other {
+  n: Int,
+}
+
+trait Display for Other {
+  fn display(self) -> String {
+    "o"
+  }
+}
+
+fn go(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> go(n - 1, acc + string.length("{[P { x: n, y: 2 }, P { x: 1, y: n }]}"))
+  }
+}
+
+fn main() {
+  println(Other { n: 1 })
+  println(go(150000, 0))
+}

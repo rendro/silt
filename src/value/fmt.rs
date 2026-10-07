@@ -104,10 +104,13 @@ impl Value {
             }
             Value::Record(ty, fields) => {
                 let items: Vec<String> = record_fields(ty, fields)
-                    .into_iter()
                     .map(|(k, v)| format!("{k}: {}", v.format_silt()))
                     .collect();
-                format!("{}{{{}}}", record_head(ty), items.join(", "))
+                // (An anonymous record is written without a name.)
+                match ty.is_anon() {
+                    true => format!("{{{}}}", items.join(", ")),
+                    false => format!("{} {{{}}}", ty.name, items.join(", ")),
+                }
             }
             Value::Variant(name, fields) => {
                 if fields.is_empty() {
@@ -132,29 +135,40 @@ impl Value {
     }
 }
 
-/// What a record is written with before its fields: the name of its
-/// type and a space; nothing for an anonymous record (`{a: 1}`).
-fn record_head(ty: &crate::typeinfo::TypeInfo) -> String {
-    match ty.is_anon() {
-        true => String::new(),
-        false => format!("{} ", ty.name),
-    }
-}
-
 /// The fields of a record in the order they are written in, in every
 /// text of it: the order the type declares them in; an anonymous
 /// record's, which has no declaration, in name order.
 fn record_fields<'a>(
-    ty: &crate::typeinfo::TypeInfo,
+    ty: &'a crate::typeinfo::TypeInfo,
     fields: &'a std::collections::BTreeMap<String, Value>,
-) -> Vec<(&'a str, &'a Value)> {
+) -> RecordFields<'a> {
     match &ty.shape {
-        crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => declared
-            .iter()
-            .filter_map(|(k, _)| fields.get_key_value(k.as_str()))
-            .map(|(k, v)| (k.as_str(), v))
-            .collect(),
-        _ => fields.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+        crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
+            RecordFields::Declared(declared.iter(), fields)
+        }
+        _ => RecordFields::Named(fields.iter()),
+    }
+}
+
+/// See [`record_fields`].
+enum RecordFields<'a> {
+    Declared(
+        std::slice::Iter<'a, (String, crate::typeinfo::FieldType)>,
+        &'a std::collections::BTreeMap<String, Value>,
+    ),
+    Named(std::collections::btree_map::Iter<'a, String, Value>),
+}
+
+impl<'a> Iterator for RecordFields<'a> {
+    type Item = (&'a str, &'a Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            RecordFields::Declared(declared, fields) => {
+                declared.find_map(|(name, _)| Some((name.as_str(), fields.get(name.as_str())?)))
+            }
+            RecordFields::Named(fields) => fields.next().map(|(name, v)| (name.as_str(), v)),
+        }
     }
 }
 
@@ -334,15 +348,21 @@ impl Value {
                 }
                 ty::DURATION => fmt_duration(f, val_i64(fields.get("ns"))),
                 _ => {
-                    write!(f, "{}{{", record_head(ty))?;
-                    for (i, (k, v)) in record_fields(ty, fields).into_iter().enumerate() {
+                    // (An anonymous record is written without a name.)
+                    if !ty.is_anon() {
+                        f.write_str(&ty.name)?;
+                        f.write_str(" ")?;
+                    }
+                    f.write_str("{")?;
+                    for (i, (k, v)) in record_fields(ty, fields).enumerate() {
                         if i > 0 {
-                            write!(f, ", ")?;
+                            f.write_str(", ")?;
                         }
-                        write!(f, "{k}: ")?;
+                        f.write_str(k)?;
+                        f.write_str(": ")?;
                         v.show(f, written)?;
                     }
-                    write!(f, "}}")
+                    f.write_str("}")
                 }
             },
             Value::Variant(name, fields) => {
