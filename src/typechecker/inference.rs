@@ -433,9 +433,6 @@ impl TypeChecker {
                 },
             ));
         }
-        if let Some(t) = self.forced_trait {
-            matches.retain(|(n, ..)| *n == t);
-        }
         matches
     }
 
@@ -520,15 +517,6 @@ impl TypeChecker {
     ) -> Type {
         self.last_field_access_was_method = true;
         let head = self.type_name_for_impl(&self.apply(receiver_ty));
-        // A call that names its trait (a derived impl's body) calls that
-        // trait's method.
-        let forced_entry = match (self.forced_trait, head) {
-            (Some(t), Some(head)) if self.entry_trait(entry, method_name) != Some(t) => {
-                self.trait_method_entry(head, method_name, t)
-            }
-            _ => None,
-        };
-        let entry = forced_entry.as_ref().unwrap_or(entry);
         // A method of a trait another module declares without `pub` can
         // be called only in that module.
         if let Some(trait_name) = entry.trait_name
@@ -537,15 +525,12 @@ impl TypeChecker {
             self.private_method(trait_name, method_name, span);
             return Type::Error;
         }
-        if self.forced_trait.is_none()
-            && let Some(head) = head
+        if let Some(head) = head
             && self.ambiguous_method_call(head, method_name, span)
         {
             return Type::Error;
         }
-        self.method_trait = self
-            .forced_trait
-            .or_else(|| self.entry_trait(entry, method_name));
+        self.method_trait = self.entry_trait(entry, method_name);
         // What the impl and the method ask of the receiver's parts and
         // of the method's own type variables is owed, and checked once
         // the receiver is unified with the method's `self` below.
@@ -1305,19 +1290,15 @@ impl TypeChecker {
         // A method call names its method's trait: the access records it
         // (`Expr::res`), and the compiler keys the call by it.
         let outer = self.method_trait.take();
-        // A trait the access names already (a derived impl's body) is
-        // taken off it while it is inferred, and written back below.
-        let forced = match expr.res {
-            Some(crate::defs::Res::Def(id)) => self.trait_key(id),
-            _ => None,
-        };
-        if forced.is_some() {
+        // (An access inferred before has the trait it was given then:
+        // it is decided anew.)
+        if let Some(crate::defs::Res::Def(id)) = expr.res
+            && self.trait_key(id).is_some()
+        {
             expr.res = None;
         }
-        let outer_forced = std::mem::replace(&mut self.forced_trait, forced);
         let called = self.callee_position;
         let ty = self.infer_expr_kind(expr, env);
-        self.forced_trait = outer_forced;
         // A method is called, not taken: `x.m` that is not a callee is a
         // field.
         let ty = if self.last_field_access_was_method && !called {
@@ -1826,8 +1807,8 @@ impl TypeChecker {
                         Type::Error
                     }
                     // Primitive types — check method table for trait methods.
-                    // Channel and Fn are not
-                    // auto-derived but user-defined trait impls register entries
+                    // Channel and Fn have no structural traits to
+                    // speak of, but user-defined trait impls register entries
                     // under the canonical names "Channel" / "Fn" via
                     // `type_name_for_impl` (see `src/typechecker/mod.rs:2081`,
                     // `src/typechecker/mod.rs:2092`), so dispatch must route those

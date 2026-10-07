@@ -94,7 +94,7 @@ impl Analysis {
 /// One module after its check.
 pub struct ModuleAnalysis {
     /// The declarations, with what the checker filled in (expression
-    /// types, synthesized impls).
+    /// types, what each field access means).
     pub ast: Arc<ast::Program>,
     /// The module's top-level names, and what it offers its importers.
     pub scope: ModuleScope,

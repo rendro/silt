@@ -3,7 +3,7 @@ use super::*;
 // ── The builtin environment ─────────────────────────────────────────
 
 /// What every check starts from: the checker and the environment once
-/// the builtin functions, types, traits and derived impls are registered.
+/// the builtin functions, types and traits are registered.
 /// Built once per thread and shared by every check made on it (see
 /// [`builtin_env`]).
 pub(super) struct BuiltinEnv {
@@ -15,10 +15,6 @@ pub(super) struct BuiltinEnv {
     /// The scope of the builtin names: the parent of every program's
     /// top-level scope.
     root: Rc<TypeEnv>,
-    /// The derived impls of the builtin types (`Display`, `Equal`, ...
-    /// for `IoError`, `Weekday`, ...), checked: a program compiles them
-    /// once, see [`builtin_derived_impls`].
-    impls: Rc<Vec<Decl>>,
 }
 
 impl BuiltinEnv {
@@ -48,42 +44,11 @@ impl BuiltinEnv {
         for (name, scheme) in variants {
             env.define(name, scheme);
         }
-        // Derive the builtin types' impls once, as a check of a program
-        // with no declarations would, and check their bodies. They are
-        // registered in a scope over the builtin one, so the scopes their
-        // bodies open share the builtin scope instead of copying it, and
-        // what they bind is then moved into the builtin scope.
-        let root = Rc::new(env);
-        let mut scope = TypeEnv::child_of(root.clone());
-        let mut impls = Vec::new();
-        checker.synthesize_auto_derive_impls(&mut impls);
-        for decl in &impls {
-            if let Decl::TraitImpl(ti) = decl {
-                if let Some(target) = checker.impl_target(ti) {
-                    checker.tables.builtin_derived.insert(target);
-                }
-                checker.register_trait_impl(ti);
-            }
-        }
-        checker.check_decl_bodies(&mut impls, &mut scope);
-        checker.solve_wanted(0);
-        checker.resolve_decl_types(&mut impls);
-        debug_assert!(
-            checker.errors.is_empty(),
-            "the builtin derived impls check: {:?}",
-            checker.errors
-        );
-        checker.errors.clear();
-        let bindings = std::mem::take(&mut scope.bindings);
-        drop(scope);
-        let mut env = Rc::try_unwrap(root).expect("no scope over the builtin scope is left");
-        env.bindings.extend(bindings);
         let tables = std::mem::take(&mut checker.tables);
         BuiltinEnv {
             checker,
             tables,
             root: Rc::new(env),
-            impls: Rc::new(impls),
         }
     }
 
@@ -100,29 +65,6 @@ thread_local! {
     /// `intern::reset` invalidates them, so the cache is too.
     static BUILTIN_ENV: std::cell::RefCell<Option<(u64, Rc<BuiltinEnv>)>> =
         const { std::cell::RefCell::new(None) };
-}
-
-/// The derived impls of the builtin types, checked. Every program
-/// compiles them once (`Compiler::compile_program`), so a method call on
-/// a builtin type's value finds its method.
-pub fn builtin_derived_impls() -> Rc<Vec<Decl>> {
-    builtin_env().impls.clone()
-}
-
-/// The default methods of the builtin traits, each with its trait: the
-/// one body an impl that leaves the method out runs (`Error.message`).
-/// Every program compiles them once, like the derived impls.
-pub fn builtin_default_methods() -> Vec<(crate::defs::TraitId, FnDecl)> {
-    derive_synth::builtin_trait_decls()
-        .into_iter()
-        .filter_map(|t| Some((crate::defs::builtin_trait_id(&resolve(t.name))?, t)))
-        .flat_map(|(id, t)| {
-            t.methods
-                .into_iter()
-                .filter(|m| !m.is_signature_only)
-                .map(move |m| (id, m))
-        })
-        .collect()
 }
 
 /// Whether the builtin scope binds `name` (`int.parse`).
@@ -359,7 +301,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     MethodEntry {
                         method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
                         span: Span::BUILTIN,
-                        is_auto_derived: false,
+                        structural: false,
                         trait_name: Some(key),
                         preds: Vec::new(),
                     },
@@ -378,8 +320,8 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.own_types.clear();
 }
 
-/// Test-only introspection: collect the auto-derived trait-impl and
-/// method registrations of the builtin init, for the derive-policy locks
+/// Test-only introspection: collect the structural-trait and method
+/// registrations of the builtin init, for the policy locks
 /// in `tests/cli/trait_init_parity_tests.rs`.
 ///
 /// Returns `(trait_impls, method_keys)` where:

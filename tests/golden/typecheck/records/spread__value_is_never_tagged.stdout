@@ -5,6 +5,6 @@ c
 <anon> {age: 42, city: c, name: Bob}
 c
 <anon> {k: 1, name: a, seen: true}
-Person {age: 42, name: Bob}
-Person {age: 43, name: Bob}
+Person {name: Bob, age: 42}
+Person {name: Bob, age: 43}
 <anon> {age: 42, name: Bob}

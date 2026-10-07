@@ -1,18 +1,8 @@
-//! Built-in enum and record auto-derive stamp coverage.
-//!
-//! The auto-derive synthesis pass (`synthesize_auto_derive_impls` in
-//! `src/typechecker/mod.rs`) emits a `TraitImpl` for every built-in enum
-//! and record for each policy-permitted built-in trait. These tests read
-//! the typechecker's `trait_impl_set` directly. The end-to-end semantic
-//! outputs of the synthesized methods live in the golden cases
+//! Which builtin enums and records have which of the structural traits
+//! (`Equal`, `Compare`, `Hash`, `Display`), as the typechecker's
+//! `trait_impl_set` says. What the VM's native methods of those traits
+//! give for these types is in the golden cases
 //! `tests/golden/lang/traits/auto_derive_builtin_synth__*.silt`.
-
-// ── Coverage tests: every supportable built-in has a synth impl
-//
-// Walk `self.enums` and `self.records` via a typechecker fingerprint
-// helper; for every built-in entry, assert the policy-permitted
-// trait stamps are present in `trait_impl_set`. The synth pass keys
-// off `trait_impl_set`, so a missing stamp implies missing synth.
 
 #[test]
 fn every_builtin_enum_has_stamps_for_policy_permitted_traits() {
@@ -70,7 +60,7 @@ fn every_builtin_record_has_stamps_for_policy_permitted_traits() {
     use silt::typechecker::__trait_init_fingerprint_check_program;
     let (impls, _) = __trait_init_fingerprint_check_program();
     // time records — all four built-in trait stamps via
-    // `register_auto_derived_impls_for(time, &[...], all_auto_traits)`.
+    // `register_structural_traits_for(time, &[...], all_auto_traits)`.
     for type_name in ["Instant", "Date", "Time", "DateTime", "Duration"] {
         for trait_name in ["Equal", "Compare", "Hash", "Display"] {
             let key = format!("{trait_name}:{type_name}");

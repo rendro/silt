@@ -1,39 +1,68 @@
+//! The structural traits (`Display` without a written impl, and the
+//! sealed `Equal`, `Compare` and `Hash`): which of a module's types have
+//! them.
+
 use super::*;
 
 impl TypeChecker {
-    /// Conservative check: is the field type `ty` known to satisfy
-    /// `trait_name` as recorded in `trait_impl_set`? Returns false on
-    /// unresolved tyvars or unknown nominal heads. Used by
-    /// `synthesize_auto_derive_impls` to decide whether a record / enum
-    /// can have a sound auto-derived impl.
-    pub(super) fn field_type_supports_trait(&self, trait_name: TraitKey, ty: &Type) -> bool {
-        let Some(type_name) = self.type_name_for_impl(ty) else {
-            return false;
-        };
-        let canonical = canonical_head(&self.tables.resolver, type_name);
-        self.tables
-            .trait_impl_set
-            .contains(&(trait_name, canonical))
+    /// Settle which of the module's types have the structural traits
+    /// (`Display`, `Equal`, `Compare`, `Hash`): note the types a
+    /// `Display` impl is written for (in the module, or brought in by an
+    /// import or an earlier REPL cell), whose `Display` is that impl and
+    /// not the structural one, and take the traits away from the types
+    /// whose parts lack them (`enforce_structural_gate`). No impl is
+    /// made for a structural trait: the VM has each natively, over the
+    /// structure of the value.
+    pub(super) fn settle_structural_traits(&mut self, decls: &[Decl]) {
+        let display = TraitKey::builtin("Display");
+        let mut written: std::collections::HashSet<TypeRef> = std::collections::HashSet::new();
+        for decl in decls {
+            if let Decl::TraitImpl(ti) = decl
+                && self.named_trait(ti.trait_res, ti.trait_name) == Some(display)
+                && let Some(target) = self.impl_target(ti)
+            {
+                written.insert(target);
+            }
+        }
+        let display_method = intern("display");
+        for ((type_name, method), entry) in &self.tables.method_table {
+            if *method == display_method && !entry.structural && entry.trait_name == Some(display) {
+                written.insert(*type_name);
+            }
+        }
+        self.display_written = written
+            .iter()
+            .map(|ty| canonical_head(&self.tables.resolver, *ty))
+            .collect();
+
+        let own: std::collections::HashSet<TypeRef> = decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Type(td) if !matches!(td.body, TypeBody::Alias(_)) => {
+                    Some(self.own_type(td.name))
+                }
+                _ => None,
+            })
+            .collect();
+        self.enforce_structural_gate(&own);
     }
 
-    /// Round 93: compute honest field-aware eligibility for the three
-    /// gated built-in traits (Equal / Compare / Hash) over every
-    /// user-declared type, then un-stamp `trait_impl_set` /
-    /// `method_table` for the ineligible pairs and store the reasons
-    /// in `auto_derive_negatives`. See the call site in
-    /// `synthesize_auto_derive_impls` for the full rationale.
-    pub(super) fn enforce_auto_derive_field_gate(
+    /// Ask the structural judgement of each of the module's types
+    /// (`structural_negatives_of`), then un-stamp `trait_impl_set` /
+    /// `method_table` for the pairs a field or payload rules out, and
+    /// keep the reasons in `structural_negatives`.
+    pub(super) fn enforce_structural_gate(
         &mut self,
         user_type_names: &std::collections::HashSet<TypeRef>,
     ) {
-        let negatives = self.compute_auto_derive_field_negatives(user_type_names);
+        let negatives = self.structural_negatives_of(user_type_names);
 
         // Un-stamp the negatives: drop the provisional `trait_impl_set`
         // entry (so `where a: Trait` obligations and supertrait checks
-        // reject honestly) and the provisional auto-derived
-        // `method_table` entry (so `.compare()` / `.equal()` / `.hash()`
-        // calls are rejected instead of falling through to
-        // `dispatch_trait_method`'s Value-level behaviour at runtime).
+        // reject honestly) and the provisional `method_table` entry (so
+        // `.compare()` / `.equal()` / `.hash()` calls are rejected
+        // instead of reaching the VM's method for a value that has no
+        // sound one).
         for (trait_sym, canon) in negatives.keys() {
             self.tables.trait_impl_set.remove(&(*trait_sym, *canon));
             let method_sym = match resolve(trait_sym.name).as_str() {
@@ -63,9 +92,9 @@ impl TypeChecker {
             .map(|n| canonical_head(&self.tables.resolver, *n))
             .collect();
         self.tables
-            .auto_derive_negatives
+            .structural_negatives
             .retain(|(_, canon), _| !processed.contains(canon));
-        self.tables.auto_derive_negatives.extend(negatives);
+        self.tables.structural_negatives.extend(negatives);
     }
 
     /// Which of the four structural traits each of the module's types
@@ -73,7 +102,7 @@ impl TypeChecker {
     /// (`structure_gap`) asked of the type at its own parameters, which
     /// hold whatever a use gives them. `Display` is not asked of a type
     /// with a written impl.
-    fn compute_auto_derive_field_negatives(
+    fn structural_negatives_of(
         &self,
         user_type_names: &std::collections::HashSet<TypeRef>,
     ) -> HashMap<(TraitKey, TypeRef), String> {

@@ -267,9 +267,6 @@ pub struct Compiler {
     /// The slot of each top-level function, `let` and host function of
     /// the modules compiled now, by module and name.
     own_slots: HashMap<(crate::session::ModuleId, Symbol), u16>,
-    /// Whether the derived impls of the builtin types are installed
-    /// already (by an earlier REPL entry).
-    builtin_impls_installed: bool,
 }
 
 /// The names two or more types of the program's modules have (two
@@ -295,6 +292,14 @@ fn program_type_clashes(units: &ProgramUnits) -> HashSet<Symbol> {
 /// jump over an arm.
 const MATCH_ARM: &str = "bytes of code in a match arm";
 
+/// What a method reached through its type is (`Compiler::type_member`).
+enum TypeMember {
+    /// The method of an impl: its global.
+    Slot(u16),
+    /// The VM's own method of the trait.
+    Native(crate::defs::TraitId),
+}
+
 /// A program needs more global slots than the instruction operand can
 /// name: the definition at `span` would be its `count`th.
 fn too_many_globals(count: usize, span: Span) -> Diagnostic {
@@ -313,7 +318,6 @@ impl Compiler {
     pub fn for_program(units: ProgramUnits) -> Result<Self, Diagnostic> {
         let program_clashes = program_type_clashes(&units);
         let mut globals = units.earlier.globals.clone();
-        let builtin_impls_installed = !globals.is_empty();
         let mut compiler = Self {
             contexts: Vec::new(),
             functions: Vec::new(),
@@ -325,17 +329,14 @@ impl Compiler {
             types: RefCell::new(TypeTable::default()),
             globals: Globals::default(),
             own_slots: HashMap::new(),
-            builtin_impls_installed,
         };
         compiler.own_slots = compiler.assign_slots(&mut globals)?;
         compiler.globals = globals;
         Ok(compiler)
     }
 
-    /// Give a global slot to each definition the program installs: the
-    /// builtin traits' default methods and the derived impls of the
-    /// builtin types (unless an earlier REPL entry installed them),
-    /// then, module by module, each function, `let`, host function and
+    /// Give a global slot to each definition the program installs:
+    /// module by module, each function, `let`, host function and
     /// default method of a trait, and last each impl method. An impl
     /// that leaves a default method out gets no slot for it: its method
     /// is the trait's. Gives the slots of the modules' own functions,
@@ -345,24 +346,6 @@ impl Compiler {
         globals: &mut Globals,
     ) -> Result<HashMap<(crate::session::ModuleId, Symbol), u16>, Diagnostic> {
         let mut own = HashMap::new();
-        let builtin_defaults = crate::typechecker::builtin_default_methods();
-        if !self.builtin_impls_installed {
-            for (t, method) in &builtin_defaults {
-                let trait_name = self.units.defs.get(t.0).name;
-                globals
-                    .add_default_method(
-                        *t,
-                        &resolve(method.name),
-                        format!("{trait_name}.{}", method.name),
-                    )
-                    .ok_or_else(|| too_many_globals(globals.len() + 1, method.span))?;
-            }
-            for decl in crate::typechecker::builtin_derived_impls().iter() {
-                if let Decl::TraitImpl(ti) = decl {
-                    self.assign_method_slots(ti, globals)?;
-                }
-            }
-        }
         for (index, unit) in self.units.modules.iter().enumerate() {
             if self.units.earlier.installed.contains(&index) {
                 continue;
@@ -509,7 +492,6 @@ impl Compiler {
         // Push a top-level script context.
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
 
-        self.compile_builtin_derived_impls()?;
         let order = self.units.modules[self.units.entry].let_order.clone();
         for decl in Self::decls_in_init_order(&program.decls, &order) {
             self.compile_decl(decl)?;
@@ -555,7 +537,6 @@ impl Compiler {
     pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, Diagnostic> {
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
 
-        self.compile_builtin_derived_impls()?;
         let order = self.units.modules[self.units.entry].let_order.clone();
         for decl in Self::decls_in_init_order(&program.decls, &order) {
             self.compile_decl(decl)?;
@@ -570,23 +551,6 @@ impl Compiler {
         let mut result = vec![script];
         result.append(&mut self.functions);
         Ok(result)
-    }
-
-    /// Compile the derived impls of the builtin types, which the
-    /// typechecker derives and checks once (see
-    /// [`crate::typechecker::builtin_derived_impls`]), at the start of a
-    /// program's script; a REPL session installs them once.
-    fn compile_builtin_derived_impls(&mut self) -> Result<(), Diagnostic> {
-        if self.builtin_impls_installed {
-            return Ok(());
-        }
-        for (t, method) in crate::typechecker::builtin_default_methods() {
-            self.compile_default_method(t, &resolve(self.units.defs.get(t.0).name), &method)?;
-        }
-        for decl in crate::typechecker::builtin_derived_impls().iter() {
-            self.compile_decl(decl)?;
-        }
-        Ok(())
     }
 
     // ── Declarations ──────────────────────────────────────────────
@@ -1274,10 +1238,11 @@ impl Compiler {
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
-            // `Int.display` as a value: the function `{ a -> a.display() }`
+            // `Int.display`, `Pt.compare` as a value, a method the VM has
+            // natively for the type: the function `{ a -> a.display() }`
             // (`{ a, b -> a.compare(b) }` for the two-argument methods).
             ExprKind::FieldAccess(_, method, _)
-                if self.builtin_trait_method_of_builtin_type(expr) =>
+                if let Some(TypeMember::Native(tr)) = self.type_member(expr)? =>
             {
                 let names: &[&str] = match resolve(*method).as_str() {
                     "compare" | "equal" => &["__self__", "__other__"],
@@ -1288,9 +1253,7 @@ impl Compiler {
                     ExprKind::FieldAccess(Box::new(ident(names[0])), *method, span),
                     span,
                 );
-                access.sel = Some(crate::ast::Selection::Native {
-                    tr: self.builtin_method_trait(expr.res, *method, span)?,
-                });
+                access.sel = Some(crate::ast::Selection::Native { tr });
                 let call = Expr::new(
                     ExprKind::Call(
                         Box::new(access),
@@ -1318,7 +1281,9 @@ impl Compiler {
                 self.compile_expr(&lambda)?;
             }
 
-            ExprKind::FieldAccess(..) if let Some(slot) = self.qualified_type_member(expr)? => {
+            ExprKind::FieldAccess(..)
+                if let Some(TypeMember::Slot(slot)) = self.type_member(expr)? =>
+            {
                 self.emit(Asm::GetGlobal { slot }, span)?;
             }
 
@@ -1809,14 +1774,20 @@ impl Compiler {
                 span,
             )?;
         } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
-            if self.builtin_trait_method_of_builtin_type(callee) && !args.is_empty() {
-                // `Int.display(1)`: a builtin trait's method of a
-                // builtin type, which is native, not a global; the
-                // first argument is the receiver.
-                let t = self.builtin_method_trait(callee.res, *method, span)?;
+            let member = self.type_member(callee)?;
+            if let Some(TypeMember::Native(t)) = member {
+                // `Int.display(1)`, `Pt.compare(a, b)`: a method the VM
+                // has natively for the type, not a global; the first
+                // argument is the receiver.
+                if args.is_empty() {
+                    return Err(checker_missed(
+                        span,
+                        &format!("the call of '{method}' through its type with no receiver"),
+                    ));
+                }
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call_method(*method, args.len(), t, tail, span)?;
-            } else if let Some(slot) = self.qualified_type_member(callee)? {
+            } else if let Some(TypeMember::Slot(slot)) = member {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
                 self.emit(Asm::GetGlobal { slot }, span)?;
@@ -2059,27 +2030,15 @@ impl Compiler {
     }
 
     /// The variant a resolution names (a constructor pattern, a variant
-    /// used as a value). With no resolution (the derived impls of the
-    /// builtin types, which the builtin environment makes) it is a
-    /// builtin variant, named by its name: builtin variant names are
-    /// unique among the builtins.
-    fn variant_tag(&self, res: Option<crate::defs::Res>, name: Symbol) -> Option<Tag> {
-        if let Some(res) = res {
-            let crate::defs::Res::Def(id) = res else {
-                return None;
-            };
-            let crate::defs::DefKind::Variant { ty, ordinal, .. } = self.units.defs.get(id).kind
-            else {
-                return None;
-            };
-            return Some(Tag::new(self.type_info(ty), ordinal));
-        }
-        let name = resolve(name);
-        module::builtin_enum_variants()
-            .iter()
-            .find(|(_, variants)| variants.contains(&name.as_str()))
-            .and_then(|(ty, _)| crate::typeinfo::builtin_type_named(ty))
-            .and_then(|ty| Tag::named(ty, &name))
+    /// used as a value).
+    fn variant_tag(&self, res: Option<crate::defs::Res>) -> Option<Tag> {
+        let crate::defs::Res::Def(id) = res? else {
+            return None;
+        };
+        let crate::defs::DefKind::Variant { ty, ordinal, .. } = self.units.defs.get(id).kind else {
+            return None;
+        };
+        Some(Tag::new(self.type_info(ty), ordinal))
     }
 
     /// The tag of the variant a constructor pattern names.
@@ -2089,7 +2048,7 @@ impl Compiler {
         name: Symbol,
         span: Span,
     ) -> Result<Tag, Diagnostic> {
-        self.variant_tag(res, name)
+        self.variant_tag(res)
             .ok_or_else(|| checker_missed(span, &format!("the unresolved variant '{name}'")))
     }
 
@@ -2232,13 +2191,11 @@ impl Compiler {
         Some(canonical_head(self.resolver(), written?).id)
     }
 
-    /// The trait the impl `ti` is of. The derived impls of the builtin
-    /// types, which the builtin environment makes, name a builtin trait
-    /// unresolved.
+    /// The trait the impl `ti` is of.
     fn impl_trait(&self, ti: &crate::ast::TraitImpl) -> Option<crate::defs::TraitId> {
         match ti.trait_res {
             Some(crate::defs::Res::Def(id)) => Some(crate::defs::TraitId(id)),
-            _ => crate::defs::builtin_trait_id(&resolve(ti.trait_name)),
+            _ => None,
         }
     }
 
@@ -2253,19 +2210,6 @@ impl Compiler {
             crate::defs::DefKind::Trait(t) => Some(t),
             _ => None,
         }
-    }
-
-    /// The builtin trait of `T.method` for a builtin type `T`
-    /// (`Int.display`): the one the checker resolved the access to.
-    fn builtin_method_trait(
-        &self,
-        res: Option<crate::defs::Res>,
-        method: Symbol,
-        span: Span,
-    ) -> Result<crate::defs::TraitId, Diagnostic> {
-        self.res_trait(res)
-            .or_else(|| crate::defs::builtin_trait_of_method(&resolve(method)))
-            .ok_or_else(|| checker_missed(span, &format!("the method '{method}' of no trait")))
     }
 
     /// Emit `CallMethod` of `method` of the trait `t` with `argc`
@@ -2297,32 +2241,13 @@ impl Compiler {
         }
     }
 
-    /// Whether `callee` is `T.method` for a builtin type (`Int`, `List`,
-    /// `io.IoError`, ...) and a method of a builtin trait (Display,
-    /// Compare, Equal, Hash, Error), which the VM implements natively for
-    /// it, or as a derived impl it dispatches to.
-    fn builtin_trait_method_of_builtin_type(&self, callee: &Expr) -> bool {
-        let ExprKind::FieldAccess(obj, method, _) = &callee.kind else {
-            return false;
-        };
-        if !matches!(
-            resolve(*method).as_str(),
-            "display" | "compare" | "equal" | "hash" | "message"
-        ) {
-            return false;
-        }
-        let Some(crate::defs::Res::Def(id)) = obj.res else {
-            return false;
-        };
-        let def = self.units.defs.get(id);
-        def.module.is_builtin() && def.is_type()
-    }
-
-    /// The global slot of `T.method` or `m.T.method`, a method of a type
-    /// reached through the type, as the resolver resolved `T` / `m.T`:
-    /// the method of the impls for the type's canonical head. `None` when
-    /// `expr` is not such an access.
-    fn qualified_type_member(&self, expr: &Expr) -> Result<Option<u16>, Diagnostic> {
+    /// What `T.method` or `m.T.method` is, a method reached through its
+    /// type, as the resolver resolved `T` / `m.T` and the checker the
+    /// method's trait: the global of the impl for the type's canonical
+    /// head, or, where the impl has none, the VM's own method of the
+    /// trait (a structural trait's, a builtin error enum's `message`).
+    /// `None` when `expr` is not such an access.
+    fn type_member(&self, expr: &Expr) -> Result<Option<TypeMember>, Diagnostic> {
         let ExprKind::FieldAccess(obj, field, _) = &expr.kind else {
             return Ok(None);
         };
@@ -2346,15 +2271,18 @@ impl Compiler {
             },
         );
         // (The checker wrote the method's trait on the access.)
-        self.res_trait(expr.res)
-            .and_then(|t| self.globals.method(t, ty.id, &resolve(*field)))
-            .map(Some)
-            .ok_or_else(|| {
-                checker_missed(
-                    expr.span,
-                    &format!("the method '{}.{field}' with no impl", def.name),
-                )
-            })
+        let Some(t) = self.res_trait(expr.res) else {
+            return Err(checker_missed(
+                expr.span,
+                &format!("the method '{}.{field}' of no trait", def.name),
+            ));
+        };
+        Ok(Some(
+            match self.globals.method(t, ty.id, &resolve(*field)) {
+                Some(slot) => TypeMember::Slot(slot),
+                None => TypeMember::Native(t),
+            },
+        ))
     }
 
     /// The value of the variant `expr` names, as the resolver resolved
@@ -2362,7 +2290,7 @@ impl Compiler {
     /// is the value, any other its constructor. Two enums may have
     /// variants of one name, so a variant is not looked up by its name.
     fn variant_value(&self, expr: &Expr) -> Option<Value> {
-        let tag = self.variant_tag(Some(expr.res?), intern(""))?;
+        let tag = self.variant_tag(Some(expr.res?))?;
         Some(match tag.arity() {
             0 => Value::Variant(tag, Vec::new()),
             _ => Value::VariantConstructor(tag),

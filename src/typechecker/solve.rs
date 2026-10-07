@@ -1450,7 +1450,7 @@ impl TypeChecker {
                 .tables
                 .method_table
                 .get(&(head, intern("display")))
-                .is_none_or(|entry| entry.is_auto_derived)
+                .is_none_or(|entry| entry.structural)
     }
 
     /// What a message says of a type that lacks the structural trait
@@ -1746,7 +1746,7 @@ impl TypeChecker {
         // sides describe differently shaped representations of the same
         // head (a `Record` receiver against a `Generic` impl form, the
         // bare `Tuple`/`Fn` wildcard): skipped. Impls without a stored
-        // self type (builtin pre-stamps, auto-derive synthesis) skip the
+        // self type (the stamps of the structural traits) skip the
         // check.
         let obligated_args = self.type_args_of(&resolved);
         // Whether the impl's variables are the subject's parts by now.
@@ -2058,17 +2058,6 @@ impl TypeChecker {
         entry.trait_name.or_else(|| {
             crate::defs::builtin_trait_of_method(&resolve(method)).and_then(|t| self.trait_key(t.0))
         })
-    }
-
-    /// The entry of the method `method` of the trait `t` for the type
-    /// `ty`, when the impls of two or more traits provide the method.
-    pub(super) fn trait_method_entry(
-        &self,
-        ty: TypeRef,
-        method: Symbol,
-        t: TraitKey,
-    ) -> Option<MethodEntry> {
-        self.tables.trait_methods.get(&(ty, method, t)).cloned()
     }
 
     /// Whether the module checked sees the trait `t`: a builtin trait, a

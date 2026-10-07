@@ -257,8 +257,10 @@ impl Ord for Value {
                 // agree so that `a == b ⇒ cmp(a, b) == Equal`; otherwise
                 // BTreeSet / BTreeMap would treat equal values as
                 // distinct. Records of one builtin time type order by
-                // their fields from the largest unit down; any other
-                // record by its fields in name order.
+                // their fields from the largest unit down; a record of
+                // a declared type by its fields in the order the type
+                // declares them; an anonymous record, which has no
+                // declaration, by its fields in name order.
                 if ta.is_anon() || tb.is_anon() {
                     fa.iter().cmp(fb.iter())
                 } else {
@@ -272,7 +274,16 @@ impl Ord for Value {
                             .then_with(|| cmp_record_field(fa, fb, "ns")),
                         ty::DATE_TIME => cmp_record_field(fa, fb, "date")
                             .then_with(|| cmp_record_field(fa, fb, "time")),
-                        _ => fa.iter().cmp(fb.iter()),
+                        _ => match &ta.shape {
+                            crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
+                                declared
+                                    .iter()
+                                    .map(|(name, _)| cmp_record_field(fa, fb, name))
+                                    .find(|ordering| ordering.is_ne())
+                                    .unwrap_or(Ordering::Equal)
+                            }
+                            _ => fa.iter().cmp(fb.iter()),
+                        },
                     })
                 }
             }

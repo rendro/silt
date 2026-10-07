@@ -30,8 +30,8 @@ impl TypeChecker {
         // Range, Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
         // TcpListener, TcpStream — the authoritative list is
         // `BUILTIN_TYPES` in `src/types/builtins.rs`) silently overwrote
-        // the builtin binding and then auto-derived Equal/Compare/Hash/
-        // Display impls referencing fields that the *builtin* type does
+        // the builtin binding, and what was then said of the type's
+        // structural traits went by fields the *builtin* type does
         // not have, producing an unspanned cascade of "unknown method
         // 'x' on type Int" errors. Reject at the declaration site with
         // a single clear diagnostic. Mirrors the variant-shadow error
@@ -62,10 +62,9 @@ impl TypeChecker {
         // — resolve the target with each param bound to a fresh
         // TyVar, detect cycles, then register into the canonical
         // alias registry. Aliases never appear in `enums` /
-        // `records`, never auto-derive Equal/Compare/Hash/Display
-        // (the user must write impls against the target if they
-        // want that), and emit no constructor bindings. Early-return
-        // before the auto-derive block at the end of the function.
+        // `records`, have no structural traits of their own (they
+        // are the target's), and emit no constructor bindings.
+        // Early-return before the stamps at the end of the function.
         if let TypeBody::Alias(target_te) = &td.body {
             self.register_type_alias(td, target_te, &mut param_vars);
             self.current_type_anno_span = prev_type_span;
@@ -289,53 +288,19 @@ impl TypeChecker {
             }
         }
 
-        // Auto-derive builtin traits for user-defined types.
-        //
-        // Round 62 split: non-generic enums/records are now also
-        // synthesized as real `TraitImpl` AST nodes by
-        // `synthesize_auto_derive_impls`, which routes them through
-        // `register_trait_impl` and the compiler emit path so
-        // `Op::CallMethod` finds a real impl method at dispatch time. The typecheck-stamp here remains load-bearing
-        // for two cases the synthesizer skips:
-        //
-        //   1. Generic types (`type Box(a) { Foo(a) }`,
-        //      `type Pair(a, b) { x: a, y: b }`): synthesis would need
-        //      `where a: Compare`-style impl-level clauses propagated
-        //      through `target_type_args`; that work is mechanical but
-        //      invasive and gated as a follow-up. Today the runtime
-        //      `dispatch_trait_method` path handles these.
-        //   2. Types whose fields don't all satisfy the trait (e.g. a
-        //      record with a `Map` field has no Compare on Map, so
-        //      Compare-synthesis would emit a body that fails
-        //      typecheck).
-        //
-        // Round 93: the stamp below is PROVISIONAL for Equal / Compare
-        // / Hash. `synthesize_auto_derive_impls` later runs a
-        // recursive field-aware eligibility pass
-        // (`compute_auto_derive_field_negatives`) and REMOVES the
-        // stamp (plus the auto-derived `method_table` entry) for any
-        // `(trait, type)` pair whose fields / variant payloads cannot
-        // satisfy the trait.
-        // Before round 93 the stamp stood unconditionally and `==` /
-        // `<` / `.compare()` / `.hash()` on e.g. a record wrapping a
-        // `Fn(..)` field laundered into nondeterministic Value-level
-        // fallbacks (closure ordering = Arc pointer address). Display
-        // remains unconditionally stamped: the runtime `display`
-        // fallback (`display_value`) is total and deterministic for
-        // every Value shape.
-        //
-        // For the synthesized cases, the second `trait_impl_set.insert`
-        // inside `register_trait_impl` is a no-op (the key is already
-        // present), and the duplicate-impl coherence check sees
-        // `is_auto_derived: true` from the prior method_table entry
-        // and allows the synthesized impl to overwrite it.
+        // The structural traits of the type: `Display`, `Equal`,
+        // `Compare`, `Hash`. The stamp is provisional:
+        // `enforce_structural_gate` takes a trait away again from a type
+        // whose fields or payloads lack it (a record that holds a
+        // function has no `Equal`), with the reason. No impl is made:
+        // the VM has each natively, over the structure of the value.
         let dummy_span = td.span;
-        for trait_name in BUILTIN_AUTO_DERIVED_TRAIT_NAMES {
+        for trait_name in STRUCTURAL_TRAIT_NAMES {
             self.tables
                 .trait_impl_set
                 .insert((TraitKey::builtin(trait_name), ty));
         }
-        // Register auto-derived method entries
+        // The methods of the structural traits.
         let builtin_methods: &[(&str, Type)] = &[
             (
                 "display",
@@ -366,7 +331,7 @@ impl TypeChecker {
                 MethodEntry {
                     method_type: method_type.clone(),
                     span: dummy_span,
-                    is_auto_derived: true,
+                    structural: true,
                     trait_name: None,
                     preds: Vec::new(),
                 },

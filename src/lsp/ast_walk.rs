@@ -44,15 +44,6 @@ pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Ty
                 find_type_in_expr(value, cursor, &mut best);
             }
             Decl::TraitImpl(ti) => {
-                // Skip auto-derived (synthesized) impls: their AST nodes
-                // all carry the span of the type declaration, so the walk
-                // would treat them as "at" any cursor in the declaration
-                // and pollute hover/find-type results with the
-                // synthesized body's intermediate types. The user never
-                // wrote them; LSP affordances should ignore them.
-                if ti.is_auto_derived {
-                    continue;
-                }
                 for method in &ti.methods {
                     find_type_in_expr(&method.body, cursor, &mut best);
                 }
@@ -177,9 +168,6 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
             find_ident_in_expr(value, cursor, best);
         }
         Decl::TraitImpl(ti) => {
-            if ti.is_auto_derived {
-                return;
-            }
             // Round-75 DX-4: TraitImpl's trait_name and target_type are
             // user-written references that LSP rename / references /
             // goto-def must resolve. Without these, cursor on `Greet`
@@ -674,9 +662,6 @@ pub(super) fn find_ident_type_by_name(program: &Program, name: &str) -> Option<T
             Decl::Fn(f) => find_ident_type_in_expr(&f.body, sym, &mut result),
             Decl::Let { value, .. } => find_ident_type_in_expr(value, sym, &mut result),
             Decl::TraitImpl(ti) => {
-                if ti.is_auto_derived {
-                    continue;
-                }
                 for method in &ti.methods {
                     find_ident_type_in_expr(&method.body, sym, &mut result);
                 }

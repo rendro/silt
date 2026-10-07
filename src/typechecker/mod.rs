@@ -8,13 +8,11 @@
 //! - Exhaustiveness checking for match expressions
 //! - Trait bounds: declared, inferred and owed at each use
 
-mod auto_derive;
 mod builtin_env;
+mod builtin_traits;
 mod declare_fns;
 mod declare_traits;
 mod declare_types;
-mod derive_gates;
-mod derive_synth;
 mod env;
 mod exhaustiveness;
 mod infer;
@@ -26,6 +24,7 @@ mod resolve;
 mod scheme;
 mod show;
 mod solve;
+mod structural;
 mod tables;
 mod typeexpr;
 mod unify;
@@ -44,8 +43,8 @@ pub use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
 pub use builtin_env::*;
+use builtin_traits::*;
 use declare_fns::FnSig;
-use derive_synth::*;
 use env::TypeEnv;
 use infer::pattern::collect_pattern_vars;
 use solve::{Goal, Origin, Wanted};
@@ -53,8 +52,7 @@ use std::rc::Rc;
 pub use tables::*;
 pub use unify::*;
 
-/// Names of builtin traits that the compiler registers automatically
-/// with auto-derived impls for every primitive and builtin container.
+/// Names of the builtin traits, which the checker registers itself.
 /// User code cannot redeclare a trait with any of these names — doing
 /// so would shadow the compiler's TraitInfo (different method names,
 /// different signatures) and produce nonsensical cascade errors when
@@ -66,12 +64,10 @@ pub(super) const BUILTIN_TRAIT_NAMES: &[&str] =
 /// derived structurally (see `reject_sealed_trait_impls`).
 pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Number"];
 
-/// Subset of [`BUILTIN_TRAIT_NAMES`] that is auto-derived for every
-/// primitive and builtin container. `Error` is intentionally excluded:
-/// user types and stdlib types must implement `trait Error for ...`
-/// explicitly.
-pub(super) const BUILTIN_AUTO_DERIVED_TRAIT_NAMES: &[&str] =
-    &["Equal", "Compare", "Hash", "Display"];
+/// The traits of [`BUILTIN_TRAIT_NAMES`] a type has by its structure,
+/// with no impl (`Display` unless one is written for it). `Error` is
+/// not one: an impl of it is written.
+pub(super) const STRUCTURAL_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
 // ── The type checker ────────────────────────────────────────────────
 
@@ -203,11 +199,6 @@ pub struct TypeChecker {
     /// which `infer_expr` records on the access (`Expr::res`): the
     /// compiler keys the call by it.
     pub(super) method_trait: Option<TraitKey>,
-    /// The trait the method call being inferred names already: a derived
-    /// impl's body calls the builtin trait's method of a field
-    /// (`display` of Display), whatever other trait has a method of the
-    /// name.
-    pub(super) forced_trait: Option<TraitKey>,
     /// The traits of the method calls resolved in the deferred pass, by
     /// the span of the access; `resolve_all_types` records each on its
     /// access.
@@ -307,7 +298,6 @@ impl TypeChecker {
             impl_sigs: HashMap::new(),
             last_field_access_was_method: false,
             method_trait: None,
-            forced_trait: None,
             deferred_method_traits: HashMap::new(),
             ambiguous_methods: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
@@ -872,17 +862,10 @@ impl TypeChecker {
             }
         }
 
-        // 2b: Auto-derive Display/Compare/Equal/Hash for every user
-        // enum and record that does not already have a manual impl.
-        // Mutates `program.decls`. The synthesized TraitImpls flow
-        // through `register_trait_impl` (step 2c below) and the
-        // compiler's TraitImpl emit path identical to user-written
-        // impls — producing real impl methods with global slots so
-        // `Op::CallMethod`'s method lookup finds them at runtime, never
-        // falling through to `dispatch_trait_method`.
+        // 2b: which of the module's types have the structural traits.
         // Hand-written impls of the sealed traits are rejected first.
         self.reject_sealed_trait_impls(&mut program.decls);
-        self.synthesize_auto_derive_impls(&mut program.decls);
+        self.settle_structural_traits(&program.decls);
 
         // 2c: the signatures of the functions and of the impls' methods.
         let mut sigs: Vec<Option<FnSig>> = Vec::with_capacity(program.decls.len());
@@ -1139,9 +1122,8 @@ impl TypeChecker {
 
     /// Keep one of each diagnostic: the same message at the same span
     /// with the same severity is reported once. The passes can reach one
-    /// node more than once (the derived impls of a type, which all carry
-    /// the type declaration's span, are checked per method), and a
-    /// repeated line tells the reader nothing new. Run once, after every
+    /// node more than once, and a repeated line tells the reader nothing
+    /// new. Run once, after every
     /// pass, so no pass sees a shortened error list.
     fn drop_repeated_errors(&mut self) {
         let mut seen: std::collections::HashSet<(std::string::String, Span, bool)> =
