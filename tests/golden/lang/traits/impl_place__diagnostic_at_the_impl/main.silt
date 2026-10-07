@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: the impl of trait 'Display' for type 'List' is written in module 'main', which declares neither the trait nor the type; both are builtin, so no module may write it
--- stderr-contains: --> main.silt:8:
--- the caret lands on the impl block (line 8), not on `fn pad` (line 7)
+-- stderr-contains: --> main.silt:7:
+-- the caret lands on the impl block (line 7), not on `fn pad` (line 6)
 fn pad() { }
 trait Display for List(a) {
   fn display(self) -> String { "x" }
