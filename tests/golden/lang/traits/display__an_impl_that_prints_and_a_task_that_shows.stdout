@@ -1,0 +1,5 @@
+showing 1
+showing 2
+[loud 1, loud 2]
+showing 3
+Message(Some(loud 3))
