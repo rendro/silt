@@ -2644,10 +2644,14 @@ impl Compiler {
         self.emitter().bind_over(label, over, span)
     }
 
-    /// Emit a jump to a new label, which the caller binds.
+    /// Emit a jump to a new label, which the caller binds. Where the
+    /// jump cannot be reached (after a match arm that ends in a tail
+    /// call or a `return`) there is no jump, only the label.
     fn jump(&mut self, span: Span) -> Result<Label, Diagnostic> {
         let to = self.label();
-        self.emit(Asm::Jump { to }, span)?;
+        if self.emitter().reachable() {
+            self.emit(Asm::Jump { to }, span)?;
+        }
         Ok(to)
     }
 
