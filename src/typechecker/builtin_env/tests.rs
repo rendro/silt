@@ -68,7 +68,7 @@ fn a_row_s_scheme_is_its_signature() {
             .iter()
             .filter_map(|pred| match pred {
                 Pred::Trait { tr, .. } => Some(tr.name.to_string()),
-                Pred::Anon { .. } => None,
+                Pred::Anon { .. } | Pred::Lacks { .. } => None,
             })
             .collect();
         let ty = checker.instantiate(&scheme);

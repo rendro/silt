@@ -1,0 +1,56 @@
+-- A top-level `let` is initialised after every top-level `let` its
+-- initialiser can reach: one it names, one a function it calls reads,
+-- one a method it calls reads (an impl's, a trait's default), one a
+-- closure it builds reads. Where nothing orders two, the one written
+-- first runs first.
+import list
+type P { n: Int }
+trait Get {
+  fn get(self) -> Int
+  fn twice(self) -> Int { self.get() * 2 }
+}
+trait Get for P { fn get(self) -> Int { self.n + base } }
+let a = b + 1
+let c = helper()
+let b = {
+  println("b")
+  10
+}
+let e = {
+  println("e")
+  P { n: 1 }.twice()
+}
+let base = {
+  println("base")
+  100
+}
+let first = {
+  println("first")
+  1
+}
+let d = list.map([1, 2], { x -> x + a })
+let later = {
+  println("later")
+  first + 1
+}
+fn helper() -> Int { a + b }
+fn main() {
+  println(a)
+  println(c)
+  println(d)
+  println(e)
+  println(later)
+  show_answer()
+}
+-- What a `let` holds may be called through it: a `let` that calls a
+-- function out of a table is initialised after what that function
+-- reads. A `let` that is a closure needs nothing itself.
+let answer = table.f() + inc(1)
+let table = {f: reads_seed}
+let inc = { x -> x + seed }
+fn reads_seed() -> Int { seed }
+let seed = {
+  println("seed")
+  5
+}
+fn show_answer() { println(answer) }

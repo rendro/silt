@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: the top-level `let` 'x' needs its own value to be initialised: x -> y -> z -> x
+-- stderr-not-contains: is not fully known
+-- A `let` in a ring is reported for the ring: its type is unknown
+-- because of it, and that is not a second error.
+let x = y
+
+let y = z
+
+let z = x
+
+fn main() {
+  println(x)
+}

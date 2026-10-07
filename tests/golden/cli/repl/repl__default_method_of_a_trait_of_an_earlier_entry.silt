@@ -1,0 +1,9 @@
+-- cmd: repl
+-- stdin: type P { n: Int }\ntrait Sz { fn sz(self) -> Int  fn dbl(self) -> Int { self.sz() * 2 } }\ntrait Sz for Int { fn sz(self) -> Int { self } }\n4.dbl()\nfn dy(x: a) -> Int where a: Sz { x.dbl() }\ndy(4)\nlet k = 5\ntrait Sz for P { fn sz(self) -> Int { self.n + k } }\nP { n: 1 }.sz()\nP { n: 1 }.dbl()\ndy(P { n: 2 })\nP.sz(P { n: 9 })\nP.dbl(P { n: 9 })\nimport list\nlist.map([P { n: 1 }], P.dbl)\n:quit\n
+-- A default method is the trait's one function, for every impl that
+-- leaves it out, whichever entry declared the trait: an impl written
+-- in a later entry (`trait Sz for P`), and one of the same entry as the
+-- call, get it; called on a known type, through a bounded variable,
+-- through the type, and as a function value. (The compiler's table of
+-- default methods once had only the traits of the entry at hand:
+-- `4.dbl()` was "no method 'dbl' for type 'Int'".)

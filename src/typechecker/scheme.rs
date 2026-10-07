@@ -79,7 +79,7 @@ impl TypeChecker {
                 Goal::Try { operand, ok, ret } => {
                     ret.iter().chain([operand, ok]).cloned().collect()
                 }
-                Goal::Lacks { .. } | Goal::Listed { .. } => continue,
+                Goal::Listed { .. } => continue,
                 // (One that waits is over a record of an outer scope.)
                 Goal::Rebuild {
                     base, with, result, ..
@@ -128,6 +128,10 @@ impl TypeChecker {
                     Pred::Anon { given, .. } => Pred::Anon {
                         row: Type::Var(subject),
                         given: *given,
+                    },
+                    Pred::Lacks { field, .. } => Pred::Lacks {
+                        row: Type::Var(subject),
+                        field: *field,
                     },
                 };
                 if !preds.contains(&pred) {
@@ -199,10 +203,9 @@ impl TypeChecker {
                 Goal::Pred(Pred::Trait { tr, args, subject }) => (tr, args, subject),
                 // (A row nothing gives fields to has none to clash, and
                 // is no declared record.)
-                Goal::Lacks { .. }
-                | Goal::Listed { .. }
+                Goal::Listed { .. }
                 | Goal::Rebuild { .. }
-                | Goal::Pred(Pred::Anon { .. }) => continue,
+                | Goal::Pred(Pred::Anon { .. } | Pred::Lacks { .. }) => continue,
                 Goal::Try { .. } => {
                     self.errors.push(
                         Diagnostic::error(
@@ -285,14 +288,6 @@ impl TypeChecker {
             let origin = self.use_origin();
             for pred in &scheme.preds {
                 self.want(pred.substitute(&mapping), origin);
-            }
-        }
-        // A row variable the type extends with a field somewhere must
-        // not be given that field by the use.
-        for (row, field) in Self::row_extensions(&scheme.ty) {
-            if let Some(row) = mapping.get(&row).cloned() {
-                let origin = self.use_origin();
-                self.want_goal(Goal::Lacks { row, field }, origin);
             }
         }
         // A row variable the type writes more than once: what a declared

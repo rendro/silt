@@ -1,0 +1,20 @@
+-- The value another module calls a method of is inside a value of that
+-- module's generic type, and the function that hands it over is generic.
+-- (Before the reach counted code outside the module, each of these
+-- passed the check and stopped at run time: the `let` read was "used
+-- before its top-level definition has run".)
+import other
+type P { n: Int }
+trait other.Greet for P { fn greet(self) -> String { "p {self.n} {later}" } }
+fn mk() -> P { P { n: 1 } }
+fn via(x: a) -> String where a: other.Greet { other.greet2(x) }
+fn via_box(b: other.Box(a)) -> String where a: other.Greet { other.greet_box(b) }
+let g = other.greet2
+let v2 = via_box(other.Box { item: mk() })
+let later = {
+  println("later")
+  5
+}
+fn main() {
+  println(v2)
+}

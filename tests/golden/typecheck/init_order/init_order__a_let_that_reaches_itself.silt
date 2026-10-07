@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: the top-level `let` 'a' needs its own value to be initialised: a -> f -> g -> b -> a
+-- stderr-contains: error[type]: the top-level `let` 'table' needs its own value to be initialised: table -> P.size -> table
+-- stderr-contains: error[type]: the top-level `let` 'own' needs its own value to be initialised: own -> own
+-- stderr-contains: help: a top-level `let` is initialised after every top-level `let` its value can reach
+-- stderr-not-contains: 'fine'
+-- stderr-not-contains: 'b' needs
+-- A top-level `let` whose initialiser can reach the `let` itself has
+-- no place in the order: one error for the ring, with the way round.
+type P { n: Int }
+trait Size { fn size(self) -> Int }
+trait Size for P { fn size(self) -> Int { self.n + table } }
+let a = f()
+fn f() -> Int { g() + 1 }
+fn g() -> Int { b }
+let b = a + 1
+let table = P { n: 1 }.size()
+let own = own + 1
+let fine = 3
+fn main() { println(a + table + own + fine) }

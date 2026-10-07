@@ -19,6 +19,7 @@ mod env;
 mod exhaustiveness;
 mod infer;
 mod inference;
+mod init_order;
 pub mod names;
 mod order;
 mod resolve;
@@ -106,6 +107,10 @@ pub struct TypeChecker {
     /// checked yet: decided when the module's bodies are
     /// (`settle_rows`).
     pub(super) anon_waiting: Vec<(TyVar, Type, Origin)>,
+    /// The fields a body adds to a record over a row variable of its
+    /// signature: what stands for the row has none of them
+    /// (`Pred::Lacks`).
+    pub(super) row_adds: HashMap<TyVar, Vec<Symbol>>,
     /// Whether the expression checked next is the callee of a call:
     /// `x.m` there is a method call, anywhere else a field.
     pub(super) callee_position: bool,
@@ -177,12 +182,12 @@ pub struct TypeChecker {
     /// for.
     pub(super) group_rigid: HashMap<TyVar, Vec<usize>>,
     pub(super) rigid_alias: HashMap<TyVar, RigidId>,
-    /// The declaration of each top-level `let` of the module, by the
-    /// names it binds, and the one whose value is being checked: its
-    /// value may not read a `let` declared after it, which has not run
-    /// when it does.
-    pub(super) let_index: HashMap<Symbol, usize>,
-    pub(super) checking_let: Option<usize>,
+    /// The module's top-level `let`s, by the span of each, in the order
+    /// they are initialised in (`init_order`).
+    pub(super) let_order: Vec<Span>,
+    /// Those of them, by the span of each, that are reported because
+    /// they reach themselves.
+    pub(super) let_rings: Vec<Span>,
     /// The signature of each method written in an impl of the module, as
     /// its body sees it, by the impl's type, the method and the trait,
     /// until the body is checked.
@@ -278,6 +283,7 @@ impl TypeChecker {
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),
             anon_waiting: Vec::new(),
+            row_adds: HashMap::new(),
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
@@ -296,8 +302,8 @@ impl TypeChecker {
             unknown_bounds: std::collections::HashSet::new(),
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),
-            let_index: HashMap::new(),
-            checking_let: None,
+            let_order: Vec::new(),
+            let_rings: Vec::new(),
             impl_sigs: HashMap::new(),
             last_field_access_was_method: false,
             method_trait: None,
@@ -616,8 +622,8 @@ impl TypeChecker {
                 .filter(|id| names.contains(&defs.get(*id).name))
                 .collect();
             let mut refers = Vec::new();
-            order::references_in_expr(body, &mut |res| {
-                if let Some(crate::defs::Res::Def(id)) = res
+            order::references_in_expr(body, &mut |mention| {
+                if let Some(crate::defs::Res::Def(id)) = mention.res
                     && !refers.contains(&id)
                 {
                     refers.push(id);
@@ -705,9 +711,14 @@ impl TypeChecker {
             return;
         }
         for decl in &program.decls {
-            let Decl::Let { is_pub, .. } = decl else {
+            let Decl::Let { is_pub, span, .. } = decl else {
                 continue;
             };
+            // (A `let` that needs its own value is reported for that:
+            // its type is unknown because of it.)
+            if self.let_rings.contains(span) {
+                continue;
+            }
             let (what, keyword, why) = match is_pub {
                 true => (
                     "public let",
@@ -890,14 +901,6 @@ impl TypeChecker {
         // Validate trait implementations against their declarations
         self.validate_trait_impls();
 
-        for (i, decl) in program.decls.iter().enumerate() {
-            if let Decl::Let { pattern, .. } = decl {
-                for name in collect_pattern_vars(pattern) {
-                    self.let_index.insert(name, i);
-                }
-            }
-        }
-
         // Third pass: the functions and the top-level `let`s, in the
         // order they refer to each other, callees first. Each group that
         // refers to itself is inferred together and then generalised.
@@ -918,9 +921,9 @@ impl TypeChecker {
         // After all passes, resolve any remaining type variables in annotations
         self.resolve_all_types(program);
 
-        // Each impl that leaves a default method out gets the trait's
-        // checked body, which the compiler compiles with the impl.
-        self.share_default_methods(&mut program.decls);
+        // The order the top-level `let`s are initialised in: what each
+        // call means is known now.
+        self.let_order = self.init_order(&program.decls);
 
         self.drop_repeated_errors();
         env
@@ -988,10 +991,8 @@ impl TypeChecker {
                     _,
                 ) => {
                     let names = collect_pattern_vars(pattern);
-                    self.checking_let = Some(i);
                     let is_value =
                         self.check_top_level_let(pattern, ty.as_ref(), value, *span, env);
-                    self.checking_let = None;
                     for (name, awaited_ty) in &awaited {
                         if names.contains(name)
                             && let Some(bound) = env.lookup(*name).cloned()
@@ -1059,6 +1060,10 @@ impl TypeChecker {
                     Pred::Anon { row, given } => Pred::Anon {
                         row: rep(row),
                         given: given.map(|var| self.rigid_rep_var(var)),
+                    },
+                    Pred::Lacks { row, field } => Pred::Lacks {
+                        row: rep(row),
+                        field,
                     },
                 }
             })
@@ -1281,6 +1286,10 @@ pub struct ModuleCheck {
     /// The inferred type of each top-level value the module binds by a
     /// declaration: its functions, its `let`s and the items it imports.
     pub top_level: HashMap<Symbol, Type>,
+    /// The module's top-level `let`s, by the span of each, in the order
+    /// they are initialised in: each after the `let`s its initialiser
+    /// can reach, and in source order where nothing orders two.
+    pub let_order: Vec<Span>,
 }
 
 /// The context a module is checked in, from the session.
@@ -1416,6 +1425,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
             checker.errors
         },
         top_level,
+        let_order: checker.let_order,
     }
 }
 

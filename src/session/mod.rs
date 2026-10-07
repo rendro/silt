@@ -100,6 +100,9 @@ pub struct ModuleAnalysis {
     pub scope: ModuleScope,
     /// The inferred type of each top-level value the module binds.
     pub top_level: HashMap<crate::intern::Symbol, Type>,
+    /// The module's top-level `let`s, by the span of each, in the order
+    /// they are initialised in.
+    pub let_order: Vec<crate::source::Span>,
     /// The module's type errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -511,6 +514,7 @@ impl Session {
             ast: Arc::new(ast),
             scope: resolution.scope,
             top_level: check.top_level,
+            let_order: check.let_order,
             diagnostics: bugs
                 .into_iter()
                 .chain(resolution.diagnostics)
@@ -745,6 +749,7 @@ impl Session {
                     ModuleUnit {
                         id: *m,
                         program: self.analyses[m].ast.clone(),
+                        let_order: self.analyses[m].let_order.clone(),
                         name: resolve(module.name),
                         qualifier: match (module.package == entry_package, resolve(module.name)) {
                             (true, name) => name,
