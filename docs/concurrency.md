@@ -546,6 +546,13 @@ normal result — surrounding silt code handles it through the usual
 that builtin already declares. No exception is raised, and the deadline
 does not preempt pure CPU work; it only applies to I/O.
 
+A wait on a channel or for a task inside `f` is **not** bounded by the
+deadline: `channel.receive`, `channel.send`, `channel.select` and
+`task.join` have no timeout value to return. Bound those with
+[`channel.recv_timeout`](#receive-with-timeout-channelrecv_timeoutch-dur)
+or a `channel.timeout` arm in a `select`. A `channel.receive` that nobody
+will ever answer is a deadlock inside `task.deadline` as outside it.
+
 Specifically (matching the [`SILT_IO_TIMEOUT`](#io-timeouts-silt_io_timeout)
 table):
 
