@@ -876,7 +876,7 @@ impl TypeChecker {
 
         // The order the top-level `let`s are initialised in: what each
         // call means is known now.
-        self.let_order = self.init_order(&program.decls);
+        self.let_order = self.init_order(&program.decls, &env);
 
         self.drop_repeated_errors();
         env

@@ -60,6 +60,21 @@
 //!    module and code outside it. (`parts_shown` names every form of
 //!    type: one it did not know would be any type too.)
 //!
+//!    A function with type variables of its own (`fn label(x: a) ->
+//!    String where a: Display`) shows values whose types have them.
+//!    Its body runs only through a value of the function, and every
+//!    such value comes from a place that names the function, at a type:
+//!    the function's, with a type for each variable. A value made at
+//!    one type is called at that type only, whoever calls it (a `let`
+//!    whose type is general is named again, at a type, where it is
+//!    used; importers of the module do not run while it is
+//!    initialised). So what the function shows of its variables is
+//!    reached from each node that names it, with the types the
+//!    variables stand for there, and not from the function. A type that
+//!    is not known where the function is named, or that has a variable
+//!    of the naming function, is any type: this goes one step, not
+//!    through a chain of functions.
+//!
 //! # What a `let` needs
 //!
 //! A `let` whose value is a plain value (a closure literal; a literal;
@@ -124,6 +139,52 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
         | Type::Unit
         | Type::Error
         | Type::Never => true,
+    }
+}
+
+/// Whether `at` is the type `general` with a type for each of its
+/// variables, which `stands` then holds. (Where the two differ in
+/// more than that the answer is no: the caller takes it for unknown.)
+fn instance(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>) -> bool {
+    let mut all = |general: &[Type], at: &[Type]| {
+        general.len() == at.len() && general.iter().zip(at).all(|(g, a)| instance(g, a, stands))
+    };
+    match (general, at) {
+        (Type::Var(v), _) => match stands.get(v) {
+            Some(known) => known == at,
+            None => {
+                stands.insert(*v, at.clone());
+                true
+            }
+        },
+        (Type::Fun(gp, gr), Type::Fun(ap, ar)) => {
+            all(gp, ap) && all(std::slice::from_ref(&**gr), std::slice::from_ref(&**ar))
+        }
+        (Type::List(g), Type::List(a))
+        | (Type::Range(g), Type::Range(a))
+        | (Type::Set(g), Type::Set(a))
+        | (Type::Channel(g), Type::Channel(a)) => instance(g, a, stands),
+        (Type::Tuple(g), Type::Tuple(a)) => all(g, a),
+        (Type::Generic(gn, g), Type::Generic(an, a)) => gn == an && all(g, a),
+        (Type::Map(gk, gv), Type::Map(ak, av)) => {
+            instance(gk, ak, stands) && instance(gv, av, stands)
+        }
+        (
+            Type::AnonRecord {
+                fields: g,
+                tail: RowTail::Closed,
+            },
+            Type::AnonRecord {
+                fields: a,
+                tail: RowTail::Closed,
+            },
+        ) => {
+            g.len() == a.len()
+                && g.iter()
+                    .zip(a)
+                    .all(|((gn, g), (an, a))| gn == an && instance(g, a, stands))
+        }
+        _ => general == at,
     }
 }
 
@@ -286,7 +347,7 @@ impl TypeChecker {
 
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in. Reports each `let` that reaches itself.
-    pub(super) fn init_order(&mut self, decls: &[Decl]) -> Vec<Span> {
+    pub(super) fn init_order(&mut self, decls: &[Decl], env: &TypeEnv) -> Vec<Span> {
         let mut nodes: Vec<Node> = vec![Node {
             name: "code outside the module".to_string(),
             let_decl: None,
@@ -387,6 +448,9 @@ impl TypeChecker {
             return Vec::new();
         }
         let mut by_def: HashMap<DefId, usize> = HashMap::new();
+        // The functions with type variables of their own, each with its
+        // scheme.
+        let mut general: HashMap<usize, Scheme> = HashMap::new();
         if let Some(defs) = &self.defs {
             for id in defs.of_module(self.module) {
                 let def = defs.get(*id);
@@ -396,6 +460,12 @@ impl TypeChecker {
                 ) && let Some(&node) = by_name.get(&def.name)
                 {
                     by_def.insert(*id, node);
+                    if def.kind == crate::defs::DefKind::Fn
+                        && let Some(scheme) = env.lookup(def.name)
+                        && !scheme.vars.is_empty()
+                    {
+                        general.insert(node, scheme.clone());
+                    }
                 }
             }
         }
@@ -408,12 +478,52 @@ impl TypeChecker {
         let display_method = intern("display");
         let mut named: HashMap<(usize, usize), Symbol> = HashMap::new();
         let mut edges: Vec<Vec<usize>> = Vec::with_capacity(nodes.len());
+        // What showing a value of the type `ty` reaches: the `Display`
+        // impls of its parts.
+        let shows = |ty: &Type, add: &mut dyn FnMut(usize)| {
+            let mut parts = Parts {
+                own: Vec::new(),
+                outside: false,
+            };
+            self.parts_shown(&self.apply(ty), false, &mut parts);
+            for ty in parts.own {
+                let ty = canonical_head(&self.tables.resolver, ty);
+                if let Some(&target) = of_impl.get(&(display.id, ty.id, display_method)) {
+                    add(target);
+                }
+            }
+            if parts.outside {
+                for &target in of_trait
+                    .get(&(display.id, display_method))
+                    .into_iter()
+                    .flatten()
+                {
+                    add(target);
+                }
+                add(OUTSIDE);
+            }
+        };
+        // A function with type variables of its own shows values whose
+        // types have them (`fn label(x: a) -> String where a: Display {
+        // "<{x}>" }`). What the variables stand for is known where the
+        // function is named: the type it is used at there says so, and
+        // a value made there is called at that type only. So such a
+        // showing is not the function's (`shown_at`, by function) but
+        // of each node that names it (`uses`: the function, and the
+        // type it is named at), below.
+        let mut shown_at: HashMap<usize, Vec<Type>> = HashMap::new();
+        let mut uses: Vec<Vec<(usize, Option<Type>)>> = Vec::with_capacity(nodes.len());
         for (from, node) in nodes.iter().enumerate() {
             let Some(body) = node.body else {
                 edges.push(callable_outside.clone());
+                uses.push(Vec::new());
                 continue;
             };
             let targets: std::cell::RefCell<Vec<usize>> = std::cell::RefCell::new(Vec::new());
+            let own_vars: &[TyVar] = general.get(&from).map_or(&[], |scheme| &scheme.vars);
+            let deferred: std::cell::RefCell<Vec<Type>> = std::cell::RefCell::new(Vec::new());
+            let used: std::cell::RefCell<Vec<(usize, Option<Type>)>> =
+                std::cell::RefCell::new(Vec::new());
             let mut note = |mention: Mention| {
                 let add = |target: usize| {
                     let mut targets = targets.borrow_mut();
@@ -424,6 +534,10 @@ impl TypeChecker {
                 if let Some(crate::defs::Res::Def(id)) = mention.res {
                     if let Some(&target) = by_def.get(&id) {
                         add(target);
+                        if general.contains_key(&target) {
+                            used.borrow_mut()
+                                .push((target, mention.expr.and_then(|expr| expr.ty.clone())));
+                        }
                         if let Some(def) = self.def(id) {
                             named.entry((from, target)).or_insert(def.name);
                         }
@@ -443,29 +557,22 @@ impl TypeChecker {
                     }
                 }
                 // A value that is shown: what its parts' `Display` impls
-                // are.
+                // are. Where its type has variables of the function
+                // written here, and no others, the parts they stand for
+                // are for who names the function.
                 let show = |ty: &Type| {
-                    let mut parts = Parts {
-                        own: Vec::new(),
-                        outside: false,
-                    };
-                    self.parts_shown(&self.apply(ty), false, &mut parts);
-                    for ty in parts.own {
-                        let ty = canonical_head(&self.tables.resolver, ty);
-                        if let Some(&target) = of_impl.get(&(display.id, ty.id, display_method)) {
-                            add(target);
-                        }
+                    let ty = self.apply(ty);
+                    let mut vars: Vec<TyVar> = Vec::new();
+                    crate::types::map_rigid(&ty, &mut |r| {
+                        vars.push(r.var);
+                        Type::Rigid(r)
+                    });
+                    if vars.is_empty() || !vars.iter().all(|v| own_vars.contains(v)) {
+                        return shows(&ty, &mut |target| add(target));
                     }
-                    if parts.outside {
-                        for &target in of_trait
-                            .get(&(display.id, display_method))
-                            .into_iter()
-                            .flatten()
-                        {
-                            add(target);
-                        }
-                        add(OUTSIDE);
-                    }
+                    let rest = crate::types::map_rigid(&ty, &mut |_| Type::Unit);
+                    shows(&rest, &mut |target| add(target));
+                    deferred.borrow_mut().push(ty);
                 };
                 match mention.expr.map(|expr| (&expr.kind, expr)) {
                     Some((ExprKind::StringInterp(parts), _)) => {
@@ -527,6 +634,14 @@ impl TypeChecker {
                     // impl of the method in the module, the trait's
                     // default, and, for a trait of another module or a
                     // builtin one, impls and defaults outside it.
+                    // (`display` of such a receiver shows it.)
+                    Some(Selection::Dynamic { tr })
+                        if *tr == display.id && *method == display_method && recv.ty.is_some() =>
+                    {
+                        if let Some(ty) = &recv.ty {
+                            show(ty);
+                        }
+                    }
                     Some(Selection::Dynamic { tr }) => {
                         for &target in of_trait.get(&(*tr, *method)).into_iter().flatten() {
                             add(target);
@@ -587,6 +702,44 @@ impl TypeChecker {
             }
             references_in_expr(body, &mut note);
             edges.push(targets.into_inner());
+            uses.push(used.into_inner());
+            let deferred = deferred.into_inner();
+            if !deferred.is_empty() {
+                shown_at.insert(from, deferred);
+            }
+        }
+        // What a function shows of its own variables, for each node
+        // that names it, at the type it names it at. A type that is not
+        // known there, or has a variable left, is any type.
+        for (from, used) in uses.iter().enumerate() {
+            for (target, at) in used {
+                let (Some(shown), Some(scheme)) = (shown_at.get(target), general.get(target))
+                else {
+                    continue;
+                };
+                let mut stands: HashMap<TyVar, Type> = HashMap::new();
+                let known = at
+                    .as_ref()
+                    .is_some_and(|at| instance(&scheme.ty, &self.apply(at), &mut stands));
+                for ty in shown {
+                    let here = match known {
+                        true => crate::types::map_rigid(ty, &mut |r| {
+                            stands.get(&r.var).cloned().unwrap_or(Type::Rigid(r))
+                        }),
+                        false => ty.clone(),
+                    };
+                    // (A function that calls itself, at its own
+                    // variables: nothing new.)
+                    if from == *target && here == *ty {
+                        continue;
+                    }
+                    shows(&here, &mut |target| {
+                        if !edges[from].contains(&target) {
+                            edges[from].push(target);
+                        }
+                    });
+                }
+            }
         }
 
         // The `let`s each `let` needs, with the way to each (the
