@@ -40,14 +40,20 @@ impl TypeChecker {
                 continue;
             };
 
-            // (A structural trait has no impl to validate.)
+            // (A structural trait has no impl to validate, unless one is
+            // written: `trait Display for T {}` is an impl, and lacks
+            // its method.)
+            let written = self
+                .tables
+                .trait_impl_spans
+                .contains_key(&(*trait_name, *type_name));
             let is_auto = trait_info
                 .methods
                 .first()
                 .and_then(|(m, _)| self.tables.method_table.get(&(*type_name, *m)))
                 .map(|e| e.structural)
                 .unwrap_or(false);
-            if is_auto {
+            if is_auto && !written {
                 continue;
             }
 
@@ -150,8 +156,14 @@ impl TypeChecker {
             // (`register_trait_impl`).
             for (method_name, _) in &trait_info.methods {
                 let key = (*type_name, *method_name);
-                if self.tables.method_table.contains_key(&key) {
-                } else if !trait_info.default_method_bodies.contains_key(method_name) {
+                // (What the type has by its structure is not the
+                // impl's method.)
+                let provided = self
+                    .tables
+                    .method_table
+                    .get(&key)
+                    .is_some_and(|entry| !entry.structural);
+                if !provided && !trait_info.default_method_bodies.contains_key(method_name) {
                     // No impl method AND the trait does not provide a
                     // default body — the impl is genuinely missing a
                     // required method.
