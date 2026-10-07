@@ -1328,6 +1328,7 @@ impl TypeChecker {
                 target_type,
                 binding.name,
                 resolved.clone(),
+                &self_type,
             ) {
                 Ok(()) => {
                     impl_binding_map.insert(binding.name, resolved);

@@ -124,6 +124,10 @@ pub struct AssocBinding {
     /// itself an `AssocProj` — re-enter through `canonicalize` on the
     /// enclosing type, not through this stored value.)
     pub ty: Type,
+    /// The self type of the impl that binds it (`Box(a)`), canonical:
+    /// the binding's type variables are the impl's, and stand for the
+    /// arguments of the type the projection is taken of.
+    pub of: Type,
 }
 
 /// Cycle diagnostic returned by [`Resolver::register_assoc_binding`]
@@ -216,6 +220,7 @@ impl Resolver {
         target_head: TypeRef,
         assoc_name: Symbol,
         ty: Type,
+        of: &Type,
     ) -> Result<(), AssocBindingCycle> {
         let head_canon = canonical_head(self, target_head);
         let canon_ty = canonicalize(self, &ty);
@@ -239,8 +244,13 @@ impl Resolver {
                 via: cycle,
             });
         }
-        self.assoc_bindings
-            .insert(target_triple, AssocBinding { ty: canon_ty });
+        self.assoc_bindings.insert(
+            target_triple,
+            AssocBinding {
+                ty: canon_ty,
+                of: canonicalize(self, of),
+            },
+        );
         Ok(())
     }
 
@@ -445,7 +455,16 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
                 // before another alias became known) reduces too. The
                 // recursion terminates because the binding's head is
                 // not the same as the AssocProj's input head.
-                return canonicalize(resolver, &binding.ty);
+                // The binding is written with the impl's type variables
+                // (`type Item = a` in `trait C for Box(a)`): each is
+                // what the receiver has in its place (`Int` for
+                // `Box(Int)`), not the impl's own variable.
+                let mut stands = std::collections::HashMap::new();
+                let bound = match super::instance_of(&binding.of, &canon_recv, &mut stands) {
+                    true => super::substitute_vars(&binding.ty, &stands),
+                    false => binding.ty.clone(),
+                };
+                return canonicalize(resolver, &bound);
             }
             // No binding (or abstract receiver): keep as canonical
             // AssocProj. The typechecker emits a "type does not
