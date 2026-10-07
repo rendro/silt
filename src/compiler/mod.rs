@@ -1929,11 +1929,21 @@ impl Compiler {
         // now, with every enclosing local still in place.
         let first_slot = self.emitter().height();
 
-        // Compile initial values; each stays on the stack as its binding.
-        for (name, _, init) in bindings {
+        // The initial values are of the enclosing scope, all of them, as
+        // the arguments of a `loop(...)` see the values of the round
+        // before: each is compiled before any binding has its name, and
+        // stays on the stack as its binding.
+        for (_, _, init) in bindings {
             self.compile_expr(init)?;
-            let slot = self.add_local(*name, span)?;
-            self.emit(Asm::SetLocal { slot }, span)?;
+        }
+        let ctx = self.ctx_mut();
+        let depth = ctx.scope_depth;
+        for (i, (name, _, _)) in bindings.iter().enumerate() {
+            ctx.locals.push(Local {
+                name: *name,
+                depth,
+                slot: first_slot + i,
+            });
         }
 
         // Record the loop start, where `loop(...)` jumps back to.

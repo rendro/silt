@@ -182,6 +182,11 @@ fn sum(xs) {
 }
 ```
 
+The initial values are read where the `loop` stands, all of them, before
+any of the loop's names exists: in `loop n = n + 1, acc = n` both `n` on
+the right are the one outside, as the arguments of `loop(...)` are the
+values of the round before. The loop's names are known in its body only.
+
 When the body produces a value without calling `loop(...)`, that value is the
 result of the entire expression. `loop` is composable -- you can bind its
 result, return it, or use it in a pipeline.
