@@ -133,6 +133,76 @@ and a top-level `fn`, `type`, `let` or trait — are an error that names
 both sites. Which declaration a top-level name refers to therefore never
 depends on the order of the declarations.
 
+Nor does the value of a top-level `let`. A top-level `let` is
+initialised after every top-level `let` its value can reach: the ones
+it names, and the ones that the functions and methods it mentions read.
+Where nothing orders two of them, the one written first runs first.
+
+```silt
+let total = base() + 1 -- runs second: `base` reads `start`
+
+let start = 10
+
+fn base() -> Int {
+  start * 2
+}
+
+fn main() {
+  println(total) -- 21
+}
+```
+
+What a `let`'s value can reach is decided by three rules:
+
+- **A function that is named counts as called.** So does a function of
+  another module, and code of another module can call the methods this
+  module's impls give that module's traits (and the builtin traits):
+  a `let` that mentions another module's function is initialised after
+  every `let` those methods read.
+- **A method call on a value whose type is a bounded type variable
+  (`fn f(x: a) where a: Label { x.label() }`) reaches every impl of the
+  method in the module**, whichever value the call is given.
+- **A `let` that is a plain value runs nothing.** A plain value is a
+  literal, a name, a closure, or a list, tuple, record, map, set or
+  variant made of plain values. Such a `let` needs only the top-level
+  `let`s it names outside closures; what the functions it names read
+  does not matter. A table of handlers that read the table is fine:
+
+```silt
+import list
+
+let routes = [("home", home), ("count", count)]
+
+fn home() -> String {
+  "home"
+}
+
+fn count() -> String {
+  "{list.length(routes)} routes"
+}
+
+fn main() {
+  println(count()) -- 2 routes
+}
+```
+
+A closure handed to a function is not a plain value: `let f = wrap({ n
+-> ... f(n - 1) ... })` runs `wrap`, which may call the closure.
+
+A top-level `let` that can reach itself has no place in the order, and
+is an error that names the way round:
+
+```silt
+let a = f()
+
+fn f() -> Int {
+  b + 1
+}
+
+let b = a + 1
+-- error: the top-level `let` 'a' needs its own value to be initialised: a -> f -> b -> a
+```
+
 **Destructuring** works in `let` for irrefutable patterns, the ones that
 match every value of their type: tuples and records, the constructor of a
 single-variant type, an or-pattern whose alternatives cover the type

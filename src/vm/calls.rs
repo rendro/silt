@@ -16,17 +16,14 @@ use super::{Vm, VmError};
 const MAX_FRAMES: usize = 100_000;
 
 /// Build the user-facing stack-overflow error reported when a call would
-/// exceed `MAX_FRAMES`. The tip is scoped honestly: tail-call elimination
-/// only exists for *plain* function calls (`Op::TailCall`) — method
-/// dispatch (`Op::CallMethod`) and builtin callbacks (`Op::CallBuiltin`)
-/// have no tail form and always consume a frame, so "put the call in tail
-/// position" is not actionable advice for recursive trait methods.
+/// exceed `MAX_FRAMES`. A call in tail position, of a function or of a
+/// method, runs in its caller's frame; any other takes one.
 fn stack_overflow_error() -> VmError {
     VmError::new(format!(
         "stack overflow: recursion depth exceeded {MAX_FRAMES} frames"
     ))
     .with_help(
-        "tail-call elimination applies to plain function calls in tail position; method and builtin calls always consume a frame",
+        "a call in tail position, of a function or a method, reuses its caller's frame; a call whose result is still used (`1 + f(n - 1)`) takes a frame of its own",
     )
 }
 

@@ -1,0 +1,27 @@
+-- `r.f(x)` on a record whose field `f` holds a function calls the
+-- function: with a declared record, an anonymous one, a record behind
+-- an open row, a field that is itself read off a field, and a declared
+-- record that also has a method of another name.
+type Holder { run: Fn(Int) -> Int, name: String }
+trait Describe { fn describe(self) -> String }
+trait Describe for Holder { fn describe(self) -> String { "holder {self.name}" } }
+fn call(r, x) { r.run(x) }
+fn tail(r: Holder, n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> tail(r, n - 1, r.run(acc))
+  }
+}
+fn main() {
+  let h = Holder { run: { x -> x + 1 }, name: "h" }
+  println(h.run(1))
+  println(h.describe())
+  let r = {run: { x -> x * 2 }, inner: {go: { s -> "go {s}" }}}
+  println(r.run(4))
+  println(r.inner.go("on"))
+  println(call(h, 10))
+  println(call(r, 10))
+  println(tail(h, 100000, 0))
+  println(3 |> h.run)
+  println(3 |> r.run())
+}

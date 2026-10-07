@@ -1,0 +1,64 @@
+-- timeout: 60
+-- A compute program of the performance guard: methods of impls called
+-- on known types, a default method through a bounded type variable,
+-- and a function held in a field, each in a tail-recursive loop.
+type Vec2 {
+  x: Int,
+  y: Int,
+}
+
+type Acc {
+  total: Int,
+  step: Fn(Int) -> Int,
+}
+
+trait Shape {
+  fn area(self) -> Int
+  fn double_area(self) -> Int {
+    self.area() * 2
+  }
+}
+
+trait Shape for Vec2 {
+  fn area(self) -> Int {
+    self.x * self.y
+  }
+}
+
+trait Step {
+  fn add(self, o: Vec2) -> Vec2
+}
+
+trait Step for Vec2 {
+  fn add(self, o: Vec2) -> Vec2 {
+    Vec2 { x: self.x + o.x, y: self.y + o.y }
+  }
+}
+
+fn walk(v: Vec2, n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> walk(v.add(Vec2 { x: 1, y: 0 }), n - 1, acc + v.area() % 7)
+  }
+}
+
+fn generic(s: a, n: Int, acc: Int) -> Int where a: Shape {
+  match n {
+    0 -> acc
+    _ -> generic(s, n - 1, acc + s.double_area() % 5)
+  }
+}
+
+fn fields(a: Acc, n: Int) -> Int {
+  match n {
+    0 -> a.total
+    _ -> fields(a.{ total: a.step(a.total) }, n - 1)
+  }
+}
+
+fn main() {
+  let v = Vec2 { x: 3, y: 4 }
+  println(walk(v, 300000, 0))
+  println(generic(v, 200000, 0))
+  println(fields(Acc { total: 0, step: { t -> t + 3 } }, 200000))
+}

@@ -122,7 +122,7 @@ repros/type_soundness/gen5.silt	holds	accept	control: an empty top-level list is
 repros/type_soundness/h1.silt	holds	reject E0326	TS-1: a top-level `let` sees the over-general scheme at depth one
 repros/type_soundness/h2.silt	holds	reject E0301	TS-1: `let n: Int = mk()` where mk returns a String
 repros/type_soundness/h3.silt	holds	reject E0301	a top-level channel made by a function stays monomorphic
-repros/type_soundness/h4.silt	pending:4b	accept	decision D3: top-level `let`s initialise in dependency order
+repros/type_soundness/h4.silt	holds	accept	decision D3: top-level `let`s initialise in dependency order
 repros/type_soundness/i1.silt	-	obsolete	fn lambda; ported: lang/soundness/i1.silt
 repros/type_soundness/i10.silt	-	obsolete	fn lambda; ported: lang/soundness/i10.silt
 repros/type_soundness/i11.silt	-	obsolete	fn lambda; ported: lang/soundness/i11.silt

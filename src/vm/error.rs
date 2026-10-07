@@ -120,6 +120,11 @@ where
     // manifest: it goes through the same display rule as other printed
     // manifest values.
     let mut line = |name: &str, span: &Span| {
+        // A function silt declares itself (a builtin trait's default
+        // method) is at no place in the program.
+        if !span.is_in_source() {
+            return format!("  -> {}  (builtin)", crate::git::escape_for_display(name));
+        }
         let at = format_frame(name, span);
         format!(
             "  -> {}  at {}",

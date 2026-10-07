@@ -863,11 +863,14 @@ ops! {
 
     /// Runtime method dispatch: the method named by the constant, of the
     /// impl of the trait `of` names (see
-    /// [`Globals::call_method`](super::Globals::call_method);
-    /// [`NO_TRAIT`](super::NO_TRAIT) for any trait's) for the receiver's
-    /// type, else a builtin trait method or a record field holding a
-    /// function; call it with the top `argc` values, the receiver first.
+    /// [`Globals::call_method`](super::Globals::call_method)) for the
+    /// receiver's type, else the builtin trait's native method; call it
+    /// with the top `argc` values, the receiver first.
     CallMethod { method: Str, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
+    /// `CallMethod` in tail position: a method that is a closure runs
+    /// in the current frame. Followed by `Return`, which returns the
+    /// result of any other.
+    TailCallMethod { method: Str, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
 
     /// Move TOS down to the frame's slot `slot` and drop every value
     /// that was above that slot: pop TOS, cut the frame back to `slot`

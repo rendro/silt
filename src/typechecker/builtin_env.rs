@@ -67,6 +67,7 @@ impl BuiltinEnv {
         }
         checker.check_decl_bodies(&mut impls, &mut scope);
         checker.solve_wanted(0);
+        checker.resolve_decl_types(&mut impls);
         debug_assert!(
             checker.errors.is_empty(),
             "the builtin derived impls check: {:?}",
@@ -106,6 +107,22 @@ thread_local! {
 /// a builtin type's value finds its method.
 pub fn builtin_derived_impls() -> Rc<Vec<Decl>> {
     builtin_env().impls.clone()
+}
+
+/// The default methods of the builtin traits, each with its trait: the
+/// one body an impl that leaves the method out runs (`Error.message`).
+/// Every program compiles them once, like the derived impls.
+pub fn builtin_default_methods() -> Vec<(crate::defs::TraitId, FnDecl)> {
+    derive_synth::builtin_trait_decls()
+        .into_iter()
+        .filter_map(|t| Some((crate::defs::builtin_trait_id(&resolve(t.name))?, t)))
+        .flat_map(|(id, t)| {
+            t.methods
+                .into_iter()
+                .filter(|m| !m.is_signature_only)
+                .map(move |m| (id, m))
+        })
+        .collect()
 }
 
 /// Whether the builtin scope binds `name` (`int.parse`).

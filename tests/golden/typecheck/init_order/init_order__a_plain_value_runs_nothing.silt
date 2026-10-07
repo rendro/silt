@@ -1,0 +1,74 @@
+-- A `let` whose value is a plain value (a closure; a literal; a name; a
+-- list, tuple, record, map, set or variant of plain values) runs
+-- nothing when it is initialised: it needs only the `let`s it names,
+-- not what the functions it names reach. A table of handlers that read
+-- the table is such a value.
+import list
+import map
+
+let routes = [("home", home), ("help", help)]
+
+fn home() -> String {
+  "home"
+}
+
+fn help() -> String {
+  routes |> list.map({ r ->
+    match r {
+      (name, _) -> name
+    }
+  }) |> list.fold("", { a, b -> "{a} {b}" })
+}
+
+let handlers = #{"a": handle_a, "b": handle_b}
+
+fn registry_size() -> Int {
+  map.length(handlers)
+}
+
+fn handle_a(x: Int) -> Int {
+  x + 1
+}
+
+fn handle_b(x: Int) -> Int {
+  x + registry_size()
+}
+
+let ops = [show_ops]
+
+fn show_ops() -> Int {
+  list.length(ops)
+}
+
+type Job {
+  name: String,
+  run: Fn() -> Int,
+}
+
+let jobs = Some(Job { name: "count", run: count_jobs })
+
+fn count_jobs() -> Int {
+  match jobs {
+    Some(_) -> 1
+    None -> 0
+  }
+}
+
+-- A plain value reads the `let`s it names: `pair` is initialised after
+-- `late`, though it is written first.
+let pair = (late, show_ops)
+
+let late = {
+  println("late")
+  7
+}
+
+fn main() {
+  println(help())
+  println(handle_b(1))
+  println(show_ops())
+  println(count_jobs())
+  match pair {
+    (n, f) -> println(n + f())
+  }
+}

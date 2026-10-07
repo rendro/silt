@@ -3,6 +3,11 @@
 -- A task that is cancelled while it runs goes no further than the end
 -- of its slice: it never reaches its receives, and the two values in
 -- the buffer stay.
+--
+-- The cancel comes before the work, whatever the machine does: the
+-- task looks for `go` without waiting, `main` cancels it and only
+-- then sends `go`, and between `go` and the first receive lie many
+-- slices of work.
 import channel
 import task
 import time
@@ -14,15 +19,24 @@ fn spin(n) {
   }
 }
 
+fn until_go(go) {
+  match channel.try_receive(go) {
+    channel.Message(_) -> ()
+    _ -> until_go(go)
+  }
+}
+
 fn main() {
   let buf = channel.new(2)
   channel.send(buf, 1)
   channel.send(buf, 2)
   let started = channel.new(1)
+  let go = channel.new(1)
   let taken = channel.new(2)
-  let h = task.spawn({ ->
+  let h = task.spawn { ->
     channel.send(started, ())
-    spin(10000)
+    until_go(go)
+    spin(100000)
     loop {
       match channel.receive(buf) {
         channel.Message(v) -> {
@@ -34,9 +48,10 @@ fn main() {
         channel.Sent -> ()
       }
     }
-  })
+  }
   let _ = channel.receive(started)
   task.cancel(h)
+  channel.send(go, ())
   time.sleep(time.ms(250))
   println("taken: {channel.try_receive(taken)}")
   println("left: {channel.try_receive(buf)} {channel.try_receive(buf)}")

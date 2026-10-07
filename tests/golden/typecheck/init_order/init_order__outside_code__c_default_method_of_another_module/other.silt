@@ -1,0 +1,12 @@
+pub type P { n: Int }
+pub type E { X, Y(Int) }
+pub trait Name { fn name(self) -> String }
+trait Name for P { fn name(self) -> String { "other.P" } }
+trait Name for E { fn name(self) -> String { "other.E" } }
+pub fn dyn_name(x: a) -> String where a: Name { x.name() }
+pub trait Tag {
+  fn tag(self) -> String
+  fn tagged(self) -> String { "<{self.tag()}>" }
+}
+trait Tag for P { fn tag(self) -> String { "other.P.tag" } }
+pub fn mk() -> P { P { n: 1 } }

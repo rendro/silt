@@ -570,54 +570,6 @@ impl TypeChecker {
         })
     }
 
-    /// Keep the checked body of each default method of the module's
-    /// traits, and copy into each impl of `decls` the checked body of
-    /// each default method it leaves out: the compiler compiles it with
-    /// the impl's methods, as if the impl had written it. Run once the
-    /// bodies are checked and their types resolved.
-    pub(super) fn share_default_methods(&mut self, decls: &mut [Decl]) {
-        for decl in decls.iter() {
-            let Decl::Trait(t) = decl else {
-                continue;
-            };
-            let key = self.own_trait(t.name);
-            if let Some(info) = self.tables.traits.get_mut(&key) {
-                for m in t.methods.iter().filter(|m| !m.is_signature_only) {
-                    info.default_method_bodies.insert(m.name, m.clone());
-                }
-            }
-        }
-        for decl in decls.iter_mut() {
-            let Decl::TraitImpl(ti) = decl else {
-                continue;
-            };
-            let Some(trait_info) = self.impl_trait(ti).and_then(|t| self.tables.traits.get(&t))
-            else {
-                continue;
-            };
-            let written: std::collections::HashSet<Symbol> =
-                ti.methods.iter().map(|m| m.name).collect();
-            // In the trait's order, so the copies land in a deterministic
-            // order.
-            for (method_name, _) in &trait_info.methods {
-                if !written.contains(method_name)
-                    && let Some(default_fn) = trait_info.default_method_bodies.get(method_name)
-                {
-                    // (Stage 6 step 4b compiles a default method once,
-                    // and removes this copy and `share_default_methods`'
-                    // second loop.)
-                    // The copy is for the compiler, which reads what
-                    // each name resolves to. The types are the trait
-                    // body's to show (hover, inlay hints): a second
-                    // typed copy at the same spans would show twice.
-                    let mut copy = default_fn.clone();
-                    resolve::each_expr_mut(&mut copy.body, &mut |expr| expr.ty = None);
-                    ti.methods.push(copy);
-                }
-            }
-        }
-    }
-
     // ── Register trait implementations ──────────────────────────────
 
     /// Convert a type name Symbol to a Type.

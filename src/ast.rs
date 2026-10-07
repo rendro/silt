@@ -16,6 +16,36 @@ pub struct Expr {
     /// names; on a `RecordCreate`, the record type. `None` elsewhere, and
     /// on what the checker synthesizes.
     pub res: Option<Res>,
+    /// What a field access on a value means, filled in by the
+    /// typechecker when the types are final: the compiler emits what it
+    /// says. `None` elsewhere (and on `m.f`, `Type.method`, a variant:
+    /// those are names, and `res` says what they name).
+    pub sel: Option<Selection>,
+}
+
+/// What `recv.name`, on a value, means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selection {
+    /// The record's field `name`.
+    Field,
+    /// In a call, `recv.name(args)`: the function the record's field
+    /// `name` holds, called with `args`.
+    FieldCall,
+    /// In a call: the method `name` of the impl of the trait `tr` for
+    /// the type `ty`, the receiver's, called with the receiver and
+    /// `args`.
+    Impl {
+        tr: crate::defs::TraitId,
+        ty: crate::defs::TypeId,
+    },
+    /// In a call: the method `name` of the builtin trait `tr`
+    /// (Display, Equal, Compare, Hash) for a receiver whose type has no
+    /// written impl of it: the type has the trait by its structure.
+    Native { tr: crate::defs::TraitId },
+    /// In a call: the method `name` of the trait `tr`, for a receiver
+    /// whose type is known only where the code runs (a type variable
+    /// bounded by the trait; a type passed as a value).
+    Dynamic { tr: crate::defs::TraitId },
 }
 
 impl Expr {
@@ -25,6 +55,7 @@ impl Expr {
             span,
             ty: None,
             res: None,
+            sel: None,
         }
     }
 }

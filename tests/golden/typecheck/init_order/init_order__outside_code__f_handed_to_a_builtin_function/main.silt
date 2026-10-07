@@ -1,0 +1,17 @@
+-- Another module's function is handed to a builtin higher-order
+-- function, which calls it.
+-- (Before the reach counted code outside the module, each of these
+-- passed the check and stopped at run time: the `let` read was "used
+-- before its top-level definition has run".)
+import other
+import list
+type P { n: Int }
+trait other.Greet for P { fn greet(self) -> String { "p {self.n} {later}" } }
+let v = list.map([P { n: 1 }], other.greet2)
+let later = {
+  println("later")
+  5
+}
+fn main() {
+  println(v)
+}

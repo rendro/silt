@@ -1,0 +1,36 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot extend the record with field 'age': it has one already
+-- stderr-contains: 32:13
+-- stderr-contains: 33:13
+-- stderr-contains: 34:16
+-- stderr-contains: 35:17
+-- stderr-not-contains: 28:
+-- stderr-not-contains: 29:
+-- stderr-not-contains: 30:
+-- stderr-not-contains: 31:
+-- A function that extends a record owes that the record it is given
+-- has no such field, whether or not what it makes reaches its type:
+-- for a row it infers, for a row its signature writes, and through a
+-- function that passes its parameter on.
+fn f(p) {
+  let x = {...p, age: 1}
+  x.age + 1
+}
+fn g(p: {name: String, ...r}) -> Int {
+  let x = {...p, age: 1}
+  x.age + 1
+}
+fn wrap(p) { g(p) }
+fn outer(p: {name: String, ...q}) -> Int { g(p) }
+fn pass(p: {name: String, ...r}) -> {name: String, ...r} { p }
+fn main() {
+  println(f({name: "a"}))
+  println(g({name: "a"}))
+  println(wrap({name: "a", k: 1}))
+  println(pass({name: "a", age: 1}).age)
+  println(f({name: "a", age: "old"}))
+  println(g({name: "a", age: "old"}))
+  println(wrap({name: "a", age: "old"}))
+  println(outer({name: "a", age: "old"}))
+}

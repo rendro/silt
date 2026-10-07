@@ -1087,19 +1087,6 @@ impl TypeChecker {
         scheme
     }
 
-    /// Whether a name in the value of the top-level `let` being checked
-    /// names a top-level `let` of the module declared after it.
-    fn reads_later_let(&self, res: Option<crate::defs::Res>, name: Symbol) -> bool {
-        let Some(current) = self.checking_let else {
-            return false;
-        };
-        self.res_def(res).is_some_and(|def| {
-            def.module == self.module
-                && def.kind == crate::defs::DefKind::Let
-                && self.let_index.get(&name).is_some_and(|i| *i > current)
-        })
-    }
-
     /// Check a call: `callee(args)`, `a |> callee(rest)` (the piped
     /// value is the first argument) or `a |> callee`. The one call rule:
     /// the callee is checked first, so its use owes its predicates
@@ -1184,7 +1171,7 @@ impl TypeChecker {
                 for k in owed_before..self.wanted.len() {
                     let Type::Var(v) = (match &self.wanted[k].goal {
                         Goal::Pred(pred) => pred.subject(),
-                        Goal::Lacks { row, .. } | Goal::Listed { row, .. } => row,
+                        Goal::Listed { row, .. } => row,
                         _ => continue,
                     }) else {
                         continue;
@@ -1570,22 +1557,6 @@ impl TypeChecker {
                 if expr.res == Some(crate::defs::Res::Error) {
                     // The resolver reported the name, or it comes from a
                     // module that failed to load.
-                    Type::Error
-                } else if self.reads_later_let(expr.res, name) {
-                    // A top-level `let` runs before the ones declared
-                    // after it: the value of a later one is not there
-                    // yet.
-                    self.errors.push(
-                        Diagnostic::error(
-                            Code::UndefinedVariable,
-                            span,
-                            format!("undefined variable '{name}'"),
-                        )
-                        .with_help(format!(
-                            "`{name}` is a top-level `let` declared after this one, and \
-                             top-level `let`s run in the order they are written"
-                        )),
-                    );
                     Type::Error
                 } else if let Some(scheme) = self
                     .def_scheme(expr.res, env)
