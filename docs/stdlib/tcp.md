@@ -134,7 +134,9 @@ That is what lets the blocked operation, and its thread, end. So a read
 that timed out cannot be tried again: the next call on that connection
 gives `Err(TcpClosed)`. The same holds for the `stream.tcp_*` sources and
 sink when their pipeline is cut short. A `tcp.accept` that nobody waits
-for is woken and gives up; the listener stays usable.
+for is woken and gives up; the listener stays usable. A `tcp.accept_tls` that
+is given up while its client has connected but not finished the handshake
+closes that connection.
 
 ## Notes
 

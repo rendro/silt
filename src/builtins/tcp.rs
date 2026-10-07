@@ -140,9 +140,9 @@ mod tls {
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls")?;
         let next_id = vm.next_tcp_id();
-        let (stopped, stop) = super::accept_stop(&listener);
+        let (giving_up, stop) = GivingUp::of(&listener);
         vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-            match do_accept_tls(&listener, &stopped, &cert_pem, &key_pem, next_id) {
+            match do_accept_tls(&listener, &giving_up, &cert_pem, &key_pem, next_id) {
                 Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
                 Err(e) => Value::variant(
                     bv::ERR,
@@ -169,14 +169,14 @@ mod tls {
         let key_pem = require_bytes(&args[2], "tcp.accept_tls_mtls")?;
         let client_ca_pem = require_bytes(&args[3], "tcp.accept_tls_mtls")?;
         let next_id = vm.next_tcp_id();
-        let (stopped, stop) = super::accept_stop(&listener);
+        let (giving_up, stop) = GivingUp::of(&listener);
         vm.io_stoppable(
             "tcp",
             tcp_timeout_err,
             stop,
             move || match do_accept_tls_mtls(
                 &listener,
-                &stopped,
+                &giving_up,
                 &cert_pem,
                 &key_pem,
                 &client_ca_pem,
@@ -225,7 +225,7 @@ mod tls {
 
     fn do_accept_tls(
         listener: &TcpListenerHandle,
-        stopped: &Arc<AtomicBool>,
+        giving_up: &GivingUp,
         cert_pem: &[u8],
         key_pem: &[u8],
         next_id: usize,
@@ -236,7 +236,7 @@ mod tls {
             .with_no_client_auth()
             .with_single_cert(certs, key)
             .map_err(|e| format!("server config: {e}"))?;
-        let sock = accepted(listener, stopped)?;
+        let sock = giving_up.accepted(listener)?;
         let conn = ServerConnection::new(Arc::new(config))
             .map_err(|e| format!("server connection setup: {e}"))?;
         // See `do_connect_tls`: clone the fd before handing it to rustls
@@ -248,13 +248,14 @@ mod tls {
             let mut wrapper = ServerStreamWrapper { inner: stream };
             // The handshake fails here rather than at the first read.
             wrapper.complete_io_handshake()?;
+            giving_up.handshake_done();
             Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
         })
     }
 
     fn do_accept_tls_mtls(
         listener: &TcpListenerHandle,
-        stopped: &Arc<AtomicBool>,
+        giving_up: &GivingUp,
         cert_pem: &[u8],
         key_pem: &[u8],
         client_ca_pem: &[u8],
@@ -284,7 +285,7 @@ mod tls {
             .with_client_cert_verifier(verifier)
             .with_single_cert(certs, key)
             .map_err(|e| format!("server config: {e}"))?;
-        let sock = accepted(listener, stopped)?;
+        let sock = giving_up.accepted(listener)?;
         let conn = ServerConnection::new(Arc::new(config))
             .map_err(|e| format!("server connection setup: {e}"))?;
         let socket = sock.try_clone().map_err(|e| format!("tcp accept: {e}"))?;
@@ -293,23 +294,61 @@ mod tls {
             let mut wrapper = ServerStreamWrapper { inner: stream };
             // The handshake fails here rather than at the first read.
             wrapper.complete_io_handshake()?;
+            giving_up.handshake_done();
             Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
         })
     }
 
-    /// The next connection of `listener`; an error if the accept was
-    /// given up.
-    fn accepted(
-        listener: &TcpListenerHandle,
-        stopped: &Arc<AtomicBool>,
-    ) -> Result<TcpStream, String> {
-        match listener.accept(stopped) {
-            Ok(Some(sock)) => Ok(sock),
-            Ok(None) => {
-                debug_assert!(stopped.load(Ordering::SeqCst));
-                Err("tcp accept: given up".into())
+    /// How a TLS accept is given up when nobody waits for it any more:
+    /// while it waits for a connection, as a plain accept is; while it
+    /// is in the handshake with a client that sends nothing, by
+    /// shutting that connection down. Either way its thread ends. A
+    /// connection that is given up in its handshake is closed: it was
+    /// no task's yet, and it is not one the next accept could take
+    /// over.
+    #[derive(Clone)]
+    pub(super) struct GivingUp {
+        stopped: Arc<AtomicBool>,
+        /// The connection, while the handshake runs.
+        handshaking: Arc<parking_lot::Mutex<Option<TcpStream>>>,
+    }
+
+    impl GivingUp {
+        fn of(listener: &Arc<TcpListenerHandle>) -> (GivingUp, impl FnOnce() + Send + 'static) {
+            let giving_up = GivingUp {
+                stopped: Arc::new(AtomicBool::new(false)),
+                handshaking: Arc::default(),
+            };
+            let (listener, mine) = (listener.clone(), giving_up.clone());
+            (giving_up, move || {
+                // The flag first: an accept that returns now reads it
+                // under the lock below.
+                listener.stop(&mine.stopped);
+                if let Some(socket) = mine.handshaking.lock().take() {
+                    let _ = socket.shutdown(std::net::Shutdown::Both);
+                }
+            })
+        }
+
+        /// The next connection of `listener`, noted as in its
+        /// handshake; an error if the accept was given up.
+        fn accepted(&self, listener: &TcpListenerHandle) -> Result<TcpStream, String> {
+            let sock = match listener.accept(&self.stopped) {
+                Ok(Some(sock)) => sock,
+                Ok(None) => return Err("tcp accept: given up".into()),
+                Err(e) => return Err(format!("tcp accept: {e}")),
+            };
+            let mut handshaking = self.handshaking.lock();
+            if self.stopped.load(Ordering::SeqCst) {
+                let _ = sock.shutdown(std::net::Shutdown::Both);
+                return Err("tcp accept: given up".into());
             }
-            Err(e) => Err(format!("tcp accept: {e}")),
+            *handshaking = sock.try_clone().ok();
+            Ok(sock)
+        }
+
+        fn handshake_done(&self) {
+            self.handshaking.lock().take();
         }
     }
 

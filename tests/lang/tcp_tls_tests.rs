@@ -177,3 +177,66 @@ mod hex {
         }
     }
 }
+
+/// A TLS accept whose client is connected and says nothing is given up
+/// (its deadline passes): the handshake it waits in is ended by
+/// shutting that connection down, so its thread ends too. Before, the
+/// thread and the connection stayed for as long as the client did.
+#[test]
+fn a_given_up_tls_accept_ends_in_its_handshake() {
+    let (cert_pem, key_pem) = generate_self_signed_cert();
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let source = format!(
+        r#"
+import bytes
+import task
+import tcp
+import time
+
+fn main() {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(cert) = bytes.from_hex("{cert_hex}") else {{ panic("no cert") }}
+  when let Ok(key) = bytes.from_hex("{key_hex}") else {{ panic("no key") }}
+  -- The client is connected before the accept starts, and stays
+  -- silent: the accept gets it at once and waits in the handshake.
+  when let Ok(silent) = tcp.connect("127.0.0.1:{{tcp.local_port(listener)}}") else {{
+    panic("cannot connect")
+  }}
+  match task.deadline(time.ms(100), {{ -> tcp.accept_tls(listener, cert, key) }}) {{
+    Ok(_) -> println("a handshake with a silent client")
+    Err(tcp.TcpTimeout) -> println("given up")
+    Err(e) -> println("another error: {{e.message()}}")
+  }}
+  -- The connection of the handshake was closed from the server's side.
+  match tcp.read(silent, 1) {{
+    Ok(data) -> println("the client reads {{bytes.length(data)}} bytes")
+    Err(e) -> println("the client's read fails: {{e.message()}}")
+  }}
+}}
+"#,
+        cert_hex = hex(&cert_pem),
+        key_hex = hex(&key_pem),
+    );
+    let program = silt::session::testing::compile_str(&source).unwrap_or_else(|e| panic!("{e:?}"));
+    let out = silt::Buffer::new();
+    let mut vm = silt::Vm::new(silt::HostIo::buffer(&out));
+    let result = vm.run_program(&program).map_err(|e| e.message);
+    vm.settle();
+    assert_eq!(result, Ok(Value::Unit), "{:?}", out.contents());
+    assert_eq!(out.contents(), "given up\nthe client reads 0 bytes\n");
+    // Every thread of the pool that exists is one that is free: none
+    // is still in the handshake.
+    #[cfg(feature = "test-hooks")]
+    {
+        use std::time::{Duration, Instant};
+        let limit = Instant::now() + Duration::from_secs(10);
+        while silt::vm::io_pool_live_threads(&vm) != silt::vm::io_pool_threads(&vm) {
+            assert!(
+                Instant::now() < limit,
+                "the thread of the given-up accept is still there"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    drop(vm);
+}
