@@ -120,6 +120,58 @@ fn open_documents_of_a_directory_that_is_not_on_disk_import_each_other() {
     client.shutdown();
 }
 
+/// An importer is checked again, and its diagnostics published again,
+/// when the document it imports opens and when it closes: the error at
+/// the `import` goes away with the first and comes back with the second.
+#[test]
+fn an_importer_is_checked_again_when_the_imported_document_opens_or_closes() {
+    let mut client = LspClient::spawn();
+    let dir = format!("file:///silt_no_such_dir_{}_stale", std::process::id());
+    let imported = format!("{dir}/wspace_late_a.silt");
+    let importer = format!("{dir}/wspace_late_b.silt");
+    let messages = |published: &Value| -> Vec<String> {
+        published
+            .pointer("/params/diagnostics")
+            .and_then(|d| d.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|d| d.get("message").and_then(|m| m.as_str()).map(String::from))
+            .collect()
+    };
+
+    let first = client.did_open_and_wait(
+        &importer,
+        "import wspace_late_a\nfn other() { wspace_late_a.pinger(2) }\n",
+    );
+    assert!(
+        messages(&first)
+            .iter()
+            .any(|m| m.contains("cannot load module")),
+        "the import of a file that is nowhere is an error; got {first}"
+    );
+
+    client.did_open(&imported, "pub fn pinger(x) { x }\n");
+    let reopened = client.wait_for_diagnostics(&importer);
+    assert_eq!(
+        messages(&reopened),
+        Vec::<String>::new(),
+        "the importer has no error once the imported document is open"
+    );
+
+    client.send_notification(
+        "textDocument/didClose",
+        json!({ "textDocument": { "uri": imported } }),
+    );
+    let closed = client.wait_for_diagnostics(&importer);
+    assert!(
+        messages(&closed)
+            .iter()
+            .any(|m| m.contains("cannot load module")),
+        "the error is back once the imported document is closed; got {closed}"
+    );
+    client.shutdown();
+}
+
 #[test]
 fn rename_returns_workspace_edit() {
     let mut client = LspClient::spawn();

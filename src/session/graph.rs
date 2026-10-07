@@ -401,6 +401,19 @@ impl ModuleGraph {
             _ => None,
         };
         let file = sources.add(name, text.into());
+        // A module that could not be read and has a text now (an editor
+        // opened the file): what each importer recorded about the failed
+        // load at its `import` no longer holds.
+        if self.modules[id.index()].load_error.is_some() {
+            for importer in &mut self.modules {
+                for import in &mut importer.imports {
+                    if matches!(import.resolution, ImportResolution::Module(target) if target == id)
+                    {
+                        import.problem = None;
+                    }
+                }
+            }
+        }
         let module = &mut self.modules[id.index()];
         module.file = Some(file);
         module.imports.clear();
