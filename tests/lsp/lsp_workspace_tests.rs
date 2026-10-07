@@ -83,6 +83,43 @@ fn references_finds_all_uses_across_files() {
     client.shutdown();
 }
 
+/// Two open documents in one directory import each other whether or not
+/// the directory is on disk: `file:///tmp/...` names no directory on
+/// Windows, and an editor's unsaved files may name none anywhere.
+#[test]
+fn open_documents_of_a_directory_that_is_not_on_disk_import_each_other() {
+    let mut client = LspClient::spawn();
+    let dir = format!("file:///silt_no_such_dir_{}", std::process::id());
+    let file_a = format!("{dir}/wspace_missing_a.silt");
+    let file_b = format!("{dir}/wspace_missing_b.silt");
+    client.did_open_and_wait(&file_a, "pub fn pinger(x) { x }\nfn main() { pinger(1) }\n");
+    client.did_open_and_wait(
+        &file_b,
+        "import wspace_missing_a\nfn other() { wspace_missing_a.pinger(2) }\n",
+    );
+
+    let resp = client.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": file_a },
+            "position": { "line": 1, "character": 15 },
+            "context": { "includeDeclaration": true }
+        }),
+    );
+    let uris: Vec<String> = resp
+        .get("result")
+        .and_then(|r| r.as_array())
+        .expect("references result is an array")
+        .iter()
+        .filter_map(|loc| loc.get("uri").and_then(|u| u.as_str()).map(String::from))
+        .collect();
+    assert!(
+        uris.iter().any(|u| *u == file_b),
+        "expected a reference in the importing document; got: {uris:?}"
+    );
+    client.shutdown();
+}
+
 #[test]
 fn rename_returns_workspace_edit() {
     let mut client = LspClient::spawn();

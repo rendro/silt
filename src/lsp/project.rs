@@ -56,10 +56,14 @@ pub(super) struct Project {
 
 impl Project {
     pub(super) fn new(dir: &Path) -> Project {
+        // A directory that is not on disk (two unsaved documents, a URI
+        // whose path this platform has no directory for) has no manifest
+        // to look for: its documents are the modules of an unnamed
+        // package, so that they import each other as files there would.
         let project = if dir.is_dir() {
             ProjectSetup::Discover(dir.to_path_buf())
         } else {
-            ProjectSetup::None
+            ProjectSetup::Script(dir.to_path_buf())
         };
         let config = Config {
             project,
