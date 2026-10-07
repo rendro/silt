@@ -1296,7 +1296,15 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<Strin
                 Some(id) => format!("task <handle:{id}>"),
                 None => "a thread of the runtime".to_string(),
             };
-            format!("{who} waits {}", on.join(", or "))
+            // A deadline that is in effect for the task does not end
+            // this wait: said, since it is what one may expect of it.
+            let in_deadline = match waiting.sleeper {
+                Sleeper::Task(task) if task.vm.current_deadline.is_some() => {
+                    " (inside a task.deadline, which does not bound this wait)"
+                }
+                _ => "",
+            };
+            format!("{who} waits {}{in_deadline}", on.join(", or "))
         })
         .collect();
     if others.len() > LISTED {
@@ -1576,6 +1584,11 @@ thread_local! {
     /// tag of that task.
     static RUNNING_TASK_OWNER: Cell<Option<u64>> = const { Cell::new(None) };
 }
+
+/// What a deadlock report says when a `task.deadline` is in effect for
+/// the code that waits: the deadline is for I/O and sleeps.
+pub(crate) const DEADLINE_DOES_NOT_BOUND: &str =
+    "task.deadline does not bound channel waits; use channel.recv_timeout or a channel.timeout arm";
 
 /// What the report of a failure that nobody joined advises.
 const UNJOINED_FAILURE_HELP: &str =

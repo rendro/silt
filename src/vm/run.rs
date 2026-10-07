@@ -246,7 +246,17 @@ impl Vm {
                 // of its own has no need to.
                 Slice::OutOfBudget => {}
                 Slice::Parked(wait) => {
-                    self.woken = Some(scheduler.block_thread(wait, self.is_program())?);
+                    let fired = scheduler.block_thread(wait, self.is_program());
+                    // A deadlock inside a `task.deadline`: the deadline
+                    // did not end the wait, and the report says why.
+                    let in_deadline = self.current_deadline.is_some();
+                    self.woken = Some(fired.map_err(|error| {
+                        if in_deadline && error.message.starts_with("deadlock on main thread") {
+                            error.with_help(crate::scheduler::DEADLINE_DOES_NOT_BOUND)
+                        } else {
+                            error
+                        }
+                    })?);
                 }
             }
             run = self.run_frames(floor, usize::MAX)?;
