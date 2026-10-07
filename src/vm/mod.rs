@@ -711,10 +711,11 @@ impl Vm {
     /// reduces a *concrete* operand to its canonical name
     /// (`type_name_for_impl` -> `crate::types::canonical::canonicalize`)
     /// and rejects interpolation when that name is absent from the Display
-    /// `trait_impl_set`. The auto-derive lists (src/typechecker/mod.rs
-    /// ~7787-7876) stamp Display onto every printable built-in plus user
-    /// records / variants; the values that are deliberately left out are
-    /// the first-class no-Display types enumerated below:
+    /// `trait_impl_set`. Every printable built-in and every record and
+    /// variant has Display by its structure
+    /// (src/typechecker/builtin_traits.rs); the values that are
+    /// deliberately left out are the first-class no-Display types
+    /// enumerated below:
     ///
     ///   - function-shaped values (`Fn` — closures, builtins, variant
     ///     constructors): no Display impl;

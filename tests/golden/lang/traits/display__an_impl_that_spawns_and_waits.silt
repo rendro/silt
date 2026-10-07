@@ -1,0 +1,40 @@
+-- repeat: 20
+-- stdout-contains: [answer 1, answer 2]
+-- stdout-contains: in a task: Some(answer 3)
+-- stdout-contains: late 1
+-- stdout-contains: late 2
+-- stdout-contains: late 3
+-- A Display impl is code like any other under the scheduler too: one
+-- that spawns a task and waits for what it sends is parked while a
+-- value is shown and goes on when the value comes, on the main thread
+-- and in a task. A task an impl spawns and nobody waits for is a task
+-- of the program: the program ends when its tasks can do no more, so
+-- one that runs to its end does (`late`), and one that waits for a
+-- value nobody sends is dropped at the end.
+import channel
+import task
+
+type Asked {
+  n: Int,
+}
+
+trait Display for Asked {
+  fn display(self) -> String {
+    let ch = channel.new(0)
+    let n = self.n
+    task.spawn({ -> channel.send(ch, "answer {n}") })
+    task.spawn({ -> println("late {n}") })
+    let never = channel.new(0)
+    task.spawn({ -> channel.receive(never) })
+    match channel.receive(ch) {
+      channel.Message(text) -> text
+      _ -> "nothing"
+    }
+  }
+}
+
+fn main() {
+  println([Asked { n: 1 }, Asked { n: 2 }])
+  let h = task.spawn({ -> "in a task: {Some(Asked { n: 3 })}" })
+  println(task.join(h))
+}

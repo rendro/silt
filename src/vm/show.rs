@@ -117,6 +117,30 @@ impl Vm {
         })))
     }
 
+    /// The text `value` is shown with, for a host that has a value in
+    /// hand after the code that made it has returned (the `Err` a
+    /// `main` or a test returned, a REPL entry's value): as `println`
+    /// would write it, written `Display` impls included. The impls run
+    /// here, on this thread, as a call of the VM's own. If one of them
+    /// fails, or cannot run to its end (it waits for something that
+    /// never comes), the text is the value's plain structure.
+    pub fn show_text(&mut self, value: &Value) -> String {
+        let floor = self.frames.len();
+        let stack_floor = self.stack.len();
+        match self.shown(value) {
+            Ok(Step::Done(Value::String(text))) => text,
+            Ok(Step::Run(showing)) => {
+                self.push_native_frame(showing);
+                let run = self.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
+                match self.finish_run(run, floor, stack_floor) {
+                    Ok(Value::String(text)) => text,
+                    _ => value.to_string(),
+                }
+            }
+            _ => value.to_string(),
+        }
+    }
+
     /// [`Vm::show`] for what gives the text as its value.
     pub(crate) fn shown(&mut self, value: &Value) -> Result<Step, VmError> {
         self.show(value, |_, text| Ok(Step::Done(Value::String(text))))

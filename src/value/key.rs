@@ -386,9 +386,9 @@ impl Hash for Value {
             //     compare equal regardless of endpoints; they take the
             //     `len == 0` path and hash only `(tag, 0)`, as before.)
             // Doing the cap inside `impl Hash` (rather than erroring in the
-            // dispatch arm) also bounds nested walks for free: auto-derived
-            // `.hash()` on records/variants/tuples/lists recurses into this
-            // arm for embedded range fields.
+            // dispatch arm) also bounds nested walks for free: `.hash()`
+            // on records/variants/tuples/lists recurses into this arm for
+            // embedded range fields.
             Value::Range(lo, hi) => {
                 state.write_u8(5);
                 let len = range_len(*lo, *hi);
