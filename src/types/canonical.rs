@@ -564,9 +564,8 @@ pub fn canonical_name(ty: &Type) -> String {
         // pending projection.
         Type::AssocProj { .. } => "_".to_string(),
         // Anonymous structural records have no nominal name; use a
-        // synthetic dispatch key. v1 of row polymorphism does not
-        // auto-derive any trait on anon records, so dispatch via this
-        // key is intentionally never registered.
+        // dispatch key of their own, for which no impl is ever
+        // registered.
         Type::AnonRecord { .. } => "<anon>".to_string(),
     }
 }

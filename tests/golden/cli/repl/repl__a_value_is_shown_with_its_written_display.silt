@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: type Temp { degrees: Int }\ntrait Display for Temp { fn display(self) -> String { "{self.degrees}C" } }\nTemp { degrees: 21 }\n[Some(Temp { degrees: 3 })]\n:quit\n
+-- The value of an entry is shown as `println` would show it: with the
+-- Display impl written for its type, at any depth.

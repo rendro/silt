@@ -183,11 +183,12 @@ import time
 fn main() {
   let never = channel.new(0)
   let _parked = 1..3 |> list.map { _ -> task.spawn { -> channel.receive(never) } }
+  -- Printed before the task exists: the order is not a matter of timing.
+  println("main")
   let _sleeps = task.spawn { ->
     time.sleep(time.ms(1))
     println("slept")
   }
-  println("main")
 }
 "#;
     let program = Arc::new(compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}")));

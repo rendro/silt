@@ -1,0 +1,14 @@
+-- An impl reads a `let` of its module; another module calls it in its
+-- own `let`s: on the value, through a bounded function, through the
+-- type. The impl's module is imported by whoever can hold a `Tag`, so
+-- it is initialised first.
+import early
+import types.{ Tag }
+
+fn main() {
+  println(early.text)
+  println(early.text2)
+  println(early.text3)
+  println(Tag { name: "m" }.display())
+  println(early.show(Tag { name: "m2" }))
+}

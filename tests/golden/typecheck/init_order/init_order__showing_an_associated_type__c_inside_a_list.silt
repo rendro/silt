@@ -1,0 +1,51 @@
+-- A value whose type is an associated type (`Self::Item`, `c.Item`) is
+-- of any type where it is shown: showing it reaches every `Display`
+-- impl of the module, so the `let` an impl reads is set first. (It was
+-- the internal error "the global 'unit' is read before it is set".)
+import string
+
+type T {
+  n: Int,
+}
+
+trait Display for T {
+  fn display(self) -> String {
+    "{self.n}{unit}"
+  }
+}
+
+trait Container {
+  type Item: Display
+  fn all(self) -> List(Self::Item)
+  fn shown(self) -> String {
+    string.from(self.all())
+  }
+  fn shown2(self) -> String {
+    self.all().display()
+  }
+}
+
+type Holder {
+  t: T,
+}
+
+trait Container for Holder {
+  type Item = T
+  fn all(self) -> List(T) {
+    [self.t]
+  }
+}
+
+let a = Holder { t: T { n: 1 } }.shown()
+
+let a2 = Holder { t: T { n: 2 } }.shown2()
+
+let unit = {
+  println("unit")
+  "C"
+}
+
+fn main() {
+  println("main")
+  println(a)
+}

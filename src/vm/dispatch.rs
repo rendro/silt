@@ -8,28 +8,6 @@ use crate::builtins;
 use crate::typeinfo::Tag;
 use crate::value::{HostFn, Value};
 
-// ── Round-62 follow-up: dispatch arms for (Variant, Variant) /
-// (Record, Record) — and the corresponding entries in the hash
-// allowlist — were deleted in this round.
-//
-// The auto-derive synthesis pass in
-// `src/typechecker/mod.rs::synthesize_auto_derive_impls` now
-// processes BOTH user-declared types AND built-in enums / records
-// (Option, Result, Weekday, Method, ChannelResult, Step, IoError /
-// JsonError / ..., Date, Time, DateTime, Duration, Instant,
-// FileStat, Response, Request). Every (trait, type) pair stamped
-// in `trait_impl_set` receives a synthesized impl, whose methods get
-// global slots at compile time, and `Op::CallMethod`'s method lookup
-// (`Globals::method`) resolves the call before it ever reaches
-// `dispatch_trait_method`.
-//
-// The deadness instrumentation (six atomic counters + their
-// reset/snapshot helpers) was removed alongside the arms. The
-// barrage in `tests/meta/auto_derive_dead_arm_proof_tests.rs` now
-// stands as a behavioural lock — every shape (user and built-in)
-// must produce the expected output, which it cannot do via the
-// catch-all error arm that remains in `dispatch_trait_method`.
-
 /// Write `text` to the host's stdout for `print` / `println`. A failure
 /// is a runtime error.
 fn write_stdout(vm: &Vm, text: &str) -> Result<(), VmError> {
@@ -266,19 +244,9 @@ impl Vm {
                         "type 'Fn' does not implement Equal".into(),
                     )));
                 }
-                // Defensive fallback. For every valid user/builtin type
-                // that passes the round-93 field-aware auto-derive gate
-                // (`compute_auto_derive_field_negatives`), a synth-emitted
-                // `equal` impl method is produced and `Op::CallMethod`
-                // (src/vm/run.rs) resolves it FIRST, so a
-                // Variant/Record receiver never reaches this arm. Types
-                // with non-supportable fields (e.g. Channel/Map/Tuple/
-                // Function/Bytes/Handle) are now statically REJECTED by
-                // that gate (`type 'X' does not implement trait`), so the
-                // old "such fields are laundered through here" path no
-                // longer exists, and no valid program reaches it. `impl PartialEq for Value` (in
-                // src/value/key.rs) compares records and variants structurally,
-                // so this arm stays sound even on that malformed input.
+                // `Equal` is structural: `PartialEq for Value`
+                // (src/value/key.rs) is its one implementation, for `==`
+                // and for `.equal()`.
                 Some(Ok(Value::Bool(*receiver == extra_args[0])))
             }
             "compare" => {
@@ -308,34 +276,22 @@ impl Vm {
                     }
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-                    // List vs List: the typechecker auto-derives Compare for
-                    // List (see src/typechecker/mod.rs:8176), so a value of
-                    // `List(T)` flowing through a `Compare` bound must
-                    // resolve here. Defer to the existing element-wise
+                    // List vs List: a list has Compare when its
+                    // elements do. Defer to the existing element-wise
                     // ordering on `Value::cmp`, which already handles
                     // List/Range pairings (see src/vm/arithmetic.rs:152).
                     (Value::List(_), Value::List(_))
                     | (Value::List(_), Value::Range(..))
                     | (Value::Range(..), Value::List(_))
                     | (Value::Range(..), Value::Range(..)) => receiver.cmp(other),
-                    // Defensive fallback. For every valid user/builtin type
-                    // that passes the round-93 field-aware auto-derive gate
-                    // (`compute_auto_derive_field_negatives`), a synth-emitted
-                    // `compare` impl method is produced and `Op::CallMethod`
-                    // (src/vm/run.rs) resolves it FIRST, so a
-                    // Variant/Record receiver never reaches this arm. Types
-                    // with non-supportable fields (e.g. Channel/Map/Tuple/
-                    // Function/Bytes/Handle) are now statically REJECTED by
-                    // that gate (`type 'X' does not implement trait`), so the
-                    // old "such fields are laundered through here" path no
-                    // longer exists, and no valid program reaches it. `fn cmp` (in src/value/key.rs)
-                    // orders records and variants structurally, so this arm
-                    // stays sound even on that malformed input.
+                    // `Compare` is structural: `Ord for Value`
+                    // (src/value/key.rs) orders records by their
+                    // declared fields and variants by declaration, for
+                    // `<` and for `.compare()`.
                     (Value::Variant(..), Value::Variant(..))
                     | (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     //
-                    // Unit vs Unit: typechecker auto-derives Compare for `()`
-                    // (src/typechecker/mod.rs:8173). All units are equal.
+                    // Unit vs Unit: all units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
                     // A tuple is ordered part by part.
                     (Value::Tuple(_), Value::Tuple(_)) => receiver.cmp(other),
@@ -355,11 +311,7 @@ impl Vm {
                 Some(Ok(Value::Int(result)))
             }
             "hash" => {
-                // The typechecker auto-derives `Hash` for Int / Float /
-                // Bool / String / List (and more). At runtime, the
-                // synthesized impls of user types are resolved via the
-                // method lookup in `Op::CallMethod`; only
-                // auto-derived primitives fall through to here.
+                // `Hash` is structural.
                 //
                 // `Value` already implements `std::hash::Hash` with a
                 // canonical bit-hash for floats (see `impl Hash for Value` in src/value/key.rs).
@@ -382,23 +334,7 @@ impl Vm {
                         "type 'Fn' does not implement Hash".into(),
                     )));
                 }
-                // Only honour hash() for types the typechecker actually
-                // auto-derives Hash for — emitting a dispatch error for
-                // anything else keeps the user-impl path authoritative.
-                // The Variant/Record entries below are a defensive
-                // fallback. For every valid user/builtin type that passes
-                // the round-93 field-aware auto-derive gate
-                // (`compute_auto_derive_field_negatives`), a synth-emitted
-                // `hash` impl method is produced and `Op::CallMethod`
-                // (src/vm/run.rs) resolves it FIRST, so a
-                // Variant/Record receiver never reaches this arm. Types
-                // with non-supportable fields (e.g. Channel/Map/Tuple/
-                // Function/Bytes/Handle) are now statically REJECTED by
-                // that gate (`type 'X' does not implement trait`), so the
-                // old "such fields are laundered through here" path no
-                // longer exists, and no valid program reaches it. `impl Hash for Value` (in
-                // src/value/key.rs) hashes records and variants structurally, so
-                // this arm stays sound even on that malformed input.
+                // The types that have `Hash`.
                 match receiver {
                     Value::Int(_)
                     | Value::Float(_)
@@ -501,10 +437,11 @@ impl Vm {
                             args.len()
                         )));
                     }
-                    let mut text = self.display_value(&args[0]);
-                    text.push('\n');
-                    write_stdout(self, &text)?;
-                    Ok(Step::Done(Value::Unit))
+                    self.show(&args[0], |vm, mut text| {
+                        text.push('\n');
+                        write_stdout(vm, &text)?;
+                        Ok(Step::Done(Value::Unit))
+                    })
                 }
                 "print" => {
                     if args.len() != 1 {
@@ -513,13 +450,17 @@ impl Vm {
                             args.len()
                         )));
                     }
-                    write_stdout(self, &self.display_value(&args[0]))?;
-                    Ok(Step::Done(Value::Unit))
+                    self.show(&args[0], |vm, text| {
+                        write_stdout(vm, &text)?;
+                        Ok(Step::Done(Value::Unit))
+                    })
                 }
-                "panic" => {
-                    let msg = args.first().map(|v| v.to_string()).unwrap_or_default();
-                    Err(VmError::new(format!("panic: {msg}")))
-                }
+                "panic" => match args.first() {
+                    Some(msg) => {
+                        self.show(msg, |_, text| Err(VmError::new(format!("panic: {text}"))))
+                    }
+                    None => Err(VmError::new("panic: ".into())),
+                },
                 _ => Err(VmError::new(format!("unknown builtin: {name}"))),
             }
         }

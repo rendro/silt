@@ -1,0 +1,5 @@
+import a
+
+pub fn both(x: a) -> String where a: a.Tag {
+  "{x.tag()} {x.tag()}"
+}

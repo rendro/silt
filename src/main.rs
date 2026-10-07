@@ -27,7 +27,7 @@ use crate::cli::help::{GLOBAL_FLAGS, usage_text};
 use crate::cli::watch::maybe_handle_watch;
 
 // Windows defaults to a 1 MiB main-thread stack which is too tight for
-// silt's recursive walks (type canonicalization, auto-derive synthesis,
+// silt's recursive walks (type canonicalization, the structural judgement,
 // row-polymorphic field unification, supertrait obligation chasing).
 // Linux/macOS default to 8 MiB. Spawn the entire dispatcher on a worker
 // thread with an explicit reserve so the build behaves identically
@@ -41,8 +41,7 @@ use crate::cli::watch::maybe_handle_watch;
 // chains of only ~250 terms. 256 MiB is *virtual* address space:
 // pages are only committed as they are actually touched, so the
 // steady-state memory cost is unchanged while deep-but-legitimate
-// programs (multi-thousand-term chains, very wide auto-derived
-// records) check and run instead of aborting. All checking/compiling
+// programs (multi-thousand-term chains, very wide records) check and run instead of aborting. All checking/compiling
 // entry points (run / check / disasm / test / repl / lsp) execute on
 // this thread; `--watch` re-invokes the binary as a subprocess whose
 // own silt-main gets the same reserve.

@@ -1,0 +1,17 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: main returned Err: code 50
+-- The `Err` a `main` returns is shown as `println` would show it: with
+-- the Display impl written for its type.
+type Code {
+  n: Int,
+}
+
+trait Display for Code {
+  fn display(self) -> String {
+    "code {100 / self.n}"
+  }
+}
+
+fn main() -> Result(Int, Code) {
+  Err(Code { n: 2 })
+}

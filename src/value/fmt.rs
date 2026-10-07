@@ -103,11 +103,14 @@ impl Value {
                 format!("({})", items.join(", "))
             }
             Value::Record(ty, fields) => {
-                let items: Vec<String> = fields
-                    .iter()
+                let items: Vec<String> = record_fields(ty, fields)
                     .map(|(k, v)| format!("{k}: {}", v.format_silt()))
                     .collect();
-                format!("{} {{{}}}", ty.name, items.join(", "))
+                // (An anonymous record is written without a name.)
+                match ty.is_anon() {
+                    true => format!("{{{}}}", items.join(", ")),
+                    false => format!("{} {{{}}}", ty.name, items.join(", ")),
+                }
             }
             Value::Variant(name, fields) => {
                 if fields.is_empty() {
@@ -128,6 +131,64 @@ impl Value {
             Value::TcpListener(t) => format!("<tcp-listener:{}>", t.id),
             Value::TcpStream(t) => format!("<tcp-stream:{}>", t.id),
             Value::Unit => "()".to_string(),
+        }
+    }
+}
+
+/// The fields of a record in the order they are written in, in every
+/// text of it: the order the type declares them in; an anonymous
+/// record's, which has no declaration, in name order.
+fn record_fields<'a>(
+    ty: &'a crate::typeinfo::TypeInfo,
+    fields: &'a std::collections::BTreeMap<String, Value>,
+) -> RecordFields<'a> {
+    match &ty.shape {
+        crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
+            RecordFields::Declared {
+                declared: declared.iter(),
+                fields,
+                in_step: Some(fields.iter()),
+            }
+        }
+        _ => RecordFields::Named(fields.iter()),
+    }
+}
+
+/// See [`record_fields`].
+enum RecordFields<'a> {
+    Declared {
+        declared: std::slice::Iter<'a, (String, crate::typeinfo::FieldType)>,
+        fields: &'a std::collections::BTreeMap<String, Value>,
+        /// The fields in name order, for as long as the declaration
+        /// has gone in that order too: the next declared field is then
+        /// the next of these, and is not looked up.
+        in_step: Option<std::collections::btree_map::Iter<'a, String, Value>>,
+    },
+    Named(std::collections::btree_map::Iter<'a, String, Value>),
+}
+
+impl<'a> Iterator for RecordFields<'a> {
+    type Item = (&'a str, &'a Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            RecordFields::Declared {
+                declared,
+                fields,
+                in_step,
+            } => loop {
+                let (name, _) = declared.next()?;
+                if let Some(by_name) = in_step {
+                    match by_name.next() {
+                        Some((key, value)) if key == name => return Some((name.as_str(), value)),
+                        _ => *in_step = None,
+                    }
+                }
+                if let Some(value) = fields.get(name.as_str()) {
+                    return Some((name.as_str(), value));
+                }
+            },
+            RecordFields::Named(fields) => fields.next().map(|(name, v)| (name.as_str(), v)),
         }
     }
 }
@@ -201,8 +262,34 @@ fn fmt_duration(f: &mut fmt::Formatter<'_>, total_ns: i64) -> fmt::Result {
     }
 }
 
+/// What writes a value in place of the formatter: for a value of a type
+/// with a `Display` impl a program wrote, what the impl gave. `None`
+/// for any other value, which the formatter writes itself.
+pub type Written<'a> = &'a dyn Fn(&Value, &mut fmt::Formatter<'_>) -> Option<fmt::Result>;
+
+/// A value as it is shown (`println`, interpolation), with `written`
+/// asked first at each record and variant inside it.
+pub struct Shown<'a>(pub &'a Value, pub Written<'a>);
+
+impl fmt::Display for Shown<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.show(f, self.1)
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.show(f, &|_, _| None)
+    }
+}
+
+impl Value {
+    fn show(&self, f: &mut fmt::Formatter<'_>, written: Written<'_>) -> fmt::Result {
+        if matches!(self, Value::Record(..) | Value::Variant(..))
+            && let Some(done) = written(self, f)
+        {
+            return done;
+        }
         match self {
             Value::Int(n) => write!(f, "{n}"),
             Value::Float(n) => write!(f, "{n}"),
@@ -214,7 +301,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{v}")?;
+                    v.show(f, written)?;
                 }
                 write!(f, "]")
             }
@@ -226,10 +313,12 @@ impl fmt::Display for Value {
                         write!(f, ", ")?;
                     }
                     if let Value::String(s) = k {
-                        write!(f, "\"{s}\": {v}")?;
+                        write!(f, "\"{s}\": ")?;
                     } else {
-                        write!(f, "{k}: {v}")?;
+                        k.show(f, written)?;
+                        write!(f, ": ")?;
                     }
+                    v.show(f, written)?;
                 }
                 write!(f, "}}")
             }
@@ -239,7 +328,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{v}")?;
+                    v.show(f, written)?;
                 }
                 write!(f, "]")
             }
@@ -249,7 +338,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{v}")?;
+                    v.show(f, written)?;
                 }
                 write!(f, ")")
             }
@@ -280,14 +369,21 @@ impl fmt::Display for Value {
                 }
                 ty::DURATION => fmt_duration(f, val_i64(fields.get("ns"))),
                 _ => {
-                    write!(f, "{} {{", ty.name)?;
-                    for (i, (k, v)) in fields.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{k}: {v}")?;
+                    // (An anonymous record is written without a name.)
+                    if !ty.is_anon() {
+                        f.write_str(&ty.name)?;
+                        f.write_str(" ")?;
                     }
-                    write!(f, "}}")
+                    f.write_str("{")?;
+                    for (i, (k, v)) in record_fields(ty, fields).enumerate() {
+                        if i > 0 {
+                            f.write_str(", ")?;
+                        }
+                        f.write_str(k)?;
+                        f.write_str(": ")?;
+                        v.show(f, written)?;
+                    }
+                    f.write_str("}")
                 }
             },
             Value::Variant(name, fields) => {
@@ -309,7 +405,7 @@ impl fmt::Display for Value {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{v}")?;
+                        v.show(f, written)?;
                     }
                     write!(f, ")")
                 }

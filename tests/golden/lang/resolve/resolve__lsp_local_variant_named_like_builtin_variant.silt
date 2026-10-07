@@ -1,7 +1,7 @@
 -- cmd: lsp
 -- An editor shows nothing for a file whose enum has variants named like
--- a builtin module's: no shadowing warning, and no error from the
--- derived impls of either enum.
+-- a builtin module's: no shadowing warning, and no error about either
+-- enum.
 type T { Stop(Int), Go }
 type U { Message, Monday(String) }
 fn main() {

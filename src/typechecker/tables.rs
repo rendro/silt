@@ -9,15 +9,6 @@ pub(super) struct EnumInfo {
     /// The actual TyVar ids assigned to each type parameter (same order as `params`).
     pub(super) param_var_ids: Vec<TyVar>,
     pub(super) variants: Vec<VariantInfo>,
-    /// Package symbol where this enum was originally declared. Used by
-    /// the trait-orphan check in `register_trait_impl` to determine
-    /// whether the impl's target type is local to the current package.
-    /// The builtin enums (the builtin environment's) carry the
-    /// sentinel `intern("__builtin__")`; user enums carry the
-    /// `current_package` value at the time their decl was processed,
-    /// or `intern("__builtin__")` when there is no enclosing package
-    /// (a host module).
-    pub(super) defined_in: Symbol,
 }
 
 #[derive(Debug, Clone)]
@@ -30,10 +21,6 @@ pub(super) struct VariantInfo {
 #[derive(Debug, Clone)]
 pub(super) struct RecordInfo {
     pub(super) fields: Vec<(Symbol, Type)>,
-    /// Package symbol where this record was originally declared. See
-    /// `EnumInfo::defined_in` for semantics — used by the trait-orphan
-    /// check in `register_trait_impl`.
-    pub(super) defined_in: Symbol,
 }
 
 /// Information about a declared trait.
@@ -99,15 +86,6 @@ pub(super) struct TraitInfo {
     /// name and the trait bounds the impl-supplied binding must satisfy.
     /// Empty for traits with no associated types (the common case).
     pub(super) assoc_types: Vec<AssocTypeInfo>,
-    /// Package symbol where this trait was originally declared. Used
-    /// by the trait-orphan check in `register_trait_impl` to determine
-    /// whether the impl's trait is local to the current package.
-    /// Built-in traits registered through `builtin_trait_decls` carry
-    /// the sentinel `intern("__builtin__")`; user traits carry the
-    /// `current_package` value at decl-processing time, or
-    /// `intern("__builtin__")` when there is no enclosing package
-    /// (a check outside a session).
-    pub(super) defined_in: Symbol,
 }
 
 /// Information about a single associated-type declaration inside a
@@ -126,17 +104,17 @@ pub(super) struct AssocTypeInfo {
 pub(crate) struct MethodEntry {
     pub(super) method_type: Type,
     pub(super) span: Span,
-    pub(super) is_auto_derived: bool,
+    pub(super) structural: bool,
     /// GAP (round 17 F3): name of the trait that provided this method.
     /// Used for coherence diagnostics when two distinct traits supply
     /// a method with the same name for the same target type. `None`
-    /// for auto-derived entries (Showable on every type, etc.) that
-    /// don't participate in user-visible coherence rules.
+    /// for a structural trait's method (`structural`), which is no
+    /// impl's.
     pub(super) trait_name: Option<TraitKey>,
     /// What every use of the method owes, on the variables of
     /// `method_type`: the `where` clauses of the impl's header
     /// (`trait Greet for Box(a) where a: Greet`) and the bounds the
-    /// trait declares for the method. None for a derived impl's.
+    /// trait declares for the method. None for a structural trait's.
     pub(super) preds: Vec<Pred>,
 }
 
@@ -169,12 +147,12 @@ pub struct Tables {
     /// trait because some field / variant payload does not satisfy it
     /// (computed structurally and recursively). Value = full diagnostic
     /// message naming the offending field and its type. Every pair here
-    /// had its pre-stamped `trait_impl_set` entry and auto-derived
-    /// `method_table` entry removed by `synthesize_auto_derive_impls`.
+    /// had its pre-stamped `trait_impl_set` entry and structural
+    /// `method_table` entry removed by `enforce_structural_gate`.
     /// Consulted by the operator-operand checks in `inference.rs` and to
     /// enrich "unknown method" diagnostics at `.equal()` / `.compare()`
     /// / `.hash()` call sites.
-    pub(super) auto_derive_negatives: HashMap<(TraitKey, TypeRef), String>,
+    pub(super) structural_negatives: HashMap<(TraitKey, TypeRef), String>,
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
@@ -207,8 +185,8 @@ pub struct Tables {
     /// elements at runtime. Generic impls (`for List(a)`) store `Var`
     /// args, which the positional comparison treats as wildcards, so
     /// they keep matching every instantiation. Absent for impls that
-    /// never pass through `register_trait_impl` (builtin pre-stamps,
-    /// auto-derive synthesis) — the check silently skips those.
+    /// never pass through `register_trait_impl` (the stamps of the
+    /// structural traits) — the check silently skips those.
     pub(super) impl_self_types: HashMap<(TraitKey, TypeRef), Type>,
     /// Maps record type names to their type parameter TyVar ids.
     pub(super) record_param_var_ids: HashMap<TypeRef, Vec<TyVar>>,
@@ -226,9 +204,6 @@ pub struct Tables {
     /// error diagnostics at use sites. Parallel to `type_aliases`
     /// (the alias is in `type_aliases` iff it is a key here).
     pub(super) type_alias_arity: HashMap<TypeRef, usize>,
-    /// The builtin types whose derived impls the builtin environment
-    /// holds already, so a check does not derive them again.
-    pub(super) builtin_derived: std::collections::HashSet<TypeRef>,
     /// The session's canonical alias / associated-type-binding
     /// registries. Populated as the typechecker processes user
     /// `type ... = ...` decls and trait impls; consumed by
@@ -388,7 +363,7 @@ impl Tables {
             self.impl_preds.remove(&key);
             self.impl_trait_args.remove(&key);
             self.impl_self_types.remove(&key);
-            self.auto_derive_negatives.remove(&key);
+            self.structural_negatives.remove(&key);
         }
         for id in rows.schemes {
             self.schemes.remove(&id);

@@ -1,0 +1,8 @@
+-- `main` imports `m`, which imports the trait's module: the trait's
+-- methods are called here without an import of its own.
+import m
+
+fn main() {
+  println(3.tag())
+  println(m.both(4))
+}

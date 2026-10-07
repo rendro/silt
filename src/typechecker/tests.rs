@@ -843,8 +843,8 @@ fn test_trait_impl_validates_methods() {
 fn test_trait_impl_missing_method() {
     // Both trait methods are abstract (no body) so omitting `detail`
     // in the impl is genuinely missing — not silently filled in by a
-    // default. With the default-method feature, a method with a body
-    // would be synthesized into the impl rather than reported.
+    // default: a method with a body would be the impl's too, and not
+    // reported.
     let errors = check_errors(
         r#"
             trait Showable {
@@ -1848,8 +1848,8 @@ fn main() {
 #[test]
 fn test_trait_impl_with_wrong_method_signature() {
     // Both trait methods are declared abstract (no body) so the impl
-    // genuinely owes both. Methods with default bodies are now
-    // synthesized into impls rather than reported as missing.
+    // genuinely owes both. A method with a default body is the impl's
+    // without being written, and is not reported as missing.
     let errors = check_errors(
         r#"
 trait Describable {

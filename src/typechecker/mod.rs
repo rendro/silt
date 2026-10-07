@@ -8,13 +8,11 @@
 //! - Exhaustiveness checking for match expressions
 //! - Trait bounds: declared, inferred and owed at each use
 
-mod auto_derive;
 mod builtin_env;
+mod builtin_traits;
 mod declare_fns;
 mod declare_traits;
 mod declare_types;
-mod derive_gates;
-mod derive_synth;
 mod env;
 mod exhaustiveness;
 mod infer;
@@ -26,6 +24,7 @@ mod resolve;
 mod scheme;
 mod show;
 mod solve;
+mod structural;
 mod tables;
 mod typeexpr;
 mod unify;
@@ -44,8 +43,8 @@ pub use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
 pub use builtin_env::*;
+use builtin_traits::*;
 use declare_fns::FnSig;
-use derive_synth::*;
 use env::TypeEnv;
 use infer::pattern::collect_pattern_vars;
 use solve::{Goal, Origin, Wanted};
@@ -53,8 +52,7 @@ use std::rc::Rc;
 pub use tables::*;
 pub use unify::*;
 
-/// Names of builtin traits that the compiler registers automatically
-/// with auto-derived impls for every primitive and builtin container.
+/// Names of the builtin traits, which the checker registers itself.
 /// User code cannot redeclare a trait with any of these names — doing
 /// so would shadow the compiler's TraitInfo (different method names,
 /// different signatures) and produce nonsensical cascade errors when
@@ -66,12 +64,10 @@ pub(super) const BUILTIN_TRAIT_NAMES: &[&str] =
 /// derived structurally (see `reject_sealed_trait_impls`).
 pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Number"];
 
-/// Subset of [`BUILTIN_TRAIT_NAMES`] that is auto-derived for every
-/// primitive and builtin container. `Error` is intentionally excluded:
-/// user types and stdlib types must implement `trait Error for ...`
-/// explicitly.
-pub(super) const BUILTIN_AUTO_DERIVED_TRAIT_NAMES: &[&str] =
-    &["Equal", "Compare", "Hash", "Display"];
+/// The traits of [`BUILTIN_TRAIT_NAMES`] a type has by its structure,
+/// with no impl (`Display` unless one is written for it). `Error` is
+/// not one: an impl of it is written.
+pub(super) const STRUCTURAL_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
 // ── The type checker ────────────────────────────────────────────────
 
@@ -203,11 +199,6 @@ pub struct TypeChecker {
     /// which `infer_expr` records on the access (`Expr::res`): the
     /// compiler keys the call by it.
     pub(super) method_trait: Option<TraitKey>,
-    /// The trait the method call being inferred names already: a derived
-    /// impl's body calls the builtin trait's method of a field
-    /// (`display` of Display), whatever other trait has a method of the
-    /// name.
-    pub(super) forced_trait: Option<TraitKey>,
     /// The traits of the method calls resolved in the deferred pass, by
     /// the span of the access; `resolve_all_types` records each on its
     /// access.
@@ -220,16 +211,13 @@ pub struct TypeChecker {
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
     pub(super) seen_modules: std::collections::HashSet<crate::session::ModuleId>,
-    /// Trait-orphan check (round 63 item 5): the package symbol whose
-    /// source we're currently typechecking. `Some(pkg)` is set by
-    /// `check_module` (the entry point the session checks every module
-    /// of a program with) so per-package
-    /// decls (traits/enums/records) are stamped with the right
-    /// `defined_in`. `None` means a host module: treat every decl as
-    /// local (sentinel
-    /// `__builtin__`) so the orphan rule never trips on a program that
-    /// has no package context.
-    pub(super) current_package: Option<Symbol>,
+    /// The modules the module checked imports, and theirs, and so on:
+    /// the modules that are initialised before it. `None` for a REPL
+    /// cell, which follows every earlier cell and what those imported.
+    pub(super) reach: Option<std::collections::HashSet<crate::session::ModuleId>>,
+    /// For a REPL cell, the cells of its session: for where an impl may
+    /// be written they count as one module.
+    pub(super) cells: std::collections::HashSet<crate::session::ModuleId>,
     /// The session's definitions, which the resolver's `Res` slots
     /// name. `None` for a checker that has no program (the builtins).
     pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
@@ -307,12 +295,12 @@ impl TypeChecker {
             impl_sigs: HashMap::new(),
             last_field_access_was_method: false,
             method_trait: None,
-            forced_trait: None,
             deferred_method_traits: HashMap::new(),
             ambiguous_methods: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
-            current_package: None,
+            reach: None,
+            cells: std::collections::HashSet::new(),
             defs: None,
             module: crate::session::ModuleId(0),
             module_name: intern("main"),
@@ -325,23 +313,6 @@ impl TypeChecker {
             registry_rows: false,
             tables: Tables::default(),
         }
-    }
-
-    /// Sentinel package symbol used as the `defined_in` for built-in
-    /// trait/enum/record entries (and for user decls processed without
-    /// an enclosing package, i.e. a check outside a session). Distinct
-    /// from any real package name because user package names are
-    /// validated against [a-z][a-z0-9_-]* by the manifest layer, so a
-    /// double-underscore name cannot collide.
-    pub(super) fn builtin_pkg() -> Symbol {
-        intern("__builtin__")
-    }
-
-    /// Returns the `defined_in` package stamp to record on a decl
-    /// processed at the current cursor position: the active
-    /// `current_package` if set, otherwise the built-in sentinel.
-    pub(super) fn defining_package(&self) -> Symbol {
-        self.current_package.unwrap_or_else(Self::builtin_pkg)
     }
 
     /// The trait the module's own declaration `name` declares; a
@@ -780,28 +751,17 @@ impl TypeChecker {
                 }
                 match &td.body {
                     TypeBody::Enum(_) => {
-                        let pkg = self.defining_package();
                         self.tables.enums.entry(ty).or_insert_with(|| EnumInfo {
                             variants: Vec::new(),
                             params: td.params.clone(),
                             param_var_ids: Vec::new(),
-                            // Placeholder stamp: the real entry overwrites
-                            // this in `register_type_decl` below. Stamp the
-                            // current package now so a stray orphan check
-                            // that races ahead of the real registration
-                            // (e.g. a malformed program with an impl
-                            // referencing a forward-declared enum) sees a
-                            // sensible local-package value rather than the
-                            // built-in sentinel.
-                            defined_in: pkg,
                         });
                     }
                     TypeBody::Record(_) => {
-                        let pkg = self.defining_package();
-                        self.tables.records.entry(ty).or_insert_with(|| RecordInfo {
-                            fields: Vec::new(),
-                            defined_in: pkg,
-                        });
+                        self.tables
+                            .records
+                            .entry(ty)
+                            .or_insert_with(|| RecordInfo { fields: Vec::new() });
                     }
                     TypeBody::Alias(_) => {
                         // Phase D: alias names are pre-registered into
@@ -872,17 +832,10 @@ impl TypeChecker {
             }
         }
 
-        // 2b: Auto-derive Display/Compare/Equal/Hash for every user
-        // enum and record that does not already have a manual impl.
-        // Mutates `program.decls`. The synthesized TraitImpls flow
-        // through `register_trait_impl` (step 2c below) and the
-        // compiler's TraitImpl emit path identical to user-written
-        // impls — producing real impl methods with global slots so
-        // `Op::CallMethod`'s method lookup finds them at runtime, never
-        // falling through to `dispatch_trait_method`.
+        // 2b: which of the module's types have the structural traits.
         // Hand-written impls of the sealed traits are rejected first.
         self.reject_sealed_trait_impls(&mut program.decls);
-        self.synthesize_auto_derive_impls(&mut program.decls);
+        self.settle_structural_traits(&program.decls);
 
         // 2c: the signatures of the functions and of the impls' methods.
         let mut sigs: Vec<Option<FnSig>> = Vec::with_capacity(program.decls.len());
@@ -923,7 +876,7 @@ impl TypeChecker {
 
         // The order the top-level `let`s are initialised in: what each
         // call means is known now.
-        self.let_order = self.init_order(&program.decls);
+        self.let_order = self.init_order(&program.decls, &env);
 
         self.drop_repeated_errors();
         env
@@ -1139,9 +1092,8 @@ impl TypeChecker {
 
     /// Keep one of each diagnostic: the same message at the same span
     /// with the same severity is reported once. The passes can reach one
-    /// node more than once (the derived impls of a type, which all carry
-    /// the type declaration's span, are checked per method), and a
-    /// repeated line tells the reader nothing new. Run once, after every
+    /// node more than once, and a repeated line tells the reader nothing
+    /// new. Run once, after every
     /// pass, so no pass sees a shortened error list.
     fn drop_repeated_errors(&mut self) {
         let mut seen: std::collections::HashSet<(std::string::String, Span, bool)> =
@@ -1301,9 +1253,11 @@ pub struct ModuleContext<'a> {
     /// A file, a REPL cell, or an embedder's host module, whose
     /// functions are bodiless signatures.
     pub kind: names::ModuleKind,
-    /// The package the module belongs to, for the trait-orphan rule
-    /// (round 63 item 5).
-    pub package: Option<Symbol>,
+    /// The modules it imports, and theirs, and so on. `None` for a REPL
+    /// cell.
+    pub reach: Option<std::collections::HashSet<crate::session::ModuleId>>,
+    /// For a REPL cell, the cells of its session.
+    pub cells: std::collections::HashSet<crate::session::ModuleId>,
     /// The module's top-level names, from the resolver.
     pub scope: &'a names::ModuleScope,
     /// For a REPL cell, the values it imports from the earlier cells,
@@ -1325,7 +1279,8 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         module,
         module_name,
         kind,
-        package,
+        reach,
+        cells,
         scope,
         earlier,
         defs,
@@ -1352,7 +1307,8 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     }
     checker.signatures_only = kind == names::ModuleKind::Host;
     checker.is_cell = kind == names::ModuleKind::Cell;
-    checker.current_package = package;
+    checker.reach = reach;
+    checker.cells = cells;
     checker.defs = Some(defs);
     checker.module = module;
     checker.module_name = module_name;

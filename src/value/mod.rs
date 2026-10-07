@@ -14,6 +14,7 @@ mod key;
 mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
+pub use fmt::{Shown, Written};
 
 /// Maximum number of elements that may be materialized from a range into a
 /// list, JSON array, or similar eager collection.  Prevents accidental OOM

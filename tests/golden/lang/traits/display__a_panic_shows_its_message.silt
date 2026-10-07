@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: panic: 21C
+-- A panic's message is shown like any value.
+type Temp {
+  degrees: Int,
+}
+
+trait Display for Temp {
+  fn display(self) -> String {
+    "{self.degrees}C"
+  }
+}
+
+fn main() {
+  panic(Temp { degrees: 21 })
+}

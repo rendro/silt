@@ -1,0 +1,7 @@
+-- stderr-not-contains: declares neither the trait nor the type
+type Tag { A, B }
+
+fn main() {
+  let xs: List(Tag) = [A, B]
+  println(xs)
+}

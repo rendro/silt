@@ -1,0 +1,66 @@
+-- Showing a value calls the Display impls of its parts: a top-level
+-- `let` that interpolates, prints, converts with `string.from` or calls
+-- `.display()` is initialised after what those impls read, for a part
+-- at any depth of the value's type, fields of the module's types
+-- included, and through a builtin handed on as a value. Showing a value
+-- with no such part orders nothing.
+import list
+import string
+
+type Temp {
+  degrees: Int,
+}
+
+trait Display for Temp {
+  fn display(self) -> String {
+    "{self.degrees}{unit}"
+  }
+}
+
+type Wrap {
+  inner: List(Temp),
+}
+
+type Tree {
+  Leaf(Temp),
+  Node(Tree, Tree),
+}
+
+let a = "{Temp { degrees: 1 }}"
+
+let b = string.from(Wrap { inner: [Temp { degrees: 2 }] })
+
+let c = Node(Leaf(Temp { degrees: 3 }), Leaf(Temp { degrees: 4 })).display()
+
+let d = [Some(Temp { degrees: 5 })] |> list.map(string.from)
+
+let e = {
+  println(Temp { degrees: 6 })
+  1
+}
+
+fn show(x: a) -> String where a: Display {
+  "<{x}>"
+}
+
+let f = show((Temp { degrees: 7 }, 1))
+
+let plain = {
+  println("plain")
+  "{[1, 2]} {3.display()}"
+}
+
+let unit = {
+  println("unit")
+  "C"
+}
+
+fn main() {
+  println(a)
+  println(b)
+  println(c)
+  println(d)
+  println(e)
+  println(f)
+  println(plain)
+}

@@ -170,6 +170,11 @@ let bob = { name: "Bob", age: 25 } -- same type as alice
 alice.name -- "Alice"
 ```
 
+An anonymous record is shown as it is written, without a name, its
+fields in the order of their names: `println(alice)` prints
+`{age: 30, name: Alice}`. A closed one has `==`, `.equal()`, `.hash()`
+and `.display()` when its fields do, and no order (`<`, `.compare()`).
+
 The type of `alice` is the structural type `{name: String, age: Int}`,
 which can also appear in any annotation:
 

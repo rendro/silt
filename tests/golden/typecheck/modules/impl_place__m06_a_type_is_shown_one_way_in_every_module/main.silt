@@ -1,0 +1,11 @@
+-- The impl of `Display` for `Tag` is in `Tag`'s module, so it is there
+-- for every module that can hold a `Tag`: a `let` of a module that is
+-- initialised before `main` shows a `Tag` as `main` does. (With the
+-- impl in `main`, `early.text` was `early Tag {name: e}`.)
+import early
+import types.{ Tag }
+
+fn main() {
+  println(early.text)
+  println(early.show(Tag { name: "e" }))
+}

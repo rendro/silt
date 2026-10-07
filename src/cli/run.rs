@@ -150,27 +150,22 @@ pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
     }
 }
 
-/// The payload of `value` when it is the `Err(..)` of a `Result`, rendered
-/// for a diagnostic; `None` for every other value.
+/// The payload of `value` when it is the `Err(..)` of a `Result`; `None`
+/// for every other value.
 ///
 /// A `main` or a test function that returns `Err(..)` has failed. This is
 /// the one place that says what "returned `Err`" means, for `silt run`
-/// and `silt test` alike.
-pub(crate) fn returned_err(value: &silt::Value) -> Option<String> {
+/// and `silt test` alike. The payload is shown with [`silt::Vm::show_text`],
+/// as `println` would write it.
+pub(crate) fn returned_err(value: &silt::Value) -> Option<&silt::Value> {
     let silt::Value::Variant(tag, fields) = value else {
         return None;
     };
     if !tag.is(silt::typeinfo::bv::ERR) {
         return None;
     }
-    // Result's Err carries exactly one payload; render it via the VM's
-    // Display machinery (stdlib error variants print their `.message()`,
-    // strings print bare). Fall back to the whole variant for defensive
-    // completeness.
-    Some(match fields.as_slice() {
-        [single] => single.to_string(),
-        _ => value.to_string(),
-    })
+    // (Result's Err carries exactly one payload.)
+    Some(fields.first().unwrap_or(value))
 }
 
 /// The span of the name of the top-level function `name` of `program`.
@@ -238,7 +233,7 @@ pub(crate) fn vm_run_file(path: &str) {
         let d = Diagnostic::error(
             Code::MainReturnedErr,
             main_span,
-            format!("main returned Err: {payload}"),
+            format!("main returned Err: {}", vm.show_text(payload)),
         );
         eprintln!("{}", render_human(&ProgramFiles::new(path, &sources), &d));
         process::exit(1);

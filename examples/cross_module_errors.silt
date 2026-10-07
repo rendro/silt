@@ -23,7 +23,7 @@ type Config {
 }
 
 -- Wrapper enum: one variant per module whose errors we want to
--- surface, plus a Custom for ad-hoc domain errors. Silt's auto-derived
+-- surface, plus a Custom for ad-hoc domain errors. Silt's structural
 -- Display renders each variant cleanly; `.message()` falls through to
 -- the underlying module's trait impl.
 type AppError {

@@ -1,12 +1,15 @@
--- Two dependencies each have a module `util` with a type `Pt`: a value
--- of each prints qualified as the program names it, by the dependency
--- and the module (`da.util.Pt`), and runs its own Display impl.
+-- Two dependencies each have a module `util` with a type `Pt`, which
+-- has a Display impl, and a type `Raw`, which has none: a `Pt` prints
+-- as its own impl says, and a `Raw` prints qualified as the program
+-- names it, by the dependency and the module (`da.util.Raw`).
 import da
 import db
 import list
 fn main() {
   println(da.mk())
   println(db.mk())
+  println(da.raw())
+  println(db.raw())
   println(da.show())
   println(db.show())
   println(da.reds() |> list.sort)

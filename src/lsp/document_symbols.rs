@@ -122,9 +122,6 @@ impl Server {
                 // the keyword it starts with. The range spans the whole
                 // impl block so clicking the symbol jumps to it.
                 Decl::TraitImpl(ti) => {
-                    if ti.is_auto_derived {
-                        continue;
-                    }
                     // Round-80 G1: an impl block has no single
                     // identifier (the synthesized "impl Trait for
                     // Target" caption spans two identifiers in the

@@ -1,0 +1,10 @@
+plain
+unit
+6C
+1C
+Wrap {inner: [2C]}
+Node(Leaf(3C), Leaf(4C))
+[Some(5C)]
+1
+<(7C, 1)>
+[1, 2] 3

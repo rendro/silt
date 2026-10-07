@@ -2,3 +2,4 @@ import util
 pub fn mk() -> util.Pt { util.Pt { x: 1 } }
 pub fn show() -> String { mk().display() }
 pub fn reds() -> List(util.Color) { [util.Green, util.Red] }
+pub fn raw() -> util.Raw { util.Raw { v: 1 } }

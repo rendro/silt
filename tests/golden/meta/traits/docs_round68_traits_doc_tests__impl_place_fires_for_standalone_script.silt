@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: declares neither the trait nor the type
+trait Display for List(a) {
+  fn display(self) -> String { "x" }
+}
+
+fn main() {
+  ()
+}

@@ -513,19 +513,16 @@ impl TypeChecker {
         }
     }
 
-    /// The variant the constructor pattern `pattern` names (see
-    /// `pattern_variant_enum`).
+    /// The variant the constructor pattern `pattern` names: the one the
+    /// resolver resolved it to.
     fn ctor_target(&self, pattern: &Pattern) -> CtorTarget {
-        let PatternKind::Constructor {
-            qualifier, name, ..
-        } = &pattern.kind
-        else {
+        let PatternKind::Constructor { name, .. } = &pattern.kind else {
             return CtorTarget::Unknown;
         };
         if pattern.res == Some(crate::defs::Res::Error) || self.names_rejected(pattern.res, *name) {
             return CtorTarget::Silent;
         }
-        let enum_name = self.pattern_variant_enum(pattern.res, qualifier);
+        let enum_name = self.res_variant_enum(pattern.res);
         match enum_name.and_then(|e| self.tables.enums.get(&e).map(|info| (e, info))) {
             Some((e, info)) if info.variants.iter().any(|v| v.name == *name) => {
                 CtorTarget::Enum(e, info.clone())

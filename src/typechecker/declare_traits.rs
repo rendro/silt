@@ -13,9 +13,9 @@ impl TypeChecker {
         for (trait_name, type_name) in &impl_pairs {
             // GAP-2: Prefer the impl block's real span (stored at
             // registration time) over a method span. Fall back to the
-            // method table only for auto-derived impls that have no
-            // user-visible source site, and to `Span::BUILTIN` for the
-            // impls silt declares itself.
+            // method table for a structural trait, which has no impl
+            // block, and to `Span::BUILTIN` for what silt declares
+            // itself.
             let diag_span = self
                 .tables
                 .trait_impl_spans
@@ -40,24 +40,30 @@ impl TypeChecker {
                 continue;
             };
 
-            // Skip auto-derived impls (builtin traits on all types).
+            // (A structural trait has no impl to validate, unless one is
+            // written: `trait Display for T {}` is an impl, and lacks
+            // its method.)
+            let written = self
+                .tables
+                .trait_impl_spans
+                .contains_key(&(*trait_name, *type_name));
             let is_auto = trait_info
                 .methods
                 .first()
                 .and_then(|(m, _)| self.tables.method_table.get(&(*type_name, *m)))
-                .map(|e| e.is_auto_derived)
+                .map(|e| e.structural)
                 .unwrap_or(false);
-            if is_auto {
+            if is_auto && !written {
                 continue;
             }
 
             // (b) Supertrait obligation: implementing a trait on a type
             // requires every supertrait to also be implemented for the
-            // same type. Auto-derived builtins (Display/Equal/Hash/Compare)
-            // do show up in `trait_impl_set`, so this also catches the
-            // common case `trait Ordered: Equal { ... }` followed by
-            // `trait Ordered for MyType { ... }` where MyType has not
-            // overridden Equal — auto-derived counts as implementing.
+            // same type. The structural traits (Display/Equal/Hash/Compare)
+            // are in `trait_impl_set` for the types that have them, so
+            // `trait Ordered: Equal { ... }` followed by
+            // `trait Ordered for MyType { ... }` holds when MyType has
+            // Equal by its structure.
             //
             // B1 (round 60): when the supertrait reference carries args
             // (`trait Holds(b): Carry(b)` + `impl Holds(Int) for Bag`),
@@ -150,8 +156,14 @@ impl TypeChecker {
             // (`register_trait_impl`).
             for (method_name, _) in &trait_info.methods {
                 let key = (*type_name, *method_name);
-                if self.tables.method_table.contains_key(&key) {
-                } else if !trait_info.default_method_bodies.contains_key(method_name) {
+                // (What the type has by its structure is not the
+                // impl's method.)
+                let provided = self
+                    .tables
+                    .method_table
+                    .get(&key)
+                    .is_some_and(|entry| !entry.structural);
+                if !provided && !trait_info.default_method_bodies.contains_key(method_name) {
                     // No impl method AND the trait does not provide a
                     // default body — the impl is genuinely missing a
                     // required method.
@@ -187,7 +199,7 @@ impl TypeChecker {
     /// trait-decl features automatically apply to built-ins.
     pub(super) fn register_trait_decl_user(&mut self, t: &TraitDecl) {
         // Reject redefinition of builtin trait names. The compiler has
-        // already preregistered TraitInfo + auto-derived impls for these
+        // already preregistered TraitInfo and the structural traits for these
         // names; letting a user `trait Equal { fn eq(self) -> Bool }`
         // overwrite them would produce a cascade of bogus
         // "missing method" errors when validate_trait_impls runs the
@@ -311,7 +323,6 @@ impl TypeChecker {
         let pre_assoc_types = assoc_types.clone();
         let private_to = (!t.is_pub).then_some((self.module, self.module_name));
         let pre_supertraits: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
-        let pkg = self.defining_package();
         self.tables.traits.insert(
             key,
             TraitInfo {
@@ -327,7 +338,6 @@ impl TypeChecker {
                 default_method_bodies: HashMap::new(),
                 assoc_types: pre_assoc_types,
                 private_to,
-                defined_in: pkg,
             },
         );
 
@@ -518,7 +528,6 @@ impl TypeChecker {
                 default_method_bodies,
                 assoc_types,
                 private_to,
-                defined_in: pkg,
             },
         );
     }
@@ -590,18 +599,16 @@ impl TypeChecker {
     }
 
     /// Reject every hand-written impl of `Equal`, `Compare` or `Hash` and
-    /// drop it from `decls`. These traits are sealed: every type gets
-    /// them derived structurally from its fields (see
-    /// `synthesize_auto_derive_impls`), and `==` / `<` never dispatch to
-    /// an impl, so a hand-written one could only disagree with them.
+    /// drop it from `decls`. These traits are sealed: every type has
+    /// them by its structure, and `==` / `<` never dispatch to an impl,
+    /// so a hand-written one could only disagree with them.
     pub(super) fn reject_sealed_trait_impls(&mut self, decls: &mut Vec<Decl>) {
         let mut errors = Vec::new();
         decls.retain(|decl| match decl {
             Decl::TraitImpl(ti)
-                if !ti.is_auto_derived
-                    && self
-                        .impl_trait(ti)
-                        .is_some_and(|t| SEALED_TRAIT_NAMES.iter().any(|n| t.is_builtin(n))) =>
+                if self
+                    .impl_trait(ti)
+                    .is_some_and(|t| SEALED_TRAIT_NAMES.iter().any(|n| t.is_builtin(n))) =>
             {
                 errors.push((ti.trait_name, ti.span));
                 false
@@ -624,101 +631,66 @@ impl TypeChecker {
         }
     }
 
-    /// Apply the trait-orphan rule. Returns `true` when the impl is
-    /// allowed, `false` after emitting an error and signalling the
-    /// caller to skip the rest of registration. See the call site in
-    /// `register_trait_impl` for the rule statement.
-    fn check_orphan_rule(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
-        let trait_pkg = self
-            .impl_trait(ti)
-            .and_then(|t| self.tables.traits.get(&t))
-            .map(|t| t.defined_in);
-        // Compute the head-type package by reconstructing a Type from
-        // the impl's target name + args. We use the canonicalised
-        // `target_type` symbol because the round-23 GAP #1 unknown-
-        // target check has already validated the name; for the orphan
-        // walk we just need the head symbol's `defined_in`.
-        let head_pkg = if let Some(info) = self.tables.enums.get(&target_type) {
-            Some(info.defined_in)
-        } else if let Some(info) = self.tables.records.get(&target_type) {
-            Some(info.defined_in)
-        } else {
-            // Built-in head (List/Map/Set/Channel/Range/Tuple/Fn/Int/...):
-            // no enum or record registered under this name. Treat as
-            // stdlib-owned (`None`) so the trait-local arm can satisfy
-            // the rule when a user package writes `trait MyTrait for
-            // List(...)`.
-            let head_str = builtin_type_name(target_type).unwrap_or_default();
-            if crate::types::builtins::is_primitive(head_str)
-                || crate::types::builtins::is_container(head_str)
-            {
-                None
-            } else {
-                // Truly unknown — the round-23 GAP #1 check already
-                // emitted a diagnostic. Don't double-report; allow the
-                // orphan walk to fall through.
-                return true;
-            }
+    /// Whether the impl `ti`, of a trait for the type `target_type`, is
+    /// written where an impl may be: in the module that declares its
+    /// trait or in the module that declares its type. If not, that is
+    /// reported, with the modules it may be written in.
+    ///
+    /// What this gives: a module that can call a method of the trait on
+    /// a value of the type has the impl's module among the modules it
+    /// imports, so the impl is there, and initialised, whenever it is
+    /// called; and no two modules can each write the impl. A builtin
+    /// trait or type is declared in no module: an impl of `Display` goes
+    /// with its type, an impl for `Int` with its trait. The entries of
+    /// one REPL session count as one module: each is run to its end
+    /// before the next is read.
+    fn impl_in_its_module(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
+        let Some(defs) = self.defs.clone() else {
+            return true;
         };
-
-        let builtin = Self::builtin_pkg();
-        // A package "p" is local iff it equals the current package.
-        // Built-in stamps (`__builtin__` or `None`) are never local on
-        // their own — they're stdlib-owned, and the orphan rule
-        // requires the OTHER arm to be locally owned. The REPL /
-        // scratch script case (current_package = None) treats every
-        // arm as local so the rule is effectively disabled there.
-        let current_pkg_sym = self.current_package;
-        // Returns true when a package stamp identifies the active
-        // current_package. None and `__builtin__` are stdlib-owned
-        // and return false. The REPL path (current_package=None)
-        // short-circuits before reaching here so we don't have to
-        // special-case it inside this helper.
-        let is_local = |pkg: Option<Symbol>| -> bool {
-            let Some(cur) = current_pkg_sym else {
-                return true;
-            };
-            match pkg {
-                None => false,
-                Some(p) if p == builtin => false,
-                Some(p) => p == cur,
-            }
+        // An unknown trait is reported elsewhere.
+        let Some(tr) = self.impl_trait(ti) else {
+            return true;
         };
-
-        // Unknown trait — the unknown-trait diagnostic fires elsewhere.
-        // Treat as local so we don't pile a misleading orphan
-        // diagnostic on top of it.
-        if trait_pkg.is_none() {
+        let here = |module: crate::session::ModuleId| {
+            module == self.module || (self.is_cell && self.cells.contains(&module))
+        };
+        let of_trait = defs.get(tr.id.0).module;
+        let of_type = defs.get(target_type.id.0).module;
+        if here(of_trait) || here(of_type) {
             return true;
         }
-        let trait_local = is_local(trait_pkg);
-        let type_local = is_local(head_pkg);
-
-        if trait_local || type_local {
-            return true;
-        }
-
-        // Both arms are foreign. Build a diagnostic that names both
-        // packages, the impl's trait, and the impl's target type.
-        let trait_pkg_name = trait_pkg
-            .map(resolve)
-            .unwrap_or_else(|| "(unknown)".to_string());
-        let head_pkg_name = head_pkg
-            .map(resolve)
-            .unwrap_or_else(|| "__builtin__".to_string());
-        let current_pkg_name = current_pkg_sym
-            .map(resolve)
-            .unwrap_or_else(|| "(scratch)".to_string());
+        let named = |module: crate::session::ModuleId| {
+            (!module.is_builtin()).then(|| {
+                self.tables
+                    .module_names
+                    .get(&module)
+                    .map_or_else(|| "?".to_string(), |name| resolve(*name))
+            })
+        };
+        let (tr, ty) = (resolve(ti.trait_name), resolve(ti.target_type));
+        let place = match (named(of_trait), named(of_type)) {
+            (Some(t), Some(y)) if t == y => {
+                format!("it may be written in module '{t}', which declares both")
+            }
+            (Some(t), Some(y)) => format!(
+                "it may be written in module '{t}', which declares the trait, \
+                 or in module '{y}', which declares the type"
+            ),
+            (Some(t), None) => {
+                format!("it may be written in module '{t}', which declares the trait")
+            }
+            (None, Some(y)) => {
+                format!("it may be written in module '{y}', which declares the type")
+            }
+            (None, None) => "both are builtin, so no module may write it".to_string(),
+        };
         self.error(
-            Code::OrphanImpl,
+            Code::ImplElsewhere,
             format!(
-                "orphan impl: trait '{}' is from package '{}' and type '{}' is from package '{}'; \
-                 either the trait or the type must be defined in the current package '{}'",
-                resolve(ti.trait_name),
-                trait_pkg_name,
-                resolve(ti.target_type),
-                head_pkg_name,
-                current_pkg_name,
+                "the impl of trait '{tr}' for type '{ty}' is written in module '{}', which \
+                 declares neither the trait nor the type; {place}",
+                resolve(self.module_name),
             ),
             ti.span,
         );
@@ -790,8 +762,9 @@ impl TypeChecker {
 
         // Coherence check: reject duplicate user-defined impls.
         if self.tables.trait_impl_set.contains(&impl_key) {
-            // Allow overriding auto-derived impls (only `Display` can be
-            // written by hand: see `reject_sealed_trait_impls`).
+            // A written impl takes the place of the structural trait
+            // (only `Display` can be written by hand: see
+            // `reject_sealed_trait_impls`).
             let first_method = ti
                 .methods
                 .first()
@@ -812,7 +785,7 @@ impl TypeChecker {
                         .filter(|e| self.entry_trait(e, first_method) == Some(trait_key))
                         .cloned()
                 });
-            let is_overriding_auto = existing.map(|e| e.is_auto_derived).unwrap_or(true);
+            let is_overriding_auto = existing.map(|e| e.structural).unwrap_or(true);
             if !is_overriding_auto {
                 self.error(
                     Code::DuplicateDeclaration,
@@ -826,23 +799,9 @@ impl TypeChecker {
             }
         }
 
-        // Trait-orphan rule (round 63 item 5): reject `impl Trait for Type`
-        // when both the trait and the target type's head are foreign to
-        // the current package. Auto-derived synthetic impls are exempt
-        // — they're conceptually the stdlib's implementation specialised
-        // to a user-supplied type parameter, and the synth pass never
-        // races against another package over a built-in head.
-        //
-        // Built-ins (`__builtin__`) are stdlib-owned and treated as a
-        // wild-card counterparty: a user package implementing a built-in
-        // trait for one of its own types satisfies the type-local arm,
-        // and a user package implementing one of its own traits for a
-        // built-in type satisfies the trait-local arm.
-        if !ti.is_auto_derived && !self.check_orphan_rule(ti, target_type) {
-            // Skip the rest of impl registration on rejection: don't
-            // poison `trait_impl_set` / `method_table` with an entry the
-            // user wasn't allowed to register, otherwise downstream
-            // dispatch would silently route through this orphan.
+        // Nothing of an impl written elsewhere is registered: no call
+        // goes through it.
+        if !self.impl_in_its_module(ti, target_type) {
             return;
         }
 
@@ -1103,7 +1062,7 @@ impl TypeChecker {
         // `type Bytes2 = List(Int)`) satisfied a where-bound for ANY
         // `List(T)`. Overwrites are fine: coherence rejects duplicate user
         // impls above, and the one permitted overwrite (a user Display
-        // impl overriding the auto-derived one) should win here too.
+        // impl in the place of the structural one) should win here too.
         self.tables
             .impl_self_types
             .insert((trait_key, target_type), self_type.clone());
@@ -1738,7 +1697,7 @@ impl TypeChecker {
                     // The method's own span (not `ti.span`, the impl
                     // block's header), for what is reported about it.
                     span: method.span,
-                    is_auto_derived: ti.is_auto_derived,
+                    structural: false,
                     trait_name: Some(trait_key),
                     preds: method_constraints.clone(),
                 },
@@ -1782,7 +1741,7 @@ impl TypeChecker {
                     MethodEntry {
                         method_type: substitute_vars(ty, &mapping),
                         span: ti.span,
-                        is_auto_derived: ti.is_auto_derived,
+                        structural: false,
                         trait_name: Some(trait_key),
                         preds: method_constraints,
                     },
@@ -1861,7 +1820,7 @@ impl TypeChecker {
                     ..existing
                 });
         }
-        if !entry.is_auto_derived {
+        if !entry.structural {
             self.tables
                 .trait_methods
                 .insert((target_type, method, trait_key), entry.clone());

@@ -2,7 +2,9 @@ a-pt 1
 b-pt s
 a-pt 1
 a-pt 1 / b-pt s / 1 s
-a.Pt {x: 1}
-b.Pt {y: s}
+a-pt 1
+b-pt s
+a.Raw {v: 1}
+b.Raw {v: 2}
 q
 true

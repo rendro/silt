@@ -37,7 +37,7 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "string",
             page: "string.md",
-            call: string::call,
+            steps: string::call,
             rows: [
                 u("fn char_code(s: String) -> Int", "Unicode code point of first character"),
                 u("fn chars(s: String) -> List(String)", "Split string into single-character strings"),

@@ -1,4 +1,4 @@
--- Synth-emitted Compare/Equal/Hash/Display globals for a nullary enum,
+-- The auto-derived Compare/Equal/Hash/Display of a nullary enum,
 -- through `where` bounds and qualified `Type.method` calls.
 type Color { Red, Green, Blue, }
 fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
