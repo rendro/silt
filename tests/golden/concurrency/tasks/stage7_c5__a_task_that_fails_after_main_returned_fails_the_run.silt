@@ -1,0 +1,16 @@
+-- exit: 1
+-- repeat: 100
+-- stderr-contains: failed and was never joined: division by zero
+-- The program ends when its tasks can do no more, not when `main`
+-- returns: a task that fails later still makes the run fail, every
+-- time.
+import task
+import time
+
+fn main() {
+  let _late = task.spawn({ ->
+    time.sleep(time.ms(5))
+    1 / 0
+  })
+  println("main returns")
+}

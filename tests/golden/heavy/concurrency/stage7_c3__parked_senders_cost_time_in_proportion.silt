@@ -1,10 +1,13 @@
--- repeat: 3
--- timeout: 60
+-- timeout: 120
 -- Many tasks parked on one channel cost time in proportion to their
 -- number, not to its square: with four times the senders the fan-in
 -- takes about four times as long. (When leaving the channel's queue
 -- meant searching it, four times the senders took sixteen times as
 -- long; the bound here is eight.)
+--
+-- Each size is measured three times, in turn, and its best time
+-- counts: a machine that is busy for a moment makes one measurement
+-- long, not the shortest of three.
 import channel
 import list
 import task
@@ -29,11 +32,24 @@ fn fan_in(senders) {
   (sum, time.since(start, time.now()).ns)
 }
 
+fn best(a, b) {
+  match a < b {
+    true -> a
+    false -> b
+  }
+}
+
 fn main() {
-  -- Once to start the workers, so that neither measurement pays for it.
+  -- Once to start the workers, so that no measurement pays for it.
   let _ = fan_in(500)
-  let (small_sum, small) = fan_in(5000)
-  let (large_sum, large) = fan_in(20000)
+  let (small_sum, small_1) = fan_in(5000)
+  let (large_sum, large_1) = fan_in(20000)
+  let (_, small_2) = fan_in(5000)
+  let (_, large_2) = fan_in(20000)
+  let (_, small_3) = fan_in(5000)
+  let (_, large_3) = fan_in(20000)
+  let small = best(small_1, best(small_2, small_3))
+  let large = best(large_1, best(large_2, large_3))
   println("sums: {small_sum} {large_sum}")
   println("in proportion: {large < small * 8}")
 }

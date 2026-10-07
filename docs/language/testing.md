@@ -119,18 +119,33 @@ line, rendered like any runtime error:
       = help: join the task with task.join to handle its error, or cancel it with task.cancel
 ```
 
-The runner looks for failed tasks after each test. A task that fails only
-after its test has returned -- while a later test runs -- still fails the
-test that spawned it. That test is then reported again, as failed, with the
-note `(a task it spawned failed after the test had returned)`, and the
-summary counts it as failed instead of passed. The same holds for a failure
-noticed after the last test: the runner looks once more before it prints
-the summary. A task that is still running when the summary is printed is not
-a failure, and a failure after that point is not reported. A task spawned by
-a file's top-level code counts as a failure of the file.
+A test has ended when its test function has returned **and the tasks it
+spawned can do no more**: each has ended or waits, with no timer and no I/O
+of theirs pending (the rule of
+[When a program ends](../concurrency.md#when-a-program-ends), applied to
+the test's own tasks). The runner waits for that before it gives the
+test's result, so:
 
-Join the tasks a test spawns (or cancel them) before the test returns, and
-the result of the test does not depend on timing.
+- a task that fails after the test function has returned fails that test,
+  not a later one;
+- a task that never stops keeps its test, and the run, from ending: cancel
+  it before the test returns;
+- a task left waiting for something nobody will give is dropped with its
+  test, and is neither waited for nor reported by a later test.
+
+A test whose function fails (a failed assertion, a `panic`, a returned
+`Err`) is not waited for: its tasks are stopped where they are, as a program's are when `main`
+fails. A ticker that the test would have cancelled on its last line does
+not keep the run going.
+
+The tasks that a file's top-level code spawns are the file's. The runner
+waits for them in the same way before the first test, and those that wait
+then stay for the tests: a top-level task that answers requests on a channel
+serves every test of the file, and a test that waits for its answer is not
+deadlocked. A test has ended when neither its own tasks nor the file's can
+do more. If a task of the top-level code fails and nobody joins it, the file
+has failed: `FAIL <file> (a task spawned by the file's top-level code
+failed)`, once, after the file's last test, with the reports under it.
 
 ## Exit Code
 

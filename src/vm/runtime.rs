@@ -347,15 +347,38 @@ impl IoPool {
 /// I/O operation timed out, panicked, or could not run.
 pub(crate) type ErrFactory = fn(&str) -> Value;
 
-/// An I/O operation on the pool.
+/// An I/O operation on the pool, as the task that waits for it holds
+/// it.
 pub(crate) struct IoOp {
     /// Completed with the operation's value.
     pub(crate) cell: Arc<Cell<Value>>,
-    /// What keeps the program from being called deadlocked while the
-    /// operation is in flight. Whoever stops waiting for it first
-    /// drops it: the worker when the operation ends, or the task when
-    /// its deadline passes.
+    /// What keeps the program from being called deadlocked, or ended,
+    /// while the operation is in flight and somebody waits for it.
+    /// Whoever is done with it first drops it: the worker when the
+    /// operation ends, or the waiter when it stops waiting, on every
+    /// way out of its wait (see the `Drop`).
     pub(crate) in_flight: Arc<parking_lot::Mutex<Option<External>>>,
+}
+
+impl IoOp {
+    /// Nobody waits for the operation, which counts as pending until
+    /// it ends: it feeds a channel that the program reads.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn detach(mut self) {
+        self.in_flight = Arc::default();
+    }
+}
+
+/// The waiter is gone: it has its value, its deadline passed, it was
+/// cancelled, or it was dropped with its task at the end of the
+/// program. An operation that nobody waits for is not pending for the
+/// program, whether or not its thread can be told to stop (a read of
+/// the terminal cannot).
+impl Drop for IoOp {
+    fn drop(&mut self) {
+        let gone = self.in_flight.lock().take();
+        drop(gone);
+    }
 }
 
 // ── Runtime (shared state) ───────────────────────────────────────

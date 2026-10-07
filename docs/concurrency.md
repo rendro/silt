@@ -429,6 +429,55 @@ typically want one of two patterns when cancellation is an expected outcome:
 
 Returns `Unit`.
 
+### When a program ends
+
+A program ends when `main` has returned **and its tasks can do no more**:
+every task has ended or waits, and none of them waits for a sleep, a
+timeout or an I/O operation that is still pending. Until then `silt run`
+keeps going:
+
+- A task that is still at work when `main` returns runs to its end. What it
+  prints is part of the program's output; if it fails, the run fails.
+- A task that sleeps, or waits for a timeout or for I/O, is waited for.
+  A `channel.timeout` channel counts only while a task waits on it: one
+  that lost its race in a `select`, or that nobody looks at any more,
+  holds nothing up, however long it still has to run.
+- A task that waits for something only another task could give (a receive
+  on a channel nobody will send on) is dropped when nothing else can run:
+  such a wait could never end.
+- A task that never stops keeps the program from ending. A ticker, a
+  server loop or a watcher has to be told to stop, or cancelled, before
+  `main` returns. That holds for a task that waits in I/O as well
+  (`tcp.accept`, `io.read_line`): once it is cancelled nobody waits for
+  the operation, which then counts for nothing. A server started with
+  `http.serve` ends when the task that called it is cancelled.
+
+```silt
+import channel
+import task
+import time
+
+fn main() {
+  let ticks = channel.new(8)
+  let ticker = task.spawn { ->
+    loop {
+      time.sleep(time.ms(10))
+      let _ = channel.try_send(ticks, ())
+      loop()
+    }
+  }
+  let _ = channel.receive(ticks)
+  println("one tick")
+  -- Without this the program would tick for ever.
+  task.cancel(ticker)
+}
+```
+
+If `main` fails, with a runtime error or by returning `Err`, the program
+has failed: nothing is waited for. Under `silt test`, each test ends in the same way, for the
+tasks that the test spawned (see
+[Testing](language/testing.md#spawned-tasks)).
+
 ### Failures that nobody joins
 
 A task that ends with a runtime error (a `panic`, a failed assertion, a
@@ -439,11 +488,9 @@ exits with status 1, even if `main` returned normally:
 
 ```silt
 import task
-import time
 
 fn main() {
   let _ = task.spawn { -> 1 / 0 }
-  time.sleep(time.ms(100))
   println("main done")
 }
 ```
@@ -453,7 +500,7 @@ main done
 error[runtime]: task <handle:0> failed and was never joined: division by zero
  --> main.silt:4:27
    |
- 4 |   let _ = task.spawn({ -> 1 / 0 })
+ 4 |   let _ = task.spawn { -> 1 / 0 }
    |                           ^ task <handle:0> failed and was never joined: division by zero
   = help: join the task with task.join to handle its error, or cancel it with task.cancel
 ```
@@ -467,10 +514,13 @@ more than one frame. The rules:
   a second time.
 - **A cancel handles the failure.** `task.cancel(h)` on a task that has
   failed dismisses the failure: no report, no exit status 1.
-- **Only failures that have happened count.** The report is made when
-  `main` returns (or fails). A task that is still running then is not a
-  failure; if it fails afterwards, while the process shuts down, it is not
-  reported.
+- **Every failure counts.** The report is made when the program has ended
+  (see [When a program ends](#when-a-program-ends)): a task that fails
+  after `main` has returned still makes the run fail, every time. The
+  example above does not have to wait for its task. (A stage of a stream
+  is different: its failure goes to whoever reads the stream, and is not
+  reported if nobody does. See
+  [stream](stdlib/stream.md#design-notes).)
 - **A deadlock shows its cause.** When `main` is told
   `deadlock on main thread`, the failures reported with it are usually the
   reason: a producer that failed before it sent.
@@ -478,7 +528,8 @@ more than one frame. The rules:
 Under `silt test`, the failure fails the test that spawned the task (see
 [Testing](language/testing.md#spawned-tasks)). In the REPL it is reported
 when the session ends, since a later input may still join or cancel the
-task.
+task; an input is not waited for beyond its own value, so the tasks it
+spawned go on while you type the next.
 
 ### Scoped deadlines: `task.deadline(dur, fn)`
 
@@ -1242,14 +1293,15 @@ that error, silt reports the tasks that failed and that nobody joined
 [Failures that nobody joins](#failures-that-nobody-joins)): a failed
 producer is the usual reason why a counterpart is missing.
 
-A timer that is pending counts as able to end a wait: a `time.sleep`, a
-`channel.timeout` channel that has not closed yet, a `channel.recv_timeout`
-that has not expired. While one is pending, no deadlock is reported, whether
-or not it could ever reach the channel that `main` waits on. The verdict
-comes after the timer has fired, if the program is still stuck then. So a
-background task that sleeps for a minute delays the report of an unrelated
-deadlock by up to a minute. The same holds for an I/O operation that is in
-flight. Only `main` gets a deadlock verdict; tasks that are stuck while
+A wait that will end by itself counts as able to go on: a `time.sleep`, a
+`channel.recv_timeout` that has not expired, a wait on a `channel.timeout`
+channel that has not closed yet (a `channel.timeout` that no task waits on
+does not count: it could wake nobody). While a task is in such a wait, no
+deadlock is reported, whether or not that task could ever reach the channel
+that `main` waits on. The verdict comes when the wait has ended, if the
+program is still stuck then. So a background task that sleeps for a minute
+delays the report of an unrelated deadlock by up to a minute. The same holds
+for a task that waits for an I/O operation. Only `main` gets a deadlock verdict; tasks that are stuck while
 `main` is not waiting stay parked.
 
 ### Implications of real parallelism

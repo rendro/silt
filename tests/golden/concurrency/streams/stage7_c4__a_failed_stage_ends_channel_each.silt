@@ -1,0 +1,14 @@
+-- exit: 1
+-- stdout-contains: got 5
+-- stdout-contains: got 10
+-- stderr-contains: error[runtime]: division by zero
+-- `channel.each` on a stream raises the failure of the stage too,
+-- after the values that came before it.
+import channel
+import stream
+
+fn main() {
+  let quotients = stream.from_list([2, 1, 0]) |> stream.map({ x -> 10 / x })
+  channel.each(quotients) { q -> println("got {q}") }
+  println("unreachable")
+}

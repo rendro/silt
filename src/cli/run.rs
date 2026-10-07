@@ -212,10 +212,14 @@ pub(crate) fn vm_run_file(path: &str) {
     silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new(silt::HostIo::process());
     let run_result = vm.run_program(&program);
-    // The program has ended. The tasks that failed by now and that
-    // nobody joined or cancelled are reported, and make the run fail. A
-    // task that is still running is not a failure; if it fails later,
-    // nobody takes its failure and it is not reported.
+    // `main` has returned; the program ends when its tasks can do no
+    // more. After an error of `main`, raised or returned as `Err`,
+    // nothing is waited for: the program has failed.
+    if matches!(&run_result, Ok(value) if returned_err(value).is_none()) {
+        vm.settle();
+    }
+    // The program has ended. The tasks that failed and that nobody
+    // joined or cancelled are reported, and make the run fail.
     let tasks_failed = report_task_failures(path, &sources, file);
     // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of

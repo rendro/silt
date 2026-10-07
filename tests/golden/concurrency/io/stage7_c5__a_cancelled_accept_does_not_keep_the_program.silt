@@ -1,0 +1,16 @@
+-- timeout: 10
+-- requires-feature: tcp
+-- A task that waits in `tcp.accept` is cancelled before `main`
+-- returns. Nobody waits for the operation any more, so it is not
+-- pending for the program, which ends.
+import task
+import tcp
+import time
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let acceptor = task.spawn { -> tcp.accept(listener) }
+  time.sleep(time.ms(20))
+  task.cancel(acceptor)
+  println("cancelled")
+}

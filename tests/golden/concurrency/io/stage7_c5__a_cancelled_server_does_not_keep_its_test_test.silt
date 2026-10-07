@@ -1,0 +1,37 @@
+-- cmd: test
+-- timeout: 10
+-- requires-feature: http
+-- stderr-contains: PASS stage7_c5__a_cancelled_server_does_not_keep_its_test_test.silt::test_a_uses_a_server
+-- stderr-contains: PASS stage7_c5__a_cancelled_server_does_not_keep_its_test_test.silt::test_b_runs
+-- stderr-contains: 2 tests: 2 passed, 0 failed
+-- A test starts a server in a task and cancels it on its last line:
+-- the test ends, and the next one runs.
+import http
+import task
+import test
+import time
+
+fn get(url, tries) {
+  match http.get(url) {
+    Ok(r) -> r.status
+    Err(e) -> match tries {
+      0 -> panic(e.message())
+      _ -> {
+        time.sleep(time.ms(20))
+        get(url, tries - 1)
+      }
+    }
+  }
+}
+
+fn test_a_uses_a_server() {
+  let server = task.spawn { ->
+    http.serve(38472) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }
+  }
+  test.assert_eq(get("http://127.0.0.1:38472/", 200), 200)
+  task.cancel(server)
+}
+
+fn test_b_runs() {
+  test.assert_eq(1, 1)
+}

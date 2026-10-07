@@ -3021,7 +3021,6 @@ mod abandon {
     use super::*;
     use crate::runtime::handle::TaskHandle;
     use crate::runtime::sync::{Arm, Channel, Wait};
-    use crate::scheduler::Task;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
@@ -3068,13 +3067,7 @@ mod abandon {
         vm.spawned = true;
         let id = main.next_task_id();
         let handle = Arc::new(TaskHandle::new(id));
-        main.scheduler()
-            .submit(Task {
-                id,
-                vm,
-                handle: handle.clone(),
-            })
-            .unwrap();
+        main.scheduler().submit(id, vm, handle.clone()).unwrap();
         (handle, abandoned)
     }
 

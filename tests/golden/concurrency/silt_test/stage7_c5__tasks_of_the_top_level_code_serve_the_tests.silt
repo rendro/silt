@@ -1,0 +1,39 @@
+-- cmd: test
+-- repeat: 20
+-- stderr-contains: PASS stage7_c5__tasks_of_the_top_level_code_serve_the_tests.silt::test_asks_the_service
+-- stderr-contains: PASS stage7_c5__tasks_of_the_top_level_code_serve_the_tests.silt::test_leaves_a_task_behind
+-- stderr-contains: PASS stage7_c5__tasks_of_the_top_level_code_serve_the_tests.silt::test_asks_again
+-- stderr-contains: 3 tests: 3 passed, 0 failed
+-- A task that the file's top-level code left waiting stays for the
+-- file's tests: it is not dropped when the top-level code has ended,
+-- nor with the tasks that a test leaves, and a test that waits for
+-- its answer is not deadlocked.
+import channel
+import task
+import test
+
+let requests = channel.new(0)
+let replies = channel.new(0)
+let server = task.spawn({ ->
+  channel.each(requests) { n -> channel.send(replies, n * 2) }
+})
+
+fn ask(n) {
+  channel.send(requests, n)
+  when let channel.Message(v) = channel.receive(replies) else { panic("closed") }
+  v
+}
+
+fn test_asks_the_service() {
+  test.assert_eq(ask(21), 42)
+}
+
+fn test_leaves_a_task_behind() {
+  let never = channel.new(0)
+  let _parked = task.spawn({ -> channel.receive(never) })
+  test.assert_eq(ask(1), 2)
+}
+
+fn test_asks_again() {
+  test.assert_eq(ask(4), 8)
+}
