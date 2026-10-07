@@ -1,11 +1,7 @@
--- (A later initial value of a `loop` header that uses an earlier binder
--- of the header, `loop n = n + 1, acc = n`, is left out here: the
--- checker reads that `n` as the one outside the loop and the compiled
--- code as the loop's, so no rename of either keeps both.)
 import list
 
 fn loopy(n: Int) -> Int {
-  loop n = n + 1, acc = 0 {
+  loop n = n + 1, acc = n {
     match n > 5 {
       true -> acc + n
       false -> loop(n + 1, acc + 1)

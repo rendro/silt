@@ -215,16 +215,18 @@ fn collect_local_bindings_in_expr(
             bindings: loop_bindings,
             body,
         } => {
-            // A binder is visible behind its own initial value: in the
-            // later ones, and in the body.
+            // The initial values are of the enclosing scope, all of
+            // them: a binder is visible in the body only.
             let body_end = body.span.end as usize;
-            for (name, name_span, init) in loop_bindings {
+            for (_, _, init) in loop_bindings {
                 collect_local_bindings_in_expr(init, scope_end, bindings, records);
+            }
+            for (name, name_span, init) in loop_bindings {
                 bindings.push(LocalBinding {
                     name: *name,
                     binding_offset: name_span.start as usize,
                     binding_len: resolve(*name).len(),
-                    scope_start: init.span.end as usize,
+                    scope_start: body.span.start as usize,
                     scope_end: body_end,
                     ty: init.ty.clone(),
                     same_as: None,

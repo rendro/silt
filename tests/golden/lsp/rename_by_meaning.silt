@@ -1,29 +1,31 @@
 -- cmd: lsp
--- lsp: rename 31:7 Sizable
--- lsp: rename 50:5 resize
--- lsp: definition 50:5
--- lsp: definition 50:18
--- lsp: definition 98:88
--- lsp: rename 32:12 me
--- lsp: rename 54:13 width
--- lsp: rename 55:3 width
--- lsp: rename 60:10 m
--- lsp: definition 60:27
--- lsp: rename 65:7 n
--- lsp: rename 65:7 total
--- lsp: rename 66:13 n
--- lsp: rename 65:7 println
--- lsp: rename 65:7 _
--- lsp: rename 72:9 inner
--- lsp: references 75:3
--- lsp: references 79:8
--- lsp: rename 92:24 Holder
+-- lsp: rename 33:7 Sizable
+-- lsp: rename 52:5 resize
+-- lsp: definition 52:5
+-- lsp: definition 52:18
+-- lsp: definition 100:88
+-- lsp: rename 34:12 me
+-- lsp: rename 56:13 width
+-- lsp: rename 57:3 width
+-- lsp: rename 62:10 m
+-- lsp: definition 62:27
+-- lsp: rename 67:7 n
+-- lsp: rename 67:7 total
+-- lsp: rename 68:13 n
+-- lsp: rename 67:7 println
+-- lsp: rename 67:7 _
+-- lsp: rename 74:9 inner
+-- lsp: references 77:3
+-- lsp: references 81:8
+-- lsp: references 80:10
+-- lsp: rename 94:24 Holder
 -- A rename edits what the name means and nothing else. A method name at
 -- a call is no name of its trait (and has no rename); its definition is
 -- the method. `self` is not renamed. A field written without its value
 -- is written out. The binders of an or-pattern's alternatives are one
 -- binding. A new name that is taken where the old one is written is
 -- refused. A block ends its `let`s. `<T as Trait>::Item` names the trait.
+-- A loop's initial values are read outside it; its names are its body's.
 type Box {
   w: Int,
 }
@@ -76,10 +78,10 @@ fn blocks(n: Int) -> Int {
 }
 
 fn loops(n: Int) -> Int {
-  loop n = n + 1 {
+  loop n = n + 1, acc = n {
     match n > 5 {
-      true -> n
-      false -> loop(n + 1)
+      true -> n + acc
+      false -> loop(n + 1, acc)
     }
   }
 }
