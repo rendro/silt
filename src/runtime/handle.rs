@@ -107,7 +107,7 @@ pub struct TaskHandle {
     /// it. Read when the program ends, for the report of failures that
     /// nobody joined.
     unjoined_failure: AtomicBool,
-    /// Who the task belongs to (`scheduler::set_task_owner`): the
+    /// Who the task belongs to (`Vm::set_task_owner`): the
     /// program, or one test of a test run.
     owner: u64,
 }

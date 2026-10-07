@@ -170,10 +170,12 @@ same host, so a development server is not accidentally exposed to the
 network. To accept connections from other machines, use
 [`http.serve_all`](#httpserve_all).
 
-Each incoming request is handled on its own thread with a fresh VM, so
-multiple requests are processed concurrently. The accept loop runs on a
-dedicated OS thread and does not block the scheduler. If a handler function
-errors, the server returns a 500 response without crashing. The handler
+Each incoming request is handled by a task of its own, so multiple
+requests are processed concurrently, and a handler that waits (for a
+channel, a timer, another request: a long poll) holds no thread while it
+does. The accept loop runs on a dedicated OS thread and does not block the
+scheduler. If a handler function errors, the server returns a 500 response
+without crashing. The handler
 receives a `Request` and must return a `Response`. The server runs forever
 (stop with Ctrl-C).
 

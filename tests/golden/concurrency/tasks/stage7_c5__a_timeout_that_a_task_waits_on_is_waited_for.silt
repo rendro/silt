@@ -1,0 +1,18 @@
+-- timeout: 10
+-- The other side of the rule: a task that waits on a timeout channel
+-- has a wait that will end, so the program lasts until it has, and
+-- what the task does then is the program's.
+import channel
+import task
+
+fn main() {
+  let never = channel.new(0)
+  -- Printed before the task exists: the order is not a matter of timing.
+  println("main returns")
+  let _waits = task.spawn { ->
+    match channel.select([channel.Recv(never), channel.Recv(channel.timeout(30))]) {
+      (_, channel.Closed) -> println("timed out")
+      _ -> println("something else")
+    }
+  }
+}

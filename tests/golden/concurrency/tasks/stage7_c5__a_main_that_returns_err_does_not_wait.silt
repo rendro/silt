@@ -1,0 +1,26 @@
+-- exit: 1
+-- timeout: 10
+-- stderr-contains: main returned Err: no luck
+-- `main` gives up through `?` ahead of the line that would have
+-- cancelled its ticker. A `main` that returns `Err` has failed, like
+-- one that raises an error: nothing is waited for, and the error is
+-- printed.
+import task
+import time
+
+fn step() -> Result(Int, String) {
+  Err("no luck")
+}
+
+fn main() -> Result(Int, String) {
+  let ticker = task.spawn { ->
+    loop {
+      time.sleep(time.ms(1))
+      loop()
+    }
+  }
+  println("before")
+  let v = step()?
+  task.cancel(ticker)
+  Ok(v)
+}

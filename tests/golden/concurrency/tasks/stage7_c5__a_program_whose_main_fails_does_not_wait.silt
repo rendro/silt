@@ -1,0 +1,18 @@
+-- exit: 1
+-- timeout: 10
+-- stderr-contains: panic: main gives up
+-- After an error of `main` the program has failed, and nothing is
+-- waited for: the ticker does not keep it running.
+import task
+import time
+
+fn main() {
+  let _ticker = task.spawn({ ->
+    loop {
+      time.sleep(time.ms(1))
+      loop()
+    }
+  })
+  println("before")
+  panic("main gives up")
+}

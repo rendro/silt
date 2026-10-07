@@ -1,0 +1,36 @@
+-- timeout: 10
+-- requires-feature: http
+-- A server that runs in a task is cancelled before `main` returns,
+-- as the docs tell a program with a server loop to do. The server
+-- ends with the task that served: the program ends.
+import http
+import task
+import time
+
+fn get(url, tries) {
+  match http.get(url) {
+    Ok(r) -> "status {r.status}"
+    Err(e) -> match tries {
+      0 -> "error {e.message()}"
+      _ -> {
+        time.sleep(time.ms(20))
+        get(url, tries - 1)
+      }
+    }
+  }
+}
+
+fn main() {
+  let server = task.spawn { ->
+    http.serve(38471) { req ->
+      match req.path {
+        "/boom" -> panic("handler fails")
+        _ -> http.Response { status: 200, body: "ok", headers: #{} }
+      }
+    }
+  }
+  println(get("http://127.0.0.1:38471/", 200))
+  println(get("http://127.0.0.1:38471/boom", 0))
+  task.cancel(server)
+  println("server cancelled")
+}

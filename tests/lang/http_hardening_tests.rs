@@ -425,3 +425,75 @@ fn main() {{
         "expected VmError detail on stderr for operator debugging; got stderr:\n{stderr}"
     );
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// Long poll: handlers are tasks. A handler that waits holds no thread.
+// ────────────────────────────────────────────────────────────────────────
+
+/// 20 requests wait in their handlers for a value on a channel, far
+/// more than the I/O pool has threads. Each `/post` then releases one
+/// of them, and every waiter gets its answer.
+#[test]
+fn long_poll_handlers_wait_without_holding_a_thread() {
+    const WAITERS: usize = 20;
+    let port = pick_port();
+    let src = format!(
+        r#"
+import channel
+import http
+fn main() {{
+  let mailbox = channel.new(0)
+  http.serve({port}) {{ req ->
+    match req.path {{
+      "/wait" -> match channel.receive(mailbox) {{
+        channel.Message(text) -> http.Response {{ status: 200, body: text, headers: #{{}} }}
+        _ -> http.Response {{ status: 500, body: "closed", headers: #{{}} }}
+      }}
+      _ -> {{
+        channel.send(mailbox, "released")
+        http.Response {{ status: 200, body: "posted", headers: #{{}} }}
+      }}
+    }}
+  }}
+}}
+"#
+    );
+    let tmp = tmp_silt_file("long_poll", &src);
+    let child = spawn_silt(&tmp);
+    assert!(
+        wait_for_bind(port, Duration::from_secs(10)),
+        "silt http.serve failed to bind 127.0.0.1:{port}"
+    );
+
+    let request = |path: &str| {
+        let mut conn = connect_with_retry(port);
+        conn.set_read_timeout(Some(Duration::from_secs(20))).ok();
+        conn.write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .expect("request write");
+        conn
+    };
+    let answer = |mut conn: TcpStream| {
+        let mut buf = Vec::new();
+        let _ = conn.read_to_end(&mut buf);
+        String::from_utf8_lossy(&buf).into_owned()
+    };
+
+    let waiters: Vec<TcpStream> = (0..WAITERS).map(|_| request("/wait")).collect();
+    // Every `/post` is answered when a waiter has taken its value, so
+    // the posts get through while all the waiters are still parked.
+    let posted: Vec<String> = (0..WAITERS).map(|_| answer(request("/post"))).collect();
+    let released: Vec<String> = waiters.into_iter().map(answer).collect();
+
+    let (_stdout, stderr) = shutdown(child);
+    let _ = std::fs::remove_file(&tmp);
+
+    for (i, resp) in posted.iter().enumerate() {
+        assert!(resp.ends_with("posted"), "post {i}: {resp:?}\n{stderr}");
+    }
+    for (i, resp) in released.iter().enumerate() {
+        assert!(resp.ends_with("released"), "waiter {i}: {resp:?}\n{stderr}");
+    }
+}

@@ -1,0 +1,17 @@
+  PASS stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt::test_a_wakes_the_first
+  PASS stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt::test_b_wakes_the_second
+  FAIL stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt (a task spawned by the file's top-level code failed)
+    error[runtime]: task <handle:0> failed and was never joined: panic: the first top-level task
+     --> stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt:17:3
+        |
+     17 |   panic("the first top-level task")
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ task <handle:0> failed and was never joined: panic: the first top-level task
+      = help: join the task with task.join to handle its error, or cancel it with task.cancel
+    error[runtime]: task <handle:1> failed and was never joined: panic: the second top-level task
+     --> stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt:22:3
+        |
+     22 |   panic("the second top-level task")
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ task <handle:1> failed and was never joined: panic: the second top-level task
+      = help: join the task with task.join to handle its error, or cancel it with task.cancel
+
+2 tests: 2 passed, 0 failed, 0 skipped (1 file failed to compile)

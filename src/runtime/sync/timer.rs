@@ -82,8 +82,11 @@ impl Timer {
         self.arm(deadline, Action::Fire(token))
     }
 
-    /// Close `channel` at `deadline`.
+    /// Close `channel` at `deadline`. From now on the channel says
+    /// so ([`Channel::closes_by_timer`]): a task that waits on it has
+    /// a wait that will end.
     pub fn close_at(&self, deadline: Duration, channel: Arc<Channel>) -> TimerId {
+        channel.set_closes_by_timer();
         self.arm(deadline, Action::Close(channel))
     }
 

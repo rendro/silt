@@ -58,7 +58,7 @@ impl Vm {
     }
 
     /// Push the frame of a builtin.
-    pub(super) fn push_native_frame(&mut self, native: Box<dyn Native>) {
+    pub(crate) fn push_native_frame(&mut self, native: Box<dyn Native>) {
         self.frames.push(Frame::Native(native));
         self.native_frames += 1;
     }
