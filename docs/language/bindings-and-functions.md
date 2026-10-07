@@ -215,12 +215,12 @@ let width = string.length(label(42)) -- shows an Int: reaches no impl
 
 trait Display for Row {
   fn display(self) -> String {
-    string.pad_left("{self.n}", width, " ")
+    string.pad_left("{self.n}", width, "0")
   }
 }
 
 fn main() {
-  println(Row { n: 1 }) -- "   1"
+  println(Row { n: 1 }) -- 0001
 }
 ```
 
