@@ -1,3 +1,4 @@
 pub type Pt { x: Int }
 pub type Color { Red, Green }
 trait Display for Pt { fn display(self) -> String { "da-pt" } }
+pub type Raw { v: Int }

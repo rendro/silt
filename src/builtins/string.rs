@@ -5,17 +5,27 @@ use std::sync::Arc;
 use super::common::{require_int, require_string, value_kind};
 use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
-use crate::vm::{Vm, VmError};
+use crate::vm::{Step, Vm, VmError};
 
 /// Dispatch `string.<name>(args)`.
-pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
     match name {
+        // (A value is shown as its `Display` impl says, which may be
+        // the program's code: a step, not a value at once.)
         "from" => {
             if args.len() != 1 {
                 return Err(VmError::new("string.from takes 1 argument".into()));
             }
-            Ok(Value::String(vm.display_value(&args[0])))
+            vm.shown(&args[0])
         }
+        _ => value(name, args).map(Step::Done),
+    }
+}
+
+/// `string.<name>(args)` for the functions that give their value at
+/// once.
+fn value(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
         "split" => {
             if args.len() != 2 {
                 return Err(VmError::new("string.split takes 2 arguments".into()));

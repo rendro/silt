@@ -10,6 +10,7 @@ mod io;
 mod iter;
 mod run;
 mod runtime;
+mod show;
 
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};

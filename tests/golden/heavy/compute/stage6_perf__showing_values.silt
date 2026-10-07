@@ -1,0 +1,61 @@
+-- timeout: 60
+-- A compute program of the performance guard: showing values. Records,
+-- variants, lists, tuples, options and maps are interpolated, converted
+-- with `string.from` and `.display()`, and printed, in a tail-recursive
+-- loop; no type has a Display impl of its own.
+import list
+import string
+
+type Point {
+  x: Int,
+  y: Int,
+}
+
+type Shape {
+  Circle(Point, Int),
+  Poly(List(Point)),
+  Nothing,
+}
+
+type Scene {
+  name: String,
+  shapes: List(Shape),
+}
+
+fn scene(n: Int) -> Scene {
+  let p = Point { x: n, y: n + 1 }
+  Scene {
+    name: "scene {n}",
+    shapes: [Circle(p, n % 7), Poly([p, Point { x: 0, y: n }, p]), Nothing],
+  }
+}
+
+fn run(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> {
+      let s = scene(n)
+      let a = "{s}"
+      let b = string.from((n, Some(s.shapes), #{ "k": [n, n] }))
+      let c = s.shapes.display()
+      let d = "{n} {s.name} {Point { x: n, y: n }} {[1, 2, 3]} {Some(n)}"
+      run(n - 1, acc + string.length(a) + string.length(b) + string.length(c) + string.length(d))
+    }
+  }
+}
+
+fn show_all(n: Int) {
+  match n {
+    0 -> ()
+    _ -> {
+      println(scene(n))
+      show_all(n - 1)
+    }
+  }
+}
+
+fn main() {
+  println(run(30000, 0))
+  show_all(40)
+  println(list.map([scene(1), scene(2)], string.from) |> list.length)
+}

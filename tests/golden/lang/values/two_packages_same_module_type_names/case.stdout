@@ -1,5 +1,7 @@
-da.util.Pt {x: 1}
-db.util.Pt {x: 1}
+da-pt
+db-pt
+da.util.Raw {v: 1}
+db.util.Raw {v: 1}
 da-pt
 db-pt
 [Red, Green]

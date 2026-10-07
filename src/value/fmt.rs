@@ -201,8 +201,34 @@ fn fmt_duration(f: &mut fmt::Formatter<'_>, total_ns: i64) -> fmt::Result {
     }
 }
 
+/// What writes a value in place of the formatter: for a value of a type
+/// with a `Display` impl a program wrote, what the impl gave. `None`
+/// for any other value, which the formatter writes itself.
+pub type Written<'a> = &'a dyn Fn(&Value, &mut fmt::Formatter<'_>) -> Option<fmt::Result>;
+
+/// A value as it is shown (`println`, interpolation), with `written`
+/// asked first at each record and variant inside it.
+pub struct Shown<'a>(pub &'a Value, pub Written<'a>);
+
+impl fmt::Display for Shown<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.show(f, self.1)
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.show(f, &|_, _| None)
+    }
+}
+
+impl Value {
+    fn show(&self, f: &mut fmt::Formatter<'_>, written: Written<'_>) -> fmt::Result {
+        if matches!(self, Value::Record(..) | Value::Variant(..))
+            && let Some(done) = written(self, f)
+        {
+            return done;
+        }
         match self {
             Value::Int(n) => write!(f, "{n}"),
             Value::Float(n) => write!(f, "{n}"),
@@ -214,7 +240,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{v}")?;
+                    v.show(f, written)?;
                 }
                 write!(f, "]")
             }
@@ -226,10 +252,12 @@ impl fmt::Display for Value {
                         write!(f, ", ")?;
                     }
                     if let Value::String(s) = k {
-                        write!(f, "\"{s}\": {v}")?;
+                        write!(f, "\"{s}\": ")?;
                     } else {
-                        write!(f, "{k}: {v}")?;
+                        k.show(f, written)?;
+                        write!(f, ": ")?;
                     }
+                    v.show(f, written)?;
                 }
                 write!(f, "}}")
             }
@@ -239,7 +267,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{v}")?;
+                    v.show(f, written)?;
                 }
                 write!(f, "]")
             }
@@ -249,7 +277,7 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{v}")?;
+                    v.show(f, written)?;
                 }
                 write!(f, ")")
             }
@@ -280,12 +308,25 @@ impl fmt::Display for Value {
                 }
                 ty::DURATION => fmt_duration(f, val_i64(fields.get("ns"))),
                 _ => {
+                    // The fields in the order the type declares them;
+                    // an anonymous record's, which has no declaration,
+                    // in name order.
                     write!(f, "{} {{", ty.name)?;
-                    for (i, (k, v)) in fields.iter().enumerate() {
+                    let declared: Vec<(&str, &Value)> = match &ty.shape {
+                        crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
+                            declared
+                                .iter()
+                                .filter_map(|(k, _)| Some((k.as_str(), fields.get(k)?)))
+                                .collect()
+                        }
+                        _ => fields.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+                    };
+                    for (i, (k, v)) in declared.into_iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{k}: {v}")?;
+                        write!(f, "{k}: ")?;
+                        v.show(f, written)?;
                     }
                     write!(f, "}}")
                 }
@@ -309,7 +350,7 @@ impl fmt::Display for Value {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{v}")?;
+                        v.show(f, written)?;
                     }
                     write!(f, ")")
                 }

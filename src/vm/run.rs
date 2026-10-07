@@ -324,6 +324,24 @@ impl Vm {
         }
     }
 
+    /// Go on as `step`, what showing a value came to: its value is the
+    /// instruction's, at once or when its frame is done.
+    fn enter_step(&mut self, step: Step) -> Result<DispatchResult, VmError> {
+        match step {
+            Step::Done(value) => {
+                self.push(value);
+                Ok(DispatchResult::Continue)
+            }
+            Step::Run(native) => {
+                self.push_native_frame(native);
+                Ok(DispatchResult::Native)
+            }
+            Step::Call { .. } | Step::Park(_) | Step::Yield => Err(VmError::new(
+                "internal VM error: a shown value calls or waits without a frame".into(),
+            )),
+        }
+    }
+
     /// Run `closure` in the current frame, with the `argc` values from
     /// the stack's slot `args_at` on as its arguments: a tail call.
     #[inline(always)]
@@ -437,12 +455,33 @@ impl Vm {
             let entered = self.call_value(func, argc, receiver_slot)?;
             return Ok(self.entered(entered));
         }
+        // `display` of a value whose parts a written impl may show.
+        if method_name == "display"
+            && argc == 1
+            && self.global_slots.any_shown()
+            && Self::value_implements_display(&receiver)
+        {
+            self.stack.truncate(receiver_slot);
+            let step = self.shown(&receiver)?;
+            return self.enter_step(step);
+        }
         // A builtin trait's method the type has natively (display,
         // equal, compare, hash).
         match self.dispatch_trait_method(&receiver, method_name, &self.stack[receiver_slot + 1..]) {
             Some(result) => {
                 self.stack.truncate(receiver_slot);
                 self.push(result?);
+            }
+            // `message` of an `Error` impl that leaves it out is the
+            // value's `display`.
+            None if method_name == "message"
+                && argc == 1
+                && self.global_slots.trait_at(trait_index)
+                    == crate::defs::builtin_trait_id("Error") =>
+            {
+                self.stack.truncate(receiver_slot);
+                let step = self.shown(&receiver)?;
+                return self.enter_step(step);
             }
             None => {
                 return Err(VmError::type_confusion(format!(
@@ -593,8 +632,8 @@ impl Vm {
                         )));
                     }
                     _ => {
-                        let s = self.display_value(&val);
-                        self.push(Value::String(s));
+                        let step = self.shown(&val)?;
+                        return self.enter_step(step);
                     }
                 }
             }
@@ -1142,7 +1181,9 @@ impl Vm {
             }
             Instr::Panic => {
                 let msg = self.pop();
-                return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
+                let step =
+                    self.show(&msg, |_, text| Err(VmError::new(format!("panic: {text}"))))?;
+                return self.enter_step(step);
             }
             Instr::CallMethod { method, argc, of } => {
                 return self.call_method(method, argc, of, false);
