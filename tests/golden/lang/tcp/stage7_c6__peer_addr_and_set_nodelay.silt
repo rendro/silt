@@ -1,0 +1,25 @@
+-- requires-feature: tcp
+-- `tcp.peer_addr` gives the address of the other end; `tcp.set_nodelay`
+-- sets the socket's option. Both refuse a connection that was closed.
+import bytes
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { ->
+    when let Ok(conn) = tcp.accept(listener) else { panic("cannot accept") }
+    when let Ok(data) = tcp.read_exact(conn, 2) else { panic("cannot read") }
+    bytes.length(data)
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  println(tcp.peer_addr(conn) == Ok("127.0.0.1:{port}"))
+  println(tcp.set_nodelay(conn, true))
+  println(tcp.set_nodelay(conn, false))
+  when let Ok(_) = tcp.write(conn, bytes.from_string("hi")) else { panic("cannot write") }
+  println(task.join(server))
+  tcp.close(conn)
+  println(tcp.peer_addr(conn))
+  println(tcp.set_nodelay(conn, true))
+}

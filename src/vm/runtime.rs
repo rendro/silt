@@ -146,8 +146,7 @@ const IO_POOL_IDLE: std::time::Duration = std::time::Duration::from_secs(5);
 /// is woken finds its operation done, and the thread free.
 type IoJob = Box<dyn FnOnce() -> Box<dyn FnOnce() + Send> + Send>;
 
-/// Where an operation stands, for its waiter and its thread. Changed
-/// under the pool's lock.
+/// Where an operation stands, for its waiter and its thread.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Queued,
@@ -155,7 +154,50 @@ enum Phase {
     /// Running, and its waiter is gone: the thread no longer counts
     /// as one of the pool's, and ends when the operation returns.
     Left,
-    Done,
+    /// It has returned; its thread is handing the value to the waiter.
+    Finishing,
+    /// As `Finishing`, and the waiter went in that moment.
+    Gone,
+    /// The value is there.
+    Finished,
+}
+
+/// What an operation's waiter and its thread share.
+struct OpState {
+    phase: parking_lot::Mutex<Phase>,
+    /// Completed with the operation's value.
+    cell: Arc<Cell<Value>>,
+    /// See [`IoOp::unheard_with`]. Whoever knows first that the waiter
+    /// is gone and the value is there calls it: the waiter if the
+    /// value was there when it went, the thread otherwise.
+    unheard: parking_lot::Mutex<Option<Unheard>>,
+    /// Set when the waiter has taken the value ([`IoOp::take`]).
+    taken: std::sync::atomic::AtomicBool,
+}
+
+type Unheard = Box<dyn FnOnce(&Value) + Send>;
+
+impl OpState {
+    fn new(phase: Phase) -> Arc<OpState> {
+        Arc::new(OpState {
+            phase: parking_lot::Mutex::new(phase),
+            cell: Cell::new(),
+            unheard: parking_lot::Mutex::new(None),
+            taken: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    /// The waiter is gone and the value is there: if the waiter did
+    /// not take it, it is nobody's.
+    fn unheard(&self) {
+        let unheard = self.unheard.lock().take();
+        if let Some(unheard) = unheard
+            && !self.taken.load(std::sync::atomic::Ordering::SeqCst)
+            && let Some(value) = self.cell.get()
+        {
+            unheard(value);
+        }
+    }
 }
 
 /// The threads of a VM that run blocking operations (file and socket
@@ -186,7 +228,7 @@ struct PoolShared {
 }
 
 struct PoolState {
-    queue: VecDeque<(IoJob, Arc<parking_lot::Mutex<Phase>>)>,
+    queue: VecDeque<(IoJob, Arc<OpState>)>,
     /// The pool's threads: those that run an operation whose waiter
     /// waits, and those that wait for work.
     threads: usize,
@@ -208,7 +250,7 @@ impl PoolShared {
                 state.threads -= 1;
                 return;
             }
-            let Some((job, phase)) = state.queue.pop_front() else {
+            let Some((job, op)) = state.queue.pop_front() else {
                 let timed_out = self.work.wait_for(&mut state, self.idle).timed_out();
                 if timed_out && state.queue.is_empty() {
                     state.threads -= 1;
@@ -216,17 +258,22 @@ impl PoolShared {
                 }
                 continue;
             };
-            *phase.lock() = Phase::Running;
+            *op.phase.lock() = Phase::Running;
             state.busy += 1;
             drop(state);
             let finish = job();
             state = self.state.lock();
-            let left = std::mem::replace(&mut *phase.lock(), Phase::Done) == Phase::Left;
+            let left = std::mem::replace(&mut *op.phase.lock(), Phase::Finishing) == Phase::Left;
             if !left {
                 state.busy -= 1;
             }
             drop(state);
             finish();
+            let gone = std::mem::replace(&mut *op.phase.lock(), Phase::Finished) == Phase::Gone;
+            if left || gone {
+                // The waiter went before the value was there.
+                op.unheard();
+            }
             if left {
                 // Not counted since its waiter left.
                 return;
@@ -293,14 +340,15 @@ impl IoPool {
         failure: ErrFactory,
         f: impl FnOnce() -> Value + Send + 'static,
     ) -> IoOp {
-        let phase = Arc::new(parking_lot::Mutex::new(Phase::Queued));
+        let state = OpState::new(Phase::Queued);
         let op = IoOp {
-            cell: Cell::new(),
+            cell: state.cell.clone(),
             in_flight: Arc::new(parking_lot::Mutex::new(Some(self.scheduler.external()))),
             pool: self.shared.clone(),
-            phase: phase.clone(),
+            state: state.clone(),
             stop: None,
         };
+        let queued = state;
         let (cell, in_flight) = (op.cell.clone(), op.in_flight.clone());
         let scheduler = self.scheduler.clone();
         let job: IoJob = Box::new(move || {
@@ -337,7 +385,7 @@ impl IoPool {
             return op;
         }
         if !state.unavailable {
-            state.queue.push_back((job, phase));
+            state.queue.push_back((job, queued));
             if state.queue.len() <= state.threads - state.busy {
                 // A thread that waits for work, or is about to look
                 // for some, takes it.
@@ -370,17 +418,17 @@ impl IoPool {
             ));
             let queued = std::mem::take(&mut state.queue);
             drop(state);
-            for (job, phase) in queued {
+            for (job, op) in queued {
                 let finish = job();
-                *phase.lock() = Phase::Done;
                 finish();
+                *op.phase.lock() = Phase::Finished;
             }
             return op;
         }
         drop(state);
         let finish = job();
-        *op.phase.lock() = Phase::Done;
         finish();
+        *op.state.phase.lock() = Phase::Finished;
         op
     }
 }
@@ -401,7 +449,7 @@ pub(crate) struct IoOp {
     /// way out of its wait (see the `Drop`).
     pub(crate) in_flight: Arc<parking_lot::Mutex<Option<External>>>,
     pool: Arc<PoolShared>,
-    phase: Arc<parking_lot::Mutex<Phase>>,
+    state: Arc<OpState>,
     /// What makes the operation return when nobody waits for it.
     stop: Option<Box<dyn FnOnce() + Send>>,
 }
@@ -415,13 +463,34 @@ impl IoOp {
         self
     }
 
+    /// The operation's value, for the waiter whose wait it ended: the
+    /// value has reached the task.
+    pub(crate) fn take(&self) -> Option<Value> {
+        let value = self.cell.get()?.clone();
+        self.state
+            .taken
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Some(value)
+    }
+
+    /// `unheard` is called with the operation's value if the waiter
+    /// goes without having taken it ([`IoOp::take`]), once the value
+    /// is there, in whichever order the two come. For a value that
+    /// must not be lost with a waiter that was cancelled just as it
+    /// came (an accepted connection).
+    #[cfg(feature = "tcp")]
+    pub(crate) fn unheard_with(self, unheard: impl FnOnce(&Value) + Send + 'static) -> IoOp {
+        *self.state.unheard.lock() = Some(Box::new(unheard));
+        self
+    }
+
     /// Nobody waits for the operation, which counts as pending until
     /// it ends, and its thread as the pool's: it feeds a channel that
     /// the program reads.
     #[cfg(feature = "postgres")]
     pub(crate) fn detach(mut self) {
         self.in_flight = Arc::default();
-        self.phase = Arc::new(parking_lot::Mutex::new(Phase::Done));
+        self.state = OpState::new(Phase::Left);
     }
 }
 
@@ -436,27 +505,36 @@ impl Drop for IoOp {
     fn drop(&mut self) {
         let gone = self.in_flight.lock().take();
         drop(gone);
-        let running = {
+        let (running, finished) = {
             let mut state = self.pool.state.lock();
-            let mut phase = self.phase.lock();
+            let mut phase = self.state.phase.lock();
             match *phase {
                 Phase::Queued => {
-                    let mine = &self.phase;
-                    state.queue.retain(|(_, phase)| !Arc::ptr_eq(phase, mine));
-                    *phase = Phase::Done;
-                    false
+                    let mine = &self.state;
+                    state.queue.retain(|(_, op)| !Arc::ptr_eq(op, mine));
+                    *phase = Phase::Left;
+                    (false, false)
                 }
                 Phase::Running => {
                     *phase = Phase::Left;
                     state.threads -= 1;
                     state.busy -= 1;
-                    true
+                    (true, false)
                 }
-                Phase::Left | Phase::Done => false,
+                // The thread sees that, and calls `unheard`.
+                Phase::Finishing => {
+                    *phase = Phase::Gone;
+                    (false, false)
+                }
+                Phase::Finished => (false, true),
+                Phase::Left | Phase::Gone => (false, false),
             }
         };
         if running && let Some(stop) = self.stop.take() {
             stop();
+        }
+        if finished {
+            self.state.unheard();
         }
     }
 }
@@ -724,7 +802,7 @@ mod tests {
             let _ = held.recv();
             Value::Unit
         });
-        until("it runs", || *op.phase.lock() == Phase::Running);
+        until("it runs", || *op.state.phase.lock() == Phase::Running);
         drop(op);
         assert_eq!(pool.threads(), 0);
         let next = pool.submit(failure, || Value::Int(2));
@@ -742,7 +820,9 @@ mod tests {
             let _ = held.recv();
             Value::Unit
         });
-        until("the first runs", || *first.phase.lock() == Phase::Running);
+        until("the first runs", || {
+            *first.state.phase.lock() == Phase::Running
+        });
         let ran = Arc::new(AtomicBool::new(false));
         let flag = ran.clone();
         let second = pool.submit(failure, move || {

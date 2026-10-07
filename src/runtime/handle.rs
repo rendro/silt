@@ -76,6 +76,10 @@ struct Accepting {
     /// The addresses that the connections made to wake an accept come
     /// from: such a connection is not a client's.
     wakes: Vec<std::net::SocketAddr>,
+    /// Clients' connections that reached an accept which had been
+    /// given up: the next accepts take them, oldest first, before
+    /// they ask the OS.
+    kept: std::collections::VecDeque<std::net::TcpStream>,
 }
 
 impl TcpListenerHandle {
@@ -100,7 +104,9 @@ impl TcpListenerHandle {
     }
 
     /// The next connection; `None` if the accept was given up
-    /// ([`TcpListenerHandle::stop`] with the same flag).
+    /// ([`TcpListenerHandle::stop`] with the same flag). A client's
+    /// connection is never lost to an accept that was given up: it is
+    /// kept for the next one.
     pub fn accept(
         &self,
         stopped: &Arc<AtomicBool>,
@@ -110,6 +116,9 @@ impl TcpListenerHandle {
             loop {
                 if stopped.load(AtomicOrdering::SeqCst) {
                     return Ok(None);
+                }
+                if let Some(stream) = accepting.kept.pop_front() {
+                    return Ok(Some(stream));
                 }
                 if accepting.current.is_none() {
                     break;
@@ -126,11 +135,20 @@ impl TcpListenerHandle {
                     let mut accepting = self.accepting.lock();
                     let wake = accepting.wakes.iter().position(|addr| *addr == peer);
                     let Some(wake) = wake else {
+                        if stopped.load(AtomicOrdering::SeqCst) {
+                            // A client's, and nobody waits for this
+                            // accept: it is the next accept's.
+                            accepting.kept.push_back(stream);
+                            break Ok(None);
+                        }
                         break Ok(Some(stream));
                     };
                     accepting.wakes.swap_remove(wake);
                     if stopped.load(AtomicOrdering::SeqCst) {
                         break Ok(None);
+                    }
+                    if let Some(kept) = accepting.kept.pop_front() {
+                        break Ok(Some(kept));
                     }
                     // Meant for an accept that had its connection
                     // already: this one goes on.
@@ -142,6 +160,26 @@ impl TcpListenerHandle {
         self.accepting.lock().current = None;
         self.turn.notify_all();
         result
+    }
+
+    /// Keep a client's connection for the next accept: one that an
+    /// accept had taken for a task which never received it.
+    pub fn keep(&self, stream: std::net::TcpStream) {
+        self.accepting.lock().kept.push_back(stream);
+        self.turn.notify_all();
+        // An accept in the OS call does not see it: it is woken as
+        // one that is given up is, by a connection it drops, and
+        // looks at what is kept before it calls the OS again.
+        let mut accepting = self.accepting.lock();
+        if accepting.current.is_some() {
+            let woken = self.wake_addr().and_then(|addr| {
+                let conn = std::net::TcpStream::connect_timeout(&addr, WAKE_CONNECT_LIMIT)?;
+                conn.local_addr()
+            });
+            if let Ok(from) = woken {
+                accepting.wakes.push(from);
+            }
+        }
     }
 
     /// Give up the accept that was called with `stopped`: it returns
@@ -209,10 +247,14 @@ pub struct TcpStreamHandle {
     /// dropped. `None` if the socket could not be cloned, or after a
     /// shutdown on Windows.
     shutdown_sock: Mutex<Option<std::net::TcpStream>>,
-    /// The OS socket that a blocked read uses (`SOCKET as usize` on
-    /// Windows, where `CancelIoEx` on it ends that read; the file
-    /// descriptor on Unix, unused).
-    reader_socket: Option<usize>,
+    /// The OS sockets that a blocked read and a blocked write use
+    /// (`SOCKET as usize` on Windows, where `CancelIoEx` on each ends
+    /// what blocks on it; the file descriptors on Unix, unused). Both
+    /// are the same for a connection that is one object.
+    io_sockets: [Option<usize>; 2],
+    /// Who is at the other end, as it was when the connection was
+    /// made.
+    peer: std::io::Result<std::net::SocketAddr>,
 }
 
 enum TcpIo {
@@ -230,7 +272,8 @@ impl TcpStreamHandle {
         Ok(Arc::new(TcpStreamHandle {
             id,
             shutdown_sock: Mutex::new(stream.try_clone().ok()),
-            reader_socket: stream.raw_socket(),
+            io_sockets: [stream.raw_socket(), write.raw_socket()],
+            peer: stream.peer_addr(),
             io: TcpIo::Halves {
                 read: Mutex::new(stream),
                 write: Mutex::new(write),
@@ -247,19 +290,51 @@ impl TcpStreamHandle {
         wrap: impl FnOnce() -> Result<Box<dyn ReadWrite>, String>,
     ) -> Result<Arc<Self>, String> {
         let shutdown_sock = Mutex::new(socket.try_clone().ok());
-        let reader_socket = socket.raw_socket();
+        let io_sockets = [socket.raw_socket(); 2];
+        let peer = socket.peer_addr();
         Ok(Arc::new(TcpStreamHandle {
             id,
             io: TcpIo::Whole(Mutex::new(wrap()?)),
             closed: AtomicBool::new(false),
             shutdown_sock,
-            reader_socket,
+            io_sockets,
+            peer,
         }))
+    }
+
+    /// Another handle to the socket of a plain connection that no
+    /// task has: `None` for TLS, and if the socket cannot be cloned.
+    pub fn socket(&self) -> Option<std::net::TcpStream> {
+        match &self.io {
+            TcpIo::Halves { read, .. } => read.try_lock()?.try_clone().ok(),
+            TcpIo::Whole(_) => None,
+        }
     }
 
     /// Whether the connection was shut down from this side.
     pub fn is_closed(&self) -> bool {
         self.closed.load(AtomicOrdering::SeqCst)
+    }
+
+    /// The address of the other end.
+    pub fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        match &self.peer {
+            Ok(addr) => Ok(*addr),
+            Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
+        }
+    }
+
+    /// Send small writes at once (`on`), or let the system gather
+    /// them (Nagle's algorithm, the default). The option is the
+    /// socket's: it holds for both halves.
+    pub fn set_nodelay(&self, on: bool) -> std::io::Result<()> {
+        match self.shutdown_sock.lock().as_ref() {
+            Some(socket) => socket.set_nodelay(on),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "the connection is closed",
+            )),
+        }
     }
 
     pub fn read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -322,13 +397,18 @@ impl TcpStreamHandle {
         if let Some(sock) = slot.as_ref() {
             let _ = sock.shutdown(std::net::Shutdown::Both);
         }
-        // Winsock's `shutdown(SD_BOTH)` does not end a `recv` that
-        // blocks on another handle of the socket (the reader's, of
-        // which `shutdown_sock` is a duplicate). `CancelIoEx` on the
-        // reader's own SOCKET does; the duplicate is then closed.
+        // Winsock's `shutdown(SD_BOTH)` does not end a `recv` or a
+        // `send` that blocks on another handle of the socket (the
+        // halves', of which `shutdown_sock` is a duplicate).
+        // `CancelIoEx` on the half's own SOCKET does; the duplicate
+        // is then closed.
         #[cfg(windows)]
         {
-            if let Some(sock) = self.reader_socket {
+            let [reader, writer] = self.io_sockets;
+            for sock in [reader, writer.filter(|writer| Some(*writer) != reader)]
+                .into_iter()
+                .flatten()
+            {
                 // SAFETY: `CancelIoEx` may be called on any HANDLE, a
                 // SOCKET included; it fails harmlessly if the handle
                 // is invalid or nothing is pending. A null
@@ -343,7 +423,7 @@ impl TcpStreamHandle {
             let _ = slot.take();
         }
         #[cfg(not(windows))]
-        let _ = self.reader_socket;
+        let _ = self.io_sockets;
         drop(slot);
     }
 }

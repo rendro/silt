@@ -29,6 +29,8 @@ mod list_zip_bounds_tests;
 mod missing_import_recommends_tests;
 mod module_constants_completion_tests;
 mod numeric_defaulting_tests;
+#[path = "../support/port_file.rs"]
+mod port_file;
 mod postgres_hardening_tests;
 mod property_tests;
 mod round73_postgres_poisoned_mutex_tests;

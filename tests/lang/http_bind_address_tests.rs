@@ -16,11 +16,13 @@
 #![cfg(feature = "http")]
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::port_file::PortFile;
 
 fn silt_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_silt") {
@@ -54,34 +56,6 @@ fn tmp_silt_file(stem: &str, src: &str) -> PathBuf {
     tmp
 }
 
-/// Grab an ephemeral port from the OS, drop the listener, hand the number
-/// to the silt subprocess. Bind on 0.0.0.0 so the port is known-free on
-/// every interface (not just loopback).
-fn pick_port() -> u16 {
-    let l = TcpListener::bind("0.0.0.0:0").expect("bind");
-    let port = l.local_addr().unwrap().port();
-    drop(l);
-    port
-}
-
-/// Poll-connect on 127.0.0.1 until the silt subprocess has bound the
-/// port, or time out. The caller uses this to synchronise "the server is
-/// now up and accepting".
-fn wait_for_bind(port: u16, max_wait: Duration) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < max_wait {
-        if let Ok(s) = TcpStream::connect_timeout(
-            &format!("127.0.0.1:{port}").parse().unwrap(),
-            Duration::from_millis(200),
-        ) {
-            drop(s);
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
-}
-
 fn spawn_silt(tmp: &PathBuf) -> Child {
     Command::new(silt_bin())
         .arg("run")
@@ -105,15 +79,20 @@ fn shutdown(mut child: Child) -> (String, String) {
     .unwrap_or_default()
 }
 
-/// A server on a listener bound to `host`. Always answers 200.
-fn server_src(host: &str, port: u16) -> String {
+/// A server on a listener bound to `host`, on a port the system
+/// chooses and the program writes to `port_path`. Always answers 200.
+fn server_src(host: &str, port_path: &str) -> String {
     format!(
         r#"
 import http
+import io
 import tcp
 
 fn main() {{
-  when let Ok(listener) = tcp.listen("{host}:{port}") else {{ panic("cannot listen") }}
+  when let Ok(listener) = tcp.listen("{host}:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file("{port_path}", "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
   http.serve(listener) {{ _req ->
     http.Response {{ status: 200, body: "ok", headers: #{{}} }}
   }}
@@ -181,19 +160,14 @@ fn discover_external_ipv4() -> Option<std::net::Ipv4Addr> {
 ///     half is a no-op rather than a false-negative failure.
 #[test]
 fn a_listener_on_loopback_serves_loopback_only() {
-    let port = pick_port();
-    let tmp = tmp_silt_file("serve_default_localhost", &server_src("127.0.0.1", port));
+    let port_file = PortFile::new();
+    let tmp = tmp_silt_file(
+        "serve_default_localhost",
+        &server_src("127.0.0.1", &port_file.path()),
+    );
     let child = spawn_silt(&tmp);
 
-    let bound = wait_for_bind(port, Duration::from_secs(10));
-    if !bound {
-        let (stdout, stderr) = shutdown(child);
-        let _ = std::fs::remove_file(&tmp);
-        panic!(
-            "silt failed to bind 127.0.0.1:{port}\n\
-             stdout: {stdout}\nstderr: {stderr}"
-        );
-    }
+    let port = port_file.wait();
 
     // (1) Sanity: loopback works.
     assert!(
@@ -244,19 +218,11 @@ fn a_listener_on_loopback_serves_loopback_only() {
 /// rewrites to 127.0.0.1 for outbound connect) succeeds.
 #[test]
 fn a_listener_on_the_unspecified_address_serves_all_interfaces() {
-    let port = pick_port();
-    let tmp = tmp_silt_file("all_interfaces", &server_src("0.0.0.0", port));
+    let port_file = PortFile::new();
+    let tmp = tmp_silt_file("all_interfaces", &server_src("0.0.0.0", &port_file.path()));
     let child = spawn_silt(&tmp);
 
-    let bound = wait_for_bind(port, Duration::from_secs(10));
-    if !bound {
-        let (stdout, stderr) = shutdown(child);
-        let _ = std::fs::remove_file(&tmp);
-        panic!(
-            "silt the server failed to bind port {port}\n\
-             stdout: {stdout}\nstderr: {stderr}"
-        );
-    }
+    let port = port_file.wait();
 
     // Loopback must work (0.0.0.0 includes loopback).
     assert!(

@@ -8,3 +8,5 @@ mod checker_scaling;
 mod fmt_property;
 mod fmt_property_sweep_tests;
 mod integration;
+#[path = "../support/port_file.rs"]
+mod port_file;

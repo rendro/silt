@@ -25,9 +25,10 @@ fn run(input: &str) -> Value {
     silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
 
-/// Pick a port from the OS by binding then immediately rebinding from
-/// silt's perspective. Returns the address string.
-fn pick_port() -> String {
+/// An address that nobody listens on: a port the OS gave and that was
+/// given back. (The tests that listen ask for port 0 themselves and
+/// read the port with `tcp.local_port`.)
+fn unbound_addr() -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     drop(listener);
@@ -54,147 +55,141 @@ fn main() {
 
 #[test]
 fn test_echo_roundtrip() {
-    let addr = pick_port();
-    let src = format!(
-        r#"
+    let src = r#"
 import bytes
 import tcp
 import task
 import time
 
-fn main() {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
-        match tcp.accept(listener) {{
-          Ok(conn) -> {{
-            match tcp.read(conn, 1024) {{
-              Ok(buf) -> {{
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
+        match tcp.accept(listener) {
+          Ok(conn) -> {
+            match tcp.read(conn, 1024) {
+              Ok(buf) -> {
                 let _ = tcp.write(conn, buf)
                 tcp.close(conn)
-              }}
-              Err(e) -> println("server read err: {{e}}")
-            }}
-          }}
-          Err(e) -> println("accept err: {{e}}")
-        }}
-      }})
+              }
+              Err(e) -> println("server read err: {e}")
+            }
+          }
+          Err(e) -> println("accept err: {e}")
+        }
+      })
       time.sleep(time.ms(50))
-      match tcp.connect("{addr}") {{
-        Ok(conn) -> {{
+      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+        Ok(conn) -> {
           let _ = tcp.write(conn, bytes.from_string("hello"))
-          let result = match tcp.read(conn, 1024) {{
-            Ok(buf) -> match bytes.to_string(buf) {{
+          let result = match tcp.read(conn, 1024) {
+            Ok(buf) -> match bytes.to_string(buf) {
               Ok(s) -> s
               Err(e) -> e.message()
-            }}
+            }
             Err(e) -> e.message()
-          }}
+          }
           tcp.close(conn)
           task.join(server)
           result
-        }}
+        }
         Err(e) -> e.message()
-      }}
-    }}
+      }
+    }
     Err(e) -> e.message()
-  }}
-}}
+  }
+}
 "#
-    );
+    .to_string();
     let v = run(&src);
     assert_eq!(v, Value::String("hello".into()));
 }
 
 #[test]
 fn test_read_exact_returns_full_payload() {
-    let addr = pick_port();
-    let src = format!(
-        r#"
+    let src = r#"
 import bytes
 import tcp
 import task
 import time
 
-fn main() {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
-        match tcp.accept(listener) {{
-          Ok(conn) -> {{
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
+        match tcp.accept(listener) {
+          Ok(conn) -> {
             -- Send 8 bytes in two writes so read_exact has to assemble.
             let _ = tcp.write(conn, bytes.from_string("abcd"))
             time.sleep(time.ms(20))
             let _ = tcp.write(conn, bytes.from_string("efgh"))
             tcp.close(conn)
-          }}
+          }
           Err(_) -> ()
-        }}
-      }})
+        }
+      })
       time.sleep(time.ms(50))
-      match tcp.connect("{addr}") {{
-        Ok(conn) -> {{
-          let result = match tcp.read_exact(conn, 8) {{
-            Ok(buf) -> match bytes.to_string(buf) {{
+      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+        Ok(conn) -> {
+          let result = match tcp.read_exact(conn, 8) {
+            Ok(buf) -> match bytes.to_string(buf) {
               Ok(s) -> s
               Err(e) -> e.message()
-            }}
+            }
             Err(e) -> e.message()
-          }}
+          }
           tcp.close(conn)
           task.join(server)
           result
-        }}
+        }
         Err(e) -> e.message()
-      }}
-    }}
+      }
+    }
     Err(e) -> e.message()
-  }}
-}}
+  }
+}
 "#
-    );
+    .to_string();
     let v = run(&src);
     assert_eq!(v, Value::String("abcdefgh".into()));
 }
 
 #[test]
 fn test_read_after_close_errors() {
-    let addr = pick_port();
-    let src = format!(
-        r#"
+    let src = r#"
 import bytes
 import tcp
 import task
 import time
 
-fn main() {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
-        match tcp.accept(listener) {{
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
+        match tcp.accept(listener) {
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
-        }}
-      }})
+        }
+      })
       time.sleep(time.ms(50))
-      match tcp.connect("{addr}") {{
-        Ok(conn) -> {{
+      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+        Ok(conn) -> {
           tcp.close(conn)
-          let result = match tcp.read(conn, 16) {{
+          let result = match tcp.read(conn, 16) {
             Ok(_) -> "wrong: should error"
             Err(_) -> "errored"
-          }}
+          }
           task.join(server)
           result
-        }}
+        }
         Err(e) -> e.message()
-      }}
-    }}
+      }
+    }
     Err(e) -> e.message()
-  }}
-}}
+  }
+}
 "#
-    );
+    .to_string();
     let v = run(&src);
     // Lock the exact Err-branch string. The previous `contains("error")`
     // was satisfied by the Ok-branch sentinel "wrong: should error" too
@@ -206,49 +201,47 @@ fn main() {{
 
 #[test]
 fn test_write_after_close_errors() {
-    let addr = pick_port();
-    let src = format!(
-        r#"
+    let src = r#"
 import bytes
 import tcp
 import task
 import time
 
-fn main() {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
-        match tcp.accept(listener) {{
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
+        match tcp.accept(listener) {
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
-        }}
-      }})
+        }
+      })
       time.sleep(time.ms(50))
-      match tcp.connect("{addr}") {{
-        Ok(conn) -> {{
+      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+        Ok(conn) -> {
           tcp.close(conn)
-          let result = match tcp.write(conn, bytes.from_string("hi")) {{
+          let result = match tcp.write(conn, bytes.from_string("hi")) {
             Ok(_) -> "wrong: should error"
             Err(_) -> "errored"
-          }}
+          }
           task.join(server)
           result
-        }}
+        }
         Err(e) -> e.message()
-      }}
-    }}
+      }
+    }
     Err(e) -> e.message()
-  }}
-}}
+  }
+}
 "#
-    );
+    .to_string();
     let v = run(&src);
     assert_eq!(v, Value::String("errored".into()));
 }
 
 #[test]
 fn test_connect_to_unbound_port_errors() {
-    let addr = pick_port();
+    let addr = unbound_addr();
     let src = format!(
         r#"
 import tcp

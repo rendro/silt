@@ -35,13 +35,6 @@ fn run_with_timeout(src: String, budget: Duration) -> Option<Value> {
     rx.recv_timeout(budget).ok()
 }
 
-fn pick_port() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("local_addr");
-    drop(listener);
-    addr.to_string()
-}
-
 // ─────────────────────────────────────────────────────────────────────
 // Core fix: tcp.close on one handle wakes a concurrent reader that is
 // parked inside tcp.read on another clone of the same stream. Before
@@ -51,7 +44,6 @@ fn pick_port() -> String {
 
 #[test]
 fn test_close_unblocks_concurrent_reader_on_same_stream() {
-    let addr = pick_port();
     // Layout:
     //   Server task: listens, accepts, then sits in `tcp.read` expecting
     //       data that never arrives. Holds the connection handle.
@@ -65,57 +57,56 @@ fn test_close_unblocks_concurrent_reader_on_same_stream() {
     // third task to exercise the "close unblocks my own pending read"
     // path: without the fix, closing while a clone is parked in read
     // doesn't affect the parked read at all.
-    let src = format!(
-        r#"
+    let src = r#"
 import bytes
 import tcp
 import task
 import time
 
-fn main() {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
-        match tcp.accept(listener) {{
-          Ok(conn) -> {{
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
+        match tcp.accept(listener) {
+          Ok(conn) -> {
             -- Spawn a sibling that closes `conn` after a brief delay.
             -- Before the fix: this close is a no-op on the fd, so the
             -- read below hangs forever. After the fix: shutdown(Both)
             -- on the shared fd wakes the read with EOF (0 bytes).
-            let closer = task.spawn({{ ->
+            let closer = task.spawn({ ->
               time.sleep(time.ms(50))
               tcp.close(conn)
-            }})
-            let r = match tcp.read(conn, 1024) {{
-              Ok(buf) -> match bytes.length(buf) {{
+            })
+            let r = match tcp.read(conn, 1024) {
+              Ok(buf) -> match bytes.length(buf) {
                 0 -> "eof"
                 _ -> "unexpected-data"
-              }}
-              Err(e) -> "read-err:{{e}}"
-            }}
+              }
+              Err(e) -> "read-err:{e}"
+            }
             task.join(closer)
             r
-          }}
-          Err(e) -> "accept-err:{{e}}"
-        }}
-      }})
+          }
+          Err(e) -> "accept-err:{e}"
+        }
+      })
       time.sleep(time.ms(50))
-      match tcp.connect("{addr}") {{
-        Ok(client) -> {{
+      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+        Ok(client) -> {
           -- Do NOT send data: we want the server's read to be pending
           -- when the sibling calls tcp.close(conn) on it.
           let r = task.join(server)
           tcp.close(client)
           r
-        }}
-        Err(e) -> "connect-err:{{e}}"
-      }}
-    }}
-    Err(e) -> "listen-err:{{e}}"
-  }}
-}}
+        }
+        Err(e) -> "connect-err:{e}"
+      }
+    }
+    Err(e) -> "listen-err:{e}"
+  }
+}
 "#
-    );
+    .to_string();
 
     // Budget: the inner sleep is 50ms; a healthy run completes well
     // under 1s on Linux/macOS. Windows uses the same 5s budget — the
@@ -147,42 +138,40 @@ fn main() {{
 
 #[test]
 fn test_close_then_write_same_task_errors() {
-    let addr = pick_port();
-    let src = format!(
-        r#"
+    let src = r#"
 import bytes
 import tcp
 import task
 import time
 
-fn main() {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
-        match tcp.accept(listener) {{
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
+        match tcp.accept(listener) {
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
-        }}
-      }})
+        }
+      })
       time.sleep(time.ms(50))
-      match tcp.connect("{addr}") {{
-        Ok(conn) -> {{
+      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+        Ok(conn) -> {
           tcp.close(conn)
-          let r = match tcp.write(conn, bytes.from_string("hi")) {{
+          let r = match tcp.write(conn, bytes.from_string("hi")) {
             Ok(_) -> "wrong: write-after-close should error"
             Err(_) -> "errored"
-          }}
+          }
           task.join(server)
           r
-        }}
-        Err(e) -> "connect-err:{{e}}"
-      }}
-    }}
-    Err(e) -> "listen-err:{{e}}"
-  }}
-}}
+        }
+        Err(e) -> "connect-err:{e}"
+      }
+    }
+    Err(e) -> "listen-err:{e}"
+  }
+}
 "#
-    );
+    .to_string();
     assert_eq!(run(&src), Value::String("errored".into()));
 }
 
@@ -193,38 +182,36 @@ fn main() {{
 
 #[test]
 fn test_double_close_is_idempotent() {
-    let addr = pick_port();
-    let src = format!(
-        r#"
+    let src = r#"
 import tcp
 import task
 import time
 
-fn main() {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
-        match tcp.accept(listener) {{
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
+        match tcp.accept(listener) {
           Ok(c) -> tcp.close(c)
           Err(_) -> ()
-        }}
-      }})
+        }
+      })
       time.sleep(time.ms(50))
-      match tcp.connect("{addr}") {{
-        Ok(conn) -> {{
+      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+        Ok(conn) -> {
           tcp.close(conn)
           tcp.close(conn)
           task.join(server)
           "ok"
-        }}
-        Err(e) -> "connect-err:{{e}}"
-      }}
-    }}
-    Err(e) -> "listen-err:{{e}}"
-  }}
-}}
+        }
+        Err(e) -> "connect-err:{e}"
+      }
+    }
+    Err(e) -> "listen-err:{e}"
+  }
+}
 "#
-    );
+    .to_string();
     assert_eq!(run(&src), Value::String("ok".into()));
 }
 
@@ -250,39 +237,37 @@ fn test_tls_close_shutdown_does_not_hang() {
     // prove the server path doesn't hang on cleanup, which implicitly
     // depends on sockets being released cleanly. This is the closest
     // in-process TLS test we can get without a matching trust anchor.
-    let addr = pick_port();
-    let src = format!(
-        r#"
+    let src = r#"
 import bytes
 import tcp
 import task
 import time
 
-fn main() {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
         let bad_cert = bytes.from_string("-----BEGIN CERTIFICATE-----\nnotacert\n-----END CERTIFICATE-----\n")
         let bad_key = bytes.from_string("-----BEGIN PRIVATE KEY-----\nnotakey\n-----END PRIVATE KEY-----\n")
-        match tcp.accept_tls(listener, bad_cert, bad_key) {{
+        match tcp.accept_tls(listener, bad_cert, bad_key) {
           Ok(_) -> "unexpected: should error"
           Err(_) -> "errored"
-        }}
-      }})
+        }
+      })
       time.sleep(time.ms(50))
-      match tcp.connect("{addr}") {{
-        Ok(conn) -> {{
+      match tcp.connect("127.0.0.1:{tcp.local_port(listener)}") {
+        Ok(conn) -> {
           tcp.close(conn)
           task.join(server)
-        }}
-        Err(e) -> "connect-err:{{e}}"
-      }}
-    }}
-    Err(e) -> "listen-err:{{e}}"
-  }}
-}}
+        }
+        Err(e) -> "connect-err:{e}"
+      }
+    }
+    Err(e) -> "listen-err:{e}"
+  }
+}
 "#
-    );
+    .to_string();
     let v = run_with_timeout(src, Duration::from_secs(5))
         .expect("tls close path hung — regression in shutdown handling");
     assert_eq!(v, Value::String("errored".into()));

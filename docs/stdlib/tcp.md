@@ -23,10 +23,10 @@ default features in your `Cargo.toml`.
 | `connect` | `(String) -> Result(TcpStream, TcpError)` | Open a TCP connection to `host:port` (cooperative I/O) |
 | `listen` | `(String) -> Result(TcpListener, TcpError)` | Bind a TCP listener to `host:port` |
 | `local_port` | `(TcpListener) -> Int` | The port the listener is bound to: the one the system chose for port `0` |
-| `peer_addr` | `(TcpStream) -> Result(String, TcpError)` | Remote socket address (not yet implemented for trait-object stream handles; returns Err) |
+| `peer_addr` | `(TcpStream) -> Result(String, TcpError)` | The address of the other end, as `ip:port` |
 | `read` | `(TcpStream, Int) -> Result(Bytes, TcpError)` | Read up to `max` bytes (cooperative) |
 | `read_exact` | `(TcpStream, Int) -> Result(Bytes, TcpError)` | Read exactly `n` bytes (cooperative; loops) |
-| `set_nodelay` | `(TcpStream, Bool) -> Result((), TcpError)` | Disable Nagle (not yet implemented for trait-object stream handles; returns Err) |
+| `set_nodelay` | `(TcpStream, Bool) -> Result((), TcpError)` | Send small writes at once (`true`) instead of gathering them (Nagle's algorithm, the default) |
 | `write` | `(TcpStream, Bytes) -> Result((), TcpError)` | Write the entire buffer and flush (cooperative) |
 
 ## Errors
@@ -137,8 +137,6 @@ for is woken and gives up; the listener stays usable.
 
 ## Notes
 
-- `peer_addr` and `set_nodelay` currently return Err (they require unwrapping
-  the trait-object stream). They will be wired up in a later release.
 - silt does not use async/await. Blocking calls run on the same I/O pool as
   `io.read_file`, `fs.list_dir`, etc. (see
   [the I/O pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for)).

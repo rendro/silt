@@ -212,7 +212,7 @@ impl Vm {
     }
 
     /// Wait for `op`.
-    fn io_wait(
+    pub(crate) fn io_wait(
         &mut self,
         name: &'static str,
         timeout_err: ErrFactory,
@@ -227,10 +227,15 @@ impl Vm {
         // it ends, the operation has no waiter and no longer counts as
         // pending for the program (`IoOp`'s `Drop`).
         Ok(self.park(name, wait, move |_, fired| {
-            Ok(Step::Done(match (fired, op.cell.get()) {
-                (Fired::Arm(..), Some(value)) => value.clone(),
-                _ => timeout_err(source.message()),
-            }))
+            // The value is taken only by a wait that it ended: one
+            // that came as the deadline passed stays unheard.
+            let value = match fired {
+                Fired::Arm(..) => op.take(),
+                _ => None,
+            };
+            Ok(Step::Done(
+                value.unwrap_or_else(|| timeout_err(source.message())),
+            ))
         }))
     }
 

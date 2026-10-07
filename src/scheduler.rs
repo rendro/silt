@@ -282,7 +282,10 @@ enum TimerThread {
     /// No deadline has needed it yet.
     Idle,
     Running,
-    /// It could not be started: the threads that wait fire the timer.
+    /// It could not be started: the threads that wait and the workers
+    /// without work fire the timer. (While every worker runs a task
+    /// and no thread waits, nobody does: a deadline is then late by
+    /// as long as that lasts.)
     Unavailable,
 }
 
@@ -873,9 +876,27 @@ impl Inner {
             if let Some(task) = self.pop(&mut queue) {
                 return Some(task);
             }
+            // Where there is no timer thread, a worker without work is
+            // one of the threads that fire the timer: it sleeps until
+            // the next deadline, not until there is a task. (Whoever
+            // arms a deadline then tells the workers under the queue's
+            // lock, so the look here does not miss it.)
+            let deadline = match *self.timer_lock.lock() {
+                TimerThread::Unavailable => self.parking.timer().real_wait(),
+                TimerThread::Idle | TimerThread::Running => None,
+            };
             queue.sleepers += 1;
-            self.work.wait(&mut queue);
+            match deadline {
+                None => self.work.wait(&mut queue),
+                Some(wait) => {
+                    let _ = self.work.wait_for(&mut queue, wait);
+                }
+            }
             queue.sleepers -= 1;
+            drop(queue);
+            if deadline.is_some() && self.parking.timer().fire_due(&self.parking) > 0 {
+                self.check_all();
+            }
         }
     }
 
@@ -1040,11 +1061,13 @@ impl Inner {
             TimerThread::Running => {
                 self.timer_wake.notify_one();
             }
-            // A thread that waits may wait for longer than up to the
-            // new deadline.
+            // A thread that waits, or a worker without work, may wait
+            // for longer than up to the new deadline.
             _ => {
                 drop(thread);
                 self.poke_threads();
+                drop(self.queue.lock());
+                self.work.notify_all();
             }
         }
     }
@@ -1766,9 +1789,10 @@ fn main() {
     }
 
     /// Where the timer thread cannot be started, the threads that
-    /// wait fire the timer: sleeps, timeouts and timeout channels
-    /// still end, on the program's own thread and in tasks, and the
-    /// program ends when its tasks have.
+    /// wait and the workers without work fire the timer: sleeps,
+    /// timeouts and timeout channels still end, on the program's own
+    /// thread and in tasks, also while the program's thread computes
+    /// and never waits, and the program ends when its tasks have.
     #[test]
     fn without_a_timer_thread_the_waiting_threads_fire_the_timer() {
         let program = crate::session::testing::compile_str(
@@ -1777,7 +1801,22 @@ import channel
 import task
 import time
 
+fn busy(woke) {
+  match channel.try_receive(woke) {
+    channel.Message(_) -> ()
+    _ -> busy(woke)
+  }
+}
+
 fn main() {
+  -- main never waits here: the task's sleep ends all the same.
+  let woke = channel.new(1)
+  let _sleeper = task.spawn { ->
+    time.sleep(time.ms(5))
+    channel.send(woke, ())
+  }
+  busy(woke)
+  println("a task woke while main was busy")
   time.sleep(time.ms(5))
   println("main slept")
   let ch = channel.new(0)
@@ -1812,7 +1851,8 @@ fn main() {
         let printed: Vec<String> = out.0.lock().iter().map(|(text, _)| text.clone()).collect();
         assert_eq!(
             printed.concat(),
-            "main slept\ngot 1\nthe timeout channel closed\nmain returns\na task after main\n"
+            "a task woke while main was busy\nmain slept\ngot 1\nthe timeout channel closed\n\
+             main returns\na task after main\n"
         );
         assert!(*vm.scheduler().inner.timer_lock.lock() == super::TimerThread::Unavailable);
     }

@@ -396,6 +396,127 @@ fn main() {
     assert_eq!(out, "5\n");
 }
 
+/// An accept is given up in the same instant as a client connects, a
+/// thousand times. The client's connection is never lost: if the
+/// accept that was given up had it already and its task got it, that
+/// task hands it on; if the accept had it and its task was gone, or
+/// was given up with it in hand, the next accept gets it. Either way
+/// the client is served.
+#[test]
+fn a_client_is_never_lost_to_an_accept_that_was_given_up() {
+    let source = r#"
+import bytes
+import channel
+import task
+import tcp
+
+fn acceptor(listener, started, accepted) {
+  task.spawn { ->
+    channel.send(started, ())
+    match tcp.accept(listener) {
+      Ok(conn) -> channel.send(accepted, conn)
+      Err(_) -> ()
+    }
+  }
+}
+
+fn round(listener, port, started, n, served) {
+  match n {
+    0 -> served
+    _ -> {
+      let accepted = channel.new(2)
+      let given_up = acceptor(listener, started, accepted)
+      let _ = channel.receive(started)
+      let client = task.spawn { ->
+        when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("the client cannot connect") }
+        when let Ok(_) = tcp.write(conn, bytes.from_string("x")) else { panic("the client cannot write") }
+        when let Ok(echo) = tcp.read_exact(conn, 1) else { panic("the client was not served") }
+        tcp.close(conn)
+        bytes.length(echo)
+      }
+      task.cancel(given_up)
+      let next = acceptor(listener, started, accepted)
+      let _ = channel.receive(started)
+      when let channel.Message(conn) = channel.receive(accepted) else { panic("no connection") }
+      when let Ok(byte) = tcp.read_exact(conn, 1) else { panic("the server cannot read") }
+      when let Ok(_) = tcp.write(conn, byte) else { panic("the server cannot write") }
+      let got = task.join(client)
+      tcp.close(conn)
+      task.cancel(next)
+      round(listener, port, started, n - 1, served + got)
+    }
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  println(round(listener, tcp.local_port(listener), channel.new(0), 1000, 0))
+}
+"#;
+    let (_vm, out) = run(source).expect("the program ended");
+    assert_eq!(out, "1000\n");
+}
+
+/// A write blocks: the peer reads nothing and the buffers are full.
+/// When the deadline around it passes the task goes on, the connection
+/// is closed, the thread of the write ends, and a file read afterwards
+/// is not held up.
+#[test]
+fn a_blocked_write_ends_when_its_deadline_passes() {
+    let (listener, addr) = listener();
+    let _peer = silent_peer(listener, 1);
+    let path = temp_file("blocked_write.txt", "the file");
+    let source = format!(
+        r#"
+import bytes
+import io
+import string
+import task
+import tcp
+import time
+
+fn fill(conn, chunk, n) {{
+  match n {{
+    0 -> Ok(())
+    _ -> match tcp.write(conn, chunk) {{
+      Ok(_) -> fill(conn, chunk, n - 1)
+      Err(e) -> Err(e)
+    }}
+  }}
+}}
+
+fn main() {{
+  when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
+  let chunk = bytes.from_string(string.repeat("0123456789abcdef", 65536))
+  match task.deadline(time.ms(300), {{ -> fill(conn, chunk, 256) }}) {{
+    Err(tcp.TcpTimeout) -> println("timed out")
+    Ok(_) -> println("the peer took everything")
+    Err(e) -> println("a write failed: {{e.message()}}")
+  }}
+  match tcp.write(conn, chunk) {{
+    Err(tcp.TcpClosed) -> println("closed")
+    _ -> println("something else")
+  }}
+  when let Ok(text) = io.read_file("{path}") else {{ panic("cannot read the file") }}
+  println(text)
+}}
+"#
+    );
+    #[cfg(target_os = "linux")]
+    let before = os_threads();
+    let (vm, out) = run(&source).expect("the program ended");
+    assert_eq!(out, "timed out\nclosed\nthe file\n");
+    #[cfg(feature = "test-hooks")]
+    until("the write left the pool", || {
+        silt::vm::io_pool_threads(&vm) <= 1
+    });
+    #[cfg(target_os = "linux")]
+    until("the thread of the write ended", || {
+        os_threads() <= before + 12
+    });
+    drop(vm);
+}
+
 /// `main` fails while a task waits in `tcp.read`. Nothing is waited
 /// for (`stop_tasks`): the task is dropped, its connection is shut
 /// down, and the thread of the read ends although the peer never says

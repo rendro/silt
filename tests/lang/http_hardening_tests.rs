@@ -32,6 +32,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::port_file::PortFile;
+
 fn silt_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_silt") {
         return PathBuf::from(p);
@@ -64,40 +66,19 @@ fn tmp_silt_file(stem: &str, src: &str) -> PathBuf {
     tmp
 }
 
-/// Grab an ephemeral port from the OS, drop the listener, hand the number
-/// to the silt subprocess.
-fn pick_port() -> u16 {
+/// A port that nobody listens on: one the OS gave and that was given
+/// back. (The servers of these tests listen on port 0 themselves and
+/// tell the test their port: see `PortFile`.)
+fn unbound_port() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = l.local_addr().unwrap().port();
     drop(l);
     port
 }
 
-/// Poll-connect until the silt subprocess has bound the port, or time out.
-fn wait_for_bind(port: u16, max_wait: Duration) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < max_wait {
-        if let Ok(s) = TcpStream::connect_timeout(
-            &format!("127.0.0.1:{port}").parse().unwrap(),
-            Duration::from_millis(200),
-        ) {
-            drop(s);
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
-}
-
-/// Connect to the silt subprocess with a retry loop. `wait_for_bind`
-/// confirms the listener is up via a probe-and-drop cycle, but the
-/// follow-up `TcpStream::connect` from a test can still race the silt
-/// subprocess's accept loop on slow CI runners (Linux occasionally
-/// returned `ECONNREFUSED` between the bind probe drop and the real
-/// connect — see ci flake against med1_handler_error_does_not_leak_vm_error_details).
-/// Retry up to ~2s before giving up, treating `ConnectionRefused` as
-/// transient. Any other error is surfaced immediately so we don't
-/// mask real bugs.
+/// Connect to the silt subprocess. Its listener is bound when the test
+/// has its port, so the connection is queued at once; `ConnectionRefused`
+/// is still retried for a moment, any other error is surfaced.
 fn connect_with_retry(port: u16) -> TcpStream {
     let addr = format!("127.0.0.1:{port}");
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -146,18 +127,23 @@ fn shutdown(mut child: Child) -> (String, String) {
 
 /// Minimal echo-ish silt server: always returns 200 OK with a short body,
 /// regardless of input. Used by HIGH-1 and HIGH-2 tests.
-fn echo_server_src(port: u16) -> String {
+fn echo_server_src(port_path: &str) -> String {
     format!(
         r#"
 import http
+import io
 import tcp
 
-fn bound(port) {{
-  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
   listener
 }}
 fn main() {{
-  http.serve(bound({port})) {{ _req ->
+  http.serve(bound("{port_path}")) {{ _req ->
     http.Response {{ status: 200, body: "ok", headers: #{{}} }}
   }}
 }}
@@ -171,14 +157,12 @@ fn main() {{
 
 #[test]
 fn high1_http_serve_rejects_oversized_body_with_413() {
-    let port = pick_port();
-    let tmp = tmp_silt_file("high1_body_cap", &echo_server_src(port));
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let tmp = tmp_silt_file("high1_body_cap", &echo_server_src(&port_path));
     let child = spawn_silt(&tmp);
 
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port}"
-    );
+    let port = port_file.wait();
 
     // 50 MiB body, well above the 10 MiB cap. We send a real (honest)
     // Content-Length so the server knows to reject up front, but we also
@@ -252,14 +236,12 @@ fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
     // This guards against a future regression where the slowloris
     // connection would wedge the *user-visible* accept pipeline.
 
-    let port = pick_port();
-    let tmp = tmp_silt_file("high2_slowloris", &echo_server_src(port));
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let tmp = tmp_silt_file("high2_slowloris", &echo_server_src(&port_path));
     let child = spawn_silt(&tmp);
 
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port}"
-    );
+    let port = port_file.wait();
 
     // Attacker: open a connection, send partial headers, then sit there.
     let mut attacker = connect_with_retry(port);
@@ -310,7 +292,7 @@ fn high3_http_get_bogus_address_returns_err_in_bounded_time() {
     // listening on it. Connecting should fail fast (ECONNREFUSED on
     // loopback). The key guard is that the silt subprocess exits within
     // the 10s timeout_connect budget we set — not that it hangs forever.
-    let port = pick_port();
+    let port = unbound_port();
     let src = format!(
         r#"
 import http
@@ -365,15 +347,21 @@ fn med1_handler_error_does_not_leak_vm_error_details() {
     //     "call stack", or "at line",
     //   - silt stderr DOES contain the VmError detail (so ops can
     //     debug — the info isn't silently swallowed).
-    let port = pick_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
     let src = format!(
         r#"
 import http
+import io
 import tcp
 import test
 
-fn bound(port) {{
-  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
   listener
 }}
 
@@ -382,7 +370,7 @@ fn private_helper() {{
 }}
 
 fn main() {{
-  http.serve(bound({port})) {{ _req ->
+  http.serve(bound("{port_path}")) {{ _req ->
     private_helper()
     http.Response {{ status: 200, body: "never", headers: #{{}} }}
   }}
@@ -392,10 +380,7 @@ fn main() {{
     let tmp = tmp_silt_file("med1_info_leak", &src);
     let child = spawn_silt(&tmp);
 
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port}"
-    );
+    let port = port_file.wait();
 
     // Poke the server; read whatever 500 it returns.
     let mut sock = connect_with_retry(port);
@@ -448,20 +433,26 @@ fn main() {{
 #[test]
 fn long_poll_handlers_wait_without_holding_a_thread() {
     const WAITERS: usize = 20;
-    let port = pick_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
     let src = format!(
         r#"
 import channel
 import http
+import io
 import tcp
 
-fn bound(port) {{
-  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
   listener
 }}
 fn main() {{
   let mailbox = channel.new(0)
-  http.serve(bound({port})) {{ req ->
+  http.serve(bound("{port_path}")) {{ req ->
     match req.path {{
       "/wait" -> match channel.receive(mailbox) {{
         channel.Message(text) -> http.Response {{ status: 200, body: text, headers: #{{}} }}
@@ -478,10 +469,7 @@ fn main() {{
     );
     let tmp = tmp_silt_file("long_poll", &src);
     let child = spawn_silt(&tmp);
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port}"
-    );
+    let port = port_file.wait();
 
     let request = |path: &str| {
         let mut conn = connect_with_retry(port);
@@ -524,17 +512,24 @@ fn main() {{
 fn the_handler_cap_turns_away_what_is_over_it_and_the_waiters_get_their_answers() {
     const CAP: usize = 128;
     const OVER: usize = 40;
-    let port = pick_port();
-    let control = pick_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let control_file = PortFile::new();
+    let control_path = control_file.path();
     let src = format!(
         r#"
 import channel
 import http
+import io
 import task
 import tcp
 
-fn bound(port) {{
-  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
   listener
 }}
 
@@ -543,12 +538,12 @@ fn main() {{
   -- A second server, with handlers of its own, to end the wait: the
   -- first one is at its cap and would turn the request away.
   let _control = task.spawn {{ ->
-    http.serve(bound({control})) {{ _req ->
+    http.serve(bound("{control_path}")) {{ _req ->
       channel.close(mailbox)
       http.Response {{ status: 200, body: "closed", headers: #{{}} }}
     }}
   }}
-  http.serve(bound({port})) {{ _req ->
+  http.serve(bound("{port_path}")) {{ _req ->
     let _ = channel.receive(mailbox)
     http.Response {{ status: 200, body: "released", headers: #{{}} }}
   }}
@@ -557,11 +552,8 @@ fn main() {{
     );
     let tmp = tmp_silt_file("handler_cap", &src);
     let child = spawn_silt(&tmp);
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10))
-            && wait_for_bind(control, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port} and :{control}"
-    );
+    let port = port_file.wait();
+    let control = control_file.wait();
 
     let request = |port: u16| {
         let mut conn = connect_with_retry(port);

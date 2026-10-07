@@ -543,26 +543,29 @@ fn peer_addr(args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::new("tcp.peer_addr takes 1 argument".into()));
     }
-    let _ = require_stream(&args[0], "tcp.peer_addr")?;
-    // peer_addr requires the underlying TcpStream; the trait-object form
-    // hides it. Returning a placeholder Err for now — full support comes
-    // when TLS streams need a uniform peer_addr interface.
-    // For PR 2 alone, this is acceptable since most flows don't need it.
-    Ok(err(
-        "tcp.peer_addr is not yet implemented for trait-object stream handles",
-    ))
+    let stream = require_stream(&args[0], "tcp.peer_addr")?;
+    if stream.is_closed() {
+        return Ok(err_closed());
+    }
+    Ok(match stream.peer_addr() {
+        Ok(addr) => ok(Value::String(addr.to_string())),
+        Err(e) => tcp_io_err(&e),
+    })
 }
 
 fn set_nodelay(args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::new("tcp.set_nodelay takes 2 arguments".into()));
     }
-    let _ = require_stream(&args[0], "tcp.set_nodelay")?;
-    let _ = require_bool(&args[1], "tcp.set_nodelay")?;
-    // Same trait-object issue as peer_addr.
-    Ok(err(
-        "tcp.set_nodelay is not yet implemented for trait-object stream handles",
-    ))
+    let stream = require_stream(&args[0], "tcp.set_nodelay")?;
+    let on = require_bool(&args[1], "tcp.set_nodelay")?;
+    if stream.is_closed() {
+        return Ok(err_closed());
+    }
+    Ok(match stream.set_nodelay(on) {
+        Ok(()) => ok(Value::Unit),
+        Err(e) => tcp_io_err(&e),
+    })
 }
 
 // ── Cooperative I/O ops ────────────────────────────────────────────────
@@ -574,18 +577,37 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     let listener = require_listener(&args[0], "tcp.accept")?.clone();
     let next_id = vm.next_tcp_id();
     let (stopped, stop) = accept_stop(&listener);
-    vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-        let stream = match listener.accept(&stopped) {
-            Ok(Some(stream)) => TcpStreamHandle::plain(next_id, stream),
-            // Given up: nobody reads the value.
-            Ok(None) => return err_closed(),
-            Err(e) => Err(e),
-        };
-        match stream {
-            Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-            Err(e) => tcp_io_err(&e),
-        }
-    })
+    let accepting = listener.clone();
+    let op = vm
+        .runtime
+        .io_pool
+        .submit(tcp_timeout_err, move || {
+            let stream = match accepting.accept(&stopped) {
+                Ok(Some(stream)) => TcpStreamHandle::plain(next_id, stream),
+                // Given up: nobody reads the value.
+                Ok(None) => return err_closed(),
+                Err(e) => Err(e),
+            };
+            match stream {
+                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                Err(e) => tcp_io_err(&e),
+            }
+        })
+        .stop_with(stop)
+        // A connection that came just as the task stopped waiting (it
+        // was cancelled, its deadline passed) reached no task: only
+        // the operation's value holds it. It is a client's, and goes
+        // to the next accept.
+        .unheard_with(move |value| {
+            if let Value::Variant(tag, fields) = value
+                && tag.is(bv::OK)
+                && let [Value::TcpStream(conn)] = &fields[..]
+                && let Some(socket) = conn.socket()
+            {
+                listener.keep(socket);
+            }
+        });
+    vm.io_wait("tcp", tcp_timeout_err, op)
 }
 
 fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
