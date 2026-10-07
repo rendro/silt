@@ -2,4 +2,10 @@ pub trait Describe {
   fn describe(self) -> String
 }
 
+trait Describe for Int {
+  fn describe(self) -> String {
+    "the int {self}"
+  }
+}
+
 pub type Pair(a) = (a, a)

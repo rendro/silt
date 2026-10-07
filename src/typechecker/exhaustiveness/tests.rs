@@ -272,7 +272,6 @@ fn checker_with_expr() -> (TypeChecker, TypeRef) {
                     field_types: vec![expr_ty.clone(), expr_ty],
                 },
             ],
-            defined_in: super::TypeChecker::builtin_pkg(),
         },
     );
     (tc, expr)

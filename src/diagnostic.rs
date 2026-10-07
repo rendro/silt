@@ -175,7 +175,7 @@ codes! {
     /// a hand-written impl of a derived trait, ...
     InvalidTraitImpl = "E0331", Type;
     /// An impl of a foreign trait for a foreign type.
-    OrphanImpl = "E0332", Type;
+    ImplElsewhere = "E0332", Type;
     DuplicateDeclaration = "E0333", Type;
     /// A record, enum or alias declaration that is not well-formed.
     InvalidTypeDeclaration = "E0334", Type;

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A user Display impl for builtin TcpStream is an impl no module may write, not "not a declared type".
+-- stderr-contains: declares neither the trait nor the type
+-- stderr-not-contains: not a declared type
+import tcp
+trait Display for tcp.TcpStream {
+  fn display(b) -> String { "x" }
+}
+fn main() {}

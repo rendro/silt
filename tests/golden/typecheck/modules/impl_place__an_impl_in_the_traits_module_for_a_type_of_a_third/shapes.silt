@@ -1,0 +1,7 @@
+pub type Square {
+  side: Int,
+}
+
+pub fn unit_square() -> Square {
+  Square { side: 1 }
+}

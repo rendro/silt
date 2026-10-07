@@ -1,8 +1,0 @@
--- cmd: check
--- exit: 0
--- stderr-not-contains: orphan impl
-trait Cast(b) { fn cast(self) -> b }
-trait Cast(Int) for String {
-  fn cast(self) -> Int { 0 }
-}
-fn main() {}

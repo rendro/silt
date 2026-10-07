@@ -145,9 +145,8 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
     // vec![])` from their builtin modules (`bytes::register`,
     // `tcp::register`). Registering them here exposes them to the
     // trait-impl-target gate (`is_builtin_container`) so error messages
-    // for `trait T for Bytes { ... }` walk the orphan-rule path
-    // instead of `target 'Bytes' is not a declared type`. See round-65
-    // GAP fix that lifted these out of the deferred bucket.
+    // for `trait Display for Bytes { ... }` say that no module may
+    // write that impl, not `target 'Bytes' is not a declared type`.
     BuiltinType {
         name: "Bytes",
         arity: Some(0),

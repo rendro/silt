@@ -299,9 +299,9 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     register_structural_traits_for(checker, &["Bytes"], &["Hash"]);
 
     // TcpListener / TcpStream are registered in BUILTIN_TYPES so the
-    // trait-impl-target gate gives an orphan-rule rejection (rather
-    // than "type not declared") if a user tries to add their own
-    // impls, but no built-in trait impls are stamped — they remain
+    // trait-impl-target gate says where an impl for them may be
+    // written (rather than "type not declared") if a user tries to add
+    // their own impls, but no built-in trait impls are stamped — they remain
     // unprintable opaque resources.
 }
 

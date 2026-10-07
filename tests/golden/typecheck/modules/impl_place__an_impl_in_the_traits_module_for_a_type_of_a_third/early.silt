@@ -1,0 +1,8 @@
+import shapes
+import traits
+
+pub let first = traits.measure(shapes.unit_square())
+
+pub let second = shapes.Square { side: 2 }.told()
+
+pub let third = 3.area()

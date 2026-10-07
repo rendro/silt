@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown method 'tagged' on type Int
+-- A module calls the methods of the traits whose modules it imports
+-- (or they import, and so on). `c` does not import `a`: whether `a`
+-- was checked before `c` or after it, `c` has no method `tagged`.
+-- (It once had it when an earlier import had brought the impl in. The
+-- help that names the module is there only when `a` is checked first.)
+import c
+import a
+
+fn main() {
+  println(c.v())
+  println(a.touch())
+}

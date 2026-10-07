@@ -1,0 +1,7 @@
+import types.{ Tag }
+
+pub let text = "early {Tag { name: "e" }}"
+
+pub fn show(t: Tag) -> String {
+  "early {t}"
+}

@@ -21,10 +21,6 @@ impl BuiltinEnv {
     fn build() -> Self {
         let mut checker = TypeChecker::new();
         let mut env = TypeEnv::new();
-        // With no `current_package`, every builtin decl is stamped with
-        // the `__builtin__` sentinel by `defining_package()`, which the
-        // orphan rule relies on: `trait Display for List(a)` in user code
-        // must not look trait-local.
         register_prelude(&mut checker, &mut env);
         enter_registry(&mut checker, &mut env);
         register_builtin_trait_impls(&mut checker);
@@ -216,7 +212,6 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
     }
     for td in &types {
         let ty = checker.own_type(td.name);
-        let defined_in = TypeChecker::builtin_pkg();
         match &td.body {
             TypeBody::Enum(_) => {
                 checker.tables.enums.insert(
@@ -225,18 +220,14 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         variants: Vec::new(),
                         params: td.params.clone(),
                         param_var_ids: Vec::new(),
-                        defined_in,
                     },
                 );
             }
             TypeBody::Record(_) => {
-                checker.tables.records.insert(
-                    ty,
-                    RecordInfo {
-                        fields: Vec::new(),
-                        defined_in,
-                    },
-                );
+                checker
+                    .tables
+                    .records
+                    .insert(ty, RecordInfo { fields: Vec::new() });
             }
             TypeBody::Alias(_) => {}
         }

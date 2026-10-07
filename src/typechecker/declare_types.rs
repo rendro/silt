@@ -180,7 +180,6 @@ impl TypeChecker {
                         params: td.params.clone(),
                         param_var_ids: var_ids,
                         variants: variant_infos,
-                        defined_in: self.defining_package(),
                     },
                 );
             }
@@ -232,7 +231,6 @@ impl TypeChecker {
                     ty,
                     RecordInfo {
                         fields: field_types.clone(),
-                        defined_in: self.defining_package(),
                     },
                 );
 

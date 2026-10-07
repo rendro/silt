@@ -298,7 +298,7 @@ impl TypeChecker {
         result_ty: &Type,
         span: Span,
     ) -> bool {
-        let Some(entry) = self.tables.method_table.get(&(type_name, field)).cloned() else {
+        let Some(entry) = self.method_entry(type_name, field) else {
             return false;
         };
         let instantiated = self.dispatch_method_entry(&entry, field, obj_ty, span);
@@ -2076,6 +2076,49 @@ impl TypeChecker {
                 .is_some_and(|(owner, _)| owner != self.module)
         });
         !private && (self.seen_traits.contains(&t.id.0) || self.seen_modules.contains(&def.module))
+    }
+
+    /// The module that declares the trait `t`, by name, when the module
+    /// checked does not import it, nor a module that does, and so on: a
+    /// method of the trait is not called here. (Its impls may or may not
+    /// be known to the session by now; what a module means does not
+    /// depend on that.)
+    fn unreached(&self, t: TraitKey) -> Option<Symbol> {
+        let module = self.defs.as_ref()?.get(t.id.0).module;
+        let reach = self.reach.as_ref()?;
+        if module == self.module || module.is_builtin() || reach.contains(&module) {
+            return None;
+        }
+        Some(
+            self.tables
+                .module_names
+                .get(&module)
+                .copied()
+                .unwrap_or_else(|| intern("?")),
+        )
+    }
+
+    /// The method `method` of the type `ty`, if the module checked may
+    /// call it: a method of a trait declared in a module it does not
+    /// reach by its imports it has not.
+    pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
+        let entry = self.tables.method_table.get(&(ty, method))?;
+        match entry.trait_name.and_then(|t| self.unreached(t)) {
+            Some(_) => None,
+            None => Some(entry.clone()),
+        }
+    }
+
+    /// What to say where `ty` has no method `method` here but a trait of
+    /// a module that is not imported has one.
+    pub(super) fn unreached_help(&self, ty: TypeRef, method: Symbol) -> Option<String> {
+        let t = self.tables.method_table.get(&(ty, method))?.trait_name?;
+        let module = self.unreached(t)?;
+        Some(format!(
+            "trait '{}' of module '{module}' has a method '{method}' for this type; \
+             import '{module}' to call it",
+            t.name
+        ))
     }
 
     /// Whether a call of `method` of `ty` is ambiguous here; if so, it is

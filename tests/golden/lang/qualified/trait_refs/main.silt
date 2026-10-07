@@ -1,5 +1,6 @@
 -- Trait references reached through a module: an impl of an imported
--- trait, an impl for an imported type, a where bound and a supertrait.
+-- trait, an impl for an imported type (of a trait declared here), a
+-- where bound and a supertrait.
 import lib
 
 type Local { L(Int) }
@@ -9,12 +10,6 @@ trait lib.Describe for Local {
     match self {
       L(n) -> "local {n}"
     }
-  }
-}
-
-trait lib.Describe for lib.Pt {
-  fn describe(self) -> String {
-    "pt {self.x},{self.y}"
   }
 }
 
@@ -28,6 +23,12 @@ trait Loud for Local {
   }
 }
 
+trait Loud for lib.Pt {
+  fn shout(self) -> String {
+    "{self.describe()}!!"
+  }
+}
+
 fn show(a: a) -> String where a: lib.Describe {
   a.describe()
 }
@@ -36,4 +37,5 @@ fn main() {
   println(show(L(1)))
   println(show(lib.Pt { x: 1, y: 2 }))
   println(L(2).shout())
+  println(lib.Pt { x: 3, y: 4 }.shout())
 }

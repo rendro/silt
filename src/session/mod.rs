@@ -20,7 +20,7 @@ mod host;
 mod packages;
 pub mod testing;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -497,13 +497,20 @@ impl Session {
         }
         let resolution =
             names::resolve_module(&mut ast, id, kind, &imported, Arc::make_mut(&mut self.defs));
+        let cell = kind == ModuleKind::Cell;
+        let reach = (!cell).then(|| self.graph.reach(id));
+        let cells = match cell {
+            true => self.cells.info.keys().copied().collect(),
+            false => HashSet::new(),
+        };
         let check = typechecker::check_module(
             &mut ast,
             ModuleContext {
                 module: id,
                 module_name: module.name,
                 kind,
-                package: (kind != ModuleKind::Host).then_some(module.package_name),
+                reach,
+                cells,
                 scope: &resolution.scope,
                 earlier: &earlier,
                 defs: self.defs.clone(),

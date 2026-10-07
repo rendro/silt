@@ -614,31 +614,34 @@ The `Error` trait has supertrait `Display` and one method,
 `JsonError`, `HttpError`, …) implements it explicitly, and user code
 can implement it on its own error types.
 
-## Coherence — The Orphan Rule
+## Where an Impl Is Written
 
-silt enforces a **trait orphan rule** so two unrelated packages cannot
-both register an impl for the same `(trait, type)` pair and silently
-disagree on dispatch. The rule:
+An impl is written in the module that declares its trait, or in the
+module that declares its type. Anywhere else it is an error.
 
-> An `impl Trait for Type` declared in package `P` is allowed only when
-> at least one of `Trait` or `Type` is defined in `P` (or is built-in
-> to silt). Impls where both the trait and the head type are foreign to
-> `P` are rejected.
+A built-in trait and a built-in type are declared in no module, so:
 
-Built-in traits and built-in types (`List`, `Map`, `Set`, `Option`,
-`Result`, `Range`, …) are stdlib-owned. They count as foreign to your
-package — implementing `Display` for `List(a)` from your own package is
-forbidden. (The four auto-derived traits are not impls: every type has
-them by its structure.)
+- an impl of `Display` or `Error` for a type goes in the module that
+  declares the type;
+- an impl for `Int`, `String`, `List(a)`, `Option(a)` or another
+  built-in type goes in the module that declares the trait;
+- no module may write an impl of a built-in trait for a built-in type.
 
-The rule applies to every file silt loads; a stand-alone script is in a
-synthetic `__local__` package. Each REPL input belongs to the package of
-the directory the REPL was started in (or to `__local__`), so the rule
-applies there too.
+For an impl with a parameterized target (`trait Area for Box(a)`), the
+type is the one named first, `Box`.
 
-### Allowed: at least one local anchor
+Two things follow. A type has at most one impl of a trait in a whole
+program, and every module sees the same one: no two modules can each
+write it. And the impl is there wherever it is called: a module that can
+call a method of a trait on a value of a type imports the module of the
+trait and the module of the type (directly, or through the modules it
+imports), and one of those two holds the impl. A value is shown, and a
+method answers, the same way in every module.
 
-A local trait on a built-in type satisfies the trait-local arm:
+A module calls the methods of the traits whose modules it imports,
+directly or through the modules it imports, and of the built-in traits.
+
+### In the trait's module
 
 ```silt
 trait Greet {
@@ -652,7 +655,7 @@ trait Greet for List(a) {
 }
 ```
 
-A built-in trait on a local type satisfies the type-local arm:
+### In the type's module
 
 ```silt
 type Color {
@@ -668,34 +671,31 @@ trait Display for Color {
 }
 ```
 
-A local trait on a local type is the trivial case — both arms are
-satisfied:
+A module that imports `Color` cannot write this impl: it belongs beside
+the type. The same holds for a trait and a type of two other modules:
 
 ```silt
-type Color {
-  Red,
-  Green,
-  Blue,
-}
+-- main.silt
+import shapes.{ Square }
+import traits.{ Area }
 
-trait Greet {
-  fn greet(self) -> String
-}
-
-trait Greet for Color {
-  fn greet(self) -> String {
-    "color"
+trait Area for Square { -- error
+  fn area(self) -> Int {
+    self.side * self.side
   }
 }
 ```
 
-### Rejected: both anchors foreign
+```
+the impl of trait 'Area' for type 'Square' is written in module 'main',
+which declares neither the trait nor the type; it may be written in
+module 'traits', which declares the trait, or in module 'shapes', which
+declares the type
+```
 
-Implementing a built-in trait on a built-in type from a user package is
-an orphan impl — neither anchor is local:
+### Neither has a module
 
 ```silt
--- in package `myapp`
 trait Display for List(a) { -- error
   fn display(self) -> String {
     "stolen"
@@ -703,16 +703,17 @@ trait Display for List(a) { -- error
 }
 ```
 
-The compiler emits:
-
 ```
-orphan impl: trait 'Display' is from package '__builtin__' and type
-'List' is from package '__builtin__'; either the trait or the type
-must be defined in the current package 'myapp'
+the impl of trait 'Display' for type 'List' is written in module 'main',
+which declares neither the trait nor the type; both are builtin, so no
+module may write it
 ```
 
-To add behaviour to a built-in type, wrap it in a local newtype or
+To add behaviour to a built-in type, wrap it in a type of your own or
 declare your own trait and implement that instead.
+
+In the REPL, the entries of a session count as one module: an impl for
+a type of an earlier entry may be written in a later one.
 
 ## Where Clauses
 

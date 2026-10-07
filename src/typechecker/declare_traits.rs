@@ -311,7 +311,6 @@ impl TypeChecker {
         let pre_assoc_types = assoc_types.clone();
         let private_to = (!t.is_pub).then_some((self.module, self.module_name));
         let pre_supertraits: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
-        let pkg = self.defining_package();
         self.tables.traits.insert(
             key,
             TraitInfo {
@@ -327,7 +326,6 @@ impl TypeChecker {
                 default_method_bodies: HashMap::new(),
                 assoc_types: pre_assoc_types,
                 private_to,
-                defined_in: pkg,
             },
         );
 
@@ -518,7 +516,6 @@ impl TypeChecker {
                 default_method_bodies,
                 assoc_types,
                 private_to,
-                defined_in: pkg,
             },
         );
     }
@@ -622,101 +619,66 @@ impl TypeChecker {
         }
     }
 
-    /// Apply the trait-orphan rule. Returns `true` when the impl is
-    /// allowed, `false` after emitting an error and signalling the
-    /// caller to skip the rest of registration. See the call site in
-    /// `register_trait_impl` for the rule statement.
-    fn check_orphan_rule(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
-        let trait_pkg = self
-            .impl_trait(ti)
-            .and_then(|t| self.tables.traits.get(&t))
-            .map(|t| t.defined_in);
-        // Compute the head-type package by reconstructing a Type from
-        // the impl's target name + args. We use the canonicalised
-        // `target_type` symbol because the round-23 GAP #1 unknown-
-        // target check has already validated the name; for the orphan
-        // walk we just need the head symbol's `defined_in`.
-        let head_pkg = if let Some(info) = self.tables.enums.get(&target_type) {
-            Some(info.defined_in)
-        } else if let Some(info) = self.tables.records.get(&target_type) {
-            Some(info.defined_in)
-        } else {
-            // Built-in head (List/Map/Set/Channel/Range/Tuple/Fn/Int/...):
-            // no enum or record registered under this name. Treat as
-            // stdlib-owned (`None`) so the trait-local arm can satisfy
-            // the rule when a user package writes `trait MyTrait for
-            // List(...)`.
-            let head_str = builtin_type_name(target_type).unwrap_or_default();
-            if crate::types::builtins::is_primitive(head_str)
-                || crate::types::builtins::is_container(head_str)
-            {
-                None
-            } else {
-                // Truly unknown — the round-23 GAP #1 check already
-                // emitted a diagnostic. Don't double-report; allow the
-                // orphan walk to fall through.
-                return true;
-            }
+    /// Whether the impl `ti`, of a trait for the type `target_type`, is
+    /// written where an impl may be: in the module that declares its
+    /// trait or in the module that declares its type. If not, that is
+    /// reported, with the modules it may be written in.
+    ///
+    /// What this gives: a module that can call a method of the trait on
+    /// a value of the type has the impl's module among the modules it
+    /// imports, so the impl is there, and initialised, whenever it is
+    /// called; and no two modules can each write the impl. A builtin
+    /// trait or type is declared in no module: an impl of `Display` goes
+    /// with its type, an impl for `Int` with its trait. The entries of
+    /// one REPL session count as one module: each is run to its end
+    /// before the next is read.
+    fn impl_in_its_module(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
+        let Some(defs) = self.defs.clone() else {
+            return true;
         };
-
-        let builtin = Self::builtin_pkg();
-        // A package "p" is local iff it equals the current package.
-        // Built-in stamps (`__builtin__` or `None`) are never local on
-        // their own — they're stdlib-owned, and the orphan rule
-        // requires the OTHER arm to be locally owned. The REPL /
-        // scratch script case (current_package = None) treats every
-        // arm as local so the rule is effectively disabled there.
-        let current_pkg_sym = self.current_package;
-        // Returns true when a package stamp identifies the active
-        // current_package. None and `__builtin__` are stdlib-owned
-        // and return false. The REPL path (current_package=None)
-        // short-circuits before reaching here so we don't have to
-        // special-case it inside this helper.
-        let is_local = |pkg: Option<Symbol>| -> bool {
-            let Some(cur) = current_pkg_sym else {
-                return true;
-            };
-            match pkg {
-                None => false,
-                Some(p) if p == builtin => false,
-                Some(p) => p == cur,
-            }
+        // An unknown trait is reported elsewhere.
+        let Some(tr) = self.impl_trait(ti) else {
+            return true;
         };
-
-        // Unknown trait — the unknown-trait diagnostic fires elsewhere.
-        // Treat as local so we don't pile a misleading orphan
-        // diagnostic on top of it.
-        if trait_pkg.is_none() {
+        let here = |module: crate::session::ModuleId| {
+            module == self.module || (self.is_cell && self.cells.contains(&module))
+        };
+        let of_trait = defs.get(tr.id.0).module;
+        let of_type = defs.get(target_type.id.0).module;
+        if here(of_trait) || here(of_type) {
             return true;
         }
-        let trait_local = is_local(trait_pkg);
-        let type_local = is_local(head_pkg);
-
-        if trait_local || type_local {
-            return true;
-        }
-
-        // Both arms are foreign. Build a diagnostic that names both
-        // packages, the impl's trait, and the impl's target type.
-        let trait_pkg_name = trait_pkg
-            .map(resolve)
-            .unwrap_or_else(|| "(unknown)".to_string());
-        let head_pkg_name = head_pkg
-            .map(resolve)
-            .unwrap_or_else(|| "__builtin__".to_string());
-        let current_pkg_name = current_pkg_sym
-            .map(resolve)
-            .unwrap_or_else(|| "(scratch)".to_string());
+        let named = |module: crate::session::ModuleId| {
+            (!module.is_builtin()).then(|| {
+                self.tables
+                    .module_names
+                    .get(&module)
+                    .map_or_else(|| "?".to_string(), |name| resolve(*name))
+            })
+        };
+        let (tr, ty) = (resolve(ti.trait_name), resolve(ti.target_type));
+        let place = match (named(of_trait), named(of_type)) {
+            (Some(t), Some(y)) if t == y => {
+                format!("it may be written in module '{t}', which declares both")
+            }
+            (Some(t), Some(y)) => format!(
+                "it may be written in module '{t}', which declares the trait, \
+                 or in module '{y}', which declares the type"
+            ),
+            (Some(t), None) => {
+                format!("it may be written in module '{t}', which declares the trait")
+            }
+            (None, Some(y)) => {
+                format!("it may be written in module '{y}', which declares the type")
+            }
+            (None, None) => "both are builtin, so no module may write it".to_string(),
+        };
         self.error(
-            Code::OrphanImpl,
+            Code::ImplElsewhere,
             format!(
-                "orphan impl: trait '{}' is from package '{}' and type '{}' is from package '{}'; \
-                 either the trait or the type must be defined in the current package '{}'",
-                resolve(ti.trait_name),
-                trait_pkg_name,
-                resolve(ti.target_type),
-                head_pkg_name,
-                current_pkg_name,
+                "the impl of trait '{tr}' for type '{ty}' is written in module '{}', which \
+                 declares neither the trait nor the type; {place}",
+                resolve(self.module_name),
             ),
             ti.span,
         );
@@ -825,20 +787,9 @@ impl TypeChecker {
             }
         }
 
-        // Trait-orphan rule (round 63 item 5): reject `impl Trait for Type`
-        // when both the trait and the target type's head are foreign to
-        // the current package.
-        //
-        // Built-ins (`__builtin__`) are stdlib-owned and treated as a
-        // wild-card counterparty: a user package implementing a built-in
-        // trait for one of its own types satisfies the type-local arm,
-        // and a user package implementing one of its own traits for a
-        // built-in type satisfies the trait-local arm.
-        if !self.check_orphan_rule(ti, target_type) {
-            // Skip the rest of impl registration on rejection: don't
-            // poison `trait_impl_set` / `method_table` with an entry the
-            // user wasn't allowed to register, otherwise downstream
-            // dispatch would silently route through this orphan.
+        // Nothing of an impl written elsewhere is registered: no call
+        // goes through it.
+        if !self.impl_in_its_module(ti, target_type) {
             return;
         }
 

@@ -57,7 +57,7 @@ impl Native for Showing {
         let next = Cell::new(0);
         let texts = &self.texts;
         let text = Shown(&self.value, &|part, f| {
-            vm.written_display(part)?;
+            vm.written_slot(part)?;
             let text = &texts[next.get()];
             next.set(next.get() + 1);
             Some(f.write_str(text))
@@ -71,16 +71,35 @@ impl Native for Showing {
 }
 
 impl Vm {
-    /// The `display` the program wrote for the type of `value`, a record
-    /// or a variant.
-    fn written_display(&self, value: &Value) -> Option<Value> {
+    /// Where the `display` the program wrote for the type of `value`, a
+    /// record or a variant, is kept.
+    fn written_slot(&self, value: &Value) -> Option<u16> {
         let ty = match value {
             Value::Record(ty, _) => ty.id,
             Value::Variant(tag, _) => tag.type_id(),
             _ => return None,
         };
-        let slot = self.global_slots.shown(ty)?;
-        self.globals.get(usize::from(slot)).cloned().flatten()
+        self.global_slots.shown(ty)
+    }
+
+    /// The `display` the program wrote for the type of `value`.
+    ///
+    /// An impl of `Display` is written in the module that declares its
+    /// type, and a module's functions are set before any of its code
+    /// runs, so a value of the type is never there before the impl is:
+    /// an impl that is not set yet is a bug of silt, and said so, not
+    /// taken for a type without one.
+    fn written_display(&self, value: &Value) -> Result<Option<Value>, VmError> {
+        let Some(slot) = self.written_slot(value) else {
+            return Ok(None);
+        };
+        match self.globals.get(usize::from(slot)).cloned().flatten() {
+            Some(display) => Ok(Some(display)),
+            None => Err(VmError::type_confusion(format!(
+                "the `display` written for '{}' is called before it is set",
+                self.user_facing_type_name(value)
+            ))),
+        }
     }
 
     /// Show `value` and go on with `then`, which gets its text: at once
@@ -98,12 +117,22 @@ impl Vm {
         // What the formatter writes, with nothing for the parts a
         // written impl shows: complete if there is no such part.
         let parts: RefCell<Vec<(Value, Value)>> = RefCell::new(Vec::new());
+        let unset: RefCell<Option<VmError>> = RefCell::new(None);
         let text = Shown(value, &|part, _| {
-            let display = self.written_display(part)?;
+            let display = match self.written_display(part) {
+                Ok(display) => display?,
+                Err(error) => {
+                    unset.borrow_mut().get_or_insert(error);
+                    return None;
+                }
+            };
             parts.borrow_mut().push((part.clone(), display));
             Some(Ok(()))
         })
         .to_string();
+        if let Some(error) = unset.into_inner() {
+            return Err(error);
+        }
         let parts = parts.into_inner();
         if parts.is_empty() {
             return then(self, text);

@@ -1,0 +1,11 @@
+-- The trait's module writes the impl for a type of a third module, and
+-- for `Int`. Whoever calls a method of the trait imports the trait's
+-- module, so its `let`s are set before the first call, in the `let`s
+-- of another module too.
+import early
+
+fn main() {
+  println(early.first)
+  println(early.second)
+  println(early.third)
+}

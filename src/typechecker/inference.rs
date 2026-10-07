@@ -192,6 +192,20 @@ pub(super) fn format_unknown_method_message(
 }
 
 impl TypeChecker {
+    /// The "unknown method" message for `field` of the type `ty`, with
+    /// its help: the module to import when a trait out of reach has the
+    /// method, or a method of a similar name.
+    fn unknown_method_message(
+        &self,
+        field: Symbol,
+        display: &str,
+        ty: TypeRef,
+    ) -> (String, Option<String>) {
+        let (message, similar) =
+            format_unknown_method_message(field, display, &self.tables.method_table, ty);
+        (message, self.unreached_help(ty, field).or(similar))
+    }
+
     /// Put `var: trait_name` (at the trait arguments `args`) in scope,
     /// and with it each supertrait, at the arguments the trait's
     /// declaration gives it: `where a: Ordered` with
@@ -676,7 +690,7 @@ impl TypeChecker {
                 // the effective type name (same path as
                 // `type_name_for_impl`).
                 let name = self.type_name_for_impl(&inner)?;
-                let entry = self.tables.method_table.get(&(name, field)).cloned()?;
+                let entry = self.method_entry(name, field)?;
                 if let Some(trait_name) = entry.trait_name
                     && self.private_owner(trait_name).is_some()
                 {
@@ -697,7 +711,7 @@ impl TypeChecker {
     /// Report `T.field` where the type `T` has no method `field`. A builtin
     /// module named like the type with a function of that name (`int.parse`
     /// for `Int.parse`) is suggested.
-    fn no_type_method(&mut self, type_name: &str, field: Symbol, span: Span) {
+    fn no_type_method(&mut self, type_name: &str, field: Symbol, span: Span, ty: Option<TypeRef>) {
         let module = type_name.to_lowercase();
         let mut d = Diagnostic::error(
             Code::UnresolvedName,
@@ -705,7 +719,9 @@ impl TypeChecker {
             format!("type '{type_name}' has no method '{field}'"),
         );
         let qualified = intern(&format!("{module}.{field}"));
-        if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
+        if let Some(help) = ty.and_then(|ty| self.unreached_help(ty, field)) {
+            d = d.with_help(help);
+        } else if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
             d = d.with_help(format!(
                 "did you mean `{module}.{field}`, a function of module `{module}`?"
             ));
@@ -1621,7 +1637,7 @@ impl TypeChecker {
                 };
                 if let Some(ty) = type_ref {
                     let key = (canonical_head(&self.tables.resolver, ty), field);
-                    if let Some(entry) = self.tables.method_table.get(&key).cloned() {
+                    if let Some(entry) = self.method_entry(key.0, key.1) {
                         if let Some(trait_name) = entry.trait_name
                             && self.private_owner(trait_name).is_some()
                         {
@@ -1646,7 +1662,7 @@ impl TypeChecker {
                     if matches!(obj.kind, ExprKind::FieldAccess(..))
                         || self.def_scheme(obj.res, env).is_none()
                     {
-                        self.no_type_method(&resolve(ty.name), field, span);
+                        self.no_type_method(&resolve(ty.name), field, span, Some(key.0));
                         expr.ty = Some(Type::Error);
                         return Type::Error;
                     }
@@ -1689,7 +1705,7 @@ impl TypeChecker {
                     // variable's case is reported above).
                     let inner = self.apply(&gargs[0]);
                     if !matches!(inner, Type::Var(_) | Type::Rigid(_) | Type::Error) {
-                        self.no_type_method(&format!("{inner}"), field, span);
+                        self.no_type_method(&format!("{inner}"), field, span, None);
                     }
                     return Type::Error;
                 }
@@ -1768,9 +1784,7 @@ impl TypeChecker {
                             return resolved;
                         }
                         // Check method table (trait methods)
-                        if let Some(entry) =
-                            self.tables.method_table.get(&(*type_name, field)).cloned()
-                        {
+                        if let Some(entry) = self.method_entry(*type_name, field) {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
@@ -1828,9 +1842,7 @@ impl TypeChecker {
                         // dispatch_type_for_value(Value::Unit)), `Fn` of a
                         // function.
                         let type_name = head_of(&obj_ty).expect("a primitive head has a type");
-                        if let Some(entry) =
-                            self.tables.method_table.get(&(type_name, field)).cloned()
-                        {
+                        if let Some(entry) = self.method_entry(type_name, field) {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
@@ -1850,12 +1862,7 @@ impl TypeChecker {
                         let display = format!("type {type_name}");
                         self.error_help(
                             Code::UnknownMethod,
-                            format_unknown_method_message(
-                                field,
-                                &display,
-                                &self.tables.method_table,
-                                type_name,
-                            ),
+                            self.unknown_method_message(field, &display, type_name),
                             span,
                         );
                         Type::Error
@@ -1882,9 +1889,7 @@ impl TypeChecker {
                         let type_name = self
                             .type_name_for_impl(t)
                             .expect("container head has canonical name");
-                        if let Some(entry) =
-                            self.tables.method_table.get(&(type_name, field)).cloned()
-                        {
+                        if let Some(entry) = self.method_entry(type_name, field) {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
@@ -1925,12 +1930,7 @@ impl TypeChecker {
                         let display = resolve(type_name.name).to_string();
                         self.error_help(
                             Code::UnknownMethod,
-                            format_unknown_method_message(
-                                field,
-                                &display,
-                                &self.tables.method_table,
-                                type_name,
-                            ),
+                            self.unknown_method_message(field, &display, type_name),
                             span,
                         );
                         Type::Error

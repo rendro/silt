@@ -9,15 +9,6 @@ pub(super) struct EnumInfo {
     /// The actual TyVar ids assigned to each type parameter (same order as `params`).
     pub(super) param_var_ids: Vec<TyVar>,
     pub(super) variants: Vec<VariantInfo>,
-    /// Package symbol where this enum was originally declared. Used by
-    /// the trait-orphan check in `register_trait_impl` to determine
-    /// whether the impl's target type is local to the current package.
-    /// The builtin enums (the builtin environment's) carry the
-    /// sentinel `intern("__builtin__")`; user enums carry the
-    /// `current_package` value at the time their decl was processed,
-    /// or `intern("__builtin__")` when there is no enclosing package
-    /// (a host module).
-    pub(super) defined_in: Symbol,
 }
 
 #[derive(Debug, Clone)]
@@ -30,10 +21,6 @@ pub(super) struct VariantInfo {
 #[derive(Debug, Clone)]
 pub(super) struct RecordInfo {
     pub(super) fields: Vec<(Symbol, Type)>,
-    /// Package symbol where this record was originally declared. See
-    /// `EnumInfo::defined_in` for semantics — used by the trait-orphan
-    /// check in `register_trait_impl`.
-    pub(super) defined_in: Symbol,
 }
 
 /// Information about a declared trait.
@@ -99,15 +86,6 @@ pub(super) struct TraitInfo {
     /// name and the trait bounds the impl-supplied binding must satisfy.
     /// Empty for traits with no associated types (the common case).
     pub(super) assoc_types: Vec<AssocTypeInfo>,
-    /// Package symbol where this trait was originally declared. Used
-    /// by the trait-orphan check in `register_trait_impl` to determine
-    /// whether the impl's trait is local to the current package.
-    /// Built-in traits registered through `builtin_trait_decls` carry
-    /// the sentinel `intern("__builtin__")`; user traits carry the
-    /// `current_package` value at decl-processing time, or
-    /// `intern("__builtin__")` when there is no enclosing package
-    /// (a check outside a session).
-    pub(super) defined_in: Symbol,
 }
 
 /// Information about a single associated-type declaration inside a
