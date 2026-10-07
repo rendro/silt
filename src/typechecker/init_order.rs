@@ -55,8 +55,10 @@
 //!    enum of the module, the types of its fields, and theirs. Showing
 //!    reaches the module's `Display` impl for each such type; a type of
 //!    another module among them is code outside the module; a type
-//!    variable among them is any type, so every `Display` impl of the
-//!    module and code outside it.
+//!    variable among them, or an associated type an impl is yet to
+//!    name (`Self::Item`), is any type, so every `Display` impl of the
+//!    module and code outside it. (`parts_shown` names every form of
+//!    type: one it did not know would be any type too.)
 //!
 //! # What a `let` needs
 //!
@@ -110,9 +112,18 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
         }
         Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
         Type::Tuple(ts) => all(ts),
+        // A type the code does not know here: any type.
+        Type::AssocProj { .. } => false,
         // (A function inside a value is not called by a method of the
         // value.)
-        _ => true,
+        Type::Fun(..) => true,
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Error
+        | Type::Never => true,
     }
 }
 
@@ -167,14 +178,21 @@ impl TypeChecker {
     /// See [`Parts`]. A type variable inside a declaration (`declared`)
     /// is a parameter: what stands for it is among the type's
     /// arguments where the type is used.
+    ///
+    /// Every form of type is named here, and none is passed over by a
+    /// catch-all: a form that is not known by its name is any type.
     fn parts_shown(&self, ty: &Type, declared: bool, parts: &mut Parts) {
         match ty {
             Type::Var(_) | Type::Rigid(_) => parts.outside |= !declared,
+            // The type an impl gives for an associated type, which is
+            // not known here: any type.
+            Type::AssocProj { .. } => parts.outside = true,
             Type::Generic(name, args) => {
                 for arg in args {
                     self.parts_shown(arg, declared, parts);
                 }
                 let Some(def) = self.def(name.id.0) else {
+                    parts.outside = true;
                     return;
                 };
                 if def.module.is_builtin() {
@@ -220,8 +238,19 @@ impl TypeChecker {
                 self.parts_shown(v, declared, parts);
             }
             Type::Tuple(ts) => ts.iter().for_each(|t| self.parts_shown(t, declared, parts)),
-            // (A function is not shown; nothing else has parts.)
-            _ => {}
+            // A function is not shown (a type that holds one has no
+            // `Display` but the one written for it, which is the
+            // type's own impl, counted with the type).
+            Type::Fun(..) => {}
+            // No parts, and no impl a program writes. (`Error` and
+            // `Never` are of no value that is shown.)
+            Type::Int
+            | Type::Float
+            | Type::Bool
+            | Type::String
+            | Type::Unit
+            | Type::Error
+            | Type::Never => {}
         }
     }
 
