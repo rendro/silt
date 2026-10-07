@@ -850,7 +850,7 @@ fn is_module_name(name: &str) -> bool {
         .tokens
         .iter()
         .map(|tok| &tok.kind)
-        .filter(|t| !matches!(t, Token::Eof | Token::Newline));
+        .filter(|t| !matches!(t, Token::Eof));
     matches!(
         (tokens.next(), tokens.next()),
         (Some(Token::Ident(s)), None) if resolve(*s) == name

@@ -113,7 +113,7 @@ fn lexer_multi_char_operators() -> BTreeSet<String> {
             .tokens
             .into_iter()
             .map(|tok| tok.kind)
-            .filter(|tok| !matches!(tok, Token::Newline | Token::Eof))
+            .filter(|tok| !matches!(tok, Token::Eof))
             .collect();
         if let [tok] = significant.as_slice()
             && tok.to_string() == cand

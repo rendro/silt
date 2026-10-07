@@ -158,11 +158,7 @@ fn decl_shapes(source: &str, lexed: &Lexed, program: &Program) -> Shapes {
     };
     let mut header = Vec::new();
     let mut tail = Vec::new();
-    let tokens: Vec<_> = lexed
-        .tokens
-        .iter()
-        .filter(|tok| tok.kind != Token::Newline)
-        .collect();
+    let tokens: Vec<_> = lexed.tokens.iter().collect();
     for (i, tok) in tokens.iter().enumerate() {
         let comments = lexed.comments_before(tok);
         // Whether the token stands on the line of comment `n`, with

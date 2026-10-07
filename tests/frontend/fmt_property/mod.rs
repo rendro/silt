@@ -296,12 +296,7 @@ pub fn gaps(text: &str) -> Vec<usize> {
     lexed
         .tokens
         .iter()
-        .filter(|tok| {
-            !matches!(
-                tok.kind,
-                Token::Newline | Token::StringMiddle(_) | Token::StringEnd(_)
-            )
-        })
+        .filter(|tok| !matches!(tok.kind, Token::StringMiddle(_) | Token::StringEnd(_)))
         .map(|tok| tok.span.start as usize)
         .collect()
 }
@@ -477,7 +472,7 @@ fn header(text: &str) -> String {
     let Ok(lexed) = Lexer::new(FileId::default(), text).tokenize() else {
         return String::new();
     };
-    let Some(first) = lexed.tokens.iter().find(|tok| tok.kind != Token::Newline) else {
+    let Some(first) = lexed.tokens.first() else {
         return String::new();
     };
     let leading = &lexed.comments[..first.comments.end as usize];

@@ -97,6 +97,9 @@ channels and function values are the exception — they do not implement
 
 Escape literal braces with backslash: `"\{not interpolation}"`.
 
+The expression between the braces may span lines, and a line break may
+stand in front of the closing brace.
+
 ### Triple-Quoted Strings
 
 No escape processing, no interpolation, indentation stripping:
