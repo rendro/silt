@@ -4,10 +4,10 @@
 //! Every piece of running silt code is a task to the scheduler, whoever
 //! drives it:
 //!
-//! - a task made by `task.spawn` is run slice by slice by the workers;
-//! - the program itself (`fn main`, a test, a REPL entry), a stream
-//!   stage and an HTTP handler are run by their own thread
-//!   (`Scheduler::enter`).
+//! - a task made by `task.spawn`, a stage of a stream and the handler
+//!   of an HTTP request are run slice by slice by the workers;
+//! - the program itself (`fn main`, a test, a REPL entry) is run by
+//!   its own thread (`Scheduler::enter`).
 //!
 //! Each of them waits in the same place, the registry of parked tasks
 //! ([`Parking`]), for the same thing, a [`Wait`]: a spawned task is
@@ -15,17 +15,33 @@
 //! ends; a thread waits where it is (`Scheduler::block_thread`) and,
 //! where there are no workers, runs the queued tasks while it does.
 //!
-//! # Deadlock
+//! # Deadlock, and the end of a program
 //!
-//! The program is deadlocked when every task waits and nothing outside
-//! can end a wait: no timer is pending and no I/O operation is in
-//! flight (`Scheduler::external`). That is checked when a task parks,
-//! when one ends, and when something external ends; it is exact, so it
-//! is reported at once. The program's own thread gets the error.
+//! Tasks are counted by owner (`Vm::set_task_owner`): the program, or one
+//! test of a test run, with which the tasks of its file's top-level
+//! code count (`Vm::set_task_owner_within`). The tasks of an owner have
+//! come to a stop when each has ended or waits, none of the waits
+//! will end by itself (it has no deadline, and it is not on a channel
+//! that a timer will close), and no I/O operation that one of them
+//! waits for is in flight (`Scheduler::external`). That is checked
+//! when one of them parks or ends and when something external of
+//! theirs ends; it is exact and stays true, so the event that
+//! completes it sees it.
+//!
+//! - If the program's own thread is in a wait then, the program is
+//!   deadlocked: the wait fails with the error.
+//! - If the program's own code has returned and its thread waits for
+//!   the program to end (`Scheduler::settle`), it has ended: the tasks
+//!   that still wait are dropped.
+//!
+//! A timer that will close a channel which no task waits on wakes
+//! nobody, and holds nothing up. After an error of the program's own
+//! code nothing is waited for: `Scheduler::stop_tasks` ends the
+//! owner's tasks where they are.
 
 use parking_lot::{Condvar, Mutex};
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
@@ -34,7 +50,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::runtime::handle::TaskHandle;
-use crate::runtime::sync::{self, Channel, Fired, Parking, Resumed, Source, Stuck, TaskId, Wait};
+use crate::runtime::sync::{self, Channel, Fired, Parking, Resumed, Source, TaskId, Wait, Waiting};
 use crate::value::Value;
 use crate::vm::{HostIo, Vm, VmError};
 
@@ -130,10 +146,35 @@ pub(crate) enum SliceResult {
 }
 
 /// A lightweight task scheduled on the M:N thread pool.
-pub struct Task {
-    pub id: usize,
-    pub vm: Vm,
-    pub handle: Arc<TaskHandle>,
+struct Task {
+    id: usize,
+    vm: Vm,
+    handle: Arc<TaskHandle>,
+    /// The tasks it is counted with: those of its owner.
+    group: Arc<Group>,
+}
+
+/// The tasks of one owner (`Vm::set_task_owner`): the program, or one
+/// test of a test run. Whether a program is deadlocked, and whether it
+/// has ended, is asked of its own tasks: what an earlier test left
+/// behind does not count.
+struct Group {
+    owner: u64,
+    /// The tasks that have not ended: spawned tasks, and threads that
+    /// are running silt code.
+    live: AtomicUsize,
+    /// What can end a wait of one of them from outside the tasks: I/O
+    /// operations in flight. See [`External`]. (The deadline of a wait
+    /// is seen on the wait.)
+    external: AtomicUsize,
+    /// The tasks that wait or are on their way into a wait: never
+    /// fewer than those that wait. A look without a lock that spares
+    /// most of the exact ones.
+    parking: AtomicUsize,
+    /// Set while its tasks are being stopped
+    /// ([`Scheduler::stop_tasks`]): none of them runs another slice
+    /// or enters a wait.
+    stopped: AtomicBool,
 }
 
 /// The scheduler of one program.
@@ -161,8 +202,9 @@ struct ThreadPark {
     /// The spawned task whose slice the thread runs, if it is a
     /// worker's.
     task: Option<usize>,
-    /// Who the code on the thread belongs to (`set_task_owner`).
-    owner: u64,
+    /// The tasks that the code on the thread counts with: those of
+    /// its owner (`Vm::set_task_owner`).
+    group: Arc<Group>,
 }
 
 #[derive(Default)]
@@ -174,15 +216,9 @@ struct ThreadState {
     poked: bool,
 }
 
-/// What the scheduler says of a parked task in a deadlock report.
-struct Who {
-    /// The handle's number, for a spawned task; `None` for a thread
-    /// that is no worker's (a stream stage, an HTTP handler).
-    task: Option<usize>,
-    owner: u64,
-}
-
 struct Inner {
+    /// Which scheduler of the process this is.
+    id: u64,
     queue: Mutex<RunQueue>,
     /// The length of the queue, for a look without its lock.
     queued: AtomicUsize,
@@ -195,23 +231,25 @@ struct Inner {
     shutdown: AtomicBool,
     /// Whether worker threads run the queue.
     has_workers: AtomicBool,
-    /// The tasks that have not ended: spawned tasks, and threads that
-    /// are running silt code.
-    live: AtomicUsize,
-    /// The spawned tasks among them, for `MAX_TASKS`.
+    /// The spawned tasks that have not ended, for `MAX_TASKS`.
     spawned: AtomicUsize,
-    /// What can end a wait from outside the tasks, besides the timer:
-    /// I/O operations in flight. See [`External`].
-    external: AtomicUsize,
+    /// The tasks by owner.
+    groups: Mutex<HashMap<u64, Arc<Group>>>,
     parking: Parking<Sleeper>,
-    /// The wait of the program's own thread, while it waits: who gets
-    /// the verdict.
-    main_wait: Mutex<Option<TaskId>>,
+    /// What the program's own thread waits for, while it waits: it is
+    /// told when its tasks can do nothing more.
+    main: Mutex<Option<Main>>,
     /// The verdict, between the check that gave it and the program's
     /// thread that raises it.
     deadlock: Mutex<Option<VmError>>,
     /// The names of the waits of threads.
     next_thread_wait: AtomicU64,
+    /// The owner tag of the tasks spawned outside any task
+    /// (`Scheduler::set_owner`).
+    owner: AtomicU64,
+    /// The owner tag of the tasks that are there besides those of
+    /// `owner`; 0 for none.
+    outer: AtomicU64,
     /// Whether the thread that runs the program knows this scheduler
     /// (`StartedSchedulers`).
     registered: AtomicBool,
@@ -248,16 +286,63 @@ enum TimerThread {
     Unavailable,
 }
 
+/// What the program's own thread waits for.
+#[derive(Clone)]
+struct Main {
+    /// The tasks of the owner it runs code for.
+    group: Arc<Group>,
+    /// The tasks that are there besides, and count with them
+    /// (`Vm::set_task_owner_within`).
+    outer: Option<Arc<Group>>,
+    waits: MainWaits,
+}
+
+impl Main {
+    /// The thread that calls is the program's own, and `group` its
+    /// owner's tasks.
+    fn of_this_thread(inner: &Inner, group: Arc<Group>, waits: MainWaits) -> Main {
+        let outer = inner.outer.load(Ordering::SeqCst);
+        Main {
+            group,
+            outer: (outer != 0).then(|| inner.group_of(outer)),
+            waits,
+        }
+    }
+
+    /// Whether the tasks of `owner` are among those it waits on.
+    fn counts(&self, owner: u64) -> bool {
+        self.group.owner == owner || self.outer.as_ref().is_some_and(|g| g.owner == owner)
+    }
+
+    fn groups(&self) -> impl Iterator<Item = &Arc<Group>> {
+        std::iter::once(&self.group).chain(&self.outer)
+    }
+}
+
+#[derive(Clone)]
+enum MainWaits {
+    /// In a wait of the program's code: when no task it waits on can
+    /// go on, that is a deadlock, and the wait fails.
+    Blocked(TaskId),
+    /// For its tasks to come to a stop, its own code having returned
+    /// ([`Scheduler::settle`]).
+    Settling(Arc<ThreadPark>),
+    /// For its tasks to have ended, each stopped where it was
+    /// ([`Scheduler::stop_tasks`]).
+    Stopping(Arc<ThreadPark>),
+}
+
 /// Something outside the tasks that can end a wait, for as long as it
 /// lives: an I/O operation in flight, a thread that serves the
-/// program. While one exists the program is not deadlocked. It is
-/// dropped after the last thing it does for a task has returned.
-pub(crate) struct External(Arc<Inner>);
+/// program. While one exists the program is neither deadlocked nor
+/// ended. It is dropped after the last thing it does for a task has
+/// returned.
+pub(crate) struct External(Arc<Inner>, Arc<Group>);
 
 impl Drop for External {
     fn drop(&mut self) {
-        self.0.external.fetch_sub(1, Ordering::SeqCst);
-        self.0.check_stuck();
+        self.1.external.fetch_sub(1, Ordering::SeqCst);
+        self.0.check(&self.1);
     }
 }
 
@@ -273,24 +358,17 @@ thread_local! {
 /// [`Scheduler::enter`] until it is dropped: it counts as a task.
 pub(crate) struct Running {
     inner: Arc<Inner>,
-    /// False for a guard taken on a thread that was counted already.
-    counts: bool,
-}
-
-impl Running {
-    /// The calling thread takes over a guard that another thread took
-    /// for it ([`Scheduler::enter_for_thread`]).
-    pub(crate) fn adopt(&self) {
-        COUNTED.with(|counted| counted.set(true));
-    }
+    /// The tasks it counts with; `None` for a guard taken on a thread
+    /// that was counted already.
+    counted: Option<Arc<Group>>,
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
-        if self.counts {
+        if let Some(group) = &self.counted {
             let _ = COUNTED.try_with(|counted| counted.set(false));
-            self.inner.live.fetch_sub(1, Ordering::SeqCst);
-            self.inner.check_stuck();
+            group.live.fetch_sub(1, Ordering::SeqCst);
+            self.inner.check(group);
         }
     }
 }
@@ -306,7 +384,9 @@ impl Scheduler {
         let timer = sync::Timer::new(io.clone());
         let inner = Arc::new_cyclic(|inner: &Weak<Inner>| {
             let ready = inner.clone();
+            static SCHEDULERS: AtomicU64 = AtomicU64::new(0);
             Inner {
+                id: SCHEDULERS.fetch_add(1, Ordering::Relaxed),
                 queue: Mutex::default(),
                 queued: AtomicUsize::new(0),
                 spinning: AtomicUsize::new(0),
@@ -314,18 +394,19 @@ impl Scheduler {
                 waiting_threads: Mutex::new(Vec::new()),
                 shutdown: AtomicBool::new(false),
                 has_workers: AtomicBool::new(false),
-                live: AtomicUsize::new(0),
                 spawned: AtomicUsize::new(0),
-                external: AtomicUsize::new(0),
+                groups: Mutex::new(HashMap::new()),
                 parking: Parking::new(timer, move |sleeper, resumed| {
                     // Without a scheduler the task is dropped.
                     if let Some(inner) = ready.upgrade() {
                         inner.ready(sleeper, resumed);
                     }
                 }),
-                main_wait: Mutex::new(None),
+                main: Mutex::new(None),
                 deadlock: Mutex::new(None),
                 next_thread_wait: AtomicU64::new(0),
+                owner: AtomicU64::new(0),
+                outer: AtomicU64::new(0),
                 registered: AtomicBool::new(false),
                 timer_lock: Mutex::new(TimerThread::Idle),
                 timer_wake: Condvar::new(),
@@ -401,11 +482,12 @@ impl Scheduler {
         report_unjoined_failures(&self.inner)
     }
 
-    /// Submit a runnable task to the scheduler.
+    /// Start the task `id`, whose VM `vm` has its first frame and
+    /// whose result goes to `handle`.
     ///
     /// Returns an error if the live-task count has reached the
     /// scheduler's hard task limit.
-    pub fn submit(&self, task: Task) -> Result<(), String> {
+    pub(crate) fn submit(&self, id: usize, vm: Vm, handle: Arc<TaskHandle>) -> Result<(), String> {
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
         }
@@ -431,9 +513,15 @@ impl Scheduler {
                     .push(Arc::downgrade(&self.inner));
             });
         }
+        let group = self.inner.group(handle.owner());
         self.inner.spawned.fetch_add(1, Ordering::SeqCst);
-        self.inner.live.fetch_add(1, Ordering::SeqCst);
-        self.inner.enqueue(task);
+        group.live.fetch_add(1, Ordering::SeqCst);
+        self.inner.enqueue(Task {
+            id,
+            vm,
+            handle,
+            group,
+        });
         Ok(())
     }
 
@@ -451,9 +539,11 @@ impl Scheduler {
         self.inner.parking.cancel(TaskId(handle.id as u64));
     }
 
-    /// Close `channel` when the clock reads `deadline`.
+    /// Close `channel` when the clock reads `deadline`. Until then a
+    /// task that waits on the channel has a wait that will end.
     pub(crate) fn close_at(&self, deadline: Duration, channel: Arc<Channel>) {
-        self.inner.parking.timer().close_at(deadline, channel);
+        let timer = self.inner.parking.timer();
+        timer.close_at(deadline, channel);
         self.inner.timer_armed();
     }
 
@@ -480,36 +570,118 @@ impl Scheduler {
     /// as a task until the guard is dropped. Nothing changes for a
     /// thread that counts already.
     pub(crate) fn enter(&self) -> Running {
-        let counts = !COUNTED.with(|counted| counted.replace(true));
-        if counts {
-            self.inner.live.fetch_add(1, Ordering::SeqCst);
-        }
+        let counted = (!COUNTED.with(|counted| counted.replace(true))).then(|| {
+            let group = self.inner.group(self.inner.current_owner());
+            group.live.fetch_add(1, Ordering::SeqCst);
+            group
+        });
         Running {
             inner: self.inner.clone(),
-            counts,
+            counted,
         }
     }
 
-    /// [`Scheduler::enter`] for a thread that is about to be started:
-    /// it counts from now, so that nobody finds the program deadlocked
-    /// before the thread runs. The thread calls [`Running::adopt`].
-    pub(crate) fn enter_for_thread(&self) -> Running {
-        self.inner.live.fetch_add(1, Ordering::SeqCst);
-        Running {
-            inner: self.inner.clone(),
-            counts: true,
-        }
+    /// The owner tag of the tasks spawned from now on outside any task
+    /// (by the thread that runs the program), and, if it is not 0,
+    /// that of the tasks that count with them. See
+    /// [`Vm::set_task_owner`] and [`Vm::set_task_owner_within`].
+    pub(crate) fn set_owner(&self, owner: u64, outer: u64) {
+        self.inner.outer.store(outer, Ordering::SeqCst);
+        self.inner.owner.store(owner, Ordering::SeqCst);
     }
 
-    /// See [`External`].
+    /// The owner tag of a task spawned here and now.
+    pub(crate) fn current_owner(&self) -> u64 {
+        self.inner.current_owner()
+    }
+
+    /// See [`External`]. It counts for the owner of the code that asks.
     pub(crate) fn external(&self) -> External {
-        self.inner.external.fetch_add(1, Ordering::SeqCst);
-        External(self.inner.clone())
+        let group = self.inner.group(self.inner.current_owner());
+        group.external.fetch_add(1, Ordering::SeqCst);
+        External(self.inner.clone(), group)
+    }
+
+    /// The program's own code has returned: wait until the program has
+    /// ended. That is when none of its tasks can go on: each of them
+    /// has ended or waits, and no sleep, timeout or I/O operation of theirs
+    /// is pending. The tasks that still wait then are dropped; they
+    /// could never be woken. Called by the thread that ran the code,
+    /// for the owner it ran it for (`Vm::set_task_owner`): a test waits
+    /// for its own tasks only.
+    pub(crate) fn settle(&self) {
+        let _ = self.wait_for(MainWaits::Settling);
+        // What still waits is dropped, in one act: dropping a task can
+        // wake another (a stage that is dropped closes its output, and
+        // whoever reads that wakes), and the program has ended, so
+        // that one runs no further either.
+        self.stop_tasks();
+    }
+
+    /// The program's own code has failed: its tasks are stopped where
+    /// they are. One that waits is dropped; one that runs ends with
+    /// the slice it is in; none starts a wait or another slice.
+    /// Returns when all have ended. What they had failed with by then
+    /// stays to be reported; I/O that they started is not waited for.
+    /// Called like [`Scheduler::settle`], for the same owner.
+    pub(crate) fn stop_tasks(&self) {
+        let group = self.inner.group(self.inner.current_owner());
+        // The flag first: a task on its way into a wait reads it.
+        group.stopped.store(true, Ordering::SeqCst);
+        self.drop_waiting(&group);
+        let _ = self.wait_for(MainWaits::Stopping);
+        group.stopped.store(false, Ordering::SeqCst);
+    }
+
+    /// Drop the tasks of `group` that wait.
+    fn drop_waiting(&self, group: &Group) {
+        let inner = &self.inner;
+        let left: Vec<TaskId> = inner.parking.inspect(|waiting| {
+            let of_owner =
+                |waiting: &&Waiting<'_, Sleeper>| owner_of(waiting.sleeper) == group.owner;
+            waiting.iter().filter(of_owner).map(|w| w.task).collect()
+        });
+        for task in left {
+            inner.parking.cancel(task);
+        }
+    }
+
+    /// Wait until the tasks of the calling thread's owner have come to
+    /// a stop, as [`Scheduler::settle`] does, and leave those that
+    /// wait where they are: code that the thread runs next may wake
+    /// them.
+    pub(crate) fn wait_until_idle(&self) {
+        let _ = self.wait_for(MainWaits::Settling);
+    }
+
+    /// The calling thread, the program's own, waits for its tasks:
+    /// `waits` says for what. Gives the owner's tasks.
+    fn wait_for(&self, waits: fn(Arc<ThreadPark>) -> MainWaits) -> Arc<Group> {
+        let inner = &self.inner;
+        let group = inner.group(inner.current_owner());
+        let park = Arc::new(ThreadPark {
+            state: Mutex::default(),
+            wake: Condvar::new(),
+            task: None,
+            group: group.clone(),
+        });
+        let main = Main::of_this_thread(inner, group.clone(), waits(park.clone()));
+        *inner.main.lock() = Some(main);
+        inner.check(&group);
+        inner.waiting_threads.lock().push(park.clone());
+        let _ = inner.sleep_thread(&park);
+        inner
+            .waiting_threads
+            .lock()
+            .retain(|other| !Arc::ptr_eq(other, &park));
+        *inner.main.lock() = None;
+        group
     }
 
     /// Send `value` on `channel` from a thread, which waits while there
     /// is no receiver and no room. `false` when the channel is closed,
     /// or the program has ended: the value was not sent.
+    #[cfg(feature = "postgres")]
     pub(crate) fn send_wait(&self, channel: &Arc<Channel>, value: Value) -> bool {
         let value = match channel.try_send(value, self.wake()) {
             sync::TrySend::Sent => return true,
@@ -523,27 +695,6 @@ impl Scheduler {
         )
     }
 
-    /// Receive from `channel` on a thread, which waits while the
-    /// channel is empty: a value, or `None` when the channel is closed
-    /// and empty, or the program has ended. `main` as for
-    /// [`Scheduler::block_thread`], whose error is returned.
-    pub(crate) fn receive_wait(
-        &self,
-        channel: &Arc<Channel>,
-        main: bool,
-    ) -> Result<Option<Value>, VmError> {
-        match channel.try_receive(self.wake()) {
-            sync::TryReceive::Value(value) => return Ok(Some(value)),
-            sync::TryReceive::Closed(_) => return Ok(None),
-            sync::TryReceive::Empty => {}
-        }
-        let wait = Wait::new(vec![sync::Arm::Recv(channel.clone())]);
-        Ok(match self.block_thread(wait, main)? {
-            Fired::Arm(_, sync::Outcome::Received(value)) => Some(value),
-            _ => None,
-        })
-    }
-
     /// The calling thread waits for `wait` and gets how it ended. It
     /// counts as a task while it waits, if it does not already (a
     /// thread after [`Scheduler::enter`], a worker in a slice). `main` says that the
@@ -552,32 +703,41 @@ impl Scheduler {
     pub(crate) fn block_thread(&self, wait: Wait, main: bool) -> Result<Fired, VmError> {
         let inner = &self.inner;
         let _counted = self.enter();
+        let group = inner.group(inner.current_owner());
         // The names of spawned tasks count up from 0.
         let id = TaskId(u64::MAX - inner.next_thread_wait.fetch_add(1, Ordering::Relaxed));
         if main {
-            *inner.main_wait.lock() = Some(id);
+            let waits = MainWaits::Blocked(id);
+            *inner.main.lock() = Some(Main::of_this_thread(inner, group.clone(), waits));
         }
         let timed = wait.deadline.is_some();
         let park = Arc::new(ThreadPark {
             state: Mutex::default(),
             wake: Condvar::new(),
             task: RUNNING_TASK.with(|task| task.get()),
-            owner: current_task_owner(),
+            group: group.clone(),
         });
         let sleeper = Sleeper::Thread(park.clone());
+        // Counted as on its way into the wait until the wait has ended
+        // (`ready`: not as late as when the thread has woken), or was
+        // over at once.
+        group.parking.fetch_add(1, Ordering::SeqCst);
         let resumed = match inner.parking.park(id, sleeper, wait, || false) {
-            Some((_, resumed)) => resumed,
+            Some((_, resumed)) => {
+                group.parking.fetch_sub(1, Ordering::SeqCst);
+                resumed
+            }
             None => {
                 if timed {
                     inner.timer_armed();
                 }
-                inner.check_stuck();
+                inner.check(&group);
                 inner.wait_thread(&park)
             }
         };
         // The verdict is the program's thread's.
         let verdict = if main {
-            *inner.main_wait.lock() = None;
+            *inner.main.lock() = None;
             inner.deadlock.lock().take()
         } else {
             None
@@ -599,6 +759,54 @@ impl Scheduler {
 }
 
 impl Inner {
+    /// The owner tag of a task spawned here and now: that of the task
+    /// whose slice the thread runs, or the one set for the program.
+    fn current_owner(&self) -> u64 {
+        RUNNING_TASK_OWNER
+            .try_with(|owner| owner.get())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| self.owner.load(Ordering::SeqCst))
+    }
+
+    /// The tasks of `owner`. A thread keeps the group it asked for
+    /// last: nearly every call is for the same owner as the one
+    /// before. (A group stays for as long as its scheduler.)
+    fn group(&self, owner: u64) -> Arc<Group> {
+        thread_local! {
+            /// The scheduler ([`Inner::id`]) and the group of this
+            /// thread's last call.
+            static LAST: RefCell<Option<(u64, Arc<Group>)>> = const { RefCell::new(None) };
+        }
+        LAST.with(|last| {
+            let mut last = last.borrow_mut();
+            if let Some((scheduler, group)) = &*last
+                && *scheduler == self.id
+                && group.owner == owner
+            {
+                return group.clone();
+            }
+            let group = self.group_of(owner);
+            *last = Some((self.id, group.clone()));
+            group
+        })
+    }
+
+    /// [`Inner::group`], looked up.
+    fn group_of(&self, owner: u64) -> Arc<Group> {
+        let mut groups = self.groups.lock();
+        let group = groups.entry(owner).or_insert_with(|| {
+            Arc::new(Group {
+                owner,
+                live: AtomicUsize::new(0),
+                external: AtomicUsize::new(0),
+                parking: AtomicUsize::new(0),
+                stopped: AtomicBool::new(false),
+            })
+        });
+        group.clone()
+    }
+
     /// Put a task on the run queue.
     fn enqueue(&self, task: Task) {
         let mut queue = self.queue.lock();
@@ -698,23 +906,31 @@ impl Inner {
     /// A task has ended: it completed, failed, or was cancelled.
     fn end_task(&self, task: Task) {
         // Its frames are abandoned before it stops counting.
-        drop(task);
+        let Task {
+            vm, handle, group, ..
+        } = task;
+        drop(vm);
+        drop(handle);
         self.spawned.fetch_sub(1, Ordering::SeqCst);
-        self.live.fetch_sub(1, Ordering::SeqCst);
-        self.check_stuck();
+        group.live.fetch_sub(1, Ordering::SeqCst);
+        self.check(&group);
     }
 
     /// The wait of `sleeper` has ended.
     fn ready(&self, sleeper: Sleeper, resumed: Resumed) {
         match sleeper {
-            Sleeper::Task(mut task) => match resumed {
-                Resumed::Fired(fired) => {
-                    task.vm.woken = Some(fired);
-                    self.enqueue(task);
+            Sleeper::Task(mut task) => {
+                task.group.parking.fetch_sub(1, Ordering::SeqCst);
+                match resumed {
+                    Resumed::Fired(fired) => {
+                        task.vm.woken = Some(fired);
+                        self.enqueue(task);
+                    }
+                    Resumed::Cancelled => self.end_task(task),
                 }
-                Resumed::Cancelled => self.end_task(task),
-            },
+            }
             Sleeper::Thread(park) => {
+                park.group.parking.fetch_sub(1, Ordering::SeqCst);
                 park.state.lock().resumed = Some(resumed);
                 park.wake.notify_one();
             }
@@ -774,7 +990,7 @@ impl Inner {
             };
             if next.is_some_and(|next| next.is_zero()) {
                 if timer.fire_due(&self.parking) > 0 {
-                    self.check_stuck();
+                    self.check_all();
                 }
                 if let Some(resumed) = park.state.lock().resumed.take() {
                     return resumed;
@@ -801,7 +1017,7 @@ impl Inner {
             }
             drop(state);
             if next.is_some() && timer.fire_due(&self.parking) > 0 {
-                self.check_stuck();
+                self.check_all();
             }
         }
     }
@@ -850,49 +1066,55 @@ impl Inner {
 
     /// One slice of a task. `Some` when the slice ended in a wait that
     /// was over at once: the task has its result and can go on.
-    fn run_once(self: &Arc<Self>, task: Task) -> Option<Task> {
-        let Task { id, mut vm, handle } = task;
-        // A task that was cancelled runs no further.
-        if handle.is_cancelled() {
-            self.end_task(Task { id, vm, handle });
+    fn run_once(self: &Arc<Self>, mut task: Task) -> Option<Task> {
+        // A task that was cancelled runs no further, nor does one that
+        // was stopped with its owner's.
+        if task.handle.is_cancelled() || task.group.stopped.load(Ordering::SeqCst) {
+            self.end_task(task);
             return None;
         }
         // The tasks that this slice spawns belong to the owner of this
-        // task. See `set_task_owner`.
-        let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(handle.owner())));
+        // task. See `Vm::set_task_owner`.
+        let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(task.handle.owner())));
         let counted = COUNTED.with(|counted| counted.replace(true));
-        let running = RUNNING_TASK.with(|task| task.replace(Some(id)));
-        let result = vm.execute_slice(time_slice());
-        RUNNING_TASK.with(|task| task.set(running));
+        let running = RUNNING_TASK.with(|running| running.replace(Some(task.id)));
+        let result = task.vm.execute_slice(time_slice());
+        RUNNING_TASK.with(|was| was.set(running));
         COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
 
         match result {
-            SliceResult::Yielded => self.enqueue(Task { id, vm, handle }),
+            SliceResult::Yielded => self.enqueue(task),
             SliceResult::Completed(value) => {
-                handle.complete(Ok(value), &self.parking);
-                self.end_task(Task { id, vm, handle });
+                task.handle.complete(Ok(value), &self.parking);
+                self.end_task(task);
             }
             SliceResult::Failed(error) => {
                 // A failure that no join receives is reported when the
                 // program ends, so it is recorded here. `fail` returns
                 // false if the task had been cancelled before: its
                 // handle keeps the cancellation as its result then.
-                if handle.fail(vm.enrich_error(error), &self.parking) {
-                    record_failed_task(self, &handle);
+                let error = task.vm.enrich_error(error);
+                if task.handle.fail(error, &self.parking) {
+                    record_failed_task(self, &task.handle);
                 }
-                self.end_task(Task { id, vm, handle });
+                self.end_task(task);
             }
             SliceResult::Blocked(wait) => {
-                let wait = wait.cancel(Some(handle.cancel_flag()));
+                let wait = wait.cancel(Some(task.handle.cancel_flag()));
                 let timed = wait.deadline.is_some();
-                let cancelled = handle.clone();
-                let sleeper = Sleeper::Task(Task { id, vm, handle });
-                let back = self.parking.park(TaskId(id as u64), sleeper, wait, || {
-                    cancelled.is_cancelled()
+                let cancelled = task.handle.clone();
+                let group = task.group.clone();
+                let id = TaskId(task.id as u64);
+                // Counted as on its way into the wait until the wait
+                // has ended (`ready`), or was over at once.
+                group.parking.fetch_add(1, Ordering::SeqCst);
+                let back = self.parking.park(id, Sleeper::Task(task), wait, || {
+                    cancelled.is_cancelled() || group.stopped.load(Ordering::SeqCst)
                 });
                 match back {
                     Some((Sleeper::Task(mut task), Resumed::Fired(fired))) => {
+                        group.parking.fetch_sub(1, Ordering::SeqCst);
                         task.vm.woken = Some(fired);
                         return Some(task);
                     }
@@ -901,7 +1123,7 @@ impl Inner {
                         if timed {
                             self.timer_armed();
                         }
-                        self.check_stuck();
+                        self.check(&group);
                     }
                 }
             }
@@ -909,73 +1131,129 @@ impl Inner {
         None
     }
 
-    /// Give the verdict if the program is deadlocked: its own thread
-    /// waits, and so does every other task, with nothing pending
-    /// outside.
-    fn check_stuck(&self) {
-        // A first look without a lock. A deadlock stays one, so the
-        // event that completes it (this is called after each) sees it
-        // here too.
-        if self.external.load(Ordering::SeqCst) > 0
-            || self.parking.waiting() != self.live.load(Ordering::SeqCst)
-        {
+    /// The tasks of `group` may have come to a stop, each ended or
+    /// waiting with nothing of theirs pending. If the program's own
+    /// thread waits on them, it is told: a wait of its code fails as a
+    /// deadlock; a wait for the program's end is over.
+    ///
+    /// Called after every event that can complete such a stop: a task
+    /// of the group parks or ends, something external of it ends. The
+    /// stop stays once it is there, so the last of those events sees
+    /// it.
+    fn check(&self, group: &Group) {
+        // A first look without a lock.
+        if group.parking.load(Ordering::SeqCst) < group.live.load(Ordering::SeqCst) {
             return;
         }
-        // Without the program's thread waiting there is nobody to tell.
-        let Some(main) = *self.main_wait.lock() else {
+        let Some(main) = self.main.lock().clone() else {
             return;
         };
-        let stuck = self.parking.stuck(
-            || self.live.load(Ordering::SeqCst),
-            || self.external.load(Ordering::SeqCst),
-            |sleeper| match sleeper {
-                Sleeper::Task(task) => Who {
-                    task: Some(task.id),
-                    owner: task.handle.owner(),
-                },
-                Sleeper::Thread(park) => Who {
-                    task: park.task,
-                    owner: park.owner,
-                },
-            },
-        );
-        let Some(stuck) = stuck else {
+        if !main.counts(group.owner) {
             return;
-        };
-        let Some(own) = stuck.iter().find(|stuck| stuck.task == main) else {
-            return;
-        };
-        let what = match own.on.as_slice() {
-            [Source::Recv(_)] => "channel receive with no counterparty",
-            [Source::Send(_)] => "channel send with no counterparty",
-            [Source::Cell(_)] => "task.join with no progress possible",
-            _ => "channel select with no counterparty",
-        };
-        let mut verdict = VmError::new(format!("deadlock on main thread: {what}"));
-        for line in waits_of_the_others(&stuck, main, own.who.owner) {
-            verdict = verdict.with_help(line);
         }
-        *self.deadlock.lock() = Some(verdict);
-        self.parking.cancel(main);
+        // Stopped tasks have ended when none is left: whatever is
+        // pending for them has nobody to wake.
+        if let MainWaits::Stopping(park) = &main.waits {
+            if main.group.live.load(Ordering::SeqCst) == 0 {
+                park.state.lock().resumed = Some(Resumed::Cancelled);
+                park.wake.notify_one();
+            }
+            return;
+        }
+        if group.external.load(Ordering::SeqCst) > 0 {
+            return;
+        }
+        // The exact look: with the registry held, nothing parks or
+        // wakes, and the counts are of the same moment.
+        let stopped = self.parking.inspect(|waiting| {
+            let own: Vec<&Waiting<'_, Sleeper>> = waiting
+                .iter()
+                .filter(|waiting| main.counts(owner_of(waiting.sleeper)))
+                .collect();
+            let count = |of: fn(&Group) -> &AtomicUsize| -> usize {
+                main.groups().map(|g| of(g).load(Ordering::SeqCst)).sum()
+            };
+            // A wait that will end without anybody's doing: one with a
+            // deadline, or one on a channel that a timer will close. A
+            // timer whose channel nobody waits on wakes nobody.
+            let will_end = |waiting: &&Waiting<'_, Sleeper>| {
+                waiting.deadline.is_some() || waiting.on.iter().any(Source::closes_by_timer)
+            };
+            let stopped = own.len() == count(|g| &g.live)
+                && !own.iter().any(will_end)
+                && count(|g| &g.external) == 0;
+            stopped.then(|| match &main.waits {
+                MainWaits::Settling(_) | MainWaits::Stopping(_) => None,
+                MainWaits::Blocked(id) => Some(verdict(&own, *id)),
+            })
+        });
+        let Some(verdict) = stopped else {
+            return;
+        };
+        match main.waits {
+            MainWaits::Settling(park) | MainWaits::Stopping(park) => {
+                park.state.lock().resumed = Some(Resumed::Cancelled);
+                park.wake.notify_one();
+            }
+            MainWaits::Blocked(id) => {
+                // `None`: the program's thread is not among those that
+                // wait (its wait is over, or not yet begun).
+                if let Some(verdict) = verdict.flatten() {
+                    *self.deadlock.lock() = Some(verdict);
+                    self.parking.cancel(id);
+                }
+            }
+        }
+    }
+
+    /// [`Inner::check`] for every owner: after a timer has done
+    /// something that woke nobody.
+    fn check_all(&self) {
+        let groups: Vec<Arc<Group>> = self.groups.lock().values().cloned().collect();
+        for group in groups {
+            self.check(&group);
+        }
     }
 }
 
+/// The owner of the code that waits.
+fn owner_of(sleeper: &Sleeper) -> u64 {
+    match sleeper {
+        Sleeper::Task(task) => task.handle.owner(),
+        Sleeper::Thread(park) => park.group.owner,
+    }
+}
+
+/// The deadlock error for the program's thread, whose wait is `main`,
+/// from the waits of its owner's tasks. `None` if its own wait is not
+/// among them.
+fn verdict(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Option<VmError> {
+    let mine = own.iter().find(|waiting| waiting.task == main)?;
+    let what = match mine.on {
+        [Source::Recv(_)] => "channel receive with no counterparty",
+        [Source::Send(_)] => "channel send with no counterparty",
+        [Source::Cell(_)] => "task.join with no progress possible",
+        _ => "channel select with no counterparty",
+    };
+    let mut verdict = VmError::new(format!("deadlock on main thread: {what}"));
+    for line in waits_of_the_others(own, main) {
+        verdict = verdict.with_help(line);
+    }
+    Some(verdict)
+}
+
 /// What each parked task besides the program's own waits on, one line
-/// each, for the deadlock report. Only the tasks of `owner` are
-/// listed: in a test run, those of the test that is deadlocked, not
-/// what earlier tests left parked.
-fn waits_of_the_others(stuck: &[Stuck<Who>], main: TaskId, owner: u64) -> Vec<String> {
+/// each, for the deadlock report.
+fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<String> {
     /// How many tasks are listed.
     const LISTED: usize = 8;
-    let others: Vec<&Stuck<Who>> = stuck
-        .iter()
-        .filter(|stuck| stuck.task != main && stuck.who.owner == owner)
-        .collect();
+    let others: Vec<&&Waiting<'_, Sleeper>> =
+        own.iter().filter(|waiting| waiting.task != main).collect();
     let mut lines: Vec<String> = others
         .iter()
         .take(LISTED)
-        .map(|stuck| {
-            let on: Vec<String> = stuck
+        .map(|waiting| {
+            let on: Vec<String> = waiting
                 .on
                 .iter()
                 .map(|source| match source {
@@ -987,9 +1265,13 @@ fn waits_of_the_others(stuck: &[Stuck<Who>], main: TaskId, owner: u64) -> Vec<St
                     },
                 })
                 .collect();
-            let who = match stuck.who.task {
+            let task = match waiting.sleeper {
+                Sleeper::Task(task) => Some(task.id),
+                Sleeper::Thread(park) => park.task,
+            };
+            let who = match task {
                 Some(id) => format!("task <handle:{id}>"),
-                None => "a stream stage or handler".to_string(),
+                None => "a thread of the runtime".to_string(),
             };
             format!("{who} waits {}", on.join(", or "))
         })
@@ -1109,23 +1391,26 @@ fn timer_loop(inner: Arc<Inner>) {
         // A deadline that ended nobody's wait (a channel that closed
         // unheard) may have been the last thing pending.
         if timer.fire_due(&inner.parking) > 0 {
-            inner.check_stuck();
+            inner.check_all();
         }
     }
 }
 
 /// Failed tasks kept for the report of failures that nobody joined, up
-/// to `MAX_RECORDED_FAILURES`. Each scheduler has one; while the
-/// failures are collected (`collect_unjoined_failures`), the one of the
-/// process is used instead.
+/// to `MAX_RECORDED_FAILURES` for each owner: the many failures of one
+/// test do not push out the failure of another. Each scheduler has
+/// one; while the failures are collected (`collect_unjoined_failures`),
+/// the one of the process is used instead.
 #[derive(Default)]
 struct FailedTasks {
-    /// Handles of tasks that ended with an error. Whether a join has
-    /// received the error since, or a cancel has dismissed it, is read
-    /// from the handle at report time.
-    handles: Vec<Arc<TaskHandle>>,
+    /// Per owner tag, the handles of tasks that ended with an error,
+    /// in the order of their failures. Whether a join has received the
+    /// error since, or a cancel has dismissed it, is read from the
+    /// handle at report time.
+    handles: BTreeMap<u64, Vec<Arc<TaskHandle>>>,
     /// Per owner tag, the number of failed tasks that were not recorded
-    /// because `handles` was full of failures that nobody had joined.
+    /// because the owner's handles were full of failures that nobody
+    /// had joined.
     not_recorded: BTreeMap<u64, usize>,
 }
 
@@ -1135,18 +1420,20 @@ impl FailedTasks {
     /// joined or cancelled since they were kept); the caller drops them
     /// after it has released the lock on the record.
     fn record(&mut self, handle: &Arc<TaskHandle>) -> Vec<Arc<TaskHandle>> {
+        let owner = handle.owner();
+        let kept = self.handles.entry(owner).or_default();
         let mut handled_since = Vec::new();
-        if self.handles.len() >= MAX_RECORDED_FAILURES {
-            let (unhandled, handled): (Vec<_>, Vec<_>) = std::mem::take(&mut self.handles)
+        if kept.len() >= MAX_RECORDED_FAILURES {
+            let (unhandled, handled): (Vec<_>, Vec<_>) = std::mem::take(kept)
                 .into_iter()
                 .partition(|h| h.has_unjoined_failure());
-            self.handles = unhandled;
+            *kept = unhandled;
             handled_since = handled;
         }
-        if self.handles.len() >= MAX_RECORDED_FAILURES {
-            *self.not_recorded.entry(handle.owner()).or_insert(0) += 1;
+        if kept.len() >= MAX_RECORDED_FAILURES {
+            *self.not_recorded.entry(owner).or_insert(0) += 1;
         } else {
-            self.handles.push(handle.clone());
+            kept.push(handle.clone());
         }
         handled_since
     }
@@ -1154,7 +1441,10 @@ impl FailedTasks {
     /// Empty the record, and return what it held.
     fn take(&mut self) -> (Vec<Arc<TaskHandle>>, BTreeMap<u64, usize>) {
         (
-            std::mem::take(&mut self.handles),
+            std::mem::take(&mut self.handles)
+                .into_values()
+                .flatten()
+                .collect(),
             std::mem::take(&mut self.not_recorded),
         )
     }
@@ -1258,37 +1548,10 @@ thread_local! {
 
 // ── Who spawned a task, and the failures that nobody joined ─────────
 
-/// The owner tag of the tasks spawned outside any task. See
-/// `set_task_owner`.
-static PROGRAM_TASK_OWNER: AtomicU64 = AtomicU64::new(0);
-
 thread_local! {
     /// On a worker thread, while it runs a slice of a task: the owner
     /// tag of that task.
     static RUNNING_TASK_OWNER: Cell<Option<u64>> = const { Cell::new(None) };
-}
-
-/// Set the owner tag of the tasks spawned from now on outside any task:
-/// by the thread that runs the program, or by a thread that runs a
-/// stream stage or an HTTP handler. A task spawned by a task gets the
-/// owner of the task that spawns it, so one tag covers every task that
-/// descends from the tasks spawned under it.
-///
-/// A report of a task's failure carries the owner tag
-/// (`UnjoinedFailure::owner`). `silt test` sets one tag per test, and
-/// so charges the failure of a task to the test that spawned it. 0, the
-/// default, means no owner.
-pub fn set_task_owner(owner: u64) {
-    PROGRAM_TASK_OWNER.store(owner, Ordering::SeqCst);
-}
-
-/// The owner tag of a task spawned here and now. See `set_task_owner`.
-pub(crate) fn current_task_owner() -> u64 {
-    RUNNING_TASK_OWNER
-        .try_with(|owner| owner.get())
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| PROGRAM_TASK_OWNER.load(Ordering::SeqCst))
 }
 
 /// What the report of a failure that nobody joined advises.
@@ -1317,7 +1580,7 @@ fn collected_failures() -> &'static Mutex<FailedTasks> {
 pub struct UnjoinedFailure {
     /// The id of the task, as `<handle:N>` shows it.
     pub task_id: usize,
-    /// The owner tag the task was spawned under. See `set_task_owner`.
+    /// The owner tag the task was spawned under. See `Vm::set_task_owner`.
     pub owner: u64,
     /// The error the task ended with, as the task raised it.
     pub error: VmError,
@@ -1369,9 +1632,9 @@ impl UnjoinedFailures {
 /// run`, `silt test`, the REPL): it decides when a failure counts and
 /// renders the report with the program's files. It cannot be undone.
 ///
-/// A failure that is not taken is never reported. A task that fails
-/// after the front end's last take, one that was still running when the
-/// program ended, therefore leaves no report.
+/// A failure that is not taken is never reported: the front end takes
+/// them when the program has ended ([`Vm::settle`]), after which no
+/// task can fail.
 pub fn collect_unjoined_failures() {
     COLLECTING.store(true, Ordering::SeqCst);
 }
@@ -1406,6 +1669,7 @@ mod tests {
     use crate::{HostIo, Value};
     use parking_lot::Mutex;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
     /// An output that keeps what was printed and when.
@@ -1445,6 +1709,60 @@ mod tests {
     fn assert_deadlock(result: Result<Value, VmError>, what: &str) {
         let error = result.expect_err("the program is deadlocked");
         assert_eq!(error.message, format!("deadlock on main thread: {what}"));
+    }
+
+    /// The verdict is asked of the tasks of one owner. What another
+    /// owner left on the same scheduler (a task asleep for an hour, a
+    /// task that waits) neither delays it nor is counted in it.
+    ///
+    #[test]
+    fn a_deadlock_is_asked_of_the_tasks_of_one_owner() {
+        let compile = |source: &str| {
+            crate::session::testing::compile_str(source).expect("the program compiles")
+        };
+        let leaves_tasks = compile(
+            r#"
+import channel
+import task
+import time
+fn main() {
+  let never = channel.new(0)
+  let _asleep = task.spawn({ -> time.sleep(time.hours(1)) })
+  let _waits = task.spawn({ -> channel.receive(never) })
+  let ready = channel.new(0)
+  let _third = task.spawn({ -> channel.send(ready, 1) })
+  let _ = channel.receive(ready)
+}
+"#,
+        );
+        let deadlocked = compile(
+            r#"
+import channel
+import task
+fn main() {
+  let never = channel.new(0)
+  let _waits = task.spawn({ -> channel.receive(never) })
+  channel.receive(never)
+}
+"#,
+        );
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()));
+        vm.set_task_owner(1);
+        let first = vm.run_program(&leaves_tasks);
+        vm.set_task_owner(2);
+        let before = Instant::now();
+        let second = vm.run_program(&deadlocked);
+        let took = before.elapsed();
+        assert_eq!(first.map_err(|e| e.message), Ok(Value::Unit));
+        let error = second.expect_err("the second program is deadlocked");
+        assert_eq!(
+            error.message,
+            "deadlock on main thread: channel receive with no counterparty"
+        );
+        // Its own task is listed, the first owner's two are not.
+        assert_eq!(error.help.len(), 1, "{:?}", error.help);
+        assert!(took < Duration::from_secs(30), "the verdict took {took:?}");
     }
 
     #[test]
@@ -1524,6 +1842,39 @@ fn main() {
 }
 "#);
         assert_deadlock(result, "channel select with no counterparty");
+    }
+
+    /// 20 pipelines that are cut short (`repeat |> take(3)`, and a
+    /// `first` of a long range) leave no stage behind: every source is
+    /// stopped when nobody reads it any more, so no task is left to
+    /// use a processor or to keep a thread.
+    #[test]
+    fn a_truncated_pipeline_leaves_no_task() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import list
+import stream
+fn main() {
+  let all = 1..20 |> list.map { i ->
+    stream.repeat(i) |> stream.map({ x -> x + 1 }) |> stream.take(3) |> stream.collect
+  }
+  let _ = stream.from_range(1, 1000000) |> stream.map({ x -> x }) |> stream.first
+  list.length(all)
+}
+"#,
+        )
+        .expect("the program compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert!(matches!(result, Ok(Value::Int(20))), "got {result:?}");
+        // The stages end on the workers, a moment after the sinks.
+        let limit = Instant::now() + Duration::from_secs(10);
+        let spawned = || vm.scheduler().inner.spawned.load(Ordering::SeqCst);
+        while spawned() > 0 && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(spawned(), 0, "stages are left");
+        assert_eq!(vm.scheduler().inner.parking.waiting(), 0);
     }
 
     #[test]

@@ -1,0 +1,25 @@
+-- timeout: 10
+-- requires-feature: tcp
+-- The peer sends one line and then says nothing, with the connection
+-- open. `stream.first` takes the line and cuts the pipeline short:
+-- the read that the source had started is nobody's any more, and the
+-- program ends without waiting for the peer.
+import bytes
+import channel
+import stream
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:38473") else { panic("cannot listen") }
+  let silent = channel.new(0)
+  let _peer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(listener) else { panic("cannot accept") }
+    let _ = tcp.write(conn, bytes.from_string("hello\n"))
+    -- Never: the connection stays open.
+    channel.receive(silent)
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:38473") else { panic("cannot connect") }
+  println(stream.tcp_lines(conn) |> stream.first)
+  println("main returns")
+}

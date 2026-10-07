@@ -1,0 +1,8 @@
+-- A chunk size of zero gives a stream that is closed, not one that
+-- never ends.
+import stream
+
+fn main() {
+  println(stream.file_chunks("no-such-file", 0) |> stream.collect)
+  println(stream.from_list([1, 2, 3]) |> stream.take(0) |> stream.count)
+}

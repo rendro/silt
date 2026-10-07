@@ -12,4 +12,7 @@ fn main() {
     x * 10
   }
   println(channel.receive(out))
+  -- The rest is not wanted: without this the program would go on
+  -- until the stream has produced it.
+  channel.close(out)
 }

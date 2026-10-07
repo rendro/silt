@@ -2101,10 +2101,11 @@ fn stream(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     // value is unused (we return the channel, not a completion).
     let sql = sql.clone();
     let scheduler = vm.scheduler().clone();
-    let _op = vm.runtime.io_pool.submit(pg_timeout_err, move || {
+    let op = vm.runtime.io_pool.submit(pg_timeout_err, move || {
         do_stream_worker(target, sql, params, worker_channel, scheduler);
         Value::Unit
     });
+    op.detach();
 
     Ok(ok(Value::Channel(channel)))
 }
@@ -2308,10 +2309,11 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         // conn drops back into the pool.
         let worker_ch = worker_channel.clone();
         let scheduler = runtime.scheduler.clone();
-        let _op = runtime.io_pool.submit(pg_timeout_err, move || {
+        let op = runtime.io_pool.submit(pg_timeout_err, move || {
             do_listen_worker(conn, channel_name_owned, worker_ch, scheduler);
             Value::Unit
         });
+        op.detach();
         ok(Value::Channel(worker_channel))
     };
 

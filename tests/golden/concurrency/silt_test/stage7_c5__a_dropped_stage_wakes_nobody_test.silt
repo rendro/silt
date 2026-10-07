@@ -1,0 +1,47 @@
+-- cmd: test
+-- repeat: 200
+-- stderr-contains: PASS stage7_c5__a_dropped_stage_wakes_nobody_test.silt::test_a_leaves_a_pipeline_that_waits
+-- stderr-contains: PASS stage7_c5__a_dropped_stage_wakes_nobody_test.silt::test_b_works_for_a_while
+-- stderr-contains: PASS stage7_c5__a_dropped_stage_wakes_nobody_test.silt::test_c_runs
+-- stderr-contains: 3 tests: 3 passed, 0 failed
+-- stderr-not-contains: never joined
+-- stderr-not-contains: top-level code failed
+-- The first test leaves a stage that waits on a gate nobody feeds and
+-- a task that collects from it. Both are dropped when the test has
+-- ended. The collecting task is not woken by the drop of the stage:
+-- it fails neither its test, nor a later one, nor the file.
+import channel
+import stream
+import task
+import test
+
+fn spin(n) {
+  match n {
+    0 -> 0
+    _ -> spin(n - 1)
+  }
+}
+
+fn test_a_leaves_a_pipeline_that_waits() {
+  let gate = channel.new(0)
+  let s = stream.from_list([1, 2, 3]) |> stream.map { x ->
+    match channel.receive(gate) {
+      channel.Message(k) -> x * k
+      _ -> 0
+    }
+  }
+  let _h = task.spawn { ->
+    let xs = stream.collect(s)
+    let _ = spin(20000)
+    panic("the pipeline gave {xs}")
+  }
+  test.assert_eq(1, 1)
+}
+
+fn test_b_works_for_a_while() {
+  test.assert_eq(spin(100000), 0)
+}
+
+fn test_c_runs() {
+  test.assert_eq(1, 1)
+}

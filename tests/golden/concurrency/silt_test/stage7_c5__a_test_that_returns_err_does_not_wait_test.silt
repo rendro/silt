@@ -1,0 +1,32 @@
+-- cmd: test
+-- exit: 1
+-- timeout: 10
+-- stderr-contains: FAIL stage7_c5__a_test_that_returns_err_does_not_wait_test.silt::test_a_gives_up
+-- stderr-contains: test_a_gives_up returned Err: no luck
+-- stderr-contains: PASS stage7_c5__a_test_that_returns_err_does_not_wait_test.silt::test_b_runs
+-- stderr-contains: 2 tests: 1 passed, 1 failed
+-- A test that returns `Err` has failed, like one whose assertion
+-- fails: its ticker is stopped, and the next test runs.
+import task
+import test
+import time
+
+fn step() -> Result(Int, String) {
+  Err("no luck")
+}
+
+fn test_a_gives_up() -> Result(Int, String) {
+  let ticker = task.spawn { ->
+    loop {
+      time.sleep(time.ms(1))
+      loop()
+    }
+  }
+  let v = step()?
+  task.cancel(ticker)
+  Ok(v)
+}
+
+fn test_b_runs() {
+  test.assert_eq(1, 1)
+}

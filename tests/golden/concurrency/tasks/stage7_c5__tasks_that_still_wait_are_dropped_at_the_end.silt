@@ -1,0 +1,23 @@
+-- repeat: 20
+-- stderr-not-contains: deadlock
+-- A task that waits for something nobody will give when the program's
+-- other tasks have ended is dropped: the program ends, with status 0.
+-- To stop a task that would otherwise keep running, cancel it.
+import channel
+import list
+import task
+import time
+
+fn main() {
+  let never = channel.new(0)
+  let _waiting = 1..3 |> list.map { _ -> task.spawn({ -> channel.receive(never) }) }
+  let ticker = task.spawn({ ->
+    loop {
+      time.sleep(time.ms(1))
+      loop()
+    }
+  })
+  time.sleep(time.ms(5))
+  task.cancel(ticker)
+  println("done")
+}

@@ -15,7 +15,7 @@ pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::Runtime;
-pub(crate) use runtime::{CallFrame, ErrFactory, Frame, Native, Step};
+pub(crate) use runtime::{CallFrame, ErrFactory, Frame, IoOp, Native, Step};
 
 /// Test-only: report the worker count of the I/O pool attached to this
 /// VM. Used by the `SILT_IO_POOL_SIZE` env-knob integration tests to
@@ -79,36 +79,7 @@ use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
 use crate::value::Value;
-use runtime::{IoOp, IoPool, RegexCache};
-
-/// Start an OS thread that runs silt callbacks outside the scheduler: a
-/// stream stage or an HTTP handler. It gets the stack of a scheduler
-/// worker (see [`crate::scheduler::WORKER_STACK_BYTES`]). If the system
-/// refuses a stack that large, the thread starts on the default stack.
-pub(crate) fn spawn_callback_thread<F, T>(f: F) -> std::thread::JoinHandle<T>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    let bytes = crate::scheduler::WORKER_STACK_BYTES;
-    // `Builder::spawn` drops its closure when it fails, so the body is
-    // shared with the fallback and taken by whichever thread runs.
-    let body = Arc::new(parking_lot::Mutex::new(Some(f)));
-    let for_large = body.clone();
-    let spawned = std::thread::Builder::new()
-        .stack_size(bytes)
-        .spawn(move || {
-            let f = for_large.lock().take().expect("thread body runs once");
-            f()
-        });
-    match spawned {
-        Ok(handle) => handle,
-        Err(_) => std::thread::spawn(move || {
-            let f = body.lock().take().expect("thread body runs once");
-            f()
-        }),
-    }
-}
+use runtime::{IoPool, RegexCache};
 
 // ── VM ────────────────────────────────────────────────────────────
 
@@ -248,22 +219,19 @@ impl Vm {
         timeout_err: ErrFactory,
         op: impl FnOnce() -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
-        let IoOp { cell, in_flight } = self.runtime.io_pool.submit(timeout_err, op);
+        let op = self.runtime.io_pool.submit(timeout_err, op);
         let (deadline, source) = match self.runtime.scheduler.io_deadline(self.current_deadline) {
             Some((deadline, source)) => (Some(deadline), source),
             None => (None, crate::scheduler::DeadlineSource::Task),
         };
-        let wait = Wait::new(vec![Arm::Cell(cell.clone())]).deadline(deadline);
+        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(deadline);
+        // The frame owns the operation: when the wait is over, however
+        // it ends, the operation has no waiter and no longer counts as
+        // pending for the program (`IoOp`'s `Drop`).
         Ok(self.park(name, wait, move |_, fired| {
-            Ok(Step::Done(match (fired, cell.get()) {
+            Ok(Step::Done(match (fired, op.cell.get()) {
                 (Fired::Arm(..), Some(value)) => value.clone(),
-                // The operation goes on without a waiter: it no longer
-                // counts as pending for the program.
-                _ => {
-                    let abandoned = in_flight.lock().take();
-                    drop(abandoned);
-                    timeout_err(source.message())
-                }
+                _ => timeout_err(source.message()),
             }))
         }))
     }
@@ -332,6 +300,76 @@ impl Vm {
         let result = self.run(Arc::new(script));
         self.report_unjoined_failures();
         result
+    }
+
+    /// Wait until the program has ended. [`Vm::run_program`] and
+    /// [`Vm::call_test`] return when the program's own code (`fn main`,
+    /// the test function) has returned; the tasks it spawned may still
+    /// run. The program has ended when none of them can go on: each
+    /// has ended or waits, and no timer and no I/O operation of theirs
+    /// is pending. The tasks that still wait then are dropped, and the
+    /// failures that nobody joined are final.
+    ///
+    /// `silt run` and `silt test` call this before they give the
+    /// program's result, so a task that fails after `main` has
+    /// returned still makes the run fail, and a task that never ends
+    /// (an endless loop, a sleep) keeps the program from ending. An
+    /// embedder that wants neither does not call it, and drops the VM
+    /// to end the program where it is.
+    ///
+    /// The tasks waited for are those of the current owner
+    /// ([`Vm::set_task_owner`]).
+    pub fn settle(&mut self) {
+        self.runtime.scheduler.settle();
+        self.report_unjoined_failures();
+    }
+
+    /// Set the owner tag of the tasks that this VM's own code spawns
+    /// from now on (`fn main`, a test function; not the code of a
+    /// task). A task spawned by a task gets the owner of the task that
+    /// spawns it, so one tag covers every task that descends from the
+    /// tasks spawned under it. 0, the default, means no owner.
+    ///
+    /// The owner is whose tasks the VM asks about: a deadlock is one
+    /// of the owner's tasks, [`Vm::settle`] waits for them and no
+    /// others, and the report of a task's failure carries the tag
+    /// ([`crate::scheduler::UnjoinedFailure::owner`]). `silt test`
+    /// sets one tag per test, and so judges each test by its own
+    /// tasks. The tag is the VM's: two VMs do not see each other's.
+    pub fn set_task_owner(&mut self, owner: u64) {
+        self.runtime.scheduler.set_owner(owner, 0);
+    }
+
+    /// [`Vm::set_task_owner`], for code that runs while the tasks of
+    /// `outer` are still there and may work for it: a test, and the
+    /// tasks that the top-level code of its file left waiting. Those
+    /// count with the owner's when the VM waits: it is not deadlocked
+    /// while one of them can go on, and [`Vm::settle`] waits for them
+    /// too. They are not dropped with the owner's, and their failures
+    /// stay theirs.
+    pub fn set_task_owner_within(&mut self, owner: u64, outer: u64) {
+        self.runtime.scheduler.set_owner(owner, outer);
+    }
+
+    /// End the program whose own code has failed: stop its tasks
+    /// where they are, and return when all have ended. One that waits
+    /// is dropped; one that runs ends with the slice it is in. Nothing
+    /// is waited for, as after an error of `main` under `silt run`,
+    /// where the process ends; `silt test` calls this after a test
+    /// that failed, since the VM goes on to the next test.
+    pub fn stop_tasks(&mut self) {
+        self.runtime.scheduler.stop_tasks();
+        self.report_unjoined_failures();
+    }
+
+    /// Wait as [`Vm::settle`] does, and drop nothing: the tasks that
+    /// wait stay, for code that this VM runs next and that may wake
+    /// them. `silt test` calls this after a file's top-level code, the
+    /// tasks of which may serve the file's tests
+    /// ([`Vm::set_task_owner_within`]).
+    pub fn wait_until_idle(&mut self) {
+        self.runtime.scheduler.wait_until_idle();
+        self.report_unjoined_failures();
     }
 
     /// Call the test function `test` of the program this VM ran with

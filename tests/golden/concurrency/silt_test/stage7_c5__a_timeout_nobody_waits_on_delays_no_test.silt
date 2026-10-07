@@ -1,0 +1,38 @@
+-- cmd: test
+-- timeout: 10
+-- stderr-contains: PASS stage7_c5__a_timeout_nobody_waits_on_delays_no_test.silt::test_a_leaves_a_parked_task
+-- stderr-contains: PASS stage7_c5__a_timeout_nobody_waits_on_delays_no_test.silt::test_b_loses_no_time_to_its_own_timeout
+-- stderr-contains: PASS stage7_c5__a_timeout_nobody_waits_on_delays_no_test.silt::test_c_runs
+-- stderr-contains: 3 tests: 3 passed, 0 failed
+-- The file's top-level code makes a timeout channel of a minute and
+-- leaves a service task waiting for requests. The first test leaves
+-- a parked task; the second has a `select` whose own timeout of a
+-- minute lost its race. Nobody waits on either timeout channel, so
+-- neither the top-level code nor a test lasts for it.
+import channel
+import task
+import test
+
+let far: Channel(Int) = channel.timeout(60000)
+
+let requests: Channel(Int) = channel.new(0)
+
+let service: task.Handle(()) = task.spawn { -> channel.each(requests) { _ -> () } }
+
+fn test_a_leaves_a_parked_task() {
+  let never = channel.new(0)
+  let _parked = task.spawn { -> channel.receive(never) }
+  test.assert_eq(1, 1)
+}
+
+fn test_b_loses_no_time_to_its_own_timeout() {
+  let ch = channel.new(1)
+  channel.send(ch, 1)
+  let late = channel.timeout(60000)
+  let _ = channel.select([channel.Recv(ch), channel.Recv(late)])
+  test.assert_eq(1, 1)
+}
+
+fn test_c_runs() {
+  test.assert_eq(1, 1)
+}
