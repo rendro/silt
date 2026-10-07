@@ -144,7 +144,11 @@ fn record_fields<'a>(
 ) -> RecordFields<'a> {
     match &ty.shape {
         crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
-            RecordFields::Declared(declared.iter(), fields)
+            RecordFields::Declared {
+                declared: declared.iter(),
+                fields,
+                in_step: Some(fields.iter()),
+            }
         }
         _ => RecordFields::Named(fields.iter()),
     }
@@ -152,10 +156,14 @@ fn record_fields<'a>(
 
 /// See [`record_fields`].
 enum RecordFields<'a> {
-    Declared(
-        std::slice::Iter<'a, (String, crate::typeinfo::FieldType)>,
-        &'a std::collections::BTreeMap<String, Value>,
-    ),
+    Declared {
+        declared: std::slice::Iter<'a, (String, crate::typeinfo::FieldType)>,
+        fields: &'a std::collections::BTreeMap<String, Value>,
+        /// The fields in name order, for as long as the declaration
+        /// has gone in that order too: the next declared field is then
+        /// the next of these, and is not looked up.
+        in_step: Option<std::collections::btree_map::Iter<'a, String, Value>>,
+    },
     Named(std::collections::btree_map::Iter<'a, String, Value>),
 }
 
@@ -164,9 +172,22 @@ impl<'a> Iterator for RecordFields<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            RecordFields::Declared(declared, fields) => {
-                declared.find_map(|(name, _)| Some((name.as_str(), fields.get(name.as_str())?)))
-            }
+            RecordFields::Declared {
+                declared,
+                fields,
+                in_step,
+            } => loop {
+                let (name, _) = declared.next()?;
+                if let Some(by_name) = in_step {
+                    match by_name.next() {
+                        Some((key, value)) if key == name => return Some((name.as_str(), value)),
+                        _ => *in_step = None,
+                    }
+                }
+                if let Some(value) = fields.get(name.as_str()) {
+                    return Some((name.as_str(), value));
+                }
+            },
             RecordFields::Named(fields) => fields.next().map(|(name, v)| (name.as_str(), v)),
         }
     }
