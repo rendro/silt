@@ -46,9 +46,17 @@
 //!    the function values they are given; the sealed traits (Equal,
 //!    Compare, Hash) have no code a program writes.
 //!
-//! Not covered, by design until the formatter calls `Display` impls
-//! (stage 6 step 4a): printing and interpolation call no code a program
-//! writes.
+//! 4. A `Display` impl the formatter calls. Showing a value
+//!    (interpolation, a builtin whose signature asks `Display` of its
+//!    argument, called or handed on as a value, and `.display()` on a
+//!    type with no impl of its own) calls the written `Display` impl of
+//!    every part of the value that has one. The parts a value of a type
+//!    can have are the type's: its arguments, and, for a record or an
+//!    enum of the module, the types of its fields, and theirs. Showing
+//!    reaches the module's `Display` impl for each such type; a type of
+//!    another module among them is code outside the module; a type
+//!    variable among them is any type, so every `Display` impl of the
+//!    module and code outside it.
 //!
 //! # What a `let` needs
 //!
@@ -147,7 +155,106 @@ fn plain_value(
     }
 }
 
+/// What showing a value of the type `ty` can call: the types `ty` is
+/// made of that are another module's or unknown (`outside`), and the
+/// types of the module among them (`own`), fields included.
+struct Parts {
+    own: Vec<TypeRef>,
+    outside: bool,
+}
+
 impl TypeChecker {
+    /// See [`Parts`]. A type variable inside a declaration (`declared`)
+    /// is a parameter: what stands for it is among the type's
+    /// arguments where the type is used.
+    fn parts_shown(&self, ty: &Type, declared: bool, parts: &mut Parts) {
+        match ty {
+            Type::Var(_) | Type::Rigid(_) => parts.outside |= !declared,
+            Type::Generic(name, args) => {
+                for arg in args {
+                    self.parts_shown(arg, declared, parts);
+                }
+                let Some(def) = self.def(name.id.0) else {
+                    return;
+                };
+                if def.module.is_builtin() {
+                    return;
+                }
+                if def.module != self.module {
+                    parts.outside = true;
+                    return;
+                }
+                if parts.own.contains(name) {
+                    return;
+                }
+                parts.own.push(*name);
+                let fields: Vec<Type> = match self.tables.records.get(name) {
+                    Some(record) => record.fields.iter().map(|(_, t)| t.clone()).collect(),
+                    None => self
+                        .tables
+                        .enums
+                        .get(name)
+                        .map(|info| {
+                            info.variants
+                                .iter()
+                                .flat_map(|v| v.field_types.iter().cloned())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                };
+                for field in &fields {
+                    self.parts_shown(&self.apply(field), true, parts);
+                }
+            }
+            Type::AnonRecord { fields, tail } => {
+                parts.outside |= !declared && !matches!(tail, RowTail::Closed);
+                for field in fields.values() {
+                    self.parts_shown(field, declared, parts);
+                }
+            }
+            Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => {
+                self.parts_shown(t, declared, parts)
+            }
+            Type::Map(k, v) => {
+                self.parts_shown(k, declared, parts);
+                self.parts_shown(v, declared, parts);
+            }
+            Type::Tuple(ts) => ts.iter().for_each(|t| self.parts_shown(t, declared, parts)),
+            // (A function is not shown; nothing else has parts.)
+            _ => {}
+        }
+    }
+
+    /// The parameters of the builtin function `def` that it shows: the
+    /// ones whose type has a variable its signature asks `Display` of.
+    fn shown_params(&self, def: &crate::defs::Def) -> Vec<usize> {
+        let Some(scheme) = builtin_scheme(def) else {
+            return Vec::new();
+        };
+        let Type::Fun(params, _) = &scheme.ty else {
+            return Vec::new();
+        };
+        let display = TraitKey::builtin("Display");
+        let shown: Vec<TyVar> = scheme
+            .preds
+            .iter()
+            .filter_map(|pred| match pred {
+                Pred::Trait {
+                    tr,
+                    subject: Type::Var(v),
+                    ..
+                } if *tr == display => Some(*v),
+                _ => None,
+            })
+            .collect();
+        params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| free_vars_in(param).iter().any(|v| shown.contains(v)))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in. Reports each `let` that reaches itself.
     pub(super) fn init_order(&mut self, decls: &[Decl]) -> Vec<Span> {
@@ -159,6 +266,7 @@ impl TypeChecker {
             params: &[],
         }];
         let mut by_name: HashMap<Symbol, usize> = HashMap::new();
+        let mut bound_twice: Vec<usize> = Vec::new();
         // The methods of each impl; of each trait, whatever the impl;
         // and each trait's default methods.
         let mut of_impl: HashMap<(TraitId, TypeId, Symbol), usize> = HashMap::new();
@@ -187,7 +295,11 @@ impl TypeChecker {
                 } => {
                     let binders = collect_pattern_vars(pattern);
                     for name in &binders {
-                        by_name.insert(*name, nodes.len());
+                        // (A name bound twice is the parser's error: what
+                        // reads it is not ordered by it.)
+                        if let Some(first) = by_name.insert(*name, nodes.len()) {
+                            bound_twice.extend([first, nodes.len()]);
+                        }
                     }
                     nodes.push(Node {
                         name: match binders.first() {
@@ -263,6 +375,8 @@ impl TypeChecker {
         // that is mentioned by a name, the name (a `let` may bind
         // several).
         let own_trait = |tr: TraitId| self.own_traits.values().any(|own| own.id == tr);
+        let display = TraitKey::builtin("Display");
+        let display_method = intern("display");
         let mut named: HashMap<(usize, usize), Symbol> = HashMap::new();
         let mut edges: Vec<Vec<usize>> = Vec::with_capacity(nodes.len());
         for (from, node) in nodes.iter().enumerate() {
@@ -270,9 +384,10 @@ impl TypeChecker {
                 edges.push(callable_outside.clone());
                 continue;
             };
-            let mut targets: Vec<usize> = Vec::new();
+            let targets: std::cell::RefCell<Vec<usize>> = std::cell::RefCell::new(Vec::new());
             let mut note = |mention: Mention| {
-                let mut add = |target: usize| {
+                let add = |target: usize| {
+                    let mut targets = targets.borrow_mut();
                     if !targets.contains(&target) {
                         targets.push(target);
                     }
@@ -298,6 +413,58 @@ impl TypeChecker {
                         add(OUTSIDE);
                     }
                 }
+                // A value that is shown: what its parts' `Display` impls
+                // are.
+                let show = |ty: &Type| {
+                    let mut parts = Parts {
+                        own: Vec::new(),
+                        outside: false,
+                    };
+                    self.parts_shown(&self.apply(ty), false, &mut parts);
+                    for ty in parts.own {
+                        let ty = canonical_head(&self.tables.resolver, ty);
+                        if let Some(&target) = of_impl.get(&(display.id, ty.id, display_method)) {
+                            add(target);
+                        }
+                    }
+                    if parts.outside {
+                        for &target in of_trait
+                            .get(&(display.id, display_method))
+                            .into_iter()
+                            .flatten()
+                        {
+                            add(target);
+                        }
+                        add(OUTSIDE);
+                    }
+                };
+                match mention.expr.map(|expr| (&expr.kind, expr)) {
+                    Some((ExprKind::StringInterp(parts), _)) => {
+                        for part in parts {
+                            if let StringPart::Expr(shown) = part
+                                && let Some(ty) = &shown.ty
+                            {
+                                show(ty);
+                            }
+                        }
+                    }
+                    // A builtin that shows an argument, called or not:
+                    // the type it is used at says what it is given.
+                    Some((ExprKind::Ident(_) | ExprKind::FieldAccess(..), expr)) => {
+                        if let Some(crate::defs::Res::Def(id)) = expr.res
+                            && let Some(def) = self.def(id)
+                            && def.module.is_builtin()
+                            && let Some(Type::Fun(params, _)) = &expr.ty
+                        {
+                            for i in self.shown_params(&def) {
+                                if let Some(param) = params.get(i) {
+                                    show(param);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
                 let Some(Expr {
                     kind: ExprKind::FieldAccess(recv, method, _),
                     sel,
@@ -312,7 +479,7 @@ impl TypeChecker {
                 // (but a builtin trait's method on a value, of the type
                 // `of`, that is builtin through and through: that
                 // calls nothing a program writes).
-                let mut one_impl = |tr: TraitId, ty: TypeId, of: Option<&Type>| match of_impl
+                let one_impl = |tr: TraitId, ty: TypeId, of: Option<&Type>| match of_impl
                     .get(&(tr, ty, *method))
                     .or_else(|| defaults.get(&(tr, *method)))
                 {
@@ -339,9 +506,16 @@ impl TypeChecker {
                             add(OUTSIDE);
                         }
                     }
-                    // (The VM's own method of a builtin trait: it calls
-                    // no code a program writes.)
-                    Some(Selection::Native { .. }) => {}
+                    // The VM's own method of a builtin trait: `display`
+                    // shows the receiver; the others call no code a
+                    // program writes.
+                    Some(Selection::Native { tr }) => {
+                        if *tr == display.id
+                            && let Some(ty) = &recv.ty
+                        {
+                            show(ty);
+                        }
+                    }
                     Some(Selection::Field | Selection::FieldCall) => {}
                     // `Type.method`: that impl's method.
                     None => {
@@ -383,7 +557,7 @@ impl TypeChecker {
                 references_in_pattern(&param.pattern, &mut note);
             }
             references_in_expr(body, &mut note);
-            edges.push(targets);
+            edges.push(targets.into_inner());
         }
 
         // The `let`s each `let` needs, with the way to each (the
@@ -501,6 +675,9 @@ impl TypeChecker {
             names.insert(0, own.clone());
             // (Each `let` on the way is in the ring.)
             in_ring.extend(way.iter().filter(|&&n| nodes[n].let_decl.is_some()));
+            if way.iter().any(|n| bound_twice.contains(n)) {
+                continue;
+            }
             self.errors.push(
                 Diagnostic::error(
                     Code::InitCycle,

@@ -674,11 +674,13 @@ impl Vm {
             Instr::GetGlobal { slot } => {
                 let value = match self.globals.get(slot as usize) {
                     Some(Some(value)) => value.clone(),
-                    // A top-level `let` initializer that calls code which
-                    // reads a `let` initialized after it.
+                    // (The checker orders the top-level `let`s so that
+                    // each is set before anything can read it, and the
+                    // definitions are set before any `let` runs: no
+                    // checked program comes here.)
                     _ => {
-                        return Err(VmError::new(format!(
-                            "'{}' is used before its top-level definition has run",
+                        return Err(VmError::type_confusion(format!(
+                            "the global '{}' is read before it is set",
                             self.global_slots.name(slot)
                         )));
                     }
