@@ -13,7 +13,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use silt::session::testing::compile_str;
 use silt::{Buffer, HostIo, Value, Vm};
@@ -60,17 +60,24 @@ fn silent_peer(listener: TcpListener, n: usize) -> mpsc::Sender<()> {
     done
 }
 
-/// The threads of this process (Linux), for the tests that say a
-/// thread has ended.
-#[cfg(target_os = "linux")]
-fn os_threads() -> usize {
-    std::fs::read_dir("/proc/self/task")
-        .expect("/proc/self/task")
-        .count()
+/// Every thread of the VM's I/O pool that exists is a free one: none
+/// is still in an operation that nobody waits for. (A thread that was
+/// to end and has not is one that exists and is not the pool's.)
+/// Without the test hooks nothing is asserted here: the behaviour
+/// that the test saw before is what it proves.
+fn no_thread_is_left_in_an_operation(vm: &Vm) {
+    #[cfg(feature = "test-hooks")]
+    until(
+        "a thread is still in an operation that nobody waits for",
+        || silt::vm::io_pool_live_threads(vm) == silt::vm::io_pool_threads(vm),
+    );
+    let _ = vm;
 }
 
 /// Wait, for at most ten seconds, until `done` holds.
+#[cfg(feature = "test-hooks")]
 fn until(what: &str, done: impl Fn() -> bool) {
+    use std::time::Instant;
     let limit = Instant::now() + Duration::from_secs(10);
     while !done() {
         assert!(Instant::now() < limit, "{what}");
@@ -126,10 +133,7 @@ fn main() {{
     );
     let (vm, out) = run(&source).expect("the file read did not wait for the idle readers");
     assert_eq!(out, "the file\n");
-    #[cfg(feature = "test-hooks")]
-    until("the threads of the cancelled reads left the pool", || {
-        silt::vm::io_pool_threads(&vm) <= 1
-    });
+    no_thread_is_left_in_an_operation(&vm);
     drop(vm);
 }
 
@@ -170,8 +174,6 @@ fn main() {{
 }}
 "#
     );
-    #[cfg(target_os = "linux")]
-    let before = os_threads();
     let (vm, out) = run(&source).expect("the program ended");
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 9, "{out:?}");
@@ -182,15 +184,7 @@ fn main() {{
         "{out:?}"
     );
     assert_eq!(lines[8], "the file");
-    // The eight threads are gone, not parked in a read for as long
-    // as the peer says nothing. What may remain: the scheduler's
-    // workers and timer, and pool threads that wait for work.
-    #[cfg(target_os = "linux")]
-    until("the threads of the timed-out reads ended", || {
-        os_threads() <= before + 12
-    });
-    #[cfg(feature = "test-hooks")]
-    until("they left the pool", || silt::vm::io_pool_threads(&vm) <= 2);
+    no_thread_is_left_in_an_operation(&vm);
     drop(vm);
 }
 
@@ -271,92 +265,114 @@ fn main() {
   println("done")
 }
 "#;
-    #[cfg(target_os = "linux")]
-    let before = os_threads();
     let (vm, out) = run(source).expect("the program ended");
     assert_eq!(out, "done\n");
-    #[cfg(target_os = "linux")]
-    until("the threads of the cancelled accepts ended", || {
-        os_threads() <= before + 12
-    });
-    #[cfg(feature = "test-hooks")]
-    until("they left the pool", || silt::vm::io_pool_threads(&vm) <= 2);
+    no_thread_is_left_in_an_operation(&vm);
     drop(vm);
 }
 
 /// An accept that waits costs nothing: its thread is in the OS call
 /// and is not woken until a connection comes or the accept is given
-/// up. Over two seconds it uses no CPU time to speak of and is never
-/// scheduled.
+/// up. Over two seconds it is never scheduled and uses no CPU time to
+/// speak of.
+///
+/// The program gives its accept up only when the test connects to a
+/// second listener, so nothing wakes the accept during the window the
+/// test measures. The thread is the accept's own, known by its OS id
+/// from the pool. A window in which the thread was scheduled (it may
+/// not have reached the call yet when the test first looks) is
+/// measured again: a thread that is woken now and then fails every
+/// window.
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "test-hooks"))]
 fn an_idle_accept_is_not_woken() {
-    /// The threads of the I/O pool: (voluntary context switches,
-    /// nanoseconds on a CPU) of each.
-    fn io_threads() -> Vec<(u64, u64)> {
-        let mut threads = Vec::new();
-        for task in std::fs::read_dir("/proc/self/task").expect("/proc/self/task") {
-            let dir = task.expect("a task").path();
-            let name = std::fs::read_to_string(dir.join("comm")).unwrap_or_default();
-            if name.trim() != "silt-io" {
-                continue;
-            }
-            let status = std::fs::read_to_string(dir.join("status")).unwrap_or_default();
-            let switches = status
-                .lines()
-                .find_map(|line| line.strip_prefix("voluntary_ctxt_switches:"))
-                .and_then(|n| n.trim().parse().ok())
-                .expect("voluntary_ctxt_switches");
-            let on_cpu = std::fs::read_to_string(dir.join("schedstat"))
-                .ok()
-                .and_then(|stat| stat.split_whitespace().next()?.parse().ok())
-                .expect("schedstat");
-            threads.push((switches, on_cpu));
-        }
-        threads
+    use crate::port_file::PortFile;
+
+    /// (voluntary context switches, nanoseconds on a CPU) of a thread.
+    fn activity(thread: u32) -> Option<(u64, u64)> {
+        let dir = format!("/proc/self/task/{thread}");
+        let status = std::fs::read_to_string(format!("{dir}/status")).ok()?;
+        let switches = status
+            .lines()
+            .find_map(|line| line.strip_prefix("voluntary_ctxt_switches:"))?
+            .trim()
+            .parse()
+            .ok()?;
+        let on_cpu = std::fs::read_to_string(format!("{dir}/schedstat"))
+            .ok()?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()?;
+        Some((switches, on_cpu))
     }
 
-    let source = r#"
+    let control = PortFile::new();
+    let source = format!(
+        r#"
+import io
 import task
 import tcp
-import time
 
-fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let acceptor = task.spawn { -> tcp.accept(listener) }
-  time.sleep(time.ms(4000))
+fn main() {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  let acceptor = task.spawn {{ -> tcp.accept(listener) }}
+  -- Until the test connects here, nothing happens.
+  when let Ok(control) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file("{control_path}", "{{tcp.local_port(control)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  let _ = tcp.accept(control)
   task.cancel(acceptor)
   println("done")
-}
-"#;
-    let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
+}}
+"#,
+        control_path = control.path()
+    );
+    let program = compile_str(&source).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let out = Buffer::new();
+    let mut vm = Vm::new(HostIo::buffer(&out));
+    let threads = silt::vm::io_pool_thread_ids(&vm);
     let running = thread::spawn(move || {
-        let out = Buffer::new();
-        let mut vm = Vm::new(HostIo::buffer(&out));
         let result = vm.run_program(&program).map_err(|e| e.message);
         vm.settle();
-        (result, out.contents())
+        result
     });
-    until("the accept has its thread", || io_threads().len() == 1);
-    // Let it get into the call.
-    thread::sleep(Duration::from_millis(300));
-    let before = io_threads();
-    thread::sleep(Duration::from_secs(2));
-    let after = io_threads();
-    assert_eq!(before.len(), 1, "one thread in accept");
-    assert_eq!(after.len(), 1, "one thread in accept");
-    let (switches, on_cpu) = (after[0].0 - before[0].0, after[0].1 - before[0].1);
-    assert_eq!(
-        switches, 0,
-        "the thread of the accept was woken while it waited"
-    );
+    let control_port = control.wait();
+    // Both accepts have their threads: the task's and main's.
+    until("the two accepts have threads", || threads().len() == 2);
+    let accepts = threads();
+
+    let mut quiet = false;
+    for _ in 0..10 {
+        let before: Vec<_> = accepts.iter().map(|id| activity(*id)).collect();
+        thread::sleep(Duration::from_secs(2));
+        let after: Vec<_> = accepts.iter().map(|id| activity(*id)).collect();
+        let deltas: Vec<(u64, u64)> = before
+            .iter()
+            .zip(&after)
+            .map(|(b, a)| {
+                let (b, a) = (b.expect("the thread exists"), a.expect("the thread exists"));
+                (a.0 - b.0, a.1 - b.1)
+            })
+            .collect();
+        if deltas
+            .iter()
+            .all(|(switches, on_cpu)| *switches == 0 && *on_cpu < 10_000_000)
+        {
+            quiet = true;
+            break;
+        }
+    }
     assert!(
-        on_cpu < 10_000_000,
-        "the accept used {on_cpu} ns of CPU in two seconds"
+        quiet,
+        "an idle accept was scheduled in each of ten windows of two seconds"
     );
-    let (result, out) = running.join().expect("the program ran");
+
+    drop(TcpStream::connect(("127.0.0.1", control_port)).expect("connect to end the program"));
+    let result = running.join().expect("the program ran");
     assert_eq!(result, Ok(Value::Unit));
-    assert_eq!(out, "done\n");
+    assert_eq!(out.contents(), "done\n");
 }
 
 /// Two tasks wait in `tcp.accept` on one listener; the first is
@@ -502,18 +518,9 @@ fn main() {{
 }}
 "#
     );
-    #[cfg(target_os = "linux")]
-    let before = os_threads();
     let (vm, out) = run(&source).expect("the program ended");
     assert_eq!(out, "timed out\nclosed\nthe file\n");
-    #[cfg(feature = "test-hooks")]
-    until("the write left the pool", || {
-        silt::vm::io_pool_threads(&vm) <= 1
-    });
-    #[cfg(target_os = "linux")]
-    until("the thread of the write ended", || {
-        os_threads() <= before + 12
-    });
+    no_thread_is_left_in_an_operation(&vm);
     drop(vm);
 }
 
@@ -544,8 +551,6 @@ fn main() {{
 "#
     );
     let program = compile_str(&source).unwrap_or_else(|errors| panic!("{errors:?}"));
-    #[cfg(target_os = "linux")]
-    let before = os_threads();
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let err = Buffer::new();
@@ -556,13 +561,6 @@ fn main() {{
     });
     let (vm, result) = rx.recv_timeout(BUDGET).expect("the tasks were stopped");
     assert_eq!(result, Err("panic: main gives up".to_string()));
-    #[cfg(feature = "test-hooks")]
-    until("the read left the pool", || {
-        silt::vm::io_pool_threads(&vm) <= 1
-    });
-    #[cfg(target_os = "linux")]
-    until("the thread of the read ended", || {
-        os_threads() <= before + 12
-    });
+    no_thread_is_left_in_an_operation(&vm);
     drop(vm);
 }

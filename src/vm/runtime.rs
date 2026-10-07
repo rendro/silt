@@ -245,6 +245,10 @@ struct PoolShared {
     idle: std::time::Duration,
     /// The threads that exist: started and not yet returned.
     live: std::sync::atomic::AtomicUsize,
+    /// Their ids as the OS knows them, for tests that look a thread
+    /// up in `/proc`.
+    #[cfg(all(target_os = "linux", any(test, feature = "test-hooks")))]
+    os_ids: parking_lot::Mutex<Vec<u32>>,
 }
 
 struct PoolState {
@@ -277,6 +281,20 @@ impl PoolShared {
             }
         }
         let _live = Live(&self.live);
+        #[cfg(all(target_os = "linux", any(test, feature = "test-hooks")))]
+        let _known = {
+            /// The thread is in `os_ids` until this is dropped.
+            struct Known<'a>(&'a parking_lot::Mutex<Vec<u32>>, u32);
+            impl Drop for Known<'_> {
+                fn drop(&mut self) {
+                    self.0.lock().retain(|id| *id != self.1);
+                }
+            }
+            // SAFETY: `gettid` takes no arguments and cannot fail.
+            let id = unsafe { libc::gettid() } as u32;
+            self.os_ids.lock().push(id);
+            Known(&self.os_ids, id)
+        };
         let mut state = self.state.lock();
         loop {
             if state.stopped {
@@ -343,6 +361,8 @@ impl IoPool {
                 max,
                 idle,
                 live: std::sync::atomic::AtomicUsize::new(0),
+                #[cfg(all(target_os = "linux", any(test, feature = "test-hooks")))]
+                os_ids: parking_lot::Mutex::new(Vec::new()),
             }),
         }
     }
@@ -372,6 +392,14 @@ impl IoPool {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn live_threads(&self) -> usize {
         self.shared.live.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Something that can be asked for the OS ids of the pool's
+    /// threads from another thread than the one that runs the VM.
+    #[cfg(all(target_os = "linux", feature = "test-hooks"))]
+    pub(crate) fn thread_ids(&self) -> impl Fn() -> Vec<u32> + Send + 'static {
+        let shared = self.shared.clone();
+        move || shared.os_ids.lock().clone()
     }
 
     /// Run the blocking operation `f` on a thread of the pool. Its
