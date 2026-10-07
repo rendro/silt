@@ -591,6 +591,12 @@ impl ModuleGraph {
         let (_, name, span) = import;
         let text = match overlays.get(&canonical_key(&target.path)) {
             Some(text) => Ok(text.clone()),
+            // A path no file can have (an editor's document that is not
+            // a file, see the language server's `uri_to_path`) is not
+            // looked for on disk.
+            None if target.path.to_string_lossy().contains('\0') => {
+                Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+            }
             None => std::fs::read_to_string(&target.path),
         };
         match text {

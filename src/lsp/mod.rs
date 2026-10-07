@@ -518,7 +518,34 @@ pub fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
             decoded
         }
     };
-    Some(std::path::PathBuf::from(decoded))
+    Some(without_dot_segments(std::path::Path::new(&decoded)))
+}
+
+/// `path` without its `.` and `..` segments, each `..` taking the
+/// segment in front of it: `/x/../a.silt` and `/a.silt` name one file,
+/// and a document is found by its path.
+fn without_dot_segments(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Nothing is above the root; a relative path keeps a
+                // leading `..`.
+                let last = out.components().next_back();
+                match last {
+                    Some(Component::Normal(_)) => {
+                        out.pop();
+                    }
+                    Some(Component::RootDir | Component::Prefix(_)) => {}
+                    Some(Component::ParentDir | Component::CurDir) | None => out.push(".."),
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

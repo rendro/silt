@@ -172,6 +172,65 @@ fn an_importer_is_checked_again_when_the_imported_document_opens_or_closes() {
     client.shutdown();
 }
 
+/// Documents that are no files (`untitled:` buffers) see each other by
+/// their names, and nothing on disk: an import of a sibling that is not
+/// open is a module that is not there, whatever the server's working
+/// directory holds.
+#[test]
+fn documents_that_are_no_files_import_each_other_and_read_no_disk() {
+    let mut client = LspClient::spawn();
+    let errors = |published: &Value| -> Vec<String> {
+        published
+            .pointer("/params/diagnostics")
+            .and_then(|d| d.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|d| d.get("message").and_then(|m| m.as_str()).map(String::from))
+            .collect()
+    };
+    client.did_open_and_wait("untitled:nofile_a.silt", "pub fn pinger(x) { x }\n");
+    let importer = client.did_open_and_wait(
+        "untitled:nofile_b.silt",
+        "import nofile_a\nfn other() { nofile_a.pinger(2) }\n",
+    );
+    assert_eq!(errors(&importer), Vec::<String>::new());
+    // `Cargo.toml` is in the server's working directory; a module is a
+    // `.silt` file, and `tests` is a directory there: neither is read.
+    let alone = client.did_open_and_wait(
+        "untitled:nofile_c.silt",
+        "import nofile_missing\nfn other() { nofile_missing.f() }\n",
+    );
+    assert!(
+        errors(&alone)
+            .iter()
+            .any(|m| m.contains("cannot load module 'nofile_missing': no such file")),
+        "got {alone}"
+    );
+    client.shutdown();
+}
+
+/// `/x/../a.silt` and `/a.silt` are one document's path.
+#[test]
+fn dot_segments_of_a_file_uri_are_resolved() {
+    let mut client = LspClient::spawn();
+    let dir = format!("file:///silt_no_such_dir_{}_dots", std::process::id());
+    client.did_open_and_wait(
+        &format!("{dir}/sub/../dots_a.silt"),
+        "pub fn pinger(x) { x }\n",
+    );
+    let importer = client.did_open_and_wait(
+        &format!("{dir}/./dots_b.silt"),
+        "import dots_a\nfn other() { dots_a.pinger(2) }\n",
+    );
+    let diagnostics = importer
+        .pointer("/params/diagnostics")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(diagnostics.is_empty(), "got {importer}");
+    client.shutdown();
+}
+
 #[test]
 fn rename_returns_workspace_edit() {
     let mut client = LspClient::spawn();
