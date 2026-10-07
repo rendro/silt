@@ -18,39 +18,50 @@ type Result<T> = std::result::Result<T, Diagnostic>;
 /// behind the last of them; `starts_file`: nothing stands in front of
 /// the first comment.
 ///
-/// It is the last run of comments that each stand on lines of their own
-/// (a `--` line, or a `{- -}` block with nothing in front of it and
-/// behind it on its lines), with no empty line between two of them or
-/// between the last one and the declaration. Their texts are joined
-/// line by line: a `--` comment without the `--` and one space, a block
-/// without its delimiters and without an empty first and last line.
-/// The indentation the lines share is taken off.
+/// It is the last block of comments above the declaration's line: the
+/// block starts at a comment that starts a line, holds the comments that
+/// follow it on its line and on the next lines without an empty line
+/// between, and ends one line break above the declaration's line. A
+/// comment on the declaration's own line (`{- note -} fn f()`) is not
+/// part of it and does not cut it off. Their texts are joined line by
+/// line: a `--` comment without the `--` and one space, a block without
+/// its delimiters and without an empty first and last line; two
+/// comments on one line give two lines, as they do once `silt fmt` has
+/// put each on a line of its own. The indentation the lines share is
+/// taken off.
 fn doc_of(
     comments: &[Comment],
     newlines_before: u8,
     starts_file: bool,
     source: &str,
 ) -> Option<String> {
-    if comments.is_empty() || newlines_before != 1 {
-        return None;
-    }
     // How many line breaks stand behind comment `k`.
     let breaks_behind = |k: usize| match comments.get(k + 1) {
         Some(next) => next.newlines_before,
         None => newlines_before,
     };
-    let on_own_lines = |k: usize| {
-        (comments[k].newlines_before > 0 || (k == 0 && starts_file)) && breaks_behind(k) > 0
-    };
-    let mut first = comments.len();
-    while first > 0 && on_own_lines(first - 1) && breaks_behind(first - 1) == 1 {
+    // The comments on the declaration's own line are not documentation.
+    let mut end = comments.len();
+    while end > 0 && breaks_behind(end - 1) == 0 {
+        end -= 1;
+    }
+    if end == 0 || breaks_behind(end - 1) != 1 {
+        return None;
+    }
+    let mut first = end - 1;
+    while first > 0 && breaks_behind(first - 1) <= 1 {
         first -= 1;
     }
-    if first == comments.len() {
+    // A comment behind code on its line belongs to that code.
+    let starts_line = |k: usize| comments[k].newlines_before > 0 || (k == 0 && starts_file);
+    while first < end && !starts_line(first) {
+        first += 1;
+    }
+    if first == end {
         return None;
     }
     let mut lines: Vec<&str> = Vec::new();
-    for comment in &comments[first..] {
+    for comment in &comments[first..end] {
         let text = comment.text(source);
         match comment.kind {
             CommentKind::Line => {
