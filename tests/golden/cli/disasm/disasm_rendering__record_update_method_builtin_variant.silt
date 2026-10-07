@@ -1,17 +1,14 @@
 -- cmd: disasm
--- The operand rendering of the opcodes main compiles to. The prelude
--- chunks never emit RecordUpdate or CallBuiltin, so these needles match
--- main only. A method of a known impl (`q.display()`, the derived
--- Display of Point) is a call of the method's global; inside it, the
--- field's `display` is found by the value's type (CallMethod).
+-- The operand rendering of the opcodes main compiles to. `q.display()`
+-- on a record with no Display impl of its own is the VM's own method
+-- of the trait (CallMethod).
 -- (Variant construction compiles to the constructor as a constant + Call.)
 -- stdout-contains: == main (arity=0, upvalues=0) ==
 -- stdout-contains: RecordUpdate         1
 -- stdout-contains: |  field 3     ; "x"
--- stdout-contains: ; Point.display
--- stdout-contains: CallMethod           2     1   ; "display" of Display
--- stdout-contains: CallBuiltin          8     1   ; "string.length"
--- stdout-contains: Constant             9     ; <constructor:Circle>
+-- stdout-contains: CallMethod           7     1   ; "display" of Display
+-- stdout-contains: CallBuiltin          9     1   ; "string.length"
+-- stdout-contains: Constant             10    ; <constructor:Circle>
 import string
 
 type Point { x: Int, y: Int }
