@@ -58,20 +58,14 @@ pub struct Globals {
     names: Vec<String>,
     defs: HashMap<DefId, u16>,
     methods: HashMap<(TraitId, TypeId), HashMap<String, u16>>,
-    /// The methods of each type whatever their trait, for a call whose
-    /// trait is not known where it is compiled (a call in a polymorphic
-    /// function with no bound for the receiver), with the trait of each.
-    /// `None` where two traits provide the method for the type: such a
-    /// call is ambiguous.
-    by_type: HashMap<TypeId, HashMap<String, Option<(u16, TraitId)>>>,
+    /// The default methods of each trait: the body the trait writes,
+    /// compiled once. An impl that leaves the method out has this slot
+    /// as its method's.
+    defaults: HashMap<(TraitId, String), u16>,
     /// The traits a `CallMethod` names, by the index its operand holds,
     /// each with its name.
     traits: Vec<(TraitId, String)>,
 }
-
-/// The `CallMethod` trait operand of a call whose trait is not known
-/// where it is compiled.
-pub const NO_TRAIT: u16 = u16::MAX;
 
 impl Globals {
     /// The number of slots.
@@ -88,40 +82,21 @@ impl Globals {
         self.defs.get(&def).copied()
     }
 
-    /// The slot of the method `method` of the impl of the trait `t` (any
-    /// trait's, for `None`) for the type `ty`.
-    pub fn method(&self, t: Option<TraitId>, ty: TypeId, method: &str) -> Option<u16> {
-        match t {
-            Some(t) => self.methods.get(&(t, ty))?.get(method).copied(),
-            None => self
-                .by_type
-                .get(&ty)?
-                .get(method)
-                .copied()
-                .flatten()
-                .map(|(slot, _)| slot),
-        }
+    /// The slot of the method `method` of the impl of the trait `t` for
+    /// the type `ty`.
+    pub fn method(&self, t: TraitId, ty: TypeId, method: &str) -> Option<u16> {
+        self.methods.get(&(t, ty))?.get(method).copied()
     }
 
-    /// Whether a call of `method` on a value of the type `ty` that names
-    /// no trait is ambiguous: two traits' impls provide the method for
-    /// the type, or one trait's impl and, for a type whose builtin trait
-    /// methods are native (`native`: `Int`, `List`, ...), the builtin
-    /// trait the method is of (`display` of Display).
-    pub fn ambiguous(&self, ty: TypeId, method: &str, native: bool) -> bool {
-        match self.by_type.get(&ty).and_then(|m| m.get(method)) {
-            Some(None) => true,
-            Some(Some((_, t))) => {
-                native && crate::defs::builtin_trait_of_method(method).is_some_and(|b| b != *t)
-            }
-            None => false,
-        }
+    /// The number of traits a `CallMethod` operand can name.
+    pub fn trait_count(&self) -> usize {
+        self.traits.len()
     }
 
     /// [`Globals::method`] for a `CallMethod` trait operand.
     pub fn call_method(&self, trait_index: u16, ty: TypeId, method: &str) -> Option<u16> {
-        let t = self.traits.get(trait_index as usize).map(|(t, _)| *t);
-        self.method(t, ty, method)
+        let (t, _) = self.traits.get(trait_index as usize)?;
+        self.method(*t, ty, method)
     }
 
     /// The name of slot `slot`.
@@ -137,14 +112,12 @@ impl Globals {
     }
 
     /// The `CallMethod` operand of the trait `t`, named `name`; `None`
-    /// when 65,535 traits are named already.
+    /// when 65,536 traits are named already.
     pub fn trait_index(&mut self, t: TraitId, name: String) -> Option<u16> {
         if let Some(k) = self.traits.iter().position(|(known, _)| *known == t) {
             return u16::try_from(k).ok();
         }
-        let k = u16::try_from(self.traits.len())
-            .ok()
-            .filter(|k| *k != NO_TRAIT)?;
+        let k = u16::try_from(self.traits.len()).ok()?;
         self.traits.push((t, name));
         Some(k)
     }
@@ -167,6 +140,48 @@ impl Globals {
         Some(slot)
     }
 
+    /// The slot of the default method `method` of the trait `t`.
+    pub fn default_method(&self, t: TraitId, method: &str) -> Option<u16> {
+        self.defaults.get(&(t, method.to_string())).copied()
+    }
+
+    /// The default methods of the trait `t`, each with its slot, by
+    /// name: whatever declared the trait (the program, a module it
+    /// imports, an earlier REPL entry, the builtins).
+    pub fn default_methods(&self, t: TraitId) -> Vec<(String, u16)> {
+        let mut methods: Vec<(String, u16)> = self
+            .defaults
+            .iter()
+            .filter(|((of, _), _)| *of == t)
+            .map(|((_, method), slot)| (method.clone(), *slot))
+            .collect();
+        methods.sort();
+        methods
+    }
+
+    /// The slot of the default method `method` of the trait `t`, named
+    /// `name`: a new one the first time.
+    pub fn add_default_method(&mut self, t: TraitId, method: &str, name: String) -> Option<u16> {
+        if let Some(slot) = self.default_method(t, method) {
+            return Some(slot);
+        }
+        let slot = self.add(name)?;
+        self.defaults.insert((t, method.to_string()), slot);
+        Some(slot)
+    }
+
+    /// The impl of the trait `t` for the type `ty` leaves `method` out:
+    /// its method is the trait's default, in `slot`.
+    pub fn default_for(&mut self, t: TraitId, ty: TypeId, method: &str, slot: u16) {
+        if self.method(t, ty, method).is_some() {
+            return;
+        }
+        self.methods
+            .entry((t, ty))
+            .or_default()
+            .insert(method.to_string(), slot);
+    }
+
     /// The slot of the method `method` of the impl of the trait `t` for
     /// the type `ty`, named `name`: a new one the first time. A later
     /// impl of the trait for the type (a REPL entry's) takes the slot
@@ -178,7 +193,7 @@ impl Globals {
         method: &str,
         name: String,
     ) -> Option<u16> {
-        if let Some(slot) = self.method(Some(t), ty, method) {
+        if let Some(slot) = self.method(t, ty, method) {
             return Some(slot);
         }
         let slot = self.add(name)?;
@@ -186,12 +201,6 @@ impl Globals {
             .entry((t, ty))
             .or_default()
             .insert(method.to_string(), slot);
-        self.by_type
-            .entry(ty)
-            .or_default()
-            .entry(method.to_string())
-            .and_modify(|known| *known = None)
-            .or_insert(Some((slot, t)));
         Some(slot)
     }
 }

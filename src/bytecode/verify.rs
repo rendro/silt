@@ -56,6 +56,49 @@ impl fmt::Display for VerifyError {
     }
 }
 
+/// Check what the code of `function` names of the program's globals:
+/// each global slot is one of `globals`' slots, and the trait of each
+/// method call one of its traits. ([`verify`] checks a function alone,
+/// when it is made; this is checked where the globals are known.)
+pub fn verify_globals(function: &Function, globals: &super::Globals) -> Result<(), VerifyError> {
+    let code = function.chunk().code();
+    let mut at = 0;
+    while at < code.len() {
+        let Some((instr, next)) = decode(code, at) else {
+            return Err(VerifyError {
+                at,
+                what: "no instruction is encoded here".into(),
+            });
+        };
+        let what = match instr {
+            Instr::GetGlobal { slot } | Instr::SetGlobal { slot }
+                if usize::from(slot) >= globals.len() =>
+            {
+                Some(format!(
+                    "`{}` names global {slot} of {}",
+                    instr.op().name(),
+                    globals.len()
+                ))
+            }
+            Instr::CallMethod { of, .. } | Instr::TailCallMethod { of, .. }
+                if usize::from(of) >= globals.trait_count() =>
+            {
+                Some(format!(
+                    "`{}` names trait {of} of {}",
+                    instr.op().name(),
+                    globals.trait_count()
+                ))
+            }
+            _ => None,
+        };
+        if let Some(what) = what {
+            return Err(VerifyError { at, what });
+        }
+        at = next;
+    }
+    Ok(())
+}
+
 /// What is known about the frame where an instruction starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Frame {
@@ -263,7 +306,7 @@ fn check(
                 chunk.closure(f).function.upvalue_count()
             ));
         }
-        Instr::CallMethod { argc: 0, .. } => {
+        Instr::CallMethod { argc: 0, .. } | Instr::TailCallMethod { argc: 0, .. } => {
             return fail(format!("`{op}` has no receiver"));
         }
         _ => {}
@@ -294,7 +337,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::bytecode::{Asm, Emitter, NO_TRAIT, Op, VmClosure};
+    use crate::bytecode::{Asm, Emitter, Op, VmClosure};
     use crate::source::Span;
 
     // Hand-built functions: the bytes are written here, not by the
@@ -542,8 +585,38 @@ mod tests {
     }
 
     #[test]
+    fn a_function_names_only_globals_and_traits_the_program_has() {
+        let globals = crate::bytecode::Globals::default();
+        let [lo, hi] = 0u16.to_le_bytes();
+        // A method call of a trait the program does not have.
+        let code = vec![
+            op(Op::Unit),
+            op(Op::CallMethod),
+            0,
+            0,
+            1,
+            lo,
+            hi,
+            op(Op::Return),
+        ];
+        let function = Function::unverified(0, 0, code, vec![Value::String("foo".into())]);
+        assert_eq!(verify(&function), Ok(()));
+        assert_eq!(
+            verify_globals(&function, &globals).unwrap_err().to_string(),
+            "at offset 1: `CallMethod` names trait 0 of 0"
+        );
+        // A global slot the program does not have.
+        let code = vec![op(Op::GetGlobal), 3, 0, op(Op::Return)];
+        let function = Function::unverified(0, 0, code, Vec::new());
+        assert_eq!(
+            verify_globals(&function, &globals).unwrap_err().to_string(),
+            "at offset 0: `GetGlobal` names global 3 of 0"
+        );
+    }
+
+    #[test]
     fn bad_13_method_call_without_a_receiver() {
-        let [lo, hi] = NO_TRAIT.to_le_bytes();
+        let [lo, hi] = 0u16.to_le_bytes();
         let code = vec![op(Op::CallMethod), 0, 0, 0, lo, hi, op(Op::Return)];
         assert_eq!(
             rejected(code, vec![Value::String("foo".into())]),

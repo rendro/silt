@@ -330,6 +330,15 @@ impl Each {
     }
 }
 
+/// The end of a `channel.each`: the channel is closed and empty. If a
+/// stream stage fed it and failed, that failure is raised here.
+fn ended(close: Close) -> Result<Step, VmError> {
+    match close.failure {
+        Some(failure) => Err((*failure).clone()),
+        None => Ok(Step::Done(Value::Unit)),
+    }
+}
+
 impl Native for Each {
     fn name(&self) -> &str {
         "channel.each"
@@ -340,16 +349,17 @@ impl Native for Each {
             // After each message, give way to the other tasks.
             EachState::Called => return Ok(Step::Yield),
             EachState::Waited => {
-                return Ok(match vm.woken()? {
-                    Fired::Arm(_, Outcome::Received(message)) => self.call(vm, message),
-                    _ => Step::Done(Value::Unit),
-                });
+                return match vm.woken()? {
+                    Fired::Arm(_, Outcome::Received(message)) => Ok(self.call(vm, message)),
+                    Fired::Arm(_, Outcome::Closed(close)) => ended(close),
+                    _ => Ok(Step::Done(Value::Unit)),
+                };
             }
             EachState::Take => {}
         }
         match self.ch.try_receive(vm.scheduler().wake()) {
             TryReceive::Value(message) => Ok(self.call(vm, message)),
-            TryReceive::Closed(_) => Ok(Step::Done(Value::Unit)),
+            TryReceive::Closed(close) => ended(close),
             TryReceive::Empty => {
                 self.state = EachState::Waited;
                 Ok(Step::Park(Wait::new(vec![Arm::Recv(self.ch.clone())])))
@@ -372,34 +382,17 @@ fn spawn_with_deadline(
     // runs this, or the owner the front end set for the program.
     let handle = Arc::new(TaskHandle::with_owner(
         task_id,
-        crate::scheduler::current_task_owner(),
+        vm.scheduler().current_owner(),
     ));
 
-    let child_closure = closure.clone();
     let mut child_vm = vm.spawn_child();
     child_vm.current_deadline = deadline;
 
-    // A target without threads runs the task to its end here.
-    #[cfg(target_arch = "wasm32")]
-    handle.complete(
-        child_vm.call_blocking(&Value::VmClosure(child_closure), &[]),
-        vm.scheduler().wake(),
-    );
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use crate::scheduler::Task;
-        child_vm.start_task(child_closure);
-        child_vm.spawned = true;
-
-        vm.scheduler()
-            .submit(Task {
-                id: task_id,
-                vm: child_vm,
-                handle: handle.clone(),
-            })
-            .map_err(VmError::new)?;
-    }
+    child_vm.start_task(closure.clone());
+    child_vm.spawned = true;
+    vm.scheduler()
+        .submit(task_id, child_vm, handle.clone())
+        .map_err(VmError::new)?;
 
     Ok(Value::Handle(handle))
 }

@@ -512,6 +512,11 @@ pub enum Pred {
     /// only if the body of that function does so to that variable
     /// (which is known once the body is checked).
     Anon { row: Type, given: Option<TyVar> },
+    /// The row `row` (a row variable, as a type) has no field `field`:
+    /// the definition extends a record over the row with the field
+    /// (`{...p, age: 30}`), whether or not what it makes reaches the
+    /// definition's type.
+    Lacks { row: Type, field: Symbol },
 }
 
 impl Pred {
@@ -536,6 +541,10 @@ impl Pred {
                 row: substitute_vars(row, mapping),
                 given: *given,
             },
+            Pred::Lacks { row, field } => Pred::Lacks {
+                row: substitute_vars(row, mapping),
+                field: *field,
+            },
         }
     }
 
@@ -543,7 +552,7 @@ impl Pred {
     pub fn subject(&self) -> &Type {
         match self {
             Pred::Trait { subject, .. } => subject,
-            Pred::Anon { row, .. } => row,
+            Pred::Anon { row, .. } | Pred::Lacks { row, .. } => row,
         }
     }
 
@@ -551,7 +560,7 @@ impl Pred {
     pub fn args(&self) -> &[Type] {
         match self {
             Pred::Trait { args, .. } => args,
-            Pred::Anon { .. } => &[],
+            Pred::Anon { .. } | Pred::Lacks { .. } => &[],
         }
     }
 }

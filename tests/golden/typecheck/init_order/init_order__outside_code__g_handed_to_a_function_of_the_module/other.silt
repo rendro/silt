@@ -1,0 +1,6 @@
+pub fn call(f: Fn() -> a) -> a { f() }
+pub fn apply(f: Fn(a) -> b, x: a) -> b { f(x) }
+pub type Box(a) { item: a }
+pub trait Greet { fn greet(self) -> String }
+pub fn greet_box(b: Box(a)) -> String where a: Greet { b.item.greet() }
+pub fn greet2(x: a) -> String where a: Greet { x.greet() }

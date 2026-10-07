@@ -60,7 +60,7 @@ mod tests;
 
 pub use cell::{Cell, Completion};
 pub use channel::{Channel, Close, TryReceive, TrySend};
-pub use parking::{Parking, Stuck};
+pub use parking::{Parking, Waiting};
 pub use timer::{Timer, TimerId};
 pub use token::{Fired, Outcome, Resumed, TaskId, Token, Wake};
 pub use wait::{Arm, Park, Parked, Source, Wait, park};

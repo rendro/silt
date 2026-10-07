@@ -21,4 +21,7 @@ fn main() {
     (_, channel.Closed) -> println("closed")
     _ -> println("other")
   }
+  -- The rest is not wanted: without this the program would go on
+  -- until the stream has produced it.
+  channel.close(out)
 }

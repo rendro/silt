@@ -1,0 +1,93 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: the top-level `let` 'wrapped' needs its own value to be initialised: wrapped -> wrapped
+-- stderr-contains: error[type]: the top-level `let` 'version' needs its own value to be initialised: version -> lbl -> Cfg.label -> version
+-- stderr-contains: error[type]: the top-level `let` 'q' needs its own value to be initialised: q -> S.t -> P.s -> q
+-- stderr-contains: error[type]: the top-level `let` 'x' needs its own value to be initialised: x -> y -> z -> x
+-- stderr-not-contains: is not fully known
+-- stderr-not-contains: 'p' needs
+-- stderr-not-contains: 'fact' needs
+-- A `let` whose value is computed needs what the computation can
+-- reach: a closure handed to a function (the function may call it), a
+-- bounded call (it reaches every impl of the method in the module). A
+-- ring is named by the binder that is read, and a `let` in a ring gets
+-- no second error for its unknown type.
+type Cfg {
+  name: String,
+}
+
+type Other {
+  k: Int,
+}
+
+trait Label {
+  fn label(self) -> String
+}
+
+trait Label for Cfg {
+  fn label(self) -> String {
+    "cfg {version}"
+  }
+}
+
+trait Label for Other {
+  fn label(self) -> String {
+    "other"
+  }
+}
+
+fn lbl(x: a) -> String where a: Label {
+  x.label()
+}
+
+let version = lbl(Other { k: 1 })
+
+fn id(f: Fn(Int) -> Int) -> Fn(Int) -> Int {
+  f
+}
+
+let wrapped = id({ n ->
+  match n {
+    0 -> 1
+    _ -> n * wrapped(n - 1)
+  }
+})
+
+let fact = { n ->
+  match n {
+    0 -> 1
+    _ -> n * fact(n - 1)
+  }
+}
+
+type P {
+  n: Int,
+}
+
+trait S {
+  fn s(self) -> Int
+  fn t(self) -> Int {
+    self.s() + 1
+  }
+}
+
+trait S for P {
+  fn s(self) -> Int {
+    self.n + q
+  }
+}
+
+let (p, q) = (r, P { n: 1 }.t())
+
+let r = 1
+
+let x = y
+
+let y = z
+
+let z = x
+
+fn main() {
+  println(version)
+  println(wrapped(3) + fact(3) + p + q + x)
+}

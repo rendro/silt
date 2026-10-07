@@ -661,7 +661,9 @@ fn the_timer_closes_a_channel_at_its_time() {
     let d = Double::new();
     let ch = Channel::new(0, 0);
     let deadline = d.timer.deadline_after(10 * MS).unwrap();
+    assert!(!ch.closes_by_timer());
     let id = d.timer.close_at(deadline, ch.clone());
+    assert!(ch.closes_by_timer());
     assert_eq!(id.deadline(), deadline);
     assert!(d.block(1, recv(&ch)).is_none());
 
@@ -1033,59 +1035,52 @@ fn shutdown_gives_every_parked_task_and_leaves_nothing_queued() {
 }
 
 #[test]
-fn tasks_are_stuck_when_all_wait_and_nothing_is_pending() {
+fn the_waiting_tasks_are_shown_with_what_they_wait_on() {
     let d = Double::new();
     let (p, ready) = parking(&d);
     let (a, b) = (Channel::new(4, 0), Channel::new(5, 0));
-    let stuck = |live: usize, external: usize| p.stuck(|| live, || external, |task| *task);
-    assert!(stuck(0, 0).is_none(), "nothing waits");
+    let shown = || {
+        p.inspect(|waiting| {
+            waiting
+                .iter()
+                .map(|waiting| {
+                    let on: Vec<String> = waiting
+                        .on
+                        .iter()
+                        .map(|source| match source {
+                            Source::Recv(channel) => format!("receive {}", channel.id()),
+                            Source::Send(channel) => format!("send {}", channel.id()),
+                            Source::Cell(_) => "cell".to_string(),
+                        })
+                        .collect();
+                    assert_eq!(*waiting.sleeper, waiting.task.0);
+                    (waiting.task.0, on.join(" "), waiting.deadline.is_some())
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    assert!(shown().is_empty(), "nothing waits");
 
     assert!(rest(&p, 2, send(&b, 1)).is_none());
-    assert!(stuck(2, 0).is_none(), "task 1 runs");
-    assert!(rest(&p, 1, select_recv(&a, &a)).is_none());
-    assert!(stuck(3, 0).is_none(), "a third task runs");
-    assert!(stuck(2, 1).is_none(), "an I/O operation is in flight");
-
-    let tasks = stuck(2, 0).expect("both tasks wait on each other");
-    let on: Vec<(u64, Vec<String>)> = tasks
-        .iter()
-        .map(|stuck| {
-            let on = stuck.on.iter().map(|source| match source {
-                Source::Recv(channel) => format!("receive {}", channel.id()),
-                Source::Send(channel) => format!("send {}", channel.id()),
-                Source::Cell(_) => "cell".to_string(),
-            });
-            assert_eq!(stuck.who, stuck.task.0);
-            (stuck.task.0, on.collect())
-        })
-        .collect();
+    let wait = select_recv(&a, &a).deadline(d.timer.deadline_after(MS));
+    assert!(rest(&p, 1, wait).is_none());
     assert_eq!(
-        on,
+        shown(),
         [
-            (1, vec!["receive 4".to_string(), "receive 4".to_string()]),
-            (2, vec!["send 5".to_string()]),
+            (1, "receive 4 receive 4".to_string(), true),
+            (2, "send 5".to_string(), false),
         ]
     );
+    assert_eq!(p.waiting(), 2);
 
-    // A timer that will close a channel can still end a wait.
-    let id = d
-        .timer
-        .close_at(d.timer.deadline_after(MS).expect("in range"), a.clone());
-    assert!(stuck(2, 0).is_none(), "a timer is armed");
-    assert!(d.timer.disarm(id));
-    assert!(stuck(2, 0).is_some());
-
-    // A wait with a deadline is never stuck; when the deadline has
-    // handed its task back, the other is.
-    assert!(p.cancel(TaskId(1)));
-    assert!(matches!(handed_back(&ready), (1, Resumed::Cancelled)));
-    let wait = recv(&a).deadline(d.timer.deadline_after(MS));
-    assert!(rest(&p, 1, wait).is_none());
-    assert!(stuck(2, 0).is_none(), "task 1 has a deadline");
+    // The deadline hands task 1 back: it waits no longer.
     d.clock.advance(MS);
     assert_eq!(d.timer.fire_due(&*p), 1);
-    assert!(stuck(2, 0).is_none(), "task 1 runs again");
-    assert_eq!(stuck(1, 0).expect("task 1 has ended").len(), 1);
+    assert!(matches!(
+        handed_back(&ready),
+        (1, Resumed::Fired(Fired::Deadline))
+    ));
+    assert_eq!(shown(), [(2, "send 5".to_string(), false)]);
 }
 
 // ── Threads ─────────────────────────────────────────────────────────

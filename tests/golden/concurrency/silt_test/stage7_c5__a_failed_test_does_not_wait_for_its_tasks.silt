@@ -1,0 +1,40 @@
+-- cmd: test
+-- exit: 1
+-- repeat: 20
+-- timeout: 10
+-- stderr-contains: FAIL stage7_c5__a_failed_test_does_not_wait_for_its_tasks.silt::test_a_fails_before_it_cancels_its_ticker
+-- stderr-contains: PASS stage7_c5__a_failed_test_does_not_wait_for_its_tasks.silt::test_b_runs
+-- stderr-contains: 2 tests: 1 passed, 1 failed
+-- stderr-not-contains: never joined
+-- A test whose function fails is not waited for: its tasks are
+-- stopped where they are. The ticker that the failed assertion left
+-- running does not keep the run from ending, nor does the task that
+-- sleeps for an hour, which fails nothing.
+import task
+import test
+import time
+
+fn test_a_fails_before_it_cancels_its_ticker() {
+  let ticker = task.spawn({ ->
+    loop {
+      time.sleep(time.ms(1))
+      loop()
+    }
+  })
+  let _spinner = task.spawn({ ->
+    loop n = 0 {
+      loop(n + 1)
+    }
+  })
+  let _late = task.spawn({ ->
+    time.sleep(time.hours(1))
+    panic("too late to count")
+  })
+  test.assert_eq(1, 2)
+  task.cancel(ticker)
+}
+
+fn test_b_runs() {
+  let h = task.spawn({ -> 20 + 1 })
+  test.assert_eq(task.join(h), 21)
+}

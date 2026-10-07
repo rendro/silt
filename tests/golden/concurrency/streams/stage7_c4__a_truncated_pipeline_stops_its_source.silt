@@ -1,0 +1,16 @@
+-- repeat: 20
+-- stderr-not-contains: deadlock
+-- A stage or a sink that reads no further stops the stage that feeds
+-- it, which stops the one before it: after `take(3)` and after `first`
+-- the endless sources are gone. (That no task is left is checked by
+-- the unit test `a_truncated_pipeline_leaves_no_task`.)
+import list
+import stream
+
+fn main() {
+  let all = 1..20 |> list.map { i ->
+    stream.repeat(i) |> stream.map({ x -> x + 1 }) |> stream.take(3) |> stream.collect
+  }
+  println(list.length(all))
+  println(stream.from_range(1, 1000000) |> stream.first)
+}

@@ -501,7 +501,12 @@ impl TypeChecker {
     /// After all passes, walk the AST and resolve any remaining type variables
     /// in the `expr.ty` annotations using the final substitution.
     pub(super) fn resolve_all_types(&self, program: &mut Program) {
-        for decl in &mut program.decls {
+        self.resolve_decl_types(&mut program.decls);
+    }
+
+    /// `resolve_all_types` for the declarations `decls`.
+    pub(super) fn resolve_decl_types(&self, decls: &mut [Decl]) {
+        for decl in decls {
             match decl {
                 Decl::Fn(f) => self.resolve_expr_types(&mut f.body),
                 Decl::TraitImpl(ti) => {
@@ -531,7 +536,70 @@ impl TypeChecker {
             {
                 expr.res = Some(crate::defs::Res::Def(t.id.0));
             }
+            self.select(expr);
         });
+    }
+
+    /// Write what the field accesses of `expr` (itself, or the callee of
+    /// the call it is) mean, the types being final: the compiler's
+    /// `Selection`.
+    fn select(&self, expr: &mut Expr) {
+        use crate::ast::Selection;
+        match &mut expr.kind {
+            // (The callee is visited after its call: a field that is
+            // called is marked here, and decided there.)
+            ExprKind::Call(callee, _) => {
+                if matches!(callee.kind, ExprKind::FieldAccess(..)) {
+                    callee.sel = Some(Selection::FieldCall);
+                }
+            }
+            ExprKind::Pipe(_, right) => {
+                if matches!(right.kind, ExprKind::FieldAccess(..)) {
+                    right.sel = Some(Selection::FieldCall);
+                }
+            }
+            ExprKind::FieldAccess(recv, _, _) => {
+                let called = expr.sel.take().is_some();
+                // A receiver the checker gave no type is a name: a
+                // module, a type (`m.f`, `Shape.Circle`, `Pt.make`).
+                let Some(recv_ty) = &recv.ty else {
+                    return;
+                };
+                let tr = match expr.res {
+                    Some(crate::defs::Res::Def(id)) => self.trait_key(id),
+                    _ => None,
+                };
+                expr.sel = Some(match tr {
+                    Some(tr) => self.method_selection(tr, recv_ty),
+                    None if called => Selection::FieldCall,
+                    None => Selection::Field,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// What a call of a method of the trait `tr` on a receiver of the
+    /// type `recv` runs.
+    fn method_selection(&self, tr: TraitKey, recv: &Type) -> crate::ast::Selection {
+        use crate::ast::Selection;
+        let recv = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(recv));
+        match &recv {
+            Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => {
+                Selection::Dynamic { tr: tr.id }
+            }
+            // A type passed as a value: the method of the type it is.
+            Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => {
+                Selection::Dynamic { tr: tr.id }
+            }
+            _ => match self.type_name_for_impl(&recv) {
+                Some(ty) if self.tables.trait_impl_set.contains(&(tr, ty)) => Selection::Impl {
+                    tr: tr.id,
+                    ty: ty.id,
+                },
+                _ => Selection::Native { tr: tr.id },
+            },
+        }
     }
 }
 

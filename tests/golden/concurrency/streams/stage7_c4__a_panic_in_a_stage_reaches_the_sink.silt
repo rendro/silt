@@ -1,0 +1,18 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: panic: three is too many
+-- stderr-not-contains: never joined
+-- The same for a panic, through a second stage and into `fold`.
+import stream
+
+fn main() {
+  let sum = stream.from_range(1, 10)
+    |> stream.map({ x ->
+      match x {
+        3 -> panic("three is too many")
+        _ -> x
+      }
+    })
+    |> stream.map({ x -> x * 2 })
+    |> stream.fold(0) { acc, x -> acc + x }
+  println(sum)
+}

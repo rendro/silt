@@ -1,0 +1,33 @@
+-- cmd: test
+-- exit: 1
+-- repeat: 20
+-- Two tasks of the file's top-level code fail, each woken by another
+-- test. The tests are judged by what they did; the file has failed,
+-- which is said once, after its last test, with both reports.
+import channel
+import task
+import test
+
+let first: Channel(Int) = channel.new(0)
+
+let second: Channel(Int) = channel.new(0)
+
+let fails_first: task.Handle(()) = task.spawn { ->
+  let _ = channel.receive(first)
+  panic("the first top-level task")
+}
+
+let fails_second: task.Handle(()) = task.spawn { ->
+  let _ = channel.receive(second)
+  panic("the second top-level task")
+}
+
+fn test_a_wakes_the_first() {
+  channel.send(first, 1)
+  test.assert_eq(1, 1)
+}
+
+fn test_b_wakes_the_second() {
+  channel.send(second, 1)
+  test.assert_eq(1, 1)
+}

@@ -1,0 +1,19 @@
+-- Another module's function is held in a field of a `let`'s record and
+-- called through the field.
+-- (Before the reach counted code outside the module, each of these
+-- passed the check and stopped at run time: the `let` read was "used
+-- before its top-level definition has run".)
+import other
+type P { n: Int }
+trait other.Greet for P { fn greet(self) -> String { "p {self.n} {later}" } }
+type Q { p: P }
+trait other.Greet for Q { fn greet(self) -> String { other.greet2(self.p) } }
+let r = {go: other.greet2}
+let v = r.go(P { n: 1 })
+let later = {
+  println("later")
+  5
+}
+fn main() {
+  println(v)
+}

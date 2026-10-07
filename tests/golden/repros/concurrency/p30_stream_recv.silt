@@ -17,4 +17,6 @@ fn main() {
     channel.Closed -> println("closed")
     _ -> println("other")
   }
+  -- the rest is not wanted: the program ends when the stream has stopped
+  channel.close(s)
 }

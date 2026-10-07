@@ -2644,7 +2644,7 @@ mod type_confusion {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::bytecode::{NO_TRAIT, VmClosure};
+    use crate::bytecode::VmClosure;
     use crate::diagnostic::Code;
 
     /// Emit the push of `value`.
@@ -2828,15 +2828,15 @@ mod type_confusion {
     }
 
     #[test]
-    fn method_call_on_a_type_without_the_method() {
-        confused("no method 'nope' for type 'Int'", |e| {
+    fn method_call_that_names_no_trait_of_the_program() {
+        confused("names a trait the program does not have", |e| {
             push(e, Value::Int(1));
             let method = name(e, "nope");
             e.emit(
                 Asm::CallMethod {
                     method,
                     argc: 1,
-                    of: NO_TRAIT,
+                    of: 0,
                 },
                 span(),
             )
@@ -3021,7 +3021,6 @@ mod abandon {
     use super::*;
     use crate::runtime::handle::TaskHandle;
     use crate::runtime::sync::{Arm, Channel, Wait};
-    use crate::scheduler::Task;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
@@ -3068,13 +3067,7 @@ mod abandon {
         vm.spawned = true;
         let id = main.next_task_id();
         let handle = Arc::new(TaskHandle::new(id));
-        main.scheduler()
-            .submit(Task {
-                id,
-                vm,
-                handle: handle.clone(),
-            })
-            .unwrap();
+        main.scheduler().submit(id, vm, handle.clone()).unwrap();
         (handle, abandoned)
     }
 

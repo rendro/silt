@@ -328,7 +328,6 @@ pub mod ty {
 
     /// The types of the run time's own marker values, which no program
     /// can name: ids past any definition.
-    pub const STREAM_ERROR: TypeId = TypeId(DefId(u32::MAX));
     pub const MAP_ERROR: TypeId = TypeId(DefId(u32::MAX - 1));
     pub const NOTIFICATION: TypeId = TypeId(DefId(u32::MAX - 3));
 }
@@ -427,7 +426,6 @@ pub mod bv {
     pub const V_FLOAT: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 3);
     pub const V_NULL: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 4);
     pub const V_LIST: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 5);
-    pub const STREAM_ERROR: BuiltinVariant = BuiltinVariant::new(ty::STREAM_ERROR, 0);
     pub const MAP_ERROR: BuiltinVariant = BuiltinVariant::new(ty::MAP_ERROR, 0);
 }
 
@@ -544,7 +542,7 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
     })
 }
 
-/// The run time's own marker types (see [`ty::STREAM_ERROR`]).
+/// The run time's own marker types (see [`ty::MAP_ERROR`]).
 fn marker_types() -> &'static [Arc<TypeInfo>] {
     static TYPES: OnceLock<Vec<Arc<TypeInfo>>> = OnceLock::new();
     TYPES.get_or_init(|| {
@@ -566,7 +564,6 @@ fn marker_types() -> &'static [Arc<TypeInfo>] {
             })
         };
         vec![
-            variant(ty::STREAM_ERROR, "__StreamTypeError__", 1),
             variant(ty::MAP_ERROR, "__MapMapTypeError__", 0),
             record(ty::NOTIFICATION, "Notification"),
         ]

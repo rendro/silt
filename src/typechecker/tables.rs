@@ -85,12 +85,11 @@ pub(super) struct TraitInfo {
     /// names.
     pub(super) var_names: Vec<(TyVar, Symbol)>,
     /// Default method bodies declared inside the trait. Maps method name
-    /// to the full FnDecl (with body), checked once the trait's module
-    /// is. Impls that omit a method whose name appears here are not
-    /// "missing method" errors: the method is registered for the impl's
-    /// type with the trait's signature, and the checked FnDecl is copied
-    /// into the impl's `methods` (`share_default_methods`), where the
-    /// compiler compiles it like a method the impl wrote.
+    /// to the FnDecl as written. Impls that omit a method whose name
+    /// appears here are not "missing method" errors: the method is
+    /// registered for the impl's type with the trait's signature, and
+    /// the impl's method is the trait's body, which is checked once
+    /// with the trait and compiled once.
     pub(super) default_method_bodies: HashMap<Symbol, FnDecl>,
     /// The module that declares the trait without `pub`, and its name:
     /// the trait's methods can be called only in that module. `None` for

@@ -19,8 +19,9 @@
 //!
 //! # Deadlock
 //!
-//! [`Parking::stuck`] is the rule "every task waits and nothing outside
-//! can end a wait". It is exact when the scheduler keeps to one order:
+//! "Every task waits and nothing outside can end a wait" is for the
+//! scheduler to say, from what [`Parking::inspect`] shows it and what
+//! it counts itself. That is exact when it keeps to one order:
 //! whoever ends a wait from outside a task (the timer, an I/O thread)
 //! stops counting as external only after its wake has returned, and a
 //! task stops counting as live only after its last operation has
@@ -71,12 +72,15 @@ type Tasks<T> = HashMap<TaskId, Entry<T>, BuildHasherDefault<NameHasher>>;
 /// park and wake.
 const SHARDS: usize = 16;
 
-/// A task that waits when no wait can end any more, what it waits on,
-/// and what the scheduler says of it.
-pub struct Stuck<W> {
+/// A task that waits, as [`Parking::inspect`] shows it.
+pub struct Waiting<'a, T> {
     pub task: TaskId,
-    pub on: Vec<Source>,
-    pub who: W,
+    /// What the scheduler parked.
+    pub sleeper: &'a T,
+    /// What the task is queued on, in the order of its wait's arms.
+    pub on: &'a [Source],
+    /// The deadline of its wait.
+    pub deadline: Option<std::time::Duration>,
 }
 
 pub struct Parking<T> {
@@ -85,7 +89,7 @@ pub struct Parking<T> {
     shards: Vec<Mutex<Tasks<T>>>,
     /// The entries that are committed. Changed only under the lock of
     /// the entry's shard, so it stands still for whoever holds all of
-    /// them ([`Parking::stuck`]).
+    /// them ([`Parking::inspect`]).
     waiting: AtomicUsize,
     /// Set before the shards are emptied, read under a shard's lock.
     shut_down: AtomicBool,
@@ -204,38 +208,26 @@ impl<T: Send> Parking<T> {
         tasks.get(&id).is_some_and(|entry| entry.committed)
     }
 
-    /// The parked tasks, by id, if no wait can end any more: at least
-    /// one task waits, every live task waits, and nothing is pending in
-    /// the timer or outside. `live` and `external` are the scheduler's
-    /// counts (see the [module documentation](self)); they are read
-    /// with every lock of this registry held. Once `Some`, it stays
-    /// so. `who` describes each task for the report.
-    pub fn stuck<W>(
-        &self,
-        live: impl FnOnce() -> usize,
-        external: impl FnOnce() -> usize,
-        who: impl Fn(&T) -> W,
-    ) -> Option<Vec<Stuck<W>>> {
-        // With all of them held no task parks or wakes.
+    /// Look at the tasks that wait, by id, while none parks and none
+    /// wakes: every lock of the registry is held for the time of
+    /// `look`. What the scheduler counts outside (its live tasks, what
+    /// is pending) is to be read inside `look`, so that it belongs to
+    /// the same moment (see the [module documentation](self)).
+    pub fn inspect<R>(&self, look: impl FnOnce(&[Waiting<'_, T>]) -> R) -> R {
         let shards: Vec<_> = self.shards.iter().map(|shard| shard.lock()).collect();
-        let waiting = self.waiting.load(Ordering::SeqCst);
-        let stuck =
-            waiting > 0 && waiting == live() && self.timer.pending() == 0 && external() == 0;
-        if !stuck {
-            return None;
-        }
-        let mut tasks: Vec<Stuck<W>> = shards
+        let mut waiting: Vec<Waiting<'_, T>> = shards
             .iter()
             .flat_map(|tasks| tasks.iter())
             .filter(|(_, entry)| entry.committed)
-            .map(|(&task, entry)| Stuck {
+            .map(|(&task, entry)| Waiting {
                 task,
-                on: entry.parked.sources().to_vec(),
-                who: who(&entry.task),
+                sleeper: &entry.task,
+                on: entry.parked.sources(),
+                deadline: entry.parked.deadline(),
             })
             .collect();
-        tasks.sort_by_key(|stuck| stuck.task);
-        Some(tasks)
+        waiting.sort_by_key(|waiting| waiting.task);
+        look(&waiting)
     }
 
     /// The runtime ends: every parked task comes back, by id, off every
