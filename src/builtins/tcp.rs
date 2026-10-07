@@ -11,9 +11,9 @@
 //! is woken by a connection of the listener to itself. Its thread then
 //! ends instead of blocking for as long as the peer stays silent.
 //!
-//! A plain connection has a half for reading and one for writing, so a
-//! task that reads and a task that writes do not wait for each other;
-//! a TLS connection is one object behind one lock
+//! A plain connection is read and written at the same time: a task
+//! that reads and a task that writes do not wait for each other; a
+//! TLS connection is one object behind one lock
 //! ([`TcpStreamHandle`]).
 
 use std::net::{TcpListener, TcpStream};
@@ -626,14 +626,13 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         .runtime
         .io_pool
         .submit(tcp_timeout_err, move || {
-            let stream = match accepting.accept(&stopped) {
-                Ok(Some(stream)) => TcpStreamHandle::plain(next_id, stream),
+            match accepting.accept(&stopped) {
+                Ok(Some(stream)) => Value::variant(
+                    bv::OK,
+                    vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
+                ),
                 // Given up: nobody reads the value.
-                Ok(None) => return err_closed(),
-                Err(e) => Err(e),
-            };
-            match stream {
-                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                Ok(None) => err_closed(),
                 Err(e) => tcp_io_err(&e),
             }
         })
@@ -661,8 +660,11 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     let addr = require_string(&args[0], "tcp.connect")?.to_string();
     let next_id = vm.next_tcp_id();
     vm.io("tcp", tcp_timeout_err, move || {
-        match TcpStream::connect(&addr).and_then(|s| TcpStreamHandle::plain(next_id, s)) {
-            Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+        match TcpStream::connect(&addr) {
+            Ok(stream) => Value::variant(
+                bv::OK,
+                vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
+            ),
             Err(e) => tcp_io_err(&e),
         }
     })

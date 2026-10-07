@@ -114,7 +114,7 @@ fn build_all_variants() -> AllVariants {
     // TcpListener Value.
     let fresh_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind 2");
     let tcp_listener_handle = TcpListenerHandle::new(1, fresh_listener);
-    let tcp_stream_handle = TcpStreamHandle::plain(2, client_stream).expect("stream handle");
+    let tcp_stream_handle = TcpStreamHandle::plain(2, client_stream);
 
     let mut record_fields = BTreeMap::new();
     record_fields.insert("x".to_string(), Value::Int(1));

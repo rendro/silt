@@ -231,55 +231,54 @@ const WAKE_CONNECT_LIMIT: std::time::Duration = std::time::Duration::from_secs(1
 
 /// A connection.
 ///
-/// A plain TCP connection has two halves, each a handle of its own to
-/// the one socket (`try_clone`): a task that reads and a task that
-/// writes do not wait for each other. A TLS connection is one object
-/// behind one lock: its reads and writes take turns.
+/// A plain TCP connection is read and written at the same time: a
+/// task that reads and a task that writes do not wait for each other
+/// (the socket is used through shared references; each direction has
+/// a lock of its own, so two readers, or two writers, take turns). A
+/// TLS connection is one object behind one lock: its reads and writes
+/// take turns.
 pub struct TcpStreamHandle {
     pub id: usize,
     io: TcpIo,
     closed: AtomicBool,
-    /// A third handle to the socket, to shut it down
-    /// ([`TcpStreamHandle::shut_down`]) without the lock of a half,
-    /// which a blocked read or write holds. On Unix a shutdown through
-    /// any handle ends a blocked `recv` on the others. On Windows it
-    /// does not: there the handle is also taken out of this slot and
-    /// dropped. `None` if the socket could not be cloned, or after a
-    /// shutdown on Windows.
-    shutdown_sock: Mutex<Option<std::net::TcpStream>>,
-    /// The OS sockets that a blocked read and a blocked write use
-    /// (`SOCKET as usize` on Windows, where `CancelIoEx` on each ends
-    /// what blocks on it; the file descriptors on Unix, unused). Both
-    /// are the same for a connection that is one object.
-    io_sockets: [Option<usize>; 2],
-    /// Who is at the other end, as it was when the connection was
-    /// made.
-    peer: std::io::Result<std::net::SocketAddr>,
+    /// The OS socket that a blocked read or write uses (`SOCKET as
+    /// usize` on Windows, where `CancelIoEx` on it ends what blocks on
+    /// it; the file descriptor on Unix, unused).
+    io_socket: Option<usize>,
 }
 
 enum TcpIo {
-    Halves {
-        read: Mutex<std::net::TcpStream>,
-        write: Mutex<std::net::TcpStream>,
+    Plain {
+        socket: std::net::TcpStream,
+        /// Held by the task whose read is in flight; likewise
+        /// `writing`.
+        reading: Mutex<()>,
+        writing: Mutex<()>,
     },
-    Whole(Mutex<Box<dyn ReadWrite>>),
+    Tls {
+        both: Mutex<Box<dyn ReadWrite>>,
+        /// Another handle to the socket, to shut it down and to set
+        /// its options without the lock of `both`, which a blocked
+        /// read or write holds. `None` if the socket could not be
+        /// cloned, or after a shutdown on Windows (where the handle
+        /// is closed to end what blocks on the other).
+        socket: Mutex<Option<std::net::TcpStream>>,
+    },
 }
 
 impl TcpStreamHandle {
     /// A plain TCP connection.
-    pub fn plain(id: usize, stream: std::net::TcpStream) -> std::io::Result<Arc<Self>> {
-        let write = stream.try_clone()?;
-        Ok(Arc::new(TcpStreamHandle {
+    pub fn plain(id: usize, socket: std::net::TcpStream) -> Arc<Self> {
+        Arc::new(TcpStreamHandle {
             id,
-            shutdown_sock: Mutex::new(stream.try_clone().ok()),
-            io_sockets: [stream.raw_socket(), write.raw_socket()],
-            peer: stream.peer_addr(),
-            io: TcpIo::Halves {
-                read: Mutex::new(stream),
-                write: Mutex::new(write),
+            io_socket: socket.raw_socket(),
+            io: TcpIo::Plain {
+                socket,
+                reading: Mutex::new(()),
+                writing: Mutex::new(()),
             },
             closed: AtomicBool::new(false),
-        }))
+        })
     }
 
     /// A connection that is one object (TLS) over `socket`. Called
@@ -289,16 +288,16 @@ impl TcpStreamHandle {
         socket: &std::net::TcpStream,
         wrap: impl FnOnce() -> Result<Box<dyn ReadWrite>, String>,
     ) -> Result<Arc<Self>, String> {
-        let shutdown_sock = Mutex::new(socket.try_clone().ok());
-        let io_sockets = [socket.raw_socket(); 2];
-        let peer = socket.peer_addr();
+        let other = Mutex::new(socket.try_clone().ok());
+        let io_socket = socket.raw_socket();
         Ok(Arc::new(TcpStreamHandle {
             id,
-            io: TcpIo::Whole(Mutex::new(wrap()?)),
+            io: TcpIo::Tls {
+                both: Mutex::new(wrap()?),
+                socket: other,
+            },
             closed: AtomicBool::new(false),
-            shutdown_sock,
-            io_sockets,
-            peer,
+            io_socket,
         }))
     }
 
@@ -306,8 +305,8 @@ impl TcpStreamHandle {
     /// task has: `None` for TLS, and if the socket cannot be cloned.
     pub fn socket(&self) -> Option<std::net::TcpStream> {
         match &self.io {
-            TcpIo::Halves { read, .. } => read.try_lock()?.try_clone().ok(),
-            TcpIo::Whole(_) => None,
+            TcpIo::Plain { socket, .. } => socket.try_clone().ok(),
+            TcpIo::Tls { .. } => None,
         }
     }
 
@@ -316,40 +315,57 @@ impl TcpStreamHandle {
         self.closed.load(AtomicOrdering::SeqCst)
     }
 
-    /// The address of the other end.
-    pub fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
-        match &self.peer {
-            Ok(addr) => Ok(*addr),
-            Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
+    /// Do `f` with the socket, whatever blocks on the connection.
+    fn with_socket<T>(
+        &self,
+        f: impl FnOnce(&std::net::TcpStream) -> std::io::Result<T>,
+    ) -> std::io::Result<T> {
+        match &self.io {
+            TcpIo::Plain { socket, .. } => f(socket),
+            TcpIo::Tls { socket, .. } => match socket.lock().as_ref() {
+                Some(socket) => f(socket),
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "the connection is closed",
+                )),
+            },
         }
     }
 
+    /// The address of the other end.
+    pub fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.with_socket(|socket| socket.peer_addr())
+    }
+
     /// Send small writes at once (`on`), or let the system gather
-    /// them (Nagle's algorithm, the default). The option is the
-    /// socket's: it holds for both halves.
+    /// them (Nagle's algorithm, the default).
     pub fn set_nodelay(&self, on: bool) -> std::io::Result<()> {
-        match self.shutdown_sock.lock().as_ref() {
-            Some(socket) => socket.set_nodelay(on),
-            None => Err(std::io::Error::new(
-                std::io::ErrorKind::NotConnected,
-                "the connection is closed",
-            )),
-        }
+        self.with_socket(|socket| socket.set_nodelay(on))
     }
 
     pub fn read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
         use std::io::Read;
         match &self.io {
-            TcpIo::Halves { read, .. } => read.lock().read(buf),
-            TcpIo::Whole(both) => both.lock().read(buf),
+            TcpIo::Plain {
+                socket, reading, ..
+            } => {
+                let _turn = reading.lock();
+                (&*socket).read(buf)
+            }
+            TcpIo::Tls { both, .. } => both.lock().read(buf),
         }
     }
 
     pub fn read_exact(&self, buf: &mut [u8]) -> std::io::Result<()> {
         use std::io::Read;
         match &self.io {
-            TcpIo::Halves { read, .. } => read.lock().read_exact(buf),
-            TcpIo::Whole(both) => both.lock().read_exact(buf),
+            TcpIo::Plain {
+                socket, reading, ..
+            } => {
+                let _turn = reading.lock();
+                (&*socket).read_exact(buf)
+            }
+            TcpIo::Tls { both, .. } => both.lock().read_exact(buf),
         }
     }
 
@@ -357,12 +373,14 @@ impl TcpStreamHandle {
     pub fn write_all(&self, buf: &[u8]) -> std::io::Result<()> {
         use std::io::Write;
         match &self.io {
-            TcpIo::Halves { write, .. } => {
-                let mut write = write.lock();
-                write.write_all(buf)?;
-                write.flush()
+            TcpIo::Plain {
+                socket, writing, ..
+            } => {
+                let _turn = writing.lock();
+                (&*socket).write_all(buf)?;
+                (&*socket).flush()
             }
-            TcpIo::Whole(both) => {
+            TcpIo::Tls { both, .. } => {
                 let mut both = both.lock();
                 both.write_all(buf)?;
                 both.flush()
@@ -382,49 +400,48 @@ impl TcpStreamHandle {
         if self.closed.swap(true, AtomicOrdering::SeqCst) {
             return;
         }
-        // What a TLS writer still buffers, if nobody is in it: a
-        // blocked read or write holds the lock, and waiting for it
-        // here would wait for the very thing this is to end.
-        if let TcpIo::Whole(both) = &self.io
-            && let Some(mut both) = both.try_lock()
-        {
-            let _ = std::io::Write::flush(&mut *both);
-        }
         // Errors (not connected, the peer closed first) are ignored:
         // the connection is closed either way.
-        #[allow(unused_mut)]
-        let mut slot = self.shutdown_sock.lock();
-        if let Some(sock) = slot.as_ref() {
-            let _ = sock.shutdown(std::net::Shutdown::Both);
+        match &self.io {
+            TcpIo::Plain { socket, .. } => {
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+            }
+            TcpIo::Tls { both, socket } => {
+                // What the TLS writer still buffers, if nobody is in
+                // it: a blocked read or write holds the lock, and
+                // waiting for it here would wait for the very thing
+                // this is to end.
+                if let Some(mut both) = both.try_lock() {
+                    let _ = std::io::Write::flush(&mut *both);
+                }
+                #[allow(unused_mut)]
+                let mut other = socket.lock();
+                if let Some(other) = other.as_ref() {
+                    let _ = other.shutdown(std::net::Shutdown::Both);
+                }
+                // On Windows the duplicate is closed too (see below).
+                #[cfg(windows)]
+                let _ = other.take();
+            }
         }
         // Winsock's `shutdown(SD_BOTH)` does not end a `recv` or a
-        // `send` that blocks on another handle of the socket (the
-        // halves', of which `shutdown_sock` is a duplicate).
-        // `CancelIoEx` on the half's own SOCKET does; the duplicate
-        // is then closed.
+        // `send` that blocks on the socket. `CancelIoEx` on the SOCKET
+        // that the blocked call uses does.
         #[cfg(windows)]
-        {
-            let [reader, writer] = self.io_sockets;
-            for sock in [reader, writer.filter(|writer| Some(*writer) != reader)]
-                .into_iter()
-                .flatten()
-            {
-                // SAFETY: `CancelIoEx` may be called on any HANDLE, a
-                // SOCKET included; it fails harmlessly if the handle
-                // is invalid or nothing is pending. A null
-                // `lpOverlapped` cancels all pending I/O on it.
-                use std::ptr;
-                use windows_sys::Win32::Foundation::HANDLE;
-                use windows_sys::Win32::System::IO::CancelIoEx;
-                unsafe {
-                    let _ = CancelIoEx(sock as HANDLE, ptr::null_mut());
-                }
+        if let Some(sock) = self.io_socket {
+            // SAFETY: `CancelIoEx` may be called on any HANDLE, a
+            // SOCKET included; it fails harmlessly if the handle is
+            // invalid or nothing is pending. A null `lpOverlapped`
+            // cancels all pending I/O on it.
+            use std::ptr;
+            use windows_sys::Win32::Foundation::HANDLE;
+            use windows_sys::Win32::System::IO::CancelIoEx;
+            unsafe {
+                let _ = CancelIoEx(sock as HANDLE, ptr::null_mut());
             }
-            let _ = slot.take();
         }
         #[cfg(not(windows))]
-        let _ = self.io_sockets;
-        drop(slot);
+        let _ = self.io_socket;
     }
 }
 
