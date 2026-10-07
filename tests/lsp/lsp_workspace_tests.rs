@@ -201,11 +201,14 @@ fn documents_that_are_no_files_import_each_other_and_read_no_disk() {
         "import nofile_missing\nfn other() { nofile_missing.f() }\n",
     );
     assert!(
-        errors(&alone)
-            .iter()
-            .any(|m| m.contains("cannot load module 'nofile_missing': no such file")),
+        errors(&alone).iter().any(|m| m.contains(
+            "no open document named 'nofile_missing' beside this one \
+             (an unsaved document reads no files)"
+        )),
         "got {alone}"
     );
+    // The path the server made up for the document is shown to nobody.
+    assert!(!alone.to_string().contains("unsaved/"), "got {alone}");
     client.shutdown();
 }
 

@@ -529,7 +529,17 @@ impl ModuleGraph {
                         let target_id =
                             self.module_for(target, (id, name, span), overlays, sources);
                         let module = self.module(target_id);
-                        if let Some((kind, text)) = &module.load_error {
+                        if module.load_error.is_some() && is_no_file(&module.path) {
+                            let name = resolve(name);
+                            problem = Some(Diagnostic::error(
+                                Code::ModuleNotFound,
+                                span,
+                                format!(
+                                    "no open document named '{name}' beside this one \
+                                     (an unsaved document reads no files)"
+                                ),
+                            ));
+                        } else if let Some((kind, text)) = &module.load_error {
                             let mut d = module::module_load_error(
                                 &resolve(name),
                                 &module.path,
@@ -591,10 +601,7 @@ impl ModuleGraph {
         let (_, name, span) = import;
         let text = match overlays.get(&canonical_key(&target.path)) {
             Some(text) => Ok(text.clone()),
-            // A path no file can have (an editor's document that is not
-            // a file, see the language server's `uri_to_path`) is not
-            // looked for on disk.
-            None if target.path.to_string_lossy().contains('\0') => {
+            None if is_no_file(&target.path) => {
                 Err(std::io::Error::from(std::io::ErrorKind::NotFound))
             }
             None => std::fs::read_to_string(&target.path),
@@ -955,4 +962,11 @@ fn module_path_for_display(p: &Path) -> String {
     crate::source::without_verbatim_prefix(p)
         .display()
         .to_string()
+}
+
+/// Whether `path` is one no file can have: that of an editor's document
+/// that is not a file (see the language server's `uri_to_path`). It is
+/// not looked for on disk, and is shown to nobody.
+fn is_no_file(path: &Path) -> bool {
+    path.to_string_lossy().contains('\0')
 }
