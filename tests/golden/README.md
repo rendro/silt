@@ -147,6 +147,7 @@ a range is `line:col-line:col`, its end exclusive.
 | Request | Asks | A line of the answer |
 |---|---|---|
 | `references L:C` | `textDocument/references`, with the declaration | `geo.silt:1:8-1:10` |
+| `definition L:C` | `textDocument/definition` | `geo.silt:1:8-1:10` |
 | `highlight L:C` | `textDocument/documentHighlight` | `19:7-19:9` |
 | `prepare-rename L:C` | `textDocument/prepareRename` | `20:13-20:19` |
 | `rename L:C NAME` | `textDocument/rename` | `geo.silt:1:8-1:10 => NAME` |

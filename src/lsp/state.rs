@@ -10,13 +10,12 @@ use std::sync::Arc;
 use crate::ast::*;
 use crate::intern::Symbol;
 use crate::session::ModuleId;
-use crate::source::{SourceFile, Span};
+use crate::source::SourceFile;
 use crate::types::Type;
 
 // ── Document state ─────────────────────────────────────────────────
 
 pub(super) struct DefInfo {
-    pub(super) span: Span,
     pub(super) ty: Option<Type>,
     pub(super) params: Vec<String>,
     /// Markdown documentation from a doc comment preceding the decl,

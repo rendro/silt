@@ -6,7 +6,6 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::source::Span;
 use crate::types::Type;
 
 use super::ast_walk::visit_expr_children;
@@ -32,10 +31,6 @@ pub(super) fn build_definitions(
                 defs.insert(
                     f.name,
                     DefInfo {
-                        // Use the identifier's span, not the keyword span,
-                        // so LSP rename / references / definition land on
-                        // the name token. Round-63 B1 fix.
-                        span: f.name_span,
                         ty: fn_ty,
                         params,
                         doc: f.doc.clone(),
@@ -46,8 +41,6 @@ pub(super) fn build_definitions(
                 defs.insert(
                     t.name,
                     DefInfo {
-                        // Use the identifier's span (round-63 B1).
-                        span: t.name_span,
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),
@@ -58,15 +51,6 @@ pub(super) fn build_definitions(
                         defs.insert(
                             v.name,
                             DefInfo {
-                                // Use the variant-name identifier's span
-                                // (parser-recorded), NOT the enum decl's
-                                // span: `t.span` sits on the `type`
-                                // keyword, so rename of a variant from a
-                                // usage site text-edited the keyword into
-                                // the new name (`Disc Shape { ... }`) and
-                                // goto-def landed on `type`. Same bug
-                                // class as round-63 B1 / round-75 DX-2.
-                                span: v.name_span,
                                 ty: None,
                                 params: vec![],
                                 // Variants inherit the enum's doc
@@ -85,11 +69,6 @@ pub(super) fn build_definitions(
                 defs.insert(
                     t.name,
                     DefInfo {
-                        // Round-75 DX-2: use the trait-name identifier
-                        // span, not the `trait` keyword span, so LSP
-                        // rename / references / goto-def replace the
-                        // name and not the keyword.
-                        span: t.name_span,
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),
@@ -98,7 +77,6 @@ pub(super) fn build_definitions(
             }
             Decl::Let {
                 pattern,
-                name_span,
                 value,
                 doc,
                 ..
@@ -114,7 +92,6 @@ pub(super) fn build_definitions(
                 };
                 collect_let_pattern_defs(
                     pattern,
-                    *name_span,
                     value_ty.as_ref(),
                     doc.as_deref(),
                     true,
@@ -131,16 +108,13 @@ pub(super) fn build_definitions(
 /// Recursively walk a `let` pattern from a top-level `Decl::Let`, inserting a
 /// `DefInfo` for every leaf identifier introduced by the pattern. Tuple,
 /// Record, Constructor, List, and Or patterns are traversed so that
-/// destructured top-level bindings (e.g. `let (a, b) = (1, 2)`) show up in
-/// goto-def just like bare `let x = ...`.
+/// destructured top-level bindings (e.g. `let (a, b) = (1, 2)`) are known
+/// just like bare `let x = ...`.
 ///
-/// `name_span` is the bare `let x = ...` binding's name span. `value_ty`
-/// is the value expression's
-/// type; when it matches the pattern's shape we propagate component types
+/// `value_ty` is the value expression's type; when it matches the pattern's shape we propagate component types
 /// to leaves so hover can render `Int` for `a` in `let (a, b) = (1, 2)`.
 fn collect_let_pattern_defs(
     pattern: &Pattern,
-    name_span: Option<Span>,
     value_ty: Option<&Type>,
     doc: Option<&str>,
     is_top: bool,
@@ -149,27 +123,9 @@ fn collect_let_pattern_defs(
 ) {
     match &pattern.kind {
         PatternKind::Ident(name) if resolve(*name) != "_" => {
-            // For the bare top-level `let x = ...` case use the binding's
-            // name-identifier span (round-71 DX-1 fix), mirroring the
-            // FnDecl/TypeDecl name_span pattern from round-63 B1. Without
-            // this, LSP rename uses the `let` keyword span and clobbers
-            // `let` (or `pub`) instead of replacing the name. For leaves
-            // of a compound pattern (e.g. `a` inside `(a, b)`) use the
-            // ident's own span so goto-def lands on the identifier.
-            // `is_top` is true at the outermost call; goes false for any
-            // recursion into sub-patterns so destructured leaves get
-            // their own span.
             defs.insert(
                 *name,
                 DefInfo {
-                    span: if is_top {
-                        // Prefer the parser-recorded name_span when present.
-                        // For a bare `Ident` pattern this is the same as
-                        // `pattern.span`; the `unwrap_or` is just defensive.
-                        name_span.unwrap_or(pattern.span)
-                    } else {
-                        pattern.span
-                    },
                     ty: value_ty.cloned(),
                     params: vec![],
                     // Only the bare binding inherits the let's doc; a
@@ -189,12 +145,12 @@ fn collect_let_pattern_defs(
             };
             for (i, p) in pats.iter().enumerate() {
                 let inner = elem_tys.as_ref().and_then(|t| t.get(i));
-                collect_let_pattern_defs(p, None, inner, None, false, defs, records);
+                collect_let_pattern_defs(p, inner, None, false, defs, records);
             }
         }
         PatternKind::Or(pats) => {
             for p in pats {
-                collect_let_pattern_defs(p, None, value_ty, None, false, defs, records);
+                collect_let_pattern_defs(p, value_ty, None, false, defs, records);
             }
         }
         PatternKind::Constructor {
@@ -209,7 +165,7 @@ fn collect_let_pattern_defs(
                 _ => None,
             };
             for p in fields {
-                collect_let_pattern_defs(p, None, inner_ty.as_ref(), None, false, defs, records);
+                collect_let_pattern_defs(p, inner_ty.as_ref(), None, false, defs, records);
             }
         }
         PatternKind::Record { fields, .. } => {
@@ -219,17 +175,14 @@ fn collect_let_pattern_defs(
                     .as_ref()
                     .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
             };
-            for (name, name_span, sub) in fields {
+            for (name, _, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs, records);
+                    collect_let_pattern_defs(p, ty.as_ref(), None, false, defs, records);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
                         DefInfo {
-                            // The shorthand field binding is at the field
-                            // name.
-                            span: *name_span,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -248,15 +201,14 @@ fn collect_let_pattern_defs(
                     .as_ref()
                     .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
             };
-            for (name, name_span, sub) in fields {
+            for (name, _, sub) in fields {
                 if let Some(p) = sub {
                     let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, None, ty.as_ref(), None, false, defs, records);
+                    collect_let_pattern_defs(p, ty.as_ref(), None, false, defs, records);
                 } else if resolve(*name) != "_" {
                     defs.insert(
                         *name,
                         DefInfo {
-                            span: *name_span,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -266,13 +218,12 @@ fn collect_let_pattern_defs(
             }
             // Round-101: the named rest binder (`{ x, ...rest }`) binds
             // `rest` — mirror the typechecker's `collect_pattern_vars`.
-            if let Some((r, r_span)) = rest
+            if let Some((r, _)) = rest
                 && resolve(*r) != "_"
             {
                 defs.insert(
                     *r,
                     DefInfo {
-                        span: *r_span,
                         ty: None,
                         params: vec![],
                         doc: None,
@@ -284,7 +235,7 @@ fn collect_let_pattern_defs(
             // Round-101: map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
-                collect_let_pattern_defs(p, None, None, None, false, defs, records);
+                collect_let_pattern_defs(p, None, None, false, defs, records);
             }
         }
         PatternKind::List(pats, rest) => {
@@ -293,10 +244,10 @@ fn collect_let_pattern_defs(
                 _ => (None, None),
             };
             for p in pats {
-                collect_let_pattern_defs(p, None, elem_ty.as_ref(), None, false, defs, records);
+                collect_let_pattern_defs(p, elem_ty.as_ref(), None, false, defs, records);
             }
             if let Some(r) = rest {
-                collect_let_pattern_defs(r, None, list_ty.as_ref(), None, false, defs, records);
+                collect_let_pattern_defs(r, list_ty.as_ref(), None, false, defs, records);
             }
         }
         _ => {}

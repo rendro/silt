@@ -15,14 +15,17 @@ fn cross_file_definition() {
     let mut client = LspClient::spawn();
     let file_a = "file:///tmp/silt_wspace_a.silt";
     let file_b = "file:///tmp/silt_wspace_b.silt";
-    client.did_open_and_wait(file_a, "fn shared_helper(x) { x + 1 }\n");
-    client.did_open_and_wait(file_b, "fn main() { shared_helper(5) }\n");
+    client.did_open_and_wait(file_a, "pub fn shared_helper(x) { x + 1 }\n");
+    client.did_open_and_wait(
+        file_b,
+        "import silt_wspace_a.{ shared_helper }\nfn main() { shared_helper(5) }\n",
+    );
 
     let resp = client.request(
         "textDocument/definition",
         json!({
             "textDocument": { "uri": file_b },
-            "position": { "line": 0, "character": 15 }
+            "position": { "line": 1, "character": 15 }
         }),
     );
     let result = resp.get("result").expect("definition result");

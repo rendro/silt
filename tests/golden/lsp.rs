@@ -540,6 +540,10 @@ impl Asked<'_> {
                 json!({"textDocument": doc, "position": at()?,
                        "context": {"includeDeclaration": true}}),
             ),
+            "definition" => (
+                "textDocument/definition",
+                json!({"textDocument": doc, "position": at()?}),
+            ),
             "highlight" => (
                 "textDocument/documentHighlight",
                 json!({"textDocument": doc, "position": at()?}),
@@ -612,11 +616,13 @@ impl Asked<'_> {
         let result = &response["result"];
         let what = request.split_whitespace().next().unwrap_or("");
         let mut lines: Vec<String> = match what {
-            "references" => result
+            // A definition is one location or a list of them.
+            "references" | "definition" => result
                 .as_array()
                 .map(|a| a.as_slice())
-                .unwrap_or_default()
+                .unwrap_or(std::slice::from_ref(result))
                 .iter()
+                .filter(|loc| loc.is_object())
                 .map(|loc| self.location(loc["uri"].as_str().unwrap_or(""), &loc["range"]))
                 .collect(),
             "highlight" => result

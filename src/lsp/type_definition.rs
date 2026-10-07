@@ -7,13 +7,11 @@
 //! no user-authored declaration to point at, so we return `None` and
 //! LSP clients render "no type definition".
 
-use lsp_types::Location;
 use lsp_types::request::{GotoTypeDefinitionParams, GotoTypeDefinitionResponse};
 
 use super::Server;
 use super::ast_walk::find_type_at_offset;
-use super::conversions::{position_to_offset, span_to_range};
-use crate::intern::Symbol;
+use super::conversions::position_to_offset;
 use crate::types::Type;
 
 impl Server {
@@ -30,42 +28,23 @@ impl Server {
 
         let cursor = position_to_offset(&doc.source, &pos);
         let ty = find_type_at_offset(program, cursor)?;
-        let name = type_head_name(&ty)?;
-
-        // Look up the type's declaration anywhere in the workspace.
-        // The definitions map is populated from top-level decls, so
-        // records, enums, and traits all live there.
-        let hits = self.workspace_lookup_definition(name);
-        if hits.is_empty() {
-            return None;
-        }
-        let locations: Vec<Location> = hits
-            .into_iter()
-            .filter_map(|(hit_uri, span)| {
-                let src = self.documents.get(&hit_uri).map(|d| &d.source)?;
-                Some(Location::new(hit_uri, span_to_range(&span, src)))
-            })
-            .collect();
-        if locations.is_empty() {
-            return None;
-        }
-        if locations.len() == 1 {
-            Some(GotoTypeDefinitionResponse::Scalar(
-                locations.into_iter().next().unwrap(),
-            ))
-        } else {
-            Some(GotoTypeDefinitionResponse::Array(locations))
+        // The declaration of the type's head, by its definition.
+        let target = self.type_target(doc, type_head(&ty)?)?;
+        let mut locations = self.declarations_of(uri, &target);
+        match locations.len() {
+            0 => None,
+            1 => Some(GotoTypeDefinitionResponse::Scalar(locations.remove(0))),
+            _ => Some(GotoTypeDefinitionResponse::Array(locations)),
         }
     }
 }
 
-/// Extract the "head" name of a type — the identifier that a user's
-/// `type` declaration would bind. Only nominal types (records and
-/// generics) have a head name; structural types (tuple, list, fn, …)
-/// and primitives return `None`.
-fn type_head_name(ty: &Type) -> Option<Symbol> {
+/// The type a `type` declaration declares, of which `ty` is an
+/// instance. Only a nominal type has one; a structural type (tuple,
+/// list, function, ...) has none.
+fn type_head(ty: &Type) -> Option<crate::defs::TypeId> {
     match ty {
-        Type::Generic(name, _) => Some(name.name),
+        Type::Generic(name, _) => Some(name.id),
         _ => None,
     }
 }

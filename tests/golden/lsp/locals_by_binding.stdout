@@ -1,0 +1,25 @@
+> references 21:11
+locals_by_binding.silt:20:11-20:12
+locals_by_binding.silt:21:11-21:12
+> references 22:7
+locals_by_binding.silt:22:7-22:8
+locals_by_binding.silt:23:3-23:4
+> definition 23:3
+locals_by_binding.silt:22:7-22:8
+> rename 27:13 first
+locals_by_binding.silt:26:10-26:11 => first
+locals_by_binding.silt:27:13-27:14 => first
+locals_by_binding.silt:28:17-28:18 => first
+> references 33:19
+locals_by_binding.silt:32:18-32:20
+locals_by_binding.silt:33:19-33:21
+> references 40:21
+locals_by_binding.silt:40:9-40:10
+locals_by_binding.silt:40:21-40:22
+locals_by_binding.silt:40:30-40:31
+> definition 41:26
+locals_by_binding.silt:38:15-38:16
+> references 46:22
+locals_by_binding.silt:46:17-46:18
+locals_by_binding.silt:46:22-46:23
+locals_by_binding.silt:46:26-46:27

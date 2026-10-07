@@ -56,16 +56,9 @@ pub(super) enum DefKey {
 pub(super) enum Target {
     /// Definitions: one, or the value and the type an import item names.
     Defs(Vec<DefKey>),
-    /// A local binding of the document: the name `name` in its
-    /// `decl`th declaration, bound by the binding whose name starts at
-    /// byte `binding` (`None` for one the document's list of local
-    /// bindings does not have: then every such use of the name in the
-    /// declaration is taken as one binding's).
-    Local {
-        decl: usize,
-        name: Symbol,
-        binding: Option<usize>,
-    },
+    /// The local binding of the document whose name starts at this byte
+    /// (see `local_bindings.rs`).
+    Local(usize),
 }
 
 impl Target {
@@ -73,7 +66,7 @@ impl Target {
     pub(super) fn is_renameable(&self) -> bool {
         match self {
             Target::Defs(keys) => keys.iter().all(|key| matches!(key, DefKey::At { .. })),
-            Target::Local { .. } => true,
+            Target::Local(_) => true,
         }
     }
 }
@@ -150,18 +143,6 @@ fn import_item_defs(
 }
 
 impl Server {
-    /// Find every top-level definition of `name` across all
-    /// documents. Returns `(uri, span)` per hit.
-    pub(super) fn workspace_lookup_definition(&self, name: Symbol) -> Vec<(Uri, Span)> {
-        let mut hits = Vec::new();
-        for (uri, doc) in &self.documents {
-            if let Some(def) = doc.definitions.get(&name) {
-                hits.push((uri.clone(), def.span));
-            }
-        }
-        hits
-    }
-
     /// What the name at byte `cursor` of the open document `uri` means,
     /// with the span of the name as written there.
     pub(super) fn target_at(&self, uri: &Uri, cursor: usize) -> Option<(Span, Target)> {
@@ -190,12 +171,7 @@ impl Server {
             return declared;
         }
         let local = uses.locals.iter().find(|l| holds(l.span, cursor))?;
-        let target = Target::Local {
-            decl: local.decl,
-            name: local.name,
-            binding: local.binding(&doc.locals),
-        };
-        Some((local.span, target))
+        Some((local.span, Target::Local(local.binding(&doc.locals)?)))
     }
 
     /// Every place that names `target`, which was found in the open
@@ -208,11 +184,7 @@ impl Server {
         include_definition: bool,
     ) -> Vec<Location> {
         let mut locations = match target {
-            Target::Local {
-                decl,
-                name,
-                binding,
-            } => self.local_references(uri, *decl, *name, *binding, include_definition),
+            Target::Local(binding) => self.local_references(uri, *binding, include_definition),
             Target::Defs(keys) => {
                 self.check_importers(keys);
                 self.def_references(keys, include_definition)
@@ -229,16 +201,9 @@ impl Server {
         locations
     }
 
-    /// The binder and the uses of the local `name` of the `decl`th
-    /// declaration of the document `uri` that resolve to `binding`.
-    fn local_references(
-        &self,
-        uri: &Uri,
-        decl: usize,
-        name: Symbol,
-        binding: Option<usize>,
-        include_binder: bool,
-    ) -> Vec<Location> {
+    /// The binder of the local binding at byte `binding` of the document
+    /// `uri`, and the uses that resolve to it.
+    fn local_references(&self, uri: &Uri, binding: usize, include_binder: bool) -> Vec<Location> {
         let found = || {
             let doc = self.documents.get(uri)?;
             let program = doc.program.as_ref()?;
@@ -248,9 +213,8 @@ impl Server {
             let ranges: Vec<_> = uses
                 .locals
                 .iter()
-                .filter(|l| l.decl == decl && l.name == name)
                 .filter(|l| include_binder || !l.binder)
-                .filter(|l| l.binding(&doc.locals) == binding)
+                .filter(|l| l.binding(&doc.locals) == Some(binding))
                 .map(|l| span_to_range(&l.span, &doc.source))
                 .collect();
             Some(ranges)
@@ -260,6 +224,58 @@ impl Server {
             .into_iter()
             .map(|range| Location::new(uri.clone(), range))
             .collect()
+    }
+
+    /// Where `target` is declared: a local's binder in the document
+    /// `uri`, a definition's name in its file. Nothing for one of silt's
+    /// own.
+    pub(super) fn declarations_of(&self, uri: &Uri, target: &Target) -> Vec<Location> {
+        match target {
+            Target::Local(binding) => {
+                let binder = self.documents.get(uri).and_then(|doc| {
+                    let local = doc.locals.iter().find(|b| b.binding_offset == *binding)?;
+                    Some(super::conversions::offsets_to_range(
+                        &doc.source,
+                        local.binding_offset,
+                        local.binding_offset + local.binding_len,
+                    ))
+                });
+                binder
+                    .map(|range| Location::new(uri.clone(), range))
+                    .into_iter()
+                    .collect()
+            }
+            Target::Defs(keys) => {
+                let mut locations: Vec<Location> = Vec::new();
+                for key in keys {
+                    let found = self.projects.values().find_map(|project| {
+                        let session = &project.session;
+                        let def = session.defs().get(def_of_key(session, key)?);
+                        if def.module.is_builtin() || !def.span.is_in_source() {
+                            return None;
+                        }
+                        let module = session.graph().module(def.module);
+                        let source = session.sources().get(module.file?)?;
+                        let uri = self.uri_for_path(&module.path)?;
+                        Some(Location::new(uri, span_to_range(&def.span, source)))
+                    });
+                    if let Some(location) = found
+                        && !locations.contains(&location)
+                    {
+                        locations.push(location);
+                    }
+                }
+                locations
+            }
+        }
+    }
+
+    /// The definition of the type `id` of the session of the open
+    /// document `doc`, as a target.
+    pub(super) fn type_target(&self, doc: &Document, id: crate::defs::TypeId) -> Option<Target> {
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        Some(Target::Defs(vec![def_key(session, id.0)]))
     }
 
     /// Check the workspace files that import the module of one of
@@ -504,8 +520,6 @@ fn type_symbols(t: &TypeDecl, uri: &Uri, source: &SourceFile, out: &mut Vec<Symb
 struct LocalName {
     span: Span,
     name: Symbol,
-    /// The index of the declaration it stands in.
-    decl: usize,
     binder: bool,
 }
 
@@ -533,8 +547,6 @@ struct Uses<'a> {
     defs: Vec<(Span, DefId)>,
     /// Each local name: its binders and its uses.
     locals: Vec<LocalName>,
-    /// The index of the declaration being walked.
-    decl: usize,
     /// The pattern being walked is a top-level `let`'s: its names are
     /// definitions.
     declares: bool,
@@ -547,11 +559,9 @@ impl<'a> Uses<'a> {
             module,
             defs: Vec::new(),
             locals: Vec::new(),
-            decl: 0,
             declares: false,
         };
-        for (index, decl) in program.decls.iter().enumerate() {
-            uses.decl = index;
+        for decl in &program.decls {
             uses.decl(decl);
         }
         uses
@@ -575,12 +585,7 @@ impl<'a> Uses<'a> {
         if self.declares && binder {
             return;
         }
-        self.locals.push(LocalName {
-            span,
-            name,
-            decl: self.decl,
-            binder,
-        });
+        self.locals.push(LocalName { span, name, binder });
     }
 
     fn decl(&mut self, decl: &Decl) {

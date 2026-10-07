@@ -1,6 +1,9 @@
-//! Collect local bindings (let / params / match / when / loop) with their
-//! source positions, used to power hover / goto-def on locally-bound
-//! identifiers. Every binder's position is its own span in the AST.
+//! The local bindings of a document: every name a parameter, a `let` in
+//! a body, a `when let`, a match arm, a closure or a `loop` binds, with
+//! the span of the name where it is bound and the range of the source it
+//! is visible in. Hover, go-to-definition, references and rename find a
+//! local by them: a use is the binding of its name with the smallest
+//! range around it.
 
 use std::collections::HashMap;
 
@@ -15,11 +18,7 @@ use super::state::LocalBinding;
 
 // ── Local binding collection (for hover/goto on locals) ──────────────
 
-/// Walk the program and collect every local binding (let, parameter, match)
-/// with its approximate source position. Binding offsets are recovered by
-/// scanning the source text between the enclosing scope start and a known
-/// reference offset (`(value.span.start as usize)` for lets, `(f.span.start as usize)` for
-/// params), which covers the common `let x = e` and `let x: T = e` cases.
+/// Every local binding of `program`.
 ///
 /// A top-level function's parameters have the types of the checker's
 /// type of the function (`top_level`), when there is one.
@@ -41,22 +40,21 @@ pub(super) fn collect_local_bindings(
                     }
                     _ => None,
                 };
-                // Function parameters, at their own spans.
+                // The parameters, each name at its own span.
                 for (i, param) in f.params.iter().enumerate() {
-                    if let PatternKind::Ident(name) = &param.pattern.kind {
-                        let ty = match param_types {
-                            Some(types) => Some(types[i].clone()),
-                            None => find_param_type(&f.body, *name),
-                        };
-                        bindings.push(LocalBinding {
-                            name: *name,
-                            binding_offset: param.pattern.span.start as usize,
-                            binding_len: resolve(*name).len(),
-                            scope_start: body_start,
-                            scope_end: body_end,
-                            ty,
-                        });
-                    }
+                    let ty = match (&param.pattern.kind, param_types) {
+                        (_, Some(types)) => Some(types[i].clone()),
+                        (PatternKind::Ident(name), None) => find_param_type(&f.body, *name),
+                        _ => None,
+                    };
+                    collect_pattern_bindings(
+                        &param.pattern,
+                        body_start,
+                        ty.as_ref(),
+                        body_end,
+                        &mut bindings,
+                        records,
+                    );
                 }
                 collect_local_bindings_in_expr(&f.body, body_end, &mut bindings, records);
             }
@@ -69,28 +67,59 @@ pub(super) fn collect_local_bindings(
                     continue;
                 }
                 for method in &ti.methods {
-                    let body_start = method.body.span.start as usize;
-                    let body_end = method.body.span.end as usize;
-                    for param in &method.params {
-                        if let PatternKind::Ident(name) = &param.pattern.kind {
-                            let ty = find_param_type(&method.body, *name);
-                            bindings.push(LocalBinding {
-                                name: *name,
-                                binding_offset: param.pattern.span.start as usize,
-                                binding_len: resolve(*name).len(),
-                                scope_start: body_start,
-                                scope_end: body_end,
-                                ty,
-                            });
-                        }
-                    }
-                    collect_local_bindings_in_expr(&method.body, body_end, &mut bindings, records);
+                    collect_method_bindings(method, &mut bindings, records);
+                }
+            }
+            // A trait's methods: the parameters of each, and what a
+            // default body binds.
+            Decl::Trait(t) => {
+                for method in &t.methods {
+                    collect_method_bindings(method, &mut bindings, records);
                 }
             }
             _ => {}
         }
     }
     bindings
+}
+
+/// The parameters of a trait's or an impl's method, and what its body
+/// binds.
+fn collect_method_bindings(
+    method: &FnDecl,
+    bindings: &mut Vec<LocalBinding>,
+    records: &RecordFields,
+) {
+    let body_end = method.body.span.end as usize;
+    param_bindings(&method.params, &method.body, bindings, records);
+    collect_local_bindings_in_expr(&method.body, body_end, bindings, records);
+}
+
+/// The names the parameters `params` of a function or closure with the
+/// body `body` bind, visible in the body. A parameter that is one name
+/// has the type the body uses it at.
+fn param_bindings(
+    params: &[Param],
+    body: &Expr,
+    bindings: &mut Vec<LocalBinding>,
+    records: &RecordFields,
+) {
+    let body_start = body.span.start as usize;
+    let body_end = body.span.end as usize;
+    for param in params {
+        let ty = match &param.pattern.kind {
+            PatternKind::Ident(name) => find_param_type(body, *name),
+            _ => None,
+        };
+        collect_pattern_bindings(
+            &param.pattern,
+            body_start,
+            ty.as_ref(),
+            body_end,
+            bindings,
+            records,
+        );
+    }
 }
 
 /// Collect local bindings inside an expression, given the enclosing scope.
@@ -107,17 +136,11 @@ fn collect_local_bindings_in_expr(
             for stmt in stmts.iter() {
                 match stmt {
                     Stmt::Let { pattern, value, .. } => {
-                        let value_start = value.span.start as usize;
-                        // Walk the pattern recursively so destructuring
-                        // (`let (a, b) = ...`, `let P { x, y } = ...`, etc.)
-                        // also registers each leaf ident as a binding. The
-                        // binding scope starts at `value_start` so the
-                        // binding ident on the LHS is still found by
-                        // `find_local_binding_at_offset` via its own
-                        // `binding_offset`/`binding_len`.
+                        // The names are visible behind the value:
+                        // `let x = x + 1` uses the `x` before it.
                         collect_pattern_bindings(
                             pattern,
-                            value_start,
+                            value.span.end as usize,
                             value.ty.as_ref(),
                             scope_end,
                             bindings,
@@ -130,10 +153,11 @@ fn collect_local_bindings_in_expr(
                         expr,
                         else_body,
                     } => {
-                        // Pattern idents are bound in the rest of the block.
+                        // The names are bound in the rest of the block,
+                        // behind the `else` body.
                         collect_pattern_bindings(
                             pattern,
-                            expr.span.start as usize,
+                            else_body.span.end as usize,
                             expr.ty.as_ref(),
                             scope_end,
                             bindings,
@@ -156,20 +180,8 @@ fn collect_local_bindings_in_expr(
             }
         }
         ExprKind::Lambda { params, body, .. } => {
-            let body_start = body.span.start as usize;
             let body_end = body.span.end as usize;
-            for p in params {
-                if let PatternKind::Ident(name) = &p.pattern.kind {
-                    bindings.push(LocalBinding {
-                        name: *name,
-                        binding_offset: p.pattern.span.start as usize,
-                        binding_len: resolve(*name).len(),
-                        scope_start: body_start,
-                        scope_end: body_end,
-                        ty: find_param_type(body, *name),
-                    });
-                }
-            }
+            param_bindings(params, body, bindings, records);
             collect_local_bindings_in_expr(body, body_end, bindings, records);
         }
         ExprKind::Match { expr, arms } => {
@@ -177,7 +189,11 @@ fn collect_local_bindings_in_expr(
                 collect_local_bindings_in_expr(e, scope_end, bindings, records);
             }
             for arm in arms {
-                let arm_start = arm.body.span.start as usize;
+                // An arm's names are visible in its guard and its body.
+                let arm_start = match &arm.guard {
+                    Some(guard) => guard.span.start as usize,
+                    None => arm.body.span.start as usize,
+                };
                 let arm_end = arm.body.span.end as usize;
                 collect_pattern_bindings(
                     &arm.pattern,
