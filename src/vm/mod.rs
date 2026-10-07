@@ -835,6 +835,7 @@ impl Vm {
         match val {
             // Variants that carry semantic content into the user-facing
             // diagnostic. Each is a deliberate alias documented above.
+            Value::Record(ty, _) if ty.is_anon() => "an anonymous record".to_string(),
             Value::Record(ty, _) => ty.name.clone(),
             Value::Variant(tag, _) => tag.ty().name.clone(),
             Value::VariantConstructor(tag) => {

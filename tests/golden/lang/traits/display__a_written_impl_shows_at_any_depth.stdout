@@ -9,6 +9,6 @@ Node(Leaf(21C), Node(Leaf(3C), Leaf(21C)))
 Some(21C)
 false
 [Ok(21C), Err(no)]
-<anon> {n: 1, temp: 21C}
+{n: 1, temp: 21C}
 Box {item: [Some((21C, [3C]))]}
 Some([Box {item: 21C}])

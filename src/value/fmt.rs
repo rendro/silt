@@ -103,11 +103,11 @@ impl Value {
                 format!("({})", items.join(", "))
             }
             Value::Record(ty, fields) => {
-                let items: Vec<String> = fields
-                    .iter()
+                let items: Vec<String> = record_fields(ty, fields)
+                    .into_iter()
                     .map(|(k, v)| format!("{k}: {}", v.format_silt()))
                     .collect();
-                format!("{} {{{}}}", ty.name, items.join(", "))
+                format!("{}{{{}}}", record_head(ty), items.join(", "))
             }
             Value::Variant(name, fields) => {
                 if fields.is_empty() {
@@ -129,6 +129,32 @@ impl Value {
             Value::TcpStream(t) => format!("<tcp-stream:{}>", t.id),
             Value::Unit => "()".to_string(),
         }
+    }
+}
+
+/// What a record is written with before its fields: the name of its
+/// type and a space; nothing for an anonymous record (`{a: 1}`).
+fn record_head(ty: &crate::typeinfo::TypeInfo) -> String {
+    match ty.is_anon() {
+        true => String::new(),
+        false => format!("{} ", ty.name),
+    }
+}
+
+/// The fields of a record in the order they are written in, in every
+/// text of it: the order the type declares them in; an anonymous
+/// record's, which has no declaration, in name order.
+fn record_fields<'a>(
+    ty: &crate::typeinfo::TypeInfo,
+    fields: &'a std::collections::BTreeMap<String, Value>,
+) -> Vec<(&'a str, &'a Value)> {
+    match &ty.shape {
+        crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => declared
+            .iter()
+            .filter_map(|(k, _)| fields.get_key_value(k.as_str()))
+            .map(|(k, v)| (k.as_str(), v))
+            .collect(),
+        _ => fields.iter().map(|(k, v)| (k.as_str(), v)).collect(),
     }
 }
 
@@ -308,20 +334,8 @@ impl Value {
                 }
                 ty::DURATION => fmt_duration(f, val_i64(fields.get("ns"))),
                 _ => {
-                    // The fields in the order the type declares them;
-                    // an anonymous record's, which has no declaration,
-                    // in name order.
-                    write!(f, "{} {{", ty.name)?;
-                    let declared: Vec<(&str, &Value)> = match &ty.shape {
-                        crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
-                            declared
-                                .iter()
-                                .filter_map(|(k, _)| Some((k.as_str(), fields.get(k)?)))
-                                .collect()
-                        }
-                        _ => fields.iter().map(|(k, v)| (k.as_str(), v)).collect(),
-                    };
-                    for (i, (k, v)) in declared.into_iter().enumerate() {
+                    write!(f, "{}{{", record_head(ty))?;
+                    for (i, (k, v)) in record_fields(ty, fields).into_iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }

@@ -1,10 +1,10 @@
-<anon> {name: a}
-<anon> {city: c, name: a}
+{name: a}
+{city: c, name: a}
 c
-<anon> {age: 42, name: Bob}
-<anon> {age: 42, city: c, name: Bob}
+{age: 42, name: Bob}
+{age: 42, city: c, name: Bob}
 c
-<anon> {k: 1, name: a, seen: true}
+{k: 1, name: a, seen: true}
 Person {name: Bob, age: 42}
 Person {name: Bob, age: 43}
-<anon> {age: 42, name: Bob}
+{age: 42, name: Bob}

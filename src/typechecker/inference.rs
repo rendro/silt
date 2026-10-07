@@ -1729,6 +1729,12 @@ impl TypeChecker {
                             };
                             self.unify(&obj_ty, &extended, span);
                             result_ty
+                        } else if let Some(method_ty) = self.structural_method(&obj_ty, field, span)
+                        {
+                            // A method every value has that its parts
+                            // allow (`{a: 1}.display()`), as on a tuple.
+                            expr.ty = Some(method_ty.clone());
+                            return method_ty;
                         } else {
                             // ERR-GAP (round 81 F2): mirror the sibling
                             // Record / Generic field-access sites and

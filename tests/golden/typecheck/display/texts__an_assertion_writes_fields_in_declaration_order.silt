@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: assertion failed: (P {z: 1, a: 2}, {a: 2, b: 1}) != (P {z: 1, a: 3}, {a: 2, b: 1})
+-- The text of a failed assertion writes a record as `println` does:
+-- the fields in the order of the declaration (it was name order), an
+-- anonymous record without a tag, in name order.
+import test
+
+type P {
+  z: Int,
+  a: Int,
+}
+
+fn main() {
+  test.assert_eq((P { z: 1, a: 2 }, { b: 1, a: 2 }), (P { z: 1, a: 3 }, { b: 1, a: 2 }))
+}

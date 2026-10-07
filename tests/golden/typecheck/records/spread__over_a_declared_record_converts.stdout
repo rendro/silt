@@ -1,7 +1,7 @@
-<anon> {age: 42, name: Bob}
+{age: 42, name: Bob}
 true
 Bob 42
 once
-<anon> {age: old, city: x, name: Bob}
+{age: old, city: x, name: Bob}
 [1]
 1
