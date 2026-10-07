@@ -1244,6 +1244,52 @@ pub struct ModuleCheck {
     pub let_order: Vec<Span>,
 }
 
+/// For the module `module`, checked, with every other module of its
+/// program: at each place it reported that a type has no method of
+/// some name, the help that names a trait with such a method for the
+/// type whose module `module` does not reach (`reach`: the modules it
+/// imports, and theirs, and so on). It is made from the whole program's
+/// impls, so it does not depend on the order the modules were checked
+/// in.
+pub fn out_of_reach_helps(
+    tables: &Tables,
+    defs: &crate::defs::DefTable,
+    module: crate::session::ModuleId,
+    reach: &std::collections::HashSet<crate::session::ModuleId>,
+) -> Vec<(Span, String)> {
+    let mut helps = Vec::new();
+    for (span, ty, method) in tables.unknown_methods.get(&module).into_iter().flatten() {
+        let mut found: Vec<(String, String)> = tables
+            .trait_methods
+            .keys()
+            .filter(|(of, name, _)| of == ty && name == method)
+            .filter_map(|(_, _, t)| {
+                let owner = defs.get(t.id.0).module;
+                let private = tables
+                    .traits
+                    .get(t)
+                    .is_some_and(|info| info.private_to.is_some());
+                if owner == module || owner.is_builtin() || reach.contains(&owner) || private {
+                    return None;
+                }
+                let owner = tables.module_names.get(&owner)?;
+                Some((resolve(t.name), resolve(*owner)))
+            })
+            .collect();
+        found.sort();
+        if let Some((tr, owner)) = found.first() {
+            helps.push((
+                *span,
+                format!(
+                    "trait '{tr}' of module '{owner}' has a method '{method}' for this type; \
+                     import '{owner}' to call it"
+                ),
+            ));
+        }
+    }
+    helps
+}
+
 /// The context a module is checked in, from the session.
 pub struct ModuleContext<'a> {
     /// The module checked.

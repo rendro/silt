@@ -193,17 +193,17 @@ pub(super) fn format_unknown_method_message(
 
 impl TypeChecker {
     /// The "unknown method" message for `field` of the type `ty`, with
-    /// its help: the module to import when a trait out of reach has the
-    /// method, or a method of a similar name.
+    /// a method of a similar name as its help. That it was reported is
+    /// kept (`note_unknown_method`).
     fn unknown_method_message(
-        &self,
+        &mut self,
         field: Symbol,
         display: &str,
         ty: TypeRef,
+        span: Span,
     ) -> (String, Option<String>) {
-        let (message, similar) =
-            format_unknown_method_message(field, display, &self.tables.method_table, ty);
-        (message, self.unreached_help(ty, field).or(similar))
+        self.note_unknown_method(span, ty, field);
+        format_unknown_method_message(field, display, &self.tables.method_table, ty)
     }
 
     /// Put `var: trait_name` (at the trait arguments `args`) in scope,
@@ -719,9 +719,10 @@ impl TypeChecker {
             format!("type '{type_name}' has no method '{field}'"),
         );
         let qualified = intern(&format!("{module}.{field}"));
-        if let Some(help) = ty.and_then(|ty| self.unreached_help(ty, field)) {
-            d = d.with_help(help);
-        } else if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
+        if let Some(ty) = ty {
+            self.note_unknown_method(span, ty, field);
+        }
+        if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
             d = d.with_help(format!(
                 "did you mean `{module}.{field}`, a function of module `{module}`?"
             ));
@@ -1816,6 +1817,7 @@ impl TypeChecker {
                         // through the Generic/named-record field-access
                         // path so `u.nam` on `type User { name, age }`
                         // prints `did you mean 'name'?`.
+                        self.note_unknown_method(span, *type_name, field);
                         let shown = self.show_type(&Type::Generic(*type_name, vec![]));
                         let base = format!("unknown field or method '{field}' on type {shown}");
                         let msg = if let Some(rec_info) = self.tables.records.get(type_name) {
@@ -1866,11 +1868,8 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         let display = format!("type {type_name}");
-                        self.error_help(
-                            Code::UnknownMethod,
-                            self.unknown_method_message(field, &display, type_name),
-                            span,
-                        );
+                        let message = self.unknown_method_message(field, &display, type_name, span);
+                        self.error_help(Code::UnknownMethod, message, span);
                         Type::Error
                     }
                     // Collection types. Phase B: Range receivers were
@@ -1934,11 +1933,8 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         let display = resolve(type_name.name).to_string();
-                        self.error_help(
-                            Code::UnknownMethod,
-                            self.unknown_method_message(field, &display, type_name),
-                            span,
-                        );
+                        let message = self.unknown_method_message(field, &display, type_name, span);
+                        self.error_help(Code::UnknownMethod, message, span);
                         Type::Error
                     }
                     Type::Rigid(r) => {

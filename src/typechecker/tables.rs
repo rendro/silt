@@ -140,6 +140,12 @@ pub struct Tables {
     /// Every method of a written trait impl, by its type, its name and
     /// its trait.
     pub(super) trait_methods: HashMap<(TypeRef, Symbol, TraitKey), MethodEntry>,
+    /// Where each module reported that a type has no method of some
+    /// name: the place, the type, the name. Once every module of a
+    /// program is checked, a trait out of the module's reach that has
+    /// such a method is named there ([`out_of_reach_helps`]).
+    pub(super) unknown_methods:
+        HashMap<crate::session::ModuleId, Vec<(crate::source::Span, TypeRef, Symbol)>>,
     /// Tracks which (trait_name, type) pairs have been implemented.
     pub(super) trait_impl_set: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// Round 93: `(trait_name, canonical type name)` pairs for which a
@@ -336,6 +342,7 @@ impl Tables {
     /// it was a REPL cell that is dropped.
     pub fn forget(&mut self, module: crate::session::ModuleId) {
         self.waiting.remove(&module);
+        self.unknown_methods.remove(&module);
         let Some(rows) = self.rows.remove(&module) else {
             return;
         };
