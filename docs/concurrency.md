@@ -1220,11 +1220,21 @@ timeout path.
 #### The I/O pool, and operations that nobody waits for
 
 Blocking operations run on threads of their own, the I/O pool, so that
-they never hold up the scheduler. The pool grows and shrinks by itself:
-an operation gets a thread at once, a new one if all are busy (up to
-256), and a thread that finds no work for a few seconds ends. Four tasks
-that each wait for a line from a silent peer do not delay a file read.
-There is nothing to configure.
+they never hold up the scheduler. The model is plain: **an operation that
+blocks has a thread for as long as it blocks**. (silt has no
+readiness-based I/O yet; a task that waits in `tcp.read` costs a thread,
+about 25 KiB of memory with its task.) The pool grows and shrinks by
+itself: an operation gets a thread at once, a new one if all are busy, and
+a thread that finds no work for a few seconds ends. Four tasks that each
+wait for a line from a silent peer do not delay a file read. There is
+nothing to configure.
+
+There is a bound: **4,096 operations in flight**. One more is not queued;
+it returns its module's error at once (`Err(TcpUnknown("too many I/O
+operations in flight (4096)"))`, `Err(IoUnknown(...))`, ...), because an
+operation that waited for a thread might be the very one that would have
+released the others. A server that holds more connections than that open
+in blocking reads has to refuse some.
 
 A task stops waiting for its operation when its deadline passes
 (`task.deadline`, `SILT_IO_TIMEOUT`), when it is cancelled, or when it is
@@ -1249,6 +1259,10 @@ What becomes of the operation depends on what it is:
   started completes. Its thread no longer counts as one of the pool's, so
   operations that never return (a read of a terminal nobody types at) do
   not use the pool up. An operation that had not started yet never runs.
+  Such stuck operations have a bound of their own, 64: while that many
+  are still running unheard, every new I/O operation fails at once with
+  an error that says so, instead of the program taking a thread for each
+  without end.
 
 ### Blocking operations
 

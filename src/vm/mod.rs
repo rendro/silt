@@ -14,6 +14,7 @@ mod runtime;
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
+pub use runtime::IoFailure;
 pub use runtime::Runtime;
 pub(crate) use runtime::{CallFrame, ErrFactory, Frame, IoOp, Native, Step};
 
@@ -25,13 +26,21 @@ pub fn io_pool_threads(vm: &Vm) -> usize {
     vm.runtime.io_pool.threads()
 }
 
+/// Test-only: how many threads of the I/O pool of this VM exist. It
+/// equals [`io_pool_threads`] unless a thread still runs an operation
+/// that nobody waits for: such a thread has not ended.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn io_pool_live_threads(vm: &Vm) -> usize {
+    vm.runtime.io_pool.live_threads()
+}
+
 /// Test-only: run a panicking operation on this VM's I/O pool, wait
 /// for it, and return the value it completes with: `failure` of the
 /// panic's message, with a "panic: " prefix. `failure` is the typed
 /// error of a builtin module, so the value has the shape that module's
 /// callers match on.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(&str) -> Value) -> Value {
+pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value) -> Value {
     let op = vm.runtime.io_pool.submit(failure, || {
         panic!("synthetic IO worker panic for round-76 lock");
     });
@@ -156,9 +165,9 @@ impl Vm {
     pub(crate) fn deadline_exceeded_with(&self, timeout_err: ErrFactory) -> Option<Value> {
         let deadline = self.current_deadline?;
         if self.runtime.io.monotonic() >= deadline {
-            Some(timeout_err(
+            Some(timeout_err(IoFailure::Timeout(
                 crate::scheduler::DeadlineSource::Task.message(),
-            ))
+            )))
         } else {
             None
         }
@@ -236,9 +245,9 @@ impl Vm {
                 Fired::Arm(..) => op.take(),
                 _ => None,
             };
-            Ok(Step::Done(
-                value.unwrap_or_else(|| timeout_err(source.message())),
-            ))
+            Ok(Step::Done(value.unwrap_or_else(|| {
+                timeout_err(IoFailure::Timeout(source.message()))
+            })))
         }))
     }
 
@@ -254,7 +263,7 @@ impl Vm {
         let scheduler = Arc::new(Scheduler::new(io.clone()));
         Vm {
             runtime: Arc::new(Runtime {
-                io_pool: IoPool::new(io.clone(), scheduler.clone()),
+                io_pool: IoPool::new(scheduler.clone()),
                 scheduler,
                 io,
                 rng: parking_lot::Mutex::new(None),

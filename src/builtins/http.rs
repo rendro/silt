@@ -283,12 +283,19 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 /// ureq's error enum shape is minor-version-unstable; we match on
 /// the rendered message and fall back to `HttpUnknown`.
 #[cfg(feature = "http")]
-/// Factory: deadline-cancelled http op surfaces as `Err(HttpTimeout)`
-/// rather than `Err(IoUnknown(_))`. It is given the deadline message,
-/// which is dropped because `HttpTimeout` is a nullary variant. Used by http.get / http.request submits.
+/// The error of an `http` function whose operation has no value of
+/// its own: `HttpTimeout` when its deadline passed, `HttpUnknown` with
+/// the reason when it could not run or panicked.
 #[cfg(feature = "http")]
-fn http_timeout_err(_msg: &str) -> Value {
-    Value::variant(bv::ERR, vec![Value::variant(bv::HTTP_TIMEOUT, vec![])])
+fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
+    use crate::vm::IoFailure;
+    let error = match failure {
+        IoFailure::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, vec![]),
+        IoFailure::Panicked(why) | IoFailure::Refused(why) => {
+            Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(why.to_string())])
+        }
+    };
+    Value::variant(bv::ERR, vec![error])
 }
 
 #[cfg(feature = "http")]
@@ -570,7 +577,7 @@ enum ServeState {
 /// What a step of a request's task completes with when the I/O pool
 /// cannot run it.
 #[cfg(feature = "http")]
-fn not_served(_why: &str) -> Value {
+fn not_served(_why: crate::vm::IoFailure<'_>) -> Value {
     Value::Unit
 }
 

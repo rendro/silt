@@ -26,13 +26,18 @@ use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
 
-/// Factory: deadline-cancelled tcp op surfaces as `Err(TcpTimeout)`
-/// rather than the default `Err(IoUnknown(_))`. Used by every tcp.*
-/// builtin that runs on the I/O pool. The message text is dropped because
-/// `TcpTimeout` is a nullary variant; `e.message()` still produces a
-/// helpful string via the trait impl.
-fn tcp_timeout_err(_msg: &str) -> Value {
-    Value::variant(bv::ERR, vec![Value::variant(bv::TCP_TIMEOUT, vec![])])
+/// The error of a `tcp` function whose operation has no value of its
+/// own: `TcpTimeout` when its deadline passed, `TcpUnknown` with the
+/// reason when it could not run or panicked.
+fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
+    use crate::vm::IoFailure;
+    let error = match failure {
+        IoFailure::Timeout(_) => Value::variant(bv::TCP_TIMEOUT, vec![]),
+        IoFailure::Panicked(why) | IoFailure::Refused(why) => {
+            Value::variant(bv::TCP_UNKNOWN, vec![Value::String(why.to_string())])
+        }
+    };
+    Value::variant(bv::ERR, vec![error])
 }
 
 /// Dispatch the builtin `trait Error for TcpError` method table.

@@ -168,8 +168,8 @@ struct Pipe {
 const BURST: usize = 256;
 
 /// The error of an I/O operation of a pipe that could not run.
-fn io_failure(msg: &str) -> Value {
-    err_io_unknown(msg)
+fn io_failure(failure: crate::vm::IoFailure<'_>) -> Value {
+    err_io_unknown(failure.text())
 }
 
 fn internal(what: &str) -> VmError {

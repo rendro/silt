@@ -132,10 +132,29 @@ impl Vm {
 /// Why a timer or an I/O operation finds its threads stopped.
 const VM_GONE: &str = "the VM that ran the program has been dropped";
 
-/// How many threads the pool runs at most. Each operation in flight
-/// has a thread of its own up to here; beyond, operations wait for a
-/// thread.
-pub(crate) const IO_POOL_THREADS_MAX: usize = 256;
+/// How many threads the pool runs at most: how many operations can
+/// be in flight at a time, since each has a thread of its own until
+/// there is readiness-based I/O. An operation beyond that fails at
+/// once with its module's error; it does not wait, since what it
+/// would wait for may be what it was going to do (the write that
+/// releases the readers). A blocked operation costs its thread's
+/// kernel stack and the pages of the thread's own stack that it
+/// touched, beside its task: about 25 KiB together, measured with
+/// 3,000 tasks in `tcp.read` (105 MiB against 37 MiB with 300), so
+/// 4,096 of them about 100 MiB.
+pub(crate) const IO_POOL_THREADS_MAX: usize = 4096;
+
+/// How many operations may still run although nobody waits for them
+/// (their waiter was cancelled, timed out or dropped). One that can
+/// be made to return ([`IoOp::stop_with`]) is here for a moment; one
+/// that cannot (a read of a FIFO or a terminal that never ends) stays.
+/// Beyond the bound new operations fail at once: the stuck ones must
+/// not take a thread each without end.
+pub(crate) const IO_POOL_UNHEARD_MAX: usize = 64;
+
+/// The stack of a thread of the pool. The operations are calls into
+/// the OS and the libraries around it (TLS, HTTP), not silt code.
+const IO_POOL_STACK_BYTES: usize = 512 * 1024;
 
 /// How long a thread of the pool waits for work before it ends.
 const IO_POOL_IDLE: std::time::Duration = std::time::Duration::from_secs(5);
@@ -214,7 +233,6 @@ impl OpState {
 /// its thread stops counting as the pool's whether or not it can: a
 /// read of the terminal that never returns does not use up the pool.
 pub(crate) struct IoPool {
-    io: HostIo,
     scheduler: Arc<Scheduler>,
     shared: Arc<PoolShared>,
 }
@@ -225,6 +243,8 @@ struct PoolShared {
     work: parking_lot::Condvar,
     max: usize,
     idle: std::time::Duration,
+    /// The threads that exist: started and not yet returned.
+    live: std::sync::atomic::AtomicUsize,
 }
 
 struct PoolState {
@@ -234,6 +254,11 @@ struct PoolState {
     threads: usize,
     /// Those of them that run an operation.
     busy: usize,
+    /// The threads that run an operation whose waiter is gone: no
+    /// longer the pool's, and not yet ended.
+    unheard: usize,
+    /// Whether a thread was ever started.
+    started: bool,
     /// No thread could be started when one was needed and none
     /// existed (a platform without threads): operations run on the
     /// thread that submits them.
@@ -244,6 +269,14 @@ struct PoolState {
 
 impl PoolShared {
     fn run(self: Arc<Self>) {
+        /// The thread exists until this is dropped.
+        struct Live<'a>(&'a std::sync::atomic::AtomicUsize);
+        impl Drop for Live<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _live = Live(&self.live);
         let mut state = self.state.lock();
         loop {
             if state.stopped {
@@ -264,7 +297,9 @@ impl PoolShared {
             let finish = job();
             state = self.state.lock();
             let left = std::mem::replace(&mut *op.phase.lock(), Phase::Finishing) == Phase::Left;
-            if !left {
+            if left {
+                state.unheard -= 1;
+            } else {
                 state.busy -= 1;
             }
             drop(state);
@@ -284,28 +319,30 @@ impl PoolShared {
 }
 
 impl IoPool {
-    pub(super) fn new(io: HostIo, scheduler: Arc<Scheduler>) -> Self {
-        Self::with(IO_POOL_THREADS_MAX, IO_POOL_IDLE, io, scheduler)
+    pub(super) fn new(scheduler: Arc<Scheduler>) -> Self {
+        Self::with(IO_POOL_THREADS_MAX, IO_POOL_IDLE, scheduler)
     }
 
     /// A pool of at most `max` threads, each of which ends after
     /// `idle` without work. `max` 0 stands in for a platform without
     /// threads.
-    fn with(max: usize, idle: std::time::Duration, io: HostIo, scheduler: Arc<Scheduler>) -> Self {
+    fn with(max: usize, idle: std::time::Duration, scheduler: Arc<Scheduler>) -> Self {
         IoPool {
-            io,
             scheduler,
             shared: Arc::new(PoolShared {
                 state: parking_lot::Mutex::new(PoolState {
                     queue: VecDeque::new(),
                     threads: 0,
                     busy: 0,
+                    unheard: 0,
+                    started: false,
                     unavailable: max == 0,
                     stopped: false,
                 }),
                 work: parking_lot::Condvar::new(),
                 max,
                 idle,
+                live: std::sync::atomic::AtomicUsize::new(0),
             }),
         }
     }
@@ -327,6 +364,14 @@ impl IoPool {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn threads(&self) -> usize {
         self.shared.state.lock().threads
+    }
+
+    /// How many threads of the pool exist: started, and not returned.
+    /// More than [`IoPool::threads`] while a thread still runs an
+    /// operation that nobody waits for.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn live_threads(&self) -> usize {
+        self.shared.live.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Run the blocking operation `f` on a thread of the pool. Its
@@ -362,7 +407,7 @@ impl IoPool {
                     } else {
                         "IO task panicked".to_string()
                     };
-                    failure(&format!("panic: {msg}"))
+                    failure(IoFailure::Panicked(&format!("panic: {msg}")))
                 }
             };
             Box::new(move || {
@@ -374,57 +419,90 @@ impl IoPool {
         });
 
         let shared = &self.shared;
-        let mut state = shared.state.lock();
-        if state.stopped {
-            drop(state);
-            // The VM is gone: the operation fails.
-            let err = failure(&format!("cannot run an I/O operation: {VM_GONE}"));
+        // The operation is not run: its value is the module's error.
+        let refuse = |op: IoOp, why: String| {
+            let err = failure(IoFailure::Refused(&why));
+            *op.state.phase.lock() = Phase::Finished;
             let _ = op.cell.complete(err, self.scheduler.wake());
             let done = op.in_flight.lock().take();
             drop(done);
-            return op;
-        }
-        if !state.unavailable {
-            state.queue.push_back((job, queued));
-            if state.queue.len() <= state.threads - state.busy {
-                // A thread that waits for work, or is about to look
-                // for some, takes it.
-                shared.work.notify_one();
-                return op;
-            }
-            if state.threads >= shared.max {
-                // Every thread is busy and there may be no more: it
-                // waits for one.
-                return op;
-            }
-            state.threads += 1;
-            let pool = shared.clone();
-            let started = std::thread::Builder::new()
-                .name("silt-io".into())
-                .spawn(move || pool.run());
-            let Err(e) = started else {
-                return op;
-            };
-            state.threads -= 1;
-            if state.threads > 0 {
-                // The threads there are take it when they are free.
-                return op;
-            }
-            // No thread at all: from now on, and for what is queued,
-            // the thread that asks does the work.
-            state.unavailable = true;
-            self.io.err(&format!(
-                "silt: cannot start an I/O thread ({e}); I/O runs on the threads that ask for it\n"
-            ));
-            let queued = std::mem::take(&mut state.queue);
+            op
+        };
+        let mut state = shared.state.lock();
+        if state.stopped {
             drop(state);
-            for (job, op) in queued {
-                let finish = job();
-                finish();
-                *op.phase.lock() = Phase::Finished;
-            }
+            return refuse(op, format!("cannot run an I/O operation: {VM_GONE}"));
+        }
+        if state.unavailable {
+            drop(state);
+            let finish = job();
+            finish();
+            *op.state.phase.lock() = Phase::Finished;
             return op;
         }
+        if state.unheard >= IO_POOL_UNHEARD_MAX {
+            let unheard = state.unheard;
+            drop(state);
+            return refuse(
+                op,
+                format!(
+                    "too many I/O operations that nobody waits for are still running \
+                     ({unheard}); they cannot be interrupted"
+                ),
+            );
+        }
+        if state.queue.len() < state.threads - state.busy {
+            // A thread that waits for work, or is about to look for
+            // some, takes it.
+            state.queue.push_back((job, queued));
+            shared.work.notify_one();
+            return op;
+        }
+        if state.threads >= shared.max {
+            let in_flight = state.threads;
+            drop(state);
+            return refuse(
+                op,
+                format!("too many I/O operations in flight ({in_flight})"),
+            );
+        }
+        state.queue.push_back((job, queued));
+        state.threads += 1;
+        shared
+            .live
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let pool = shared.clone();
+        let started = std::thread::Builder::new()
+            .name("silt-io".into())
+            .stack_size(IO_POOL_STACK_BYTES)
+            .spawn(move || pool.run());
+        let Err(e) = started else {
+            state.started = true;
+            return op;
+        };
+        shared
+            .live
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        state.threads -= 1;
+        if state.threads > 0 {
+            // The threads there are take it when they are free.
+            return op;
+        }
+        // No thread at all. The operation that asked is the last in
+        // the queue.
+        let (job, _) = state
+            .queue
+            .pop_back()
+            .expect("the operation that was queued");
+        if state.started {
+            // The system had threads before and will have again: only
+            // this operation fails, and the next one tries anew.
+            drop(state);
+            return refuse(op, format!("cannot start an I/O thread: {e}"));
+        }
+        // It never had one (a platform without threads): from now on
+        // the thread that asks does the work.
+        state.unavailable = true;
         drop(state);
         let finish = job();
         finish();
@@ -433,9 +511,29 @@ impl IoPool {
     }
 }
 
-/// The typed error of a builtin module for a reason given as text: an
-/// I/O operation timed out, panicked, or could not run.
-pub(crate) type ErrFactory = fn(&str) -> Value;
+/// Why an I/O operation has no value of its own, with the reason as
+/// text.
+#[derive(Clone, Copy, Debug)]
+pub enum IoFailure<'a> {
+    /// A deadline passed (`task.deadline`, `SILT_IO_TIMEOUT`).
+    Timeout(&'a str),
+    /// The operation panicked.
+    Panicked(&'a str),
+    /// It was not run: the pool has no thread for it, or the VM is
+    /// gone.
+    Refused(&'a str),
+}
+
+impl IoFailure<'_> {
+    pub fn text(&self) -> &str {
+        match self {
+            IoFailure::Timeout(text) | IoFailure::Panicked(text) | IoFailure::Refused(text) => text,
+        }
+    }
+}
+
+/// The typed error of a builtin module for an [`IoFailure`].
+pub(crate) type ErrFactory = fn(IoFailure<'_>) -> Value;
 
 /// An I/O operation on the pool, as the task that waits for it holds
 /// it.
@@ -519,6 +617,7 @@ impl Drop for IoOp {
                     *phase = Phase::Left;
                     state.threads -= 1;
                     state.busy -= 1;
+                    state.unheard += 1;
                     (true, false)
                 }
                 // The thread sees that, and calls `unheard`.
@@ -651,15 +750,16 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
-    fn failure(msg: &str) -> Value {
-        Value::String(msg.to_string())
+    fn failure(failure: IoFailure<'_>) -> Value {
+        Value::String(failure.text().to_string())
     }
 
     fn pool(max: usize, idle: Duration) -> IoPool {
-        let io = HostIo::process();
-        let scheduler = Arc::new(Scheduler::new(io.clone()));
-        IoPool::with(max, idle, io, scheduler)
+        IoPool::with(max, idle, Arc::new(Scheduler::new(HostIo::process())))
     }
+
+    /// An idle limit that no test reaches.
+    const NEVER_IDLE: Duration = Duration::from_secs(3600);
 
     /// Wait, for at most ten seconds, until `done` holds.
     fn until(what: &str, done: impl Fn() -> bool) {
@@ -676,7 +776,7 @@ mod tests {
     /// panic in it is the typed failure, and nothing stays pending.
     #[test]
     fn without_threads_an_operation_runs_on_the_caller() {
-        let pool = pool(0, IO_POOL_IDLE);
+        let pool = pool(0, NEVER_IDLE);
         let here = std::thread::current().id();
 
         let op = pool.submit(failure, move || {
@@ -699,7 +799,7 @@ mod tests {
     /// gets a thread of its own.
     #[test]
     fn a_thread_is_added_when_all_are_busy() {
-        let pool = pool(IO_POOL_THREADS_MAX, IO_POOL_IDLE);
+        let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
         let (release, held) = mpsc::channel::<()>();
         let held = Arc::new(parking_lot::Mutex::new(held));
         let blocked: Vec<IoOp> = (0..8)
@@ -724,30 +824,42 @@ mod tests {
         });
     }
 
-    /// A thread that waits for work is used before another is started,
-    /// and ends when it has waited for long enough.
+    /// A thread that is free is used before another is started.
     #[test]
-    fn a_thread_is_reused_and_retired_when_idle() {
-        let pool = pool(IO_POOL_THREADS_MAX, Duration::from_millis(50));
+    fn a_thread_is_reused() {
+        let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
         for n in 0..20 {
             let op = pool.submit(failure, move || Value::Int(n));
             until("the operation ran", || op.cell.get().is_some());
             // The thread that woke the waiter is free for the next.
             assert_eq!(pool.threads(), 1);
+            assert_eq!(pool.live_threads(), 1);
         }
-        until("the idle thread ended", || pool.threads() == 0);
+    }
+
+    /// A thread that finds no work for the idle limit ends, and the
+    /// next operation gets a new one.
+    #[test]
+    fn a_thread_is_retired_when_idle() {
+        let pool = pool(IO_POOL_THREADS_MAX, Duration::from_millis(1));
         let op = pool.submit(failure, || Value::Int(1));
+        until("the operation ran", || op.cell.get().is_some());
+        until("the idle thread ended", || pool.live_threads() == 0);
+        assert_eq!(pool.threads(), 0);
+        let op = pool.submit(failure, || Value::Int(2));
         until("a new thread ran it", || op.cell.get().is_some());
     }
 
-    /// At the bound, operations wait for a thread, in order.
+    /// At the bound an operation is refused at once, with the module's
+    /// error: it does not wait for a thread. When one is free again,
+    /// operations run again.
     #[test]
-    fn at_the_bound_operations_wait_for_a_thread() {
-        let pool = pool(2, IO_POOL_IDLE);
+    fn at_the_bound_an_operation_is_refused_at_once() {
+        let pool = pool(2, NEVER_IDLE);
         let (release, held) = mpsc::channel::<()>();
         let held = Arc::new(parking_lot::Mutex::new(held));
         let running = Arc::new(AtomicUsize::new(0));
-        let ops: Vec<IoOp> = (0..5)
+        let blocked: Vec<IoOp> = (0..2)
             .map(|_| {
                 let (held, running) = (held.clone(), running.clone());
                 pool.submit(failure, move || {
@@ -758,14 +870,66 @@ mod tests {
             })
             .collect();
         until("two run", || running.load(Ordering::SeqCst) == 2);
+        let refused = pool.submit(failure, || Value::Int(3));
+        match refused.cell.get() {
+            Some(Value::String(msg)) => {
+                assert_eq!(msg, "too many I/O operations in flight (2)")
+            }
+            other => panic!("expected the refusal, got {other:?}"),
+        }
+        assert!(refused.in_flight.lock().is_none());
         assert_eq!(pool.threads(), 2);
-        for _ in &ops {
+        for _ in &blocked {
             release.send(()).unwrap();
         }
-        until("all five end", || {
-            ops.iter().all(|op| op.cell.get().is_some())
+        until("the two end", || {
+            blocked.iter().all(|op| op.cell.get().is_some())
         });
-        assert_eq!(pool.threads(), 2);
+        let next = pool.submit(failure, || Value::Int(4));
+        until("the next runs", || next.cell.get().is_some());
+        assert!(matches!(next.cell.get(), Some(Value::Int(4))));
+    }
+
+    /// Operations that cannot be stopped and that nobody waits for any
+    /// more keep their threads, up to a bound of their own; beyond it
+    /// new operations are refused, until some of them have ended.
+    #[test]
+    fn stuck_operations_without_a_waiter_are_bounded() {
+        let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
+        let (release, held) = mpsc::channel::<()>();
+        let held = Arc::new(parking_lot::Mutex::new(held));
+        let running = Arc::new(AtomicUsize::new(0));
+        for _ in 0..IO_POOL_UNHEARD_MAX {
+            let (held, started) = (held.clone(), running.clone());
+            let before = running.load(Ordering::SeqCst);
+            let op = pool.submit(failure, move || {
+                started.fetch_add(1, Ordering::SeqCst);
+                let _ = held.lock().recv();
+                Value::Unit
+            });
+            until("it runs", || running.load(Ordering::SeqCst) > before);
+            // Its waiter goes; it cannot be stopped.
+            drop(op);
+        }
+        assert_eq!(pool.threads(), 0);
+        assert_eq!(pool.live_threads(), IO_POOL_UNHEARD_MAX);
+        let refused = pool.submit(failure, || Value::Int(1));
+        match refused.cell.get() {
+            Some(Value::String(msg)) => assert_eq!(
+                msg,
+                &format!(
+                    "too many I/O operations that nobody waits for are still running \
+                     ({IO_POOL_UNHEARD_MAX}); they cannot be interrupted"
+                )
+            ),
+            other => panic!("expected the refusal, got {other:?}"),
+        }
+        for _ in 0..IO_POOL_UNHEARD_MAX {
+            release.send(()).unwrap();
+        }
+        until("the stuck threads ended", || pool.live_threads() == 0);
+        let next = pool.submit(failure, || Value::Int(2));
+        until("the next runs", || next.cell.get().is_some());
     }
 
     /// An operation whose waiter is gone is told to stop, and its
@@ -773,7 +937,7 @@ mod tests {
     /// stopped.
     #[test]
     fn an_operation_without_a_waiter_does_not_use_up_the_pool() {
-        let pool = pool(1, IO_POOL_IDLE);
+        let pool = pool(1, NEVER_IDLE);
         let stopped = Arc::new(AtomicBool::new(false));
         let started = Arc::new(AtomicBool::new(false));
         // One that can be stopped.
@@ -814,7 +978,7 @@ mod tests {
     /// does.
     #[test]
     fn an_operation_that_is_queued_when_its_waiter_goes_never_runs() {
-        let pool = pool(1, IO_POOL_IDLE);
+        let pool = pool(1, NEVER_IDLE);
         let (release, held) = mpsc::channel::<()>();
         let first = pool.submit(failure, move || {
             let _ = held.recv();
@@ -841,7 +1005,7 @@ mod tests {
     /// error, and the threads end.
     #[test]
     fn a_stopped_pool_fails_its_operations() {
-        let pool = pool(IO_POOL_THREADS_MAX, IO_POOL_IDLE);
+        let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
         let op = pool.submit(failure, || Value::Int(1));
         until("it ran", || op.cell.get().is_some());
         pool.stop();
