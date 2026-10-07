@@ -1765,6 +1765,58 @@ fn main() {
         assert!(took < Duration::from_secs(30), "the verdict took {took:?}");
     }
 
+    /// Where the timer thread cannot be started, the threads that
+    /// wait fire the timer: sleeps, timeouts and timeout channels
+    /// still end, on the program's own thread and in tasks, and the
+    /// program ends when its tasks have.
+    #[test]
+    fn without_a_timer_thread_the_waiting_threads_fire_the_timer() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import channel
+import task
+import time
+
+fn main() {
+  time.sleep(time.ms(5))
+  println("main slept")
+  let ch = channel.new(0)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(5))
+    channel.send(ch, 1)
+  }
+  match channel.recv_timeout(ch, time.ms(20000)) {
+    Ok(v) -> println("got {v}")
+    Err(_) -> println("timed out")
+  }
+  task.join(sender)
+  match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(5))]) {
+    (_, channel.Closed) -> println("the timeout channel closed")
+    _ -> println("something else")
+  }
+  println("main returns")
+  let _late = task.spawn { ->
+    time.sleep(time.ms(5))
+    println("a task after main")
+  }
+}
+"#,
+        )
+        .expect("the program compiles");
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()));
+        *vm.scheduler().inner.timer_lock.lock() = super::TimerThread::Unavailable;
+        let result = vm.run_program(&program);
+        vm.settle();
+        assert_eq!(result.map_err(|e| e.message), Ok(Value::Unit));
+        let printed: Vec<String> = out.0.lock().iter().map(|(text, _)| text.clone()).collect();
+        assert_eq!(
+            printed.concat(),
+            "main slept\ngot 1\nthe timeout channel closed\nmain returns\na task after main\n"
+        );
+        assert!(*vm.scheduler().inner.timer_lock.lock() == super::TimerThread::Unavailable);
+    }
+
     #[test]
     fn a_deadlock_is_reported_when_the_last_task_parks() {
         let (result, out, end) = run(r#"

@@ -22,6 +22,7 @@ default features in your `Cargo.toml`.
 | `close` | `(TcpStream) -> ()` | Mark the stream as closed; future ops error |
 | `connect` | `(String) -> Result(TcpStream, TcpError)` | Open a TCP connection to `host:port` (cooperative I/O) |
 | `listen` | `(String) -> Result(TcpListener, TcpError)` | Bind a TCP listener to `host:port` |
+| `local_port` | `(TcpListener) -> Int` | The port the listener is bound to: the one the system chose for port `0` |
 | `peer_addr` | `(TcpStream) -> Result(String, TcpError)` | Remote socket address (not yet implemented for trait-object stream handles; returns Err) |
 | `read` | `(TcpStream, Int) -> Result(Bytes, TcpError)` | Read up to `max` bytes (cooperative) |
 | `read_exact` | `(TcpStream, Int) -> Result(Bytes, TcpError)` | Read exactly `n` bytes (cooperative; loops) |
@@ -79,31 +80,68 @@ fn main() {
 }
 ```
 
+## Addresses and ports
+
+`tcp.listen("host:port")` binds where it is told:
+
+- `"127.0.0.1:8080"` listens on loopback: only programs on this machine
+  can connect. This is the address for development servers.
+- `"0.0.0.0:8080"` listens on every network interface: other machines can
+  connect.
+- Port `0` asks the system for a free port; `tcp.local_port(listener)`
+  gives the one it chose:
+
+```silt
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  println(tcp.local_port(listener) > 0)
+}
+```
+
+A listener is also what [`http.serve`](http.md#httpserve) serves on.
+
 ## Cooperative I/O
 
-`accept`, `connect`, `read`, `read_exact`, and `write` integrate with the silt
-scheduler: when called inside a `task.spawn`'d task, they submit the I/O to
-silt's thread pool and yield the task slot until the operation completes.
-Other tasks run in the meantime. From silt's perspective the call looks
-synchronous; under the hood it's cooperative.
+`accept`, `connect`, `read`, `read_exact`, and `write` wait without
+holding up the scheduler: the operation runs on a thread of the I/O pool
+and the task (or `main`) waits for its value while other tasks run. From
+silt's perspective the call looks synchronous.
 
-When called from the main task (no `task.spawn`), the same operations run
-synchronously on the calling thread.
+**Reading and writing at the same time.** A plain TCP connection can be
+read by one task and written by another at once: neither waits for the
+other. (Two tasks that read the same connection take turns, as do two
+that write.) A TLS connection is different: its reads and writes take
+turns, so a task that waits in `tcp.read` holds up a `tcp.write` on the
+same TLS connection until the read returns.
 
 ## Stream lifetime
 
-`TcpStream` and `TcpListener` are garbage-collected via `Arc` reference
-counting. Dropping the last reference closes the underlying socket.
-`tcp.close` is a defensive marker — it makes subsequent `read`/`write` calls
-fail fast with a clear message instead of attempting I/O on a stream the user
-has logically finished with.
+`tcp.close(conn)` shuts the connection down: a `read` or `write` that
+another task has in flight on it returns, and later calls fail with
+`TcpClosed`. Without `tcp.close` the socket is closed when the last
+reference to the connection is gone.
+
+**A read or write that nobody waits for ends its connection.** When a
+task stops waiting for `tcp.read`, `tcp.read_exact` or `tcp.write` (its
+`task.deadline` or `SILT_IO_TIMEOUT` passed, it was cancelled, or the
+program ended), the connection is shut down exactly as by `tcp.close`.
+That is what lets the blocked operation, and its thread, end. So a read
+that timed out cannot be tried again: the next call on that connection
+gives `Err(TcpClosed)`. The same holds for the `stream.tcp_*` sources and
+sink when their pipeline is cut short. A `tcp.accept` that nobody waits
+for is woken and gives up; the listener stays usable.
 
 ## Notes
 
 - `peer_addr` and `set_nodelay` currently return Err (they require unwrapping
   the trait-object stream). They will be wired up in a later release.
-- silt does not use async/await. The scheduler does cooperative yielding via
-  the same I/O pool used by `io.read_file`, `fs.list_dir`, etc.
+- silt does not use async/await. Blocking calls run on the same I/O pool as
+  `io.read_file`, `fs.list_dir`, etc. (see
+  [the I/O pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for)).
 
 ## TLS (opt-in feature)
 

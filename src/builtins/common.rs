@@ -56,6 +56,7 @@ pub(super) fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>,
     }
 }
 
+#[cfg(feature = "tcp")]
 pub(super) fn require_bool(arg: &Value, fn_label: &str) -> Result<bool, VmError> {
     match arg {
         Value::Bool(b) => Ok(*b),

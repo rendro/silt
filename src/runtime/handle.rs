@@ -52,44 +52,300 @@ impl ReadWrite for std::net::TcpStream {
     }
 }
 
+/// A listening socket.
+///
+/// An accept blocks in the OS until a connection comes: it costs
+/// nothing while it waits. It can still be given up
+/// ([`TcpListenerHandle::stop`]): the listener then connects to
+/// itself, the accept returns with that connection, knows it by its
+/// address, drops it and ends. One accept at a time is in the OS call
+/// (the others wait their turn here), so the connection that wakes
+/// reaches the accept it is meant for.
 pub struct TcpListenerHandle {
     pub id: usize,
-    pub listener: std::net::TcpListener,
+    listener: std::net::TcpListener,
+    accepting: Mutex<Accepting>,
+    /// The accepts that wait their turn wait here.
+    turn: parking_lot::Condvar,
 }
 
+#[derive(Default)]
+struct Accepting {
+    /// The stop flag of the accept that is in the OS call.
+    current: Option<Arc<AtomicBool>>,
+    /// The addresses that the connections made to wake an accept come
+    /// from: such a connection is not a client's.
+    wakes: Vec<std::net::SocketAddr>,
+}
+
+impl TcpListenerHandle {
+    pub fn new(id: usize, listener: std::net::TcpListener) -> Self {
+        TcpListenerHandle {
+            id,
+            listener,
+            accepting: Mutex::default(),
+            turn: parking_lot::Condvar::new(),
+        }
+    }
+
+    /// The address the listener is bound to.
+    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.listener.local_addr()
+    }
+
+    /// Another handle to the listening socket, for a server that
+    /// accepts on it itself (`http.serve`).
+    pub fn to_std(&self) -> std::io::Result<std::net::TcpListener> {
+        self.listener.try_clone()
+    }
+
+    /// The next connection; `None` if the accept was given up
+    /// ([`TcpListenerHandle::stop`] with the same flag).
+    pub fn accept(
+        &self,
+        stopped: &Arc<AtomicBool>,
+    ) -> std::io::Result<Option<std::net::TcpStream>> {
+        {
+            let mut accepting = self.accepting.lock();
+            loop {
+                if stopped.load(AtomicOrdering::SeqCst) {
+                    return Ok(None);
+                }
+                if accepting.current.is_none() {
+                    break;
+                }
+                self.turn.wait(&mut accepting);
+            }
+            accepting.current = Some(stopped.clone());
+        }
+        let result = loop {
+            match self.listener.accept() {
+                Ok((stream, peer)) => {
+                    // Whoever wakes an accept holds this lock until the
+                    // address of its connection is noted.
+                    let mut accepting = self.accepting.lock();
+                    let wake = accepting.wakes.iter().position(|addr| *addr == peer);
+                    let Some(wake) = wake else {
+                        break Ok(Some(stream));
+                    };
+                    accepting.wakes.swap_remove(wake);
+                    if stopped.load(AtomicOrdering::SeqCst) {
+                        break Ok(None);
+                    }
+                    // Meant for an accept that had its connection
+                    // already: this one goes on.
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => break Err(e),
+            }
+        };
+        self.accepting.lock().current = None;
+        self.turn.notify_all();
+        result
+    }
+
+    /// Give up the accept that was called with `stopped`: it returns
+    /// `None`, at once if it waits its turn, and as soon as the
+    /// connection made here reaches it if it is in the OS call.
+    ///
+    /// That connection goes to the listener's own port on the loopback
+    /// address. If it cannot be made (the listener's backlog is full,
+    /// a packet filter forbids loopback traffic to the port, the
+    /// process has no descriptor left), the accept stays in the OS
+    /// call until a client connects: its thread lingers.
+    pub fn stop(&self, stopped: &Arc<AtomicBool>) {
+        stopped.store(true, AtomicOrdering::SeqCst);
+        let mut accepting = self.accepting.lock();
+        let in_the_call = accepting
+            .current
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, stopped));
+        if !in_the_call {
+            drop(accepting);
+            self.turn.notify_all();
+            return;
+        }
+        let woken = self.wake_addr().and_then(|addr| {
+            let conn = std::net::TcpStream::connect_timeout(&addr, WAKE_CONNECT_LIMIT)?;
+            conn.local_addr()
+        });
+        if let Ok(from) = woken {
+            accepting.wakes.push(from);
+        }
+    }
+
+    /// Where a connection to this listener from this machine goes.
+    fn wake_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        let mut addr = self.listener.local_addr()?;
+        if addr.ip().is_unspecified() {
+            addr.set_ip(match addr {
+                std::net::SocketAddr::V4(_) => std::net::Ipv4Addr::LOCALHOST.into(),
+                std::net::SocketAddr::V6(_) => std::net::Ipv6Addr::LOCALHOST.into(),
+            });
+        }
+        Ok(addr)
+    }
+}
+
+/// How long the connection that wakes an accept may take to be made.
+/// On the loopback interface it is made at once.
+const WAKE_CONNECT_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A connection.
+///
+/// A plain TCP connection has two halves, each a handle of its own to
+/// the one socket (`try_clone`): a task that reads and a task that
+/// writes do not wait for each other. A TLS connection is one object
+/// behind one lock: its reads and writes take turns.
 pub struct TcpStreamHandle {
     pub id: usize,
-    pub inner: Mutex<Box<dyn ReadWrite>>,
-    pub closed: std::sync::atomic::AtomicBool,
-    /// Side-channel handle to the underlying `TcpStream` fd, used by
-    /// `tcp.close` to call `shutdown(Both)` without having to acquire
-    /// `inner`'s mutex (which a concurrent `tcp.read` on another task may
-    /// be holding). Obtained via `TcpStream::try_clone` at construction
-    /// time; for TLS streams this is a clone of the socket that was
-    /// subsequently handed to `rustls::StreamOwned`. On Unix, a
-    /// `shutdown(Both)` on any clone affects the shared fd, causing any
-    /// blocked reader to return EOF promptly. On Windows, `shutdown`
-    /// alone does NOT reliably unblock a parked `recv`; after the
-    /// shutdown we take the cloned handle out of this slot and drop it
-    /// (which calls `closesocket` on the duplicate handle) to cancel
-    /// pending I/O on the underlying socket. Wrapped in a `Mutex` so
-    /// `close()` can `take()` the handle out from `&self` without having
-    /// to contend for `inner`'s mutex. `None` if cloning the fd failed
-    /// at construction (best-effort — callers fall back to Drop
-    /// semantics) or after `close()` has consumed it on Windows.
-    pub shutdown_sock: Mutex<Option<std::net::TcpStream>>,
-    /// Raw OS socket handle for the **inner** stream (the one a parked
-    /// `tcp.read` is using). Cached at construction time so `tcp.close`
-    /// can issue `CancelIoEx` on Windows WITHOUT acquiring `inner`'s
-    /// mutex — which is held by the parked reader and would deadlock.
+    io: TcpIo,
+    closed: AtomicBool,
+    /// A third handle to the socket, to shut it down
+    /// ([`TcpStreamHandle::shut_down`]) without the lock of a half,
+    /// which a blocked read or write holds. On Unix a shutdown through
+    /// any handle ends a blocked `recv` on the others. On Windows it
+    /// does not: there the handle is also taken out of this slot and
+    /// dropped. `None` if the socket could not be cloned, or after a
+    /// shutdown on Windows.
+    shutdown_sock: Mutex<Option<std::net::TcpStream>>,
+    /// The OS socket that a blocked read uses (`SOCKET as usize` on
+    /// Windows, where `CancelIoEx` on it ends that read; the file
+    /// descriptor on Unix, unused).
+    reader_socket: Option<usize>,
+}
+
+enum TcpIo {
+    Halves {
+        read: Mutex<std::net::TcpStream>,
+        write: Mutex<std::net::TcpStream>,
+    },
+    Whole(Mutex<Box<dyn ReadWrite>>),
+}
+
+impl TcpStreamHandle {
+    /// A plain TCP connection.
+    pub fn plain(id: usize, stream: std::net::TcpStream) -> std::io::Result<Arc<Self>> {
+        let write = stream.try_clone()?;
+        Ok(Arc::new(TcpStreamHandle {
+            id,
+            shutdown_sock: Mutex::new(stream.try_clone().ok()),
+            reader_socket: stream.raw_socket(),
+            io: TcpIo::Halves {
+                read: Mutex::new(stream),
+                write: Mutex::new(write),
+            },
+            closed: AtomicBool::new(false),
+        }))
+    }
+
+    /// A connection that is one object (TLS) over `socket`. Called
+    /// with the socket before it is handed to that object.
+    pub fn whole(
+        id: usize,
+        socket: &std::net::TcpStream,
+        wrap: impl FnOnce() -> Result<Box<dyn ReadWrite>, String>,
+    ) -> Result<Arc<Self>, String> {
+        let shutdown_sock = Mutex::new(socket.try_clone().ok());
+        let reader_socket = socket.raw_socket();
+        Ok(Arc::new(TcpStreamHandle {
+            id,
+            io: TcpIo::Whole(Mutex::new(wrap()?)),
+            closed: AtomicBool::new(false),
+            shutdown_sock,
+            reader_socket,
+        }))
+    }
+
+    /// Whether the connection was shut down from this side.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(AtomicOrdering::SeqCst)
+    }
+
+    pub fn read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::Read;
+        match &self.io {
+            TcpIo::Halves { read, .. } => read.lock().read(buf),
+            TcpIo::Whole(both) => both.lock().read(buf),
+        }
+    }
+
+    pub fn read_exact(&self, buf: &mut [u8]) -> std::io::Result<()> {
+        use std::io::Read;
+        match &self.io {
+            TcpIo::Halves { read, .. } => read.lock().read_exact(buf),
+            TcpIo::Whole(both) => both.lock().read_exact(buf),
+        }
+    }
+
+    /// Write all of `buf`, and flush.
+    pub fn write_all(&self, buf: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        match &self.io {
+            TcpIo::Halves { write, .. } => {
+                let mut write = write.lock();
+                write.write_all(buf)?;
+                write.flush()
+            }
+            TcpIo::Whole(both) => {
+                let mut both = both.lock();
+                both.write_all(buf)?;
+                both.flush()
+            }
+        }
+    }
+
+    /// Shut the connection down, once: a read or a write that blocks
+    /// on it returns, and later ones are refused. This is `tcp.close`,
+    /// and what ends an operation that nobody waits for any more (its
+    /// task was cancelled, timed out, or dropped at the end of the
+    /// program): the thread that ran it is free again.
     ///
-    /// On Windows: `SOCKET as usize` (matches
-    /// `AsRawSocket::as_raw_socket() as usize`).
-    /// On Unix: `RawFd as usize`. Currently unused on Unix because
-    /// `shutdown(Both)` on the cloned fd already wakes the reader.
-    /// `None` only if the underlying stream type does not expose a
-    /// raw socket (e.g. test fakes).
-    pub reader_socket: Option<usize>,
+    /// A TLS connection gets no `close_notify`: a rough shutdown is
+    /// preferred to a thread that never returns.
+    pub fn shut_down(&self) {
+        if self.closed.swap(true, AtomicOrdering::SeqCst) {
+            return;
+        }
+        // What a TLS writer still buffers, if nobody is in it: a
+        // blocked read or write holds the lock, and waiting for it
+        // here would wait for the very thing this is to end.
+        if let TcpIo::Whole(both) = &self.io
+            && let Some(mut both) = both.try_lock()
+        {
+            let _ = std::io::Write::flush(&mut *both);
+        }
+        // Errors (not connected, the peer closed first) are ignored:
+        // the connection is closed either way.
+        #[allow(unused_mut)]
+        let mut slot = self.shutdown_sock.lock();
+        if let Some(sock) = slot.as_ref() {
+            let _ = sock.shutdown(std::net::Shutdown::Both);
+        }
+        // Winsock's `shutdown(SD_BOTH)` does not end a `recv` that
+        // blocks on another handle of the socket (the reader's, of
+        // which `shutdown_sock` is a duplicate). `CancelIoEx` on the
+        // reader's own SOCKET does; the duplicate is then closed.
+        #[cfg(windows)]
+        {
+            if let Some(sock) = self.reader_socket {
+                // SAFETY: `CancelIoEx` may be called on any HANDLE, a
+                // SOCKET included; it fails harmlessly if the handle
+                // is invalid or nothing is pending. A null
+                // `lpOverlapped` cancels all pending I/O on it.
+                use std::ptr;
+                use windows_sys::Win32::Foundation::HANDLE;
+                use windows_sys::Win32::System::IO::CancelIoEx;
+                unsafe {
+                    let _ = CancelIoEx(sock as HANDLE, ptr::null_mut());
+                }
+            }
+            let _ = slot.take();
+        }
+        #[cfg(not(windows))]
+        let _ = self.reader_socket;
+        drop(slot);
+    }
 }
 
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.

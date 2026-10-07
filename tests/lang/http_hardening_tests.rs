@@ -150,8 +150,14 @@ fn echo_server_src(port: u16) -> String {
     format!(
         r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 fn main() {{
-  http.serve({port}) {{ _req ->
+  http.serve(bound({port})) {{ _req ->
     http.Response {{ status: 200, body: "ok", headers: #{{}} }}
   }}
 }}
@@ -363,14 +369,20 @@ fn med1_handler_error_does_not_leak_vm_error_details() {
     let src = format!(
         r#"
 import http
+import tcp
 import test
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn private_helper() {{
   test.assert(false, "secret-internal-info")
 }}
 
 fn main() {{
-  http.serve({port}) {{ _req ->
+  http.serve(bound({port})) {{ _req ->
     private_helper()
     http.Response {{ status: 200, body: "never", headers: #{{}} }}
   }}
@@ -441,9 +453,15 @@ fn long_poll_handlers_wait_without_holding_a_thread() {
         r#"
 import channel
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 fn main() {{
   let mailbox = channel.new(0)
-  http.serve({port}) {{ req ->
+  http.serve(bound({port})) {{ req ->
     match req.path {{
       "/wait" -> match channel.receive(mailbox) {{
         channel.Message(text) -> http.Response {{ status: 200, body: text, headers: #{{}} }}
@@ -492,6 +510,112 @@ fn main() {{
 
     for (i, resp) in posted.iter().enumerate() {
         assert!(resp.ends_with("posted"), "post {i}: {resp:?}\n{stderr}");
+    }
+    for (i, resp) in released.iter().enumerate() {
+        assert!(resp.ends_with("released"), "waiter {i}: {resp:?}\n{stderr}");
+    }
+}
+
+/// Under load: 168 long polls at once against a server that runs at
+/// most 128 handlers. 128 wait in their handlers (tasks: none holds a
+/// thread), the 40 over the cap are turned away with 503 at once, and
+/// when the mailbox is closed every waiter gets its answer.
+#[test]
+fn the_handler_cap_turns_away_what_is_over_it_and_the_waiters_get_their_answers() {
+    const CAP: usize = 128;
+    const OVER: usize = 40;
+    let port = pick_port();
+    let control = pick_port();
+    let src = format!(
+        r#"
+import channel
+import http
+import task
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
+
+fn main() {{
+  let mailbox = channel.new(0)
+  -- A second server, with handlers of its own, to end the wait: the
+  -- first one is at its cap and would turn the request away.
+  let _control = task.spawn {{ ->
+    http.serve(bound({control})) {{ _req ->
+      channel.close(mailbox)
+      http.Response {{ status: 200, body: "closed", headers: #{{}} }}
+    }}
+  }}
+  http.serve(bound({port})) {{ _req ->
+    let _ = channel.receive(mailbox)
+    http.Response {{ status: 200, body: "released", headers: #{{}} }}
+  }}
+}}
+"#
+    );
+    let tmp = tmp_silt_file("handler_cap", &src);
+    let child = spawn_silt(&tmp);
+    assert!(
+        wait_for_bind(port, Duration::from_secs(10))
+            && wait_for_bind(control, Duration::from_secs(10)),
+        "silt http.serve failed to bind 127.0.0.1:{port} and :{control}"
+    );
+
+    let request = |port: u16| {
+        let mut conn = connect_with_retry(port);
+        conn.set_read_timeout(Some(Duration::from_secs(60))).ok();
+        conn.write_all(
+            format!("GET /wait HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .expect("request write");
+        conn
+    };
+    let answer = |mut conn: TcpStream| {
+        let mut buf = Vec::new();
+        let _ = conn.read_to_end(&mut buf);
+        String::from_utf8_lossy(&buf).into_owned()
+    };
+
+    let polls: Vec<TcpStream> = (0..CAP + OVER).map(|_| request(port)).collect();
+    // Each on a thread of its own: those over the cap answer at once,
+    // the others when the mailbox is closed.
+    let answers: Vec<std::thread::JoinHandle<String>> = polls
+        .into_iter()
+        .map(|conn| std::thread::spawn(move || answer(conn)))
+        .collect();
+    // The 40 refusals show that 128 handlers are in their wait.
+    let mut waiting = Vec::new();
+    let mut turned_away = Vec::new();
+    let limit = Instant::now() + Duration::from_secs(30);
+    let mut pending = answers;
+    while turned_away.len() < OVER && Instant::now() < limit {
+        let (done, rest): (Vec<_>, Vec<_>) = pending.into_iter().partition(|h| h.is_finished());
+        turned_away.extend(done.into_iter().map(|h| h.join().expect("answer")));
+        pending = rest;
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    waiting.append(&mut pending);
+    assert_eq!(turned_away.len(), OVER, "refusals while the cap is reached");
+    assert_eq!(waiting.len(), CAP);
+
+    let closed = answer(request(control));
+    let released: Vec<String> = waiting
+        .into_iter()
+        .map(|h| h.join().expect("answer"))
+        .collect();
+
+    let (_stdout, stderr) = shutdown(child);
+    let _ = std::fs::remove_file(&tmp);
+
+    assert!(closed.ends_with("closed"), "{closed:?}\n{stderr}");
+    for (i, resp) in turned_away.iter().enumerate() {
+        assert!(
+            resp.starts_with("HTTP/1.1 503"),
+            "over the cap {i}: {resp:?}\n{stderr}"
+        );
     }
     for (i, resp) in released.iter().enumerate() {
         assert!(resp.ends_with("released"), "waiter {i}: {resp:?}\n{stderr}");

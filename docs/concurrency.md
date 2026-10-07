@@ -1210,49 +1210,38 @@ Scoped deadlines nest with `SILT_IO_TIMEOUT`; whichever elapses first
 fires, and the caller sees the same typed variant as the module's normal
 timeout path.
 
-#### Caveat: I/O threads continue after timeout
+#### The I/O pool, and operations that nobody waits for
 
-The timeout ends the task's wait, not the operation. When the deadline
-elapses, the parked task resumes with the module's typed timeout variant
-(e.g. `Err(HttpTimeout)` for an `http.get`, `Err(IoUnknown(msg))` for an
-`io.read_file`), at the moment the deadline passes. The OS thread in the I/O pool
-that dispatched the blocking syscall (for example `io.read_file`,
-`http.get`, or an `io.write_file`) is **not** interrupted -- it
-continues executing the syscall until the kernel returns, then
-discards the result.
+Blocking operations run on threads of their own, the I/O pool, so that
+they never hold up the scheduler. The pool grows and shrinks by itself:
+an operation gets a thread at once, a new one if all are busy (up to
+256), and a thread that finds no work for a few seconds ends. Four tasks
+that each wait for a line from a silent peer do not delay a file read.
+There is nothing to configure.
 
-Consequences:
+A task stops waiting for its operation when its deadline passes
+(`task.deadline`, `SILT_IO_TIMEOUT`), when it is cancelled, or when it is
+dropped at the end of the program. It resumes, or ends, at that moment.
+What becomes of the operation depends on what it is:
 
-- The timeout error surfaces promptly to silt code, but the underlying
-  file-descriptor or socket work keeps running in the background.
-- Under aggressive timeout workloads (many concurrent I/O calls that
-  routinely overrun their deadline), the I/O pool can saturate with
-  zombie work -- threads that are still blocked on a syscall whose
-  result nobody will read. New I/O submissions queue behind them.
-- The I/O pool is sized at VM startup. The default is `min(available
-  parallelism, 4)`, falling back to 2 only when the platform cannot
-  report parallelism (a single-core host gets 1; unlike the scheduler
-  worker pool there is no deadlock-driven minimum, because I/O jobs
-  never block on one another). Set the `SILT_IO_POOL_SIZE` environment
-  variable to override; the value must be a positive integer and is
-  silently clamped at 64 (anything larger is almost certainly a
-  misconfiguration). Invalid or zero values fall back to the default.
-  Read once at `Vm::new`, so changing it mid-run has no effect.
-
-Mitigations:
-
-- Prefer scoped `task.deadline` / `task.spawn_until` over a tight
-  process-wide `SILT_IO_TIMEOUT` when only a few call sites need a
-  deadline; this keeps the rest of the program on the
-  unbounded-but-non-zombie path.
-- Do not set `SILT_IO_TIMEOUT` shorter than the realistic completion
-  time of your slowest I/O call. A timeout that fires routinely is a
-  zombie-thread source; a timeout that fires only on genuine hangs is
-  a safety net.
-- If you need aggressive timeouts on truly blocking operations, split
-  the work into shorter-bounded steps (smaller reads, chunked writes,
-  per-request HTTP timeouts configured at the peer) so a timeout
-  that fires is also close to the syscall boundary.
+- **On a TCP connection** (`tcp.read`, `tcp.read_exact`, `tcp.write`, the
+  `stream.tcp_*` sources and sink): the connection is **shut down**, as by
+  `tcp.close`, which makes the operation return and frees its thread.
+  The connection cannot be used afterwards: a read that timed out cannot
+  be tried again. Give a read the time the peer may really take, and
+  treat a timeout as the end of the connection.
+- **`tcp.accept`**: the accept is woken and gives up; the listener
+  stays usable. (An accept that waits costs nothing: its thread sleeps
+  in the system until a connection comes. To wake it the listener
+  connects to its own port on the loopback address; where that is not
+  possible, say a packet filter forbids it, the thread stays until a
+  client connects.)
+- **Everything else** (file I/O, `http.get`, `tcp.connect`,
+  `io.read_line`): the operation cannot be interrupted. It runs to its
+  end in the background and its result is discarded; a write that had
+  started completes. Its thread no longer counts as one of the pool's, so
+  operations that never return (a read of a terminal nobody types at) do
+  not use the pool up. An operation that had not started yet never runs.
 
 ### Blocking operations
 

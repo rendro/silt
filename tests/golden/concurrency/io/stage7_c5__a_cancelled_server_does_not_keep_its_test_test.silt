@@ -8,27 +8,22 @@
 -- the test ends, and the next one runs.
 import http
 import task
+import tcp
 import test
-import time
 
-fn get(url, tries) {
+fn get(url) {
   match http.get(url) {
     Ok(r) -> r.status
-    Err(e) -> match tries {
-      0 -> panic(e.message())
-      _ -> {
-        time.sleep(time.ms(20))
-        get(url, tries - 1)
-      }
-    }
+    Err(e) -> panic(e.message())
   }
 }
 
 fn test_a_uses_a_server() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let server = task.spawn { ->
-    http.serve(38472) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }
+    http.serve(listener) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }
   }
-  test.assert_eq(get("http://127.0.0.1:38472/", 200), 200)
+  test.assert_eq(get("http://127.0.0.1:{tcp.local_port(listener)}/"), 200)
   task.cancel(server)
 }
 

@@ -654,36 +654,34 @@ impl crate::vm::Native for Serve {
     }
 }
 
-/// Shared implementation of `http.serve` and `http.serve_all`.
-///
-/// `bind_host` is the interface portion of the bind address ("127.0.0.1"
-/// for `http.serve`, "0.0.0.0" for `http.serve_all`). `name_for_err` is
-/// the user-visible builtin name used in error messages.
+/// `http.serve(listener, handler)`: serve HTTP on a listener that
+/// `tcp.listen` bound. Which interfaces the server is reached on, and
+/// on which port, is what was written there.
 #[cfg(feature = "http")]
-fn do_http_serve_inner(
-    vm: &mut Vm,
-    bind_host: &str,
-    name_for_err: &'static str,
-    args: &[Value],
-) -> Result<Step, VmError> {
+fn serve(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
+    let name_for_err = "http.serve";
     if args.len() != 2 {
-        return Err(VmError::new(format!(
-            "{name_for_err} takes 2 arguments (port, handler)"
-        )));
+        return Err(VmError::new(
+            "http.serve takes 2 arguments (listener, handler)".into(),
+        ));
     }
-    let Value::Int(port) = &args[0] else {
+    let Value::TcpListener(listener) = &args[0] else {
         return Err(VmError::new(format!(
-            "{name_for_err} requires Int, got {}",
+            "http.serve requires TcpListener, got {}",
             value_kind(&args[0])
         )));
     };
     let handler = args[1].clone();
 
-    let addr = format!("{bind_host}:{port}");
-    let server = Arc::new(
-        tiny_http::Server::http(&addr)
-            .map_err(|e| VmError::new(format!("{name_for_err}: failed to bind: {e}")))?,
-    );
+    // The server has a handle of its own to the listening socket.
+    let server = listener
+        .to_std()
+        .map_err(|e| e.to_string())
+        .and_then(|listener| {
+            tiny_http::Server::from_listener(listener, None).map_err(|e| e.to_string())
+        })
+        .map_err(|e| VmError::new(format!("http.serve: cannot serve on the listener: {e}")))?;
+    let server = Arc::new(server);
 
     // The VM that the VM of each request's task is made from.
     let mut template_vm = vm.spawn_child();
@@ -889,31 +887,13 @@ pub(crate) fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step,
         "serve" => {
             #[cfg(feature = "http")]
             {
-                // Security: default to loopback only (HIGH-5). Developers who
-                // want to expose the server on all interfaces must opt in via
-                // `http.serve_all`.
-                do_http_serve_inner(vm, "127.0.0.1", "http.serve", args)
+                serve(vm, args)
             }
             #[cfg(not(feature = "http"))]
             {
                 let _ = args;
                 Err(VmError::new(
                     "http.serve requires the 'http' feature".into(),
-                ))
-            }
-        }
-
-        "serve_all" => {
-            #[cfg(feature = "http")]
-            {
-                // Explicit opt-in to binding 0.0.0.0 (all interfaces). (HIGH-5)
-                do_http_serve_inner(vm, "0.0.0.0", "http.serve_all", args)
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = args;
-                Err(VmError::new(
-                    "http.serve_all requires the 'http' feature".into(),
                 ))
             }
         }

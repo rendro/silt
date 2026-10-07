@@ -418,8 +418,7 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 u("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request").feature("http", cfg!(feature = "http")),
                 u("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers").feature("http", cfg!(feature = "http")),
-                u("fn serve(port: Int, handler: Fn(Request) -> Response) -> ()", "Start a concurrent HTTP server bound to `127.0.0.1` (loopback only)").feature("http", cfg!(feature = "http")),
-                u("fn serve_all(port: Int, handler: Fn(Request) -> Response) -> ()", "Start a concurrent HTTP server bound to `0.0.0.0` (all interfaces)").feature("http", cfg!(feature = "http")),
+                u("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per request").feature("http", cfg!(feature = "http")),
                 u("fn segments(path: String) -> List(String)", "Split URL path into segments"),
                 u("fn parse_query(query: String) -> Map(String, List(String))", "Parse a URL query string into a multi-value map"),
             ],
@@ -557,6 +556,7 @@ pub(super) fn modules() -> Vec<Module> {
                 u("fn close(stream: TcpStream) -> ()", "Mark the stream as closed; future ops error"),
                 u("fn connect(addr: String) -> Result(TcpStream, TcpError)", "Open a TCP connection to `host:port` (cooperative I/O)"),
                 u("fn listen(addr: String) -> Result(TcpListener, TcpError)", "Bind a TCP listener to `host:port`"),
+                u("fn local_port(listener: TcpListener) -> Int", "The port the listener is bound to: the one the system chose for port `0`"),
                 u("fn peer_addr(stream: TcpStream) -> Result(String, TcpError)", "Remote socket address (not yet implemented for trait-object stream handles; returns Err)"),
                 u("fn read(stream: TcpStream, max: Int) -> Result(Bytes, TcpError)", "Read up to `max` bytes (cooperative)"),
                 u("fn read_exact(stream: TcpStream, n: Int) -> Result(Bytes, TcpError)", "Read exactly `n` bytes (cooperative; loops)"),

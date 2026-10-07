@@ -6,7 +6,7 @@ order: 14
 
 # http
 
-HTTP client and server. Included by default. Exclude with `--no-default-features` for WASM or minimal builds (networking functions will return a runtime error, but `http.segments` still works).
+HTTP client and server. Included by default (the server needs [tcp](tcp.md), which the `http` feature brings with it). Exclude with `--no-default-features` for WASM or minimal builds (networking functions will return a runtime error, but `http.segments` still works).
 
 ## Types
 
@@ -44,8 +44,7 @@ type Response {
 |------|-----------|-------------|
 | `get` | `(String) -> Result(Response, HttpError)` | HTTP GET request |
 | `request` | `(Method, String, String, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
-| `serve` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server bound to `127.0.0.1` (loopback only) |
-| `serve_all` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server bound to `0.0.0.0` (all interfaces) |
+| `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per request |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
 | `parse_query` | `(String) -> Map(String, List(String))` | Parse a URL query string into a multi-value map |
 
@@ -161,29 +160,40 @@ let resp = http.request(
 ## `http.serve`
 
 ```
-http.serve(port: Int, handler: Fn(Request) -> Response) -> ()
+http.serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()
 ```
 
-Starts an HTTP server on the given port, **bound to `127.0.0.1` (loopback
-only)**. This is the safe default: the listener is only reachable from the
-same host, so a development server is not accidentally exposed to the
-network. To accept connections from other machines, use
-[`http.serve_all`](#httpserve_all).
+Serves HTTP on a listener made with [`tcp.listen`](tcp.md). The address
+written there decides where the server is reached, and on which port:
+
+| `tcp.listen(...)` | The server is reached |
+|---|---|
+| `"127.0.0.1:8080"` | from this machine only (loopback). **Write this unless you mean otherwise**: a development server is then not exposed to the network the machine happens to be on. |
+| `"0.0.0.0:8080"` | on every network interface: from the LAN, and from the internet if the host is routed. For a deployment behind a reverse proxy, or a container whose port is published. |
+| `"127.0.0.1:0"` | on a port the system chooses; [`tcp.local_port(listener)`](tcp.md) says which. For tests, and for servers that tell someone else where they are. |
+
+The listener is bound when `tcp.listen` returns, so a client may connect
+before `http.serve` runs: its request is queued and answered when the
+server starts.
 
 Each incoming request is handled by a task of its own, so multiple
 requests are processed concurrently, and a handler that waits (for a
 channel, a timer, another request: a long poll) holds no thread while it
-does. The accept loop runs on a dedicated OS thread and does not block the
-scheduler. If a handler function errors, the server returns a 500 response
-without crashing. The handler
-receives a `Request` and must return a `Response`. The server runs forever
-(stop with Ctrl-C).
+does. At most 128 handlers run at a time; a request beyond that is
+answered `503` at once. If a handler function errors, the server returns
+a 500 response without crashing. The handler receives a `Request` and
+must return a `Response`.
+
+`http.serve` returns only when its server ends. To run a server beside
+other work, call it in a task; `task.cancel` of that task ends the
+server (see [When a program ends](../concurrency.md#when-a-program-ends)).
 
 Use pattern matching on `(req.method, segments)` for routing:
 
 ```silt
 import http
 import json
+import tcp
 
 type User {
   id: Int,
@@ -191,9 +201,12 @@ type User {
 }
 
 fn main() {
-  println("Listening on :8080")
+  when let Ok(listener) = tcp.listen("127.0.0.1:8080") else {
+    panic("cannot listen on port 8080")
+  }
+  println("Listening on :{tcp.local_port(listener)}")
 
-  http.serve(8080) { req ->
+  http.serve(listener) { req ->
     match (req.method, http.segments(req.path)) {
       (http.GET, []) -> http.Response { status: 200, body: "Hello!", headers: #{} }
 
@@ -215,39 +228,6 @@ fn main() {
 ```
 
 Unsupported HTTP methods (e.g. TRACE) receive an automatic 405 response.
-
-
-## `http.serve_all`
-
-```
-http.serve_all(port: Int, handler: Fn(Request) -> Response) -> ()
-```
-
-Identical to [`http.serve`](#httpserve) except the listener is bound to
-`0.0.0.0`, so the server accepts connections from *any* network interface
-(localhost, LAN, and public IPs if the host is routed).
-
-**Security rationale.** The default `http.serve` binds to `127.0.0.1` so a
-development server cannot be accidentally exposed to the network — a
-common source of data leaks when a laptop joins an untrusted Wi-Fi, or a
-container is run without explicit port firewalling. `http.serve_all` is
-the explicit opt-in for the minority of cases where binding all interfaces
-is actually what you want (deployment behind a reverse proxy, LAN-only
-services, containers where loopback is bridged). The two variants
-otherwise behave identically — same concurrency caps, same body-size
-limits, same error handling.
-
-```silt
-import http
-
-fn main() {
-  -- Accept connections from anywhere. Make sure this is really what
-  -- you want before shipping.
-  http.serve_all(8080) { _req ->
-    http.Response { status: 200, body: "Hello, world!", headers: #{} }
-  }
-}
-```
 
 
 ## `http.segments`

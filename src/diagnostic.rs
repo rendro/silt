@@ -11,7 +11,9 @@
 
 use std::fmt::Write as _;
 
-use crate::source::{FileId, SourceMap, SourceName, Span};
+#[cfg(any(test, feature = "lsp"))]
+use crate::source::FileId;
+use crate::source::{SourceMap, SourceName, Span};
 
 // ── Severity, phase, code ───────────────────────────────────────────
 

@@ -144,11 +144,17 @@ fn test_http_serve_non_blocking_in_task() {
 import http
 import task
 import channel
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
   let done = channel.new(1)
   let server = task.spawn({{ ->
-    http.serve({port}, {{ req ->
+    http.serve(bound({port}), {{ req ->
       http.Response {{ status: 200, body: "ok", headers: #{{}} }}
     }})
   }})
@@ -187,9 +193,15 @@ fn test_http_serve_concurrent_requests() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
@@ -256,9 +268,15 @@ fn test_http_serve_basic_get_response() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     http.Response {{ status: 200, body: "hello from silt", headers: #{{}} }}
   }})
 }}
@@ -297,9 +315,15 @@ fn test_http_serve_returns_custom_status_code() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     http.Response {{ status: 404, body: "not found", headers: #{{}} }}
   }})
 }}
@@ -338,9 +362,15 @@ fn test_http_serve_echoes_request_path() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
@@ -383,9 +413,15 @@ fn test_http_serve_echoes_query_string() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     http.Response {{ status: 200, body: req.query, headers: #{{}} }}
   }})
 }}
@@ -425,9 +461,15 @@ fn test_http_serve_reads_request_body() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     http.Response {{ status: 200, body: req.body, headers: #{{}} }}
   }})
 }}
@@ -466,9 +508,15 @@ fn test_http_serve_reads_request_method() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     let method_name = match req.method {{
       http.GET -> "got-get"
       http.POST -> "got-post"
@@ -534,9 +582,15 @@ fn test_http_serve_sets_response_headers() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     http.Response {{
       status: 200,
       body: "ok",
@@ -589,9 +643,15 @@ fn test_http_serve_routing_by_path() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     match req.path {{
       "/health" -> http.Response {{ status: 200, body: "ok", headers: #{{}} }}
       "/greet" -> http.Response {{ status: 200, body: "hello!", headers: #{{}} }}
@@ -651,9 +711,15 @@ fn test_http_serve_concurrent_requests_stress() {
         let input = format!(
             r#"
 import http
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound({port}), {{ req ->
     http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
@@ -706,13 +772,19 @@ fn test_http_serve_from_task_with_silt_client() {
 import http
 import task
 import channel
+import tcp
+
+fn bound(port) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:{{port}}") else {{ panic("cannot listen") }}
+  listener
+}}
 
 fn main() {{
   let result_ch = channel.new(1)
 
   -- Start the server in a task
   let server = task.spawn({{ ->
-    http.serve({port}, {{ req ->
+    http.serve(bound({port}), {{ req ->
       http.Response {{ status: 200, body: "silt-response", headers: #{{}} }}
     }})
   }})
