@@ -1,5 +1,5 @@
--- Built-in enums (Weekday, Method) and the built-in Date record go
--- through the same auto-derive synth globals as user types.
+-- Built-in enums (Weekday, Method) and the built-in Date record have
+-- the auto-derived traits as user types do.
 import time
 import http
 fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }

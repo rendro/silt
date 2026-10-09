@@ -1,0 +1,37 @@
+-- There is one Display. A type's written impl is what `.display()`,
+-- interpolation, `println`, `print`, `string.from`, a `where a:
+-- Display` function and the default `Error.message` print, alone and
+-- inside a list.
+import string
+
+type Temp {
+  degrees: Int,
+}
+
+trait Display for Temp {
+  fn display(self) -> String {
+    "{self.degrees}C"
+  }
+}
+
+trait Error for Temp {}
+
+fn show(x: a) -> String where a: Display {
+  x.display()
+}
+
+fn main() {
+  let t = Temp { degrees: 21 }
+  println(t.display())
+  println("{t}")
+  println(t)
+  println(string.from(t))
+  println(show(t))
+  println(t.message())
+  print(t)
+  println("")
+  println([t])
+  println("{[t]}")
+  println([t].display())
+  println(show([t]))
+}

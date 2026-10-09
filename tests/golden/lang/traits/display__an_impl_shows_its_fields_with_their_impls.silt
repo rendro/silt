@@ -1,0 +1,48 @@
+-- A Display impl that interpolates its fields shows each field as the
+-- field's own impl says; an impl may call `.display()` of a field, and
+-- may be called through a bounded type variable and in a task.
+import task
+
+type Temp {
+  degrees: Int,
+}
+
+trait Display for Temp {
+  fn display(self) -> String {
+    "{self.degrees}C"
+  }
+}
+
+type Span {
+  low: Temp,
+  high: Temp,
+}
+
+trait Display for Span {
+  fn display(self) -> String {
+    "{self.low}..{self.high.display()}"
+  }
+}
+
+type Forecast {
+  days: List(Span),
+}
+
+trait Display for Forecast {
+  fn display(self) -> String {
+    "forecast {self.days}"
+  }
+}
+
+fn both(x: a, y: b) -> String where a: Display, b: Display {
+  "<{x}> <{y.display()}>"
+}
+
+fn main() {
+  let s = Span { low: Temp { degrees: 3 }, high: Temp { degrees: 21 } }
+  println(s)
+  println(Forecast { days: [s, s] })
+  println(both(s, [Forecast { days: [] }]))
+  let h = task.spawn({ -> "in a task: {Some(s)}" })
+  println(task.join(h))
+}

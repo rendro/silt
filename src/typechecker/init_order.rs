@@ -46,9 +46,34 @@
 //!    the function values they are given; the sealed traits (Equal,
 //!    Compare, Hash) have no code a program writes.
 //!
-//! Not covered, by design until the formatter calls `Display` impls
-//! (stage 6 step 4a): printing and interpolation call no code a program
-//! writes.
+//! 4. A `Display` impl the formatter calls. Showing a value
+//!    (interpolation, a builtin whose signature asks `Display` of its
+//!    argument, called or handed on as a value, and `.display()` on a
+//!    type with no impl of its own) calls the written `Display` impl of
+//!    every part of the value that has one. The parts a value of a type
+//!    can have are the type's: its arguments, and, for a record or an
+//!    enum of the module, the types of its fields, and theirs. Showing
+//!    reaches the module's `Display` impl for each such type; a type of
+//!    another module among them is code outside the module; a type
+//!    variable among them, or an associated type an impl is yet to
+//!    name (`Self::Item`), is any type, so every `Display` impl of the
+//!    module and code outside it. (`parts_shown` names every form of
+//!    type: one it did not know would be any type too.)
+//!
+//!    A function with type variables of its own (`fn label(x: a) ->
+//!    String where a: Display`) shows values whose types have them.
+//!    Its body runs only through a value of the function, and every
+//!    such value comes from a place that names the function, at a type:
+//!    the function's, with a type for each variable. A value made at
+//!    one type is called at that type only, whoever calls it (a `let`
+//!    whose type is general is named again, at a type, where it is
+//!    used; importers of the module do not run while it is
+//!    initialised). So what the function shows of its variables is
+//!    reached from each node that names it, with the types the
+//!    variables stand for there, and not from the function. A type that
+//!    is not known where the function is named, or that has a variable
+//!    of the naming function, is any type: this goes one step, not
+//!    through a chain of functions.
 //!
 //! # What a `let` needs
 //!
@@ -102,9 +127,64 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
         }
         Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
         Type::Tuple(ts) => all(ts),
+        // A type the code does not know here: any type.
+        Type::AssocProj { .. } => false,
         // (A function inside a value is not called by a method of the
         // value.)
-        _ => true,
+        Type::Fun(..) => true,
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Error
+        | Type::Never => true,
+    }
+}
+
+/// Whether `at` is the type `general` with a type for each of its
+/// variables, which `stands` then holds. (Where the two differ in
+/// more than that the answer is no: the caller takes it for unknown.)
+fn instance(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>) -> bool {
+    let mut all = |general: &[Type], at: &[Type]| {
+        general.len() == at.len() && general.iter().zip(at).all(|(g, a)| instance(g, a, stands))
+    };
+    match (general, at) {
+        (Type::Var(v), _) => match stands.get(v) {
+            Some(known) => known == at,
+            None => {
+                stands.insert(*v, at.clone());
+                true
+            }
+        },
+        (Type::Fun(gp, gr), Type::Fun(ap, ar)) => {
+            all(gp, ap) && all(std::slice::from_ref(&**gr), std::slice::from_ref(&**ar))
+        }
+        (Type::List(g), Type::List(a))
+        | (Type::Range(g), Type::Range(a))
+        | (Type::Set(g), Type::Set(a))
+        | (Type::Channel(g), Type::Channel(a)) => instance(g, a, stands),
+        (Type::Tuple(g), Type::Tuple(a)) => all(g, a),
+        (Type::Generic(gn, g), Type::Generic(an, a)) => gn == an && all(g, a),
+        (Type::Map(gk, gv), Type::Map(ak, av)) => {
+            instance(gk, ak, stands) && instance(gv, av, stands)
+        }
+        (
+            Type::AnonRecord {
+                fields: g,
+                tail: RowTail::Closed,
+            },
+            Type::AnonRecord {
+                fields: a,
+                tail: RowTail::Closed,
+            },
+        ) => {
+            g.len() == a.len()
+                && g.iter()
+                    .zip(a)
+                    .all(|((gn, g), (an, a))| gn == an && instance(g, a, stands))
+        }
+        _ => general == at,
     }
 }
 
@@ -147,10 +227,127 @@ fn plain_value(
     }
 }
 
+/// What showing a value of the type `ty` can call: the types `ty` is
+/// made of that are another module's or unknown (`outside`), and the
+/// types of the module among them (`own`), fields included.
+struct Parts {
+    own: Vec<TypeRef>,
+    outside: bool,
+}
+
 impl TypeChecker {
+    /// See [`Parts`]. A type variable inside a declaration (`declared`)
+    /// is a parameter: what stands for it is among the type's
+    /// arguments where the type is used.
+    ///
+    /// Every form of type is named here, and none is passed over by a
+    /// catch-all: a form that is not known by its name is any type.
+    fn parts_shown(&self, ty: &Type, declared: bool, parts: &mut Parts) {
+        match ty {
+            Type::Var(_) | Type::Rigid(_) => parts.outside |= !declared,
+            // The type an impl gives for an associated type, which is
+            // not known here: any type.
+            Type::AssocProj { .. } => parts.outside = true,
+            Type::Generic(name, args) => {
+                for arg in args {
+                    self.parts_shown(arg, declared, parts);
+                }
+                let Some(def) = self.def(name.id.0) else {
+                    parts.outside = true;
+                    return;
+                };
+                if def.module.is_builtin() {
+                    return;
+                }
+                if def.module != self.module {
+                    parts.outside = true;
+                    return;
+                }
+                if parts.own.contains(name) {
+                    return;
+                }
+                parts.own.push(*name);
+                let fields: Vec<Type> = match self.tables.records.get(name) {
+                    Some(record) => record.fields.iter().map(|(_, t)| t.clone()).collect(),
+                    None => self
+                        .tables
+                        .enums
+                        .get(name)
+                        .map(|info| {
+                            info.variants
+                                .iter()
+                                .flat_map(|v| v.field_types.iter().cloned())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                };
+                for field in &fields {
+                    self.parts_shown(&self.apply(field), true, parts);
+                }
+            }
+            Type::AnonRecord { fields, tail } => {
+                parts.outside |= !declared && !matches!(tail, RowTail::Closed);
+                for field in fields.values() {
+                    self.parts_shown(field, declared, parts);
+                }
+            }
+            Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => {
+                self.parts_shown(t, declared, parts)
+            }
+            Type::Map(k, v) => {
+                self.parts_shown(k, declared, parts);
+                self.parts_shown(v, declared, parts);
+            }
+            Type::Tuple(ts) => ts.iter().for_each(|t| self.parts_shown(t, declared, parts)),
+            // A function is not shown (a type that holds one has no
+            // `Display` but the one written for it, which is the
+            // type's own impl, counted with the type).
+            Type::Fun(..) => {}
+            // No parts, and no impl a program writes. (`Error` and
+            // `Never` are of no value that is shown.)
+            Type::Int
+            | Type::Float
+            | Type::Bool
+            | Type::String
+            | Type::Unit
+            | Type::Error
+            | Type::Never => {}
+        }
+    }
+
+    /// The parameters of the builtin function `def` that it shows: the
+    /// ones whose type has a variable its signature asks `Display` of.
+    fn shown_params(&self, def: &crate::defs::Def) -> Vec<usize> {
+        let Some(scheme) = builtin_scheme(def) else {
+            return Vec::new();
+        };
+        let Type::Fun(params, _) = &scheme.ty else {
+            return Vec::new();
+        };
+        let display = TraitKey::builtin("Display");
+        let shown: Vec<TyVar> = scheme
+            .preds
+            .iter()
+            .filter_map(|pred| match pred {
+                Pred::Trait {
+                    tr,
+                    subject: Type::Var(v),
+                    ..
+                } if *tr == display => Some(*v),
+                _ => None,
+            })
+            .collect();
+        params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| free_vars_in(param).iter().any(|v| shown.contains(v)))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in. Reports each `let` that reaches itself.
-    pub(super) fn init_order(&mut self, decls: &[Decl]) -> Vec<Span> {
+    pub(super) fn init_order(&mut self, decls: &[Decl], env: &TypeEnv) -> Vec<Span> {
         let mut nodes: Vec<Node> = vec![Node {
             name: "code outside the module".to_string(),
             let_decl: None,
@@ -159,6 +356,7 @@ impl TypeChecker {
             params: &[],
         }];
         let mut by_name: HashMap<Symbol, usize> = HashMap::new();
+        let mut bound_twice: Vec<usize> = Vec::new();
         // The methods of each impl; of each trait, whatever the impl;
         // and each trait's default methods.
         let mut of_impl: HashMap<(TraitId, TypeId, Symbol), usize> = HashMap::new();
@@ -187,7 +385,11 @@ impl TypeChecker {
                 } => {
                     let binders = collect_pattern_vars(pattern);
                     for name in &binders {
-                        by_name.insert(*name, nodes.len());
+                        // (A name bound twice is the parser's error: what
+                        // reads it is not ordered by it.)
+                        if let Some(first) = by_name.insert(*name, nodes.len()) {
+                            bound_twice.extend([first, nodes.len()]);
+                        }
                     }
                     nodes.push(Node {
                         name: match binders.first() {
@@ -246,6 +448,9 @@ impl TypeChecker {
             return Vec::new();
         }
         let mut by_def: HashMap<DefId, usize> = HashMap::new();
+        // The functions with type variables of their own, each with its
+        // scheme.
+        let mut general: HashMap<usize, Scheme> = HashMap::new();
         if let Some(defs) = &self.defs {
             for id in defs.of_module(self.module) {
                 let def = defs.get(*id);
@@ -255,6 +460,12 @@ impl TypeChecker {
                 ) && let Some(&node) = by_name.get(&def.name)
                 {
                     by_def.insert(*id, node);
+                    if def.kind == crate::defs::DefKind::Fn
+                        && let Some(scheme) = env.lookup(def.name)
+                        && !scheme.vars.is_empty()
+                    {
+                        general.insert(node, scheme.clone());
+                    }
                 }
             }
         }
@@ -263,16 +474,59 @@ impl TypeChecker {
         // that is mentioned by a name, the name (a `let` may bind
         // several).
         let own_trait = |tr: TraitId| self.own_traits.values().any(|own| own.id == tr);
+        let display = TraitKey::builtin("Display");
+        let display_method = intern("display");
         let mut named: HashMap<(usize, usize), Symbol> = HashMap::new();
         let mut edges: Vec<Vec<usize>> = Vec::with_capacity(nodes.len());
+        // What showing a value of the type `ty` reaches: the `Display`
+        // impls of its parts.
+        let shows = |ty: &Type, add: &mut dyn FnMut(usize)| {
+            let mut parts = Parts {
+                own: Vec::new(),
+                outside: false,
+            };
+            self.parts_shown(&self.apply(ty), false, &mut parts);
+            for ty in parts.own {
+                let ty = canonical_head(&self.tables.resolver, ty);
+                if let Some(&target) = of_impl.get(&(display.id, ty.id, display_method)) {
+                    add(target);
+                }
+            }
+            if parts.outside {
+                for &target in of_trait
+                    .get(&(display.id, display_method))
+                    .into_iter()
+                    .flatten()
+                {
+                    add(target);
+                }
+                add(OUTSIDE);
+            }
+        };
+        // A function with type variables of its own shows values whose
+        // types have them (`fn label(x: a) -> String where a: Display {
+        // "<{x}>" }`). What the variables stand for is known where the
+        // function is named: the type it is used at there says so, and
+        // a value made there is called at that type only. So such a
+        // showing is not the function's (`shown_at`, by function) but
+        // of each node that names it (`uses`: the function, and the
+        // type it is named at), below.
+        let mut shown_at: HashMap<usize, Vec<Type>> = HashMap::new();
+        let mut uses: Vec<Vec<(usize, Option<Type>)>> = Vec::with_capacity(nodes.len());
         for (from, node) in nodes.iter().enumerate() {
             let Some(body) = node.body else {
                 edges.push(callable_outside.clone());
+                uses.push(Vec::new());
                 continue;
             };
-            let mut targets: Vec<usize> = Vec::new();
+            let targets: std::cell::RefCell<Vec<usize>> = std::cell::RefCell::new(Vec::new());
+            let own_vars: &[TyVar] = general.get(&from).map_or(&[], |scheme| &scheme.vars);
+            let deferred: std::cell::RefCell<Vec<Type>> = std::cell::RefCell::new(Vec::new());
+            let used: std::cell::RefCell<Vec<(usize, Option<Type>)>> =
+                std::cell::RefCell::new(Vec::new());
             let mut note = |mention: Mention| {
-                let mut add = |target: usize| {
+                let add = |target: usize| {
+                    let mut targets = targets.borrow_mut();
                     if !targets.contains(&target) {
                         targets.push(target);
                     }
@@ -280,6 +534,10 @@ impl TypeChecker {
                 if let Some(crate::defs::Res::Def(id)) = mention.res {
                     if let Some(&target) = by_def.get(&id) {
                         add(target);
+                        if general.contains_key(&target) {
+                            used.borrow_mut()
+                                .push((target, mention.expr.and_then(|expr| expr.ty.clone())));
+                        }
                         if let Some(def) = self.def(id) {
                             named.entry((from, target)).or_insert(def.name);
                         }
@@ -298,6 +556,51 @@ impl TypeChecker {
                         add(OUTSIDE);
                     }
                 }
+                // A value that is shown: what its parts' `Display` impls
+                // are. Where its type has variables of the function
+                // written here, and no others, the parts they stand for
+                // are for who names the function.
+                let show = |ty: &Type| {
+                    let ty = self.apply(ty);
+                    let mut vars: Vec<TyVar> = Vec::new();
+                    crate::types::map_rigid(&ty, &mut |r| {
+                        vars.push(r.var);
+                        Type::Rigid(r)
+                    });
+                    if vars.is_empty() || !vars.iter().all(|v| own_vars.contains(v)) {
+                        return shows(&ty, &mut |target| add(target));
+                    }
+                    let rest = crate::types::map_rigid(&ty, &mut |_| Type::Unit);
+                    shows(&rest, &mut |target| add(target));
+                    deferred.borrow_mut().push(ty);
+                };
+                match mention.expr.map(|expr| (&expr.kind, expr)) {
+                    Some((ExprKind::StringInterp(parts), _)) => {
+                        for part in parts {
+                            if let StringPart::Expr(shown) = part
+                                && let Some(ty) = &shown.ty
+                            {
+                                show(ty);
+                            }
+                        }
+                    }
+                    // A builtin that shows an argument, called or not:
+                    // the type it is used at says what it is given.
+                    Some((ExprKind::Ident(_) | ExprKind::FieldAccess(..), expr)) => {
+                        if let Some(crate::defs::Res::Def(id)) = expr.res
+                            && let Some(def) = self.def(id)
+                            && def.module.is_builtin()
+                            && let Some(Type::Fun(params, _)) = &expr.ty
+                        {
+                            for i in self.shown_params(&def) {
+                                if let Some(param) = params.get(i) {
+                                    show(param);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
                 let Some(Expr {
                     kind: ExprKind::FieldAccess(recv, method, _),
                     sel,
@@ -312,7 +615,7 @@ impl TypeChecker {
                 // (but a builtin trait's method on a value, of the type
                 // `of`, that is builtin through and through: that
                 // calls nothing a program writes).
-                let mut one_impl = |tr: TraitId, ty: TypeId, of: Option<&Type>| match of_impl
+                let one_impl = |tr: TraitId, ty: TypeId, of: Option<&Type>| match of_impl
                     .get(&(tr, ty, *method))
                     .or_else(|| defaults.get(&(tr, *method)))
                 {
@@ -331,6 +634,14 @@ impl TypeChecker {
                     // impl of the method in the module, the trait's
                     // default, and, for a trait of another module or a
                     // builtin one, impls and defaults outside it.
+                    // (`display` of such a receiver shows it.)
+                    Some(Selection::Dynamic { tr })
+                        if *tr == display.id && *method == display_method && recv.ty.is_some() =>
+                    {
+                        if let Some(ty) = &recv.ty {
+                            show(ty);
+                        }
+                    }
                     Some(Selection::Dynamic { tr }) => {
                         for &target in of_trait.get(&(*tr, *method)).into_iter().flatten() {
                             add(target);
@@ -339,9 +650,16 @@ impl TypeChecker {
                             add(OUTSIDE);
                         }
                     }
-                    // (The VM's own method of a builtin trait: it calls
-                    // no code a program writes.)
-                    Some(Selection::Native { .. }) => {}
+                    // The VM's own method of a builtin trait: `display`
+                    // shows the receiver; the others call no code a
+                    // program writes.
+                    Some(Selection::Native { tr }) => {
+                        if *tr == display.id
+                            && let Some(ty) = &recv.ty
+                        {
+                            show(ty);
+                        }
+                    }
                     Some(Selection::Field | Selection::FieldCall) => {}
                     // `Type.method`: that impl's method.
                     None => {
@@ -383,7 +701,45 @@ impl TypeChecker {
                 references_in_pattern(&param.pattern, &mut note);
             }
             references_in_expr(body, &mut note);
-            edges.push(targets);
+            edges.push(targets.into_inner());
+            uses.push(used.into_inner());
+            let deferred = deferred.into_inner();
+            if !deferred.is_empty() {
+                shown_at.insert(from, deferred);
+            }
+        }
+        // What a function shows of its own variables, for each node
+        // that names it, at the type it names it at. A type that is not
+        // known there, or has a variable left, is any type.
+        for (from, used) in uses.iter().enumerate() {
+            for (target, at) in used {
+                let (Some(shown), Some(scheme)) = (shown_at.get(target), general.get(target))
+                else {
+                    continue;
+                };
+                let mut stands: HashMap<TyVar, Type> = HashMap::new();
+                let known = at
+                    .as_ref()
+                    .is_some_and(|at| instance(&scheme.ty, &self.apply(at), &mut stands));
+                for ty in shown {
+                    let here = match known {
+                        true => crate::types::map_rigid(ty, &mut |r| {
+                            stands.get(&r.var).cloned().unwrap_or(Type::Rigid(r))
+                        }),
+                        false => ty.clone(),
+                    };
+                    // (A function that calls itself, at its own
+                    // variables: nothing new.)
+                    if from == *target && here == *ty {
+                        continue;
+                    }
+                    shows(&here, &mut |target| {
+                        if !edges[from].contains(&target) {
+                            edges[from].push(target);
+                        }
+                    });
+                }
+            }
         }
 
         // The `let`s each `let` needs, with the way to each (the
@@ -501,6 +857,9 @@ impl TypeChecker {
             names.insert(0, own.clone());
             // (Each `let` on the way is in the ring.)
             in_ring.extend(way.iter().filter(|&&n| nodes[n].let_decl.is_some()));
+            if way.iter().any(|n| bound_twice.contains(n)) {
+                continue;
+            }
             self.errors.push(
                 Diagnostic::error(
                     Code::InitCycle,

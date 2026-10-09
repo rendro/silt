@@ -207,9 +207,6 @@ fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
             collect_references_in_expr(&f.body, name, out);
         }
         Decl::TraitImpl(ti) => {
-            if ti.is_auto_derived {
-                return;
-            }
             // Round-75 DX-4: impl's trait_name and target_type are
             // user-written references — rename of either must update them.
             if ti.trait_name == name {

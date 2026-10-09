@@ -3,9 +3,9 @@
 //! One test binary; each module was a separate test crate before.
 
 mod anon_record_resolve_recursion_tests;
-mod auto_derive_builtin_synth_tests;
 mod builtin_module_constant_value_access_runtime_tests;
 mod builtin_module_dispatch_tests;
+mod builtin_structural_traits_tests;
 mod bytes_module_tests;
 mod canonical_resolver_isolation_tests;
 mod compiler_literal_bounds_tests;
@@ -57,7 +57,6 @@ mod time_sleep_cooperative_tests;
 mod uuid_module_tests;
 mod value_ord_handle_closure_tests;
 mod value_partial_eq_round26_tests;
-mod vm_dispatch_unsupportable_field_runtime_tests;
 mod vm_small_program_property_tests;
 mod wave1_frontend_tests;
 mod wave1_tooling_tests;

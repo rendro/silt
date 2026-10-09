@@ -1,0 +1,40 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: the top-level `let` 'total' needs its own value to be initialised: total -> T.display -> total
+-- stderr-contains: error[type]: the top-level `let` 'label' needs its own value to be initialised: label -> Wrap.display -> label
+-- A `let` whose initialiser shows a value needs what the value's
+-- Display impl reads: if that is the `let` itself, there is no order.
+import string
+
+type T {
+  n: Int,
+}
+
+trait Display for T {
+  fn display(self) -> String {
+    "{self.n} of {total}"
+  }
+}
+
+let total = string.length("{[T { n: 1 }]}")
+
+type Wrap {
+  t: Int,
+}
+
+trait Display for Wrap {
+  fn display(self) -> String {
+    label
+  }
+}
+
+type Holder {
+  w: Wrap,
+}
+
+let label = Some(Holder { w: Wrap { t: 1 } }).display()
+
+fn main() {
+  println(total)
+  println(label)
+}

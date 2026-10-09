@@ -1,1 +1,1 @@
-Wrap { r: Inner { x: 7 }, tag: 3 }
+Wrap {r: Inner {x: 7}, tag: 3}

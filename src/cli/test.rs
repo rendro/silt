@@ -304,7 +304,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                         let d = Diagnostic::error(
                             Code::MainReturnedErr,
                             test.span,
-                            format!("{name} returned Err: {payload}"),
+                            format!("{name} returned Err: {}", vm.show_text(payload)),
                         );
                         let files = ProgramFiles::new(path, &owners.files[file_index].sources);
                         eprint_indented(&render_human(&files, &d));

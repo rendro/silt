@@ -522,8 +522,7 @@ pub enum Stmt {
 ///
 /// `trait_name_span` points at the trait-name identifier in source so
 /// LSP rename / references / goto-def can land precisely on the trait
-/// reference (round-75 DX-4 fix). A synthesized clause (auto-derive) has
-/// the span of the type declaration that caused it.
+/// reference (round-75 DX-4 fix).
 #[derive(Debug, Clone)]
 pub struct WhereClause {
     pub type_param: Symbol,
@@ -582,8 +581,8 @@ pub struct FnDecl {
     /// landing zones. The LSP rename / references / definition /
     /// document-highlight handlers need the *identifier* range so that
     /// rename edits replace the name and not the keyword. For
-    /// synthesized FnDecls (auto-derive, recovery stubs, builtin trait
-    /// signatures) this falls back to `span`.
+    /// synthesized FnDecls (recovery stubs, builtin trait signatures)
+    /// this falls back to `span`.
     pub name_span: Span,
     /// True when this declaration was synthesized by parser error recovery
     /// (Option B: salvage the header and emit a stub so downstream references
@@ -637,9 +636,7 @@ pub struct EnumVariant {
     /// (round-63 B1): LSP rename / references / goto-def need the name
     /// token's range, not the enclosing decl's `type`-keyword span —
     /// without it, renaming a variant from a usage site rewrote the
-    /// `type` keyword. A variant synthesized outside the parser
-    /// (auto-derive's VariantInfo round-trip) has the span of its type's
-    /// declaration.
+    /// `type` keyword.
     pub name_span: Span,
     pub fields: Vec<TypeExpr>,
 }
@@ -748,7 +745,6 @@ pub struct TraitImpl {
     /// Span of the trait-name identifier in `trait <Name> for ...`.
     /// Used by LSP rename / references so cursor on the impl's trait
     /// reference resolves to the trait declaration (round-75 DX-4).
-    /// For synthesized impls (auto-derive) this falls back to `span`.
     pub trait_name_span: Span,
     /// Arguments supplied to the trait at impl time:
     /// `trait TryInto(Int) for String { ... }` yields `[Int]`.
@@ -766,8 +762,7 @@ pub struct TraitImpl {
     pub target_res: Option<Res>,
     /// Span of the target-type head-name identifier in `... for <Target>`
     /// (e.g. `Int` in `for Int`, `Box` in `for Box(a)`). Used by LSP
-    /// rename / references on the impl-target reference. For synthesized
-    /// impls (auto-derive) this falls back to `span`.
+    /// rename / references on the impl-target reference.
     pub target_type_span: Span,
     /// Type arguments on the target, if any. `trait X for Box(a)` yields
     /// `[TypeExpr::Named("a")]`; the bare `trait X for Int` yields `[]`.
@@ -800,17 +795,6 @@ pub struct TraitImpl {
     ///   - the bound type satisfies each declared trait bound.
     pub assoc_type_bindings: Vec<AssocTypeBinding>,
     pub span: Span,
-    /// True when this impl block was synthesized by the auto-derive pass
-    /// (Display / Compare / Equal / Hash for user-declared enums and
-    /// records). Synthesized impls register their methods into the
-    /// method_table with `is_auto_derived: true` so that a subsequent
-    /// user-written `trait Display for Color { ... }` is allowed to
-    /// override the generated body without colliding with the
-    /// duplicate-impl coherence check in `register_trait_impl`. (A
-    /// user-written impl of the sealed Equal / Compare / Hash is an
-    /// error.)
-    /// Default false for parser-produced impls.
-    pub is_auto_derived: bool,
 }
 
 #[derive(Debug, Clone)]

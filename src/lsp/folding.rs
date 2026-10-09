@@ -59,9 +59,6 @@ fn collect_decl_folds(decl: &Decl, source: &SourceFile, out: &mut Vec<FoldingRan
             }
         }
         Decl::TraitImpl(ti) => {
-            if ti.is_auto_derived {
-                return;
-            }
             push_span_fold(&ti.span, source, out);
             for method in &ti.methods {
                 // Same reason as `Decl::Fn`: the walker handles the body

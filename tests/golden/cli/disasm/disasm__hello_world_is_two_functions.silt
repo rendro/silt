@@ -1,0 +1,7 @@
+-- cmd: disasm
+-- A program is the code it writes: the script that installs `main`
+-- and calls it, and `main`. No impl is compiled for a builtin type or
+-- for the traits a type has by its structure.
+fn main() {
+  println("hello")
+}

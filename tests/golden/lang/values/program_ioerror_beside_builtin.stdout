@@ -1,6 +1,6 @@
 mine: x
 my IoError
-Oops(x)
+my IoError
 file not found: does-not-exist.txt
 file not found: does-not-exist.txt
 file not found: does-not-exist.txt

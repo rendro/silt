@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: the impl of trait 'Display' for type 'Tag' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'types', which declares the type
+-- An impl is written in the module of its trait or of its type. Here
+-- `types` shows a `Tag` in a `let` of its own, before `main` (which
+-- wrote the impl) is initialised: the same type would be shown in two
+-- ways.
+import types
+import types.{ Tag }
+
+trait Display for Tag {
+  fn display(self) -> String {
+    "#{self.name}{unit}"
+  }
+}
+
+let a = types.show_tag(Tag { name: "a" })
+
+let unit = {
+  println("unit")
+  "!"
+}
+
+fn main() {
+  println(types.banner)
+  println(a)
+  println(types.show_tag(Tag { name: "late" }))
+}

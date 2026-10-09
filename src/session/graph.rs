@@ -626,6 +626,19 @@ impl ModuleGraph {
         }
     }
 
+    /// The modules `id` imports, and theirs, and so on: the modules
+    /// that are initialised before it.
+    pub fn reach(&self, id: ModuleId) -> HashSet<ModuleId> {
+        let mut seen = HashSet::new();
+        let mut stack = self.module(id).imported_modules();
+        while let Some(next) = stack.pop() {
+            if seen.insert(next) {
+                stack.extend(self.module(next).imported_modules());
+            }
+        }
+        seen
+    }
+
     /// The modules reachable from `entry`, each after the modules it
     /// imports (a depth-first postorder), and the import cycles among
     /// them. Failed modules are in the order too; their imports are not

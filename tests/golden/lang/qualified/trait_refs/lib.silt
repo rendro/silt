@@ -4,3 +4,9 @@ pub trait Describe {
 
 pub type Pt { x: Int, y: Int }
 pub type C { Red, Blue }
+
+trait Describe for Pt {
+  fn describe(self) -> String {
+    "pt {self.x},{self.y}"
+  }
+}

@@ -1,0 +1,20 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: test_gives_up returned Err: [code 50, code 25]
+-- stderr-contains: 1 test: 0 passed, 1 failed, 0 skipped
+-- The `Err` a test returns is shown as `println` would show it, at any
+-- depth.
+import test
+type Code {
+  n: Int,
+}
+
+trait Display for Code {
+  fn display(self) -> String {
+    "code {100 / self.n}"
+  }
+}
+
+fn test_gives_up() -> Result(Int, List(Code)) {
+  Err([Code { n: 2 }, Code { n: 4 }])
+}

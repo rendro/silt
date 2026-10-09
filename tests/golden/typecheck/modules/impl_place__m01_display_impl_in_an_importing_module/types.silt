@@ -1,0 +1,9 @@
+pub type Tag {
+  name: String,
+}
+
+pub fn show_tag(t: Tag) -> String {
+  "tag {t}"
+}
+
+pub let banner = "banner {Tag { name: "early" }}"

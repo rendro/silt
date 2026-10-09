@@ -1,0 +1,30 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: the top-level `let` 'width' needs its own value to be initialised: width -> wrap -> Row.display -> width
+-- One step only: `wrap` names `label` at its own type variable, which
+-- is not known there, so what `wrap` shows may be of any type.
+import string
+
+type Row {
+  n: Int,
+}
+
+fn label(x: a) -> String where a: Display {
+  "<{x}>"
+}
+
+fn wrap(x: a) -> String where a: Display {
+  label(x)
+}
+
+let width = string.length(wrap(42))
+
+trait Display for Row {
+  fn display(self) -> String {
+    string.pad_left("{self.n}", width, " ")
+  }
+}
+
+fn main() {
+  println(Row { n: 1 })
+}

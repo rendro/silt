@@ -3,12 +3,6 @@
 -- run time: `run` used to fail with `undefined global: shapes.Describe`.
 import shapes.{ Describe, Pair }
 
-trait Describe for Int {
-  fn describe(self) -> String {
-    "the int {self}"
-  }
-}
-
 fn first(p: Pair(Int)) -> Int {
   let (a, _) = p
   a

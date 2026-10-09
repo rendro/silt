@@ -1,0 +1,9 @@
+-- `main` calls a function of `early` in a `let`; it calls the impl,
+-- which reads a `let` of the impl's module: set already.
+import early
+
+let a = early.show3()
+
+fn main() {
+  println(a)
+}

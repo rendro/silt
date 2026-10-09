@@ -1,0 +1,24 @@
+-- exit: 1
+-- stdout-contains: before
+-- stderr-contains: error[runtime]: division by zero
+-- stderr-contains: -> Ratio.display  at display__an_error_in_an_impl_is_the_callers.silt:16:7
+-- stderr-contains: -> main  at display__an_error_in_an_impl_is_the_callers.silt:22:3
+-- An error inside a Display impl is an error of the code that shows the
+-- value, with the impl in the call stack, wherever the value was inside
+-- what is shown.
+type Ratio {
+  n: Int,
+  d: Int,
+}
+
+trait Display for Ratio {
+  fn display(self) -> String {
+    "{self.n / self.d}"
+  }
+}
+
+fn main() {
+  println("before")
+  println([Some(Ratio { n: 1, d: 0 })])
+  println("after")
+}

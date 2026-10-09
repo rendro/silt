@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: declares neither the trait nor the type
+-- stderr-contains: trait 'Display'
+-- stderr-contains: type 'List'
+-- stderr-contains: both are builtin, so no module may write it
+trait Display for List(a) {
+  fn display(self) -> String { "stolen" }
+}
+
+fn main() {
+  ()
+}

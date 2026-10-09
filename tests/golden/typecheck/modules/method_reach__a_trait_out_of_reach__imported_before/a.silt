@@ -1,0 +1,16 @@
+pub trait Tag {
+  fn tag(self) -> String
+  fn tagged(self) -> String {
+    "<{self.tag()}>"
+  }
+}
+
+trait Tag for Int {
+  fn tag(self) -> String {
+    "int {self}"
+  }
+}
+
+pub fn touch() -> Int {
+  0
+}

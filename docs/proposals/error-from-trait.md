@@ -81,7 +81,7 @@ pipeline of near-identical lines).
   does not define "magic coercion" that the compiler inserts at
   call sites or that resolves via target-type inference. The
   conversion function name must be visible at the call site.
-- **No auto-derive.** Each `From(Src)` impl is user-declared. The
+- **No impl made by the compiler.** Each `From(Src)` impl is user-declared. The
   compiler never invents an impl that wasn't written.
 - **No trait objects / existentials.** Silt has none; this proposal
   doesn't introduce them.
@@ -315,13 +315,13 @@ never considered it (OCaml, Haskell, F#). Only Rust adopted it, and
 even there it is the single most common complaint about error
 handling readability. Not a road worth taking.
 
-### Why not auto-derive?
+### Why not have the compiler write the impl?
 
 Two reasons:
 1. Silt has no general `#[derive]` machinery for user-declared
-   traits. Auto-derive for `From` alone would be a bespoke compiler
+   traits. An impl of `From` written by the compiler would be a bespoke compiler
    feature that we'd have to justify on its own.
-2. Even with a general derive system, auto-derived `From` impls
+2. Even with a general derive system, derived `From` impls
    hide the wrap variant from the impl site. If `AppError` has
    `IoProblem(IoError)`, a derived `impl From(IoError) for AppError`
    obviously maps to `IoProblem(e)` — but the user has to know
@@ -330,7 +330,7 @@ Two reasons:
    the page.
 
 If `#[derive]` lands and proves itself for less-ambiguous traits
-(Display, Equal, etc.), auto-derived `From` becomes a natural
+(Display, Equal, etc.), a derived `From` becomes a natural
 follow-up. Not part of v1.
 
 ## When to unblock this proposal

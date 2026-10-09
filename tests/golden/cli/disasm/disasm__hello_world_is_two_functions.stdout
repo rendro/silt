@@ -1,0 +1,14 @@
+== <script> (arity=0, upvalues=0) ==
+0000  Constant             0     ; <fn:main>
+0003  SetGlobal            0     ; main
+0006  Pop
+0007  GetGlobal            0     ; main
+0010  Call                 0
+0012  Return
+
+== main (arity=0, upvalues=0) ==
+0000  Constant             0     ; <builtin:println>
+0003  Constant             1     ; "hello"
+0006  TailCall             1
+0008  Return
+

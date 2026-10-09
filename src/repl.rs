@@ -223,7 +223,7 @@ pub fn run_repl() {
                 if let Some(value) = &evaluation.value
                     && !matches!(value, Value::Unit)
                 {
-                    println!("{value}");
+                    println!("{}", repl.show(value));
                 }
                 if evaluation.committed {
                     let mut all = builtin_names();
@@ -304,6 +304,11 @@ impl Repl {
     /// reports.
     pub fn project_problems(&mut self) -> Vec<Diagnostic> {
         self.session.project_problems()
+    }
+
+    /// The text of a value an entry gave, as `println` would write it.
+    pub fn show(&mut self, value: &Value) -> String {
+        self.vm.show_text(value)
     }
 
     /// Check, compile and run `input` as the next cell.

@@ -14,31 +14,25 @@ use super::{EnumInfo, RecordInfo, TraitInfo};
 
 #[test]
 fn enum_info_size_locked() {
-    // Round 63 item 5 added `defined_in: Symbol` to track the
-    // owning package for the trait-orphan rule.
     assert_eq!(
         std::mem::size_of::<EnumInfo>(),
-        80,
+        72,
         "EnumInfo size changed — see module doc"
     );
 }
 
 #[test]
 fn record_info_size_locked() {
-    // Round 63 item 5 added `defined_in: Symbol` to track the
-    // owning package for the trait-orphan rule.
     assert_eq!(
         std::mem::size_of::<RecordInfo>(),
-        32,
+        24,
         "RecordInfo size changed — see module doc"
     );
 }
 
 #[test]
 fn trait_info_size_locked() {
-    // Round 63 item 5 added `defined_in: Symbol` to track the
-    // owning package for the trait-orphan rule; stage 5 shrank its
-    // spans from 24 to 12 bytes; stage 6 added `self_var`,
+    // Stage 5 shrank its spans from 24 to 12 bytes; stage 6 added `self_var`,
     // `var_names` and `method_bounds`, which a default body and an impl
     // are checked with.
     assert_eq!(

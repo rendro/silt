@@ -690,8 +690,8 @@ match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
 
 ### Variable binding
 
-You can also bind the channel to a new variable to inspect it later. Channels
-do not auto-derive `Display`, so log the payload (or a counter) instead of the
+You can also bind the channel to a new variable to inspect it later. A channel
+has no `Display`, so log the payload (or a counter) instead of the
 channel itself:
 
 ```silt

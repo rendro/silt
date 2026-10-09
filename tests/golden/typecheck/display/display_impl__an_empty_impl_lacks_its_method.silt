@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait impl 'Display' for 'D' is missing method 'display'
+-- stderr-contains: trait impl 'Display' for 'F' is missing method 'display'
+-- An impl of `Display` that does not write `display` lacks its method,
+-- as an impl of any trait does. (It was accepted, and the type was
+-- shown by its structure.)
+import string
+
+type D {
+  n: Int,
+}
+
+trait Display for D {}
+
+type F {
+  f: Fn(Int) -> Int,
+}
+
+trait Display for F {}
+
+fn show(x: a) -> String where a: Display {
+  x.display()
+}
+
+fn main() {
+  println(D { n: 1 })
+  println([D { n: 1 }])
+  println(D { n: 1 }.display())
+  println(show(D { n: 2 }))
+  println(D.display(D { n: 3 }))
+  println(string.from(F { f: { x -> x } }))
+  println(F { f: { x -> x } }.display())
+}

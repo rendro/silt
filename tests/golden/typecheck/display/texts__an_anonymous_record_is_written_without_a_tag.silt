@@ -1,0 +1,28 @@
+-- An anonymous record is written as it is made, `{a: 1}`, in every
+-- text of it (it was `<anon> {a: 1}`), and has the methods of the
+-- traits it has by its structure: `display`, `equal`, `hash`. A
+-- declared record's fields are in the order of the declaration in
+-- `io.inspect` too (they were in name order there).
+import io
+import string
+
+type P {
+  z: Int,
+  a: Int,
+}
+
+fn main() {
+  let r = { b: 1, a: P { z: 1, a: 2 } }
+  println(r)
+  println("{r}")
+  println([r])
+  println(io.inspect(r))
+  println(string.from(r))
+  println(r.display())
+  println(r.equal(r))
+  println(r.equal({ b: 2, a: P { z: 1, a: 2 } }))
+  println(r.hash() == r.hash())
+  println(io.inspect(P { z: 1, a: 2 }))
+  println(io.inspect([P { z: 1, a: 2 }]))
+  println(#{ r: 1 })
+}

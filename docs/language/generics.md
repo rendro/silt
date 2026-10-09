@@ -432,7 +432,7 @@ trait HashTable(k) where k: Hash + Equal {
   fn keys(self) -> List(k)
 }
 
-trait HashTable(String) for MyStore { ... }   -- OK, String auto-derives Hash + Equal
+trait HashTable(String) for MyStore { ... }   -- OK, String has Hash + Equal
 trait HashTable(Function) for OtherStore { ... }  -- error: Function does not implement Hash
 ```
 
@@ -503,23 +503,27 @@ fn sorted_unique(xs: List(a)) -> List(a) where a: Ordered {
 }
 ```
 
-The four built-in auto-derived traits (`Equal`, `Hash`, `Compare`,
-`Display`) are independent — none of them lists another as a
-supertrait — so this example uses a user-defined `Ordered` to show the
-supertrait edge being established.
+Among the built-in traits, `Compare` includes `Equal` in the same way
+(a `where a: Compare` bound lets the body use `==`); the example uses a
+user-defined `Ordered` to show the supertrait edge being written.
 
-### The four auto-derived traits
+### The four structural traits
 
-`Equal`, `Hash`, `Compare`, and `Display` are auto-derived for every
-user-defined type. Generic code that constrains on these traits works
-against every type by default:
+`Equal`, `Hash`, `Compare`, and `Display` are traits the language
+answers itself, by the structure of a type: a type has one of them when
+every type it is made of has it. Generic code that constrains on these
+traits works against every such type:
 
 ```silt
 fn dedup(xs: List(a)) -> List(a) where a: Equal + Hash { ... }
 -- Works for List(Int), List(User), List(Option(String)), ...
 ```
 
-To customise, write an explicit impl — it overrides the derived one.
+A type that holds a function has none of them (a channel has `Equal`
+only, a map or a set no `Compare`): the error is at the use that needs
+the trait. `Display` is the one a program may write an impl of
+(`trait Display for T`); an impl of `Equal`, `Hash` or `Compare` is an
+error. See [Built-in Traits](traits.md#built-in-traits).
 
 ### Trait methods on types
 
@@ -648,7 +652,7 @@ type Box {
 }
 
 trait Container for Box {
-  type Item = Int -- OK: Int auto-derives Compare
+  type Item = Int -- OK: Int has Compare
   fn first(self) -> Int {
     self.v
   }

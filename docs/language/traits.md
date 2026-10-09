@@ -88,10 +88,10 @@ cannot be redefined.)
 
 Implementing `Cmp2` on a type requires that type to also implement `Eq2`
 (four of silt's six built-in traits — `Equal`, `Hash`, `Compare`,
-`Display` — are auto-derived for every user-defined type and the
-displayable builtins, so the obligation is satisfied automatically;
-channels and function values are the exception — they do not implement
-`Display`. The fifth built-in, `Error`, is not auto-derived).
+`Display` — are structural: the language answers them for every type
+made of types that have them, so for most types the obligation holds
+without an impl; a type that holds a function has none of the four. The
+fifth built-in, `Error`, is implemented by hand).
 
 Multiple supertraits separate with `+`:
 
@@ -497,19 +497,20 @@ type.
 ## Built-in Traits
 
 silt ships **six** built-in traits. Four of them — `Equal`, `Hash`,
-`Compare`, `Display` — are **automatically derived** for every
-user-defined type. `Error` is built-in but is **not** auto-derived.
-`Number` is the types arithmetic is on, `Int` and `Float`, and nothing
-else.
+`Compare`, `Display` — are **structural**: the language answers them
+itself, for every type made of types that have them (what that means
+for each kind of type is listed below). Of the four only `Display` may
+be written by hand. `Error` is implemented by hand. `Number` is the
+types arithmetic is on, `Int` and `Float`, and nothing else.
 
-| Trait     | Purpose                          | Auto-derived? |
-|-----------|----------------------------------|---------------|
-| `Display` | Convert to human-readable string | yes           |
-| `Equal`   | Equality comparison              | yes           |
-| `Hash`    | Hash value for maps/sets         | yes           |
-| `Compare` | Order comparison                 | yes           |
-| `Error`   | Error reporting (`message()`)    | no            |
-| `Number`  | `+ - * / %` and unary `-`        | Int and Float only |
+| Trait     | Purpose                          | Who has it | An impl may be written |
+|-----------|----------------------------------|------------|------------------------|
+| `Display` | Convert to human-readable string | by structure | yes: it replaces the structural one |
+| `Equal`   | Equality comparison              | by structure | no (an error) |
+| `Hash`    | Hash value for maps/sets         | by structure | no (an error) |
+| `Compare` | Order comparison; includes `Equal` | by structure | no (an error) |
+| `Error`   | Error reporting (`message()`)    | types with an impl | yes |
+| `Number`  | `+ - * / %` and unary `-`        | Int and Float only | no |
 
 Operators are these traits: `==` and `!=` need `Equal`, `<` `>` `<=`
 `>=` need `Compare`, interpolation and `println` need `Display`,
@@ -531,12 +532,51 @@ apply to needs a type the definition decides, or an annotation. `?`
 takes it from the return type of the function it is in, when that is
 known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
-The auto-derived `Display` formats in constructor syntax (`Circle(5)`).
-Write your own `trait Display for T` to override.
+The structural `Display` formats in constructor syntax: `Circle(5)`
+for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
+order the type declares them (`{x: 1, y: 2}` for an anonymous record,
+its fields in the order of their names). Write your own
+`trait Display for T` to replace it, in the module that declares `T`
+(see [Where an Impl Is Written](#where-an-impl-is-written)): a
+`Display` impl for a type of another module, or for a built-in type, is
+an error. A type that holds a function has no structural `Display`, and
+may be given a written one. There is one `Display`: `println`, `print`, interpolation,
+`.display()`, `string.from` and a panic's message all show a value the
+same way, and all use the impl you wrote, wherever a value of the type
+is inside what is shown (`println([t])`, `"{Some(t)}"`, a field of a
+record).
 
-`Equal`, `Hash` and `Compare` are **sealed**: they are always derived
-structurally from a type's fields (a type gets them when every field
-supports them), and `==`, `<` and map keys use exactly that structure. A
+```silt
+type Temp {
+  degrees: Int,
+}
+
+trait Display for Temp {
+  fn display(self) -> String {
+    "{self.degrees}C"
+  }
+}
+
+fn main() {
+  let t = Temp { degrees: 21 }
+  println(t) -- 21C
+  println([t, t]) -- [21C, 21C]
+  println("{Some(t)}") -- Some(21C)
+}
+```
+
+`io.inspect` and the texts of failed assertions (`test.assert_eq` and
+the like) are for the person debugging: they write the structure of a
+value in silt syntax, strings quoted, and do not call written `Display`
+impls (`io.inspect(t)` is `Temp {degrees: 21}`). They write a record's
+fields in the same order as `println`.
+
+`Equal`, `Hash` and `Compare` are **sealed**: they always come
+from a type's structure (a type gets them when every field
+supports them), and `==`, `<`, `.equal()`, `.compare()`, `.hash()` and
+map keys use exactly that structure. A record is ordered by its fields
+in the order the type declares them, an enum by its variants in the
+order it declares them and then by their payloads. A
 hand-written `trait Equal for T`, `trait Compare for T` or
 `trait Hash for T` is an error:
 
@@ -586,32 +626,34 @@ The `Error` trait has supertrait `Display` and one method,
 `JsonError`, `HttpError`, …) implements it explicitly, and user code
 can implement it on its own error types.
 
-## Coherence — The Orphan Rule
+## Where an Impl Is Written
 
-silt enforces a **trait orphan rule** so two unrelated packages cannot
-both register an impl for the same `(trait, type)` pair and silently
-disagree on dispatch. The rule:
+An impl is written in the module that declares its trait, or in the
+module that declares its type. Anywhere else it is an error.
 
-> An `impl Trait for Type` declared in package `P` is allowed only when
-> at least one of `Trait` or `Type` is defined in `P` (or is built-in
-> to silt). Impls where both the trait and the head type are foreign to
-> `P` are rejected.
+A built-in trait and a built-in type are declared in no module, so:
 
-Built-in traits and built-in types (`List`, `Map`, `Set`, `Option`,
-`Result`, `Range`, …) are stdlib-owned. They count as foreign to your
-package — implementing `Display` for `List(a)` from your own package is
-forbidden. Auto-derived synthetic impls are exempt: the synth pass
-specialises stdlib impls to user-supplied type parameters and never
-races with another package.
+- an impl of `Display` or `Error` for a type goes in the module that
+  declares the type;
+- an impl for `Int`, `String`, `List(a)`, `Option(a)` or another
+  built-in type goes in the module that declares the trait;
+- no module may write an impl of a built-in trait for a built-in type.
 
-The rule applies to every file silt loads; a stand-alone script is in a
-synthetic `__local__` package. Each REPL input belongs to the package of
-the directory the REPL was started in (or to `__local__`), so the rule
-applies there too.
+For an impl with a parameterized target (`trait Area for Box(a)`), the
+type is the one named first, `Box`.
 
-### Allowed: at least one local anchor
+Two things follow. A type has at most one impl of a trait in a whole
+program, and every module sees the same one: no two modules can each
+write it. And the impl is there wherever it is called: a module that can
+call a method of a trait on a value of a type imports the module of the
+trait and the module of the type (directly, or through the modules it
+imports), and one of those two holds the impl. A value is shown, and a
+method answers, the same way in every module.
 
-A local trait on a built-in type satisfies the trait-local arm:
+A module calls the methods of the traits whose modules it imports,
+directly or through the modules it imports, and of the built-in traits.
+
+### In the trait's module
 
 ```silt
 trait Greet {
@@ -625,7 +667,7 @@ trait Greet for List(a) {
 }
 ```
 
-A built-in trait on a local type satisfies the type-local arm:
+### In the type's module
 
 ```silt
 type Color {
@@ -641,34 +683,31 @@ trait Display for Color {
 }
 ```
 
-A local trait on a local type is the trivial case — both arms are
-satisfied:
+A module that imports `Color` cannot write this impl: it belongs beside
+the type. The same holds for a trait and a type of two other modules:
 
 ```silt
-type Color {
-  Red,
-  Green,
-  Blue,
-}
+-- main.silt
+import shapes.{ Square }
+import traits.{ Area }
 
-trait Greet {
-  fn greet(self) -> String
-}
-
-trait Greet for Color {
-  fn greet(self) -> String {
-    "color"
+trait Area for Square { -- error
+  fn area(self) -> Int {
+    self.side * self.side
   }
 }
 ```
 
-### Rejected: both anchors foreign
+```
+the impl of trait 'Area' for type 'Square' is written in module 'main',
+which declares neither the trait nor the type; it may be written in
+module 'traits', which declares the trait, or in module 'shapes', which
+declares the type
+```
 
-Implementing a built-in trait on a built-in type from a user package is
-an orphan impl — neither anchor is local:
+### Neither has a module
 
 ```silt
--- in package `myapp`
 trait Display for List(a) { -- error
   fn display(self) -> String {
     "stolen"
@@ -676,16 +715,17 @@ trait Display for List(a) { -- error
 }
 ```
 
-The compiler emits:
-
 ```
-orphan impl: trait 'Display' is from package '__builtin__' and type
-'List' is from package '__builtin__'; either the trait or the type
-must be defined in the current package 'myapp'
+the impl of trait 'Display' for type 'List' is written in module 'main',
+which declares neither the trait nor the type; both are builtin, so no
+module may write it
 ```
 
-To add behaviour to a built-in type, wrap it in a local newtype or
+To add behaviour to a built-in type, wrap it in a type of your own or
 declare your own trait and implement that instead.
+
+In the REPL, the entries of a session count as one module: an impl for
+a type of an earlier entry may be written in a later one.
 
 ## Where Clauses
 

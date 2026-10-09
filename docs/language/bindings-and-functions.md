@@ -152,7 +152,7 @@ fn main() {
 }
 ```
 
-What a `let`'s value can reach is decided by three rules:
+What a `let`'s value can reach is decided by four rules:
 
 - **A function that is named counts as called.** So does a function of
   another module, and code of another module can call the methods this
@@ -188,6 +188,49 @@ fn main() {
 
 A closure handed to a function is not a plain value: `let f = wrap({ n
 -> ... f(n - 1) ... })` runs `wrap`, which may call the closure.
+
+- **Showing a value reaches the `Display` impls of its parts.**
+  Interpolation, `println`, `string.from` and `.display()` call the
+  `Display` impl written for each type the value is made of: its own,
+  its fields', its type arguments'. A value of an unknown type (a type
+  variable, an associated type such as `Self::Item`) may be of any
+  type: showing it reaches every `Display` impl of the module.
+
+A function that shows a value of its own type variable shows what it is
+given, so that showing counts where the function is named, at the type
+it is named at. `label(42)` shows an `Int`, which calls no impl:
+
+```silt
+import string
+
+type Row {
+  n: Int,
+}
+
+fn label(x: a) -> String where a: Display {
+  "<{x}>"
+}
+
+let width = string.length(label(42)) -- shows an Int: reaches no impl
+
+trait Display for Row {
+  fn display(self) -> String {
+    string.pad_left("{self.n}", width, "0")
+  }
+}
+
+fn main() {
+  println(Row { n: 1 }) -- 0001
+}
+```
+
+This goes one step only. A function that hands its own type variable on
+(`fn wrap(x: a) -> String where a: Display { label(x) }`) names `label`
+at a type that is not known there, so `wrap(42)` reaches every `Display`
+impl of the module, and `let width = string.length(wrap(42))` above
+would be an error: `width -> wrap -> Row.display -> width`. The way out
+is to call `label` at the known type (`label(42)`), or to compute the
+value without showing (`let width = 4`).
 
 A top-level `let` that can reach itself has no place in the order, and
 is an error that names the way round:

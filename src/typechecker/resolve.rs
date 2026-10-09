@@ -592,11 +592,19 @@ impl TypeChecker {
             Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => {
                 Selection::Dynamic { tr: tr.id }
             }
+            // A trait the type has by its structure (the sealed three,
+            // `Display` with no written impl) is the VM's own method;
+            // any other is the method of the impl written for the type.
             _ => match self.type_name_for_impl(&recv) {
-                Some(ty) if self.tables.trait_impl_set.contains(&(tr, ty)) => Selection::Impl {
-                    tr: tr.id,
-                    ty: ty.id,
-                },
+                Some(ty)
+                    if !self.by_structure(tr, ty)
+                        && self.tables.trait_impl_set.contains(&(tr, ty)) =>
+                {
+                    Selection::Impl {
+                        tr: tr.id,
+                        ty: ty.id,
+                    }
+                }
                 _ => Selection::Native { tr: tr.id },
             },
         }

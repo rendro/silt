@@ -1,6 +1,6 @@
 -- exit: 0
--- Tuples support Hash, so the auto-derived Pair.hash exists and the call
--- runs. The value itself is unspecified; the program checks that its
+-- Tuples support Hash, so a record with a tuple field has it and the
+-- call runs. The value itself is unspecified; the program checks that its
 -- printed form parses as an Int and that it is deterministic.
 import int
 import result

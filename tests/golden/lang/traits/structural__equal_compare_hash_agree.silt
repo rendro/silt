@@ -1,0 +1,78 @@
+-- Equal, Compare and Hash are the value's structure, the same for the
+-- operator, the method, a `where` bound, a sort, a map key and a set
+-- member. A record is ordered by its fields in the order the type
+-- declares them (not by their names), an enum by its variants in the
+-- order it declares them and then by payload.
+import list
+import map
+import set
+
+type Version {
+  minor: Int,
+  major: Int,
+}
+
+type Shape {
+  Square(Int),
+  Circle(Int),
+  Dot,
+}
+
+type Tagged(a) {
+  tag: String,
+  item: a,
+}
+
+fn lt(x: a, y: a) -> Bool where a: Compare {
+  x < y
+}
+
+fn cmp(x: a, y: a) -> Int where a: Compare {
+  x.compare(y)
+}
+
+fn same(x: a, y: a) -> Bool where a: Equal {
+  x == y && x.equal(y)
+}
+
+fn hashes(x: a, y: a) -> Bool where a: Hash {
+  x.hash() == y.hash()
+}
+
+fn main() {
+  let a = Version { minor: 1, major: 9 }
+  let b = Version { minor: 2, major: 0 }
+  -- `minor` is declared first: it decides.
+  println(a < b)
+  println(a.compare(b))
+  println(lt(a, b))
+  println(cmp(b, a))
+  println(Version.compare(a, a))
+  println(list.sort([b, a, b]) == [a, b, b])
+  -- Variants by declaration, then payload.
+  println(Square(9) < Circle(0))
+  println(Circle(1).compare(Circle(2)))
+  println(cmp(Dot, Square(1)))
+  println(list.sort([Dot, Circle(2), Square(3), Circle(1)]))
+  -- Equal and Hash agree, alone and inside containers.
+  let x = Tagged { tag: "t", item: [Some(a), None] }
+  let y = Tagged { tag: "t", item: [Some(Version { minor: 1, major: 9 }), None] }
+  println(x == y)
+  println(x.equal(y))
+  println(same(x, y))
+  println(hashes(x, y))
+  println(x.hash() == y.hash())
+  println(set.length(#[x, y]))
+  println(map.get(#{x: "found"}, y))
+  println((a, [Dot]) == (a, [Dot]))
+  println(hashes((a, [Dot]), (a, [Dot])))
+  println(same(x, Tagged { tag: "u", item: [] }))
+  -- Floats: 0.0 and -0.0 are equal, hash alike and order as equal.
+  println(0.0 == -0.0)
+  println(0.0.equal(-0.0))
+  println(hashes(0.0, -0.0))
+  println(0.0.compare(-0.0))
+  println(set.length(#[0.0, -0.0]))
+  println([1.5, -0.0] == [1.5, 0.0])
+  println(1.5 < 2.5 && cmp(1.5, 2.5) == -1)
+}

@@ -1,0 +1,9 @@
+pub trait Tag {
+  fn tag(self) -> String
+}
+
+trait Tag for Int {
+  fn tag(self) -> String {
+    "int {self}"
+  }
+}
