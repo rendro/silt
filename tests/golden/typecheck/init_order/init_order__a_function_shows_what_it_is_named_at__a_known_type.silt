@@ -1,0 +1,32 @@
+-- A function that shows a value of its own type variable shows what it
+-- is given: `label(42)` shows an `Int`, and `each_line` strings, so
+-- neither `let` reaches `Row`'s impl, which reads them. (Both were the
+-- error "width -> label -> Row.display -> width".)
+import list
+import string
+
+type Row {
+  n: Int,
+}
+
+fn label(x: a) -> String where a: Display {
+  "<{x}>"
+}
+
+fn each_line(xs: List(a)) -> List(String) where a: Display {
+  list.map(xs) { x -> "- {x}" }
+}
+
+let width = string.length(label(42))
+
+let lines = each_line(["a", "b"])
+
+trait Display for Row {
+  fn display(self) -> String {
+    "{string.pad_left("{self.n}", width, " ")} of {list.length(lines)}"
+  }
+}
+
+fn main() {
+  println(Row { n: 1 })
+}

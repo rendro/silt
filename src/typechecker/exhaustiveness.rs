@@ -465,15 +465,15 @@ impl TypeChecker {
     }
 
     /// The enum that owns the variant a constructor pattern names, with
-    /// its type (see `pattern_variant_enum`).
+    /// its type.
     pub(super) fn pattern_constructor_enum(
         &self,
         pattern: &Pattern,
     ) -> Option<(TypeRef, &EnumInfo)> {
-        let PatternKind::Constructor { qualifier, .. } = &pattern.kind else {
+        if !matches!(pattern.kind, PatternKind::Constructor { .. }) {
             return None;
-        };
-        let enum_ty = self.pattern_variant_enum(pattern.res, qualifier)?;
+        }
+        let enum_ty = self.res_variant_enum(pattern.res)?;
         let info = self.tables.enums.get(&enum_ty)?;
         Some((enum_ty, info))
     }

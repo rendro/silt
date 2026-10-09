@@ -62,10 +62,6 @@ pub(super) fn collect_local_bindings(
                 collect_local_bindings_in_expr(value, source.len(), &mut bindings, records);
             }
             Decl::TraitImpl(ti) => {
-                // Skip auto-derived (synthesized) impls — see ast_walk.rs.
-                if ti.is_auto_derived {
-                    continue;
-                }
                 for method in &ti.methods {
                     collect_method_bindings(method, &mut bindings, records);
                 }

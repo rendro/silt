@@ -257,8 +257,10 @@ impl Ord for Value {
                 // agree so that `a == b ⇒ cmp(a, b) == Equal`; otherwise
                 // BTreeSet / BTreeMap would treat equal values as
                 // distinct. Records of one builtin time type order by
-                // their fields from the largest unit down; any other
-                // record by its fields in name order.
+                // their fields from the largest unit down; a record of
+                // a declared type by its fields in the order the type
+                // declares them; an anonymous record, which has no
+                // declaration, by its fields in name order.
                 if ta.is_anon() || tb.is_anon() {
                     fa.iter().cmp(fb.iter())
                 } else {
@@ -272,7 +274,16 @@ impl Ord for Value {
                             .then_with(|| cmp_record_field(fa, fb, "ns")),
                         ty::DATE_TIME => cmp_record_field(fa, fb, "date")
                             .then_with(|| cmp_record_field(fa, fb, "time")),
-                        _ => fa.iter().cmp(fb.iter()),
+                        _ => match &ta.shape {
+                            crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
+                                declared
+                                    .iter()
+                                    .map(|(name, _)| cmp_record_field(fa, fb, name))
+                                    .find(|ordering| ordering.is_ne())
+                                    .unwrap_or(Ordering::Equal)
+                            }
+                            _ => fa.iter().cmp(fb.iter()),
+                        },
                     })
                 }
             }
@@ -375,9 +386,9 @@ impl Hash for Value {
             //     compare equal regardless of endpoints; they take the
             //     `len == 0` path and hash only `(tag, 0)`, as before.)
             // Doing the cap inside `impl Hash` (rather than erroring in the
-            // dispatch arm) also bounds nested walks for free: auto-derived
-            // `.hash()` on records/variants/tuples/lists recurses into this
-            // arm for embedded range fields.
+            // dispatch arm) also bounds nested walks for free: `.hash()`
+            // on records/variants/tuples/lists recurses into this arm for
+            // embedded range fields.
             Value::Range(lo, hi) => {
                 state.write_u8(5);
                 let len = range_len(*lo, *hi);

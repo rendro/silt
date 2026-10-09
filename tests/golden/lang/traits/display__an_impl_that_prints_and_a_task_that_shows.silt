@@ -1,0 +1,25 @@
+-- A Display impl is code like any other: one that prints does so each
+-- time a value is shown, in the order the values are written, before
+-- what is shown; a task that shows a value runs the impl too.
+import channel
+import task
+type Loud {
+  n: Int,
+}
+
+trait Display for Loud {
+  fn display(self) -> String {
+    println("showing {self.n}")
+    "loud {self.n}"
+  }
+}
+
+fn main() {
+  println([Loud { n: 1 }, Loud { n: 2 }])
+  let ch = channel.new(1)
+  let h = task.spawn({ ->
+    channel.send(ch, "{Some(Loud { n: 3 })}")
+  })
+  task.join(h)
+  println(channel.receive(ch))
+}

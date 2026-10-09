@@ -1,0 +1,56 @@
+-- A value of a type with a written Display impl is shown as the impl
+-- says wherever it is inside what is shown: in a list, a tuple, a map
+-- (as a value and as a key), a set, a record and a variant of types
+-- with no impl of their own, an Option and a Result, an anonymous
+-- record, and any depth of these. A type without an impl shows by its
+-- structure, its fields in the order it declares them.
+import map
+import set
+
+type Temp {
+  degrees: Int,
+}
+
+trait Display for Temp {
+  fn display(self) -> String {
+    "{self.degrees}C"
+  }
+}
+
+type Reading {
+  place: String,
+  temp: Temp,
+  history: List(Temp),
+}
+
+type Tree {
+  Leaf(Temp),
+  Node(Tree, Tree),
+}
+
+type Box(a) {
+  item: a,
+}
+
+fn main() {
+  let t = Temp { degrees: 21 }
+  let u = Temp { degrees: 3 }
+  println([t, u])
+  println((t, 1, "s"))
+  println(#{"k": t})
+  println(#{t: "v"})
+  println(set.length(#[t, u, t]))
+  println(#[t])
+  println(Reading { place: "attic", temp: t, history: [u, t] })
+  println(Node(Leaf(t), Node(Leaf(u), Leaf(t))))
+  println(Some(t))
+  println(None == Some(t))
+  println(Ok(t) |> wrap)
+  println({temp: t, n: 1})
+  println(Box { item: [Some((t, [u]))] })
+  println(map.get(#{1: [Box { item: t }]}, 1))
+}
+
+fn wrap(r: Result(Temp, String)) -> List(Result(Temp, String)) {
+  [r, Err("no")]
+}

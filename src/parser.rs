@@ -1875,7 +1875,6 @@ impl<'src> Parser<'src> {
                 methods,
                 assoc_type_bindings,
                 span: self.close(span),
-                is_auto_derived: false,
             }))
         }
     }

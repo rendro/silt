@@ -20,7 +20,7 @@ mod host;
 mod packages;
 pub mod testing;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -94,7 +94,7 @@ impl Analysis {
 /// One module after its check.
 pub struct ModuleAnalysis {
     /// The declarations, with what the checker filled in (expression
-    /// types, synthesized impls).
+    /// types, what each field access means).
     pub ast: Arc<ast::Program>,
     /// The module's top-level names, and what it offers its importers.
     pub scope: ModuleScope,
@@ -497,13 +497,20 @@ impl Session {
         }
         let resolution =
             names::resolve_module(&mut ast, id, kind, &imported, Arc::make_mut(&mut self.defs));
+        let cell = kind == ModuleKind::Cell;
+        let reach = (!cell).then(|| self.graph.reach(id));
+        let cells = match cell {
+            true => self.cells.info.keys().copied().collect(),
+            false => HashSet::new(),
+        };
         let check = typechecker::check_module(
             &mut ast,
             ModuleContext {
                 module: id,
                 module_name: module.name,
                 kind,
-                package: (kind != ModuleKind::Host).then_some(module.package_name),
+                reach,
+                cells,
                 scope: &resolution.scope,
                 earlier: &earlier,
                 defs: self.defs.clone(),

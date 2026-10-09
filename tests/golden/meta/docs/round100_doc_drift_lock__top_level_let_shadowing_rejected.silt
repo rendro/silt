@@ -2,6 +2,7 @@
 -- exit: 1
 -- stderr-contains: error[parse]
 -- stderr-contains: 'x' is bound twice at the top level
+-- stderr-not-contains: needs its own value
 let x = 42
 let x = x + 1
 fn main() { println(x) }

@@ -1,0 +1,5 @@
+import types.{ Tag }
+
+pub fn show3() -> String {
+  Tag.display(Tag { name: "e3" })
+}

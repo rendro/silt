@@ -732,7 +732,7 @@ pub fn release_rigid(ty: &Type, own: &[RigidId]) -> (Type, Vec<TyVar>) {
 }
 
 /// `ty` with each rigid variable replaced by what `f` gives for it.
-fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
+pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
     match ty {
         Type::Rigid(r) => f(*r),
         Type::Fun(params, ret) => {

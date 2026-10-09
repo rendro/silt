@@ -1,0 +1,23 @@
+-- A type that holds a function is shown as the impl written for it
+-- says. An impl of `Error` may be empty: `message` has a default.
+type MyErr {
+  code: Int,
+}
+
+trait Error for MyErr {}
+
+type F {
+  f: Fn(Int) -> Int,
+}
+
+trait Display for F {
+  fn display(self) -> String {
+    "F of {self.f(1)}"
+  }
+}
+
+fn main() {
+  println(MyErr { code: 1 }.message())
+  println(F { f: { x -> x + 1 } })
+  println([F { f: { x -> x + 2 } }])
+}

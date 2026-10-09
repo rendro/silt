@@ -1,0 +1,13 @@
+-- cmd: disasm
+-- A match arm that ends in a tail call ends there: no jump to the end
+-- of the match follows it, and no second Return ends the function.
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+fn main() {
+  println(count(3, 0))
+}

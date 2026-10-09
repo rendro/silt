@@ -32,7 +32,6 @@ pub enum ProjectSetup {
 pub struct Package {
     pub id: PackageId,
     /// `[package].name`, unique in a graph; `__local__` for a script.
-    /// The typechecker's orphan rule tells packages apart by it.
     pub name: Symbol,
     /// The directory of its modules; `None` when there is no project.
     pub src: Option<PathBuf>,

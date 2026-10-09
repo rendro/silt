@@ -1,0 +1,19 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: main returned Err: Code {n: 0}
+-- stderr-not-contains: division by zero
+-- Where the Display impl of the `Err` a `main` returns fails itself,
+-- the value is shown by its structure: the error to report is that
+-- `main` returned `Err`.
+type Code {
+  n: Int,
+}
+
+trait Display for Code {
+  fn display(self) -> String {
+    "code {100 / self.n}"
+  }
+}
+
+fn main() -> Result(Int, Code) {
+  Err(Code { n: 0 })
+}

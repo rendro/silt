@@ -1,4 +1,4 @@
--- BTreeMap orders fields alphabetically
+-- `io.inspect` writes the fields in the order of the declaration.
 import io
 type User { name: String, age: Int }
 

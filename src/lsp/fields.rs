@@ -25,9 +25,6 @@ pub(super) fn find_field_type_at_offset(
             Decl::Fn(f) => find_field_in_expr(&f.body, cursor, records, &mut result),
             Decl::Let { value, .. } => find_field_in_expr(value, cursor, records, &mut result),
             Decl::TraitImpl(ti) => {
-                if ti.is_auto_derived {
-                    continue;
-                }
                 for method in &ti.methods {
                     find_field_in_expr(&method.body, cursor, records, &mut result);
                 }

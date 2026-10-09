@@ -106,9 +106,6 @@ fn collect_decl_ranges(decl: &Decl, cursor: usize, out: &mut Vec<Extent>) {
         Decl::Fn(f) => try_push_body_extent(f.span, &f.body, cursor, out),
         Decl::Let { value, span, .. } => try_push_body_extent(*span, value, cursor, out),
         Decl::TraitImpl(ti) => {
-            if ti.is_auto_derived {
-                return;
-            }
             for method in &ti.methods {
                 try_push_body_extent(method.span, &method.body, cursor, out);
             }

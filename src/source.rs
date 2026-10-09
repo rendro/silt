@@ -16,7 +16,7 @@ pub struct FileId(u32);
 
 impl FileId {
     /// The declarations silt makes itself rather than reads from a file:
-    /// its builtin types, their derived impls and the methods they get.
+    /// its builtin types and traits.
     /// No `SourceMap` holds text for it, so no position in it is ever
     /// printed.
     pub const BUILTIN: FileId = FileId(u32::MAX);

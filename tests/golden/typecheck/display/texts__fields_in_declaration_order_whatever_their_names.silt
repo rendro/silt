@@ -1,0 +1,23 @@
+-- A record's fields are written in the order of the declaration: where
+-- that is not the order of their names from the first field on, and
+-- where it leaves the order of the names part of the way.
+import io
+
+type R {
+  b: Int,
+  a: Int,
+  d: Int,
+  c: Int,
+}
+
+type S {
+  a: Int,
+  c: Int,
+  b: Int,
+}
+
+fn main() {
+  println(R { a: 1, b: 2, c: 3, d: 4 })
+  println(S { a: 1, b: 2, c: 3 })
+  println(io.inspect([S { a: 1, b: 2, c: 3 }]))
+}

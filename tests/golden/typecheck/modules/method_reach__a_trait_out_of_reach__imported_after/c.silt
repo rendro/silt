@@ -1,0 +1,3 @@
+pub fn v() -> String {
+  3.tagged()
+}

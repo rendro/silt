@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: the impl of trait 'Display' for type 'Tag' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'types', which declares the type
+-- `early` calls `Tag.display` in a `let`; were the impl `main`'s, the
+-- call would come before `main` is initialised (it was the internal
+-- error "the global 'Tag.display' is read before it is set").
+import early
+import types.{ Tag }
+
+trait Display for Tag {
+  fn display(self) -> String {
+    "#{self.name}{unit}"
+  }
+}
+
+let unit = "!"
+
+fn main() {
+  println(early.text)
+  println(early.text2)
+  println(early.text3)
+  println(Tag { name: "m" }.display())
+  println(early.show(Tag { name: "m2" }))
+}

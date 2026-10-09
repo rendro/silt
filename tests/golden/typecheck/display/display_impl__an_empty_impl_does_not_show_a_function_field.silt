@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait impl 'Display' for 'F' is missing method 'display'
+-- An empty impl of `Display` does not make a type with a function or a
+-- channel in it one that can be shown. (It once switched the check
+-- off: `println(f)` printed `F {f: <fn:<lambda>>, ch: <channel:0>}`.)
+import channel
+
+type F {
+  f: Fn(Int) -> Int,
+  ch: Channel(Int),
+}
+
+trait Display for F {}
+
+fn main() {
+  let f = F { f: { x -> x }, ch: channel.new(1) }
+  println(f)
+  println("{[f]}")
+}

@@ -1,0 +1,31 @@
+import shapes
+
+pub trait Area {
+  fn area(self) -> Int
+  fn told(self) -> String {
+    "{label}{self.area()}"
+  }
+}
+
+trait Area for shapes.Square {
+  fn area(self) -> Int {
+    self.side * self.side * scale
+  }
+}
+
+trait Area for Int {
+  fn area(self) -> Int {
+    self * scale
+  }
+}
+
+let scale = {
+  println("scale")
+  10
+}
+
+let label = "area "
+
+pub fn measure(x: a) -> Int where a: Area {
+  x.area()
+}

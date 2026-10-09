@@ -377,8 +377,7 @@ impl Server {
             for decl in &analysis.ast.decls {
                 match decl {
                     Decl::TraitImpl(ti)
-                        if !ti.is_auto_derived
-                            && ti.trait_res == Some(Res::Def(tr.0))
+                        if ti.trait_res == Some(Res::Def(tr.0))
                             && ty.is_some_and(|ty| ti.target_res == Some(Res::Def(ty.0))) =>
                     {
                         if let Some(span) = named(&ti.methods) {

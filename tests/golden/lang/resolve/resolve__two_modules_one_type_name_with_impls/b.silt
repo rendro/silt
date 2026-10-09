@@ -1,3 +1,5 @@
 pub type Pt { y: String }
 trait Display for Pt { fn display(self) -> String { "b-pt {self.y}" } }
 pub fn mk() -> Pt { Pt { y: "s" } }
+pub type Raw { v: Int }
+pub fn raw() -> Raw { Raw { v: 2 } }

@@ -62,6 +62,13 @@ pub struct Globals {
     /// compiled once. An impl that leaves the method out has this slot
     /// as its method's.
     defaults: HashMap<(TraitId, String), u16>,
+    /// The slot of `display` of each type a program wrote a `Display`
+    /// impl for: what showing a value of the type calls.
+    shown: HashMap<TypeId, u16>,
+    /// One bit for each type in `shown`, by the low bits of its id: a
+    /// type whose bit is not set has no written `display`, which is
+    /// what showing a value asks of every record and variant in it.
+    shown_bits: u64,
     /// The traits a `CallMethod` names, by the index its operand holds,
     /// each with its name.
     traits: Vec<(TraitId, String)>,
@@ -102,6 +109,28 @@ impl Globals {
     /// The name of slot `slot`.
     pub fn name(&self, slot: u16) -> &str {
         self.names.get(slot as usize).map_or("?", String::as_str)
+    }
+
+    /// The trait a `CallMethod` operand names.
+    pub fn trait_at(&self, trait_index: u16) -> Option<TraitId> {
+        self.traits.get(trait_index as usize).map(|(t, _)| *t)
+    }
+
+    /// The slot of the `display` a program wrote for the type `ty`.
+    pub fn shown(&self, ty: TypeId) -> Option<u16> {
+        if self.shown_bits & Self::shown_bit(ty) == 0 {
+            return None;
+        }
+        self.shown.get(&ty).copied()
+    }
+
+    fn shown_bit(ty: TypeId) -> u64 {
+        1 << (ty.0.0 & 63)
+    }
+
+    /// Whether the program wrote a `Display` impl for any type.
+    pub fn any_shown(&self) -> bool {
+        !self.shown.is_empty()
     }
 
     /// The name of the trait a `CallMethod` operand names.
@@ -201,6 +230,10 @@ impl Globals {
             .entry((t, ty))
             .or_default()
             .insert(method.to_string(), slot);
+        if method == "display" && crate::defs::builtin_trait_id("Display") == Some(t) {
+            self.shown.insert(ty, slot);
+            self.shown_bits |= Self::shown_bit(ty);
+        }
         Some(slot)
     }
 }

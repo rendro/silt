@@ -165,9 +165,6 @@ impl<'a> Names<'a> {
         match decl {
             Decl::Fn(f) => self.fn_decl(f),
             Decl::TraitImpl(ti) => {
-                if ti.is_auto_derived {
-                    return;
-                }
                 self.name(ti.trait_name_span, ti.trait_res);
                 self.name(ti.target_type_span, ti.target_res);
                 self.where_clauses(&ti.where_clauses);

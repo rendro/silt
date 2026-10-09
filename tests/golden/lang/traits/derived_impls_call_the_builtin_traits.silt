@@ -1,6 +1,7 @@
--- A derived impl's body calls the builtin trait's method of each field
--- (`display` of Display, `compare` of Compare, ...), whatever trait of
--- the program has a method of that name for the field's type.
+-- The auto-derived traits of a type go by the builtin trait's method
+-- of each field (`display` of Display, `compare` of Compare, ...),
+-- whatever trait of the program has a method of that name for the
+-- field's type.
 import list
 import map
 trait Describe { fn display(self) -> String }

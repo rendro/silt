@@ -1,7 +1,7 @@
-<anon> {age: 2}
+{age: 2}
 true
 3
-<anon> {name: a}
+{name: a}
 3
-<anon> {age: 2, k: true}
-<anon> {age: 2}
+{age: 2, k: true}
+{age: 2}

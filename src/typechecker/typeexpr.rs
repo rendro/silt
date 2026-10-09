@@ -147,10 +147,9 @@ impl TypeChecker {
         Some(canonical_head(&self.tables.resolver, ty))
     }
 
-    /// What each variant of the enum `ty` resolves to, by name. The
-    /// builtin environment, which the builtin definitions are made from,
-    /// has none: its derived impls name the variants of builtin enums,
-    /// whose names are unique, by their enum (see `ctor_target`).
+    /// What each variant of the enum `ty` resolves to, by name (none in
+    /// the builtin environment, which the builtin definitions are made
+    /// from).
     pub(super) fn variant_resolutions(&self, ty: TypeRef) -> HashMap<Symbol, crate::defs::Res> {
         let Some(defs) = &self.defs else {
             return HashMap::new();
@@ -160,24 +159,6 @@ impl TypeChecker {
             .copied()
             .filter_map(|id| Some((self.def(id)?.name, crate::defs::Res::Def(id))))
             .collect()
-    }
-
-    /// The enum of the variant a constructor pattern names: the one the
-    /// resolver resolved it to. The checker resolves the patterns it
-    /// makes itself as it makes them, except in the builtin environment,
-    /// whose derived impls write a variant of a builtin enum with its
-    /// enum (`Weekday.Monday`), and builtin type names are unique.
-    pub(super) fn pattern_variant_enum(
-        &self,
-        res: Option<crate::defs::Res>,
-        qualifier: &[Qualifier],
-    ) -> Option<TypeRef> {
-        match res {
-            None if self.defs.is_none() => {
-                qualifier.last().and_then(|q| self.named_type(None, q.name))
-            }
-            res => self.res_variant_enum(res),
-        }
     }
 
     /// The enum a resolver slot naming a variant names it of.

@@ -216,7 +216,7 @@ fn find_qualified_access(
                 .methods
                 .iter()
                 .for_each(|m| walk(&m.body, &hit, &mut found)),
-            Decl::TraitImpl(ti) if !ti.is_auto_derived => ti
+            Decl::TraitImpl(ti) => ti
                 .methods
                 .iter()
                 .for_each(|m| walk(&m.body, &hit, &mut found)),

@@ -1,0 +1,92 @@
+-- A function that shows a value of its own type variable, named at a
+-- type of the module: each `let` reaches that type's impl, and is
+-- initialised after the `let` the impl reads. Through interpolation,
+-- `.display()`, `string.from`, two variables, a call of itself, a
+-- function value handed on, a wrapper, a local name, a closure the
+-- function returns, a record field, and a function without annotations.
+import list
+import string
+
+type Row {
+  n: Int,
+}
+
+fn label(x: a) -> String where a: Display {
+  "<{x}>"
+}
+
+fn dlabel(x: a) -> String where a: Display {
+  x.display()
+}
+
+fn slabel(x: a) -> String where a: Display {
+  string.from([x])
+}
+
+fn pair(x: a, y: b) -> String where a: Display, b: Display {
+  "{(x, y)}"
+}
+
+fn again(x: a, n: Int) -> String where a: Display {
+  match n {
+    0 -> "{x}"
+    _ -> again(x, n - 1)
+  }
+}
+
+fn wrap(x: a) -> String where a: Display {
+  label(x)
+}
+
+let a1 = label(Row { n: 1 })
+
+let a2 = dlabel([Row { n: 2 }])
+
+let a3 = slabel(Some(Row { n: 3 }))
+
+let a4 = pair(1, Row { n: 4 })
+
+let a5 = again(Row { n: 5 }, 3)
+
+let a6 = list.map([Row { n: 6 }], label)
+
+let a7 = wrap(Row { n: 7 })
+
+let a8 = {
+  let f = label
+  f(Row { n: 8 })
+}
+
+fn mk(x: a) -> Fn() -> String where a: Display {
+  { -> "{x}" }
+}
+
+fn lab(x) {
+  "({x})"
+}
+
+let s = f()
+
+let f = mk(Row { n: 9 })
+
+let r: { go: Fn(Row) -> String } = { go: label }
+
+let t = r.go(Row { n: 10 })
+
+let u = lab(Row { n: 11 })
+
+let unit = {
+  println("unit")
+  "!"
+}
+
+trait Display for Row {
+  fn display(self) -> String {
+    "{self.n}{unit}"
+  }
+}
+
+fn main() {
+  println([a1, a2, a3, a4, a5, a7, a8, s, t, u])
+  println(a6)
+}

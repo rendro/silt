@@ -1,8 +1,9 @@
 -- verdict: same
 -- Two modules each declare a `Pt` with a Display impl: each value runs
 -- its own module's impl, through a method call, through the type and in
--- a function that takes both; a record of either prints with its
--- module's name, as the two are told apart.
+-- a function that takes both, and where it is printed. A record of a
+-- type with no Display impl (`Raw`, which both modules declare too)
+-- prints with its module's name, as the two are told apart.
 import a
 import b
 fn both(p: a.Pt, q: b.Pt) -> String {
@@ -15,6 +16,8 @@ fn main() {
   println(both(a.mk(), b.mk()))
   println(a.mk())
   println(b.mk())
+  println(a.raw())
+  println(b.raw())
   match b.Pt { y: "q" } {
     b.Pt { y } -> println(y)
   }
