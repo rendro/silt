@@ -1,0 +1,7 @@
+-- doc of geo.mk
+pub fn mk(w: Int) -> Int {
+  w + 1
+}
+
+-- doc of geo.unit
+pub let unit = 1

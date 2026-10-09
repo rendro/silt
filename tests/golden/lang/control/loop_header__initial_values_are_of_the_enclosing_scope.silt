@@ -1,0 +1,37 @@
+-- The initial values of a `loop` header are all of the enclosing scope:
+-- none of them sees a name the header binds, as the arguments of
+-- `loop(...)` see the values of the round before. In `two_types` the
+-- `n` of `acc = n` is the Int outside, though the loop's own `n` is a
+-- String; in `loopy` it is the parameter.
+fn two_types() -> Int {
+  let n = 7
+  loop n = "s", acc = n {
+    match n {
+      "s" -> loop("t", acc + 1)
+      _ -> acc
+    }
+  }
+}
+
+fn loopy(n: Int) -> Int {
+  loop n = n + 1, acc = n {
+    match n > 5 {
+      true -> acc + n
+      false -> loop(n + 1, acc + 1)
+    }
+  }
+}
+
+fn swapped() -> (Int, Int) {
+  let a = 1
+  let b = 2
+  loop a = b, b = a {
+    (a, b)
+  }
+}
+
+fn main() {
+  println(two_types())
+  println(loopy(1))
+  println(swapped())
+}

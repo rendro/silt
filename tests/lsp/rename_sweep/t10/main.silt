@@ -1,0 +1,22 @@
+import geo
+import other
+
+-- doc of main's own mk (takes nothing)
+fn mk() -> String {
+  "local"
+}
+
+-- doc of main's helper
+fn helper(n: Int) -> Int {
+  n
+}
+
+fn shadow(helper: Int) -> Int {
+  let unit = helper + 1
+  unit
+}
+
+fn main() {
+  println(geo.mk(1) + shadow(2) + helper(3))
+  println(other.mk(mk()))
+}

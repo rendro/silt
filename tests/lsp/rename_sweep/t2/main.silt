@@ -1,0 +1,95 @@
+import list
+
+type Side {
+  Left(Int),
+  Right(Int),
+}
+
+type Wrap {
+  Wrap(Int),
+}
+
+type P {
+  x: Int,
+  y: Int,
+}
+
+let base = 10
+let top = base + limit
+let limit = 5
+
+fn orpat(s: Side, k: Int) -> Int {
+  match (s, k) {
+    (Left(n) | Right(n), ^k) -> n + k
+    (Left(k) | Right(k), n) when k > n -> k
+    _ -> 0
+  }
+}
+
+fn unwrap(Wrap(v), (Left(b) | Right(b), _)) -> Int {
+  v + b
+}
+
+fn find(n) {
+  match n > 0 {
+    true -> Some(n)
+    false -> None
+  }
+}
+
+fn guard(n) {
+  let x = 100
+  when let Some(x) = find(n) else {
+    return x
+  }
+  x + 1
+}
+
+fn mk(x: Int, y: Int) -> P {
+  P { x: x, y: y }
+}
+
+fn upd(p: P, x: Int) -> P {
+  p.{ x: x }
+}
+
+fn ident(v: a) -> a {
+  let w: a = v
+  w
+}
+
+fn closures(n: Int) -> Int {
+  let f = { n -> n + 1 }
+  let g = { m -> m + n }
+  let n = f(n) + g(n)
+  let h = { (a, b) -> { let n = a + b
+    n * 2 } }
+  h((n, 1))
+}
+
+fn loops(xs: List(Int)) -> Int {
+  loop rest = xs, acc = 0 {
+    match rest {
+      [] -> acc
+      [head, ..rest] -> loop(rest, acc + head)
+    }
+  }
+}
+
+fn strs(name: String) -> String {
+  -- name is mentioned here: name
+  let s = "name {name} name"
+  s
+}
+
+fn main() {
+  println(orpat(Left(1), 1) + orpat(Right(9), 2))
+  println(unwrap(Wrap(1), (Right(2), "s")))
+  println(guard(5) + guard(0 - 1))
+  let p = upd(mk(1, 2), 7)
+  println(p.x + p.y + top + base)
+  println(ident(3) + closures(2) + loops([1, 2, 3]))
+  println(strs("z"))
+  let Wrap(side) = Wrap(3)
+  println(side + list.length([1]))
+}

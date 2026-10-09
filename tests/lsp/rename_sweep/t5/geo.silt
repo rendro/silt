@@ -1,0 +1,8 @@
+pub fn mk(w: Int) -> Int {
+  w + 1
+}
+
+pub type Shape {
+  Dot,
+  Box(Int),
+}

@@ -135,8 +135,19 @@ impl LspClient {
 
     /// Receive messages until `pred` accepts one and return it. Messages
     /// it rejects are dropped. Fails the test on timeout or disconnect.
-    pub fn recv_until(&self, what: &str, mut pred: impl FnMut(&Value) -> bool) -> Value {
-        let deadline = Instant::now() + READ_TIMEOUT;
+    pub fn recv_until(&self, what: &str, pred: impl FnMut(&Value) -> bool) -> Value {
+        self.recv_until_within(READ_TIMEOUT, what, pred)
+    }
+
+    /// `recv_until` with a timeout of the caller's: for an answer whose
+    /// work grows with what the test put on disk.
+    pub fn recv_until_within(
+        &self,
+        timeout: Duration,
+        what: &str,
+        mut pred: impl FnMut(&Value) -> bool,
+    ) -> Value {
+        let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -188,6 +199,15 @@ impl LspClient {
         let id = next_id();
         self.send_request(id, method, params);
         self.recv_response_for(id)
+    }
+
+    /// `request`, waiting up to `timeout` for the response.
+    pub fn request_within(&mut self, timeout: Duration, method: &str, params: Value) -> Value {
+        let id = next_id();
+        self.send_request(id, method, params);
+        self.recv_until_within(timeout, &format!("response id={id}"), |msg| {
+            msg.get("id").and_then(|v| v.as_u64()) == Some(id)
+        })
     }
 
     /// Send a request and return only its `result` (`null` if absent).

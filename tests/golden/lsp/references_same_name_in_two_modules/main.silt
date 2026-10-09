@@ -1,0 +1,22 @@
+-- cmd: lsp
+-- lsp: references 21:16
+-- lsp: references 21:29
+-- lsp: rename 21:16 make
+-- lsp: highlight 20:11
+-- lsp: references 20:3
+-- lsp: rename 19:7 Size
+-- lsp: symbols mk
+-- Two modules declare a function `mk`. A reference is found by what the
+-- name means: `geo.mk` here, `mk` in geo.silt and the item and the uses
+-- of `import geo.{ mk }` in items.silt (a workspace file that is not
+-- open) are one function; `other.mk` and the local `mk` are not it. A
+-- rename edits exactly those places, and keeps a name of its kind.
+import geo
+import other
+
+fn main() {
+  let w = 3
+  let mk = w + 1
+  println(mk + w)
+  println(geo.mk(w) + other.mk(w))
+}

@@ -1,0 +1,79 @@
+import list
+
+type P {
+  x: Int,
+  y: Int,
+}
+
+fn nested(n: Int) -> Int {
+  let r = {
+    let n = n * 2
+    n + 1
+  }
+  n + r
+}
+
+fn anon(p: {name: String, age: Int}) -> String {
+  let { name, ...rest } = p
+  let q = { ...rest, name: name }
+  match q {
+    {name: nm, ...others} -> "{nm} {others.age} {rest.age}"
+  }
+}
+
+fn maps(m: Map(String, Int)) -> Int {
+  match m {
+    #{ "a": a, "b": b } -> a + b
+    #{ "a": a } -> a
+    _ -> 0
+  }
+}
+
+fn lists(xs: List(Int)) -> Int {
+  match xs {
+    [a, b, ..rest] -> a + b + list.length(rest)
+    [a] -> a
+    _ -> 0
+  }
+}
+
+fn recs(p: P) -> Int {
+  let P { x: inner, y: _ } = p
+  let q = p.{ x: inner + 1 }
+  let f = { P { x: a, y: b } -> a + b + inner }
+  f(q)
+}
+
+fn loops(n: Int) -> Int {
+  loop i = n, acc = 0 {
+    match i {
+      0 -> acc
+      i -> {
+        let acc = acc + i
+        loop(i - 1, acc)
+      }
+    }
+  }
+}
+
+fn pipes(n: Int) -> Int {
+  [n, n + 1]
+  |> list.map { n -> n * 2 }
+  |> list.fold(0) { acc, n -> acc + n }
+}
+
+fn whens(a: Option(Int), n: Int) -> Int {
+  when n > 0 else {
+    return n
+  }
+  when let Some(n) = a else {
+    return n + 1
+  }
+  n * 10
+}
+
+fn main() {
+  println(nested(1) + maps(#{ "a": 1, "b": 2 }) + lists([1, 2, 3]) + recs(P { x: 1, y: 2 }))
+  println(anon({ name: "a", age: 3 }))
+  println(loops(3) + pipes(1) + whens(Some(2), 1) + whens(None, 5))
+}

@@ -1,0 +1,14 @@
+import geo as g
+import geo.{ Named }
+
+pub fn mk(w: Int) -> Int {
+  g.area(g.mk(w)) + g.unit
+}
+
+pub fn label(s: a) -> String where a: Named {
+  s.name()
+}
+
+pub fn pt() -> g.Point {
+  g.origin()
+}

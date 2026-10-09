@@ -90,9 +90,6 @@ pub enum Token {
     Dot,
     Eq, // =
 
-    // Whitespace
-    Newline,
-
     Eof,
 }
 
@@ -155,7 +152,6 @@ impl fmt::Display for Token {
             Token::ColonColon => write!(f, "::"),
             Token::Dot => write!(f, "."),
             Token::Eq => write!(f, "="),
-            Token::Newline => write!(f, "\\n"),
             Token::Eof => write!(f, "EOF"),
         }
     }
@@ -168,8 +164,6 @@ pub struct Tok {
     pub span: Span,
     /// Line breaks between the previous token or comment and this token,
     /// saturating at 2 (0 = same line, 1 = next line, 2 = a blank line).
-    /// A `Token::Newline` carries no trivia: its count is 0 and the token
-    /// after it has the count of the gap.
     pub newlines_before: u8,
     /// Comments between the previous token and this one: a range of
     /// `Lexed::comments`. The end-of-file token carries the last comments
@@ -215,6 +209,18 @@ impl Lexed {
     /// The comments between the token before `tok` and `tok`.
     pub fn comments_before(&self, tok: &Tok) -> &[Comment] {
         &self.comments[tok.comments.start as usize..tok.comments.end as usize]
+    }
+
+    /// Whether `tok` starts a line: a line break stands between the
+    /// token before it and `tok`, in front of or behind the comments
+    /// between them. (A `{- -}` comment that spans lines is no line
+    /// break: what follows it stands on the line it ends on.)
+    pub fn line_break_before(&self, tok: &Tok) -> bool {
+        tok.newlines_before > 0
+            || self
+                .comments_before(tok)
+                .iter()
+                .any(|comment| comment.newlines_before > 0)
     }
 }
 
@@ -304,20 +310,13 @@ impl Lexer {
                 ..start
             };
             let is_eof = kind == Token::Eof;
-            // A newline token stands for the gap itself; the trivia of
-            // the gap goes to the token after it.
-            let (newlines_before, comments) = if kind == Token::Newline {
-                (0, self.gap_comments..self.gap_comments)
-            } else {
-                let end = self.comments.len() as u32;
-                let comments = self.gap_comments..end;
-                self.gap_comments = end;
-                (std::mem::take(&mut self.gap_newlines), comments)
-            };
+            let end = self.comments.len() as u32;
+            let comments = self.gap_comments..end;
+            self.gap_comments = end;
             tokens.push(Tok {
                 kind,
                 span,
-                newlines_before,
+                newlines_before: std::mem::take(&mut self.gap_newlines),
                 comments,
             });
             if is_eof {
@@ -369,22 +368,19 @@ impl Lexer {
         Some(ch)
     }
 
-    fn skip_whitespace(&mut self) -> bool {
-        let mut found_newline = false;
+    fn skip_whitespace(&mut self) {
         while let Some(ch) = self.peek() {
             match ch {
                 ' ' | '\t' | '\r' => {
                     self.advance_char();
                 }
                 '\n' => {
-                    found_newline = true;
                     self.gap_newlines = (self.gap_newlines + 1).min(2);
                     self.advance_char();
                 }
                 _ => break,
             }
         }
-        found_newline
     }
 
     fn skip_line_comment(&mut self) {
@@ -807,8 +803,8 @@ impl Lexer {
     }
 
     fn next_token(&mut self) -> Result<Scanned, Diagnostic> {
-        // Skip whitespace, tracking newlines
-        let mut had_newline = self.skip_whitespace();
+        // Skip whitespace, counting the line breaks.
+        self.skip_whitespace();
 
         // Skip comments (may require multiple passes if comment is followed by whitespace/comment)
         loop {
@@ -817,7 +813,7 @@ impl Lexer {
                     let comment_span = self.span();
                     self.skip_line_comment();
                     self.record_comment(CommentKind::Line, comment_span);
-                    had_newline |= self.skip_whitespace();
+                    self.skip_whitespace();
                     continue;
                 }
                 (Some('{'), Some('-')) => {
@@ -826,17 +822,11 @@ impl Lexer {
                     self.advance_char();
                     self.skip_block_comment()?;
                     self.record_comment(CommentKind::Block, comment_span);
-                    had_newline |= self.skip_whitespace();
+                    self.skip_whitespace();
                     continue;
                 }
                 _ => break,
             }
-        }
-
-        // Emit a newline token if we crossed a line boundary
-        // (but collapse multiple newlines into one)
-        if had_newline && self.peek().is_some() {
-            return Ok((Token::Newline, self.span()));
         }
 
         let start = self.span();
@@ -1112,11 +1102,11 @@ mod tests {
             .tokens
             .into_iter()
             .map(|tok| tok.kind)
-            .filter(|tok| !matches!(tok, Token::Newline | Token::Eof))
+            .filter(|tok| !matches!(tok, Token::Eof))
             .collect()
     }
 
-    /// The trivia of `input`, one item per token that is not a newline:
+    /// The trivia of `input`, one item per token:
     /// its comments as `<text>^n`, then the token as `text^n`, where `n`
     /// is `newlines_before`.
     fn trivia(input: &str) -> String {
@@ -1126,10 +1116,6 @@ mod tests {
         let mut seen = 0;
         let mut out = Vec::new();
         for tok in &lexed.tokens {
-            if tok.kind == Token::Newline {
-                assert_eq!((tok.newlines_before, tok.comments.len()), (0, 0));
-                continue;
-            }
             // The ranges follow each other and leave no comment out.
             assert_eq!(tok.comments.start, seen);
             seen = tok.comments.end;

@@ -1,0 +1,48 @@
+-- cmd: lsp
+-- lsp: references 21:11
+-- lsp: references 22:7
+-- lsp: definition 23:3
+-- lsp: rename 27:13 first
+-- lsp: references 33:19
+-- lsp: references 40:21
+-- lsp: definition 41:26
+-- lsp: references 46:22
+-- A local is found by the binding its use resolves to. `let n = n + 1`
+-- uses the `n` before it and binds a new one; a destructured parameter,
+-- a parameter of a trait's default method, a name a match arm binds
+-- (also in its guard) and a closure's parameter are each one binding
+-- with its uses, whatever else has the same name.
+type P {
+  x: Int,
+  y: Int,
+}
+
+fn shadow(n) {
+  let n = n + 1
+  let n = n * 2
+  n
+}
+
+fn pair((a, b): (Int, Int), P { x, y }) {
+  let sum = a + b
+  sum + x + y + a
+}
+
+trait Scale {
+  fn scale(self, by: Int) -> Int {
+    self.size() * by
+  }
+  fn size(self) -> Int
+}
+
+fn pick(p: P, x: Int) {
+  match p {
+    P { x, y } when x > y -> x
+    P { x: _, y } -> y + x
+  }
+}
+
+fn main() {
+  let twice = { n -> n + n }
+  println(twice(shadow(1)) + pair((1, 2), P { x: 3, y: 4 }) + pick(P { x: 1, y: 2 }, 5))
+}

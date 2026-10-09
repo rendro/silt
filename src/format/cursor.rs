@@ -42,8 +42,6 @@ pub struct Mismatch {
 
 pub struct Cursor<'a> {
     source: &'a str,
-    /// The tokens without `Token::Newline`: a token's `newlines_before`
-    /// says the same.
     tokens: Vec<&'a Tok>,
     comments: &'a [Comment],
     pos: usize,
@@ -94,11 +92,7 @@ fn is_closer_or_comma(kind: &Token) -> bool {
 
 impl<'a> Cursor<'a> {
     pub fn new(source: &'a str, lexed: &'a Lexed) -> Self {
-        let tokens: Vec<&Tok> = lexed
-            .tokens
-            .iter()
-            .filter(|tok| tok.kind != Token::Newline)
-            .collect();
+        let tokens: Vec<&Tok> = lexed.tokens.iter().collect();
         let mut closers = vec![0; tokens.len()];
         let mut open = Vec::new();
         for (i, tok) in tokens.iter().enumerate() {

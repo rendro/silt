@@ -1,0 +1,5 @@
+import mathutil
+
+fn main() {
+  println(mathutil.double(21))
+}

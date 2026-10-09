@@ -1,0 +1,7 @@
+pub fn mk(w) {
+  w * 2
+}
+
+pub fn twice(w) {
+  mk(mk(w))
+}

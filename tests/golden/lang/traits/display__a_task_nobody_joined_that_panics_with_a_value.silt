@@ -1,0 +1,20 @@
+-- exit: 1
+-- repeat: 100
+-- stderr-contains: failed and was never joined: panic: [code 25]
+-- A task that panics with a value fails with the value as it is shown,
+-- in the report of a failed task nobody joined. `main` returns, so the
+-- program waits for the task to end.
+import task
+type Code {
+  n: Int,
+}
+
+trait Display for Code {
+  fn display(self) -> String {
+    "code {100 / self.n}"
+  }
+}
+
+fn main() {
+  task.spawn({ -> panic([Code { n: 4 }]) })
+}

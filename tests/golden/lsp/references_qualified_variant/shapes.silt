@@ -1,0 +1,8 @@
+pub type Shape {
+  Square(Int),
+  Circle(Int),
+}
+
+pub fn unit() -> Shape {
+  Square(1)
+}

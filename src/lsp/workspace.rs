@@ -1,664 +1,807 @@
-//! Workspace-wide queries over open documents.
+//! Workspace-wide queries: references, rename targets and symbols.
 #![allow(deprecated)] // SymbolInformation.deprecated field is LSP-required
 //!
-//! Backs the workspace fallback of goto-definition,
-//! `textDocument/references`, `textDocument/rename`, and
-//! `workspace/symbol`. All queries iterate `self.documents`: the open
-//! documents and the workspace files the preload indexed. This is
-//! O(docs × symbols) per query — fine for reasonable-size workspaces
-//! and trivially correct (no index to keep in sync). Names are matched
-//! by symbol; a member of an imported module is resolved through the
-//! session first (see `modules.rs`).
+//! A name is found by what it means, not by how it is spelled. The
+//! resolver leaves a [`Res`] on every node that names a definition, so a
+//! reference to a function, a `let`, a type, a variant or a trait is a
+//! node whose `Res` is that definition's [`DefId`]: `mk` of module `geo`
+//! is found as `mk`, as `geo.mk` and as the item of `import geo.{ mk }`,
+//! and a function `mk` of another module is not. A local binding (a
+//! parameter, a `let` in a body, a pattern's binder) is found in its
+//! document, by the binding a use resolves to.
+//!
+//! The modules searched are those the open documents' sessions have
+//! checked, and the workspace files that import the module of the
+//! definition, which are checked for the query. A definition is the same
+//! in every session by where it is declared ([`DefKey`]).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use lsp_types::{Location, SymbolInformation, SymbolKind, Uri};
 
-use crate::ast::{
-    Decl, Expr, ExprKind, FnDecl, Pattern, PatternKind, Program, Stmt, TypeBody, TypeDecl,
-    TypeExpr, TypeExprKind,
-};
+use crate::ast::{Decl, FnDecl, ImportTarget, PatternKind, Program, Selection, TypeBody, TypeDecl};
+use crate::defs::{DefId, DefKind, Res};
 use crate::intern::{Symbol, resolve as resolve_sym};
+use crate::session::{ModuleId, Session};
 use crate::source::{SourceFile, Span};
 
 use super::Server;
-use super::ast_walk::visit_expr_children;
 use super::conversions::span_to_range;
+use super::local_bindings::nearest_local_binding_for;
+use super::names::{DefUse, Names};
+use super::project::{path_key, project_dir};
+use super::state::{DefInfo, Document};
+
+/// A definition, named the same way in every session.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub(super) enum DefKey {
+    /// One of silt's own: the builtin definitions have the same ids in
+    /// every session.
+    Builtin(DefId),
+    /// The definition whose name is declared at byte `start` of the file
+    /// `path` (a path key).
+    At {
+        path: PathBuf,
+        start: u32,
+        name: Symbol,
+    },
+}
+
+/// What the name under the cursor means.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(super) enum Target {
+    /// Definitions: one, or the value and the type an import item names.
+    Defs(Vec<DefKey>),
+    /// The local binding of the document whose name starts at this byte
+    /// (see `local_bindings.rs`).
+    Local(usize),
+}
+
+/// Whether byte `cursor` is in `span` or directly behind it.
+fn holds(span: Span, cursor: usize) -> bool {
+    span.start as usize <= cursor && cursor <= span.end as usize
+}
+
+/// The session-independent name of the definition `id` of `session`.
+fn def_key(session: &Session, id: DefId) -> DefKey {
+    let def = session.defs().get(id);
+    if def.module.is_builtin() || !def.span.is_in_source() {
+        return DefKey::Builtin(id);
+    }
+    DefKey::At {
+        path: path_key(&session.graph().module(def.module).path),
+        start: def.span.start,
+        name: def.name,
+    }
+}
+
+/// The definition of `session` that `key` names, if the session has its
+/// module.
+fn def_of_key(session: &Session, key: &DefKey) -> Option<DefId> {
+    match key {
+        DefKey::Builtin(id) => Some(*id),
+        DefKey::At { path, start, name } => {
+            let module = session
+                .graph()
+                .modules()
+                .iter()
+                .find(|m| path_key(&m.path) == *path)?;
+            let defs = session.defs();
+            defs.of_module(module.id).iter().copied().find(|id| {
+                let def = defs.get(*id);
+                def.span.start == *start && def.name == *name
+            })
+        }
+    }
+}
+
+/// What a name under the cursor is, for hover.
+pub(super) enum Named {
+    /// A definition of a file, with what its module knows of it.
+    Definition(DefInfo),
+    /// A local binding.
+    Local,
+    /// Anything else: one of silt's own names, a field, no name at all.
+    Other,
+}
+
+/// Every use of a definition in the checked modules of every session,
+/// and the punned declarations, by project directory and module: what a
+/// references or rename query walks the workspace for. It holds until
+/// the next analysis.
+pub(super) struct DefUses {
+    projects: Vec<(PathBuf, Vec<ModuleUses>)>,
+}
+
+struct ModuleUses {
+    module: ModuleId,
+    /// The URI of the module's file.
+    uri: Option<Uri>,
+    uses: Vec<(Span, DefId)>,
+    punned_declarations: Vec<Span>,
+}
+
+/// A place that names a target.
+pub(super) struct Place {
+    pub(super) location: Location,
+    /// The name is a record field written without its value or pattern
+    /// (`P { x }`): a rename writes the field out, `P { x: new }`.
+    pub(super) punned: bool,
+}
+
+/// The 1-based line of byte `at` of `source`.
+fn line_of(source: &SourceFile, at: u32) -> u32 {
+    span_to_range(
+        &Span {
+            file: crate::source::FileId::default(),
+            start: at,
+            end: at,
+        },
+        source,
+    )
+    .start
+    .line
+        + 1
+}
 
 impl Server {
-    /// Find every top-level definition of `name` across all
-    /// documents. Returns `(uri, span)` per hit.
-    pub(super) fn workspace_lookup_definition(&self, name: Symbol) -> Vec<(Uri, Span)> {
-        let mut hits = Vec::new();
-        for (uri, doc) in &self.documents {
-            if let Some(def) = doc.definitions.get(&name) {
-                hits.push((uri.clone(), def.span));
-            }
-        }
-        hits
+    /// The names of the open document `doc`, with its session and module.
+    fn names_of<'a>(&'a self, doc: &'a Document) -> Option<(Names<'a>, &'a Session, ModuleId)> {
+        let program = doc.program.as_ref()?;
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        Some((Names::of(program, session, module.id), session, module.id))
     }
 
-    /// Find every identifier reference to `name` across all
-    /// documents. Returns `(uri, span)` per hit, including the
-    /// definition site. For simplicity we match by `Symbol` equality —
-    /// shadowing in inner scopes is not currently distinguished.
-    pub(super) fn workspace_find_references(
-        &self,
-        name: Symbol,
+    /// What the name at byte `cursor` of the open document `uri` means,
+    /// with the span of the name as written there.
+    pub(super) fn target_at(&self, uri: &Uri, cursor: usize) -> Option<(Span, Target)> {
+        let doc = self.documents.get(uri)?;
+        let (names, session, module) = self.names_of(doc)?;
+        let here: Vec<&DefUse> = names
+            .defs
+            .iter()
+            .filter(|used| holds(used.span, cursor))
+            .collect();
+        if let Some(first) = here.first() {
+            let keys = here.iter().map(|used| def_key(session, used.id)).collect();
+            return Some((first.span, Target::Defs(keys)));
+        }
+        // The name of a declaration of this module.
+        let defs = session.defs();
+        let declared = defs.of_module(module).iter().copied().find_map(|id| {
+            let def = defs.get(id);
+            (def.span.is_in_source() && holds(def.span, cursor))
+                .then(|| (def.span, Target::Defs(vec![def_key(session, id)])))
+        });
+        if declared.is_some() {
+            return declared;
+        }
+        let local = names.locals.iter().find(|l| holds(l.span, cursor))?;
+        Some((local.span, Target::Local(local.binding(&doc.locals)?)))
+    }
+
+    /// What the name at byte `cursor` of the open document `uri` is: for
+    /// a definition, its type and documentation as the module that
+    /// declares it has them.
+    pub(super) fn named_at(&self, uri: &Uri, cursor: usize) -> Named {
+        let Some((_, target)) = self.target_at(uri, cursor) else {
+            return Named::Other;
+        };
+        let keys = match target {
+            Target::Local(_) => return Named::Local,
+            Target::Defs(keys) => keys,
+        };
+        let info = keys.iter().find_map(|key| {
+            let DefKey::At { name, .. } = key else {
+                return None;
+            };
+            self.projects.values().find_map(|project| {
+                let session = &project.session;
+                let def = session.defs().get(def_of_key(session, key)?);
+                let checked = session.module_analysis(def.module)?;
+                // A variant is known under its own name, as its type is.
+                super::definitions::build_definitions(
+                    &checked.ast,
+                    Some(&checked.top_level),
+                    &session.tables().record_fields(),
+                )
+                .remove(name)
+            })
+        });
+        match info {
+            Some(info) => Named::Definition(info),
+            None => Named::Other,
+        }
+    }
+
+    /// Why `target`, found in the document `uri`, cannot be renamed, if
+    /// it cannot: it is one of silt's own names, or `self`.
+    pub(super) fn not_renameable(&self, uri: &Uri, target: &Target) -> Option<String> {
+        match target {
+            Target::Defs(keys) => keys
+                .iter()
+                .any(|key| matches!(key, DefKey::Builtin(_)))
+                .then(|| "is a builtin and cannot be renamed".to_string()),
+            Target::Local(binding) => {
+                let doc = self.documents.get(uri)?;
+                let local = doc.locals.iter().find(|b| b.binding_offset == *binding)?;
+                (resolve_sym(local.name) == "self").then(|| {
+                    "is the receiver of a method and cannot be renamed: a method's first \
+                     parameter is `self`"
+                        .to_string()
+                })
+            }
+        }
+    }
+
+    /// Every place that names `target`, which was found in the open
+    /// document `uri`; with the declaration if `include_definition`.
+    /// Sorted by file and position.
+    pub(super) fn places_of(
+        &mut self,
+        uri: &Uri,
+        target: &Target,
+        include_definition: bool,
+    ) -> Vec<Place> {
+        let mut places = match target {
+            Target::Local(binding) => self.local_places(uri, *binding, include_definition),
+            Target::Defs(keys) => {
+                if self.def_uses.is_none() {
+                    self.check_importers();
+                    self.def_uses = Some(self.walk_def_uses());
+                }
+                self.def_places(keys, include_definition)
+            }
+        };
+        let key = |p: &Place| {
+            (
+                p.location.uri.as_str().to_string(),
+                p.location.range.start.line,
+                p.location.range.start.character,
+            )
+        };
+        places.sort_by_key(key);
+        places.dedup_by(|a, b| a.location == b.location);
+        places
+    }
+
+    /// The locations of [`Server::places_of`].
+    pub(super) fn references_to(
+        &mut self,
+        uri: &Uri,
+        target: &Target,
         include_definition: bool,
     ) -> Vec<Location> {
-        let mut locations = Vec::new();
-        for (uri, doc) in &self.documents {
-            let Some(program) = &doc.program else {
-                continue;
-            };
-            let mut spans: Vec<Span> = Vec::new();
-            collect_references(program, name, &mut spans);
-            if include_definition && let Some(def) = doc.definitions.get(&name) {
-                spans.push(def.span);
-            }
-            // Deduplicate by start offset — definition and first use can
-            // overlap for top-level `let` bindings.
-            let mut seen: HashSet<u32> = HashSet::new();
-            for span in spans {
-                let key = span.start;
-                if seen.insert(key) {
-                    locations.push(Location::new(
-                        uri.clone(),
-                        span_to_range(&span, &doc.source),
-                    ));
-                }
-            }
-        }
-        locations
+        self.places_of(uri, target, include_definition)
+            .into_iter()
+            .map(|place| place.location)
+            .collect()
     }
 
-    /// Collect workspace symbols matching a query string. Empty query
-    /// returns every symbol. Non-empty query does a case-insensitive
-    /// substring match — more friendly than exact prefix for
-    /// `workspace/symbol` UX.
-    pub(super) fn workspace_symbols_matching(&self, query: &str) -> Vec<SymbolInformation> {
-        let query_lower = query.to_lowercase();
-        let mut results = Vec::new();
-        for (uri, doc) in &self.documents {
-            let Some(program) = &doc.program else {
+    /// The binders of the local binding `binding` of the document `uri`
+    /// (one per alternative of an or-pattern), and the uses that resolve
+    /// to it.
+    fn local_places(&self, uri: &Uri, binding: usize, include_binders: bool) -> Vec<Place> {
+        let Some(doc) = self.documents.get(uri) else {
+            return Vec::new();
+        };
+        let Some((names, ..)) = self.names_of(doc) else {
+            return Vec::new();
+        };
+        names
+            .locals
+            .iter()
+            .filter(|l| include_binders || !l.binder)
+            .filter(|l| l.binding(&doc.locals) == Some(binding))
+            .map(|l| Place {
+                location: Location::new(uri.clone(), span_to_range(&l.span, &doc.source)),
+                punned: l.punned,
+            })
+            .collect()
+    }
+
+    /// Where `target` is declared: a local's binder in the document
+    /// `uri` (the first alternative's, of an or-pattern), a definition's
+    /// name in its file. Nothing for one of silt's own.
+    pub(super) fn declarations_of(&self, uri: &Uri, target: &Target) -> Vec<Location> {
+        match target {
+            Target::Local(binding) => {
+                let binder = self.documents.get(uri).and_then(|doc| {
+                    let local = doc.locals.iter().find(|b| b.binding_offset == *binding)?;
+                    Some(super::conversions::offsets_to_range(
+                        &doc.source,
+                        local.binding_offset,
+                        local.binding_offset + local.binding_len,
+                    ))
+                });
+                binder
+                    .map(|range| Location::new(uri.clone(), range))
+                    .into_iter()
+                    .collect()
+            }
+            Target::Defs(keys) => {
+                let mut locations: Vec<Location> = Vec::new();
+                for key in keys {
+                    let found = self.projects.values().find_map(|project| {
+                        let session = &project.session;
+                        let def = session.defs().get(def_of_key(session, key)?);
+                        if def.module.is_builtin() || !def.span.is_in_source() {
+                            return None;
+                        }
+                        self.location_in(session, def.module, def.span)
+                    });
+                    if let Some(location) = found
+                        && !locations.contains(&location)
+                    {
+                        locations.push(location);
+                    }
+                }
+                locations
+            }
+        }
+    }
+
+    /// `span` of the module `module` of `session` as a location.
+    fn location_in(&self, session: &Session, module: ModuleId, span: Span) -> Option<Location> {
+        let module = session.graph().module(module);
+        let source = session.sources().get(module.file?)?;
+        let uri = self.uri_for_path(&module.path)?;
+        Some(Location::new(uri, span_to_range(&span, source)))
+    }
+
+    /// The declaration of the method whose name at a call holds byte
+    /// `cursor` of the open document `uri`: the method of the impl the
+    /// checker selected, when that impl writes it, else the trait's.
+    pub(super) fn method_declaration_at(&self, uri: &Uri, cursor: usize) -> Option<Location> {
+        let doc = self.documents.get(uri)?;
+        let (names, session, _) = self.names_of(doc)?;
+        let method = names.methods.iter().find(|m| holds(m.span, cursor))?;
+        let (tr, ty) = match method.selection {
+            Selection::Impl { tr, ty } => (tr, Some(ty)),
+            Selection::Native { tr } | Selection::Dynamic { tr } => (tr, None),
+            Selection::Field | Selection::FieldCall => return None,
+        };
+        let named = |methods: &[FnDecl]| {
+            methods
+                .iter()
+                .find(|m| m.name == method.name)
+                .map(|m| m.name_span)
+        };
+        let mut of_trait = None;
+        for module in session.graph().modules() {
+            let Some(analysis) = session.module_analysis(module.id) else {
                 continue;
             };
-            for decl in &program.decls {
+            for decl in &analysis.ast.decls {
                 match decl {
-                    Decl::Fn(f) => {
-                        let name = resolve_sym(f.name);
-                        if matches_query(&name, &query_lower) {
-                            results.push(SymbolInformation {
-                                name,
-                                kind: SymbolKind::FUNCTION,
-                                tags: None,
-                                deprecated: None,
-                                location: Location::new(
-                                    uri.clone(),
-                                    span_to_range(&f.span, &doc.source),
-                                ),
-                                container_name: None,
-                            });
+                    Decl::TraitImpl(ti)
+                        if ti.trait_res == Some(Res::Def(tr.0))
+                            && ty.is_some_and(|ty| ti.target_res == Some(Res::Def(ty.0))) =>
+                    {
+                        if let Some(span) = named(&ti.methods) {
+                            return self.location_in(session, module.id, span);
                         }
                     }
-                    Decl::Type(t) => {
-                        push_type_symbols(t, uri, &doc.source, &query_lower, &mut results)
-                    }
-                    Decl::Trait(tr) => {
-                        let name = resolve_sym(tr.name);
-                        if matches_query(&name, &query_lower) {
-                            results.push(SymbolInformation {
-                                name,
-                                kind: SymbolKind::INTERFACE,
-                                tags: None,
-                                deprecated: None,
-                                location: Location::new(
-                                    uri.clone(),
-                                    span_to_range(&tr.span, &doc.source),
-                                ),
-                                container_name: None,
-                            });
-                        }
+                    Decl::Trait(t)
+                        if session.defs().get(tr.0).module == module.id
+                            && t.name_span == session.defs().get(tr.0).span =>
+                    {
+                        of_trait = named(&t.methods).map(|span| (module.id, span));
                     }
                     _ => {}
                 }
             }
         }
+        let (module, span) = of_trait?;
+        self.location_in(session, module, span)
+    }
+
+    /// The definition of the type `id` of the session of the open
+    /// document `doc`, as a target.
+    pub(super) fn type_target(&self, doc: &Document, id: crate::defs::TypeId) -> Option<Target> {
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        Some(Target::Defs(vec![def_key(session, id.0)]))
+    }
+
+    /// Check the workspace files that no session has checked and that
+    /// import a module of their project or of a dependency: a file that is not open and that no open
+    /// document imports is only parsed until a query needs what its
+    /// names mean. Which module an `import` names is the session's to
+    /// say (a file of the package, a dependency's library), so every
+    /// such file is checked; the reference walk then finds the importers
+    /// by what their names resolve to.
+    fn check_importers(&mut self) {
+        let imports_a_file = |program: &Program| {
+            program.decls.iter().any(|decl| match decl {
+                Decl::Import(
+                    ImportTarget::Module(m)
+                    | ImportTarget::Items(m, _)
+                    | ImportTarget::Alias(m, ..),
+                    _,
+                ) => !crate::module::is_builtin_module(&resolve_sym(*m)),
+                _ => false,
+            })
+        };
+        let importers: Vec<PathBuf> = self
+            .documents
+            .values()
+            .filter(|doc| !doc.open && doc.program.as_deref().is_some_and(imports_a_file))
+            .map(|doc| doc.path.clone())
+            .collect();
+        // A project of the workspace that has no open document gets a
+        // session for the query; the next analysis drops it again.
+        for path in importers {
+            let dir = project_dir(&path);
+            self.projects
+                .entry(dir.clone())
+                .or_insert_with(|| super::project::Project::new(&dir))
+                .check_file(&path);
+        }
+    }
+
+    /// The uses of definitions in every checked module of every session.
+    fn walk_def_uses(&self) -> DefUses {
+        // The URI of each file, an open document's first: looked up once
+        // per module, not once per place.
+        let mut uris: HashMap<&PathBuf, &Uri> = HashMap::new();
+        for (uri, doc) in self.documents.iter().filter(|(_, doc)| !doc.open) {
+            uris.insert(&doc.key, uri);
+        }
+        for (uri, doc) in self.documents.iter().filter(|(_, doc)| doc.open) {
+            uris.insert(&doc.key, uri);
+        }
+        let mut projects = Vec::new();
+        for (dir, project) in &self.projects {
+            let session = &project.session;
+            let mut modules = Vec::new();
+            for module in session.graph().modules() {
+                let Some(analysis) = session.module_analysis(module.id) else {
+                    continue;
+                };
+                let names = Names::of(&analysis.ast, session, module.id);
+                modules.push(ModuleUses {
+                    module: module.id,
+                    uri: uris
+                        .get(&path_key(&module.path))
+                        .map(|uri| (*uri).clone())
+                        .or_else(|| super::path_to_file_uri(&module.path)),
+                    uses: names.defs.iter().map(|used| (used.span, used.id)).collect(),
+                    punned_declarations: names.punned_declarations,
+                });
+            }
+            projects.push((dir.clone(), modules));
+        }
+        DefUses { projects }
+    }
+
+    /// Every place in the checked modules of every session that names
+    /// one of `keys`, from what the last walk found.
+    fn def_places(&self, keys: &[DefKey], include_definition: bool) -> Vec<Place> {
+        let mut places = Vec::new();
+        let Some(def_uses) = &self.def_uses else {
+            return places;
+        };
+        for (dir, modules) in &def_uses.projects {
+            let Some(project) = self.projects.get(dir) else {
+                continue;
+            };
+            let session = &project.session;
+            let ids: HashSet<DefId> = keys
+                .iter()
+                .filter_map(|key| def_of_key(session, key))
+                .collect();
+            if ids.is_empty() {
+                continue;
+            }
+            for module in modules {
+                let source = session
+                    .graph()
+                    .module(module.module)
+                    .file
+                    .and_then(|file| session.sources().get(file));
+                let (Some(uri), Some(source)) = (&module.uri, source) else {
+                    continue;
+                };
+                let place = |span: Span, punned: bool| Place {
+                    location: Location::new(uri.clone(), span_to_range(&span, source)),
+                    punned,
+                };
+                for (span, _) in module.uses.iter().filter(|(_, id)| ids.contains(id)) {
+                    places.push(place(*span, false));
+                }
+                if !include_definition {
+                    continue;
+                }
+                for id in &ids {
+                    let def = session.defs().get(*id);
+                    if def.module == module.module && def.span.is_in_source() {
+                        places.push(place(
+                            def.span,
+                            module.punned_declarations.contains(&def.span),
+                        ));
+                    }
+                }
+            }
+        }
+        places
+    }
+
+    /// The places of the open document `uri` that name `target`, which
+    /// was found in it, the declaration included: what a highlight
+    /// shows. Nothing but this document is read.
+    pub(super) fn places_in_document(&self, uri: &Uri, target: &Target) -> Vec<Location> {
+        let keys = match target {
+            Target::Local(binding) => {
+                return self
+                    .local_places(uri, *binding, true)
+                    .into_iter()
+                    .map(|place| place.location)
+                    .collect();
+            }
+            Target::Defs(keys) => keys,
+        };
+        let Some(doc) = self.documents.get(uri) else {
+            return Vec::new();
+        };
+        let Some((names, session, module)) = self.names_of(doc) else {
+            return Vec::new();
+        };
+        let ids: HashSet<DefId> = keys
+            .iter()
+            .filter_map(|key| def_of_key(session, key))
+            .collect();
+        let declared = ids.iter().filter_map(|id| {
+            let def = session.defs().get(*id);
+            (def.module == module && def.span.is_in_source()).then_some(def.span)
+        });
+        let mut spans: Vec<Span> = names
+            .defs
+            .iter()
+            .filter(|used| ids.contains(&used.id))
+            .map(|used| used.span)
+            .chain(declared)
+            .collect();
+        spans.sort_by_key(|span| span.start);
+        spans.dedup();
+        spans
+            .into_iter()
+            .map(|span| Location::new(uri.clone(), span_to_range(&span, &doc.source)))
+            .collect()
+    }
+
+    /// Why renaming `target`, found in the open document `uri`, to `new`
+    /// would change what a name means, if it would: at a place that
+    /// names the target, `new` already names something else (a local, a
+    /// top-level name of that module, one of silt's own names), so the
+    /// renamed name would be taken for that, or that for it.
+    pub(super) fn rename_clash(&mut self, uri: &Uri, target: &Target, new: &str) -> Option<String> {
+        let new_sym = crate::intern::intern(new);
+        let places = self.places_of(uri, target, true);
+        // One of silt's own names, visible in every module: a builtin
+        // function, type, trait or constructor.
+        let own = crate::module::builtin_free_function_names().contains(&new)
+            || crate::types::builtins::iter_all().any(|ty| ty.name == new)
+            || crate::module::builtin_module_types().contains(&new)
+            || crate::module::all_builtin_constructor_names().any(|name| name == new)
+            || crate::defs::BUILTIN_TRAITS.contains(&new)
+            || self.projects.values().any(|project| {
+                let defs = project.session.defs();
+                defs.of_module(ModuleId::PRELUDE)
+                    .iter()
+                    .any(|id| defs.get(*id).name == new_sym)
+            });
+        if own {
+            return Some(format!("`{new}` is one of silt's own names"));
+        }
+        // The module of each file, in the session that checked it.
+        let mut modules: HashMap<PathBuf, (&Session, ModuleId)> = HashMap::new();
+        for project in self.projects.values() {
+            let session = &project.session;
+            for module in session.graph().modules() {
+                if session.module_analysis(module.id).is_some() {
+                    modules.insert(path_key(&module.path), (session, module.id));
+                }
+            }
+        }
+        // The places are sorted by file: each file is looked at once.
+        let mut top_level_of: Option<(&Uri, bool)> = None;
+        for place in &places {
+            let Some(doc) = self.documents.get(&place.location.uri) else {
+                continue;
+            };
+            let file = || {
+                doc.path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            };
+            let at =
+                super::conversions::position_to_offset(&doc.source, &place.location.range.start);
+            if let Some(local) = nearest_local_binding_for(&doc.locals, new_sym, at) {
+                return Some(format!(
+                    "`{new}` is already a local name at {}:{} (bound at line {})",
+                    file(),
+                    place.location.range.start.line + 1,
+                    line_of(&doc.source, local.binding_offset as u32)
+                ));
+            }
+            // A top-level name of the module: a declaration, an import.
+            let taken = match top_level_of {
+                Some((uri, taken)) if *uri == place.location.uri => taken,
+                _ => {
+                    let taken = modules.get(&doc.key).is_some_and(|(session, module)| {
+                        session.module_analysis(*module).is_some_and(|analysis| {
+                            analysis.scope.values.contains_key(&new_sym)
+                                || analysis.scope.types.contains_key(&new_sym)
+                        })
+                    });
+                    top_level_of = Some((&place.location.uri, taken));
+                    taken
+                }
+            };
+            if taken {
+                return Some(format!("`{new}` is already a top-level name of {}", file()));
+            }
+        }
+        None
+    }
+
+    /// The workspace symbols whose name holds `query`, whatever the
+    /// case; every symbol for an empty query. A document a session has
+    /// checked gives its definitions; one that is only parsed, its
+    /// declarations. Each is at its name.
+    pub(super) fn workspace_symbols_matching(&self, query: &str) -> Vec<SymbolInformation> {
+        let query = query.to_lowercase();
+        let mut results = Vec::new();
+        let mut uris: Vec<&Uri> = self.documents.keys().collect();
+        uris.sort_by_key(|uri| uri.as_str());
+        for uri in uris {
+            let doc = &self.documents[uri];
+            let mut symbols = match self.checked(doc) {
+                Some((session, module)) => checked_symbols(session, module, uri, &doc.source),
+                None => match &doc.program {
+                    Some(program) => parsed_symbols(program, uri, &doc.source),
+                    None => Vec::new(),
+                },
+            };
+            symbols
+                .retain(|symbol| query.is_empty() || symbol.name.to_lowercase().contains(&query));
+            results.extend(symbols);
+        }
         results
     }
-}
 
-fn matches_query(name: &str, query_lower: &str) -> bool {
-    if query_lower.is_empty() {
-        return true;
+    /// The session that has checked the document `doc`, and its module
+    /// there.
+    fn checked(&self, doc: &Document) -> Option<(&Session, ModuleId)> {
+        self.projects.values().find_map(|project| {
+            let session = &project.session;
+            let module = session
+                .graph()
+                .modules()
+                .iter()
+                .find(|m| path_key(&m.path) == doc.key)?;
+            // The text the session checked is the document's.
+            let same_text = module
+                .file
+                .and_then(|file| session.sources().get(file))
+                .is_some_and(|source| source.text == doc.source.text);
+            (same_text && session.module_analysis(module.id).is_some())
+                .then_some((session, module.id))
+        })
     }
-    name.to_lowercase().contains(query_lower)
 }
 
-fn push_type_symbols(
-    t: &TypeDecl,
+fn symbol(
+    name: Symbol,
+    kind: SymbolKind,
+    span: Span,
+    container: Option<Symbol>,
     uri: &Uri,
     source: &SourceFile,
-    query_lower: &str,
-    results: &mut Vec<SymbolInformation>,
-) {
-    let name = resolve_sym(t.name);
+) -> SymbolInformation {
+    SymbolInformation {
+        name: resolve_sym(name),
+        kind,
+        tags: None,
+        deprecated: None,
+        location: Location::new(uri.clone(), span_to_range(&span, source)),
+        container_name: container.map(resolve_sym),
+    }
+}
+
+/// The definitions of the checked module `module`, in the order they
+/// were declared.
+fn checked_symbols(
+    session: &Session,
+    module: ModuleId,
+    uri: &Uri,
+    source: &SourceFile,
+) -> Vec<SymbolInformation> {
+    let defs = session.defs();
+    let mut ids: Vec<DefId> = defs.of_module(module).to_vec();
+    ids.sort_by_key(|id| defs.get(*id).span.start);
+    ids.into_iter()
+        .filter_map(|id| {
+            let def = defs.get(id);
+            let (kind, container) = match def.kind {
+                DefKind::Fn => (SymbolKind::FUNCTION, None),
+                DefKind::Let => (SymbolKind::CONSTANT, None),
+                // An alias is no type of its own.
+                DefKind::TypeAlias => (SymbolKind::TYPE_PARAMETER, None),
+                DefKind::Type(_) if defs.variants(id).is_empty() => (SymbolKind::STRUCT, None),
+                DefKind::Type(_) => (SymbolKind::ENUM, None),
+                DefKind::Variant { ty, .. } => (SymbolKind::ENUM_MEMBER, Some(defs.get(ty.0).name)),
+                DefKind::Trait(_) => (SymbolKind::INTERFACE, None),
+                DefKind::Host => return None,
+            };
+            def.span
+                .is_in_source()
+                .then(|| symbol(def.name, kind, def.span, container, uri, source))
+        })
+        .collect()
+}
+
+/// The declarations of a module that is only parsed.
+fn parsed_symbols(program: &Program, uri: &Uri, source: &SourceFile) -> Vec<SymbolInformation> {
+    let mut out = Vec::new();
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => out.push(symbol(
+                f.name,
+                SymbolKind::FUNCTION,
+                f.name_span,
+                None,
+                uri,
+                source,
+            )),
+            Decl::Let { pattern, .. } => {
+                if let PatternKind::Ident(name) = &pattern.kind {
+                    out.push(symbol(
+                        *name,
+                        SymbolKind::CONSTANT,
+                        pattern.span,
+                        None,
+                        uri,
+                        source,
+                    ));
+                }
+            }
+            Decl::Type(t) => type_symbols(t, uri, source, &mut out),
+            Decl::Trait(t) => out.push(symbol(
+                t.name,
+                SymbolKind::INTERFACE,
+                t.name_span,
+                None,
+                uri,
+                source,
+            )),
+            Decl::TraitImpl(_) | Decl::Import(..) => {}
+        }
+    }
+    out
+}
+
+fn type_symbols(t: &TypeDecl, uri: &Uri, source: &SourceFile, out: &mut Vec<SymbolInformation>) {
     let kind = match &t.body {
         TypeBody::Enum(_) => SymbolKind::ENUM,
         TypeBody::Record(_) => SymbolKind::STRUCT,
-        // Phase D: type aliases surface in workspace symbols as a generic
-        // type-parameter category — they don't form a new nominal type.
         TypeBody::Alias(_) => SymbolKind::TYPE_PARAMETER,
     };
-    if matches_query(&name, query_lower) {
-        results.push(SymbolInformation {
-            name,
-            kind,
-            tags: None,
-            deprecated: None,
-            location: Location::new(uri.clone(), span_to_range(&t.span, source)),
-            container_name: None,
-        });
-    }
+    out.push(symbol(t.name, kind, t.name_span, None, uri, source));
     if let TypeBody::Enum(variants) = &t.body {
-        let container = resolve_sym(t.name);
         for v in variants {
-            let vname = resolve_sym(v.name);
-            if matches_query(&vname, query_lower) {
-                results.push(SymbolInformation {
-                    name: vname,
-                    kind: SymbolKind::ENUM_MEMBER,
-                    tags: None,
-                    deprecated: None,
-                    location: Location::new(uri.clone(), span_to_range(&v.name_span, source)),
-                    container_name: Some(container.clone()),
-                });
-            }
+            out.push(symbol(
+                v.name,
+                SymbolKind::ENUM_MEMBER,
+                v.name_span,
+                Some(t.name),
+                uri,
+                source,
+            ));
         }
-    }
-}
-
-// ── AST walk for references ────────────────────────────────────────
-
-fn collect_references(program: &Program, name: Symbol, out: &mut Vec<Span>) {
-    for decl in &program.decls {
-        collect_references_in_decl(decl, name, out);
-    }
-}
-
-fn collect_references_in_decl(decl: &Decl, name: Symbol, out: &mut Vec<Span>) {
-    match decl {
-        Decl::Fn(f) => {
-            // Include the param-pattern binders so renaming a parameter
-            // updates the param list AND every body use (round-60 B8).
-            for param in &f.params {
-                collect_references_in_pattern(&param.pattern, name, out);
-            }
-            // Round-75 DX-4: where-clause trait references.
-            for wc in &f.where_clauses {
-                if wc.trait_name == name {
-                    push_named_span(out, wc.trait_name_span);
-                }
-            }
-            // Round-101: type-position references in the signature
-            // (param annotations, return type, where-clause args).
-            collect_references_in_fn_signature(f, name, out);
-            collect_references_in_expr(&f.body, name, out);
-        }
-        Decl::TraitImpl(ti) => {
-            // Round-75 DX-4: impl's trait_name and target_type are
-            // user-written references — rename of either must update them.
-            if ti.trait_name == name {
-                push_named_span(out, ti.trait_name_span);
-            }
-            if ti.target_type == name {
-                push_named_span(out, ti.target_type_span);
-            }
-            for wc in &ti.where_clauses {
-                if wc.trait_name == name {
-                    push_named_span(out, wc.trait_name_span);
-                }
-                for a in &wc.trait_args {
-                    collect_references_in_type_expr(a, name, out);
-                }
-            }
-            // Round-101: type-position references in the impl header
-            // (trait args, target type args) and assoc-type bindings.
-            for a in &ti.trait_args {
-                collect_references_in_type_expr(a, name, out);
-            }
-            for a in &ti.target_type_args {
-                collect_references_in_type_expr(a, name, out);
-            }
-            for b in &ti.assoc_type_bindings {
-                collect_references_in_type_expr(&b.ty, name, out);
-            }
-            for method in &ti.methods {
-                for param in &method.params {
-                    collect_references_in_pattern(&param.pattern, name, out);
-                }
-                for wc in &method.where_clauses {
-                    if wc.trait_name == name {
-                        push_named_span(out, wc.trait_name_span);
-                    }
-                }
-                collect_references_in_fn_signature(method, name, out);
-                collect_references_in_expr(&method.body, name, out);
-            }
-        }
-        Decl::Trait(t) => {
-            // Round-75 DX-4: supertrait references (`trait Sub: Super`)
-            // and trait-level where-clause refs must be tracked so a
-            // rename of `Super` updates the supertrait reference too.
-            for r in &t.supertraits {
-                if r.name == name {
-                    push_named_span(out, r.span);
-                }
-                for a in &r.args {
-                    collect_references_in_type_expr(a, name, out);
-                }
-            }
-            for wc in &t.param_where_clauses {
-                if wc.trait_name == name {
-                    push_named_span(out, wc.trait_name_span);
-                }
-                for a in &wc.trait_args {
-                    collect_references_in_type_expr(a, name, out);
-                }
-            }
-            // Round-101: assoc-type bounds, and their ARGUMENTS
-            // (`type Item: TryInto(Pt)`), which are type positions.
-            for at in &t.assoc_types {
-                for bound in &at.bounds {
-                    if bound.name == name {
-                        push_named_span(out, bound.span);
-                    }
-                    for a in &bound.args {
-                        collect_references_in_type_expr(a, name, out);
-                    }
-                }
-            }
-            for method in &t.methods {
-                for param in &method.params {
-                    collect_references_in_pattern(&param.pattern, name, out);
-                }
-                for wc in &method.where_clauses {
-                    if wc.trait_name == name {
-                        push_named_span(out, wc.trait_name_span);
-                    }
-                }
-                collect_references_in_fn_signature(method, name, out);
-                // Default method bodies, if any.
-                collect_references_in_expr(&method.body, name, out);
-            }
-        }
-        Decl::Let {
-            value, pattern, ty, ..
-        } => {
-            collect_references_in_pattern(pattern, name, out);
-            if let Some(t) = ty {
-                collect_references_in_type_expr(t, name, out);
-            }
-            collect_references_in_expr(value, name, out);
-        }
-        // Round-101: type-decl BODIES reference other types (record
-        // field types, enum variant payload types, alias targets) —
-        // renaming a type must update them or the decls dangle.
-        Decl::Type(t) => match &t.body {
-            TypeBody::Record(fields) => {
-                for fld in fields {
-                    collect_references_in_type_expr(&fld.ty, name, out);
-                }
-            }
-            TypeBody::Enum(variants) => {
-                for v in variants {
-                    for te in &v.fields {
-                        collect_references_in_type_expr(te, name, out);
-                    }
-                }
-            }
-            TypeBody::Alias(te) => collect_references_in_type_expr(te, name, out),
-        },
-        _ => {}
-    }
-}
-
-/// Push a span to the references list, skipping spans of silt's own
-/// declarations (`Span::BUILTIN`) — those are not user-renameable.
-fn push_named_span(out: &mut Vec<Span>, span: Span) {
-    if !span.is_in_source() {
-        return;
-    }
-    out.push(span);
-}
-
-/// Round-101 BROKEN fix: walk a type expression, collecting `Named` /
-/// `Generic` head references to `name`. Type-position references (param
-/// annotations, return types, record-field types, ascriptions, …) must
-/// be collected alongside value-position references — without them,
-/// renaming a user type from its declaration rewrote only the decl and
-/// left every annotation/construction/pattern site dangling, breaking
-/// the program.
-fn collect_references_in_type_expr(te: &TypeExpr, name: Symbol, out: &mut Vec<Span>) {
-    match &te.kind {
-        TypeExprKind::Named {
-            name: n, name_span, ..
-        } => {
-            if *n == name {
-                push_named_span(out, *name_span);
-            }
-        }
-        TypeExprKind::Generic {
-            name: n,
-            name_span,
-            args,
-            ..
-        } => {
-            if *n == name {
-                push_named_span(out, *name_span);
-            }
-            for a in args {
-                collect_references_in_type_expr(a, name, out);
-            }
-        }
-        TypeExprKind::Tuple(elems) => {
-            for e in elems {
-                collect_references_in_type_expr(e, name, out);
-            }
-        }
-        TypeExprKind::Function(params, ret) => {
-            for p in params {
-                collect_references_in_type_expr(p, name, out);
-            }
-            collect_references_in_type_expr(ret, name, out);
-        }
-        TypeExprKind::SelfType => {}
-        TypeExprKind::AssocProj { receiver, .. } => {
-            collect_references_in_type_expr(receiver, name, out);
-        }
-        TypeExprKind::AnonRecord { fields, .. } => {
-            for (_, t) in fields {
-                collect_references_in_type_expr(t, name, out);
-            }
-        }
-    }
-}
-
-/// Walk one fn signature's type positions: param annotations, the
-/// return type, and where-clause trait ARGUMENTS (`where a: TryInto(Pt)`
-/// — the trait NAME is already handled by the round-75 DX-4 matching at
-/// each call site).
-fn collect_references_in_fn_signature(f: &FnDecl, name: Symbol, out: &mut Vec<Span>) {
-    for param in &f.params {
-        if let Some(ty) = &param.ty {
-            collect_references_in_type_expr(ty, name, out);
-        }
-    }
-    if let Some(rt) = &f.return_type {
-        collect_references_in_type_expr(rt, name, out);
-    }
-    for wc in &f.where_clauses {
-        for a in &wc.trait_args {
-            collect_references_in_type_expr(a, name, out);
-        }
-    }
-}
-
-fn collect_references_in_expr(expr: &Expr, name: Symbol, out: &mut Vec<Span>) {
-    match &expr.kind {
-        ExprKind::Ident(n) if *n == name => {
-            out.push(expr.span);
-        }
-        // Round-71 DX-2 fix: do NOT match on FieldAccess by symbol equality.
-        // `FieldAccess.span` is the receiver's span (parser.rs:2620/2696),
-        // not the field's, so pushing it here would corrupt the receiver
-        // identifier on rename. Field names live in a separate namespace
-        // from let/fn names; symbol-collision matching across the two
-        // namespaces silently mangled unrelated code (e.g. renaming a
-        // top-level `let name` mangled `r.name` into `<newname>.name`).
-        ExprKind::Block(stmts) => {
-            for s in stmts {
-                collect_references_in_stmt(s, name, out);
-            }
-        }
-        // Round-101: ascription types (`expr: Point`) are type-position
-        // references; `visit_expr_children` only walks the value side.
-        ExprKind::Ascription(inner, te) => {
-            collect_references_in_type_expr(te, name, out);
-            collect_references_in_expr(inner, name, out);
-        }
-        // Round-101: match-arm PATTERNS are not child exprs, so
-        // `visit_expr_children` never reaches them — without this arm,
-        // pattern heads (`Point { x, .. }`) and pattern binders inside
-        // `match` were invisible to references/rename. Mirrors
-        // `ast_walk::find_ident_in_expr`, which already visits them.
-        ExprKind::Match { arms, .. } => {
-            for arm in arms {
-                collect_references_in_pattern(&arm.pattern, name, out);
-            }
-            visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, out);
-            });
-        }
-        // Round-101: record-construction HEAD (`Point { x: 3 }`,
-        // `util.Pt { .. }`) is a type-name reference.
-        ExprKind::RecordCreate {
-            name: head,
-            name_span,
-            ..
-        } if *head == name => {
-            push_named_span(out, *name_span);
-            visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, out);
-            });
-        }
-        // Round-102: lambda PARAMS are binders (and may carry type
-        // annotations), but `visit_expr_children` walks only the lambda
-        // body (ast_walk.rs). Without this arm, renaming a lambda param
-        // from a body use-site edited the uses and never the
-        // `{ n -> ... }` binder token — `{ n -> m * 2 }` no longer
-        // compiles — and `textDocument/references` omitted the binder.
-        // Walking `param.ty` also keeps `{ p: Point -> ... }`
-        // annotations in sync on a type rename (mirrors the round-101
-        // fn-signature handling in `collect_references_in_fn_signature`).
-        ExprKind::Lambda { params, .. } => {
-            for param in params {
-                collect_references_in_pattern(&param.pattern, name, out);
-                if let Some(ty) = &param.ty {
-                    collect_references_in_type_expr(ty, name, out);
-                }
-            }
-            visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, out);
-            });
-        }
-        // Round-102 (same class): `loop x = init { ... }` binders, at
-        // the span of the binder's name. Without this, body uses of `x`
-        // were renamed while the `loop x = init` binder token was not.
-        ExprKind::Loop { bindings, .. } => {
-            for (bname, bspan, _) in bindings {
-                if *bname == name {
-                    out.push(*bspan);
-                }
-            }
-            visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, out);
-            });
-        }
-        _ => {
-            visit_expr_children(expr, |child| {
-                collect_references_in_expr(child, name, out);
-            });
-        }
-    }
-}
-
-fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, out: &mut Vec<Span>) {
-    match stmt {
-        Stmt::Let { value, pattern, ty } => {
-            collect_references_in_pattern(pattern, name, out);
-            // Round-101: `let p: Point = ...` annotation.
-            if let Some(t) = ty {
-                collect_references_in_type_expr(t, name, out);
-            }
-            collect_references_in_expr(value, name, out);
-        }
-        Stmt::When {
-            expr,
-            else_body,
-            pattern,
-            ..
-        } => {
-            collect_references_in_pattern(pattern, name, out);
-            collect_references_in_expr(expr, name, out);
-            collect_references_in_expr(else_body, name, out);
-        }
-        Stmt::WhenBool {
-            condition,
-            else_body,
-            ..
-        } => {
-            collect_references_in_expr(condition, name, out);
-            collect_references_in_expr(else_body, name, out);
-        }
-        Stmt::Expr(e) => collect_references_in_expr(e, name, out),
-    }
-}
-
-fn collect_references_in_pattern(pattern: &Pattern, name: Symbol, out: &mut Vec<Span>) {
-    // Round-101: Constructor / nominal-record pattern HEADS are type- or
-    // variant-name references (`Point { x }` matches the record type;
-    // `Circle(r)` matches the enum variant). Without matching them, a
-    // type/variant rename left pattern heads dangling.
-    match &pattern.kind {
-        PatternKind::Constructor {
-            name: head,
-            name_span,
-            ..
-        }
-        | PatternKind::Record {
-            name: Some(head),
-            name_span,
-            ..
-        } if *head == name => push_named_span(out, *name_span),
-        _ => {}
-    }
-    // Patterns bind new names, so matching identifier-binding positions
-    // here is useful for rename (the binding itself) but not for
-    // general reference collection in a reader role. For rename to
-    // work correctly, we include the binding site as a reference.
-    match &pattern.kind {
-        PatternKind::Ident(n) if *n == name => {
-            out.push(pattern.span);
-        }
-        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
-            for p in pats {
-                collect_references_in_pattern(p, name, out);
-            }
-        }
-        PatternKind::List(pats, rest) => {
-            for p in pats {
-                collect_references_in_pattern(p, name, out);
-            }
-            // Round-101: the rest sub-pattern (`[h, ..t]`) binds too.
-            if let Some(r) = rest {
-                collect_references_in_pattern(r, name, out);
-            }
-        }
-        PatternKind::Constructor { args: fields, .. } => {
-            for p in fields {
-                collect_references_in_pattern(p, name, out);
-            }
-        }
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
-            // Round-62 B8 + B9: shorthand binders (`{ x, y }` with `sub
-            // = None`) bind the field name itself, at the field name's
-            // own span. Match against `name` so rename across a
-            // shorthand binder picks up every site (binder + uses).
-            for (fname, fspan, sub) in fields {
-                if let Some(p) = sub {
-                    collect_references_in_pattern(p, name, out);
-                } else if *fname == name {
-                    out.push(*fspan);
-                }
-            }
-            // Round-101: the named rest binder (`{ x, ...rest }`) binds
-            // `rest` — mirror the typechecker's `collect_pattern_vars`.
-            if let PatternKind::AnonRecord {
-                rest: Some((r, rspan)),
-                ..
-            } = &pattern.kind
-                && *r == name
-            {
-                out.push(*rspan);
-            }
-        }
-        PatternKind::Map(entries) => {
-            // Round-101: map-pattern values bind (`#{ "k": v }` binds
-            // `v`); keys are string literals, never binders.
-            for (_, p) in entries {
-                collect_references_in_pattern(p, name, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::intern::intern;
-    use crate::source::FileId;
-
-    fn span(start: u32, end: u32) -> Span {
-        Span {
-            file: FileId::default(),
-            start,
-            end,
-        }
-    }
-
-    /// Shorthand field and rest binders of an anon-record pattern are
-    /// collected at their own spans, never at the pattern head (the
-    /// opening `{`): an edit on the head rewrote the brace into the new
-    /// name, producing non-compiling source (rounds 100, 101, 103).
-    #[test]
-    fn anon_record_binders_are_collected_at_their_own_spans() {
-        // `{ x, ...rest }`
-        let x = intern("x");
-        let rest = intern("rest");
-        let pat = Pattern::new(
-            PatternKind::AnonRecord {
-                fields: vec![(x, span(2, 3), None)],
-                rest: Some((rest, span(8, 12))),
-            },
-            span(0, 14),
-        );
-        let mut out = Vec::new();
-        collect_references_in_pattern(&pat, x, &mut out);
-        assert_eq!(out, vec![span(2, 3)]);
-        let mut out = Vec::new();
-        collect_references_in_pattern(&pat, rest, &mut out);
-        assert_eq!(out, vec![span(8, 12)]);
-    }
-
-    /// The head of a constructor pattern is collected as the name alone,
-    /// not the whole pattern: a rename edits `Circle`, not `Circle(r)`.
-    #[test]
-    fn a_pattern_head_is_collected_as_its_name() {
-        let circle = intern("Circle");
-        let pat = Pattern::new(
-            PatternKind::Constructor {
-                qualifier: Vec::new(),
-                name: circle,
-                name_span: span(0, 6),
-                args: vec![Pattern::new(PatternKind::Ident(intern("r")), span(7, 8))],
-            },
-            span(0, 9),
-        );
-        let mut out = Vec::new();
-        collect_references_in_pattern(&pat, circle, &mut out);
-        assert_eq!(out, vec![span(0, 6)]);
     }
 }
