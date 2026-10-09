@@ -19,4 +19,8 @@ for target in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechec
   cp examples/*.silt "$target_dir"/ 2>/dev/null || true
 done
 
+# fuzz_http_request reads HTTP requests, not silt sources: its seeds are
+# the requests committed as fuzz/corpus/fuzz_http_request/*.http, and
+# there is nothing to copy for it.
+
 echo "Seeded corpora from examples/ into fuzz/corpus/<target>/"
