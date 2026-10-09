@@ -1,0 +1,36 @@
+fn f(a: Option(Int), n: Int) -> Int {
+  when let Some(v) = a else {
+    let n = 0
+    return n
+  }
+  n + v
+}
+
+fn g(n: Int) -> Int {
+  when n > 0 else {
+    let n = 7
+    return n
+  }
+  n
+}
+
+fn h(n: Int) -> Int {
+  {
+    let n = 2
+    println(n)
+  }
+  n
+}
+
+fn k(n: Int) -> Int {
+  let t = (1, {
+    let n = 4
+    n
+  })
+  let (a, b) = t
+  a + b + n
+}
+
+fn main() {
+  println(f(Some(1), 2) + f(None, 2) + g(1) + g(0) + h(9) + k(1))
+}

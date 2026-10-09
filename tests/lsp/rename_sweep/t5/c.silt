@@ -1,0 +1,6 @@
+{- header
+-} import geo as g
+
+pub fn fc() -> Int {
+  g.mk(3)
+}

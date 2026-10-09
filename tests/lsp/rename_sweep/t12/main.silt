@@ -1,0 +1,14 @@
+type Side {
+  Left(Int),
+  Right(Int),
+}
+
+fn get(s: Side) -> Int {
+  match s {
+    Left(n) | Right(n) -> n + 1
+  }
+}
+
+fn main() {
+  println(get(Left(1)) + get(Right(2)))
+}

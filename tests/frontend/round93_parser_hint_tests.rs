@@ -12,8 +12,8 @@
 //!
 //! Finding 3 (cleanup lock): the eight infix-operator arms of
 //! `parse_expr_bp_inner` shared a verbatim-copied tail
-//! (`l_bp < min_bp → restore/break; advance; skip_nl;
-//! parse_expr_bp(r_bp); rebuild node`). They now all route through one
+//! (`l_bp < min_bp → break; advance; parse_expr_bp(r_bp); rebuild
+//! node`). They now all route through one
 //! helper (`parse_infix_rhs`). The precedence/associativity table
 //! below pins the parsed structure of one expression per operator
 //! family so any future drift in a single arm fails loudly.

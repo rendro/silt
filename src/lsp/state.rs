@@ -10,13 +10,12 @@ use std::sync::Arc;
 use crate::ast::*;
 use crate::intern::Symbol;
 use crate::session::ModuleId;
-use crate::source::{SourceFile, Span};
+use crate::source::SourceFile;
 use crate::types::Type;
 
 // ── Document state ─────────────────────────────────────────────────
 
 pub(super) struct DefInfo {
-    pub(super) span: Span,
     pub(super) ty: Option<Type>,
     pub(super) params: Vec<String>,
     /// Markdown documentation from a doc comment preceding the decl,
@@ -41,6 +40,19 @@ pub(super) struct LocalBinding {
     pub(super) scope_end: usize,
     /// Inferred type, if known.
     pub(super) ty: Option<Type>,
+    /// For the binder of a later alternative of an or-pattern
+    /// (`Left(n) | Right(n)`): the byte the first alternative's binder
+    /// of the name starts at. The binders of all alternatives are one
+    /// binding, named by the first.
+    pub(super) same_as: Option<usize>,
+}
+
+impl LocalBinding {
+    /// The binding this binder is a site of, by the byte its first
+    /// binder starts at.
+    pub(super) fn id(&self) -> usize {
+        self.same_as.unwrap_or(self.binding_offset)
+    }
 }
 
 pub(super) struct Document {

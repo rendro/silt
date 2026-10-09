@@ -15,14 +15,17 @@ fn cross_file_definition() {
     let mut client = LspClient::spawn();
     let file_a = "file:///tmp/silt_wspace_a.silt";
     let file_b = "file:///tmp/silt_wspace_b.silt";
-    client.did_open_and_wait(file_a, "fn shared_helper(x) { x + 1 }\n");
-    client.did_open_and_wait(file_b, "fn main() { shared_helper(5) }\n");
+    client.did_open_and_wait(file_a, "pub fn shared_helper(x) { x + 1 }\n");
+    client.did_open_and_wait(
+        file_b,
+        "import silt_wspace_a.{ shared_helper }\nfn main() { shared_helper(5) }\n",
+    );
 
     let resp = client.request(
         "textDocument/definition",
         json!({
             "textDocument": { "uri": file_b },
-            "position": { "line": 0, "character": 15 }
+            "position": { "line": 1, "character": 15 }
         }),
     );
     let result = resp.get("result").expect("definition result");
@@ -46,8 +49,11 @@ fn references_finds_all_uses_across_files() {
     let mut client = LspClient::spawn();
     let file_a = "file:///tmp/silt_wspace_ref_a.silt";
     let file_b = "file:///tmp/silt_wspace_ref_b.silt";
-    client.did_open_and_wait(file_a, "fn pinger(x) { x }\nfn main() { pinger(1) }\n");
-    client.did_open_and_wait(file_b, "fn other() { pinger(2) }\n");
+    client.did_open_and_wait(file_a, "pub fn pinger(x) { x }\nfn main() { pinger(1) }\n");
+    client.did_open_and_wait(
+        file_b,
+        "import silt_wspace_ref_a\nfn other() { silt_wspace_ref_a.pinger(2) }\n",
+    );
 
     // Click on the `pinger` call at line 1 (inside main's body).
     let resp = client.request(
@@ -77,6 +83,157 @@ fn references_finds_all_uses_across_files() {
     client.shutdown();
 }
 
+/// Two open documents in one directory import each other whether or not
+/// the directory is on disk: `file:///tmp/...` names no directory on
+/// Windows, and an editor's unsaved files may name none anywhere.
+#[test]
+fn open_documents_of_a_directory_that_is_not_on_disk_import_each_other() {
+    let mut client = LspClient::spawn();
+    let dir = format!("file:///silt_no_such_dir_{}", std::process::id());
+    let file_a = format!("{dir}/wspace_missing_a.silt");
+    let file_b = format!("{dir}/wspace_missing_b.silt");
+    client.did_open_and_wait(&file_a, "pub fn pinger(x) { x }\nfn main() { pinger(1) }\n");
+    client.did_open_and_wait(
+        &file_b,
+        "import wspace_missing_a\nfn other() { wspace_missing_a.pinger(2) }\n",
+    );
+
+    let resp = client.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": file_a },
+            "position": { "line": 1, "character": 15 },
+            "context": { "includeDeclaration": true }
+        }),
+    );
+    let uris: Vec<String> = resp
+        .get("result")
+        .and_then(|r| r.as_array())
+        .expect("references result is an array")
+        .iter()
+        .filter_map(|loc| loc.get("uri").and_then(|u| u.as_str()).map(String::from))
+        .collect();
+    assert!(
+        uris.iter().any(|u| *u == file_b),
+        "expected a reference in the importing document; got: {uris:?}"
+    );
+    client.shutdown();
+}
+
+/// An importer is checked again, and its diagnostics published again,
+/// when the document it imports opens and when it closes: the error at
+/// the `import` goes away with the first and comes back with the second.
+#[test]
+fn an_importer_is_checked_again_when_the_imported_document_opens_or_closes() {
+    let mut client = LspClient::spawn();
+    let dir = format!("file:///silt_no_such_dir_{}_stale", std::process::id());
+    let imported = format!("{dir}/wspace_late_a.silt");
+    let importer = format!("{dir}/wspace_late_b.silt");
+    let messages = |published: &Value| -> Vec<String> {
+        published
+            .pointer("/params/diagnostics")
+            .and_then(|d| d.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|d| d.get("message").and_then(|m| m.as_str()).map(String::from))
+            .collect()
+    };
+
+    let first = client.did_open_and_wait(
+        &importer,
+        "import wspace_late_a\nfn other() { wspace_late_a.pinger(2) }\n",
+    );
+    assert!(
+        messages(&first)
+            .iter()
+            .any(|m| m.contains("cannot load module")),
+        "the import of a file that is nowhere is an error; got {first}"
+    );
+
+    client.did_open(&imported, "pub fn pinger(x) { x }\n");
+    let reopened = client.wait_for_diagnostics(&importer);
+    assert_eq!(
+        messages(&reopened),
+        Vec::<String>::new(),
+        "the importer has no error once the imported document is open"
+    );
+
+    client.send_notification(
+        "textDocument/didClose",
+        json!({ "textDocument": { "uri": imported } }),
+    );
+    let closed = client.wait_for_diagnostics(&importer);
+    assert!(
+        messages(&closed)
+            .iter()
+            .any(|m| m.contains("cannot load module")),
+        "the error is back once the imported document is closed; got {closed}"
+    );
+    client.shutdown();
+}
+
+/// Documents that are no files (`untitled:` buffers) see each other by
+/// their names, and nothing on disk: an import of a sibling that is not
+/// open is a module that is not there, whatever the server's working
+/// directory holds.
+#[test]
+fn documents_that_are_no_files_import_each_other_and_read_no_disk() {
+    let mut client = LspClient::spawn();
+    let errors = |published: &Value| -> Vec<String> {
+        published
+            .pointer("/params/diagnostics")
+            .and_then(|d| d.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|d| d.get("message").and_then(|m| m.as_str()).map(String::from))
+            .collect()
+    };
+    client.did_open_and_wait("untitled:nofile_a.silt", "pub fn pinger(x) { x }\n");
+    let importer = client.did_open_and_wait(
+        "untitled:nofile_b.silt",
+        "import nofile_a\nfn other() { nofile_a.pinger(2) }\n",
+    );
+    assert_eq!(errors(&importer), Vec::<String>::new());
+    // `Cargo.toml` is in the server's working directory; a module is a
+    // `.silt` file, and `tests` is a directory there: neither is read.
+    let alone = client.did_open_and_wait(
+        "untitled:nofile_c.silt",
+        "import nofile_missing\nfn other() { nofile_missing.f() }\n",
+    );
+    assert!(
+        errors(&alone).iter().any(|m| m.contains(
+            "no open document named 'nofile_missing' beside this one \
+             (an unsaved document reads no files)"
+        )),
+        "got {alone}"
+    );
+    // The path the server made up for the document is shown to nobody.
+    assert!(!alone.to_string().contains("unsaved/"), "got {alone}");
+    client.shutdown();
+}
+
+/// `/x/../a.silt` and `/a.silt` are one document's path.
+#[test]
+fn dot_segments_of_a_file_uri_are_resolved() {
+    let mut client = LspClient::spawn();
+    let dir = format!("file:///silt_no_such_dir_{}_dots", std::process::id());
+    client.did_open_and_wait(
+        &format!("{dir}/sub/../dots_a.silt"),
+        "pub fn pinger(x) { x }\n",
+    );
+    let importer = client.did_open_and_wait(
+        &format!("{dir}/./dots_b.silt"),
+        "import dots_a\nfn other() { dots_a.pinger(2) }\n",
+    );
+    let diagnostics = importer
+        .pointer("/params/diagnostics")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(diagnostics.is_empty(), "got {importer}");
+    client.shutdown();
+}
+
 #[test]
 fn rename_returns_workspace_edit() {
     let mut client = LspClient::spawn();
@@ -84,9 +241,12 @@ fn rename_returns_workspace_edit() {
     let file_b = "file:///tmp/silt_wspace_rn_b.silt";
     client.did_open_and_wait(
         file_a,
-        "fn renamed_target() { 0 }\nfn main() { renamed_target() }\n",
+        "pub fn renamed_target() { 0 }\nfn main() { renamed_target() }\n",
     );
-    client.did_open_and_wait(file_b, "fn caller() { renamed_target() }\n");
+    client.did_open_and_wait(
+        file_b,
+        "import silt_wspace_rn_a.{ renamed_target }\nfn caller() { renamed_target() }\n",
+    );
 
     // Click on the `renamed_target` call at line 1 (inside main's body).
     let resp = client.request(

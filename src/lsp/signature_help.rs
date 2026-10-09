@@ -325,14 +325,12 @@ pub(super) fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::Span;
 
     // ── build_signature_from_def ─────────────────────────────────
 
     #[test]
     fn test_build_signature_simple() {
         let def = DefInfo {
-            span: Span::point(crate::source::FileId::default(), 0),
             ty: Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
             params: vec!["a".into(), "b".into()],
             doc: None,
@@ -346,7 +344,6 @@ mod tests {
     #[test]
     fn test_build_signature_no_type() {
         let def = DefInfo {
-            span: Span::point(crate::source::FileId::default(), 0),
             ty: None,
             params: vec!["x".into(), "y".into()],
             doc: None,

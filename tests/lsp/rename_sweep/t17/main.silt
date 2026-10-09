@@ -1,0 +1,67 @@
+import list
+
+fn loopy(n: Int) -> Int {
+  loop n = n + 1, acc = n {
+    match n > 5 {
+      true -> acc + n
+      false -> loop(n + 1, acc + 1)
+    }
+  }
+}
+
+fn after(n: Int) -> Int {
+  let r = loop n = 0 {
+    match n {
+      3 -> n
+      _ -> loop(n + 1)
+    }
+  }
+  r + n
+}
+
+fn lam(n: Int) -> Int {
+  let f = { n -> { n -> n + 1 }(n) + n }
+  let g = { m -> match m {
+    0 -> n
+    n -> n + m
+  } }
+  f(n) + g(n) + g(0)
+}
+
+fn arms(x: Option(Int), y: Int) -> Int {
+  let z = match x {
+    Some(y) when y > 1 -> y
+    Some(_) -> y
+    None -> y + 1
+  }
+  z + y
+}
+
+fn guardpin(x: Int, y: Int) -> Int {
+  match (x, y) {
+    (y, ^y) -> y
+    (x, _) when x > y -> x
+    _ -> y
+  }
+}
+
+fn interp(n: Int) -> String {
+  let s = "{ { n -> n + 1 }(n) } {n} { match n {
+    0 -> "z{n}"
+    n -> "{n}"
+  } }"
+  s
+}
+
+fn pipes(xs: List(Int), n: Int) -> Int {
+  xs
+  |> list.map { x -> x + n }
+  |> list.filter { n -> n > 1 }
+  |> list.fold(n) { n, x -> n + x }
+}
+
+fn main() {
+  println(loopy(1) + after(10) + lam(2) + arms(Some(5), 1) + arms(None, 1) + guardpin(2, 2) + guardpin(3, 1))
+  println(interp(4))
+  println(pipes([1, 2, 3], 1))
+}

@@ -1,0 +1,52 @@
+type Meters {
+  Meters(Int),
+}
+
+type Box(a) {
+  item: a,
+}
+
+type Wide = Box(Meters)
+
+trait Container {
+  type Item
+  fn unwrap(self) -> Self::Item
+}
+
+trait Container for Box(a) {
+  type Item = a
+  fn unwrap(self) -> Self::Item {
+    self.item
+  }
+}
+
+trait Container for Meters {
+  type Item = Int
+  fn unwrap(self) -> <Meters as Container>::Item {
+    match self {
+      Meters(n) -> n
+    }
+  }
+}
+
+fn apply(f: Fn(Meters) -> Meters, pair: (Meters, Int)) -> {m: Meters, n: Int} {
+  let (m, n) = pair
+  { m: f(m), n: n }
+}
+
+fn get(c: t) -> <t as Container>::Item where t: Container {
+  c.unwrap()
+}
+
+fn main() {
+  let w: Wide = Box { item: Meters(2) }
+  let g = { x: Meters -> x }
+  let r = apply(g, (w.unwrap(), 3))
+  let v: List(Meters) = [r.m]
+  let k = (Meters(4) as Meters)
+  println(get(k) + get(Box { item: 1 }) + r.n)
+  match v {
+    [Meters(q)] -> println(q)
+    _ -> println(0)
+  }
+}

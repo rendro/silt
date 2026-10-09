@@ -97,6 +97,9 @@ channels and function values are the exception — they do not implement
 
 Escape literal braces with backslash: `"\{not interpolation}"`.
 
+The expression between the braces may span lines, and a line break may
+stand in front of the closing brace.
+
 ### Triple-Quoted Strings
 
 No escape processing, no interpolation, indentation stripping:
@@ -178,6 +181,11 @@ fn sum(xs) {
   }
 }
 ```
+
+The initial values are read where the `loop` stands, all of them, before
+any of the loop's names exists: in `loop n = n + 1, acc = n` both `n` on
+the right are the one outside, as the arguments of `loop(...)` are the
+values of the round before. The loop's names are known in its body only.
 
 When the body produces a value without calling `loop(...)`, that value is the
 result of the entire expression. `loop` is composable -- you can bind its

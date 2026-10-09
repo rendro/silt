@@ -1,0 +1,13 @@
+import geo.{
+  mk,
+  Shape,
+  Box,
+}
+
+pub fn fa() -> Int {
+  let s: Shape = Box(mk(1))
+  match s {
+    Box(n) -> n
+    _ -> 0
+  }
+}

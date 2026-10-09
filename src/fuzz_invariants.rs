@@ -35,8 +35,8 @@ use crate::source::Span;
 /// 5. The final `Eof` span offset equals the source length in bytes
 ///    (the lexer consumed everything).
 /// 6. The comment ranges of the tokens follow each other and leave no
-///    comment out, a newline token has none, and each comment lies
-///    between the token before it and the token that carries it.
+///    comment out, and each comment lies between the token before it
+///    and the token that carries it.
 pub fn check_lexer_invariants(source: &str, lexed: &Lexed) -> Result<(), String> {
     let tokens = &lexed.tokens;
     if tokens.is_empty() {
@@ -100,12 +100,6 @@ pub fn check_lexer_invariants(source: &str, lexed: &Lexed) -> Result<(), String>
     let mut next_comment = 0;
     let mut floor = 0;
     for (idx, tok) in tokens.iter().enumerate() {
-        if tok.kind == Token::Newline {
-            if !tok.comments.is_empty() || tok.newlines_before != 0 {
-                return Err(format!("newline token at index {idx} carries trivia"));
-            }
-            continue;
-        }
         if tok.comments.start != next_comment || tok.comments.end < tok.comments.start {
             return Err(format!(
                 "token {:?} at index {idx} has comments {:?}, expected a range from {next_comment}",
@@ -151,17 +145,12 @@ pub fn check_lexer_invariants(source: &str, lexed: &Lexed) -> Result<(), String>
     Ok(())
 }
 
-/// The tokens that a declaration is made of: all but `Newline`, `Eof`
-/// and the parentheses.
+/// The tokens that a declaration is made of: all but `Eof` and the
+/// parentheses.
 fn significant_token_count(tokens: &[Tok]) -> usize {
     tokens
         .iter()
-        .filter(|tok| {
-            !matches!(
-                tok.kind,
-                Token::Newline | Token::Eof | Token::LParen | Token::RParen
-            )
-        })
+        .filter(|tok| !matches!(tok.kind, Token::Eof | Token::LParen | Token::RParen))
         .count()
 }
 
@@ -190,7 +179,7 @@ fn decl_span(decl: &Decl) -> Span {
 ///    slip past the other invariants — the fuzzer can't see AST fields
 ///    directly, but it can see a panic on this assertion.
 /// 2. If the source contains any "significant" token (excluding
-///    `Newline`, `Eof`, `LParen`, `RParen`), then `program.decls` must
+///    `Eof`, `LParen`, `RParen`), then `program.decls` must
 ///    be non-empty. A parser bug that silently drops every top-level
 ///    construct would otherwise produce an empty-but-Ok program.
 ///    Conversely, empty/whitespace-only source must yield zero decls.

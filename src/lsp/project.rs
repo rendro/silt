@@ -56,10 +56,14 @@ pub(super) struct Project {
 
 impl Project {
     pub(super) fn new(dir: &Path) -> Project {
+        // A directory that is not on disk (two unsaved documents, a URI
+        // whose path this platform has no directory for) has no manifest
+        // to look for: its documents are the modules of an unnamed
+        // package, so that they import each other as files there would.
         let project = if dir.is_dir() {
             ProjectSetup::Discover(dir.to_path_buf())
         } else {
-            ProjectSetup::None
+            ProjectSetup::Script(dir.to_path_buf())
         };
         let config = Config {
             project,
@@ -118,6 +122,25 @@ impl Project {
         self.texts_given += 1;
         let file = self.session.set_overlay(path, text.to_string());
         Some(self.session.module_of(file))
+    }
+
+    /// Check the workspace file at `path`, which is not open, as an
+    /// entry, unless the session has checked it: a query needs what its
+    /// names mean. Its stamp is recorded, as for every file the session
+    /// reads from disk.
+    pub(super) fn check_file(&mut self, path: &Path) {
+        let checked = self
+            .session
+            .graph()
+            .module_at(path)
+            .is_some_and(|id| self.session.module_analysis(id).is_some());
+        if checked {
+            return;
+        }
+        if let Ok(file) = self.session.open(path) {
+            self.session.analyze(file);
+            self.disk.insert(path.to_path_buf(), stamp_of(path));
+        }
     }
 
     /// Whether the session has a module for the file at `path`.

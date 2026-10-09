@@ -91,9 +91,22 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
     }
 }
 
-/// The path a document's URI names.
+/// The path a document's URI names. A URI that names no file by a
+/// rooted path (`untitled:wb.silt`, `file:wb.silt`) gets a path that no
+/// file has, by its scheme and its own path: such a document is never
+/// read from disk and reads nothing from it; it sees the other open
+/// documents of its scheme and directory.
 pub(super) fn uri_to_path(uri: &Uri) -> PathBuf {
-    super::file_uri_to_path(uri.as_str()).unwrap_or_else(|| PathBuf::from(uri.path().as_str()))
+    match super::file_uri_to_path(uri.as_str()) {
+        Some(path) if path.has_root() => path,
+        _ => {
+            let (scheme, rest) = uri.as_str().split_once(':').unwrap_or(("", uri.as_str()));
+            // No file name holds a NUL: nothing on disk is at this path.
+            PathBuf::from("\0unsaved")
+                .join(scheme)
+                .join(rest.trim_start_matches('/'))
+        }
+    }
 }
 
 impl Server {
@@ -204,6 +217,8 @@ impl Server {
         if self.pending.is_empty() && self.disk_events.is_empty() {
             return;
         }
+        // What the last queries learned was true of the texts before.
+        self.def_uses = None;
         let pending = std::mem::take(&mut self.pending);
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(self, &pending)));
         if let Err(payload) = outcome {

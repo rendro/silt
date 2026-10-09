@@ -381,10 +381,7 @@ fn find_ident_in_fn_signature(f: &FnDecl, cursor: usize, best: &mut Option<Symbo
 /// nominal-record HEAD names (`Circle(r)`, `Point { x }`) so that
 /// goto-def / references / rename resolve cursors on user type and
 /// variant references in pattern position. Stdlib heads (`Some`, `Ok`,
-/// `IoNotFound`, ...) now resolve to their `Symbol` too; the rename
-/// gate (`is_symbol_user_renameable_at_cursor` →
-/// `is_user_renameable`) still rejects them, so prepareRename keeps
-/// producing a clean `null` for builtins.
+/// `IoNotFound`, ...) resolve to their `Symbol` too.
 fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Symbol>) {
     match &pattern.kind {
         PatternKind::Ident(name) => {

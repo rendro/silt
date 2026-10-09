@@ -1,0 +1,42 @@
+fn nested(n: Int) -> Int {
+  let r = {
+    let n = n * 2
+    n + 1
+  }
+  n + r
+}
+
+fn arm(n: Int) -> Int {
+  let r = match n {
+    0 -> {
+      let n = 5
+      n
+    }
+    _ -> 1
+  }
+  n + r
+}
+
+fn lam(n: Int) -> Int {
+  let f = { k ->
+    let n = k + 1
+    n
+  }
+  n + f(1)
+}
+
+fn call(n: Int) -> Int {
+  let r = id({
+    let n = n * 3
+    n
+  })
+  n + r
+}
+
+fn id(v: Int) -> Int {
+  v
+}
+
+fn main() {
+  println(nested(1) + arm(0) + lam(2) + call(3))
+}

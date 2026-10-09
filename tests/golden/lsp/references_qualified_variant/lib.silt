@@ -1,0 +1,4 @@
+pub type Round {
+  Circle(Int),
+  Dot,
+}

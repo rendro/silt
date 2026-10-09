@@ -1,0 +1,5 @@
+import mathutil.{ double }
+
+pub fn tool2() -> Int {
+  double(2)
+}

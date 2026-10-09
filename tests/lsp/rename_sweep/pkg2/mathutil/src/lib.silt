@@ -1,0 +1,5 @@
+import inner
+
+pub fn double(x: Int) -> Int {
+  inner.twice(x)
+}

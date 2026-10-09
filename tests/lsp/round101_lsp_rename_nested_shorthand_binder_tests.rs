@@ -29,7 +29,7 @@
 //! These tests drive the live LSP server over stdio (the real execution
 //! path), apply the returned WorkspaceEdit, and assert the binder IS
 //! edited, the constructor head is NOT, and the applied result still
-//! lexes and parses (see `assert_parses` for why the gate is not a full
+//! lexes and parses (see `assert_checks` for why the gate is not a full
 //! typecheck). Uses the shared LSP client in `support.rs`.
 
 use serde_json::{Value, json};
@@ -71,25 +71,24 @@ fn apply_edits(text: &str, edits: &[Value]) -> String {
     lines.join("\n")
 }
 
-/// The applied rename result must still lex and parse — the pre-fix bug
-/// clobbered the constructor head token, corrupting the pattern's very
-/// shape. Deliberately NOT a full typecheck gate: renaming a SHORTHAND
-/// binder (`{ x }`) to a name that is not a field of the record
-/// legitimately fails the typechecker's field check afterwards ("record
-/// 'Point' has no field 'w'") — the binder name IS the field name in
-/// shorthand form, and the LSP performs a token-level rename by design.
-/// The round-100 flat-case lock
-/// (tests/lsp/round100_lsp_rename_record_shorthand_binder_tests.rs) draws
-/// the same line: it asserts the edited strings, not typechecking. The
-/// string-containment assertions in each test below pin the semantic
-/// outcome; this gate pins structural integrity.
-fn assert_parses(applied: &str) {
-    let tokens = silt::lexer::Lexer::new(silt::source::FileId::default(), applied)
-        .tokenize()
-        .unwrap_or_else(|e| panic!("applied rename result no longer lexes: {e:?}\n{applied}"));
-    silt::parser::Parser::new(tokens, applied)
-        .parse_program()
-        .unwrap_or_else(|e| panic!("applied rename result no longer parses: {e:?}\n{applied}"));
+/// The renamed program checks: the field keeps its name and the binder
+/// gets the new one (`x: w`), so the result is the same program.
+fn assert_checks(applied: &str) {
+    let dir = std::env::temp_dir().join(format!("silt_r101_shorthand_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("case_{}.silt", applied.len()));
+    std::fs::write(&file, applied).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("check")
+        .arg(&file)
+        .output()
+        .expect("run silt check");
+    assert!(
+        out.status.success(),
+        "the renamed program does not check:\n{}\n{applied}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Exact repro from the round-101 finding: rename `x` (from its use inside
@@ -157,7 +156,7 @@ fn rename_shorthand_binder_after_nested_subpattern_in_match_arm() {
     // and the result still typechecks.
     let applied = apply_edits(text, edits);
     assert!(
-        applied.contains("Point { a: Inner { y }, w } -> println(\"{w + y}\")"),
+        applied.contains("Point { a: Inner { y }, x: w } -> println(\"{w + y}\")"),
         "binder and use must be renamed with `Point`/`Inner` intact; got:\n{applied}"
     );
     assert!(
@@ -168,7 +167,7 @@ fn rename_shorthand_binder_after_nested_subpattern_in_match_arm() {
         !applied.contains("w { a: Inner"),
         "the constructor head must NOT be clobbered; got:\n{applied}"
     );
-    assert_parses(&applied);
+    assert_checks(&applied);
     client.shutdown();
 }
 
@@ -212,7 +211,7 @@ fn rename_shorthand_binder_after_nested_subpattern_in_let_destructure() {
 
     let applied = apply_edits(text, edits);
     assert!(
-        applied.contains("let Point { a: Inner { y }, w } = Point { a: Inner { y: 2 }, x: 1 }"),
+        applied.contains("let Point { a: Inner { y }, x: w } = Point { a: Inner { y: 2 }, x: 1 }"),
         "binder renamed, heads and the RHS `x: 1` field label intact; got:\n{applied}"
     );
     assert!(
@@ -223,7 +222,7 @@ fn rename_shorthand_binder_after_nested_subpattern_in_let_destructure() {
         !applied.contains("w { a: Inner"),
         "the constructor head must NOT be clobbered; got:\n{applied}"
     );
-    assert_parses(&applied);
+    assert_checks(&applied);
     client.shutdown();
 }
 

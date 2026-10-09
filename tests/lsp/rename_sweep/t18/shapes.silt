@@ -1,0 +1,4 @@
+pub type Shape {
+  Dot,
+  Box(Int),
+}

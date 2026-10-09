@@ -1,0 +1,25 @@
+trait Scale {
+  fn scale(self, by: Int) -> Int {
+    self.size() * by
+  }
+  fn size(self) -> Int
+}
+
+type Box {
+  w: Int,
+}
+
+trait Scale for Box {
+  fn size(self) -> Int {
+    self.w
+  }
+}
+
+fn twice(x: a) -> Int where a: Scale {
+  x.scale(2) + x.size()
+}
+
+fn main() {
+  let b = Box { w: 3 }
+  println(b.scale(2) + twice(b) + b.size())
+}
