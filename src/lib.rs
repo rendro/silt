@@ -28,6 +28,8 @@ pub mod file_discovery;
 pub mod format;
 pub mod fuzz_invariants;
 pub mod git;
+#[cfg(feature = "http")]
+pub mod http_wire;
 pub mod intern;
 pub mod lexer;
 pub mod lockfile;

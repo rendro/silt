@@ -1,9 +1,11 @@
 //! The `http.*` builtin functions.
 
 use std::collections::BTreeMap;
+#[cfg(feature = "http")]
+use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(feature = "http")]
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "http")]
 use std::time::Duration;
 
@@ -11,9 +13,9 @@ use super::common::value_kind;
 #[cfg(feature = "http")]
 use crate::bytecode::record_type_matches;
 #[cfg(feature = "http")]
-use crate::runtime::handle::TaskHandle;
+use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
-use crate::runtime::sync::{Arm, Wait};
+use crate::runtime::sync::{Arm, Cell, Fired, Wait};
 #[cfg(feature = "http")]
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
@@ -102,12 +104,15 @@ fn extract_http_response(
             name.name
         )));
     }
+    // A status has three digits, and the one of a response is final:
+    // 1xx only announces a response, and a client that got one would
+    // wait for the response itself.
     let status = match fields.get("status") {
         Some(Value::Int(n)) => match u16::try_from(*n) {
-            Ok(s) => s,
-            Err(_) => {
+            Ok(s) if (200..=999).contains(&s) => s,
+            _ => {
                 return Err(VmError::new(format!(
-                    "Response.status out of range: {n} is not a valid HTTP status (0..=65535)"
+                    "Response.status out of range: {n} is not the status of a response (200..=999)"
                 )));
             }
         },
@@ -130,65 +135,6 @@ fn extract_http_response(
         None => return Err(VmError::new("Response.body missing".into())),
     };
     Ok((status, body, fields))
-}
-
-/// Max number of bytes accepted in an HTTP request body by `http.serve`.
-/// 10 MiB — large enough for typical form posts and JSON payloads, small
-/// enough that a single unauthenticated client cannot OOM the server
-/// (HIGH-1). Larger uploads must use chunked/streaming handlers, which
-/// the current API does not expose.
-#[cfg(feature = "http")]
-const HTTP_SERVE_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
-
-/// How long `server.recv_timeout` will block waiting for the next request
-/// before looping. The accept loop re-checks the shutdown flag each time,
-/// so this bounds how long shutdown takes. It does NOT per-connection
-/// cap slow header reads inside tiny_http's internal pool (that is a
-/// library limitation — see HIGH-2 notes).
-#[cfg(feature = "http")]
-const HTTP_SERVE_RECV_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Maximum number of concurrent request handler threads spawned by
-/// `http.serve`. Requests beyond this cap are rejected with HTTP 503
-/// so a slowloris / burst cannot force unbounded thread spawning.
-#[cfg(feature = "http")]
-const HTTP_SERVE_MAX_CONCURRENT_HANDLERS: usize = 128;
-
-/// Extract a silt Response record and send it as an HTTP response.
-/// Used by the per-request handler threads in `http.serve`.
-#[cfg(feature = "http")]
-fn send_http_response(io: &crate::vm::HostIo, response_val: &Value, req: tiny_http::Request) {
-    match extract_http_response(response_val) {
-        Ok((status, resp_body, resp_fields)) => {
-            let mut response = tiny_http::Response::from_string(&resp_body)
-                .with_status_code(tiny_http::StatusCode(status));
-
-            if let Some(Value::Map(resp_headers)) = resp_fields.get("headers") {
-                for (k, v) in resp_headers.iter() {
-                    if let (Value::String(key), Value::String(val)) = (k, v)
-                        && let Ok(header) =
-                            tiny_http::Header::from_bytes(key.as_bytes(), val.as_bytes())
-                    {
-                        response = response.with_header(header);
-                    }
-                }
-            }
-
-            let _ = req.respond(response);
-        }
-        Err(e) => {
-            // Security: don't leak VmError contents (call stack, line
-            // numbers, internal function names, possibly-sensitive panic
-            // payloads) over the HTTP wire (MED-1). Log internally,
-            // respond generically.
-            io.err(&format!(
-                "http.serve: handler returned malformed Response: {e}\n"
-            ));
-            let resp = tiny_http::Response::from_string("Internal Server Error")
-                .with_status_code(tiny_http::StatusCode(500));
-            let _ = req.respond(resp);
-        }
-    }
 }
 
 #[cfg(feature = "http")]
@@ -450,135 +396,618 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
     finish_http_response(result, url)
 }
 
-/// Decrements the count of requests in flight when the task of one
-/// ends, however it ends.
-#[cfg(feature = "http")]
-struct Decrement(Arc<AtomicUsize>);
+// ── The server ──────────────────────────────────────────────────────
+//
+// `http.serve` is a frame of the task that calls it ([`Serve`]): it
+// accepts on the listener as `tcp.accept` does, with the same
+// operation, and starts a task for each connection ([`Conn`]). That
+// task reads a request, calls the handler with it, writes what the
+// handler returns, and goes on with the next request of the
+// connection. Every accept, read and write is an operation of the I/O
+// pool that its task waits for, with a deadline where the server has
+// a limit: no thread is the server's, and one that waits for nothing
+// costs nothing. The bytes are read and written by `crate::http_wire`,
+// where every limit of the server is.
 
 #[cfg(feature = "http")]
-impl Drop for Decrement {
+use crate::http_wire as wire;
+
+/// What an `http.serve` and the tasks of its connections share.
+#[cfg(feature = "http")]
+struct Server {
+    handler: Value,
+    /// Whose the tasks of the connections are: whoever serves.
+    owner: u64,
+    /// How many handlers are being called.
+    handlers: AtomicUsize,
+    /// The tasks of the connections that have not ended; `None` once
+    /// the server has ended: no connection goes on then.
+    conns: Mutex<Option<HashMap<usize, Arc<TaskHandle>>>>,
+}
+
+#[cfg(feature = "http")]
+impl Server {
+    /// Count one more handler as being called; `None` at the bound.
+    fn call(self: &Arc<Self>) -> Option<Called> {
+        self.handlers
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |handlers| {
+                (handlers < wire::HANDLERS_MAX).then_some(handlers + 1)
+            })
+            .ok()
+            .map(|_| Called(self.clone()))
+    }
+}
+
+/// A handler that is being called, until this is dropped: when it has
+/// returned or failed, or its task was stopped.
+#[cfg(feature = "http")]
+struct Called(Arc<Server>);
+
+#[cfg(feature = "http")]
+impl Drop for Called {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        self.0.handlers.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
-/// The request of a handler's task, until it is answered.
+/// How the response to a request is sent.
 #[cfg(feature = "http")]
-type Pending = Arc<Mutex<Option<tiny_http::Request>>>;
+#[derive(Clone, Copy)]
+struct Reply {
+    /// The connection is closed after it.
+    close: bool,
+    /// The connection is kept, and the client (HTTP/1.0) is told.
+    keep_alive: bool,
+    /// The request was `HEAD`.
+    head_only: bool,
+}
 
-/// Read the request for the handler: the `Request` value it is called
-/// with. `None` when the request was turned away here (and answered):
-/// a method the server does not know, a body that is too large.
-/// Reading the body blocks, so this runs on the I/O pool.
 #[cfg(feature = "http")]
-fn read_request(pending: &Pending) -> Option<Value> {
-    let mut slot = pending.lock();
-    let mut req = slot.take()?;
-    // Parse the HTTP method
-    let method = match req.method() {
-        tiny_http::Method::Get => bv::GET,
-        tiny_http::Method::Post => bv::POST,
-        tiny_http::Method::Put => bv::PUT,
-        tiny_http::Method::Patch => bv::PATCH,
-        tiny_http::Method::Delete => bv::DELETE,
-        tiny_http::Method::Head => bv::HEAD,
-        tiny_http::Method::Options => bv::OPTIONS,
-        _ => {
-            let resp = tiny_http::Response::from_string("Method Not Allowed")
-                .with_status_code(tiny_http::StatusCode(405));
-            let _ = req.respond(resp);
-            return None;
+impl Reply {
+    /// The last word on a connection that the server ends.
+    const LAST: Reply = Reply {
+        close: true,
+        keep_alive: false,
+        head_only: false,
+    };
+
+    fn then(self) -> Then {
+        match self.close {
+            true => Then::Close,
+            false => Then::Next,
         }
-    };
-
-    // Parse URL into path and query
-    let url = req.url().to_string();
-    let (path, query) = match url.split_once('?') {
-        Some((p, q)) => (p.to_string(), q.to_string()),
-        None => (url, std::string::String::new()),
-    };
-
-    // Collect headers
-    let mut headers = BTreeMap::new();
-    for header in req.headers() {
-        headers.insert(
-            Value::String(header.field.as_str().to_string()),
-            Value::String(header.value.as_str().to_string()),
-        );
     }
-
-    // Fast-reject oversized bodies based on the
-    // declared Content-Length. Prevents a client from
-    // forcing us to consume the whole body just to
-    // discover we'd reject it. (HIGH-1)
-    if let Some(declared) = req.body_length()
-        && declared as u64 > HTTP_SERVE_MAX_BODY_BYTES
-    {
-        let resp = tiny_http::Response::from_string("Payload Too Large")
-            .with_status_code(tiny_http::StatusCode(413));
-        let _ = req.respond(resp);
-        return None;
-    }
-
-    // Read body with a hard cap. `take(N+1)` + length
-    // check lets us detect overrun (e.g. chunked
-    // encoding that lies about total length). (HIGH-1)
-    let mut body_bytes: Vec<u8> = Vec::new();
-    let cap = HTTP_SERVE_MAX_BODY_BYTES;
-    let read_result = std::io::Read::read_to_end(
-        &mut std::io::Read::take(req.as_reader(), cap + 1),
-        &mut body_bytes,
-    );
-    if read_result.is_err() || body_bytes.len() as u64 > cap {
-        let resp = tiny_http::Response::from_string("Payload Too Large")
-            .with_status_code(tiny_http::StatusCode(413));
-        let _ = req.respond(resp);
-        return None;
-    }
-    // The Request API hands us body as a String; we
-    // lossy-convert so non-UTF-8 bodies don't silently
-    // drop. Handlers that need raw bytes should use
-    // a separate API (future work).
-    let body = std::string::String::from_utf8_lossy(&body_bytes).into_owned();
-
-    // Build Request record
-    let request_val = make_http_request_value(method, &path, &query, headers, body);
-    *slot = Some(req);
-    Some(request_val)
 }
 
-/// The task of one request: read it, call the handler with it, send
-/// what the handler returns. The reading and the sending block, so
+/// What a connection does when a response has been sent.
+#[cfg(feature = "http")]
+#[derive(Clone, Copy)]
+enum Then {
+    /// Read the next request.
+    Next,
+    Close,
+    /// Close, when the client has stopped sending: after a refusal
+    /// (see [`wire::REFUSAL_TIME`]).
+    Drain,
+}
+
+/// What a connection gave when the server read it for a request.
+#[cfg(feature = "http")]
+enum Got {
+    /// A request for the handler: the `Request` value.
+    Request(Value, Reply),
+    /// A request of a method that the server does not know: it
+    /// answers itself, with a status and a word.
+    Answered(u16, &'static str, Reply),
+    /// A request that the server refuses, with a status and a word.
+    /// The connection ends with it.
+    Refused(u16, &'static str),
+    /// Nothing more: the client closed the connection, or it broke.
+    End,
+}
+
+#[cfg(feature = "http")]
+impl Got {
+    /// Made on the thread that read the request: a body of megabytes
+    /// is not turned into a string on a worker of the scheduler.
+    fn of(next: wire::Next) -> Got {
+        let request = match next {
+            wire::Next::Request(request) => request,
+            wire::Next::Refused(refused) => return Got::Refused(refused.status, refused.why),
+            wire::Next::End | wire::Next::Broken(_) => return Got::End,
+        };
+        let reply = Reply {
+            close: request.close,
+            keep_alive: request.http10 && !request.close,
+            head_only: request.method == "HEAD",
+        };
+        let method = match request.method.as_str() {
+            "GET" => bv::GET,
+            "POST" => bv::POST,
+            "PUT" => bv::PUT,
+            "PATCH" => bv::PATCH,
+            "DELETE" => bv::DELETE,
+            "HEAD" => bv::HEAD,
+            "OPTIONS" => bv::OPTIONS,
+            _ => return Got::Answered(405, wire::reason(405), reply),
+        };
+        let (path, query) = match request.target.split_once('?') {
+            Some((path, query)) => (path, query),
+            None => (request.target.as_str(), ""),
+        };
+        let mut headers = BTreeMap::new();
+        for (name, value) in request.headers {
+            headers.insert(Value::String(name), Value::String(value));
+        }
+        // The Request API hands the body over as a String: bytes that
+        // are not UTF-8 are replaced, not dropped.
+        let body = std::string::String::from_utf8_lossy(&request.body).into_owned();
+        Got::Request(
+            make_http_request_value(method, path, query, headers, body),
+            reply,
+        )
+    }
+}
+
+/// The read half of a connection, for the reader of its requests.
+#[cfg(feature = "http")]
+struct Reads(Arc<TcpStreamHandle>);
+
+#[cfg(feature = "http")]
+impl std::io::Read for Reads {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+/// What a step of a connection's task completes with when the I/O
+/// pool cannot run it: the connection is closed then.
+#[cfg(feature = "http")]
+fn not_served(_why: crate::vm::IoFailure<'_>) -> Value {
+    Value::Unit
+}
+
+/// The bytes of a response, sent as `reply` says, with the date of
+/// the host's clock.
+#[cfg(feature = "http")]
+fn response_bytes(
+    vm: &Vm,
+    status: u16,
+    headers: &[(String, String)],
+    body: &[u8],
+    reply: Reply,
+) -> Vec<u8> {
+    let now = vm.runtime.io.now().as_secs();
+    let date = i64::try_from(now)
+        .ok()
+        .and_then(|now| chrono::DateTime::from_timestamp(now, 0))
+        .map(|now| now.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
+        .unwrap_or_default();
+    let how = wire::Sending {
+        date: &date,
+        close: reply.close,
+        keep_alive: reply.keep_alive,
+        head_only: reply.head_only,
+    };
+    wire::response(status, headers, body, how)
+}
+
+/// What a body is unless the handler says otherwise.
+#[cfg(feature = "http")]
+const TEXT: &str = "text/plain; charset=UTF-8";
+
+/// A response of the server's own: a status, and a word as its body.
+#[cfg(feature = "http")]
+fn plain_response(vm: &Vm, status: u16, why: &str, reply: Reply) -> Vec<u8> {
+    let headers = [("Content-Type".to_string(), TEXT.to_string())];
+    response_bytes(vm, status, &headers, why.as_bytes(), reply)
+}
+
+/// The response that the handler returned, or 500 if what it returned
+/// is no response.
+#[cfg(feature = "http")]
+fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
+    match extract_http_response(returned) {
+        Ok((status, body, fields)) => {
+            let mut headers = Vec::new();
+            if let Some(Value::Map(given)) = fields.get("headers") {
+                for (name, value) in given.iter() {
+                    if let (Value::String(name), Value::String(value)) = (name, value) {
+                        headers.push((name.clone(), value.clone()));
+                    }
+                }
+            }
+            let typed = |(name, _): &(String, String)| name.eq_ignore_ascii_case("content-type");
+            if wire::has_body(status) && !headers.iter().any(typed) {
+                headers.push(("Content-Type".to_string(), TEXT.to_string()));
+            }
+            response_bytes(vm, status, &headers, body.as_bytes(), reply)
+        }
+        Err(e) => {
+            // Security: don't leak VmError contents (call stack, line
+            // numbers, internal function names, possibly-sensitive panic
+            // payloads) over the HTTP wire (MED-1). Log internally,
+            // respond generically.
+            vm.runtime.io.err(&format!(
+                "http.serve: handler returned malformed Response: {e}\n"
+            ));
+            plain_response(vm, 500, wire::reason(500), reply)
+        }
+    }
+}
+
+/// The task of one connection: read a request, call the handler with
+/// it, send what the handler returns, and go on with the next request
+/// while the connection is kept. The reading and the sending block, so
 /// they run on the I/O pool and the task waits for them like for any
 /// I/O; the handler itself may wait as long as it likes (a long poll)
 /// without holding a thread.
 #[cfg(feature = "http")]
-struct Serve {
-    request: Pending,
-    handler: Value,
+struct Conn {
+    server: Arc<Server>,
     /// The task's own handle: where its failure is read when the
     /// handler fails.
     handle: Arc<TaskHandle>,
+    stream: Arc<TcpStreamHandle>,
+    /// Reads the requests; it holds what was read beyond the end of
+    /// one. Locked by the operation that reads.
+    reader: Arc<Mutex<wire::Reader<Reads>>>,
+    state: ConnState,
+    /// Another task goes on with the connection (see
+    /// [`Conn::go_on_in_a_new_task`]): this one leaves it open.
+    handed_on: bool,
+}
+
+#[cfg(feature = "http")]
+enum ConnState {
+    /// The next request is to be read.
+    Next,
+    /// A request is being read.
+    Reading {
+        op: crate::vm::IoOp,
+        got: Arc<Mutex<Option<Got>>>,
+        /// Its head is there, and its body is being read.
+        in_body: bool,
+    },
+    /// The handler is being called.
+    Calling { reply: Reply, called: Called },
+    /// A response is to be sent.
+    Answering { bytes: Vec<u8>, then: Then },
+    /// A response is being sent.
+    Sending { op: crate::vm::IoOp, then: Then },
+    /// A request was refused: what the client still sends is read and
+    /// dropped.
+    Draining(crate::vm::IoOp),
+    /// The frame has returned.
+    Ended,
+}
+
+#[cfg(feature = "http")]
+impl Conn {
+    /// Read the next request: the task waits for it.
+    ///
+    /// The wait has a deadline, [`wire::REQUEST_TIME`] for the head,
+    /// and when the reader says that the head is there and a body
+    /// follows, a new one for the body ([`wire::TRANSFER_TIME`]). A
+    /// deadline that passes ends the task's wait, and with it the
+    /// read: the connection is shut down (see `IoOp`'s `Drop`).
+    fn read(&mut self, vm: &mut Vm) -> Step {
+        let got: Arc<Mutex<Option<Got>>> = Arc::default();
+        let body_follows: Arc<Cell<()>> = Cell::new();
+        let (reader, stream, stopped) = (
+            self.reader.clone(),
+            self.stream.clone(),
+            self.stream.clone(),
+        );
+        let (result, announced) = (got.clone(), body_follows.clone());
+        let scheduler = vm.scheduler().clone();
+        let op = vm
+            .runtime
+            .io_pool
+            .submit(not_served, move || {
+                let mut before_body = |waits: bool| {
+                    let _ = announced.complete((), scheduler.wake());
+                    match waits {
+                        true => stream.write_all(wire::CONTINUE),
+                        false => Ok(()),
+                    }
+                };
+                let next = reader.lock().next(&mut before_body);
+                *result.lock() = Some(Got::of(next));
+                Value::Unit
+            })
+            .stop_with(move || stopped.shut_down());
+        let wait = Wait::new(vec![Arm::Cell(op.cell.clone()), Arm::Cell(body_follows)])
+            .deadline(vm.runtime.io.deadline_after(wire::REQUEST_TIME));
+        self.state = ConnState::Reading {
+            op,
+            got,
+            in_body: false,
+        };
+        Step::Park(wait)
+    }
+
+    /// Send `bytes`: the task waits until the client has taken them,
+    /// for at most [`wire::TRANSFER_TIME`].
+    fn send(&mut self, vm: &mut Vm, bytes: Vec<u8>, then: Then) -> Step {
+        let (stream, stopped) = (self.stream.clone(), self.stream.clone());
+        let op = vm
+            .runtime
+            .io_pool
+            .submit(not_served, move || {
+                Value::Bool(stream.write_all(&bytes).is_ok())
+            })
+            .stop_with(move || stopped.shut_down());
+        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
+            .deadline(vm.runtime.io.deadline_after(wire::TRANSFER_TIME));
+        self.state = ConnState::Sending { op, then };
+        Step::Park(wait)
+    }
+
+    /// The server has said its last word on the connection, a refusal,
+    /// while the client may still be sending: tell the client that
+    /// nothing more comes, and read what it sends until it stops, for
+    /// at most [`wire::REFUSAL_TIME`]. Then the connection is closed.
+    fn drain(&mut self, vm: &mut Vm) -> Step {
+        let (stream, stopped) = (self.stream.clone(), self.stream.clone());
+        let op = vm
+            .runtime
+            .io_pool
+            .submit(not_served, move || {
+                stream.end_writes();
+                let mut dropped = [0u8; 8 * 1024];
+                while matches!(stream.read(&mut dropped), Ok(n) if n > 0) {}
+                Value::Unit
+            })
+            .stop_with(move || stopped.shut_down());
+        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
+            .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
+        self.state = ConnState::Draining(op);
+        Step::Park(wait)
+    }
+
+    /// The handler failed, and its task with it. The request is
+    /// answered 500, and the connection is as usable as after any
+    /// response: a new task takes it over, sends the answer and goes
+    /// on. `false` if there is none (the server has ended, or the
+    /// program has).
+    fn go_on_in_a_new_task(&mut self, vm: &mut Vm, reply: Reply) -> bool {
+        let id = vm.next_task_id();
+        let handle = Arc::new(TaskHandle::with_owner(id, self.server.owner));
+        {
+            let mut conns = self.server.conns.lock();
+            let Some(conns) = conns.as_mut() else {
+                return false;
+            };
+            conns.remove(&self.handle.id);
+            conns.insert(id, handle.clone());
+        }
+        let mut child = vm.spawn_child();
+        child.spawned = true;
+        child.push_native_frame(Box::new(Conn {
+            server: self.server.clone(),
+            handle: handle.clone(),
+            stream: self.stream.clone(),
+            reader: self.reader.clone(),
+            state: ConnState::Answering {
+                bytes: plain_response(vm, 500, wire::reason(500), reply),
+                then: reply.then(),
+            },
+            handed_on: false,
+        }));
+        // From here the connection is the new task's, which closes it
+        // if it cannot be started.
+        self.handed_on = true;
+        vm.scheduler().submit(id, child, handle).is_ok()
+    }
+}
+
+#[cfg(feature = "http")]
+impl crate::vm::Native for Conn {
+    fn name(&self) -> &str {
+        "http.serve"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        // Every way out that is not a wait or a call ends the task:
+        // the connection is closed when the frame is dropped.
+        let end = Ok(Step::Done(Value::Unit));
+        match std::mem::replace(&mut self.state, ConnState::Ended) {
+            ConnState::Next => Ok(self.read(vm)),
+            ConnState::Reading { op, got, in_body } => match vm.woken()? {
+                // The head is there: the body has its own time.
+                Fired::Arm(1, _) if !in_body => {
+                    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
+                        .deadline(vm.runtime.io.deadline_after(wire::TRANSFER_TIME));
+                    self.state = ConnState::Reading {
+                        op,
+                        got,
+                        in_body: true,
+                    };
+                    Ok(Step::Park(wait))
+                }
+                Fired::Arm(..) => {
+                    drop(op);
+                    let got = got.lock().take();
+                    match got {
+                        Some(Got::Request(request, reply)) => match self.server.call() {
+                            Some(called) => {
+                                self.state = ConnState::Calling { reply, called };
+                                Ok(vm.call(self.server.handler.clone(), [request]))
+                            }
+                            // As many handlers as the server calls at a
+                            // time are being called.
+                            None => {
+                                let bytes = plain_response(vm, 503, wire::reason(503), reply);
+                                Ok(self.send(vm, bytes, reply.then()))
+                            }
+                        },
+                        Some(Got::Answered(status, why, reply)) => {
+                            let bytes = plain_response(vm, status, why, reply);
+                            Ok(self.send(vm, bytes, reply.then()))
+                        }
+                        Some(Got::Refused(status, why)) => {
+                            let bytes = plain_response(vm, status, why, Reply::LAST);
+                            Ok(self.send(vm, bytes, Then::Drain))
+                        }
+                        // Nothing more comes, or nothing could read it.
+                        Some(Got::End) | None => end,
+                    }
+                }
+                // The request did not come in time.
+                Fired::Deadline => end,
+            },
+            ConnState::Calling { reply, called } => {
+                // The handler has returned.
+                drop(called);
+                let bytes = handler_response(vm, &input, reply);
+                // A task that was cancelled meanwhile (the server has
+                // ended) waits for nothing more: the response goes out
+                // as far as the system takes it at once.
+                if self.handle.is_cancelled() {
+                    self.stream.write_now(&bytes);
+                    return end;
+                }
+                Ok(self.send(vm, bytes, reply.then()))
+            }
+            ConnState::Answering { bytes, then } => Ok(self.send(vm, bytes, then)),
+            ConnState::Sending { op, then } => {
+                let sent = matches!(vm.woken()?, Fired::Arm(..))
+                    && matches!(op.take(), Some(Value::Bool(true)));
+                drop(op);
+                match (sent, then) {
+                    (true, Then::Next) => Ok(self.read(vm)),
+                    (true, Then::Drain) => Ok(self.drain(vm)),
+                    // The client did not take the response, or the
+                    // connection ends with it.
+                    (false, _) | (true, Then::Close) => end,
+                }
+            }
+            // The client has stopped sending, or its time is over.
+            ConnState::Draining(op) => {
+                vm.woken()?;
+                drop(op);
+                end
+            }
+            ConnState::Ended => Err(VmError::new(
+                "internal VM error: the task of an HTTP connection was resumed after its end"
+                    .into(),
+            )),
+        }
+    }
+
+    fn abandon(&mut self, vm: &mut Vm) {
+        // The task ends in the middle: the handler failed, or the task
+        // was stopped with the server or with the program. A request
+        // that is in flight is answered; nothing here waits, so the
+        // answer is what the system takes at once.
+        let unavailable = Reply::LAST;
+        match std::mem::replace(&mut self.state, ConnState::Ended) {
+            ConnState::Calling { reply, called } => {
+                drop(called);
+                let failure = match self.handle.try_get() {
+                    Some(Err(e)) if !self.handle.is_cancelled() => Some(e),
+                    _ => None,
+                };
+                let Some(e) = failure else {
+                    let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
+                    self.stream.write_now(&bytes);
+                    return;
+                };
+                // The failure is handled here: it is logged, and not
+                // reported as a task that nobody joined.
+                self.handle.mark_joined();
+                // Security: do NOT include VmError details (call stack,
+                // line numbers, panic payload) in the response body — that
+                // leaks implementation details and potentially sensitive
+                // values across the security boundary (MED-1). Log to the
+                // host's stderr instead.
+                vm.runtime
+                    .io
+                    .err(&format!("http.serve: handler error: {e}\n"));
+                if !self.go_on_in_a_new_task(vm, reply) && !self.handed_on {
+                    let bytes = plain_response(vm, 500, wire::reason(500), unavailable);
+                    self.stream.write_now(&bytes);
+                }
+            }
+            // The answer that a task took over and could not send.
+            ConnState::Answering { bytes, .. } => self.stream.write_now(&bytes),
+            ConnState::Reading { in_body: true, .. } => {
+                let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
+                self.stream.write_now(&bytes);
+            }
+            // Nothing is in flight: between requests, or the response
+            // is on its way.
+            _ => {}
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+impl Drop for Conn {
+    fn drop(&mut self) {
+        if self.handed_on {
+            return;
+        }
+        // An operation in flight first: it is given up with the
+        // connection.
+        self.state = ConnState::Ended;
+        self.stream.shut_down();
+        if let Some(conns) = self.server.conns.lock().as_mut() {
+            conns.remove(&self.handle.id);
+        }
+    }
+}
+
+/// `http.serve` itself, in the task that called it: accept a
+/// connection, start its task, accept the next. It ends when its task
+/// does (cancelled, or dropped at the end of the program), and the
+/// connections with it.
+#[cfg(feature = "http")]
+struct Serve {
+    server: Arc<Server>,
+    listener: Arc<TcpListenerHandle>,
+    /// This server's mark on the listener.
+    token: u64,
+    scheduler: std::sync::Weak<crate::scheduler::Scheduler>,
     state: ServeState,
-    /// The operation that sends the response, while the task waits
-    /// for it.
-    responding: Option<crate::vm::IoOp>,
-    _inflight: Decrement,
+    /// The accept before this one failed: that is said once.
+    failing: bool,
 }
 
 #[cfg(feature = "http")]
 enum ServeState {
     Start,
-    Reading(crate::vm::IoOp),
-    Calling,
-    Responding,
+    /// An accept is in flight: the operation of a `tcp.accept`.
+    Accepting(crate::vm::IoOp),
+    /// An accept failed: the next one comes after
+    /// [`wire::ACCEPT_RETRY`].
+    Retrying,
 }
 
-/// What a step of a request's task completes with when the I/O pool
-/// cannot run it.
 #[cfg(feature = "http")]
-fn not_served(_why: crate::vm::IoFailure<'_>) -> Value {
-    Value::Unit
+impl Serve {
+    /// Start the task of a connection.
+    fn connection(&mut self, vm: &mut Vm, stream: Arc<TcpStreamHandle>) {
+        let id = vm.next_task_id();
+        let handle = Arc::new(TaskHandle::with_owner(id, self.server.owner));
+        if let Some(conns) = self.server.conns.lock().as_mut() {
+            conns.insert(id, handle.clone());
+        }
+        let mut child = vm.spawn_child();
+        child.spawned = true;
+        child.push_native_frame(Box::new(Conn {
+            server: self.server.clone(),
+            handle: handle.clone(),
+            reader: Arc::new(Mutex::new(wire::Reader::new(Reads(stream.clone())))),
+            stream,
+            state: ConnState::Next,
+            handed_on: false,
+        }));
+        // A task that cannot be started (the program has as many as it
+        // may have) is dropped, and its connection closed.
+        let _ = vm.scheduler().submit(id, child, handle);
+    }
 }
 
 #[cfg(feature = "http")]
@@ -587,77 +1016,69 @@ impl crate::vm::Native for Serve {
         "http.serve"
     }
 
-    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        match std::mem::replace(&mut self.state, ServeState::Responding) {
-            ServeState::Start => {
-                let request = self.request.clone();
-                let op =
-                    vm.runtime
-                        .io_pool
-                        .submit(not_served, move || match read_request(&request) {
-                            Some(request_val) => Value::variant(bv::SOME, vec![request_val]),
-                            None => Value::variant(bv::NONE, vec![]),
-                        });
-                let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
-                self.state = ServeState::Reading(op);
-                Ok(Step::Park(wait))
-            }
-            ServeState::Reading(op) => {
+    fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+        match std::mem::replace(&mut self.state, ServeState::Start) {
+            ServeState::Start => {}
+            ServeState::Retrying => {
                 vm.woken()?;
-                match op.cell.get() {
-                    Some(Value::Variant(tag, fields)) if tag.is(bv::SOME) && fields.len() == 1 => {
-                        self.state = ServeState::Calling;
-                        Ok(vm.call(self.handler.clone(), [fields[0].clone()]))
-                    }
-                    // Answered already, or nothing can read it.
-                    _ => Ok(Step::Done(Value::Unit)),
-                }
             }
-            ServeState::Calling => {
-                let request = self.request.clone();
-                let io = vm.runtime.io.clone();
-                let op = vm.runtime.io_pool.submit(not_served, move || {
-                    if let Some(req) = request.lock().take() {
-                        send_http_response(&io, &input, req);
-                    }
-                    Value::Unit
-                });
-                let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
-                self.responding = Some(op);
-                Ok(Step::Park(wait))
-            }
-            ServeState::Responding => {
+            ServeState::Accepting(op) => {
                 vm.woken()?;
-                self.responding = None;
-                Ok(Step::Done(Value::Unit))
+                let accepted = op.take();
+                drop(op);
+                let stream = match &accepted {
+                    Some(Value::Variant(tag, fields)) if tag.is(bv::OK) => match &fields[..] {
+                        [Value::TcpStream(stream)] => Some(stream.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(stream) = stream else {
+                    // No descriptor left, no thread for the accept: the
+                    // server stays, and tries again in a moment.
+                    if !self.failing {
+                        let why = match &accepted {
+                            Some(Value::Variant(_, fields)) if fields.len() == 1 => {
+                                vm.display_value(&fields[0])
+                            }
+                            _ => "no value".to_string(),
+                        };
+                        vm.runtime.io.err(&format!(
+                            "http.serve: cannot accept a connection: {why}; trying again\n"
+                        ));
+                    }
+                    self.failing = true;
+                    self.state = ServeState::Retrying;
+                    let wait = Wait::new(vec![])
+                        .deadline(vm.runtime.io.deadline_after(wire::ACCEPT_RETRY));
+                    return Ok(Step::Park(wait));
+                };
+                self.failing = false;
+                self.connection(vm, stream);
             }
         }
+        let op = super::tcp::accept_op(vm, &self.listener);
+        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+        self.state = ServeState::Accepting(op);
+        Ok(Step::Park(wait))
     }
+}
 
-    fn abandon(&mut self, vm: &mut Vm) {
-        // The handler failed, or the program ended, before the request
-        // was answered.
-        let Some(req) = self.request.lock().take() else {
-            return;
-        };
-        if let Some(Err(e)) = self.handle.try_get()
-            && !self.handle.is_cancelled()
-        {
-            // The failure is handled here: it is logged, and not
-            // reported as a task that nobody joined.
-            self.handle.mark_joined();
-            // Security: do NOT include VmError details (call stack,
-            // line numbers, panic payload) in the response body — that
-            // leaks implementation details and potentially sensitive
-            // values across the security boundary (MED-1). Log to the
-            // host's stderr instead.
-            vm.runtime
-                .io
-                .err(&format!("http.serve: handler error: {e}\n"));
+/// The server ends with the frame of its `http.serve`, however that
+/// ends: its accept is given up as a `tcp.accept` is, the listener is
+/// nobody's again, and the tasks of its connections are cancelled (one
+/// with a request in flight answers 503, see [`Conn`]'s `abandon`).
+#[cfg(feature = "http")]
+impl Drop for Serve {
+    fn drop(&mut self) {
+        self.state = ServeState::Start;
+        self.listener.served_no_more(self.token);
+        let conns = self.server.conns.lock().take();
+        if let (Some(conns), Some(scheduler)) = (conns, self.scheduler.upgrade()) {
+            for handle in conns.values() {
+                scheduler.cancel(handle);
+            }
         }
-        let resp = tiny_http::Response::from_string("Internal Server Error")
-            .with_status_code(tiny_http::StatusCode(500));
-        let _ = req.respond(resp);
     }
 }
 
@@ -666,7 +1087,6 @@ impl crate::vm::Native for Serve {
 /// on which port, is what was written there.
 #[cfg(feature = "http")]
 fn serve(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    let name_for_err = "http.serve";
     if args.len() != 2 {
         return Err(VmError::new(
             "http.serve takes 2 arguments (listener, handler)".into(),
@@ -678,128 +1098,27 @@ fn serve(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
             value_kind(&args[0])
         )));
     };
-    let handler = args[1].clone();
-
-    // The server has a handle of its own to the listening socket.
-    let server = listener
-        .to_std()
-        .map_err(|e| e.to_string())
-        .and_then(|listener| {
-            tiny_http::Server::from_listener(listener, None).map_err(|e| e.to_string())
-        })
-        .map_err(|e| VmError::new(format!("http.serve: cannot serve on the listener: {e}")))?;
-    let server = Arc::new(server);
-
-    // The VM that the VM of each request's task is made from.
-    let mut template_vm = vm.spawn_child();
-    let task_id = vm.next_task_id();
-    let handle = Arc::new(TaskHandle::new(task_id));
-    let serve_handle = handle.clone();
-
-    // Counter of requests in flight. Caps them at
-    // HTTP_SERVE_MAX_CONCURRENT_HANDLERS so bursts / slowloris cannot
-    // force unbounded tasks (HIGH-2).
-    let inflight = Arc::new(AtomicUsize::new(0));
-
-    // Spawn the accept loop on a dedicated OS thread so it doesn't
-    // block a scheduler worker or the main thread. While it serves, a
-    // task that waits for the server is not deadlocked.
-    let serving = vm.scheduler().external();
-    let scheduler = vm.scheduler().clone();
-    // The server ends with the wait of the task that serves: when that
-    // task is cancelled, or dropped at the end of the program, the
-    // accept loop is told to end.
-    // The tasks of the requests belong to whoever serves.
-    let owner = vm.scheduler().current_owner();
-    let stopped = Arc::new(AtomicBool::new(false));
-    let stop = StopServer(server.clone(), stopped.clone());
-    std::thread::spawn(move || {
-        let _serving = serving;
-        loop {
-            if stopped.load(Ordering::SeqCst) {
-                break;
-            }
-            // Use recv_timeout so the accept loop periodically
-            // unblocks and can notice a shutdown. Note: this
-            // does NOT per-connection bound the time tiny_http
-            // spends reading headers from a slow client — tiny_http
-            // does that inside its internal task pool and doesn't
-            // expose the TcpStream to let us call
-            // set_read_timeout. The concurrent-handler cap below
-            // bounds the blast radius. (HIGH-2)
-            let req = match server.recv_timeout(HTTP_SERVE_RECV_TIMEOUT) {
-                Ok(Some(req)) => req,
-                Ok(None) => continue, // timeout, re-loop
-                Err(_) => break,      // server shut down
-            };
-
-            // Enforce concurrency cap. If we're at the cap, fast-reject
-            // with 503 instead of starting another task.
-            if inflight.load(Ordering::Acquire) >= HTTP_SERVE_MAX_CONCURRENT_HANDLERS {
-                let resp = tiny_http::Response::from_string("Service Unavailable")
-                    .with_status_code(tiny_http::StatusCode(503));
-                let _ = req.respond(resp);
-                continue;
-            }
-
-            // Each accepted request is handled by a task of its own.
-            inflight.fetch_add(1, Ordering::AcqRel);
-            let id = template_vm.next_task_id();
-            let task_handle = Arc::new(TaskHandle::with_owner(id, owner));
-            let request = Arc::new(Mutex::new(Some(req)));
-            let mut request_vm = template_vm.spawn_child();
-            request_vm.spawned = true;
-            request_vm.push_native_frame(Box::new(Serve {
-                request: request.clone(),
-                handler: handler.clone(),
-                handle: task_handle.clone(),
-                state: ServeState::Start,
-                responding: None,
-                _inflight: Decrement(inflight.clone()),
-            }));
-            let submitted = scheduler.submit(id, request_vm, task_handle);
-            // The program is ending: the request is turned away.
-            if submitted.is_err()
-                && let Some(req) = request.lock().take()
-            {
-                let resp = tiny_http::Response::from_string("Service Unavailable")
-                    .with_status_code(tiny_http::StatusCode(503));
-                let _ = req.respond(resp);
-            }
-        }
-        // Accept loop ended (server shut down) — complete the handle.
-        serve_handle.complete(Ok(Value::Unit), scheduler.wake());
-    });
-
-    // The caller waits until the server shuts down.
-    let wait = Wait::new(vec![Arm::Cell(handle.done())]);
-    Ok(vm.park(name_for_err, wait, move |_, _| {
-        // Owned by the frame that waits: see `StopServer`.
-        let _ = &stop;
-        match handle.try_get() {
-            Some(Err(mut inner)) => {
-                inner.message = format!("{name_for_err} failed: {}", inner.message);
-                Err(inner)
-            }
-            Some(Ok(value)) => Ok(Step::Done(value)),
-            None => Err(VmError::new(format!(
-                "internal VM error: {name_for_err} ended before its server"
-            ))),
-        }
-    }))
-}
-
-/// Ends a server's accept loop when it is dropped: the loop reads the
-/// flag before each `recv`, and a `recv` that waits returns.
-#[cfg(feature = "http")]
-struct StopServer(Arc<tiny_http::Server>, Arc<AtomicBool>);
-
-#[cfg(feature = "http")]
-impl Drop for StopServer {
-    fn drop(&mut self) {
-        self.1.store(true, Ordering::SeqCst);
-        self.0.unblock();
-    }
+    // The listener is this server's alone while it serves: two that
+    // accept on one listener would take each other's connections.
+    let Some(token) = listener.serve(vm.cancelled.clone()) else {
+        return Err(VmError::new(
+            "http.serve: the listener is already served by another http.serve".into(),
+        ));
+    };
+    Ok(Step::Run(Box::new(Serve {
+        server: Arc::new(Server {
+            handler: args[1].clone(),
+            // The tasks of the connections belong to whoever serves.
+            owner: vm.scheduler().current_owner(),
+            handlers: AtomicUsize::new(0),
+            conns: Mutex::new(Some(HashMap::new())),
+        }),
+        listener: listener.clone(),
+        token,
+        scheduler: Arc::downgrade(vm.scheduler()),
+        state: ServeState::Start,
+        failing: false,
+    })))
 }
 
 /// Dispatch `http.<name>(args)`.
@@ -1029,18 +1348,20 @@ mod http_response_tests {
     }
 
     #[test]
-    fn test_response_status_at_u16_max_ok() {
-        let val = make_response(65535);
-        let result = extract_http_response(&val);
-        assert!(result.is_ok(), "status 65535 should be accepted");
-        assert_eq!(result.unwrap().0, 65535);
-    }
-
-    #[test]
-    fn test_response_status_zero_ok() {
-        let val = make_response(0);
-        let result = extract_http_response(&val);
-        assert!(result.is_ok(), "status 0 should be accepted");
-        assert_eq!(result.unwrap().0, 0);
+    fn test_response_status_bounds() {
+        for status in [200, 404, 599, 999] {
+            let val = make_response(status);
+            assert_eq!(extract_http_response(&val).unwrap().0 as i64, status);
+        }
+        // 1xx is no final status; a status has three digits.
+        for status in [0, 100, 101, 199, 1000, 65535] {
+            let val = make_response(status);
+            let err = extract_http_response(&val).unwrap_err();
+            assert!(
+                err.message.contains("out of range"),
+                "{status}: {}",
+                err.message
+            );
+        }
     }
 }

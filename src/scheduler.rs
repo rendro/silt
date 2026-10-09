@@ -490,7 +490,13 @@ impl Scheduler {
     ///
     /// Returns an error if the live-task count has reached the
     /// scheduler's hard task limit.
-    pub(crate) fn submit(&self, id: usize, vm: Vm, handle: Arc<TaskHandle>) -> Result<(), String> {
+    pub(crate) fn submit(
+        &self,
+        id: usize,
+        mut vm: Vm,
+        handle: Arc<TaskHandle>,
+    ) -> Result<(), String> {
+        vm.cancelled = Some(handle.cancel_flag());
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
         }

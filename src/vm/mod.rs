@@ -107,6 +107,10 @@ pub struct Vm {
     pub(crate) woken: Option<Fired>,
     /// True for the VM of a task made by `task.spawn`.
     pub(crate) spawned: bool,
+    /// The cancel flag of the task this is the VM of; `None` for the
+    /// VM that runs the program itself. Set when the task is started
+    /// (`Scheduler::submit`).
+    pub(crate) cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Scoped deadline in effect for this task, as a reading of the
     /// host clock ([`Clock::monotonic`]). Set by
     /// `task.deadline(dur, fn)` for the duration of the callback; a
@@ -289,6 +293,7 @@ impl Vm {
             next_task_id: Arc::new(AtomicU64::new(0)),
             woken: None,
             spawned: false,
+            cancelled: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
@@ -430,6 +435,7 @@ impl Vm {
             next_task_id: self.next_task_id.clone(),
             woken: None,
             spawned: false,
+            cancelled: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),

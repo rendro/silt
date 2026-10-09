@@ -286,6 +286,25 @@ fn main() {
 #[test]
 #[cfg(all(target_os = "linux", feature = "test-hooks"))]
 fn an_idle_accept_is_not_woken() {
+    an_idle_acceptor_is_not_woken("", "tcp.accept(listener)");
+}
+
+/// A server that nobody connects to costs as little: `http.serve` is
+/// an accept on the listener and nothing else, with no thread of its
+/// own and nothing that wakes now and then to look.
+#[test]
+#[cfg(all(target_os = "linux", feature = "test-hooks", feature = "http"))]
+fn an_idle_server_is_not_woken() {
+    an_idle_acceptor_is_not_woken(
+        "import http",
+        r#"http.serve(listener) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }"#,
+    );
+}
+
+/// A task runs `acceptor` on `listener`, and nothing connects to it:
+/// see [`an_idle_accept_is_not_woken`].
+#[cfg(all(target_os = "linux", feature = "test-hooks"))]
+fn an_idle_acceptor_is_not_woken(imports: &str, acceptor: &str) {
     use crate::port_file::PortFile;
 
     /// (voluntary context switches, nanoseconds on a CPU) of a thread.
@@ -310,13 +329,14 @@ fn an_idle_accept_is_not_woken() {
     let control = PortFile::new();
     let source = format!(
         r#"
+{imports}
 import io
 import task
 import tcp
 
 fn main() {{
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
-  let acceptor = task.spawn {{ -> tcp.accept(listener) }}
+  let acceptor = task.spawn {{ -> {acceptor} }}
   -- Until the test connects here, nothing happens.
   when let Ok(control) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
   when let Ok(_) = io.write_file("{control_path}", "{{tcp.local_port(control)}}\n") else {{

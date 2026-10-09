@@ -1,0 +1,52 @@
+-- timeout: 120
+-- requires-feature: http
+-- A server is cancelled, and the program accepts on the listener
+-- itself: the listener is the program's again at once, and the first
+-- connection the accept gets is the client's, 200 times. (A server
+-- with an accept of its own left the connection that woke its accept
+-- in the listener: the program's accept got that one, with nobody at
+-- its other end.)
+import bytes
+import http
+import list
+import task
+import tcp
+
+fn main() {
+  let bad = 1..200 |> list.fold(0) { bad, round ->
+    when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+    let port = tcp.local_port(listener)
+    let server = task.spawn { ->
+      http.serve(listener) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }
+    }
+    let _ = http.get("http://127.0.0.1:{port}/")
+    task.cancel(server)
+    let client = task.spawn { ->
+      when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+      let _ = tcp.write(conn, bytes.from_string("hello"))
+      let echoed = tcp.read_exact(conn, 5)
+      tcp.close(conn)
+      echoed
+    }
+    let got = match tcp.accept(listener) {
+      Ok(conn) -> match tcp.read_exact(conn, 5) {
+        Ok(hello) -> {
+          let _ = tcp.write(conn, hello)
+          tcp.close(conn)
+          "a client"
+        }
+        Err(e) -> "a connection that says nothing: {e.message()}"
+      }
+      Err(e) -> "no connection: {e.message()}"
+    }
+    let _ = task.join(client)
+    match got {
+      "a client" -> bad
+      _ -> {
+        println("round {round}: the accept got {got}")
+        bad + 1
+      }
+    }
+  }
+  println("{bad} of 200 accepts got something else than the client")
+}

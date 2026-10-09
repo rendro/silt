@@ -61,12 +61,26 @@ impl ReadWrite for std::net::TcpStream {
 /// address, drops it and ends. One accept at a time is in the OS call
 /// (the others wait their turn here), so the connection that wakes
 /// reaches the accept it is meant for.
+///
+/// `http.serve` accepts in the same way, and has the listener to
+/// itself while it serves ([`TcpListenerHandle::serve`]).
 pub struct TcpListenerHandle {
     pub id: usize,
     listener: std::net::TcpListener,
     accepting: Mutex<Accepting>,
     /// The accepts that wait their turn wait here.
     turn: parking_lot::Condvar,
+    /// The `http.serve` that has the listener to itself.
+    served: Mutex<Option<Served>>,
+}
+
+/// The mark of an `http.serve` on its listener.
+struct Served {
+    /// Which call of `http.serve` it is.
+    token: u64,
+    /// The cancel flag of the task that serves; `None` for the
+    /// program's own thread.
+    cancelled: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Default)]
@@ -89,6 +103,7 @@ impl TcpListenerHandle {
             listener,
             accepting: Mutex::default(),
             turn: parking_lot::Condvar::new(),
+            served: Mutex::new(None),
         }
     }
 
@@ -97,10 +112,51 @@ impl TcpListenerHandle {
         self.listener.local_addr()
     }
 
-    /// Another handle to the listening socket, for a server that
-    /// accepts on it itself (`http.serve`).
-    pub fn to_std(&self) -> std::io::Result<std::net::TcpListener> {
-        self.listener.try_clone()
+    /// Whether an `http.serve` has the listener to itself: nothing
+    /// else accepts on it then.
+    ///
+    /// A server whose task has been cancelled counts no longer, even
+    /// before that task has ended: who cancels a server and at once
+    /// accepts on its listener, or serves it again, is not refused.
+    /// (The accept of the old server is given up when its task ends,
+    /// and a connection that reached it is kept for the next accept,
+    /// as after any accept that was given up.)
+    pub fn is_served(&self) -> bool {
+        self.served.lock().as_ref().is_some_and(|served| {
+            !served
+                .cancelled
+                .as_ref()
+                .is_some_and(|cancelled| cancelled.load(AtomicOrdering::SeqCst))
+        })
+    }
+
+    /// An `http.serve` takes the listener for itself, until
+    /// [`TcpListenerHandle::served_no_more`] with the token given here.
+    /// `cancelled` is the cancel flag of the task that serves. `None`
+    /// if the listener is served already.
+    pub fn serve(&self, cancelled: Option<Arc<AtomicBool>>) -> Option<u64> {
+        static TOKENS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let mut served = self.served.lock();
+        let lives = served.as_ref().is_some_and(|served| {
+            !served
+                .cancelled
+                .as_ref()
+                .is_some_and(|cancelled| cancelled.load(AtomicOrdering::SeqCst))
+        });
+        if lives {
+            return None;
+        }
+        let token = TOKENS.fetch_add(1, AtomicOrdering::Relaxed);
+        *served = Some(Served { token, cancelled });
+        Some(token)
+    }
+
+    /// The `http.serve` that took the listener with `token` has ended.
+    pub fn served_no_more(&self, token: u64) {
+        let mut served = self.served.lock();
+        if served.as_ref().is_some_and(|served| served.token == token) {
+            *served = None;
+        }
     }
 
     /// The next connection; `None` if the accept was given up
@@ -385,6 +441,34 @@ impl TcpStreamHandle {
                 both.write_all(buf)?;
                 both.flush()
             }
+        }
+    }
+
+    /// Write what of `bytes` the system takes at once, without waiting
+    /// for anything: the last word on a plain connection from a place
+    /// that cannot wait (a task that is being dropped). Nothing if a
+    /// write is in flight, or the connection is closed.
+    pub fn write_now(&self, bytes: &[u8]) {
+        use std::io::Write;
+        if self.is_closed() {
+            return;
+        }
+        if let TcpIo::Plain {
+            socket, writing, ..
+        } = &self.io
+            && let Some(_turn) = writing.try_lock()
+            && socket.set_nonblocking(true).is_ok()
+        {
+            let _ = (&*socket).write(bytes);
+            let _ = socket.set_nonblocking(false);
+        }
+    }
+
+    /// Say that nothing more is written on a plain connection: the
+    /// peer reads its end, and may still send.
+    pub fn end_writes(&self) {
+        if let TcpIo::Plain { socket, .. } = &self.io {
+            let _ = socket.shutdown(std::net::Shutdown::Write);
         }
     }
 

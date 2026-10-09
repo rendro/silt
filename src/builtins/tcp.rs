@@ -101,7 +101,7 @@ mod tls {
 
     use super::{
         Step, TcpListenerHandle, TcpStreamHandle, Value, Vm, VmError, require_bytes,
-        require_listener, require_string, tcp_timeout_err,
+        require_listener, require_string, served, tcp_timeout_err,
     };
     use crate::runtime::handle::ReadWrite;
 
@@ -137,6 +137,9 @@ mod tls {
             return Err(VmError::new("tcp.accept_tls takes 3 arguments".into()));
         }
         let listener = require_listener(&args[0], "tcp.accept_tls")?.clone();
+        if let Some(served) = served(&listener) {
+            return Ok(Step::Done(served));
+        }
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls")?;
         let next_id = vm.next_tcp_id();
@@ -165,6 +168,9 @@ mod tls {
             return Err(VmError::new("tcp.accept_tls_mtls takes 4 arguments".into()));
         }
         let listener = require_listener(&args[0], "tcp.accept_tls_mtls")?.clone();
+        if let Some(served) = served(&listener) {
+            return Ok(Step::Done(served));
+        }
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls_mtls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls_mtls")?;
         let client_ca_pem = require_bytes(&args[3], "tcp.accept_tls_mtls")?;
@@ -619,11 +625,30 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         return Err(VmError::new("tcp.accept takes 1 argument".into()));
     }
     let listener = require_listener(&args[0], "tcp.accept")?.clone();
+    if let Some(served) = served(&listener) {
+        return Ok(Step::Done(served));
+    }
+    let op = accept_op(vm, &listener);
+    vm.io_wait("tcp", tcp_timeout_err, op)
+}
+
+/// The error of an accept on a listener that an `http.serve` has to
+/// itself.
+fn served(listener: &TcpListenerHandle) -> Option<Value> {
+    listener
+        .is_served()
+        .then(|| err("the listener is served by http.serve"))
+}
+
+/// An accept on `listener`, on the I/O pool: the operation of
+/// `tcp.accept`, and of each accept of `http.serve`. Its value is
+/// `Ok(TcpStream)` or `Err(TcpError)`. It is given up when its waiter
+/// goes ([`TcpListenerHandle::stop`]).
+pub(crate) fn accept_op(vm: &mut Vm, listener: &Arc<TcpListenerHandle>) -> crate::vm::IoOp {
     let next_id = vm.next_tcp_id();
-    let (stopped, stop) = accept_stop(&listener);
-    let accepting = listener.clone();
-    let op = vm
-        .runtime
+    let (stopped, stop) = accept_stop(listener);
+    let (accepting, listener) = (listener.clone(), listener.clone());
+    vm.runtime
         .io_pool
         .submit(tcp_timeout_err, move || {
             match accepting.accept(&stopped) {
@@ -649,8 +674,7 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
             {
                 listener.keep(socket);
             }
-        });
-    vm.io_wait("tcp", tcp_timeout_err, op)
+        })
 }
 
 fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {

@@ -44,7 +44,7 @@ type Response {
 |------|-----------|-------------|
 | `get` | `(String) -> Result(Response, HttpError)` | HTTP GET request |
 | `request` | `(Method, String, String, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
-| `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per request |
+| `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per connection |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
 | `parse_query` | `(String) -> Map(String, List(String))` | Parse a URL query string into a multi-value map |
 
@@ -176,17 +176,97 @@ The listener is bound when `tcp.listen` returns, so a client may connect
 before `http.serve` runs: its request is queued and answered when the
 server starts.
 
-Each incoming request is handled by a task of its own, so multiple
-requests are processed concurrently, and a handler that waits (for a
-channel, a timer, another request: a long poll) holds no thread while it
-does. At most 128 handlers run at a time; a request beyond that is
-answered `503` at once. If a handler function errors, the server returns
-a 500 response without crashing. The handler receives a `Request` and
-must return a `Response`.
+`http.serve` does not return: it serves until its task ends. To run a
+server beside other work, call it in a task; `task.cancel` of that task
+ends the server (see [When a program ends](../concurrency.md#when-a-program-ends)).
 
-`http.serve` returns only when its server ends. To run a server beside
-other work, call it in a task; `task.cancel` of that task ends the
-server (see [When a program ends](../concurrency.md#when-a-program-ends)).
+### Connections and handlers
+
+Each connection has a task of its own. It reads a request, calls the
+handler with it, sends what the handler returns, and reads the next
+request of the connection. So:
+
+- Requests on different connections are handled concurrently.
+- Requests on one connection are answered one after the other, in their
+  order: a connection is kept after a response (keep-alive), and a client
+  may send several requests without waiting for the answers.
+- A handler that waits (for a channel, a timer, another request: a long
+  poll) holds no thread while it does.
+
+The handler receives a `Request` and must return a `Response` whose
+`status` is the status of a response: 200 to 999.
+
+| What happens | What the client gets |
+|---|---|
+| The handler fails, or returns a status that is none | `500`. The failure is written to stderr and nothing of it is sent. The connection stays usable. |
+| 128 handlers are being called already | `503` at once. That includes a request that would have released the ones that wait: a server whose handlers wait for each other needs a second server, or a timeout in the handler. |
+| The method is none of `Method`'s (e.g. `TRACE`) | `405` |
+| The method is `HEAD` | the handler is called; its response is sent without the body, with the length the body has |
+
+### What the server reads and sends
+
+The server speaks HTTP/1.1, and HTTP/1.0 to a client that does (the
+connection is then closed after the response unless the request says
+`Connection: keep-alive`). A request body is given by `Content-Length`
+or sent in chunks (`Transfer-Encoding: chunked`; trailers are read and
+dropped); `req.body` is the body, decoded. A client that sends `Expect:
+100-continue` is told to go on before its body is read. `Connection:
+close` closes the connection after the response.
+
+A response is sent with `Content-Length`, `Date` and, where the
+connection ends with it, `Connection: close`. Those three are the
+server's: headers of these names in `Response.headers` are left out, and
+so is a header whose name or value could not stand in one header line.
+`Content-Type` is `text/plain; charset=UTF-8` unless the handler sets
+one. There is no `Server` header.
+
+### Limits
+
+| Limit | | Beyond it |
+|---|---|---|
+| The head of a request: request line and headers | 64 KiB | `431`, connection closed |
+| Headers of a request | 100 | `431`, connection closed |
+| The body of a request | 10 MiB | `413`, connection closed |
+| A method | 32 bytes | `400`, connection closed |
+| A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
+| Handlers being called | 128 | `503` |
+| Time for the head of a request, from when the server starts to wait for it. This is also how long a kept connection that sends nothing stays open. | 30 s | connection closed |
+| Time for the body of a request to arrive after its head, and for a response to be taken by the client | 5 min | connection closed |
+| Time the server goes on reading (and dropping) what a client still sends after a refusal, so that the refusal reaches it | 5 s | connection closed |
+
+A request whose length is not certain is refused with `400`, never
+guessed at: `Content-Length` together with `Transfer-Encoding`;
+`Content-Length` twice, or not a plain number; a transfer coding other
+than `chunked`; a chunk size that is no hexadecimal number or does not
+fit; a line of the head that ends in a bare LF, or a CR that ends no
+line; whitespace before the colon of a header; a header that goes on in
+the next line. After a refusal the connection is closed, and what
+followed the refused request on it is not served.
+
+Every connection that waits for a request has one I/O operation in
+flight, of the 4,096 a program can have (see
+[concurrency](../concurrency.md)).
+
+### The listener while it is served
+
+While `http.serve` serves a listener, the listener is the server's alone:
+
+- `tcp.accept`, `tcp.accept_tls` and `tcp.accept_tls_mtls` on it return
+  `Err(TcpUnknown("the listener is served by http.serve"))` at once.
+- A second `http.serve` on it is a runtime error.
+
+When the task that serves has been cancelled, the server ends:
+
+- Its accept is given up. A client that connects afterwards waits in the
+  listener for whoever accepts next.
+- A request whose handler has not returned is answered `503`, and its
+  connection is closed. A connection between two requests is closed.
+- The listener is the program's again as soon as `task.cancel` has
+  returned: `tcp.accept` on it gets the next client, and another
+  `http.serve` serves it.
+
+An accept that fails (the process has no file descriptor left) is
+written to stderr once, and the server tries again after 100 ms.
 
 Use pattern matching on `(req.method, segments)` for routing:
 
@@ -226,8 +306,6 @@ fn main() {
   }
 }
 ```
-
-Unsupported HTTP methods (e.g. TRACE) receive an automatic 405 response.
 
 
 ## `http.segments`

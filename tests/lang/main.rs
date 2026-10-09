@@ -23,6 +23,7 @@ mod host_io_tests;
 mod host_module_tests;
 mod http_bind_address_tests;
 mod http_hardening_tests;
+mod http_server_tests;
 mod into_value_f64_finite_tests;
 mod list_flatten_unfold_bounds_tests;
 mod list_zip_bounds_tests;

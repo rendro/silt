@@ -21,7 +21,7 @@ repl = ["dep:rustyline"]
 lsp = ["dep:lsp-server", "dep:lsp-types"]
 watch = ["dep:notify"]
 local-clock = ["chrono/clock"]
-http = ["tcp", "dep:ureq", "dep:tiny_http"]
+http = ["tcp", "dep:ureq", "dep:httparse"]
 postgres = ["dep:postgres", "dep:r2d2", "dep:r2d2_postgres", "dep:fallible-iterator"]
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = []
@@ -55,7 +55,7 @@ toml = { version = "0.8", default-features = false, features = ["parse", "displa
 toml_edit = "0.22"
 unicode-width = "0.2"
 ureq = { version = "3", optional = true }
-tiny_http = { version = "0.12", optional = true }
+httparse = { version = "1", optional = true }
 postgres = { version = "0.19", optional = true, features = ["with-uuid-1"] }
 r2d2 = { version = "0.8", optional = true }
 r2d2_postgres = { version = "0.18", optional = true }

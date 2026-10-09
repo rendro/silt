@@ -1,0 +1,23 @@
+-- timeout: 30
+-- exit: 1
+-- requires-feature: http
+-- stderr-contains: http.serve: the listener is already served by another http.serve
+-- A listener is served by one `http.serve` at a time: two servers on
+-- one listener would take each other's connections. The second call
+-- is an error at once.
+import http
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let _first = task.spawn { ->
+    http.serve(listener) { _req -> http.Response { status: 200, body: "first", headers: #{} } }
+  }
+  -- The server serves when it has answered.
+  match http.get("http://127.0.0.1:{tcp.local_port(listener)}/") {
+    Ok(r) -> println("{r.status} {r.body}")
+    Err(e) -> println("error: {e.message()}")
+  }
+  http.serve(listener) { _req -> http.Response { status: 200, body: "second", headers: #{} } }
+}

@@ -418,7 +418,7 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 u("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request").feature("http", cfg!(feature = "http")),
                 u("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers").feature("http", cfg!(feature = "http")),
-                u("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per request").feature("http", cfg!(feature = "http")),
+                u("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per connection").feature("http", cfg!(feature = "http")),
                 u("fn segments(path: String) -> List(String)", "Split URL path into segments"),
                 u("fn parse_query(query: String) -> Map(String, List(String))", "Parse a URL query string into a multi-value map"),
             ],

@@ -133,8 +133,8 @@ fn main() {
 #[test]
 fn test_http_serve_non_blocking_in_task() {
     // Spawn http.serve in a task; verify other tasks can still run.
-    // The accept loop runs on a dedicated OS thread and the silt task
-    // yields via BlockReason::Join, so scheduler workers stay free.
+    // The server's task waits for its accept, an operation of the I/O
+    // pool, so scheduler workers stay free.
     //
     // The listener is on a port the system chooses.
     let input = r#"
@@ -169,7 +169,7 @@ fn main() {
 fn test_http_serve_concurrent_requests() {
     // Start a server on the main thread (it blocks), send concurrent
     // HTTP requests from Rust threads, and verify all get correct
-    // responses — proving per-request concurrency.
+    // responses: connections are served concurrently.
     //
     // The program listens on a port the system chooses and writes it to
     // a file the test waits for (`PortFile`).

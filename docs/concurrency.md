@@ -1234,7 +1234,9 @@ it returns its module's error at once (`Err(TcpUnknown("too many I/O
 operations in flight (4096)"))`, `Err(IoUnknown(...))`, ...), because an
 operation that waited for a thread might be the very one that would have
 released the others. A server that holds more connections than that open
-in blocking reads has to refuse some.
+in blocking reads has to refuse some. (`http.serve` has one operation in
+flight for its accept, and one for each connection that waits for a
+request or sends a response.)
 
 A task stops waiting for its operation when its deadline passes
 (`task.deadline`, `SILT_IO_TIMEOUT`), when it is cancelled, or when it is

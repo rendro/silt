@@ -5,14 +5,13 @@
 //! - HIGH-1: `http.serve` caps request bodies at 10 MiB and returns 413
 //!   Payload Too Large for anything larger (or for a Content-Length that
 //!   advertises more than the cap).
-//! - HIGH-2: `http.serve` uses `recv_timeout` so the accept loop unblocks
-//!   periodically, and bounds concurrent handler threads so a slowloris-style
-//!   burst cannot force unbounded thread spawning. (Library limitation:
-//!   tiny_http 0.12 does not expose per-connection socket timeouts, so a
-//!   partial-headers client will be held open by tiny_http's internal pool
-//!   — the test here instead exercises that a *legitimate* request still
-//!   gets a response in bounded time, and that a follow-up request on a
-//!   fresh connection after the partial-headers attacker still works.)
+//! - HIGH-2: a client that sends part of a request's head and then
+//!   nothing (slowloris) holds up nobody: every connection has a task
+//!   of its own, and a request on another connection is answered. (The
+//!   silent client itself is closed after the time for a head: see
+//!   `http_server_tests`, where the clock is the test's.) The handlers
+//!   that are called at a time are bounded, and a request beyond the
+//!   bound is answered 503.
 //! - HIGH-3: `http.get` / `http.request` configure `timeout_connect` and
 //!   `timeout_global` on the ureq Agent so a bogus / black-holed peer
 //!   does not hang forever.
@@ -219,22 +218,15 @@ fn high1_http_serve_rejects_oversized_body_with_413() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// HIGH-2: accept loop is bounded + legitimate requests still work even
-// when an attacker is sitting on a partial-headers connection.
+// HIGH-2: legitimate requests are served while an attacker is sitting
+// on a connection with half a head.
 // ────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
-    // tiny_http 0.12 does not expose per-connection socket read timeouts,
-    // so an attacker who writes `GET / HTTP/1.1\r\n` then stops is held
-    // open inside tiny_http's internal pool regardless of what we do on
-    // our side. What we *can* verify is:
-    //   1. The accept loop keeps running (recv_timeout, not
-    //      indefinite blocking).
-    //   2. A legitimate follow-up request on a fresh connection still
-    //      gets a response in bounded time.
-    // This guards against a future regression where the slowloris
-    // connection would wedge the *user-visible* accept pipeline.
+    // An attacker writes `GET / HTTP/1.1\r\n` and stops. Its connection
+    // waits in a task of its own; a request on a fresh connection gets
+    // its response.
 
     let port_file = PortFile::new();
     let port_path = port_file.path();
@@ -274,7 +266,7 @@ fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
 
     assert!(
         elapsed < Duration::from_secs(10),
-        "legitimate request took {elapsed:?} — accept loop may be wedged by slowloris"
+        "legitimate request took {elapsed:?}: the server may be wedged by the slow client"
     );
     assert!(
         resp.starts_with("HTTP/1.1 200") || resp.contains(" 200 "),
