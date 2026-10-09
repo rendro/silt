@@ -205,6 +205,18 @@ pub(crate) fn sweep(
         false => vec![PathBuf::from(entry)],
     };
     let base = verdict(&root, &files, run_entry, run);
+    // A case is a program that runs, an example one that checks: a
+    // rename of a broken program would be compared with its errors.
+    let (what, sound) = match run {
+        true => ("run", base.last().unwrap().starts_with("run: Some(0)\n")),
+        false => ("check", base[0].contains(".silt: Some(0)\n")),
+    };
+    assert!(
+        sound,
+        "{}: {run_entry} does not {what}:\n{}",
+        case.display(),
+        base.join("\n")
+    );
 
     let all_files = silt_files(&root);
     let text = std::fs::read_to_string(root.join(entry)).unwrap();

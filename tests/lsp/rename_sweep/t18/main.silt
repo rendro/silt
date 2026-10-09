@@ -1,7 +1,13 @@
 import impls
+import impls.{ Area }
 import shapes.{ Shape, Box, Dot }
+
+fn twice(x: a) -> Int where a: Area {
+  x.area() * 2
+}
 
 fn main() {
   let xs: List(Shape) = [Box(2), Dot]
   println(impls.total(xs))
+  println(twice(Box(3)))
 }

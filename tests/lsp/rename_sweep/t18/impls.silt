@@ -1,5 +1,8 @@
 import shapes
-import shapes.{ Area }
+
+pub trait Area {
+  fn area(self) -> Int
+}
 
 trait Area for shapes.Shape {
   fn area(self) -> Int {
