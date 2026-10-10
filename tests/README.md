@@ -105,6 +105,9 @@ cargo nextest run --all-features --test oracle                      # a sample o
 SILT_ORACLE_FULL=1 cargo nextest run --all-features --test oracle   # every input
 ```
 
+CI runs the sample with the `heavy` suite on every push, and every
+input once a day (the `oracle` job of `.github/workflows/fuzz-nightly.yml`).
+
 | Variable | Meaning |
 |---|---|
 | `SILT_ORACLE_FULL=1` | every input of a class instead of its sample |
