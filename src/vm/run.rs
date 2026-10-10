@@ -245,7 +245,7 @@ impl Vm {
                 Slice::Done(_) => return Ok(run),
                 // The frame gave way to other tasks, which a thread
                 // of its own has no need to.
-                Slice::OutOfBudget => {}
+                Slice::OutOfBudget => self.runtime.charge(self.own_slice())?,
                 Slice::Parked(wait) => {
                     let who = match self.is_program() {
                         true => Blocks::Program {
@@ -288,9 +288,17 @@ impl Vm {
     /// Run a task's frames for up to `max_steps` steps and return a
     /// `SliceResult`. Used by the M:N scheduler's worker threads.
     pub(crate) fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
+        // A task of a program whose step budget is used up runs no
+        // further.
+        if let Err(e) = self.runtime.charge(0) {
+            return SliceResult::Failed(e);
+        }
         match self.run_frames(0, max_steps) {
             Ok(Slice::Done(value)) => SliceResult::Completed(value),
-            Ok(Slice::OutOfBudget) => SliceResult::Yielded,
+            Ok(Slice::OutOfBudget) => match self.runtime.charge(max_steps) {
+                Ok(()) => SliceResult::Yielded,
+                Err(e) => SliceResult::Failed(e),
+            },
             Ok(Slice::Parked(wait)) => SliceResult::Blocked(wait),
             Err(e) => SliceResult::Failed(e),
         }

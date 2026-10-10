@@ -398,6 +398,17 @@ does not depend on the slice; a host sets one to test exactly that. With
 `set_time_slice(1)` the program is stopped and resumed after every
 instruction and after every step of a builtin that calls back into it.
 
+**Step budget.** `vm.set_step_budget(steps)` lets the program run that
+many more steps, those of its tasks included. When they are used up,
+whatever of the program still runs ends with a `VmError` whose
+`out_of_steps` is `true` (message `the step budget is used up`): `main`,
+and each task, whose join gives the error on. A program that loops for
+ever ends there. Steps are counted at the end of each slice that ran its
+full length, so the program may run up to one slice per thread more
+than its budget; with `set_time_slice(1)` the count is exact. A wait is
+no step: a program that waits for something that never comes is ended by
+the deadlock check or by dropping the `Vm`, not by its budget.
+
 ## Error Surfacing
 
 - **Static errors** (type errors, unknown names, bad host signatures)

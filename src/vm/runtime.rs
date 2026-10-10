@@ -673,6 +673,9 @@ pub struct Runtime {
     /// The slice an embedder set ([`Vm::set_time_slice`]); 0 while it
     /// has set none.
     pub(crate) time_slice: std::sync::atomic::AtomicUsize,
+    /// The steps the program may still run ([`Vm::set_step_budget`]);
+    /// `u64::MAX` while it has no budget.
+    pub(crate) steps_left: std::sync::atomic::AtomicU64,
 
     // ── Per-VM generators ───────────────────────────────────────
     /// The state of `math.random`; `None` until the first call seeds it
@@ -694,6 +697,21 @@ impl Runtime {
     pub(super) fn shutdown(&self) {
         self.scheduler.shutdown();
         self.io_pool.stop();
+    }
+
+    /// Take `used` steps, those of a slice that ran its full length,
+    /// off the step budget. The error of a program whose budget is
+    /// used up, from then on at every call.
+    pub(crate) fn charge(&self, used: usize) -> Result<(), VmError> {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.steps_left.load(Relaxed) == u64::MAX {
+            return Ok(());
+        }
+        let take = |left: u64| Some(left.saturating_sub(used as u64));
+        match self.steps_left.fetch_update(Relaxed, Relaxed, take) {
+            Ok(left) if left > used as u64 => Ok(()),
+            _ => Err(VmError::out_of_steps()),
+        }
     }
 
     /// The next value of `math.random`, in `[0, 1)`.

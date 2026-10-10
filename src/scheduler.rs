@@ -1338,7 +1338,7 @@ fn more_than_one_core() -> bool {
 }
 
 /// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).
-fn time_slice() -> usize {
+pub(crate) fn time_slice() -> usize {
     static SLICE: OnceLock<usize> = OnceLock::new();
     *SLICE.get_or_init(|| {
         std::env::var("SILT_TIME_SLICE")

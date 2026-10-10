@@ -272,6 +272,7 @@ impl Vm {
                 scheduler,
                 io,
                 time_slice: Default::default(),
+                steps_left: AtomicU64::new(u64::MAX),
                 rng: parking_lot::Mutex::new(None),
                 uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
             }),
@@ -319,10 +320,35 @@ impl Vm {
         }
     }
 
+    /// Let the program run `steps` more steps, those of its tasks
+    /// included. When they are used up, whatever of the program still
+    /// runs ends with an error whose [`VmError::out_of_steps`] is set
+    /// (`main`, and each task: a join of one gives the error on): a
+    /// program that does not end by itself ends there.
+    ///
+    /// A step is an instruction, or a step of a builtin that calls back
+    /// into the program. They are counted where a slice has run its
+    /// full length, so the program is ended at the end of a slice, at
+    /// most one slice of each of its threads late; with a budget the
+    /// thread that runs the program's own code is sliced as the tasks
+    /// are (see [`Vm::set_time_slice`]). A wait is no step: a program
+    /// that waits for ever is not ended by its budget.
+    pub fn set_step_budget(&mut self, steps: u64) {
+        let steps = steps.min(u64::MAX - 1);
+        self.runtime.steps_left.store(steps, Ordering::Relaxed);
+    }
+
     /// How many steps the thread that runs the program's own code runs
-    /// at a time: without a break, unless an embedder set a slice.
+    /// at a time: without a break, unless an embedder set a slice or a
+    /// step budget.
     pub(crate) fn own_slice(&self) -> usize {
-        self.time_slice().unwrap_or(usize::MAX)
+        match self.time_slice() {
+            Some(steps) => steps,
+            None if self.runtime.steps_left.load(Ordering::Relaxed) != u64::MAX => {
+                crate::scheduler::time_slice()
+            }
+            None => usize::MAX,
+        }
     }
 
     /// Report on the host's stderr the tasks that have failed so far
