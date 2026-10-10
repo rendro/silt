@@ -227,6 +227,7 @@ one. There is no `Server` header.
 | The head of a request: request line and headers | 64 KiB | `431`, connection closed |
 | Headers of a request | 100 | `431`, connection closed |
 | The body of a request | 10 MiB | `413`, connection closed |
+| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known) and those read and about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10 MiB more: about 1.5 GiB of bodies is the worst case. |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
 | What of a chunked body is not the body: chunk sizes, extensions, line ends | 1 MiB | `400`, connection closed. (A 10 MiB body in chunks of 100 bytes is within it; a body cut into single bytes is not.) |

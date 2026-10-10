@@ -420,6 +420,9 @@ struct Server {
     owner: u64,
     /// How many handlers are being called.
     handlers: AtomicUsize,
+    /// How many bytes of bodies the server holds for requests that no
+    /// handler has yet ([`wire::BODIES_MAX`]).
+    bodies: AtomicUsize,
     /// The tasks of the connections that have not ended; `None` once
     /// the server has ended: no connection goes on then.
     conns: Mutex<Option<HashMap<usize, Arc<TaskHandle>>>>,
@@ -445,6 +448,46 @@ impl Server {
                 Err(now) => handlers = now,
             }
         }
+    }
+}
+
+/// Bytes of bodies that the server holds for a request that no
+/// handler has yet, until this is dropped: when the request is handed
+/// to its handler, or given up.
+#[cfg(feature = "http")]
+struct Held(Arc<Server>, usize);
+
+#[cfg(feature = "http")]
+impl Held {
+    /// Count `bytes` more as held, if the server has room for them.
+    /// What is counted is noted in `pending`, for who makes the
+    /// [`Held`] of it.
+    fn reserve(server: &Server, pending: &AtomicUsize, bytes: usize) -> bool {
+        let mut held = server.bodies.load(Ordering::Acquire);
+        loop {
+            if bytes > wire::BODIES_MAX.saturating_sub(held) {
+                return false;
+            }
+            let counted = server.bodies.compare_exchange_weak(
+                held,
+                held + bytes,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            match counted {
+                Ok(_) => break,
+                Err(now) => held = now,
+            }
+        }
+        pending.fetch_add(bytes, Ordering::AcqRel);
+        true
+    }
+}
+
+#[cfg(feature = "http")]
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.bodies.fetch_sub(self.1, Ordering::AcqRel);
     }
 }
 
@@ -504,8 +547,9 @@ enum Then {
 /// What a connection gave when the server read it for a request.
 #[cfg(feature = "http")]
 enum Got {
-    /// A request for the handler: the `Request` value.
-    Request(Value, Reply),
+    /// A request for the handler: the `Request` value, and the count
+    /// of its body among those the server holds.
+    Request(Value, Reply, Held),
     /// A request of a method that the server does not know: it
     /// answers itself, with a status and a word.
     Answered(u16, &'static str, Reply),
@@ -520,7 +564,9 @@ enum Got {
 impl Got {
     /// Made on the thread that read the request: a body of megabytes
     /// is not turned into a string on a worker of the scheduler.
-    fn of(next: wire::Next) -> Got {
+    /// `held` is what was counted for the request's body: it goes
+    /// with a request for the handler, and ends here otherwise.
+    fn of(next: wire::Next, held: Held) -> Got {
         let request = match next {
             wire::Next::Request(request) => request,
             wire::Next::Refused(refused) => return Got::Refused(refused.status, refused.why),
@@ -550,11 +596,14 @@ impl Got {
             headers.insert(Value::String(name), Value::String(value));
         }
         // The Request API hands the body over as a String: bytes that
-        // are not UTF-8 are replaced, not dropped.
-        let body = std::string::String::from_utf8_lossy(&request.body).into_owned();
+        // are not UTF-8 are replaced, not dropped. (A body that is
+        // UTF-8 is the string, not a copy of it.)
+        let body = std::string::String::from_utf8(request.body)
+            .unwrap_or_else(|e| std::string::String::from_utf8_lossy(e.as_bytes()).into_owned());
         Got::Request(
             make_http_request_value(method, path, query, headers, body),
             reply,
+            held,
         )
     }
 }
@@ -678,6 +727,9 @@ struct Conn {
     /// Bytes of the request that is being waited for have come, as
     /// the reader says ([`wire::Reader::begun`]).
     begun: Arc<AtomicBool>,
+    /// The bytes that the reader has had counted for the body of the
+    /// request it is reading ([`Held::reserve`]).
+    pending: Arc<AtomicUsize>,
     /// How many requests the task has served since it last gave way
     /// (see [`Conn::TURN`]).
     served: usize,
@@ -741,8 +793,11 @@ impl Conn {
     /// read. `None` if it has to be waited for.
     fn at_hand(&mut self) -> Option<Got> {
         let mut reader = self.reader.try_lock()?;
+        // (A body that is among the bytes read is held already:
+        // nothing is counted for it.)
+        let got = |next| Got::of(next, Held(self.server.clone(), 0));
         if let Some(next) = reader.buffered() {
-            return Some(Got::of(next));
+            return Some(got(next));
         }
         let mut read = [0u8; 8 * 1024];
         match self.stream.read_now(&mut read)? {
@@ -750,7 +805,7 @@ impl Conn {
             0 => Some(Got::End),
             n => {
                 reader.feed(&read[..n]);
-                reader.buffered().map(Got::of)
+                reader.buffered().map(got)
             }
         }
     }
@@ -759,8 +814,10 @@ impl Conn {
     fn serve(&mut self, vm: &mut Vm, got: Got) -> Go {
         self.served += 1;
         match got {
-            Got::Request(request, reply) => match self.server.call() {
+            Got::Request(request, reply, held) => match self.server.call() {
                 Some(called) => {
+                    // The body is the handler's now.
+                    drop(held);
                     self.state = ConnState::Calling { reply, called };
                     Go::Step(vm.call(self.server.handler.clone(), [request]))
                 }
@@ -802,6 +859,7 @@ impl Conn {
             self.stream.clone(),
         );
         let (result, announced) = (got.clone(), body_follows.clone());
+        let (server, pending) = (self.server.clone(), self.pending.clone());
         let scheduler = vm.scheduler().clone();
         let op = vm
             .runtime
@@ -815,7 +873,9 @@ impl Conn {
                     }
                 };
                 let next = reader.lock().next(&mut before_body);
-                *result.lock() = Some(Got::of(next));
+                // What the reader had counted for the body.
+                let held = Held(server, pending.swap(0, Ordering::AcqRel));
+                *result.lock() = Some(Got::of(next, held));
                 Value::Unit
             })
             .stop_with(move || stopped.shut_down());
@@ -915,6 +975,7 @@ impl Conn {
             stream: self.stream.clone(),
             reader: self.reader.clone(),
             begun: self.begun.clone(),
+            pending: self.pending.clone(),
             served: 0,
             state: ConnState::Answering {
                 bytes: plain_response(vm, 500, wire::reason(500), reply),
@@ -1140,13 +1201,18 @@ impl Serve {
         }
         let mut child = vm.spawn_child();
         child.spawned = true;
-        let reader = wire::Reader::new(Reads(stream.clone()));
+        let pending = Arc::new(AtomicUsize::new(0));
+        let (server, counted) = (self.server.clone(), pending.clone());
+        let reader = wire::Reader::with_room(Reads(stream.clone()), move |bytes| {
+            Held::reserve(&server, &counted, bytes)
+        });
         let begun = reader.begun();
         child.push_native_frame(Box::new(Conn {
             server: self.server.clone(),
             handle: handle.clone(),
             reader: Arc::new(Mutex::new(reader)),
             begun,
+            pending,
             served: 0,
             stream,
             state: ConnState::Next,
@@ -1264,6 +1330,7 @@ fn serve(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
             // The tasks of the connections belong to whoever serves.
             owner: vm.scheduler().current_owner(),
             handlers: AtomicUsize::new(0),
+            bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
         }),
         listener: listener.clone(),

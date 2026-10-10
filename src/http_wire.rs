@@ -43,6 +43,20 @@ pub const BODY_MAX: usize = 10 * 1024 * 1024;
 /// handshake sent to this port is no request, however long it lasts.
 pub const METHOD_MAX: usize = 32;
 
+/// The most bytes of request bodies that the server holds at a time
+/// for requests that no handler has yet: bodies that are being read
+/// (a body counts from when its length is known, or chunk by chunk)
+/// and bodies that are read and wait to be handed over. A request
+/// whose body does not fit is refused, 503: it is not made to wait,
+/// which would hold its connection and a thread for a body that has
+/// no room, on the client's time. A body of the largest size always
+/// fits when no other is held.
+///
+/// The limit of handlers bounds the bodies beyond this: with every
+/// handler holding a request of the largest size, [`HANDLERS_MAX`]
+/// times [`BODY_MAX`] more.
+pub const BODIES_MAX: usize = 256 * 1024 * 1024;
+
 /// The longest line of a chunked body (a chunk size with its
 /// extensions). Beyond it: 400.
 pub const CHUNK_LINE_MAX: usize = 4 * 1024;
@@ -137,6 +151,9 @@ pub struct Reader<R> {
     /// ([`Reader::has_begun`]), for who waits for the reader
     /// elsewhere.
     begun: Arc<AtomicBool>,
+    /// Asked before so many more bytes of a body are read: whether
+    /// the server has room for them ([`BODIES_MAX`]).
+    room: Box<dyn FnMut(usize) -> bool + Send>,
 }
 
 /// Either a value or the end of reading this request.
@@ -144,10 +161,17 @@ type Step<T> = Result<T, Next>;
 
 impl<R: Read> Reader<R> {
     pub fn new(stream: R) -> Reader<R> {
+        Reader::with_room(stream, |_| true)
+    }
+
+    /// A reader that asks `room` before it reads so many more bytes
+    /// of a body, and refuses the request (503) where there is none.
+    pub fn with_room(stream: R, room: impl FnMut(usize) -> bool + Send + 'static) -> Reader<R> {
         Reader {
             stream,
             buf: Vec::new(),
             begun: Arc::default(),
+            room: Box::new(room),
         }
     }
 
@@ -183,11 +207,9 @@ impl<R: Read> Reader<R> {
         }
         // Read from a copy with nothing behind it: what it gives is
         // what a read of the connection would have given first.
-        let mut ahead = Reader {
-            stream: io::empty(),
-            buf: self.buf.clone(),
-            begun: Arc::default(),
-        };
+        // (What is read already is held already: no room is asked.)
+        let mut ahead = Reader::new(io::empty());
+        ahead.buf.clone_from(&self.buf);
         let mut never_waits = |waits: bool| match waits {
             true => Err(io::Error::other("the client waits")),
             false => Ok(()),
@@ -235,6 +257,9 @@ impl<R: Read> Reader<R> {
         let body = match framing {
             Framing::None | Framing::Length(0) => Vec::new(),
             Framing::Length(length) => {
+                if !(self.room)(length) {
+                    return Err(Next::Refused(NO_ROOM));
+                }
                 announce(self)?;
                 self.exactly(length)?
             }
@@ -384,7 +409,10 @@ impl<R: Read> Reader<R> {
                 return Err(Next::End);
             }
         }
-        Ok(self.buf.drain(..length).collect())
+        // The bytes themselves, not a copy of them: what was read
+        // beyond them is the lesser part.
+        let beyond = self.buf.split_off(length);
+        Ok(std::mem::replace(&mut self.buf, beyond))
     }
 
     /// A line of at most `limit` bytes, without its CRLF.
@@ -454,6 +482,9 @@ impl<R: Read> Reader<R> {
             if size > (BODY_MAX - body.len()) as u64 {
                 return Err(Next::Refused(BODY_TOO_LARGE));
             }
+            if !(self.room)(size as usize) {
+                return Err(Next::Refused(NO_ROOM));
+            }
             body.extend(self.exactly(size as usize)?);
             if !self.line(0, BAD_CHUNKS)?.is_empty() {
                 return Err(Next::Refused(BAD_CHUNKS));
@@ -476,6 +507,7 @@ impl<R: Read> Reader<R> {
 const HEAD_TOO_LARGE: Refused = refused(431, "Request Header Fields Too Large");
 const BODY_TOO_LARGE: Refused = refused(413, "Payload Too Large");
 const BAD_CHUNKS: Refused = refused(400, "Bad Request");
+const NO_ROOM: Refused = refused(503, "Service Unavailable");
 
 struct Head {
     method: String,
@@ -906,6 +938,51 @@ mod tests {
             read_all(&padded, 64 * 1024),
             (requests, Next::Refused(Refused { status: 400, .. }), _) if requests.is_empty()
         ));
+    }
+
+    /// A reader that is told there is no room refuses the body, by
+    /// its length before a byte of it is read, or at the chunk that
+    /// does not fit; and it asks for no more than the body has.
+    #[test]
+    fn a_body_that_has_no_room_is_refused() {
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let reader = |bytes: &'static [u8], room: usize| {
+            let asked = asked.clone();
+            asked.lock().unwrap().clear();
+            let mut left = room;
+            Reader::with_room(bytes, move |wanted| {
+                asked.lock().unwrap().push(wanted);
+                let fits = wanted <= left;
+                if fits {
+                    left -= wanted;
+                }
+                fits
+            })
+        };
+        let by_length: &[u8] = b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello";
+        let next = reader(by_length, 5).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::Request(request) if request.body == b"hello"));
+        assert_eq!(*asked.lock().unwrap(), [5]);
+        let mut announced = false;
+        let next = reader(by_length, 4).next(&mut |_| {
+            announced = true;
+            Ok(())
+        });
+        assert!(matches!(next, Next::Refused(Refused { status: 503, .. })));
+        // The client was not told to send it.
+        assert!(!announced);
+
+        let chunked: &[u8] = b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n\
+              3\r\nabc\r\n4\r\ndefg\r\n0\r\n\r\n";
+        let next = reader(chunked, 7).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::Request(request) if request.body == b"abcdefg"));
+        assert_eq!(*asked.lock().unwrap(), [3, 4]);
+        let next = reader(chunked, 6).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::Refused(Refused { status: 503, .. })));
+        // A request without a body asks for nothing.
+        let next = reader(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n", 0).next(&mut |_| Ok(()));
+        assert!(matches!(next, Next::Request(_)));
+        assert!(asked.lock().unwrap().is_empty());
     }
 
     /// HTTP/1.0 had no Host header: a request without one is served.

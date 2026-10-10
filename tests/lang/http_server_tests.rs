@@ -19,7 +19,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use silt::http_wire::{BODY_MAX, HEAD_MAX, HEADERS_MAX, REFUSAL_TIME, REQUEST_TIME, TRANSFER_TIME};
+use silt::http_wire::{
+    BODIES_MAX, BODY_MAX, HEAD_MAX, HEADERS_MAX, REFUSAL_TIME, REQUEST_TIME, TRANSFER_TIME,
+};
 use silt::session::testing::compile_str;
 use silt::{Buffer, Clock, HostIo, Value, Vm};
 
@@ -652,6 +654,73 @@ fn a_request_beyond_a_limit_is_refused() {
     assert_eq!(server.ask(&at_the_limit).body, BODY_MAX.to_string());
     chunks.extend_from_slice(b"1\r\n");
     refused(&chunks, 413);
+}
+
+/// The bodies that the server holds for requests that no handler has
+/// yet have a bound together: a body that would go beyond it is
+/// refused before the client is told to send it, and there is room
+/// again when a body has been handed to its handler.
+#[test]
+fn the_bodies_that_wait_for_a_handler_are_bounded_together() {
+    let server = Server::new(
+        r#"http.Response { status: 200, body: "{string.length(req.body)}", headers: #{} }"#,
+    );
+    let largest = format!(
+        "POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {BODY_MAX}\r\n\r\n"
+    );
+    // A client that is told to send its body has room for it.
+    let told_to_go_on = |client: &mut Client| {
+        let mut line = String::new();
+        client.0.read_line(&mut line).expect("the interim response");
+        assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
+        client.0.read_line(&mut line).expect("its end");
+    };
+    // As many bodies of the largest size as the bound holds, none of
+    // them sent.
+    let mut waiting: Vec<Client> = (0..BODIES_MAX / BODY_MAX)
+        .map(|_| {
+            let mut client = server.connect();
+            client.send(largest.as_bytes());
+            told_to_go_on(&mut client);
+            client
+        })
+        .collect();
+    // One more has no room, and is not told to send.
+    let mut refused = server.connect();
+    refused.send(largest.as_bytes());
+    let response = refused.response();
+    assert_eq!(response.status, 503);
+    assert_eq!(response.header("Connection"), Some("close"));
+    assert_eq!(refused.rest(), b"");
+    // What is left of the room still serves a small one.
+    let small = server.ask(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
+    assert_eq!((small.status, small.body.as_str()), (200, "5"));
+    // A body that has reached its handler makes room for another.
+    let mut first = waiting.pop().expect("a waiting client");
+    first.send(&vec![b'b'; BODY_MAX]);
+    assert_eq!(first.response().body, BODY_MAX.to_string());
+    let mut next = server.connect();
+    next.send(largest.as_bytes());
+    told_to_go_on(&mut next);
+    // And so does a client that leaves without sending its body, once
+    // the server has seen it leave.
+    drop(waiting.pop());
+    let limit = Instant::now() + PATIENCE;
+    loop {
+        let mut another = server.connect();
+        another.send(largest.as_bytes());
+        let mut line = String::new();
+        another.0.read_line(&mut line).expect("an answer");
+        if line == "HTTP/1.1 100 Continue\r\n" {
+            break;
+        }
+        assert!(line.starts_with("HTTP/1.1 503 "), "{line:?}");
+        assert!(
+            Instant::now() < limit,
+            "a client that left still has its room"
+        );
+        thread::sleep(Duration::from_millis(2));
+    }
 }
 
 /// A request whose length two readers could take differently is
