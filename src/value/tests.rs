@@ -38,7 +38,9 @@ fn make_time(hour: i64, minute: i64, second: i64, ns: i64) -> Value {
 fn record_type(id: u32, name: &str, fields: &[&str]) -> Arc<TypeInfo> {
     use crate::defs::{DefId, TypeId};
     use crate::typeinfo::FieldType;
-    let fields = fields.iter().map(|field| (field.to_string(), FieldType::Int));
+    let fields = fields
+        .iter()
+        .map(|field| (field.to_string(), FieldType::Int));
     TypeInfo::new_record(TypeId(DefId(id)), name, fields.collect())
 }
 
@@ -294,6 +296,197 @@ fn a_string_and_a_tuple_are_shared_not_copied() {
     };
     assert!(Arc::ptr_eq(a, b));
     assert_eq!(a[..], [text.clone(), Value::Int(1)]);
+}
+
+/// A record holds its fields in the order its type declares them,
+/// however a literal writes them; a field is found by its name, and a
+/// clone of the record has the same fields, not a copy of them.
+#[test]
+fn a_record_holds_its_fields_in_declaration_order() {
+    let ty = record_type(9004, "Ver", &["major", "build", "label"]);
+    let values = vec![Value::Int(7), Value::Int(1), Value::Int(9)];
+    let written = Record::written(ty.clone(), ["label", "major", "build"].into_iter(), values)
+        .expect("the type's fields");
+    assert_eq!(
+        written.fields(),
+        [Value::Int(1), Value::Int(9), Value::Int(7)]
+    );
+    let names: Vec<&str> = written.named().map(|(name, _)| name).collect();
+    assert_eq!(names, ["major", "build", "label"]);
+    assert_eq!(written.get("build"), Some(&Value::Int(9)));
+    assert_eq!(written.get("patch"), None);
+    assert!(Arc::ptr_eq(written.ty(), &ty));
+    let record = Value::Record(written.clone());
+    assert_eq!(
+        record,
+        Value::record(
+            ty.clone(),
+            vec![Value::Int(1), Value::Int(9), Value::Int(7)]
+        )
+    );
+    assert_eq!(format!("{record}"), "Ver {major: 1, build: 9, label: 7}");
+    assert!(std::ptr::eq(written.clone().fields(), written.fields()));
+
+    // Not the type's fields: one missing, one too many, one twice.
+    let two = || vec![Value::Int(1), Value::Int(2)];
+    let three = || vec![Value::Int(1), Value::Int(2), Value::Int(3)];
+    assert!(Record::written(ty.clone(), ["major", "build"].into_iter(), two()).is_none());
+    assert!(
+        Record::written(ty.clone(), ["major", "build", "patch"].into_iter(), three()).is_none()
+    );
+    assert!(
+        Record::written(ty.clone(), ["major", "build", "build"].into_iter(), three()).is_none()
+    );
+
+    // Order is the declaration's: `major` first, whatever the names'.
+    let ver = |major, build| {
+        Value::record(
+            ty.clone(),
+            vec![Value::Int(major), Value::Int(build), Value::Int(0)],
+        )
+    };
+    assert!(ver(1, 9) < ver(2, 0));
+}
+
+/// An update of fields a record has replaces them and keeps the type;
+/// the one holder of a record updates it where it is.
+#[test]
+fn a_record_update_replaces_fields_by_name() {
+    let ty = record_type(9005, "Pt", &["y", "x"]);
+    let record = Record::written(
+        ty.clone(),
+        ["y", "x"].into_iter(),
+        vec![Value::Int(1), Value::Int(2)],
+    )
+    .expect("the type's fields");
+    let kept = record.clone();
+    let updated = record
+        .updated(["x"].into_iter(), vec![Value::Int(5)])
+        .expect("a field of the record");
+    assert_eq!(updated.fields(), [Value::Int(1), Value::Int(5)]);
+    assert_eq!(kept.fields(), [Value::Int(1), Value::Int(2)]);
+    assert!(Arc::ptr_eq(updated.ty(), &ty));
+
+    let at = updated.fields().as_ptr();
+    let again = updated
+        .updated(["y", "x"].into_iter(), vec![Value::Int(8), Value::Int(9)])
+        .expect("fields of the record");
+    assert_eq!(again.fields(), [Value::Int(8), Value::Int(9)]);
+    assert_eq!(
+        again.fields().as_ptr(),
+        at,
+        "no other holder: updated in place"
+    );
+
+    // A declared record has the fields of its type and no other.
+    assert!(
+        again
+            .updated(["z"].into_iter(), vec![Value::Int(0)])
+            .is_none()
+    );
+}
+
+/// Anonymous records of one set of field names have one type, whose
+/// fields are in name order; a field added to one makes a record of
+/// the larger set, and the rest of a record is an anonymous record.
+#[test]
+fn anonymous_records_of_one_set_of_names_share_a_type() {
+    let fields = |record: &Value| -> Vec<(String, Value)> {
+        let Value::Record(record) = record else {
+            panic!("a record");
+        };
+        let named = record.named();
+        named
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect()
+    };
+    let ty = |record: &Value| match record {
+        Value::Record(record) => record.ty().clone(),
+        _ => panic!("a record"),
+    };
+    let a = Value::anon_record([("y", Value::Int(2)), ("x", Value::Int(1))]);
+    let b = Value::anon_record([("x", Value::Int(1)), ("y", Value::Int(2))]);
+    assert!(Arc::ptr_eq(&ty(&a), &ty(&b)));
+    assert!(ty(&a).is_anon());
+    assert_eq!(
+        fields(&a),
+        [
+            ("x".to_string(), Value::Int(1)),
+            ("y".to_string(), Value::Int(2))
+        ]
+    );
+    assert_eq!(a, b);
+    assert_eq!(hash_of(&a), hash_of(&b));
+    assert_eq!(format!("{a}"), "{x: 1, y: 2}");
+
+    let other = Value::anon_record([("x", Value::Int(1)), ("z", Value::Int(2))]);
+    assert!(!Arc::ptr_eq(&ty(&a), &ty(&other)));
+    assert_ne!(a, other);
+    let none = Value::anon_record([]);
+    assert!(Arc::ptr_eq(
+        &ty(&none),
+        crate::typeinfo::builtin_type(ty::ANON_RECORD)
+    ));
+    assert_eq!(format!("{none}"), "{}");
+
+    // A spread's written fields: one the record has is replaced, one
+    // it has not is added.
+    let (Value::Record(base), Value::Record(wider)) = (&a, &other) else {
+        panic!("two records");
+    };
+    let replaced = base
+        .clone()
+        .updated(["y"].into_iter(), vec![Value::Int(7)])
+        .expect("an anonymous record");
+    assert!(Arc::ptr_eq(replaced.ty(), base.ty()));
+    assert_eq!(replaced.fields(), [Value::Int(1), Value::Int(7)]);
+    let added = base
+        .clone()
+        .updated(["z", "x"].into_iter(), vec![Value::Int(2), Value::Int(1)])
+        .expect("an anonymous record");
+    let added = Value::Record(added);
+    assert_eq!(format!("{added}"), "{x: 1, y: 2, z: 2}");
+    assert_eq!(base.fields(), [Value::Int(1), Value::Int(2)]);
+
+    // The rest of a record: of an anonymous record with nothing left
+    // out, the record; of a declared record, an anonymous record.
+    assert!(std::ptr::eq(
+        base.rest([].into_iter()).fields(),
+        base.fields()
+    ));
+    assert_eq!(
+        Value::Record(wider.rest(["x"].into_iter())),
+        Value::anon_record([("z", Value::Int(2))])
+    );
+    let pt = Value::record(
+        record_type(9006, "Pt", &["y", "x"]),
+        vec![Value::Int(2), Value::Int(1)],
+    );
+    let Value::Record(declared) = &pt else {
+        panic!("a record");
+    };
+    let rest = Value::Record(declared.rest([].into_iter()));
+    assert!(ty(&rest).is_anon());
+    assert_eq!(format!("{pt}"), "Pt {y: 2, x: 1}");
+    assert_eq!(format!("{rest}"), "{x: 1, y: 2}");
+    assert_eq!(rest, a);
+}
+
+/// A builtin record is built with its fields named, in the order its
+/// type declares them, and is shown and ordered in name order.
+#[test]
+fn a_builtin_record_has_the_fields_its_type_declares() {
+    let date = make_date(2024, 3, 9);
+    let Value::Record(record) = &date else {
+        panic!("a record");
+    };
+    assert_eq!(
+        record.fields(),
+        [Value::Int(2024), Value::Int(3), Value::Int(9)]
+    );
+    assert_eq!(record.get("month"), Some(&Value::Int(3)));
+    assert_eq!(date.format_silt(), "Date {day: 9, month: 3, year: 2024}");
+    assert!(make_date(2024, 3, 9) < make_date(2024, 10, 1));
 }
 
 /// A program's record type named like a builtin one prints as a

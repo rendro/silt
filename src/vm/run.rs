@@ -844,18 +844,13 @@ impl Vm {
                 })?;
                 self.push(field);
             }
-            Instr::GetFieldNamed { name: k } => {
+            Instr::GetFieldNamed { name } => {
                 let target = self.pop();
-                let name = self.chunk().string(k);
+                let name = self.chunk().string(name);
                 let field = match &target {
                     Value::Record(record) => record.get(name).cloned().ok_or_else(|| {
                         VmError::type_confusion(format!("record has no field '{name}'"))
                     })?,
-                    // (The key is the constant itself, a String.)
-                    Value::Map(map) => map
-                        .get(self.chunk().constant(k))
-                        .cloned()
-                        .ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?,
                     other => {
                         return Err(VmError::type_confusion(format!(
                             "cannot access field '{}' on {}",

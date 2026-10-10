@@ -620,10 +620,19 @@ pub fn anon_record_type<'a>(names: impl Iterator<Item = &'a str> + Clone) -> Arc
     }
     let hash = hasher.finish();
     let is_it = |info: &Arc<TypeInfo>| {
-        info.fields().len() == count && info.fields().iter().map(|(field, _)| &**field).eq(names.clone())
+        info.fields().len() == count
+            && info
+                .fields()
+                .iter()
+                .map(|(field, _)| &**field)
+                .eq(names.clone())
     };
     let types = TYPES.get_or_init(Default::default);
-    if let Some(known) = types.read().get(&hash).and_then(|of| of.iter().find(|info| is_it(info))) {
+    if let Some(known) = types
+        .read()
+        .get(&hash)
+        .and_then(|of| of.iter().find(|info| is_it(info)))
+    {
         return known.clone();
     }
     let mut types = types.write();
@@ -681,6 +690,65 @@ mod tests {
         });
         assert!(builtin_types().get(id.0 as usize).is_none());
         assert!(id.0 as usize >= crate::defs::builtin_types().len());
+    }
+
+    /// A builtin record type lists the fields its declaration in the
+    /// builtin registry gives it, in that order: the order a builtin
+    /// builds the record in, and the places the compiler reads its
+    /// fields at.
+    #[test]
+    fn a_builtin_record_type_lists_its_declared_fields() {
+        let fields = |id: TypeId| -> Vec<&str> {
+            let fields = builtin_type(id).fields().iter();
+            fields.map(|(name, _)| name.as_str()).collect()
+        };
+        assert_eq!(fields(ty::DATE), ["year", "month", "day"]);
+        assert_eq!(fields(ty::TIME), ["hour", "minute", "second", "ns"]);
+        assert_eq!(fields(ty::DATE_TIME), ["date", "time"]);
+        assert_eq!(fields(ty::DURATION), ["ns"]);
+        assert_eq!(fields(ty::INSTANT), ["epoch_ns"]);
+        assert_eq!(fields(ty::RESPONSE), ["status", "body", "headers"]);
+        assert_eq!(
+            fields(ty::REQUEST),
+            ["method", "path", "query", "headers", "body"]
+        );
+        assert_eq!(fields(ty::NOTIFICATION), ["channel", "payload", "pid"]);
+        assert_eq!(fields(ty::QUERY_RESULT), ["row_count", "rows"]);
+        assert_eq!(fields(ty::EXEC_RESULT), ["affected", "returning"]);
+        assert_eq!(fields(ty::FILE_STAT).len(), 9);
+        assert_eq!(fields(ty::FILE_STAT)[0], "size");
+        assert!(fields(ty::ANON_RECORD).is_empty());
+        // Every record type the registry declares, and no enum.
+        for (_, decl) in crate::builtins::registry::registry().types() {
+            let info = builtin_type_named(decl.name).expect("a builtin type");
+            match &decl.shape {
+                crate::builtins::registry::TypeShape::Record(declared) => {
+                    assert_eq!(&fields(info.id), declared, "{}", decl.name);
+                    assert!(info.is_builtin());
+                }
+                crate::builtins::registry::TypeShape::Enum(_) => {
+                    assert!(info.fields().is_empty(), "{}", decl.name);
+                }
+            }
+        }
+    }
+
+    /// One description for each set of names of an anonymous record.
+    #[test]
+    fn an_anonymous_record_type_is_made_once_for_its_names() {
+        let a = anon_record_type(["age", "name"].into_iter());
+        let b = anon_record_type(["age", "name"].into_iter());
+        let c = anon_record_type(["age", "names"].into_iter());
+        assert!(Arc::ptr_eq(&a, &b));
+        assert!(!Arc::ptr_eq(&a, &c));
+        assert!(a.is_anon() && c.is_anon() && a.is_builtin());
+        assert_eq!(a.name, crate::defs::ANON_RECORD);
+        assert_eq!(a.field_index("name"), Some(1));
+        assert_eq!(a.field_index("names"), None);
+        assert!(Arc::ptr_eq(
+            &anon_record_type([].into_iter()),
+            builtin_type(ty::ANON_RECORD)
+        ));
     }
 
     /// Each `bv::` constant is the variant it is named after, with the

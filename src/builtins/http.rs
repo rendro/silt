@@ -92,10 +92,7 @@ fn make_http_request_value(
 #[cfg(feature = "http")]
 fn extract_http_response(
     val: &Value,
-) -> Result<
-    (u16, std::string::String, &crate::value::Record),
-    VmError,
-> {
+) -> Result<(u16, std::string::String, &crate::value::Record), VmError> {
     // (What is no `Response` is no value the handler's type has.)
     let fields = match val {
         Value::Record(record) if record.type_id() == ty::RESPONSE => record,

@@ -2934,11 +2934,14 @@ mod type_confusion {
             e.emit(Asm::DestructRecordField { index: 0 }, span())
                 .unwrap();
         });
-        confused("record destructure: no field 1 in an anonymous record", |e| {
-            push(e, record(&[("y", Value::Int(1))]));
-            e.emit(Asm::DestructRecordField { index: 1 }, span())
-                .unwrap();
-        });
+        confused(
+            "record destructure: no field 1 in an anonymous record",
+            |e| {
+                push(e, record(&[("y", Value::Int(1))]));
+                e.emit(Asm::DestructRecordField { index: 1 }, span())
+                    .unwrap();
+            },
+        );
         confused("record rest destructure: expected record, got Int", |e| {
             push(e, Value::Int(1));
             let x = name(e, "x");
