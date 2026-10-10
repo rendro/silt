@@ -140,6 +140,31 @@ pub(crate) enum List<'a> {
     Range(i64, i64),
 }
 
+/// The elements of a list, one after the other, a range's without
+/// making a list of them.
+pub(crate) enum Items<'a> {
+    List(std::slice::Iter<'a, Value>),
+    Range(std::ops::RangeInclusive<i64>),
+}
+
+impl Iterator for Items<'_> {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Value> {
+        match self {
+            Items::List(items) => items.next().cloned(),
+            Items::Range(range) => range.next().map(Value::Int),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Items::List(items) => items.size_hint(),
+            Items::Range(range) => range.size_hint(),
+        }
+    }
+}
+
 impl<'a> Arg<'a> for List<'a> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
@@ -150,7 +175,14 @@ impl<'a> Arg<'a> for List<'a> {
     }
 }
 
-impl List<'_> {
+impl<'a> List<'a> {
+    pub(crate) fn iter(self) -> Items<'a> {
+        match self {
+            List::Items(items) => Items::List(items.iter()),
+            List::Range(lo, hi) => Items::Range(lo..=hi),
+        }
+    }
+
     /// The elements, each a value of its own. A range of more elements
     /// than a list may have is an error.
     pub(crate) fn to_vec(self) -> Result<Vec<Value>, VmError> {

@@ -242,9 +242,11 @@ pub(crate) mod fs {
 
         fn list_dir(path: &str) -> Value {
             let names = std::fs::read_dir(path).and_then(|entries| {
-                entries
-                    .map(|entry| Ok(Value::String(entry?.file_name().to_string_lossy().into_owned())))
-                    .collect::<std::io::Result<Vec<Value>>>()
+                let names = entries.map(|entry| {
+                    let name = entry?.file_name();
+                    Ok(Value::String(name.to_string_lossy().into_owned()))
+                });
+                names.collect::<std::io::Result<Vec<Value>>>()
             });
             result(names, path, |names| Value::List(Arc::new(names)))
         }

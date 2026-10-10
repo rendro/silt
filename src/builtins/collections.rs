@@ -8,39 +8,7 @@ use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
 
-/// The elements of a list, one after the other, a range's without
-/// making a list of them.
-enum Items<'a> {
-    List(std::slice::Iter<'a, Value>),
-    Range(std::ops::RangeInclusive<i64>),
-}
-
-impl Iterator for Items<'_> {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Value> {
-        match self {
-            Items::List(items) => items.next().cloned(),
-            Items::Range(range) => range.next().map(Value::Int),
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Items::List(items) => items.size_hint(),
-            Items::Range(range) => range.size_hint(),
-        }
-    }
-}
-
-impl<'a> List<'a> {
-    fn iter(self) -> Items<'a> {
-        match self {
-            List::Items(items) => Items::List(items.iter()),
-            List::Range(lo, hi) => Items::Range(lo..=hi),
-        }
-    }
-
+impl List<'_> {
     /// How many elements it has: a range can have more than an `Int`
     /// counts.
     fn len(self) -> u128 {
@@ -345,11 +313,27 @@ pub(crate) mod list {
 
     builtins! {
         fn map(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate("list.map", xs.to_vec()?, f.clone(), Vec::new(), item_arg, keep_result, as_list))
+            Ok(iterate(
+                "list.map",
+                xs.to_vec()?,
+                f.clone(),
+                Vec::new(),
+                item_arg,
+                keep_result,
+                as_list,
+            ))
         }
 
         fn filter(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate("list.filter", xs.to_vec()?, f.clone(), Vec::new(), item_arg, keep_item_if, as_list))
+            Ok(iterate(
+                "list.filter",
+                xs.to_vec()?,
+                f.clone(),
+                Vec::new(),
+                item_arg,
+                keep_item_if,
+                as_list,
+            ))
         }
 
         fn each(xs: List, f: &Value) -> Result<Step, VmError> {
@@ -357,7 +341,15 @@ pub(crate) mod list {
         }
 
         fn fold(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate("list.fold", xs.to_vec()?, f.clone(), init.clone(), acc_and_item, set_acc, take_acc))
+            Ok(iterate(
+                "list.fold",
+                xs.to_vec()?,
+                f.clone(),
+                init.clone(),
+                acc_and_item,
+                set_acc,
+                take_acc,
+            ))
         }
 
         fn find(xs: List, f: &Value) -> Result<Step, VmError> {
@@ -406,11 +398,27 @@ pub(crate) mod list {
         }
 
         fn flat_map(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate("list.flat_map", xs.to_vec()?, f.clone(), Vec::new(), item_arg, flat_map_step, as_list))
+            Ok(iterate(
+                "list.flat_map",
+                xs.to_vec()?,
+                f.clone(),
+                Vec::new(),
+                item_arg,
+                flat_map_step,
+                as_list,
+            ))
         }
 
         fn filter_map(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate("list.filter_map", xs.to_vec()?, f.clone(), Vec::new(), item_arg, filter_map_step, as_list))
+            Ok(iterate(
+                "list.filter_map",
+                xs.to_vec()?,
+                f.clone(),
+                Vec::new(),
+                item_arg,
+                filter_map_step,
+                as_list,
+            ))
         }
 
         fn sort_by(xs: List, key: &Value) -> Result<Step, VmError> {
@@ -435,7 +443,15 @@ pub(crate) mod list {
         }
 
         fn fold_until(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate("list.fold_until", xs.to_vec()?, f.clone(), init.clone(), acc_and_item, fold_until_step, take_acc))
+            Ok(iterate(
+                "list.fold_until",
+                xs.to_vec()?,
+                f.clone(),
+                init.clone(),
+                acc_and_item,
+                fold_until_step,
+                take_acc,
+            ))
         }
 
         fn unfold(seed: &Value, f: &Value) -> Step {
@@ -979,7 +995,15 @@ pub(crate) mod set {
         }
 
         fn filter(s: Set, f: &Value) -> Step {
-            iterate("set.filter", elements(s), f.clone(), Vec::new(), item_arg, keep_item_if, as_set)
+            iterate(
+                "set.filter",
+                elements(s),
+                f.clone(),
+                Vec::new(),
+                item_arg,
+                keep_item_if,
+                as_set,
+            )
         }
 
         fn each(s: Set, f: &Value) -> Step {
@@ -987,7 +1011,15 @@ pub(crate) mod set {
         }
 
         fn fold(s: Set, init: &Value, f: &Value) -> Step {
-            iterate("set.fold", elements(s), f.clone(), init.clone(), acc_and_item, set_acc, take_acc)
+            iterate(
+                "set.fold",
+                elements(s),
+                f.clone(),
+                init.clone(),
+                acc_and_item,
+                set_acc,
+                take_acc,
+            )
         }
 
         fn new() -> BTreeSet<Value> {
