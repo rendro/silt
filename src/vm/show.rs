@@ -160,7 +160,7 @@ impl Vm {
             Ok(Step::Done(Value::String(text))) => text,
             Ok(Step::Run(showing)) => {
                 self.push_native_frame(showing);
-                let run = self.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
+                let run = self.run_thread(floor, |vm| vm.run_frames(floor, vm.own_slice()));
                 match self.finish_run(run, floor, stack_floor) {
                     Ok(Value::String(text)) => text,
                     _ => value.to_string(),

@@ -1116,7 +1116,8 @@ impl Inner {
         let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(task.handle.owner())));
         let counted = COUNTED.with(|counted| counted.replace(true));
         let running = RUNNING_TASK.with(|running| running.replace(Some(task.id)));
-        let result = task.vm.execute_slice(time_slice());
+        let slice = task.vm.time_slice().unwrap_or_else(time_slice);
+        let result = task.vm.execute_slice(slice);
         RUNNING_TASK.with(|was| was.set(running));
         COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));

@@ -10,6 +10,7 @@
 mod corpora;
 mod generated;
 mod goldens;
+mod limits;
 mod oracle;
 mod selfcheck;
 mod sweep;

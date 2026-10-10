@@ -670,6 +670,9 @@ pub struct Runtime {
     // ── Host ────────────────────────────────────────────────────
     /// Where the program's output goes and which clock it reads.
     pub(crate) io: HostIo,
+    /// The slice an embedder set ([`Vm::set_time_slice`]); 0 while it
+    /// has set none.
+    pub(crate) time_slice: std::sync::atomic::AtomicUsize,
 
     // ── Per-VM generators ───────────────────────────────────────
     /// The state of `math.random`; `None` until the first call seeds it

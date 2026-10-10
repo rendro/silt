@@ -387,6 +387,17 @@ another, and share one `Vm`.)
 one thread (the scheduler owns its own worker threads internally). To run
 several scripts in parallel from Rust, create one `Vm` per thread.
 
+## Limits
+
+**Time slice.** `vm.set_time_slice(steps)` makes the program run in
+slices of that many steps: a task gives way to the other tasks after
+`steps` instructions (the scheduler's own slice is 2000), and the thread
+that runs the program's own code stops and goes on after `steps` too,
+where it otherwise runs `main` without a break. What a program computes
+does not depend on the slice; a host sets one to test exactly that. With
+`set_time_slice(1)` the program is stopped and resumed after every
+instruction and after every step of a builtin that calls back into it.
+
 ## Error Surfacing
 
 - **Static errors** (type errors, unknown names, bad host signatures)

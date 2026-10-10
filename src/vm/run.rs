@@ -256,7 +256,7 @@ impl Vm {
                     self.woken = Some(scheduler.block_thread(wait, who)?);
                 }
             }
-            run = self.run_frames(floor, usize::MAX)?;
+            run = self.run_frames(floor, self.own_slice())?;
         }
     }
 
