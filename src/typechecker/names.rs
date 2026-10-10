@@ -326,9 +326,16 @@ pub fn resolve_module(
     );
     // What a declaration that did not parse would have bound is
     // declared, and what it means is unknown: a use of it is no error.
+    // (A name that is declared, imported or silt's own is what it is:
+    // the names are read from the tokens of what failed, and a type
+    // among a variant's fields can be among them.)
     for name in &program.unknown {
-        scope.values.entry(*name).or_insert(Binding::Poisoned);
-        scope.types.entry(*name).or_insert(Binding::Poisoned);
+        if !builtins.prelude.values.contains_key(name) {
+            scope.values.entry(*name).or_insert(Binding::Poisoned);
+        }
+        if !builtins.prelude.types.contains_key(name) {
+            scope.types.entry(*name).or_insert(Binding::Poisoned);
+        }
     }
     let mut resolver = Resolver {
         defs,

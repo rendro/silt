@@ -1100,8 +1100,9 @@ impl<'src> Parser<'src> {
                 names.extend(rest.get(1).and_then(name));
                 // The variants of an enum: the upper-case names that
                 // stand behind a comma or the brace in its braces. (A
-                // type among a variant's fields that is taken for one
-                // is no harm: a name that is declared is what it is.)
+                // type among a variant's fields can be taken for one:
+                // the resolver leaves a name that is declared, imported
+                // or silt's own what it is.)
                 let mut depth = 0;
                 for (i, tok) in rest.iter().enumerate() {
                     match tok.kind {
