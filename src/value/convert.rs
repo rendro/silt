@@ -146,7 +146,7 @@ impl FromValue for i64 {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::Int(n) => Ok(*n),
-            other => Err(format!("expected Int, got {}", value_type_name(other))),
+            other => Err(format!("expected Int, got {}", other.kind())),
         }
     }
 }
@@ -162,7 +162,7 @@ impl FromValue for f64 {
         match value {
             Value::Float(n) => Ok(*n),
             Value::Int(n) => Ok(*n as f64),
-            other => Err(format!("expected Float, got {}", value_type_name(other))),
+            other => Err(format!("expected Float, got {}", other.kind())),
         }
     }
 }
@@ -184,7 +184,7 @@ impl FromValue for bool {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::Bool(b) => Ok(*b),
-            other => Err(format!("expected Bool, got {}", value_type_name(other))),
+            other => Err(format!("expected Bool, got {}", other.kind())),
         }
     }
 }
@@ -199,7 +199,7 @@ impl FromValue for String {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::String(s) => Ok(s.clone()),
-            other => Err(format!("expected String, got {}", value_type_name(other))),
+            other => Err(format!("expected String, got {}", other.kind())),
         }
     }
 }
@@ -220,7 +220,7 @@ impl FromValue for () {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::Unit => Ok(()),
-            other => Err(format!("expected Unit, got {}", value_type_name(other))),
+            other => Err(format!("expected Unit, got {}", other.kind())),
         }
     }
 }
@@ -239,7 +239,7 @@ impl FromValue for Vec<Value> {
                 checked_range_len(*lo, *hi)?;
                 Ok((*lo..=*hi).map(Value::Int).collect())
             }
-            other => Err(format!("expected List, got {}", value_type_name(other))),
+            other => Err(format!("expected List, got {}", other.kind())),
         }
     }
 }
@@ -266,20 +266,4 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
             Err(e) => Value::variant(bv::ERR, vec![Value::String(e)]),
         })
     }
-}
-
-/// Surface kind name used by the `FromValue` impls' diagnostic shape
-/// (`"expected <Kind>, got <kind>"`). Round 76 ERR-1 GAP collapse: this
-/// previously hand-rolled its own match arms that drifted from the two
-/// canonical kind oracles (`builtins::common::value_kind` and
-/// `vm::Vm::type_name`) on four variants — `BuiltinFn` ("Fn" vs
-/// "BuiltinFn"), `VariantConstructor` ("Constructor" vs
-/// "VariantConstructor"), `TypeDescriptor` ("Type" vs "TypeDescriptor"),
-/// `PrimitiveDescriptor` ("Type" vs "PrimitiveDescriptor"). Round 75
-/// ERR-1 GAP unified `value_kind` with `Vm::type_name` for all 22
-/// variants; this helper now delegates to that canonical source so a
-/// single edit to one match arm propagates to every conversion error message.
-/// Per the project's "one way to do things" convention.
-fn value_type_name(v: &Value) -> &'static str {
-    crate::builtins::value_kind(v)
 }

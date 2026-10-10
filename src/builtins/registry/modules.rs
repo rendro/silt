@@ -3,11 +3,12 @@
 //!
 //! A function row is `f(signature, summary, body)`: the body is the
 //! function of that name among the module's typed bodies
-//! (`crate::builtins::typed`). A row `u(signature, summary)` has none
-//! yet: it runs the module's untyped `call`. A constant is `k("name:
-//! Type", summary, value)`.
+//! (`crate::builtins::typed`); with `.feature("name")` it needs a
+//! cargo feature beyond its module's, with `.optional_last()` its last
+//! parameter may be left out. A constant is `k("name: Type", summary,
+//! value)`.
 
-use super::{Module, RowSpec, UntypedCall, build_module, f, k, module};
+use super::{Module, RowSpec, build_module, f, k, module};
 use crate::builtins::collections::{list, map, set};
 use crate::builtins::numeric::{float, int, math};
 #[cfg(feature = "postgres")]

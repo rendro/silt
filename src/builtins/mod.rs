@@ -32,25 +32,14 @@ pub mod uuid;
 use crate::value::Value;
 use crate::vm::VmError;
 
-/// Re-export the canonical kind-name oracle used by the
-/// `"<fn> requires <Kind>, got <kind>"` diagnostic shape. The underlying
-/// helper lives in the private `common` submodule; this thin wrapper
-/// gives integration tests
-/// (`tests/typecheck/round75_kind_naming_canonical_tests.rs`) access without
-/// widening the visibility of every other helper in `common.rs`.
-pub fn value_kind(v: &Value) -> &'static str {
-    common::value_kind(v)
-}
-
 /// Re-export the canonical `Ok(v)` variant builder so an integration
 /// test can lock the round-83 dedup: three sibling builtin modules
 /// (`tcp`, `stream`, `postgres`) had byte-identical local `fn ok`
 /// clones that were collapsed to call `common::ok` instead. The lock
 /// in `tests/meta/round83_dead_code_dedup_lock_tests.rs` proves the deletion
 /// was a semantic no-op by comparing this builder's output against a
-/// hand-rolled `Value::variant(bv::OK, vec![v])`. Thin wrapper
-/// pattern matches `value_kind` above — we widen only this one helper,
-/// not the rest of `common.rs`.
+/// hand-rolled `Value::variant(bv::OK, vec![v])`. A thin wrapper: only
+/// this one helper is widened, not the rest of `common.rs`.
 pub fn ok(v: Value) -> Value {
     common::ok(v)
 }

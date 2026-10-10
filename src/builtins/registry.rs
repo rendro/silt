@@ -44,19 +44,10 @@ use crate::source::FileId;
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
 
-/// What a call of a row runs where the row has no typed body: the
-/// module's `call_*` function, given the function's name and the
-/// arguments as values. It gives the function's value, or the frame
-/// the builtin goes on as ([`Step::Run`]).
-pub(crate) type UntypedCall = fn(&mut Vm, &str, &[Value]) -> Result<Step, VmError>;
-
 /// What a row is at run time.
 pub(crate) enum Body {
-    /// A function with a typed body.
+    /// A function: its typed body.
     Typed(TypedCall),
-    /// A function: the module's untyped entry point, called with the
-    /// row's name.
-    Untyped(UntypedCall),
     /// A constant (`math.pi`).
     Const(Value),
     /// A row of a feature that is not built.
@@ -166,7 +157,6 @@ impl Row {
     pub(crate) fn call(&self, vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         match &self.body {
             Body::Typed(call) => call(vm, args).unwrap_or_else(|| Err(self.misfit(args))),
-            Body::Untyped(call) => call(vm, self.name, args),
             Body::Const(_) | Body::Off => Err(VmError::new(format!(
                 "{} is not a function",
                 self.qualified()
@@ -184,7 +174,7 @@ impl Row {
             .find('(')
             .zip(self.signature.rfind(") ->"))
             .map_or("()", |(open, close)| &self.signature[open..=close]);
-        let kinds: Vec<&str> = args.iter().map(super::value_kind).collect();
+        let kinds: Vec<&str> = args.iter().map(Value::kind).collect();
         VmError::type_confusion(format!(
             "{} takes {params}, but was called with ({})",
             self.qualified(),
@@ -217,12 +207,12 @@ pub struct RowSpec {
 fn f(signature: &'static str, summary: &'static str, body: TypedCall) -> RowSpec {
     RowSpec {
         typed: Some(body),
-        ..u(signature, summary)
+        ..off(signature, summary)
     }
 }
 
-/// A function row whose body is its module's untyped `call`.
-fn u(signature: &'static str, summary: &'static str) -> RowSpec {
+/// A function row of a feature that is not built: no body.
+fn off(signature: &'static str, summary: &'static str) -> RowSpec {
     RowSpec {
         signature,
         summary,
@@ -353,12 +343,9 @@ impl Module {
     }
 }
 
-/// The module `$name`: see [`Module`] for the fields. `call` is the
-/// untyped entry point of a module whose rows are not all typed, the
-/// body of each row that has none of its own (`u`), which gives a
-/// value; `steps` is one that gives a [`Step`], of a module with
-/// functions that call functions or wait. With a `feature`, it and
-/// the rows' bodies are compiled only when the feature is built.
+/// The module `$name`: see [`Module`] for the fields. With a
+/// `feature`, the rows' bodies are compiled only when the feature is
+/// built.
 macro_rules! module {
     (
         name: $name:literal,
@@ -369,17 +356,12 @@ macro_rules! module {
         $(opaque: $opaque:expr,)?
         $(error: $error:literal,)?
         $(shares: $shares:expr,)?
-        $(call: $call:expr,)?
-        $(steps: $steps:expr,)?
         rows: [$(
             $row:ident ( $($arg:expr),* $(,)? ) $(. $with:ident ( $($with_arg:tt)* ))*
         ),* $(,)?] $(,)?
     ) => {{
         #[allow(unused_mut, unused_assignments)]
         let mut feature: Option<&'static str> = None;
-        #[allow(unused_mut, unused_assignments)]
-        let mut call: Option<UntypedCall> = None;
-        module!(@call call, [$($feature)?], [$($call)?], [$($steps)?]);
         #[allow(unused_mut, unused_assignments)]
         let mut built = true;
         $(
@@ -409,7 +391,6 @@ macro_rules! module {
         build_module(
             $name,
             (feature, built),
-            call,
             ($page, include_str!(concat!("../../../docs/stdlib/", $page))),
             (types, derives, opaque),
             error,
@@ -456,22 +437,9 @@ macro_rules! module {
         #[cfg(all($(feature = $of,)? $(feature = $own,)?))]
         let row = $crate::builtins::registry::f($signature, $summary, $body);
         #[cfg(not(all($(feature = $of,)? $(feature = $own,)?)))]
-        let row = $crate::builtins::registry::u($signature, $summary);
+        let row = $crate::builtins::registry::off($signature, $summary);
         row
     }};
-    (@call $slot:ident, [], [], []) => {};
-    (@call $slot:ident, [], [$call:expr], []) => {
-        $slot = Some(|vm, name, args| ($call)(vm, name, args).map(crate::vm::Step::Done));
-    };
-    (@call $slot:ident, [], [], [$steps:expr]) => {
-        $slot = Some($steps);
-    };
-    (@call $slot:ident, [$feature:literal], [$($call:expr)?], [$($steps:expr)?]) => {
-        #[cfg(feature = $feature)]
-        {
-            module!(@call $slot, [], [$($call)?], [$($steps)?]);
-        }
-    };
 }
 use module;
 
@@ -537,11 +505,9 @@ fn type_decls(
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_module(
     name: &'static str,
     (feature, enabled): (Option<&'static str>, bool),
-    call: Option<UntypedCall>,
     (page_file, page): (&'static str, &'static str),
     (types, derives, opaque): (
         &'static str,
@@ -564,18 +530,13 @@ fn build_module(
         opaque,
         error,
         shares,
-        rows: rows(name, enabled, call, specs),
+        rows: rows(name, enabled, specs),
     }
 }
 
 /// The rows of `specs`, of the module `name` (of the prelude: `""`),
 /// which is built or not.
-fn rows(
-    name: &'static str,
-    enabled: bool,
-    call: Option<UntypedCall>,
-    specs: Vec<RowSpec>,
-) -> Vec<Row> {
+fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
     let mut rows: Vec<Row> = specs
         .into_iter()
         .map(|spec| {
@@ -591,12 +552,11 @@ fn rows(
                 enabled: on,
                 // (Its place among all rows: the registry's to say.)
                 id: BuiltinId(0),
-                body: match (spec.constant, spec.typed, call) {
+                body: match (spec.constant, spec.typed) {
                     _ if !on => Body::Off,
-                    (Some(value), _, _) => Body::Const(value),
-                    (None, Some(typed), _) => Body::Typed(typed),
-                    (None, None, Some(call)) => Body::Untyped(call),
-                    (None, None, None) => {
+                    (Some(value), _) => Body::Const(value),
+                    (None, Some(typed)) => Body::Typed(typed),
+                    (None, None) => {
                         panic!("the row `{}` of {name} has no body", spec.signature)
                     }
                 },
@@ -728,7 +688,7 @@ pub fn registry() -> &'static Registry {
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     REGISTRY.get_or_init(|| {
         let mut modules = modules::modules();
-        let mut prelude = rows("", true, None, modules::prelude());
+        let mut prelude = rows("", true, modules::prelude());
         let by_name = modules
             .iter()
             .enumerate()

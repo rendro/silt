@@ -101,6 +101,46 @@ impl Value {
 }
 
 impl Value {
+    /// The value's kind, as an error names it: the name of the `Value`
+    /// variant. A range is a "Range", not a "List", though the two are
+    /// one type to a program: the error shows what the value is.
+    ///
+    /// Not for method dispatch: that is
+    /// `crate::types::canonical::dispatch_type_for_value`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Value::Int(_) => "Int",
+            Value::Float(_) => "Float",
+            Value::Bool(_) => "Bool",
+            Value::String(_) => "String",
+            Value::List(_) => "List",
+            Value::Range(..) => "Range",
+            Value::Map(_) => "Map",
+            Value::Set(_) => "Set",
+            Value::Tuple(_) => "Tuple",
+            Value::Record(..) => "Record",
+            Value::Variant(..) => "Variant",
+            // Surface name matches `Type::Fun`'s Display (`Fn(...) -> R`)
+            // and the canonical dispatch name returned by
+            // `dispatch_type_name`. Round 71 follow-up unified
+            // `Function` / `Fun` / `Fn` on `"Fn"`.
+            Value::VmClosure(_) => "Fn",
+            Value::BuiltinFn(_) => "BuiltinFn",
+            Value::HostFn(_) => "HostFn",
+            Value::VariantConstructor(..) => "VariantConstructor",
+            Value::TypeDescriptor(_) => "TypeDescriptor",
+            Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
+            Value::Channel(_) => "Channel",
+            Value::Handle(_) => "Handle",
+            Value::Bytes(_) => "Bytes",
+            Value::TcpListener(_) => "TcpListener",
+            Value::TcpStream(_) => "TcpStream",
+            Value::Unit => "Unit",
+        }
+    }
+}
+
+impl Value {
     /// Get the length of a list or range, if applicable.
     pub fn collection_len(&self) -> Option<usize> {
         match self {

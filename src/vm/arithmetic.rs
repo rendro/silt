@@ -72,8 +72,8 @@ impl Vm {
                     Op::Mod => "%",
                     _ => unreachable!(),
                 };
-                let a_type = self.type_name(&a);
-                let b_type = self.type_name(&b);
+                let a_type = a.kind();
+                let b_type = b.kind();
                 // Special error for Int/Float mixing
                 if (a_type == "Int" && b_type == "Float") || (a_type == "Float" && b_type == "Int")
                 {
@@ -140,8 +140,8 @@ impl Vm {
             _ => {
                 return Err(VmError::type_confusion(format!(
                     "unsupported operation: cannot compare {} and {}",
-                    self.type_name(&a),
-                    self.type_name(&b)
+                    a.kind(),
+                    b.kind()
                 )));
             }
         };
@@ -212,8 +212,8 @@ impl Vm {
         if Self::value_disc(a) != Self::value_disc(b) {
             return Err(VmError::type_confusion(format!(
                 "unsupported operation: cannot compare {} and {}",
-                self.type_name(a),
-                self.type_name(b)
+                a.kind(),
+                b.kind()
             )));
         }
         Ok(())

@@ -35,7 +35,7 @@ use postgres::types::{IsNull, Kind, ToSql, Type as PgType};
 use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
 
-use super::common::{ok, value_kind};
+use super::common::ok;
 use super::typed::{Arg, List, Map, Ret, builtins};
 use crate::runtime::sync::{Channel, Close};
 use crate::scheduler::Scheduler;
@@ -704,7 +704,7 @@ fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
     let Value::Variant(tag, payload) = v else {
         return Err(format!(
             "postgres requires Value variant (VInt/VStr/...), got {}",
-            value_kind(v)
+            v.kind()
         ));
     };
     if !tag.of(ty::PG_VALUE) {
@@ -1002,7 +1002,7 @@ fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
         "postgres requires PgPool or PgTx, got {}",
         match conn {
             Value::Variant(tag, _) => tag.name(),
-            other => value_kind(other),
+            other => other.kind(),
         }
     )))
 }

@@ -1,55 +1,31 @@
-//! Round 75 — kind-name canonical-form locks.
+//! Kind-name locks.
 //!
-//! Two drift bugs collapsed to a single canonical form:
+//! An error that names the kind of a value names it with
+//! `Value::kind`: a TitleCase name for every `Value` variant, never a
+//! generic word ("value"), an article ("a function") or a lowercase
+//! form ("range"). It was three hand-written tables that had drifted
+//! (`builtins::common::value_kind`, `Vm::type_name` and
+//! `Vm::user_facing_type_name`); it is one function, and
+//! `user_facing_type_name` differs from it only by four deliberate
+//! aliases (`Record` → record name, `Variant` → parent enum / tag,
+//! `VariantConstructor` / `TypeDescriptor` / `PrimitiveDescriptor` →
+//! the bare TitleCase head followed by the carried name).
 //!
-//! - **ERR-1 GAP** — `src/builtins/common.rs::value_kind` returned the
-//!   generic word `"value"` for ~half of the `Value` variants
-//!   (`Map`, `Set`, `Range`, `Variant`, `Record`, `Unit`, `Channel`,
-//!   `Handle`, `VmClosure`, `BuiltinFn`, `VariantConstructor`,
-//!   `TypeDescriptor`, `PrimitiveDescriptor`, `TcpListener`,
-//!   `TcpStream`). Round 73f's principle was *"name the offending
-//!   kind"* — collapsing 14+ distinct shapes onto one generic word
-//!   defeats that principle. Post-fix every variant is enumerated
-//!   explicitly with a TitleCase name mirrored from
-//!   `vm::Vm::type_name`.
-//!
-//! - **ERR-4 LATENT** — `vm::Vm::user_facing_type_name` had drifted
-//!   from its sibling `type_name` along two axes:
-//!     1. Lowercase surface words (`"range"`, `"tuple"`) where
-//!        `type_name` returned TitleCase (`"Range"`, `"Tuple"`).
-//!     2. Indefinite-article forms (`"a function"`, `"a channel"`,
-//!        `"a TCP listener"`, `"a TCP stream"`, `"a task handle"`,
-//!        `` "a constructor `name`" ``) where `type_name` returned a
-//!        bare TitleCase noun (`"Fn"`, `"Channel"`, `"TcpListener"`,
-//!        `"TcpStream"`, `"Handle"`, `"VariantConstructor"`).
-//!   Two error-rendering paths emitted different strings for the same
-//!   value — exactly the dual-shape drift that "one way to do things"
-//!   forbids. Post-fix `user_facing_type_name` delegates to
-//!   `type_name` for every variant except the four deliberate aliases
-//!   (`Record` → record name, `Variant` → parent enum / tag,
-//!   `VariantConstructor` / `TypeDescriptor` / `PrimitiveDescriptor` →
-//!   the bare TitleCase head followed by the carried name).
-//!
-//! These locks pin both layers:
-//!
-//!   1. `value_kind_titlecase_for_all_value_variants` enumerates every
-//!      `Value` variant and asserts `value_kind == type_name` (i.e.
-//!      no variant falls back to the old `"value"` word).
+//!   1. `kind_is_titlecase_for_all_value_variants` enumerates every
+//!      `Value` variant and asserts its kind.
 //!   2. (The kind in the error of a builtin that is given a value of
 //!      another kind than its parameter's is locked where that error is
 //!      made: `builtins::registry`'s
 //!      `arguments_that_are_not_the_row_s_are_one_error`. No checked
 //!      program reaches it.)
-//!   3. `user_facing_type_name_titlecase_aligned_with_type_name`
-//!      enumerates every variant and asserts
-//!      `user_facing_type_name == type_name` modulo the four
-//!      documented deliberate aliases.
+//!   3. `user_facing_type_name_titlecase_aligned_with_kind` enumerates
+//!      every variant and asserts `user_facing_type_name == kind`
+//!      modulo the four documented deliberate aliases.
 
 use silt::typeinfo::bv;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use silt::builtins::value_kind;
 use silt::bytecode::{Function, VmClosure};
 use silt::runtime::handle::TaskHandle;
 use silt::runtime::sync::Channel;
@@ -161,8 +137,7 @@ fn build_all_variants() -> AllVariants {
 }
 
 /// Iterate every variant in `AllVariants` paired with its expected
-/// `type_name` output. Used by both the `value_kind` test and the
-/// `user_facing_type_name` test.
+/// kind. Used by both tests.
 fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) {
     f(&av.int, "Int");
     f(&av.float, "Float");
@@ -188,46 +163,23 @@ fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) 
     f(&av.unit, "Unit");
 }
 
-// ── Test 1: value_kind matches type_name for every variant ──────────
+// ── Test 1: the kind of every variant ───────────────────────────────
 
 #[test]
-fn value_kind_titlecase_for_all_value_variants() {
-    // Pre-fix this test would fail for 14+ variants because they all
-    // collapsed to the generic word `"value"`. Post-fix every arm is
-    // enumerated explicitly and matches the canonical TitleCase from
-    // `vm::Vm::type_name`.
+fn kind_is_titlecase_for_all_value_variants() {
     let av = build_all_variants();
-    let vm = Vm::new(silt::HostIo::process());
     for_each_variant(&av, |v, expected| {
-        let kind = value_kind(v);
-        let tn = vm.type_name(v);
-        assert_eq!(
-            kind, expected,
-            "common::value_kind drift for {v:?}: expected {expected:?}, got {kind:?}"
-        );
-        assert_eq!(
-            kind, tn,
-            "common::value_kind diverged from vm::type_name for {v:?}: \
-             value_kind={kind:?}, type_name={tn:?}"
-        );
-        // Negative lock: never the generic word again.
-        assert_ne!(
-            kind, "value",
-            "common::value_kind regressed to the generic \"value\" \
-             fallback for variant {v:?} — round 75 ERR-1 GAP fix \
-             enumerated every variant explicitly so this can never \
-             surface again"
-        );
+        assert_eq!(v.kind(), expected, "the kind of {v:?}");
     });
 }
 
-// ── Test 3: user_facing_type_name aligned with type_name ────────────
+// ── Test 3: user_facing_type_name aligned with the kind ────────────
 
 #[test]
-fn user_facing_type_name_titlecase_aligned_with_type_name() {
+fn user_facing_type_name_titlecase_aligned_with_kind() {
     // Pre-fix `user_facing_type_name` returned lowercase + indefinite-
     // article forms ("range", "tuple", "a function", "a channel", ...)
-    // for values whose `type_name` was TitleCase ("Range", "Tuple",
+    // for values whose kind is TitleCase ("Range", "Tuple",
     // "Fn", "Channel", ...). Post-fix the two paths agree byte-for-byte
     // except for four deliberate aliases that carry semantic content:
     //
@@ -243,7 +195,7 @@ fn user_facing_type_name_titlecase_aligned_with_type_name() {
     let vm = Vm::new(silt::HostIo::process());
     for_each_variant(&av, |v, expected_type_name| {
         let ufn = vm.user_facing_type_name(v);
-        let tn = vm.type_name(v);
+        let tn = v.kind();
         // No "a " article allowed (catches "a function", "a channel",
         // "a constructor", "a TCP listener", "a TCP stream",
         // "a task handle"). Use word-boundary check: the literal

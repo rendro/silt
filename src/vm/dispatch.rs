@@ -28,7 +28,7 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
                 "{}: its signature returns {}, but it returned {} {shown}",
                 host.name,
                 host.returns,
-                builtins::value_kind(&value)
+                value.kind()
             )))
         }
         Ok(Err(e)) => Err(VmError {
@@ -197,11 +197,11 @@ impl Vm {
                     // function-shaped values collapse to "Fn" via
                     // `dispatch_type_name`; the descriptor values
                     // (whose canonical name is the *carried* type name)
-                    // fall back to `type_name` so the diagnostic names
+                    // fall back to their kind so the diagnostic names
                     // the descriptor kind, not the reflected type.
                     let name = match receiver {
                         Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
-                            self.type_name(receiver).to_string()
+                            receiver.kind().to_string()
                         }
                         _ => crate::types::canonical::dispatch_type_name(receiver),
                     };
@@ -282,8 +282,8 @@ impl Vm {
                     _ => {
                         return Some(Err(VmError::new(format!(
                             "compare() not supported between {} and {}",
-                            self.type_name(receiver),
-                            self.type_name(other)
+                            receiver.kind(),
+                            other.kind()
                         ))));
                     }
                 };

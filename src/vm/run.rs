@@ -590,8 +590,8 @@ impl Vm {
                     //
                     // The rejected set is sourced from the single predicate
                     // `value_implements_display` (below) so the runtime gate
-                    // and the surface-name reporting cannot drift from the
-                    // `type_name` oracle. Parity is locked by
+                    // and the surface-name reporting cannot drift from
+                    // `Value::kind`. Parity is locked by
                     // tests/typecheck/round95_interp_display_runtime_tests.rs.
                     _ if !Self::value_implements_display(&val) => {
                         // Report the canonical surface name so the runtime
@@ -602,11 +602,11 @@ impl Vm {
                         // collapse to their canonical name via
                         // `dispatch_type_name`; the descriptor values
                         // (whose canonical name is the *carried* type name)
-                        // fall back to their `type_name` so the diagnostic
+                        // fall back to their kind so the diagnostic
                         // names the descriptor kind, not the reflected type.
                         let name = match &val {
                             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
-                                self.type_name(&val).to_string()
+                                val.kind().to_string()
                             }
                             _ => crate::types::canonical::dispatch_type_name(&val),
                         };
