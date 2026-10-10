@@ -235,10 +235,15 @@ pub struct TypeChecker {
     /// What the next function or closure to be checked is the value of:
     /// the top-level definition, or the `let` of a block, that names it.
     pub(super) frame_owner: Option<unused::FrameOwner>,
-    /// The parameters whose function type returns `()` because the body
-    /// calls them as a statement: by the function or closure, the
-    /// parameter's index and the statement.
-    pub(super) statement_units: HashMap<unused::Callee, Vec<(usize, Span)>>,
+    /// The statements whose type is being fixed to `()`, while what
+    /// their scope owes is checked again (`recheck_fixed`).
+    pub(super) fixed_statements: Vec<Span>,
+    /// The parameters of the closures a body binds with `let` whose
+    /// function type returns `()` because the closure calls them as a
+    /// statement: by the `let`'s name, the parameter's index and the
+    /// statement. (Those of a top-level definition are the session's:
+    /// `Tables::statement_units`.)
+    pub(super) local_statement_units: HashMap<Symbol, Vec<(usize, Span)>>,
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
     /// Its name, for diagnostics.
@@ -324,7 +329,8 @@ impl TypeChecker {
             statement_calls: Vec::new(),
             fn_frames: Vec::new(),
             frame_owner: None,
-            statement_units: HashMap::new(),
+            local_statement_units: HashMap::new(),
+            fixed_statements: Vec::new(),
             module: crate::session::ModuleId(0),
             module_name: intern("main"),
             own_types: HashMap::new(),
@@ -1074,7 +1080,7 @@ impl TypeChecker {
         }
         self.group_rigid.clear();
         self.settle_bounds();
-        self.forget_local_statement_units();
+        self.local_statement_units.clear();
         self.enter_level();
     }
 
@@ -1191,7 +1197,7 @@ impl TypeChecker {
         self.solve_wanted(0);
         self.exit_level();
         self.settle_bounds();
-        self.forget_local_statement_units();
+        self.local_statement_units.clear();
     }
 }
 

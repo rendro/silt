@@ -1,0 +1,4 @@
+pub fn run(f) {
+  f()
+  "ran"
+}

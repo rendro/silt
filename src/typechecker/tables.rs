@@ -303,6 +303,12 @@ pub struct Tables {
     /// `let`, a variant's constructor, a type written as a value. (A
     /// builtin's is the builtin scope's.)
     pub(super) schemes: Table<HashMap<crate::defs::DefId, Scheme>, crate::defs::DefId>,
+    /// The parameters of a function (or of the closure a top-level
+    /// `let` holds) whose function type returns `()` because the body
+    /// calls them as a statement: the parameter's index and the
+    /// statement. A module that calls the function of another names the
+    /// statement too.
+    pub(super) statement_units: HashMap<crate::defs::DefId, Vec<(usize, Span)>>,
     /// What the check of each REPL cell left waiting for the type of a
     /// `let` that a later cell may decide (see [`Waiting`]).
     pub(super) waiting: HashMap<crate::session::ModuleId, Waiting>,
@@ -436,6 +442,7 @@ impl Tables {
         }
         for id in rows.schemes {
             self.schemes.remove(&id);
+            self.statement_units.remove(&id);
         }
     }
 }

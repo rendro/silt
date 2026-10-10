@@ -1701,6 +1701,13 @@ impl TypeChecker {
                     self.show_type(&resolved),
                     self.show_bound(trait_name, bound_trait_args)
                 ),
+                // The `()` is no type the program wrote: it is what a
+                // statement's call was given (`fix_statement_calls`).
+                Type::Unit if self.in_fixed_statement(span) => format!(
+                    "trait '{}' is asked of a type that nothing decides: the call is a \
+                     statement, so the type is `()`, which does not implement the trait",
+                    self.show_bound(trait_name, bound_trait_args)
+                ),
                 _ => format!(
                     "type '{}' does not implement trait '{}'",
                     self.show_type(&Type::Generic(type_name, vec![])),
