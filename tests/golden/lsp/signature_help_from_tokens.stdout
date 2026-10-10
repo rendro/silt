@@ -1,0 +1,41 @@
+> signature 45:33
+fn join(sep: String, n: Int) -> String
+argument 2: n: Int
+> signature 49:6
+fn add(a: Int, b: Int) -> Int
+argument 2: b: Int
+> signature 51:32
+fn add(a: Int, b: Int) -> Int
+argument 2: b: Int
+> signature 52:27
+fn add(a: Int, b: Int) -> Int
+argument 2: b: Int
+> signature 52:23
+fn mul(x: Int, y: Int) -> Int
+argument 2: y: Int
+> signature 53:38
+fn join(sep: String, n: Int) -> String
+argument 2: n: Int
+> signature 54:25
+fn add(a: Int, b: Int) -> Int
+argument 2: b: Int
+> signature 54:38
+fn mul(x: Int, y: Int) -> Int
+argument 1: x: Int
+> signature 57:7
+fn apply(xs: List(Int), f: Fn(Int) -> Int, n: Int) -> List(Int)
+argument 3: n: Int
+> signature 56:10
+fn apply(xs: List(Int), f: Fn(Int) -> Int, n: Int) -> List(Int)
+argument 2: f: Fn(Int) -> Int
+> signature 55:22
+fn apply(xs: List(Int), f: Fn(Int) -> Int, n: Int) -> List(Int)
+argument 1: xs: List(Int)
+> signature 55:25
+fn apply(xs: List(Int), f: Fn(Int) -> Int, n: Int) -> List(Int)
+argument 2: f: Fn(Int) -> Int
+> signature 58:25
+fn list.length(xs: List(a)) -> Int
+argument 1: xs: List(a)
+> signature 59:13
+(nothing)

@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: let a = 1\nlet b = (a +\n
+-- The input ends while an entry is still being read: the entry is
+-- evaluated as it is and says what it lacks; it is not dropped
+-- without a word.

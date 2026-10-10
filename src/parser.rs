@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
-use crate::lexer::{Comment, CommentKind, Lexed, Tok, Token};
+use crate::lexer::{Comment, CommentKind, Lexed, MAX_SYNTAX_ERRORS, Tok, Token};
 use crate::source::Span;
 
 type Result<T> = std::result::Result<T, Diagnostic>;
@@ -192,10 +192,13 @@ pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) 
 /// body is unaffected.) Two items of `import m.{ ... }` lines are left
 /// to the resolver: they are one binding when they name one definition
 /// (`int.{ ParseError }` and `float.{ ParseError }`).
-fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
+///
+/// Returns the first `keep` of the errors, and how many more there are.
+fn top_level_name_errors(decls: &[Decl], keep: usize) -> (Vec<Diagnostic>, usize) {
     let mut first: std::collections::HashMap<Symbol, (Span, &'static str, bool)> =
         std::collections::HashMap::new();
     let mut errors = Vec::new();
+    let mut more = 0;
     for decl in decls {
         let is_item = matches!(decl, Decl::Import(ImportTarget::Items(..), _));
         for (name, span, kind) in top_level_binders(decl) {
@@ -204,6 +207,7 @@ fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
             }
             match first.get(&name) {
                 Some(&(_, _, true)) if is_item => {}
+                Some(_) if errors.len() >= keep => more += 1,
                 Some(&(first_span, first_kind, _)) => errors.push(
                     Diagnostic::error(
                         Code::DuplicateTopLevel,
@@ -222,7 +226,7 @@ fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
             }
         }
     }
-    errors
+    (errors, more)
 }
 
 // ── Parser ───────────────────────────────────────────────────────────
@@ -315,8 +319,7 @@ pub struct Parser<'src> {
     /// For each token, the number of delimiters that are open before it:
     /// `(`, `[`, `{`, `#{`, `#[` and the start of a string interpolation
     /// open one, their closers close one. A closer has the depth of the
-    /// tokens it encloses. Derived from the token positions alone, so
-    /// backtracking (`restore`) cannot put it out of step.
+    /// tokens it encloses.
     delim_depth: Vec<i32>,
     /// For each token, whether it starts a line: a line break stands
     /// between the token before it and this one (see
@@ -340,14 +343,31 @@ pub struct Parser<'src> {
     /// The program's `StatementMarks`.
     statements: StatementMarks,
     errors: Vec<Diagnostic>,
+    /// What the lexer found wrong with the text; reported with the
+    /// parser's own errors.
+    lex_errors: Vec<Diagnostic>,
+    /// The errors that are counted and not kept: the lexer's
+    /// (`Lexed::more_errors`), and the parser's own behind its first
+    /// `MAX_SYNTAX_ERRORS`.
+    more_errors: usize,
+    /// Whether the text ends inside an unclosed string or comment
+    /// (`Lexed::is_cut_short`): only the lexer's first error is reported
+    /// then.
+    cut_short: bool,
+    /// What was read of the header of the function declaration that
+    /// failed last, behind its name: it stands in for the function (see
+    /// `parse_fn_decl`).
+    fn_stub: Option<FnDecl>,
+    /// Whether the function declaration that failed last failed in its
+    /// body: the header that `fn_stub` holds is whole.
+    fn_header_whole: bool,
+    /// Whether a declaration (or a REPL entry's statements) failed and
+    /// was skipped: the program is not all of the text.
+    skipped: bool,
+    /// The names that the declarations which failed would have bound
+    /// (`Program::unknown`).
+    unknown: Vec<Symbol>,
     depth: usize,
-    /// Depth guard for recovery-stub generation. When recovery fires inside
-    /// an already-stubbed declaration (e.g., two back-to-back malformed
-    /// `fn` declarations where the second is encountered while still
-    /// recovering from the first), we must not recursively emit another
-    /// stub and call ourselves again. Incremented on entry to the recovery
-    /// path, checked on re-entry.
-    in_fn_recovery: bool,
     /// The comments of the source, when the parser is asked to attach
     /// documentation (see `with_docs`): each top-level declaration and
     /// each trait or impl method gets its `doc` from the comments in
@@ -402,10 +422,18 @@ impl<'src> Parser<'src> {
             .iter()
             .map(|tok| tok.kind != Token::Eof && lexed.line_break_before(tok))
             .collect();
+        let cut_short = lexed.is_cut_short();
         let tokens = lexed.tokens;
         let delim_depth = delimiter_depths(&tokens);
         Self {
             comments: lexed.comments,
+            lex_errors: lexed.errors,
+            more_errors: lexed.more_errors,
+            cut_short,
+            fn_stub: None,
+            fn_header_whole: false,
+            skipped: false,
+            unknown: Vec::new(),
             tokens,
             delim_depth,
             starts_line,
@@ -416,7 +444,6 @@ impl<'src> Parser<'src> {
             statements: StatementMarks::default(),
             errors: Vec::new(),
             depth: 0,
-            in_fn_recovery: false,
             docs: None,
             current_trait_name: None,
             top_level_item: "declaration",
@@ -439,29 +466,25 @@ impl<'src> Parser<'src> {
     /// two on one line get "each statement must start on its own line".
     pub fn parse_cell(&mut self, wrapper: Symbol) -> (Program, Vec<Diagnostic>) {
         self.top_level_item = "statement";
-        if !self.nl_before()
-            && matches!(
-                self.peek(),
-                Token::Fn
-                    | Token::Type
-                    | Token::Trait
-                    | Token::Pub
-                    | Token::Import
-                    | Token::Let
-                    | Token::Mod
-            )
-        {
+        if matches!(
+            self.peek(),
+            Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Import
+                | Token::Let
+                | Token::Mod
+        ) {
             return self.parse_program_recovering();
         }
         let start = self.span();
         let stmts = match self.parse_stmt_list(&Token::Eof) {
             Ok(stmts) => stmts,
             Err(e) => {
-                let program = Program {
-                    decls: Vec::new(),
-                    statements: StatementMarks::default(),
-                };
-                return (program, vec![e]);
+                self.skipped = true;
+                self.report(0..self.tokens.len(), e);
+                return self.finish(Vec::new());
             }
         };
         let span = self.close(start);
@@ -479,13 +502,7 @@ impl<'src> Parser<'src> {
             is_signature_only: false,
             doc: None,
         };
-        (
-            Program {
-                decls: vec![Decl::Fn(wrapper)],
-                statements: std::mem::take(&mut self.statements),
-            },
-            Vec::new(),
-        )
+        self.finish(vec![Decl::Fn(wrapper)])
     }
 
     /// Delimiter depth of the token at `index` (see `delim_depth`).
@@ -764,6 +781,10 @@ impl<'src> Parser<'src> {
                 return Err(self.unclosed_list_err(what, open, close));
             }
             items.push(elem(self)?);
+            // Text the lexer rejected behind an element is of none. (In
+            // the place of an element it is the element that is wrong:
+            // `f(@)` is not `f()`.)
+            self.skip_rejected();
             if self.at(&Token::Comma) {
                 self.advance();
             } else if self.at(close) {
@@ -829,129 +850,164 @@ impl<'src> Parser<'src> {
         )
     }
 
-    fn save(&self) -> usize {
-        self.pos
-    }
-
-    fn restore(&mut self, pos: usize) {
-        self.pos = pos;
-    }
-
     // ── Program ──────────────────────────────────────────────────────
 
-    pub fn parse_program(&mut self) -> Result<Program> {
-        let mut decls = Vec::new();
-        while !self.at(&Token::Eof) {
-            decls.push(self.parse_decl()?);
-            if let Some(err) = self.same_line_decl_err() {
-                return Err(err);
-            }
-        }
-        if let Some(err) = top_level_name_errors(&decls).into_iter().next() {
-            return Err(err);
-        }
-        Ok(Program {
-            decls,
-            statements: std::mem::take(&mut self.statements),
-        })
+    /// Whether the program that was parsed is not all of the text: a
+    /// declaration failed and was skipped (it is missing, or a recovery
+    /// stub stands in for it).
+    pub fn skipped_a_declaration(&self) -> bool {
+        self.skipped
     }
 
-    /// Like `parse_program`, but recovers from errors and continues parsing.
-    /// Returns the (possibly partial) program and all collected parse errors.
+    /// The declarations of the file, or the first thing wrong with its
+    /// text (see `parse_program_recovering`, which this is).
+    pub fn parse_program(&mut self) -> Result<Program> {
+        let (program, errors) = self.parse_program_recovering();
+        match errors.into_iter().next() {
+            Some(first) => Err(first),
+            None => Ok(program),
+        }
+    }
+
+    /// The declarations of the file as far as they can be read, and
+    /// everything wrong with its text: the lexer's errors and the
+    /// parser's, in source order, then the names bound twice.
     ///
-    /// When a malformed `fn` declaration is encountered, the parser uses
-    /// `parse_fn_decl_recovering` to salvage whatever header prefix (name,
-    /// params, return type) was parsed cleanly and emits a recovery-stub
-    /// `FnDecl`. Downstream passes (typechecker) treat recovery stubs as
-    /// a source of "trusted signature, unchecked body" so that later
-    /// references to the stubbed name do not cascade into "undefined
-    /// variable" errors (Option B).
+    /// A declaration that does not parse is reported once and skipped
+    /// (see `synchronize`). A function that fails behind its name leaves
+    /// a recovery stub of the header read so far (see `parse_fn_decl`),
+    /// so that uses of its name are not errors of their own.
     pub fn parse_program_recovering(&mut self) -> (Program, Vec<Diagnostic>) {
         let mut decls = Vec::new();
-        while !self.at(&Token::Eof) {
-            // Special-case `fn` and `pub fn` declarations so we can salvage
-            // partial state on failure.
-            if self.at(&Token::Fn) {
-                match self.parse_fn_decl_recovering() {
-                    Ok((decl, None)) => {
-                        decls.push(Decl::Fn(decl));
-                        self.recover_same_line_decl();
-                    }
-                    Ok((stub, Some(err))) => {
-                        self.errors.push(err);
-                        decls.push(Decl::Fn(stub));
-                        self.synchronize();
-                    }
-                    Err(e) => {
-                        self.errors.push(e);
-                        self.synchronize();
-                    }
-                }
-                continue;
+        loop {
+            // Text the lexer rejected in front of a declaration is not
+            // the declaration's: the item starts behind it. (It is of
+            // the item when the item fails: one mistake, one error.)
+            let item = self.pos;
+            self.skip_rejected();
+            if self.at(&Token::Eof) {
+                break;
             }
-            if self.at(&Token::Pub) {
-                // Look ahead: if this is `pub fn`, use the recovery path.
-                let saved = self.save();
-                let pub_span = self.span();
-                let pub_doc = self.doc_for_span(pub_span);
-                self.advance();
-                if self.at(&Token::Fn) {
-                    match self.parse_fn_decl_recovering() {
-                        Ok((mut decl, None)) => {
-                            decl.is_pub = true;
-                            decl.span = pub_span.to(decl.span);
-                            if pub_doc.is_some() {
-                                decl.doc = pub_doc;
-                            }
-                            decls.push(Decl::Fn(decl));
-                            self.recover_same_line_decl();
-                        }
-                        Ok((mut stub, Some(err))) => {
-                            stub.is_pub = true;
-                            stub.span = pub_span.to(stub.span);
-                            if pub_doc.is_some() {
-                                stub.doc = pub_doc;
-                            }
-                            self.errors.push(err);
-                            decls.push(Decl::Fn(stub));
-                            self.synchronize();
-                        }
-                        Err(e) => {
-                            self.errors.push(e);
-                            self.synchronize();
-                        }
-                    }
-                    continue;
-                }
-                // Not `pub fn`: restore and fall through to normal decl parsing.
-                self.restore(saved);
-            }
-
+            let start = self.pos;
+            let is_fn = self.at(&Token::Fn)
+                || self.at(&Token::Pub)
+                    && matches!(self.tokens.get(start + 1), Some(tok) if tok.kind == Token::Fn);
+            self.fn_stub = None;
             match self.parse_decl() {
                 Ok(decl) => {
                     decls.push(decl);
-                    self.recover_same_line_decl();
+                    if let Some(err) = self.same_line_decl_err() {
+                        self.keep_or_count(err);
+                    }
                 }
                 Err(e) => {
-                    self.errors.push(e);
-                    self.synchronize();
+                    if let Some(stub) = self.fn_stub.take().filter(|_| is_fn) {
+                        decls.push(Decl::Fn(stub));
+                    }
+                    // What is skipped is of the failed declaration.
+                    self.skipped = true;
+                    self.synchronize(start);
+                    self.names_of_failed(start..self.pos);
+                    self.report(item..self.pos, e);
                 }
             }
         }
-        self.errors.extend(top_level_name_errors(&decls));
-        let program = Program {
-            decls,
-            statements: std::mem::take(&mut self.statements),
-        };
-        (program, std::mem::take(&mut self.errors))
+        self.finish(decls)
     }
 
-    /// The recovering counterpart of the same-line check in
-    /// `parse_program`: record the error and parse the next declaration
-    /// where it starts.
-    fn recover_same_line_decl(&mut self) {
-        if let Some(err) = self.same_line_decl_err() {
-            self.errors.push(err);
+    /// Record the error `error` of the item whose tokens are `item` (a
+    /// declaration that failed, with what was skipped behind it), unless
+    /// the lexer rejected text of it (a `Token::Error`, or a string with
+    /// a wrong escape): what is wrong there is said, and what the parser
+    /// makes of it is no second error.
+    fn report(&mut self, item: std::ops::Range<usize>, error: Diagnostic) {
+        // (Of a text that is cut short no parser error is reported, and
+        // the lexer's errors of any other text are in source order.)
+        if self.cut_short {
+            return;
+        }
+        let tokens = &self.tokens[item];
+        if tokens.iter().any(|tok| tok.kind == Token::Error) {
+            return;
+        }
+        let (Some(first), Some(last)) = (tokens.first(), tokens.last()) else {
+            return self.keep_or_count(error);
+        };
+        let read = first.span.start..last.span.end;
+        let behind = self
+            .lex_errors
+            .partition_point(|lex| lex.span.start < read.start);
+        match self.lex_errors.get(behind) {
+            Some(lex) if lex.span.start < read.end => {}
+            _ => self.keep_or_count(error),
+        }
+    }
+
+    /// Keep `error` if it is among the parser's first
+    /// `MAX_SYNTAX_ERRORS` (they come in source order); count it
+    /// otherwise.
+    fn keep_or_count(&mut self, error: Diagnostic) {
+        if self.errors.len() < MAX_SYNTAX_ERRORS {
+            self.errors.push(error);
+        } else {
+            self.more_errors += 1;
+        }
+    }
+
+    /// The program of `decls` with everything wrong with the text: the
+    /// lexer's errors and the parser's in source order, then the names
+    /// bound twice, at most `MAX_SYNTAX_ERRORS` in all and one more that
+    /// counts the rest. Of a text that is cut short only the lexer's
+    /// first error is reported.
+    fn finish(&mut self, decls: Vec<Decl>) -> (Program, Vec<Diagnostic>) {
+        let mut errors = std::mem::take(&mut self.lex_errors);
+        if self.cut_short {
+            // The first error is the cause, or the only one: an error
+            // inside a string can open the string that is not closed.
+            self.errors.clear();
+            errors.truncate(1);
+            return (self.program(decls), errors);
+        }
+        errors.append(&mut self.errors);
+        errors.sort_by_key(|error| error.span.start);
+        let mut more = self.more_errors + errors.len().saturating_sub(MAX_SYNTAX_ERRORS);
+        errors.truncate(MAX_SYNTAX_ERRORS);
+        let (twice, more_twice) = top_level_name_errors(&decls, MAX_SYNTAX_ERRORS - errors.len());
+        errors.extend(twice);
+        more += more_twice;
+        // The count stands at the end of the last error that is shown,
+        // in source order: on its last character.
+        if let Some(last) = errors.iter().max_by_key(|error| error.span.start)
+            && more > 0
+        {
+            let end = (last.span.end as usize).min(self.source.len());
+            let start = self.source[..end]
+                .char_indices()
+                .next_back()
+                .map_or(end, |(at, _)| at);
+            errors.push(Diagnostic::error(
+                Code::TooManyErrors,
+                Span {
+                    file: last.span.file,
+                    start: start as u32,
+                    end: end as u32,
+                },
+                format!(
+                    "{more} more syntax error{} in this file {} not shown",
+                    if more == 1 { "" } else { "s" },
+                    if more == 1 { "is" } else { "are" },
+                ),
+            ));
+        }
+        (self.program(decls), errors)
+    }
+
+    /// The program of `decls`, with the names of what failed.
+    fn program(&mut self, decls: Vec<Decl>) -> Program {
+        Program {
+            decls,
+            unknown: std::mem::take(&mut self.unknown),
+            statements: std::mem::take(&mut self.statements),
         }
     }
 
@@ -975,22 +1031,198 @@ impl<'src> Parser<'src> {
             .then(|| self.same_line_err(self.top_level_item))
     }
 
-    /// Skip tokens until we find one that could start a new declaration.
-    fn synchronize(&mut self) {
+    /// Skip to where the next declaration starts, behind the one that
+    /// began at token `start` and failed where the parser stands: to a
+    /// declaration keyword that starts a line and is outside every brace
+    /// the failed declaration opened, or that stands at the margin (a
+    /// brace that is still open while a file is being typed must not
+    /// take the rest of the file with it). A `let` or a `type` inside
+    /// the failed declaration is no declaration.
+    fn synchronize(&mut self, start: usize) {
+        // The braces that are open behind `kind`, of `open` before it.
+        let behind = |open: usize, kind: &Token| match kind {
+            Token::LBrace | Token::HashBrace => open + 1,
+            Token::RBrace => open.saturating_sub(1),
+            _ => open,
+        };
+        let mut open = self.tokens[start..self.pos]
+            .iter()
+            .fold(0, |open, tok| behind(open, &tok.kind));
+        // A declaration that failed at its first token is behind it.
+        let mut first = self.pos == start;
         loop {
             match self.peek() {
+                Token::Eof => break,
                 Token::Fn
                 | Token::Type
                 | Token::Trait
                 | Token::Pub
                 | Token::Import
                 | Token::Let
-                | Token::Eof => break,
-                _ => {
-                    self.advance();
+                    if !first && self.nl_before() && (open == 0 || self.at_margin()) =>
+                {
+                    break;
+                }
+                kind => open = behind(open, kind),
+            }
+            first = false;
+            self.advance();
+        }
+    }
+
+    /// Step over the text the lexer rejected (`Token::Error`): where an
+    /// item, a member or an element of a list starts or ends, it stands
+    /// between them and is of none; the lexer's error is its error.
+    fn skip_rejected(&mut self) {
+        while self.at(&Token::Error) {
+            self.advance();
+        }
+    }
+
+    /// Record the names that the declaration of the tokens `failed`,
+    /// which did not parse, would have bound (`Program::unknown`): they
+    /// are declared, and what they mean is unknown, so a use of one is
+    /// no "undefined" error of its own. A type's name and the names of
+    /// its variants; a trait's name; the names an `import` brings; the
+    /// names of a `let`. (A function has its recovery stub; an impl
+    /// binds no name.)
+    fn names_of_failed(&mut self, failed: std::ops::Range<usize>) {
+        let tokens = &self.tokens[failed];
+        let name = |tok: &Tok| match tok.kind {
+            Token::Ident(name) => Some(name),
+            _ => None,
+        };
+        let upper =
+            |name: Symbol| intern::resolve(name).starts_with(|c: char| c.is_ascii_uppercase());
+        let rest = match tokens.first().map(|tok| &tok.kind) {
+            Some(Token::Pub) => &tokens[1..],
+            _ => tokens,
+        };
+        let mut names = Vec::new();
+        match rest.first().map(|tok| &tok.kind) {
+            Some(Token::Type) => {
+                names.extend(rest.get(1).and_then(name));
+                // The variants of an enum: the upper-case names that
+                // stand behind a comma or the brace in its braces. (A
+                // type among a variant's fields can be taken for one:
+                // the resolver leaves a name that is declared, imported
+                // or silt's own what it is.)
+                let mut depth = 0;
+                for (i, tok) in rest.iter().enumerate() {
+                    match tok.kind {
+                        Token::LBrace => depth += 1,
+                        Token::RBrace => depth -= 1,
+                        Token::Ident(variant)
+                            if depth == 1
+                                && upper(variant)
+                                && matches!(rest[i - 1].kind, Token::LBrace | Token::Comma) =>
+                        {
+                            names.push(variant);
+                        }
+                        _ => {}
+                    }
                 }
             }
+            // A trait declaration, not an impl (`trait T for X`).
+            Some(Token::Trait) => {
+                let header = rest.iter().take_while(|tok| tok.kind != Token::LBrace);
+                let is_impl = header.clone().any(
+                    |tok| matches!(tok.kind, Token::Ident(word) if intern::resolve(word) == "for"),
+                );
+                if !is_impl {
+                    names.extend(rest.get(1).and_then(name));
+                }
+            }
+            // `import m`, `import m as n`, `import m.{ a, b }`: every
+            // name of the line.
+            Some(Token::Import) => names.extend(rest.iter().filter_map(name)),
+            // The names of the pattern, in front of `=` or `:`.
+            Some(Token::Let) => names.extend(
+                rest.iter()
+                    .take_while(|tok| !matches!(tok.kind, Token::Eq | Token::Colon))
+                    .filter_map(name)
+                    .filter(|name| !upper(*name)),
+            ),
+            _ => {}
         }
+        self.unknown.extend(names);
+    }
+
+    /// A method of the body of a trait or an impl. One that fails in its
+    /// body leaves its recovery stub (see `parse_fn_decl`): its error is
+    /// recorded here, it is skipped to its end, and the body goes on
+    /// with the next member, so one method that does not parse does not
+    /// take the trait or the impl and its other methods with it. (One
+    /// that fails in its header is not known well enough to stand: the
+    /// trait or the impl fails with it.) Returns whether the body goes
+    /// on.
+    fn parse_method(&mut self, methods: &mut Vec<FnDecl>) -> Result<bool> {
+        let start = self.pos;
+        self.fn_stub = None;
+        match self.parse_fn_decl() {
+            Ok(method) => {
+                methods.push(method);
+                Ok(true)
+            }
+            Err(e) => {
+                let Some(mut stub) = self.fn_stub.take().filter(|_| self.fn_header_whole) else {
+                    return Err(e);
+                };
+                // (The stub of a top-level function has no where
+                // clauses; a method's are part of what its trait or its
+                // impl says of it. They are not kept: the stub is not
+                // checked against anything.)
+                stub.where_clauses = Vec::new();
+                methods.push(stub);
+                self.skipped = true;
+                let goes_on = self.skip_member(start);
+                self.report(start..self.pos, e);
+                Ok(goes_on)
+            }
+        }
+    }
+
+    /// Skip to where the next member of a trait or impl body starts,
+    /// behind the member that began at token `start` and failed where
+    /// the parser stands: outside every brace the member opened, to a
+    /// `fn` or `type` that starts a line or to the brace that closes
+    /// the body. Returns false when a declaration keyword at the margin
+    /// comes first: the body is not closed (it is being typed), and the
+    /// declaration is the file's.
+    fn skip_member(&mut self, start: usize) -> bool {
+        let behind = |open: usize, kind: &Token| match kind {
+            Token::LBrace | Token::HashBrace => open + 1,
+            Token::RBrace => open.saturating_sub(1),
+            _ => open,
+        };
+        let mut open = self.tokens[start..self.pos]
+            .iter()
+            .fold(0, |open, tok| behind(open, &tok.kind));
+        loop {
+            match self.peek() {
+                Token::Eof => return false,
+                Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Import
+                | Token::Let
+                    if self.nl_before() && self.at_margin() =>
+                {
+                    return false;
+                }
+                Token::RBrace if open == 0 => return true,
+                Token::Fn | Token::Type if open == 0 && self.nl_before() => return true,
+                kind => open = behind(open, kind),
+            }
+            self.advance();
+        }
+    }
+
+    /// Whether the current token is the first character of its line.
+    fn at_margin(&self) -> bool {
+        let at = self.span().start_offset();
+        at == 0 || self.source.as_bytes().get(at - 1) == Some(&b'\n')
     }
 
     // ── Declarations ─────────────────────────────────────────────────
@@ -1005,16 +1237,25 @@ impl<'src> Parser<'src> {
                 self.advance();
                 match self.peek() {
                     Token::Fn => {
-                        let mut f = self.parse_fn_decl()?;
-                        f.is_pub = true;
-                        f.span = span.to(f.span);
-                        // If pub's line carries a doc, that takes
+                        let parsed = self.parse_fn_decl();
+                        // The function, or the stub that stands in for
+                        // it, is public and starts at its `pub`. If
+                        // pub's line carries a doc, that takes
                         // precedence over a doc found adjacent to `fn`
                         // (which won't happen in practice — pub and fn
                         // are on the same line — but be explicit).
-                        if pub_doc.is_some() {
-                            f.doc = pub_doc;
+                        let publish = |f: &mut FnDecl| {
+                            f.is_pub = true;
+                            f.span = span.to(f.span);
+                            if pub_doc.is_some() {
+                                f.doc = pub_doc.clone();
+                            }
+                        };
+                        if let Some(stub) = &mut self.fn_stub {
+                            publish(stub);
                         }
+                        let mut f = parsed?;
+                        publish(&mut f);
                         Ok(Decl::Fn(f))
                     }
                     Token::Type => {
@@ -1093,216 +1334,67 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// A function declaration. When it fails behind its name, what was
+    /// read of its header is left in `fn_stub` as a recovery stub: a
+    /// function of that name, those parameters and that return type
+    /// with an empty body, which the checker trusts for its signature
+    /// and does not check, so that uses of the name are not "undefined"
+    /// errors of their own.
     fn parse_fn_decl(&mut self) -> Result<FnDecl> {
         let span = self.span();
         let doc = self.doc_for_span(span);
         self.expect(&Token::Fn)?;
         let (name, name_span) = self.expect_ident()?;
-        let params = self.parse_fn_params()?;
-
-        let return_type = if self.peek() == &Token::Arrow {
-            self.advance();
-            Some(self.parse_type_expr()?)
-        } else {
-            None
-        };
-
-        let where_clauses = self.parse_where_clauses_opt()?;
-
-        let (body, is_signature_only) = if self.at(&Token::LBrace) {
-            (self.parse_block()?, false)
-        } else {
-            // Abstract method — no body (e.g. trait method declarations).
-            // The Unit placeholder keeps the AST shape uniform; the
-            // is_signature_only flag is the authoritative signal.
-            (self.mk_expr(ExprKind::Unit, span), true)
-        };
-
-        Ok(FnDecl {
+        let mut decl = FnDecl {
             name,
-            params,
-            return_type,
-            where_clauses,
-            body,
-            is_pub: false,
-            span: self.close(span),
-            name_span,
-            is_recovery_stub: false,
-            is_signature_only,
-            doc,
-        })
-    }
-
-    /// Recovery-aware fn declaration parser used by `parse_program_recovering`.
-    ///
-    /// Tries to parse a function declaration; on error, attempts to salvage
-    /// whatever header prefix was parsed (name, params, return type) and
-    /// synthesizes a recovery-stub `FnDecl` whose body is an empty block.
-    ///
-    /// Returns:
-    ///   * `Ok((fn_decl, None))` — normal parse succeeded.
-    ///   * `Ok((stub_fn, Some(err)))` — parse failed after the name was
-    ///     seen; `stub_fn.is_recovery_stub == true`. Caller should push the
-    ///     error and then `synchronize()`.
-    ///   * `Err(err)` — parse failed before a name was parsed, so no stub
-    ///     can be synthesized. Caller should push the error and
-    ///     synchronize.
-    ///
-    /// Implements the depth guard: if we're already inside recovery, no
-    /// new stubs are emitted for nested failures.
-    fn parse_fn_decl_recovering(&mut self) -> Result<(FnDecl, Option<Diagnostic>)> {
-        // Depth guard: if we somehow re-entered during recovery (e.g. the
-        // salvage path tried to keep parsing and hit another fn), bail to
-        // the non-recovering path so the caller can handle it.
-        if self.in_fn_recovery {
-            return Ok((self.parse_fn_decl()?, None));
-        }
-
-        let span = self.span();
-        let doc = self.doc_for_span(span);
-        // `fn` keyword is mandatory. If this errors, we have nothing to
-        // salvage.
-        self.expect(&Token::Fn)?;
-
-        // Name is mandatory. If the user wrote `fn (` with no name,
-        // we skip stub creation: no call sites can match an unnamed stub.
-        let (name, name_span) = match self.expect_ident() {
-            Ok((n, s)) => (n, s),
-            Err(e) => return Err(e),
-        };
-
-        // From here on: errors can produce a stub.
-        self.in_fn_recovery = true;
-        let result = self.parse_fn_decl_tail(name, name_span, span, doc);
-        self.in_fn_recovery = false;
-
-        match result {
-            Ok(decl) => Ok((decl, None)),
-            Err(boxed) => {
-                let (stub, err) = *boxed;
-                Ok((stub, Some(err)))
-            }
-        }
-    }
-
-    /// Parse the tail of a function declaration (after `fn name`), with
-    /// partial salvage on errors. On success, returns a complete FnDecl.
-    /// On failure, returns `(stub_fn_decl, parse_error)` boxed to keep
-    /// the `Err` variant small (clippy `result_large_err`).
-    fn parse_fn_decl_tail(
-        &mut self,
-        name: Symbol,
-        name_span: Span,
-        span: Span,
-        doc: Option<String>,
-    ) -> std::result::Result<FnDecl, Box<(FnDecl, Diagnostic)>> {
-        // Try to parse params. On failure, emit a stub with empty params.
-        let params = match self.parse_fn_params() {
-            Ok(p) => p,
-            Err(e) => {
-                return Err(Box::new((
-                    self.make_recovery_stub(name, name_span, Vec::new(), None, span, doc.clone()),
-                    e,
-                )));
-            }
-        };
-
-        // Try return type annotation.
-        let return_type = if self.peek() == &Token::Arrow {
-            self.advance();
-            match self.parse_type_expr() {
-                Ok(t) => Some(t),
-                Err(e) => {
-                    return Err(Box::new((
-                        self.make_recovery_stub(name, name_span, params, None, span, doc.clone()),
-                        e,
-                    )));
-                }
-            }
-        } else {
-            None
-        };
-
-        // Try where clauses.
-        let where_clauses = match self.parse_where_clauses_opt() {
-            Ok(clauses) => clauses,
-            Err(e) => {
-                return Err(Box::new((
-                    self.make_recovery_stub(
-                        name,
-                        name_span,
-                        params,
-                        return_type,
-                        span,
-                        doc.clone(),
-                    ),
-                    e,
-                )));
-            }
-        };
-
-        // Body. On failure, emit a stub that preserves the header.
-        let (body, is_signature_only) = if self.at(&Token::LBrace) {
-            match self.parse_block() {
-                Ok(b) => (b, false),
-                Err(err) => {
-                    return Err(Box::new((
-                        self.make_recovery_stub(
-                            name,
-                            name_span,
-                            params,
-                            return_type,
-                            span,
-                            doc.clone(),
-                        ),
-                        err,
-                    )));
-                }
-            }
-        } else {
-            // Abstract method — no body.
-            (self.mk_expr(ExprKind::Unit, span), true)
-        };
-
-        Ok(FnDecl {
-            name,
-            params,
-            return_type,
-            where_clauses,
-            body,
-            is_pub: false,
-            span: self.close(span),
-            name_span,
-            is_recovery_stub: false,
-            is_signature_only,
-            doc,
-        })
-    }
-
-    /// Build a recovery-stub `FnDecl` with an empty body. The body is a
-    /// block containing no statements; the typechecker treats these as
-    /// having `Type::Never`-style semantics (no body errors emitted).
-    fn make_recovery_stub(
-        &self,
-        name: Symbol,
-        name_span: Span,
-        params: Vec<Param>,
-        return_type: Option<TypeExpr>,
-        span: Span,
-        doc: Option<String>,
-    ) -> FnDecl {
-        FnDecl {
-            name,
-            params,
-            return_type,
+            params: Vec::new(),
+            return_type: None,
             where_clauses: Vec::new(),
-            body: Expr::new(ExprKind::Block(Vec::new()), self.close(span)),
+            body: Expr::new(ExprKind::Block(Vec::new()), span),
             is_pub: false,
-            span: self.close(span),
+            span,
             name_span,
             is_recovery_stub: true,
             is_signature_only: false,
             doc,
+        };
+        match self.parse_fn_rest(&mut decl) {
+            Ok((where_clauses, body, is_signature_only)) => {
+                decl.where_clauses = where_clauses;
+                decl.body = body;
+                decl.is_signature_only = is_signature_only;
+                decl.is_recovery_stub = false;
+                decl.span = self.close(span);
+                Ok(decl)
+            }
+            Err(e) => {
+                decl.span = self.close(span);
+                decl.body.span = decl.span;
+                self.fn_stub = Some(decl);
+                Err(e)
+            }
+        }
+    }
+
+    /// What follows the name of the function `decl`: its parameters and
+    /// return type, which are entered in `decl` as they are read, then
+    /// its where clauses, its body, and whether it has none.
+    fn parse_fn_rest(&mut self, decl: &mut FnDecl) -> Result<(Vec<WhereClause>, Expr, bool)> {
+        self.fn_header_whole = false;
+        decl.params = self.parse_fn_params()?;
+        if self.peek() == &Token::Arrow {
+            self.advance();
+            decl.return_type = Some(self.parse_type_expr()?);
+        }
+        let where_clauses = self.parse_where_clauses_opt()?;
+        self.fn_header_whole = true;
+        if self.at(&Token::LBrace) {
+            Ok((where_clauses, self.parse_block()?, false))
+        } else {
+            // Abstract method — no body (e.g. trait method declarations).
+            // The Unit placeholder keeps the AST shape uniform; the
+            // is_signature_only flag is the authoritative signal.
+            Ok((where_clauses, self.mk_expr(ExprKind::Unit, decl.span), true))
         }
     }
 
@@ -1738,16 +1830,26 @@ impl<'src> Parser<'src> {
             let prev_trait = self.current_trait_name.replace(name);
             let mut methods = Vec::new();
             let mut assoc_types: Vec<crate::ast::AssocTypeDecl> = Vec::new();
-            while !self.at(&Token::RBrace) {
+            let mut closed = true;
+            loop {
+                self.skip_rejected();
+                if self.at(&Token::RBrace) {
+                    break;
+                }
                 if self.at(&Token::Type) {
                     let assoc = self.parse_assoc_type_decl()?;
                     assoc_types.push(assoc);
                     continue;
                 }
-                methods.push(self.parse_fn_decl()?);
+                if !self.parse_method(&mut methods)? {
+                    closed = false;
+                    break;
+                }
             }
             self.current_trait_name = prev_trait;
-            self.expect(&Token::RBrace)?;
+            if closed {
+                self.expect(&Token::RBrace)?;
+            }
             if let Some(error) = qualified_name_error {
                 return Err(error);
             }
@@ -1866,16 +1968,26 @@ impl<'src> Parser<'src> {
             let prev_trait = self.current_trait_name.replace(name);
             let mut methods = Vec::new();
             let mut assoc_type_bindings: Vec<crate::ast::AssocTypeBinding> = Vec::new();
-            while !self.at(&Token::RBrace) {
+            let mut closed = true;
+            loop {
+                self.skip_rejected();
+                if self.at(&Token::RBrace) {
+                    break;
+                }
                 if self.at(&Token::Type) {
                     let binding = self.parse_assoc_type_binding()?;
                     assoc_type_bindings.push(binding);
                     continue;
                 }
-                methods.push(self.parse_fn_decl()?);
+                if !self.parse_method(&mut methods)? {
+                    closed = false;
+                    break;
+                }
             }
             self.current_trait_name = prev_trait;
-            self.expect(&Token::RBrace)?;
+            if closed {
+                self.expect(&Token::RBrace)?;
+            }
             Ok(Decl::TraitImpl(TraitImpl {
                 trait_module,
                 trait_name: name,
@@ -4173,6 +4285,7 @@ mod tests {
     fn parse(input: &str) -> Program {
         let tokens = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
+            .checked()
             .unwrap();
         Parser::new(tokens, input).parse_program().unwrap()
     }
@@ -4650,15 +4763,28 @@ fn main() {
     fn parse_err(input: &str) -> Diagnostic {
         let tokens = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
+            .checked()
             .unwrap();
         Parser::new(tokens, input).parse_program().unwrap_err()
     }
 
     fn parse_recovering(input: &str) -> (Program, Vec<Diagnostic>) {
-        let tokens = Lexer::new(crate::source::FileId::default(), input)
-            .tokenize()
-            .unwrap();
+        let tokens = Lexer::new(crate::source::FileId::default(), input).tokenize();
         Parser::new(tokens, input).parse_program_recovering()
+    }
+
+    /// The names of the functions of `program`, a recovery stub as
+    /// `name?`.
+    fn fn_names(program: &Program) -> Vec<String> {
+        program
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Fn(f) if f.is_recovery_stub => Some(format!("{}?", f.name)),
+                Decl::Fn(f) => Some(f.name.to_string()),
+                _ => None,
+            })
+            .collect()
     }
 
     // ── 1. Error recovery ───────────────────────────────────────────
@@ -4739,6 +4865,185 @@ fn main() {
             errs.len()
         );
         assert!(!prog.decls.is_empty());
+    }
+
+    #[test]
+    fn test_recovery_skips_to_the_end_of_the_braces_of_the_failed_declaration() {
+        // The `let` and the `type` inside `a` are no declarations.
+        let (prog, errs) = parse_recovering(
+            "fn a() {\n  let x = = 1\n  let y = 2\n  type\n  y\n}\n\nfn b() {\n  2\n}\n",
+        );
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(fn_names(&prog), ["a?", "b"]);
+        assert_eq!(prog.decls.len(), 2);
+    }
+
+    #[test]
+    fn test_recovery_stops_at_a_declaration_at_the_margin_inside_open_braces() {
+        // `a` is not closed: `b`, at the margin, is read all the same;
+        // the indented `let` behind the error is not.
+        let (prog, errs) = parse_recovering("fn a() {\n  f(1,\n  let y = 2\n\nfn b() {\n  2\n}\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(fn_names(&prog), ["a?", "b"]);
+        assert_eq!(prog.decls.len(), 2);
+    }
+
+    #[test]
+    fn test_recovery_keeps_a_public_stub_public() {
+        let (prog, errs) = parse_recovering("pub fn a(x: Int) -> Int {\n  x +\n}\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        let Decl::Fn(stub) = &prog.decls[0] else {
+            panic!("a function");
+        };
+        assert!(stub.is_recovery_stub && stub.is_pub);
+        assert_eq!(stub.params.len(), 1);
+        assert!(stub.return_type.is_some());
+        assert_eq!(stub.span.start, 0);
+    }
+
+    #[test]
+    fn test_a_declaration_with_an_invalid_token_is_no_parse_error() {
+        // The lexer's error for `@` is the only one of `a`; the parse
+        // error of `b` is reported behind it.
+        let (prog, errs) =
+            parse_recovering("fn a() {\n  1 @ 2\n}\n\nfn b() {\n  let z = )\n}\n\nlet q = 1 $ 2\n");
+        let messages: Vec<&str> = errs.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "unexpected character: '@'",
+                "expected expression, found )",
+                "unexpected character: '$'"
+            ]
+        );
+        assert_eq!(fn_names(&prog), ["a?", "b?"]);
+    }
+
+    #[test]
+    fn test_a_name_outside_ascii_used_again_is_one_error_and_no_parse_error() {
+        // The second use has no lex error of its own, and its
+        // declaration is no parse error either.
+        let (prog, errs) =
+            parse_recovering("fn a() {\n  let café = 1\n  café\n}\n\nfn b() {\n  café(2)\n}\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(errs[0].notes, ["'café' is written in 2 more places"]);
+        assert_eq!(fn_names(&prog), ["a?", "b?"]);
+    }
+
+    #[test]
+    fn test_rejected_text_between_items_members_and_elements_is_of_none() {
+        // In front of a declaration, behind a field of a type, a
+        // variant of an enum, a method of a trait, an element of a
+        // list: the lexer's errors are the only ones, and nothing is
+        // skipped.
+        let source = "@ fn a() { [1 $, 2] }\ntype P { x: Int @ }\ntype E { A @, B }\n\
+                      trait T {\n  fn m(self) -> Int $\n  fn n(self) -> Int\n}\n~ import list\n";
+        let lexed = Lexer::new(crate::source::FileId::default(), source).tokenize();
+        let mut parser = Parser::new(lexed, source);
+        let (prog, errs) = parser.parse_program_recovering();
+        assert!(
+            errs.iter()
+                .all(|e| e.phase() == crate::diagnostic::Phase::Lex),
+            "{errs:?}"
+        );
+        assert_eq!(errs.len(), 6);
+        assert_eq!(prog.decls.len(), 5);
+        assert!(!parser.skipped_a_declaration());
+        assert!(prog.unknown.is_empty());
+        let Decl::Trait(t) = &prog.decls[3] else {
+            panic!("a trait");
+        };
+        assert_eq!(t.methods.len(), 2);
+    }
+
+    #[test]
+    fn test_a_declaration_that_fails_leaves_its_names() {
+        let names = |source: &str| {
+            let (prog, errs) = parse_recovering(source);
+            assert_eq!(errs.len(), 1, "{source}: {errs:?}");
+            let mut names: Vec<String> = prog.unknown.iter().map(|n| n.to_string()).collect();
+            names.sort();
+            names.join(" ")
+        };
+        assert_eq!(names("type P {\n  x: Int,\n  y:\n}\n"), "P");
+        assert_eq!(
+            names("pub type E {\n  A,\n  B(,\n  C(Int),\n}\n"),
+            "A B C E"
+        );
+        assert_eq!(names("trait T {\n  fn m(self) ->\n}\n"), "T");
+        assert_eq!(names("trait T for Int {\n  fn m(self) ->\n}\n"), "");
+        assert_eq!(names("import geo.{ mk, area, 5 }\n"), "area geo mk");
+        // Rejected text in the place of an element is the element.
+        let (prog, errs) = parse_recovering("fn f() { g(@) }\nfn h() { 1 }\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(fn_names(&prog), ["f?", "h"]);
+        assert_eq!(names("let (a, b) = )\n"), "a b");
+        assert_eq!(names("fn f( {\n}\n"), "");
+    }
+
+    #[test]
+    fn test_a_method_that_fails_in_its_body_is_a_stub_of_its_impl() {
+        let (prog, errs) = parse_recovering(
+            "trait T for Int {\n  fn a(self) -> Int { self + }\n  fn b(self) -> Int { 2 }\n}\n\
+             fn after() { 1 }\n",
+        );
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        let Decl::TraitImpl(ti) = &prog.decls[0] else {
+            panic!("an impl");
+        };
+        let stubs: Vec<bool> = ti.methods.iter().map(|m| m.is_recovery_stub).collect();
+        assert_eq!(stubs, [true, false]);
+        assert_eq!(fn_names(&prog), ["after"]);
+        // One that fails in its header takes the impl with it.
+        let (prog, errs) =
+            parse_recovering("trait T for Int {\n  fn a(self) -> { 1 }\n}\nfn after() { 1 }\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(prog.decls.len(), 1);
+        // A body that is not closed ends at a declaration at the margin.
+        let (prog, errs) =
+            parse_recovering("trait T for Int {\n  fn a(self) -> Int { f(1,\n\nfn after() { 1 }\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(prog.decls.len(), 2);
+        assert_eq!(fn_names(&prog), ["after"]);
+    }
+
+    #[test]
+    fn test_a_text_that_is_cut_short_has_the_lexers_errors_only() {
+        let (prog, errs) =
+            parse_recovering("fn a() { 1 }\nfn b() { let z = ) }\nfn c() { \"abc }\n");
+        let messages: Vec<&str> = errs.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages, ["unterminated string"]);
+        assert_eq!(fn_names(&prog), ["a", "b?", "c?"]);
+    }
+
+    #[test]
+    fn test_at_most_fifty_errors_and_a_count() {
+        let source: String = (0..75).map(|i| format!("let v{i} = )\n")).collect();
+        let (_, errs) = parse_recovering(&source);
+        assert_eq!(errs.len(), MAX_SYNTAX_ERRORS + 1);
+        let count = errs.last().unwrap();
+        assert_eq!(count.code, Code::TooManyErrors);
+        assert_eq!(
+            count.message,
+            "25 more syntax errors in this file are not shown"
+        );
+        // The lexer's errors count as well.
+        let source = "@ ".repeat(51);
+        let (_, errs) = parse_recovering(&source);
+        assert_eq!(errs.len(), MAX_SYNTAX_ERRORS + 1);
+        assert_eq!(
+            errs.last().unwrap().message,
+            "1 more syntax error in this file is not shown"
+        );
+        // The count stands on the last character of the last error
+        // that is shown.
+        let last = &errs[MAX_SYNTAX_ERRORS - 1];
+        let count = errs.last().unwrap().span;
+        assert_eq!((count.start + 1, count.end), (last.span.end, last.span.end));
+        // And the first error is the one `parse_program` returns.
+        let lexed = Lexer::new(crate::source::FileId::default(), &source).tokenize();
+        let first = Parser::new(lexed, &source).parse_program().unwrap_err();
+        assert_eq!(first, errs[0]);
     }
 
     // ── 2. Pattern parsing ──────────────────────────────────────────

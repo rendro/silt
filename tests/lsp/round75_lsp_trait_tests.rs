@@ -1,12 +1,4 @@
-//! Round-75 regression tests for LSP trait rename / references and
-//! signature-help bracket-aware comma counting.
-//!
-//! - **DX-1** — `scan_call_site_forward` only tracked `(`/`)` parens.
-//!   Commas inside list/record/map literals and blocks were credited
-//!   to the enclosing call's argument count, so `foo([1, 2], cursor)`
-//!   reported `active_param=2` instead of `1`. Fix: extend the stack
-//!   to also push/pop on `[`/`]` and `{`/`}` so commas at non-paren
-//!   nesting levels are not counted.
+//! Round-75 regression tests for LSP trait rename / references.
 //!
 //! - **DX-2** — `TraitDecl` lacked `name_span`; `definitions.rs`
 //!   recorded `t.span` (the `trait` keyword) as the trait's
@@ -99,55 +91,6 @@ fn apply_all_edits(source: &str, edits: &[Value]) -> String {
         out = apply_edit(&out, e);
     }
     out
-}
-
-// ── DX-1: signature-help bracket-aware comma counting ─────────────
-
-#[test]
-fn sig_help_bracket_inner_comma_not_credited_to_call() {
-    // `fn foo(a: List(Int), b: Int) {}` — at the cursor right before
-    // the closing `)`, expect active_parameter = 1 (we're on `b`),
-    // NOT 2 (which would happen if the comma inside `[1, 2]` were
-    // counted as a separator at the call site).
-    let source = "fn foo(a: List(Int), b: Int) -> Int {\n  b\n}\nfn main() {\n  let _r = foo([1, 2], 3)\n}\n";
-    let mut client = LspClient::spawn();
-    let uri = unique_uri("sig_bracket");
-    client.did_open_and_wait(&uri, source);
-
-    // Line index 4: `  let _r = foo([1, 2], 3)`
-    // Columns:        0         1         2
-    //                 0123456789012345678901234
-    // The `3` sits at column 23 (after `[1, 2], `). Cursor at column
-    // 23 puts us "on b", and the active_parameter must be 1.
-    let resp = client.request(
-        "textDocument/signatureHelp",
-        json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": 4, "character": 23 }
-        }),
-    );
-
-    let result = resp
-        .get("result")
-        .expect("signatureHelp response has result");
-    assert!(!result.is_null(), "expected non-null sig-help result");
-
-    let sigs = result
-        .pointer("/signatures")
-        .and_then(|v| v.as_array())
-        .expect("signatures array present");
-    assert!(!sigs.is_empty(), "must contain at least one signature");
-
-    let active = sigs[0]
-        .get("activeParameter")
-        .and_then(|v| v.as_u64())
-        .expect("SignatureInformation has activeParameter");
-    assert_eq!(
-        active, 1,
-        "active parameter must be 1 (b) — comma inside `[1, 2]` must NOT be counted as a call-site separator; got: {sigs:?}"
-    );
-
-    client.shutdown();
 }
 
 // ── DX-2: rename of trait declaration name does not clobber `trait`

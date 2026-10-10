@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: println("{")\n1 + 1\n"{"\nprintln("a { b")\nprintln("after")\n:quit\n
+-- A brace in a string starts an interpolation, and the quote behind it
+-- a string inside it that the line does not close: no later line is
+-- meant to, so the input is read at once and its error says to write
+-- `\{`. The inputs behind it are their own.

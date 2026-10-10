@@ -80,6 +80,7 @@ impl CellInfo {
     pub fn compiled(&self, checked: &ast::Program) -> ast::Program {
         ast::Program {
             decls: checked.decls[self.cell_imports..].to_vec(),
+            unknown: Vec::new(),
             statements: Default::default(),
         }
     }
@@ -283,6 +284,7 @@ impl Cells {
             types: (!types.is_empty()).then(|| {
                 Arc::new(ast::Program {
                     decls: types,
+                    unknown: Vec::new(),
                     statements: Default::default(),
                 })
             }),

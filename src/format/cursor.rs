@@ -813,7 +813,10 @@ mod tests {
     /// line break where the source has one before a token; skip the
     /// tokens of the kinds in `skip`.
     fn respace(input: &str, skip: &[Token]) -> String {
-        let lexed = Lexer::new(FileId::default(), input).tokenize().unwrap();
+        let lexed = Lexer::new(FileId::default(), input)
+            .tokenize()
+            .checked()
+            .unwrap();
         let mut cursor = Cursor::new(input, &lexed);
         let mut docs = vec![cursor.header().0];
         let mut first = true;
@@ -882,7 +885,10 @@ mod tests {
     #[test]
     fn the_header_ends_at_the_first_empty_line_or_the_first_token() {
         let header = |input: &str| {
-            let lexed = Lexer::new(FileId::default(), input).tokenize().unwrap();
+            let lexed = Lexer::new(FileId::default(), input)
+                .tokenize()
+                .checked()
+                .unwrap();
             let mut cursor = Cursor::new(input, &lexed);
             let (header, blank) = cursor.header();
             let rest = cursor.leading();
@@ -928,7 +934,10 @@ mod tests {
     #[test]
     fn a_token_the_source_does_not_have_is_an_error_but_brackets_are_skipped() {
         let input = "((a)) -- c\n+ b";
-        let lexed = Lexer::new(FileId::default(), input).tokenize().unwrap();
+        let lexed = Lexer::new(FileId::default(), input)
+            .tokenize()
+            .checked()
+            .unwrap();
         let mut cursor = Cursor::new(input, &lexed);
         let ident = Token::Ident(crate::intern::intern("x"));
         let a = cursor.token(&ident);

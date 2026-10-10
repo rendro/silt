@@ -1,0 +1,10 @@
+import geo
+
+fn broken(v: Int) -> Int {
+  let x = geo.mk(v) @ 1
+  geo.twice(x)
+}
+
+fn main() {
+  println(geo.mk(1))
+}

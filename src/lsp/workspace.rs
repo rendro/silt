@@ -96,6 +96,19 @@ fn def_of_key(session: &Session, key: &DefKey) -> Option<DefId> {
     }
 }
 
+/// Whether byte `at` of the text of `program` lies in the recovery stub
+/// of a function or method that failed to parse: its header was read,
+/// its body was not.
+fn in_recovery_stub(program: &Program, at: usize) -> bool {
+    let stub_at = |f: &FnDecl| f.is_recovery_stub && holds(f.span, at);
+    program.decls.iter().any(|decl| match decl {
+        Decl::Fn(f) => stub_at(f),
+        Decl::Trait(t) => t.methods.iter().any(stub_at),
+        Decl::TraitImpl(ti) => ti.methods.iter().any(stub_at),
+        _ => false,
+    })
+}
+
 /// What a name under the cursor is, for hover.
 pub(super) enum Named {
     /// A definition of a file, with what its module knows of it.
@@ -527,6 +540,81 @@ impl Server {
             }
         }
         places
+    }
+
+    /// Why a rename of `target`, found in the open document `uri`,
+    /// cannot be the same program under another name: a file that it
+    /// touches, or that could name the target, has a declaration that
+    /// failed to parse (a recovery stub stands in for it, or nothing),
+    /// so its names are unknown. The file and the place of its first
+    /// error; `None` when every such file is whole.
+    ///
+    /// The files, for a definition: the document's own, its module and
+    /// every checked module that imports it (a module that imports a
+    /// broken one sees its names as unknown, too). A parameter or a
+    /// local is used inside its declaration only: it is renamed
+    /// whatever failed beside it, unless its own declaration is the
+    /// recovery stub of one that failed (a parameter of a function
+    /// whose body did not parse).
+    pub(super) fn incomplete_for_rename(&mut self, uri: &Uri, target: &Target) -> Option<String> {
+        // (The importers that are not open are checked for the query.)
+        self.places_of(uri, target, true);
+        let broken = |session: &Session, id: ModuleId| -> Option<String> {
+            let module = session.graph().module(id);
+            if !module.incomplete {
+                return None;
+            }
+            let file = module
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let error = module.problems.first()?;
+            let (line, col) = session
+                .sources()
+                .line_col((error.span.file, error.span.start));
+            Some(format!(
+                "{file} has a syntax error at {line}:{col} ({})",
+                error.message
+            ))
+        };
+        let doc = self.documents.get(uri)?;
+        let own = self
+            .checked(doc)
+            .and_then(|(session, module)| broken(session, module));
+        let keys = match target {
+            Target::Local(binding) => {
+                let in_stub = doc
+                    .program
+                    .as_ref()
+                    .is_some_and(|program| in_recovery_stub(program, *binding));
+                return own.filter(|_| in_stub);
+            }
+            Target::Defs(keys) => keys,
+        };
+        if own.is_some() {
+            return own;
+        }
+        for project in self.projects.values() {
+            let session = &project.session;
+            let homes: HashSet<ModuleId> = keys
+                .iter()
+                .filter_map(|key| def_of_key(session, key))
+                .map(|id| session.defs().get(id).module)
+                .collect();
+            if homes.is_empty() {
+                continue;
+            }
+            for module in session.graph().modules() {
+                let names_it = homes.contains(&module.id)
+                    || !session.graph().reach(module.id).is_disjoint(&homes);
+                if names_it && let Some(broken) = broken(session, module.id) {
+                    return Some(broken);
+                }
+            }
+        }
+        // (A file with an edit is one of those: it names the target.)
+        None
     }
 
     /// The places of the open document `uri` that name `target`, which

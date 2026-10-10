@@ -1,0 +1,17 @@
+error[lex]: unexpected character: '@'
+ --> lex_error__what_is_wrong_behind_it_is_reported_too.silt:7:13
+   |
+ 7 |   let a = 1 @ 2
+   |             ^ unexpected character: '@'
+
+error[parse]: expected expression, found )
+ --> lex_error__what_is_wrong_behind_it_is_reported_too.silt:12:11
+    |
+ 12 |   let z = )
+    |           ^ expected expression, found )
+
+error[type]: type mismatch: expected Int, got String
+ --> lex_error__what_is_wrong_behind_it_is_reported_too.silt:17:16
+    |
+ 17 |   let s: Int = "x"
+    |                ^^^ type mismatch: expected Int, got String

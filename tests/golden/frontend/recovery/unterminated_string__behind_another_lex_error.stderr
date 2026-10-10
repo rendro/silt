@@ -1,0 +1,5 @@
+error[lex]: unexpected character: '\'
+ --> unterminated_string__behind_another_lex_error.silt:14:13
+    |
+ 14 |   println("{\"a\": 1}")
+    |             ^ unexpected character: '\'

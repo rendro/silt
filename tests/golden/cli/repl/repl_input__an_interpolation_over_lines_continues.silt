@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: "a {\n1 + 1\n} b"\n#{\n"k": [\n(1, "{\n"z"\n}")\n]\n}\n:quit\n
+-- An interpolation that is open at the end of a line goes on in the
+-- next, as an open delimiter of code does.

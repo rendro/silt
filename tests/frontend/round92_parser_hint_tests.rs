@@ -11,6 +11,7 @@ use silt::parser::Parser;
 fn parse_ok(input: &str) -> Result<(), String> {
     let tokens = Lexer::new(silt::source::FileId::default(), input)
         .tokenize()
+        .checked()
         .map_err(|e| format!("{e:?}"))?;
     Parser::new(tokens, input)
         .parse_program()

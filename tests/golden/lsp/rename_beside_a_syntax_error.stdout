@@ -1,0 +1,23 @@
+23:13 error unexpected character: '@'
+> rename 17:4 sum
+error: `add` cannot be renamed now: rename_beside_a_syntax_error.silt has a syntax error at 23:13 (unexpected character: '@'); what the names in the declaration that holds it mean is not known, and a rename would leave them as they are
+> prepare-rename 17:4
+(nothing)
+> rename 27:10 m
+rename_beside_a_syntax_error.silt:27:10-27:11 => m
+rename_beside_a_syntax_error.silt:28:7-28:8 => m
+rename_beside_a_syntax_error.silt:28:10-28:11 => m
+> prepare-rename 27:10
+27:10-27:11
+> rename 21:14 value
+error: `v` cannot be renamed now: rename_beside_a_syntax_error.silt has a syntax error at 23:13 (unexpected character: '@'); what the names in the declaration that holds it mean is not known, and a rename would leave them as they are
+> prepare-rename 21:14
+(nothing)
+> references 17:4
+rename_beside_a_syntax_error.silt:17:4-17:7
+rename_beside_a_syntax_error.silt:28:3-28:6
+rename_beside_a_syntax_error.silt:32:13-32:16
+> highlight 17:4
+17:4-17:7
+28:3-28:6
+32:13-32:16

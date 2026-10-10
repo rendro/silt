@@ -114,6 +114,9 @@ codes! {
     /// on an impl, an annotated `type` parameter, a lowercase type
     /// name, ...).
     InvalidDeclaration = "E0113", Parse;
+    /// The count of the lex and parse errors of a file that are not
+    /// shown (see `parser::MAX_SYNTAX_ERRORS`), at the first of them.
+    TooManyErrors = "E0114", Parse;
     // ── resolve ──
     /// A name that resolves to nothing where it is used.
     UnresolvedName = "E0201", Resolve;
@@ -410,14 +413,15 @@ impl SourceMap {
     /// dependency's.
     pub fn position(&self, span: Span) -> Option<Position> {
         let file = self.get(span.file)?;
-        let text: &str = &file.text;
-        let line_count = text.lines().count();
-        let last_line_end = |line: usize| {
-            text.lines()
-                .nth(line - 1)
-                .map_or(0, |l| l.trim_end_matches('\r').chars().count())
-                + 1
+        // (From the file's line table: a file of many lines is not read
+        // again for each diagnostic.)
+        let line_count = file.text_lines();
+        let line_of = |line: usize| {
+            file.line_text(line as u32)
+                .unwrap_or("")
+                .trim_end_matches('\r')
         };
+        let last_line_end = |line: usize| line_of(line).chars().count() + 1;
         let clamp = |(line, col): (u32, u32)| {
             let (line, col) = (line as usize, col as usize);
             if line_count > 0 && line > line_count {
@@ -428,12 +432,7 @@ impl SourceMap {
         };
         let (line, col) = clamp(file.line_col(span.start));
         let (end_line, end_col) = clamp(file.line_col(span.end.max(span.start)));
-        let mut line_text = text
-            .lines()
-            .nth(line - 1)
-            .unwrap_or("")
-            .trim_end_matches('\r')
-            .to_string();
+        let mut line_text = line_of(line).to_string();
         if matches!(file.path, SourceName::Manifest(_)) {
             line_text = crate::git::escape_for_display(&line_text);
         }
@@ -718,8 +717,24 @@ pub(crate) struct Excerpt {
 pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
     const EXCERPT_CHARS: usize = 160;
     const BEFORE_CARET: usize = 60;
-    let chars: Vec<char> = line.chars().collect();
-    if chars.len() <= EXCERPT_CHARS {
+    // The characters that can be shown: those around `col`. A line of a
+    // megabyte is not read to its end for each error in it; `len` is its
+    // length when the window reaches its end, and otherwise long enough
+    // that the excerpt is cut behind the window either way.
+    let lead = col.saturating_sub(BEFORE_CARET + EXCERPT_CHARS);
+    let mut chars: Vec<char> = line
+        .chars()
+        .skip(lead)
+        .take(BEFORE_CARET + 2 * EXCERPT_CHARS + 2)
+        .collect();
+    let mut lead = lead;
+    if chars.is_empty() && lead > 0 {
+        // `col` is past the end of the line: the whole line it is.
+        chars = line.chars().collect();
+        lead = 0;
+    }
+    let len = lead + chars.len();
+    if len <= EXCERPT_CHARS {
         return Excerpt {
             text: line.to_string(),
             col,
@@ -727,10 +742,8 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
             cut_after: false,
         };
     }
-    let col = col.min(chars.len());
-    let start = col
-        .saturating_sub(BEFORE_CARET)
-        .min(chars.len() - EXCERPT_CHARS);
+    let col = col.min(len);
+    let start = col.saturating_sub(BEFORE_CARET).min(len - EXCERPT_CHARS);
     let end = start + EXCERPT_CHARS;
     let mut text = String::new();
     let mut shown_col = col - start;
@@ -739,8 +752,8 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
         text.push('…');
         shown_col += 1;
     }
-    text.extend(&chars[start..end]);
-    let cut_after = end < chars.len();
+    text.extend(&chars[start.saturating_sub(lead)..end - lead]);
+    let cut_after = end < len;
     if cut_after {
         text.push('…');
     }
@@ -866,7 +879,7 @@ pub fn to_lsp(
     let shown = |span: Span| -> Range {
         let mut shown = range(span);
         if let Some(file) = sources.get(span.file) {
-            let lines = file.text.lines().count() as u32;
+            let lines = file.text_lines() as u32;
             for p in [&mut shown.start, &mut shown.end] {
                 if lines > 0 && p.line >= lines {
                     let last = file.line_text(lines).unwrap_or("");
@@ -875,6 +888,23 @@ pub fn to_lsp(
                         lines - 1,
                         last.chars().map(char::len_utf16).sum::<usize>() as u32,
                     );
+                }
+            }
+            // A place without a width (a wrong escape, a closer that is
+            // missing) is shown on the character at it: an editor draws
+            // nothing under an empty range. It starts where every door
+            // says the error is; at the end of a line there is no
+            // character, and it stays as it is.
+            if shown.start == shown.end {
+                let line = file.line_text(shown.start.line + 1).unwrap_or("");
+                let line = line.strip_suffix('\r').unwrap_or(line);
+                let mut units = 0;
+                for c in line.chars() {
+                    if units >= shown.start.character {
+                        shown.end.character += c.len_utf16() as u32;
+                        break;
+                    }
+                    units += c.len_utf16() as u32;
                 }
             }
         }
@@ -942,6 +972,29 @@ mod tests {
             start,
             end,
         }
+    }
+
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn a_place_without_a_width_is_one_character_for_an_editor() {
+        let map = sources("ab\ncd\n");
+        let range = |start: u32, end: u32| {
+            let d = Diagnostic::error(Code::ExpectedToken, span(start, end), "x");
+            let r = to_lsp(&map, &d, &|_| None).range;
+            (
+                (r.start.line, r.start.character),
+                (r.end.line, r.end.character),
+            )
+        };
+        // On a character: that character.
+        assert_eq!(range(1, 1), ((0, 1), (0, 2)));
+        assert_eq!(range(3, 3), ((1, 0), (1, 1)));
+        // At the end of a line, and at the end of the text, there is
+        // none: the place is where the other doors say it is.
+        assert_eq!(range(2, 2), ((0, 2), (0, 2)));
+        assert_eq!(range(6, 6), ((1, 2), (1, 2)));
+        // A place with a width is as it is.
+        assert_eq!(range(0, 2), ((0, 0), (0, 2)));
     }
 
     #[test]

@@ -1,0 +1,9 @@
+20:20 error unterminated string
+> hover 15:4
+```silt
+Fn(Int, Int) -> Int
+```
+> definition 15:4
+hover_beside_an_unterminated_string.silt:10:4-10:7
+> hover 19:12
+(nothing)

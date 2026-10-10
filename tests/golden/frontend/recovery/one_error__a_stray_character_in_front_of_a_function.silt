@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A character the lexer rejects in front of a declaration on its line
+-- is not the declaration's: the function is read.
+@ fn a() -> Int {
+  1
+}
+
+fn main() {
+  println("{a()} {a()}")
+}

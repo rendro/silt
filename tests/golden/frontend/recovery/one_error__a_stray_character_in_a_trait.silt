@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A character the lexer rejects between the methods of a trait is of
+-- none of them: the trait is whole, and so are its impl and its calls.
+trait T {
+  fn m(self) -> Int @
+}
+
+trait T for Int {
+  fn m(self) -> Int { self }
+}
+
+fn main() {
+  println("{1.m()} {2.m()}")
+}

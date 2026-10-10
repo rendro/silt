@@ -1,0 +1,18 @@
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+
+fn has_error(v: Int) -> String {
+  let w = add(v, 1)
+  let text =
+    "\q is {w}"
+  "{text} {add(w, v)}"
+}
+
+fn after(n: Int) -> Int {
+  add(n, n)
+}
+
+fn main() {
+  println("{add(1, 2)} {after(3)} {has_error(4)}")
+}

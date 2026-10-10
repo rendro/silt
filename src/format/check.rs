@@ -40,6 +40,7 @@ use super::Refusal;
 pub fn verify(source: &str, lexed: &Lexed, program: &Program, output: &str) -> Result<(), Refusal> {
     let output_lexed = Lexer::new(FileId::default(), output)
         .tokenize()
+        .checked()
         .map_err(|e| unparseable(&e.message, e.span, output))?;
     let output_program = Parser::new(output_lexed.clone(), output)
         .parse_program()
@@ -1224,7 +1225,10 @@ mod tests {
 
     /// What the oracle says to `output` as the result for `source`.
     fn judge(source: &str, output: &str) -> Result<(), String> {
-        let lexed = Lexer::new(FileId::default(), source).tokenize().unwrap();
+        let lexed = Lexer::new(FileId::default(), source)
+            .tokenize()
+            .checked()
+            .unwrap();
         let program = Parser::new(lexed.clone(), source).parse_program().unwrap();
         verify(source, &lexed, &program, output).map_err(|refusal| refusal.message)
     }

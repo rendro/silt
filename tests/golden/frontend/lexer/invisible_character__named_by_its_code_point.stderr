@@ -1,0 +1,11 @@
+error[lex]: unexpected character: U+00A0 (invisible)
+ --> invisible_character__named_by_its_code_point.silt:5:3
+   |
+ 5 | fn f() -> Int {
+   |   ^ unexpected character: U+00A0 (invisible)
+
+error[lex]: unexpected character: U+200B (invisible)
+ --> invisible_character__named_by_its_code_point.silt:10:8
+    |
+ 10 |   let a​ = f()
+    |        ^ unexpected character: U+200B (invisible)

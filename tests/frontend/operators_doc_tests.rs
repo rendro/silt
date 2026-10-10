@@ -126,6 +126,7 @@ fn parse(body: &str) -> Expr {
     let source = format!("fn main() {{\n  {body}\n}}\n");
     let tokens = Lexer::new(silt::source::FileId::default(), &source)
         .tokenize()
+        .checked()
         .unwrap_or_else(|e| panic!("`{body}` does not lex: {e:?}"));
     let program = Parser::new(tokens, &source)
         .parse_program()

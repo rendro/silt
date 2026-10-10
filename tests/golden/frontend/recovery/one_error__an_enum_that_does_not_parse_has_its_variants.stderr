@@ -1,0 +1,5 @@
+error[parse]: expected identifier, found ,
+ --> one_error__an_enum_that_does_not_parse_has_its_variants.silt:7:5
+   |
+ 7 |   B(,
+   |     ^ expected identifier, found ,

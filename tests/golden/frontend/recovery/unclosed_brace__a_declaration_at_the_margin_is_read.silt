@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A brace that is not closed (a function that is being typed) does not
+-- take the rest of the file with it: a declaration that starts at the
+-- margin is read, so `main` knows `helper`, and its type error is
+-- reported.
+fn first() {
+  let total = add(1,
+
+fn helper() -> Int {
+  1
+}
+
+fn main() {
+  let n: String = helper()
+  first()
+}

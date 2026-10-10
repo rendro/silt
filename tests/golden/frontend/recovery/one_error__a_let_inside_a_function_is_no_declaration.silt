@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- A function that does not parse is one error and is skipped to its
+-- end: a `let` inside its braces is no declaration of the file. Each of
+-- the two functions here has one error of its own.
+import list
+
+fn first() {
+  let a = 1
+  let b = = 2
+  let c = 3
+  println("{a} {c}")
+  let d = [1, 2] |> list.map { x -> x + 1 }
+  d
+}
+
+fn second() {
+  let z = )
+  z
+}
+
+fn main() {
+  first()
+  second()
+}

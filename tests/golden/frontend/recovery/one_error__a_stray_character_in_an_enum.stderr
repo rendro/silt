@@ -1,0 +1,5 @@
+error[lex]: unexpected character: '@'
+ --> one_error__a_stray_character_in_an_enum.silt:7:10
+   |
+ 7 |   B(Int) @,
+   |          ^ unexpected character: '@'

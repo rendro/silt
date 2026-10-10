@@ -13,8 +13,9 @@ use rustyline::{Context, Editor, Helper};
 use crate::defs::DefTable;
 use crate::diagnostic::{Diagnostic, Located, SourceView, render_human};
 use crate::intern;
+use crate::lexer::Lexer;
 use crate::session::{Config, Entry, LockPolicy, ModuleId, ProjectSetup, Session};
-use crate::source::{SourceMap, SourceName, Span};
+use crate::source::{FileId, SourceMap, SourceName, Span};
 use crate::typechecker::names::{Binding, Exports, ModuleScope};
 use crate::value::Value;
 use crate::vm::Vm;
@@ -196,48 +197,45 @@ pub fn run_repl() {
                     }
                 }
 
+                // An entry that is being read was open at the end of the
+                // line before. A line without a closer and without a
+                // quote leaves it open: it is not lexed again for such a
+                // line, so a list of thousands of lines that is pasted
+                // is read once, at its last line.
+                let still_open = !buffer.is_empty() && !line.contains([')', ']', '}', '"']);
                 if buffer.is_empty() {
                     buffer = line.to_string();
                 } else {
                     buffer.push('\n');
                     buffer.push_str(line);
                 }
-
-                if has_unclosed_delimiters(&buffer) {
+                if still_open {
                     continue;
                 }
 
-                let input = buffer.trim().to_string();
-                buffer.clear();
-
-                if input.is_empty() {
+                // An input that more lines can finish (an open
+                // delimiter of code, a string or a block comment that
+                // is not closed) goes on in the next line: the lexer
+                // says so.
+                let lexed = Lexer::new(FileId::default(), &buffer).tokenize();
+                if lexed.ends_open() {
                     continue;
                 }
 
-                let _ = rl.add_history_entry(&input);
-
-                let evaluation = repl.eval(&input);
-                for d in &evaluation.diagnostics {
-                    eprintln!("{}", repl.render(d));
-                }
-                if let Some(value) = &evaluation.value
-                    && !matches!(value, Value::Unit)
-                {
-                    println!("{}", repl.show(value));
-                }
-                if evaluation.committed {
-                    let mut all = builtin_names();
-                    all.extend(evaluation.names);
-                    all.sort();
-                    all.dedup();
-                    *names.borrow_mut() = all;
-                }
+                let input = std::mem::take(&mut buffer);
+                evaluate(&mut rl, &mut repl, &names, input.trim());
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
                 println!("^C");
             }
-            Err(ReadlineError::Eof) => break,
+            // The input ends: an entry that was still being read is
+            // evaluated as it is, and says what it lacks.
+            Err(ReadlineError::Eof) => {
+                let input = std::mem::take(&mut buffer);
+                evaluate(&mut rl, &mut repl, &names, input.trim());
+                break;
+            }
             Err(err) => {
                 eprintln!("error: {err}");
                 break;
@@ -251,6 +249,36 @@ pub fn run_repl() {
 
     if let Some(ref p) = history_path {
         let _ = rl.save_history(p);
+    }
+}
+
+/// Evaluate the entry `input`, show its diagnostics and its value, and
+/// give its names to the completion.
+fn evaluate(
+    rl: &mut Editor<SiltHelper, DefaultHistory>,
+    repl: &mut Repl,
+    names: &Rc<RefCell<Vec<String>>>,
+    input: &str,
+) {
+    if input.is_empty() {
+        return;
+    }
+    let _ = rl.add_history_entry(input);
+    let evaluation = repl.eval(input);
+    for d in &evaluation.diagnostics {
+        eprintln!("{}", repl.render(d));
+    }
+    if let Some(value) = &evaluation.value
+        && !matches!(value, Value::Unit)
+    {
+        println!("{}", repl.show(value));
+    }
+    if evaluation.committed {
+        let mut all = builtin_names();
+        all.extend(evaluation.names);
+        all.sort();
+        all.dedup();
+        *names.borrow_mut() = all;
     }
 }
 
@@ -522,116 +550,10 @@ fn print_help() {
     println!("  <Tab>        Autocomplete builtins and user-defined names");
     println!();
     println!("Enter expressions to evaluate, or declarations (fn, type, trait, import).");
-    println!("Multi-line input: unclosed braces/parens/brackets continue on the next line.");
-}
-
-fn has_unclosed_delimiters(input: &str) -> bool {
-    let mut depth_brace = 0i32;
-    let mut depth_paren = 0i32;
-    let mut depth_bracket = 0i32;
-    let mut depth_block_comment = 0i32;
-    let mut in_string = false;
-    let mut in_triple_string = false;
-    let mut backslash_count = 0u32;
-
-    let chars: Vec<char> = input.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-
-    while i < len {
-        let ch = chars[i];
-
-        // Inside a (possibly nested) block comment: look for closing `-}`
-        // while still tracking nested `{-`.
-        if depth_block_comment > 0 {
-            if ch == '{' && i + 1 < len && chars[i + 1] == '-' {
-                depth_block_comment += 1;
-                i += 2;
-                continue;
-            }
-            if ch == '-' && i + 1 < len && chars[i + 1] == '}' {
-                depth_block_comment -= 1;
-                i += 2;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-
-        // Inside a triple-quoted string: look for closing """
-        if in_triple_string {
-            if ch == '"' && i + 2 < len && chars[i + 1] == '"' && chars[i + 2] == '"' {
-                in_triple_string = false;
-                i += 3;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-
-        // Inside a regular string: track escapes and look for closing "
-        if in_string {
-            if ch == '"' && backslash_count.is_multiple_of(2) {
-                in_string = false;
-            }
-            if ch == '\\' {
-                backslash_count += 1;
-            } else {
-                backslash_count = 0;
-            }
-            i += 1;
-            continue;
-        }
-
-        // Block comment opening: `{-` (nests, matching the real lexer).
-        if ch == '{' && i + 1 < len && chars[i + 1] == '-' {
-            depth_block_comment += 1;
-            i += 2;
-            continue;
-        }
-
-        // Skip line comments: -- to end of line
-        if ch == '-' && i + 1 < len && chars[i + 1] == '-' {
-            // Skip to end of line
-            while i < len && chars[i] != '\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Check for triple-quoted string opening """
-        if ch == '"' && i + 2 < len && chars[i + 1] == '"' && chars[i + 2] == '"' {
-            in_triple_string = true;
-            i += 3;
-            continue;
-        }
-
-        // Regular string opening
-        if ch == '"' {
-            in_string = true;
-            backslash_count = 0;
-            i += 1;
-            continue;
-        }
-
-        match ch {
-            '{' => depth_brace += 1,
-            '}' => depth_brace -= 1,
-            '(' => depth_paren += 1,
-            ')' => depth_paren -= 1,
-            '[' => depth_bracket += 1,
-            ']' => depth_bracket -= 1,
-            _ => {}
-        }
-        i += 1;
-    }
-
-    depth_brace > 0
-        || depth_paren > 0
-        || depth_bracket > 0
-        || depth_block_comment > 0
-        || in_string
-        || in_triple_string
+    println!(
+        "Multi-line input: an open brace, paren, bracket, string or block comment continues on the next line."
+    );
+    println!("A brace in a string starts an interpolation: write \\{{ for the character itself.");
 }
 
 /// Completion candidates for a given prefix, using the REPL's builtin name
@@ -710,132 +632,6 @@ mod tests {
         for name in &names {
             assert!(seen.insert(name), "duplicate entry: {name}");
         }
-    }
-
-    // ── has_unclosed_delimiters tests ──────────────────────────────
-
-    #[test]
-    fn unclosed_brace() {
-        assert!(has_unclosed_delimiters("let x = {"));
-    }
-
-    #[test]
-    fn balanced_braces() {
-        assert!(!has_unclosed_delimiters("let x = {}"));
-    }
-
-    #[test]
-    fn unclosed_paren() {
-        assert!(has_unclosed_delimiters("fn foo("));
-    }
-
-    #[test]
-    fn balanced_parens() {
-        assert!(!has_unclosed_delimiters("fn foo(x)"));
-    }
-
-    #[test]
-    fn unclosed_bracket() {
-        assert!(has_unclosed_delimiters("[1, 2"));
-    }
-
-    #[test]
-    fn balanced_brackets() {
-        assert!(!has_unclosed_delimiters("[1, 2]"));
-    }
-
-    #[test]
-    fn empty_input() {
-        assert!(!has_unclosed_delimiters(""));
-    }
-
-    #[test]
-    fn complete_statement() {
-        assert!(!has_unclosed_delimiters("let x = 1"));
-    }
-
-    #[test]
-    fn unclosed_string() {
-        assert!(has_unclosed_delimiters("\"unclosed string"));
-    }
-
-    #[test]
-    fn nested_unclosed() {
-        assert!(has_unclosed_delimiters("{ ( ["));
-    }
-
-    #[test]
-    fn nested_balanced() {
-        assert!(!has_unclosed_delimiters("{ ( [] ) }"));
-    }
-
-    #[test]
-    fn string_with_two_trailing_backslashes_is_closed() {
-        // "path\\\\" in Rust source is the string: "path\\" (two backslashes).
-        // The final " is unescaped, so the string is closed.
-        assert!(!has_unclosed_delimiters(r#""path\\""#));
-    }
-
-    #[test]
-    fn string_with_one_trailing_backslash_is_open() {
-        // "path\\" in Rust source is the string: "path\" — the quote is escaped,
-        // so the string is still open.
-        assert!(has_unclosed_delimiters(r#""path\"#));
-    }
-
-    #[test]
-    fn escaped_quote_inside_string_keeps_it_open() {
-        // "hello\"" in Rust source is the string: hello" — the inner quote is
-        // escaped, and there is no closing quote, so the string is open.
-        assert!(has_unclosed_delimiters(r#""hello\""#));
-    }
-
-    #[test]
-    fn three_trailing_backslashes_string_is_open() {
-        // "hello\\\" in Rust source is the string: hello\\\ — three backslashes
-        // before the final quote means the quote IS escaped (odd count), so open.
-        assert!(has_unclosed_delimiters(r#""hello\\\"#));
-    }
-
-    #[test]
-    fn four_trailing_backslashes_string_is_closed() {
-        // "hello\\\\" in Rust source is the string: hello\\\\ (four backslashes).
-        // Even count before the final " means the quote is unescaped — closed.
-        assert!(!has_unclosed_delimiters(r#""hello\\\\""#));
-    }
-
-    // ── Multi-line input continuation ─────────────────────────────
-    //
-    // The REPL reads lines until `has_unclosed_delimiters` returns false.
-    // These tests assert the condition the interactive loop uses to decide
-    // whether to keep accumulating input rather than evaluating.
-
-    #[test]
-    fn unclosed_brace_continues_input() {
-        // `let x = {` on its own should make the REPL prompt for more.
-        let buffer = "let x = {";
-        assert!(
-            has_unclosed_delimiters(buffer),
-            "unclosed `{{` should trigger multi-line continuation"
-        );
-    }
-
-    #[test]
-    fn unclosed_bracket_continues_input() {
-        let buffer = "let xs = [1, 2,";
-        assert!(
-            has_unclosed_delimiters(buffer),
-            "unclosed `[` should trigger multi-line continuation"
-        );
-    }
-
-    #[test]
-    fn closed_braces_do_not_continue() {
-        let buffer = "let x = { 1 }";
-        assert!(
-            !has_unclosed_delimiters(buffer),
-            "balanced `{{}}` should NOT trigger multi-line continuation"
-        );
     }
 
     // ── Evaluation ────────────────────────────────────────────────
@@ -933,6 +729,17 @@ mod tests {
             value(&mut repl, "match col {\n  Color.Red -> 1\n  Green -> 2\n}"),
             "1"
         );
+    }
+
+    #[test]
+    fn a_declaration_behind_an_empty_line_or_a_comment_is_a_declaration() {
+        let mut repl = repl();
+        value(&mut repl, "\nfn f() { 7 }");
+        assert_eq!(value(&mut repl, "f()"), "7");
+        value(&mut repl, "-- eight\n\nfn g() { 8 }");
+        assert_eq!(value(&mut repl, "g()"), "8");
+        value(&mut repl, "\n\nlet n = 9");
+        assert_eq!(value(&mut repl, "\nn"), "9");
     }
 
     #[test]

@@ -200,7 +200,7 @@ fn format_here(
     source: &str,
     tamper: impl FnOnce(String) -> String,
 ) -> Result<String, Diagnostic> {
-    let lexed = Lexer::new(file, source).tokenize()?;
+    let lexed = Lexer::new(file, source).tokenize().checked()?;
     let program = Parser::new(lexed.clone(), source).parse_program()?;
     let doc = print::program(source, &lexed, &program).map_err(|mismatch| {
         let refusal = Refusal {

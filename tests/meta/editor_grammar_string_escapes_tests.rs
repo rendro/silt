@@ -56,6 +56,7 @@ fn lexer_accepts_escape(c: char) -> bool {
     let src = format!("\"\\{c}\"");
     silt::lexer::Lexer::new(silt::source::FileId::default(), &src)
         .tokenize()
+        .checked()
         .is_ok()
 }
 

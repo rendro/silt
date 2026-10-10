@@ -39,7 +39,7 @@ mod round101_lsp_rename_nested_shorthand_binder_tests;
 mod round101_lsp_type_position_rename_tests;
 mod round102_lsp_lambda_loop_binder_rename_tests;
 mod round71_lsp_rename_let_and_field_tests;
-mod round75_lsp_trait_and_sig_help_tests;
+mod round75_lsp_trait_tests;
 mod round76_lsp_folding_no_dups_tests;
 mod round76_lsp_hover_stdlib_method_tests;
 mod round77_lsp_inlay_trait_default_tests;

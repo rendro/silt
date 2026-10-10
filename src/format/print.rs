@@ -285,7 +285,7 @@ fn opens_brace_in_header(expr: &Expr) -> bool {
 fn int_then_field(literal: &str, field: &str) -> bool {
     let digits = literal.trim_start_matches(|c: char| c == '-' || c.is_whitespace());
     let text = format!("{digits}.{field}");
-    let kinds: Vec<Token> = match Lexer::new(Default::default(), &text).tokenize() {
+    let kinds: Vec<Token> = match Lexer::new(Default::default(), &text).tokenize().checked() {
         Ok(lexed) => lexed.tokens.into_iter().map(|tok| tok.kind).collect(),
         Err(_) => return false,
     };

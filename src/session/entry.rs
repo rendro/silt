@@ -249,6 +249,7 @@ mod tests {
     fn parse(source: &str) -> Program {
         let tokens = Lexer::new(FileId::default(), source)
             .tokenize()
+            .checked()
             .expect("the text must lex");
         let (program, errors) = Parser::new(tokens, source).parse_program_recovering();
         assert!(errors.is_empty(), "the text must parse");

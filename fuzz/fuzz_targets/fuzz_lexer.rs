@@ -5,14 +5,14 @@ use silt::lexer::Lexer;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {
-        // The lexer must never panic — errors are fine.
-        if let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() {
-            // If tokenization succeeds, structural invariants must hold:
-            // monotonic spans, exactly one trailing Eof, and no token
-            // referencing a byte offset past the end of the source.
-            check_lexer_invariants(s, &tokens).unwrap_or_else(|err| {
-                panic!("Lexer invariant violated: {err}");
-            });
-        }
+        // The lexer must never panic, and whatever the text, with lex
+        // errors or without, structural invariants must hold: monotonic
+        // spans, exactly one trailing Eof, no token referencing a byte
+        // offset past the end of the source, an error for every Error
+        // token.
+        let lexed = Lexer::new(silt::source::FileId::default(), s).tokenize();
+        check_lexer_invariants(s, &lexed).unwrap_or_else(|err| {
+            panic!("Lexer invariant violated: {err}");
+        });
     }
 });

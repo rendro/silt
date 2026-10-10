@@ -1,0 +1,305 @@
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:5:10
+   |
+ 5 | let v1 = )
+   |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:6:10
+   |
+ 6 | let v2 = )
+   |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:7:10
+   |
+ 7 | let v3 = )
+   |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:8:10
+   |
+ 8 | let v4 = )
+   |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:9:10
+   |
+ 9 | let v5 = )
+   |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:10:10
+    |
+ 10 | let v6 = )
+    |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:11:10
+    |
+ 11 | let v7 = )
+    |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:12:10
+    |
+ 12 | let v8 = )
+    |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:13:10
+    |
+ 13 | let v9 = )
+    |          ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:14:11
+    |
+ 14 | let v10 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:15:11
+    |
+ 15 | let v11 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:16:11
+    |
+ 16 | let v12 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:17:11
+    |
+ 17 | let v13 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:18:11
+    |
+ 18 | let v14 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:19:11
+    |
+ 19 | let v15 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:20:11
+    |
+ 20 | let v16 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:21:11
+    |
+ 21 | let v17 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:22:11
+    |
+ 22 | let v18 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:23:11
+    |
+ 23 | let v19 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:24:11
+    |
+ 24 | let v20 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:25:11
+    |
+ 25 | let v21 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:26:11
+    |
+ 26 | let v22 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:27:11
+    |
+ 27 | let v23 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:28:11
+    |
+ 28 | let v24 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:29:11
+    |
+ 29 | let v25 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:30:11
+    |
+ 30 | let v26 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:31:11
+    |
+ 31 | let v27 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:32:11
+    |
+ 32 | let v28 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:33:11
+    |
+ 33 | let v29 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:34:11
+    |
+ 34 | let v30 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:35:11
+    |
+ 35 | let v31 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:36:11
+    |
+ 36 | let v32 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:37:11
+    |
+ 37 | let v33 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:38:11
+    |
+ 38 | let v34 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:39:11
+    |
+ 39 | let v35 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:40:11
+    |
+ 40 | let v36 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:41:11
+    |
+ 41 | let v37 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:42:11
+    |
+ 42 | let v38 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:43:11
+    |
+ 43 | let v39 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:44:11
+    |
+ 44 | let v40 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:45:11
+    |
+ 45 | let v41 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:46:11
+    |
+ 46 | let v42 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:47:11
+    |
+ 47 | let v43 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:48:11
+    |
+ 48 | let v44 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:49:11
+    |
+ 49 | let v45 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:50:11
+    |
+ 50 | let v46 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:51:11
+    |
+ 51 | let v47 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:52:11
+    |
+ 52 | let v48 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:53:11
+    |
+ 53 | let v49 = )
+    |           ^ expected expression, found )
+
+error[parse]: expected expression, found )
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:54:11
+    |
+ 54 | let v50 = )
+    |           ^ expected expression, found )
+
+error[parse]: 10 more syntax errors in this file are not shown
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:54:11
+    |
+ 54 | let v50 = )
+    |           ^ 10 more syntax errors in this file are not shown

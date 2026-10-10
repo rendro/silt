@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A string that is not closed takes the rest of the file: what the
+-- parser and the checker make of the text in front of it is not
+-- reported (the function `helper` that `main` calls is inside the
+-- string), only where the string starts.
+fn main() {
+  let n: Int = helper()
+  println("the value is {n}
+}
+
+fn helper() -> Int {
+  1
+}

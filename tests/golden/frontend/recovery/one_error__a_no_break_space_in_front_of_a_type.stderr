@@ -1,0 +1,5 @@
+error[lex]: unexpected character: U+00A0 (invisible)
+ --> one_error__a_no_break_space_in_front_of_a_type.silt:4:1
+   |
+ 4 |  type P {
+   | ^ unexpected character: U+00A0 (invisible)

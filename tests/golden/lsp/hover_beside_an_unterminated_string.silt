@@ -1,0 +1,21 @@
+-- cmd: lsp
+-- lsp: hover 15:4
+-- lsp: definition 15:4
+-- lsp: hover 19:12
+-- A string that is not closed (one that is being typed) leaves the
+-- declarations in front of it to the server: hover and go-to-definition
+-- answer in them, and the one diagnostic is the lexer's. (The function
+-- that holds the string is known by its header only.)
+
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+
+fn twice(n: Int) -> Int {
+  add(n, n)
+}
+
+fn main() {
+  let n = twice(2)
+  println("n is {n})
+}

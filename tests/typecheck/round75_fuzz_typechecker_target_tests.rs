@@ -51,7 +51,10 @@ fn fuzz_typechecker_runs_on_existing_corpus() {
         let Ok(s) = std::str::from_utf8(&bytes) else {
             continue;
         };
-        let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() else {
+        let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s)
+            .tokenize()
+            .checked()
+        else {
             continue;
         };
         let Ok(_) = Parser::new(tokens, s).parse_program() else {

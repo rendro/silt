@@ -1,0 +1,11 @@
+error[parse]: expected expression, found =
+ --> one_error__a_let_inside_a_function_is_no_declaration.silt:10:11
+    |
+ 10 |   let b = = 2
+    |           ^ expected expression, found =
+
+error[parse]: expected expression, found )
+ --> one_error__a_let_inside_a_function_is_no_declaration.silt:18:11
+    |
+ 18 |   let z = )
+    |           ^ expected expression, found )
