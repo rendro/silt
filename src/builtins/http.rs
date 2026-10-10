@@ -1207,9 +1207,14 @@ impl crate::vm::Native for Serve {
                 };
                 self.failing = false;
                 self.connection(vm, stream);
+                // The accept took what else was ready with it.
+                while let Some(ready) = self.listener.take_kept() {
+                    let ready = TcpStreamHandle::plain(vm.next_tcp_id(), ready);
+                    self.connection(vm, ready);
+                }
             }
         }
-        let op = super::tcp::accept_op(vm, &self.listener);
+        let op = super::tcp::accept_op(vm, &self.listener, true);
         let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
         self.state = ServeState::Accepting(op);
         Ok(Step::Park(wait))

@@ -339,7 +339,7 @@ mod tls {
         /// The next connection of `listener`, noted as in its
         /// handshake; an error if the accept was given up.
         fn accepted(&self, listener: &TcpListenerHandle) -> Result<TcpStream, String> {
-            let sock = match listener.accept(&self.stopped) {
+            let sock = match listener.accept(&self.stopped, false) {
                 Ok(Some(sock)) => sock,
                 Ok(None) => return Err("tcp accept: given up".into()),
                 Err(e) => return Err(format!("tcp accept: {e}")),
@@ -561,9 +561,11 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let addr = require_string(&args[0], "tcp.listen")?;
     let id = vm.next_tcp_id();
     match TcpListener::bind(addr) {
-        Ok(listener) => Ok(ok(Value::TcpListener(Arc::new(TcpListenerHandle::new(
-            id, listener,
-        ))))),
+        Ok(listener) => {
+            let listener = TcpListenerHandle::new(id, listener);
+            listener.widen_backlog();
+            Ok(ok(Value::TcpListener(Arc::new(listener))))
+        }
         Err(e) => Ok(tcp_io_err(&e)),
     }
 }
@@ -628,7 +630,7 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if let Some(served) = served(&listener) {
         return Ok(Step::Done(served));
     }
-    let op = accept_op(vm, &listener);
+    let op = accept_op(vm, &listener, false);
     vm.io_wait("tcp", tcp_timeout_err, op)
 }
 
@@ -643,15 +645,21 @@ fn served(listener: &TcpListenerHandle) -> Option<Value> {
 /// An accept on `listener`, on the I/O pool: the operation of
 /// `tcp.accept`, and of each accept of `http.serve`. Its value is
 /// `Ok(TcpStream)` or `Err(TcpError)`. It is given up when its waiter
-/// goes ([`TcpListenerHandle::stop`]).
-pub(crate) fn accept_op(vm: &mut Vm, listener: &Arc<TcpListenerHandle>) -> crate::vm::IoOp {
+/// goes ([`TcpListenerHandle::stop`]). With `all_ready` it also takes
+/// the other connections that are ready, for the caller to take from
+/// the listener ([`TcpListenerHandle::take_kept`]).
+pub(crate) fn accept_op(
+    vm: &mut Vm,
+    listener: &Arc<TcpListenerHandle>,
+    all_ready: bool,
+) -> crate::vm::IoOp {
     let next_id = vm.next_tcp_id();
     let (stopped, stop) = accept_stop(listener);
     let (accepting, listener) = (listener.clone(), listener.clone());
     vm.runtime
         .io_pool
         .submit(tcp_timeout_err, move || {
-            match accepting.accept(&stopped) {
+            match accepting.accept(&stopped, all_ready) {
                 Ok(Some(stream)) => Value::variant(
                     bv::OK,
                     vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],

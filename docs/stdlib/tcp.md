@@ -102,6 +102,11 @@ fn main() {
 }
 ```
 
+Connections that arrive before the program accepts them wait in the
+listener: up to 4,096 of them on Unix (or the system's own limit, if that
+is lower), 128 elsewhere. A client beyond that is not refused; its system
+tries again, a second or more later.
+
 A listener is also what [`http.serve`](http.md#httpserve) serves on.
 While it does, the listener is the server's alone: `tcp.accept`,
 `tcp.accept_tls` and `tcp.accept_tls_mtls` on it return

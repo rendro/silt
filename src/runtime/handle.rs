@@ -163,9 +163,16 @@ impl TcpListenerHandle {
     /// ([`TcpListenerHandle::stop`] with the same flag). A client's
     /// connection is never lost to an accept that was given up: it is
     /// kept for the next one.
+    ///
+    /// With `all_ready`, the connections that are ready besides the
+    /// one returned are accepted too, without waiting, and kept
+    /// ([`TcpListenerHandle::take_kept`]): a server takes a burst of
+    /// connections off the system's queue in one go, not one for each
+    /// time its task comes round.
     pub fn accept(
         &self,
         stopped: &Arc<AtomicBool>,
+        all_ready: bool,
     ) -> std::io::Result<Option<std::net::TcpStream>> {
         {
             let mut accepting = self.accepting.lock();
@@ -213,9 +220,76 @@ impl TcpListenerHandle {
                 Err(e) => break Err(e),
             }
         };
+        if all_ready && matches!(result, Ok(Some(_))) {
+            self.keep_the_ready();
+        }
         self.accepting.lock().current = None;
         self.turn.notify_all();
         result
+    }
+
+    /// Accept the connections that are ready, without waiting, and
+    /// keep them. Called by the accept that has the turn.
+    fn keep_the_ready(&self) {
+        /// How many at a time: the accept returns with what it has.
+        const AT_ONCE: usize = 256;
+        if self.listener.set_nonblocking(true).is_err() {
+            return;
+        }
+        let mut taken = 0;
+        while taken < AT_ONCE {
+            match self.listener.accept() {
+                Ok((stream, peer)) => {
+                    let mut accepting = self.accepting.lock();
+                    match accepting.wakes.iter().position(|addr| *addr == peer) {
+                        // A connection made to wake an accept: not a
+                        // client's.
+                        Some(wake) => {
+                            accepting.wakes.swap_remove(wake);
+                        }
+                        // (Where a connection takes after its listener,
+                        // it would not wait either.)
+                        None if stream.set_nonblocking(false).is_ok() => {
+                            accepting.kept.push_back(stream);
+                            taken += 1;
+                        }
+                        None => {}
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                // Nothing more is ready.
+                Err(_) => break,
+            }
+        }
+        let _ = self.listener.set_nonblocking(false);
+    }
+
+    /// A connection that was kept for the next accept, if there is
+    /// one: for a server that has the listener to itself, which takes
+    /// them where it runs.
+    pub fn take_kept(&self) -> Option<std::net::TcpStream> {
+        self.accepting.lock().kept.pop_front()
+    }
+
+    /// Ask the system to queue more connections that wait to be
+    /// accepted than the 128 a listener is bound with: a burst of
+    /// clients beyond the queue is not refused but left to try again,
+    /// a second or more later each time. The system caps the number
+    /// at its own limit. (Elsewhere than on Unix the queue stays as it
+    /// was bound.)
+    pub fn widen_backlog(&self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            /// What Linux allows by default (`net.core.somaxconn`).
+            const BACKLOG: libc::c_int = 4096;
+            // SAFETY: `listen` on a descriptor that this handle owns
+            // and that is listening already changes the length of its
+            // queue and nothing else; a failure leaves it as it was.
+            unsafe {
+                let _ = libc::listen(self.listener.as_raw_fd(), BACKLOG);
+            }
+        }
     }
 
     /// Keep a client's connection for the next accept: one that an
@@ -683,5 +757,53 @@ impl TaskHandle {
             Some(Err(error)) => Some(error.clone()),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{TcpListener, TcpStream};
+
+    /// An accept that is asked for all that is ready returns one
+    /// connection and keeps the others that have arrived: a server
+    /// takes a burst off the system's queue with one accept. A plain
+    /// accept takes its one connection and leaves the rest where they
+    /// are.
+    #[test]
+    fn an_accept_for_all_that_is_ready_keeps_the_rest() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let listener = TcpListenerHandle::new(0, listener);
+        listener.widen_backlog();
+        // A connection is in the listener's queue when `connect` has
+        // returned.
+        let clients: Vec<TcpStream> = (0..40)
+            .map(|_| TcpStream::connect(addr).expect("connect"))
+            .collect();
+        let flag = Arc::new(AtomicBool::new(false));
+        let first = listener.accept(&flag, false).expect("accept");
+        assert!(first.is_some());
+        assert!(listener.take_kept().is_none());
+        let second = listener.accept(&flag, true).expect("accept");
+        assert!(second.is_some());
+        let mut kept = Vec::new();
+        while let Some(conn) = listener.take_kept() {
+            kept.push(conn);
+        }
+        assert_eq!(kept.len(), clients.len() - 2);
+        // What was kept waits like any connection: a read on it is
+        // not refused for want of bytes.
+        use std::io::{Read, Write};
+        let mut client = &clients[2];
+        client.write_all(b"x").expect("write");
+        let mut byte = [0u8; 1];
+        let from = client.local_addr().expect("addr");
+        let conn = kept
+            .iter_mut()
+            .find(|conn| conn.peer_addr().ok() == Some(from))
+            .expect("the client's connection");
+        conn.read_exact(&mut byte).expect("a read that waits");
+        assert_eq!(&byte, b"x");
     }
 }
