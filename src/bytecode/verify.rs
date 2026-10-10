@@ -486,11 +486,11 @@ mod tests {
     #[test]
     fn bad_08_constant_of_the_wrong_kind() {
         // A field name that is no string.
-        let code = vec![op(Op::Unit), op(Op::GetField), 0, 0, op(Op::Return)];
+        let code = vec![op(Op::Unit), op(Op::GetFieldNamed), 0, 0, op(Op::Return)];
         let why = rejected(code, vec![Value::Int(7)]);
         assert_eq!(
             why,
-            "at offset 1: `GetField` names constant 0 as Str, and it is 7"
+            "at offset 1: `GetFieldNamed` names constant 0 as Str, and it is 7"
         );
         // A closure made of something that is no function.
         let code = vec![op(Op::MakeClosure), 0, 0, 0, op(Op::Return)];

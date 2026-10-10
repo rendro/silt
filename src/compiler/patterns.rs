@@ -1031,7 +1031,9 @@ mod tests {
             assert!(!has_op(&f, op), "{op:?} emitted for an irrefutable binding");
         }
         assert!(has_op(&f, Op::DestructTuple));
-        assert!(has_op(&f, Op::DestructRecordField));
+        // (An anonymous record's fields are read by their names.)
+        assert!(has_op(&f, Op::DestructRecordFieldNamed));
+        assert!(!has_op(&f, Op::DestructRecordField));
     }
 
     /// The one variant of an enum and a record type are irrefutable too:
@@ -1047,7 +1049,9 @@ mod tests {
             assert!(!has_op(&f, op), "{op:?} emitted for an irrefutable binding");
         }
         assert!(has_op(&f, Op::DestructVariant));
+        // (A declared record's fields are read at their places.)
         assert!(has_op(&f, Op::DestructRecordField));
+        assert!(!has_op(&f, Op::DestructRecordFieldNamed));
 
         let g = compiled(
             &format!(

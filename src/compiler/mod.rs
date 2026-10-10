@@ -3353,6 +3353,71 @@ fn main() {
         assert!(has_op(main.chunk(), Op::GetField));
     }
 
+    /// A field of a record whose declared type the checker knows is
+    /// read at the place the type declares it, in an expression and in
+    /// a pattern that names the type; a field of an anonymous record,
+    /// and of a record behind an open row (which a declared record
+    /// flows into as itself), by its name.
+    #[test]
+    fn test_field_reads_at_a_place_or_by_name() {
+        use crate::bytecode::Instr;
+        let fns = compile(
+            r#"
+type User { name: String, age: Int }
+type Pair(a) { left: a, right: a }
+fn age(u: User) -> Int { u.age }
+fn right(p: Pair(Int)) -> Int { p.right }
+fn called(p: Pair(Fn(Int) -> Int)) -> Int { p.right(1) }
+fn bound(u: User) -> Int {
+    let User { age, name: _ } = u
+    age
+}
+fn matched(u: User) -> Int {
+    match u {
+        User { name: "a", age } -> age
+        User { age: 3, .. } -> 0
+        _ -> 1
+    }
+}
+fn open(r: {age: Int, ...rest}) -> Int { r.age }
+fn closed(r: {name: String, age: Int}) -> Int { r.age }
+fn inferred(r) { r.age }
+fn rest(r: {name: String, age: Int}) -> Int {
+    let {age, ...others} = r
+    age
+}
+"#,
+        );
+        let reads = |name: &str| -> Vec<String> {
+            let chunk = find_fn(&fns, name).chunk();
+            chunk
+                .instrs()
+                .filter_map(|(_, instr)| match instr {
+                    Instr::GetField { index } => Some(format!("get {index}")),
+                    Instr::DestructRecordField { index } => Some(format!("destruct {index}")),
+                    Instr::GetFieldNamed { name } => Some(format!("get {}", chunk.string(name))),
+                    Instr::DestructRecordFieldNamed { name } => {
+                        Some(format!("destruct {}", chunk.string(name)))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(reads("age"), ["get 1"]);
+        assert_eq!(reads("right"), ["get 1"]);
+        assert_eq!(reads("called"), ["get 1"]);
+        assert_eq!(reads("bound"), ["destruct 1"]);
+        assert_eq!(
+            reads("matched"),
+            ["destruct 0", "destruct 1", "destruct 1"],
+            "the tests of `name` and of `age`, then the binding of `age`"
+        );
+        assert_eq!(reads("open"), ["get age"]);
+        assert_eq!(reads("closed"), ["get age"]);
+        assert_eq!(reads("inferred"), ["get age"]);
+        assert_eq!(reads("rest"), ["destruct age"]);
+    }
+
     // ── Enum type declarations ─────────────────────────────────────
 
     #[test]
@@ -3746,7 +3811,7 @@ fn main() {
         assert!(has_op(shown.chunk(), Op::TailCallMethod));
         // A field that holds a function is read and called.
         let field = find_fn(&fns, "field");
-        assert!(has_op(field.chunk(), Op::GetField));
+        assert!(has_op(field.chunk(), Op::GetFieldNamed));
         assert!(!has_op(field.chunk(), Op::CallMethod));
     }
 
