@@ -130,6 +130,7 @@ fn inputs() -> Vec<Input> {
             expect: Expect {
                 succeeds: true,
                 stdout: std::fs::read_to_string(expected).ok(),
+                end: None,
             },
         });
     }

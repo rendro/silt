@@ -112,6 +112,9 @@ pub struct Expect {
     pub succeeds: bool,
     /// The program's exact stdout: a golden case's `.stdout` file.
     pub stdout: Option<String>,
+    /// The value `main` returns, or the message of the runtime error
+    /// the program stops at: a reference evaluator's.
+    pub end: Option<Result<Value, String>>,
 }
 
 /// One input of the oracle.
@@ -524,6 +527,30 @@ fn unexpected(expect: &Expect, first: &Run, second: &Run) -> Option<Finding> {
             if !run.stderr.is_empty() {
                 return wrong(format!("a report on stderr:\n{}", run.stderr));
             }
+        }
+        let agrees = match (&expect.end, &run.end) {
+            (Some(Ok(value)), End::Value { shown, .. }) => *shown == format!("{value:?}"),
+            (
+                Some(Err(message)),
+                End::Error {
+                    message: actual, ..
+                },
+            ) => message == actual,
+            (Some(_), End::Value { .. } | End::Error { .. }) => false,
+            (None, _) | (_, End::Panic(_) | End::Hang) => true,
+        };
+        if !agrees {
+            let actual = match &run.end {
+                End::Value { shown, .. } => format!("main returned {shown}"),
+                End::Error { message, .. } => format!("runtime error: {message}"),
+                End::Panic(_) | End::Hang => unreachable!("judged before"),
+            };
+            let expected = match &expect.end {
+                Some(Ok(value)) => format!("main returns {value:?}"),
+                Some(Err(message)) => format!("runtime error: {message}"),
+                None => unreachable!("an end is expected"),
+            };
+            return wrong(format!("{actual}; expected: {expected}"));
         }
         if let Some(stdout) = &expect.stdout
             && *stdout != run.stdout

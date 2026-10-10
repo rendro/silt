@@ -85,7 +85,16 @@ of failed tasks and in `main`'s value or error, and no run may end in a
 streams, the clock or the system's random source is compared only where
 a golden case's exact `.stdout` says what it writes.
 
-Its inputs: the golden cases that are run and must end with status 0.
+Its inputs, by class:
+
+- the golden cases that are run and must end with status 0; both runs
+  must also end well and write the case's exact `.stdout`;
+- generated programs (`tests/oracle/generated.rs`): `main` is one `Int`
+  expression of a small subset (arithmetic, `match`, `let`, closures,
+  a pipe, tuples), and must return what a reference evaluator in the
+  test computes, or stop at the integer overflow it predicts. A program
+  is named by its seed and number, `generated/1/532`, and a finding is
+  shown with the smallest program that still has it.
 
 ```
 cargo nextest run --all-features --test oracle                      # a sample of each class
@@ -98,6 +107,7 @@ SILT_ORACLE_FULL=1 cargo nextest run --all-features --test oracle   # every inpu
 | `SILT_ORACLE_ONLY=<text>` | only the inputs whose name holds the text |
 | `SILT_ORACLE_WORKERS=<n>` | the number of threads (default: 2) |
 | `SILT_ORACLE_REPORT=<file>` | append the counts, every finding and the verdict of each input to the file |
+| `SILT_ORACLE_SEED=<n>` | the seed of the generated programs (default 1) |
 
 A finding is a defect of silt, not of the input. One that is known and
 reported has a line in `tests/oracle/skip.txt` that names it; the suite

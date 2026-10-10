@@ -117,6 +117,7 @@ fn a_program_with_tasks_is_compared_when_its_output_is_given() {
     let expect = |stdout: &str| Expect {
         succeeds: true,
         stdout: Some(stdout.to_string()),
+        end: None,
     };
     let held = verdict_with(text, expect("42\n"));
     assert!(
@@ -134,7 +135,7 @@ fn a_program_with_tasks_is_compared_when_its_output_is_given() {
 fn a_run_that_fails_where_success_is_expected_is_a_finding() {
     let succeeds = || Expect {
         succeeds: true,
-        stdout: None,
+        ..Expect::default()
     };
     assert_finding(
         verdict_with("fn main() {\n  1 / 0\n}\n", succeeds()),
@@ -169,6 +170,7 @@ fn two_runs_that_write_different_output_are_a_finding() {
     let own = Expect {
         succeeds: true,
         stdout: Some("not a UUID\n".to_string()),
+        end: None,
     };
     assert_finding(verdict_with(text, own), Kind::Expectation, "stdout");
 }

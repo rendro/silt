@@ -7,6 +7,7 @@
 //! | `SILT_ORACLE_ONLY=<text>` | only the inputs whose name holds the text |
 //! | `SILT_ORACLE_WORKERS=<n>` | the number of threads (default: 2) |
 //! | `SILT_ORACLE_REPORT=<file>` | append the counts, every finding and the verdict of each input to the file |
+//! | `SILT_ORACLE_SEED=<n>` | the seed of the generated programs (default 1) |
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
