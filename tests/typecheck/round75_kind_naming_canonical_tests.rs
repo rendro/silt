@@ -3,10 +3,8 @@
 //! An error that names the kind of a value names it with
 //! `Value::kind`: a TitleCase name for every `Value` variant, never a
 //! generic word ("value"), an article ("a function") or a lowercase
-//! form ("range"). It was three hand-written tables that had drifted
-//! (`builtins::common::value_kind`, `Vm::type_name` and
-//! `Vm::user_facing_type_name`); it is one function, and
-//! `user_facing_type_name` differs from it only by four deliberate
+//! form ("range"). `Vm::user_facing_type_name` differs from it only
+//! by four deliberate
 //! aliases (`Record` → record name, `Variant` → parent enum / tag,
 //! `VariantConstructor` / `TypeDescriptor` / `PrimitiveDescriptor` →
 //! the bare TitleCase head followed by the carried name).

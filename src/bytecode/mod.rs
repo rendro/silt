@@ -39,7 +39,8 @@ enum ConstantKey {
     Nullary(TypeId, u16),
     /// A type descriptor (a record literal's or pattern's type).
     Type(TypeId),
-    /// A builtin function used as a value (`println`), by its name.
+    /// A builtin function used as a value (`println`), by its row's
+    /// id.
     Builtin(BuiltinId),
     /// A primitive type's descriptor (`Int` as a value), by its name.
     Primitive(String),
