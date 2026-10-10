@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- The lexer goes on behind a character it rejects: the parse error of
+-- another function and a type error of a third are reported with it,
+-- and the function that holds the character is no parse error as well.
+fn first() {
+  let a = 1 @ 2
+  a
+}
+
+fn second() {
+  let z = )
+  z
+}
+
+fn main() {
+  let s: Int = "x"
+  first()
+}

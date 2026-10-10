@@ -90,6 +90,10 @@ pub enum Token {
     Dot,
     Eq, // =
 
+    /// Text that is no token: the lexer said what is wrong with it
+    /// (`Lexed::errors`) and went on behind it.
+    Error,
+
     Eof,
 }
 
@@ -152,6 +156,7 @@ impl fmt::Display for Token {
             Token::ColonColon => write!(f, "::"),
             Token::Dot => write!(f, "."),
             Token::Eq => write!(f, "="),
+            Token::Error => write!(f, "invalid token"),
             Token::Eof => write!(f, "EOF"),
         }
     }
@@ -197,15 +202,37 @@ impl Comment {
     }
 }
 
-/// What the lexer makes of a file: its tokens, and its comments in
-/// source order. Each token names the comments in front of it.
+/// What the lexer makes of a file: its tokens, its comments in source
+/// order, and what is wrong with the text. Each token names the comments
+/// in front of it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Lexed {
     pub tokens: Vec<Tok>,
     pub comments: Vec<Comment>,
+    /// Every lex error, in source order. Text that is no token is a
+    /// `Token::Error` among the tokens; a string with a wrong escape is
+    /// still its string token. A text with an error is never run or
+    /// formatted.
+    pub errors: Vec<Diagnostic>,
 }
 
 impl Lexed {
+    /// The tokens of a text without a lex error, or its first error.
+    pub fn checked(mut self) -> Result<Lexed, Diagnostic> {
+        match self.errors.is_empty() {
+            true => Ok(self),
+            false => Err(self.errors.swap_remove(0)),
+        }
+    }
+
+    /// Whether the text ends inside a string or a block comment that is
+    /// not closed. Where it was meant to end is unknown, so what the
+    /// tokens before it are is unknown too: only the lexer's errors are
+    /// worth reporting for such a text.
+    pub fn is_cut_short(&self) -> bool {
+        self.errors.iter().any(ends_text)
+    }
+
     /// The comments between the token before `tok` and `tok`.
     pub fn comments_before(&self, tok: &Tok) -> &[Comment] {
         &self.comments[tok.comments.start as usize..tok.comments.end as usize]
@@ -222,6 +249,15 @@ impl Lexed {
                 .iter()
                 .any(|comment| comment.newlines_before > 0)
     }
+}
+
+/// Whether `error` is the lexer's for a string or a block comment that
+/// is not closed: the text ends inside it.
+pub fn ends_text(error: &Diagnostic) -> bool {
+    matches!(
+        error.code,
+        Code::UnterminatedString | Code::UnterminatedComment
+    )
 }
 
 /// A token and where it starts, as the scanners hand it to `tokenize`.
@@ -269,6 +305,8 @@ pub struct Lexer {
     gap_newlines: u8,
     /// The first comment in `comments` that no token has taken yet.
     gap_comments: u32,
+    /// Every error so far, in source order.
+    errors: Vec<Diagnostic>,
 }
 
 impl Lexer {
@@ -284,6 +322,7 @@ impl Lexer {
             comments: Vec::new(),
             gap_newlines: 0,
             gap_comments: 0,
+            errors: Vec::new(),
         };
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
         // (Notepad, PowerShell `>` redirects) prepend one by default,
@@ -299,10 +338,13 @@ impl Lexer {
         lexer
     }
 
-    pub fn tokenize(&mut self) -> Result<Lexed, Diagnostic> {
+    /// The tokens of the whole text. An error does not end it: the text
+    /// that is no token becomes a `Token::Error`, the error is recorded
+    /// (`Lexed::errors`), and the lexer goes on behind it.
+    pub fn tokenize(&mut self) -> Lexed {
         let mut tokens = Vec::new();
         loop {
-            let (kind, start) = self.next_token()?;
+            let (kind, start) = self.next_token();
             // Every scan stops right after its token, so the token ends
             // where the lexer stands now.
             let span = Span {
@@ -323,10 +365,18 @@ impl Lexer {
                 break;
             }
         }
-        Ok(Lexed {
+        Lexed {
             tokens,
             comments: std::mem::take(&mut self.comments),
-        })
+            errors: std::mem::take(&mut self.errors),
+        }
+    }
+
+    /// Record `error` for the text from `start` to the current position,
+    /// which is no token.
+    fn invalid(&mut self, start: Span, error: Diagnostic) -> Scanned {
+        self.errors.push(error);
+        (Token::Error, start)
     }
 
     /// Record the comment that starts at `start` and ends at the current
@@ -392,7 +442,9 @@ impl Lexer {
         }
     }
 
-    fn skip_block_comment(&mut self) -> Result<(), Diagnostic> {
+    /// Skip to the end of the block comment whose `{-` was just read. One
+    /// that is not closed is an error and runs to the end of the text.
+    fn skip_block_comment(&mut self) {
         // We've already consumed `{-`
         let mut depth = 1;
         let start = self.span();
@@ -408,18 +460,18 @@ impl Lexer {
                 }
                 Some(_) => {}
                 None => {
-                    return Err(Diagnostic::error(
+                    self.errors.push(Diagnostic::error(
                         Code::UnterminatedComment,
                         start,
                         "unterminated block comment",
                     ));
+                    return;
                 }
             }
         }
-        Ok(())
     }
 
-    fn scan_string(&mut self, is_continuation: bool, start: Span) -> Result<Scanned, Diagnostic> {
+    fn scan_string(&mut self, is_continuation: bool, start: Span) -> Scanned {
         let mut text = String::new();
 
         loop {
@@ -430,7 +482,8 @@ impl Lexer {
                     } else {
                         "unterminated string".to_string()
                     };
-                    return Err(Diagnostic::error(Code::UnterminatedString, start, message));
+                    let error = Diagnostic::error(Code::UnterminatedString, start, message);
+                    return self.invalid(start, error);
                 }
                 Some('\\') => {
                     // Capture the backslash's position BEFORE consuming
@@ -453,26 +506,29 @@ impl Lexer {
                         // `\u{1}`, …), mirroring the round-100 fix to the
                         // `unexpected character` catch-all below. Printable
                         // unknown escapes (`\q`, …) keep their plain form.
+                        // An unknown escape is an error of the string,
+                        // which goes on behind it.
                         Some(c) if c.is_control() => {
-                            return Err(Diagnostic::error(
+                            self.errors.push(Diagnostic::error(
                                 Code::InvalidEscape,
                                 self.span(),
                                 format!("unknown escape sequence: \\{}", c.escape_default()),
                             ));
                         }
                         Some(c) => {
-                            return Err(Diagnostic::error(
+                            self.errors.push(Diagnostic::error(
                                 Code::InvalidEscape,
                                 esc_span,
                                 format!("unknown escape sequence: \\{c}"),
                             ));
                         }
                         None => {
-                            return Err(Diagnostic::error(
+                            let error = Diagnostic::error(
                                 Code::UnterminatedString,
                                 start,
                                 "unterminated escape sequence",
-                            ));
+                            );
+                            return self.invalid(start, error);
                         }
                     }
                 }
@@ -485,7 +541,7 @@ impl Lexer {
                     } else {
                         Token::StringStart(text)
                     };
-                    return Ok((tok, start));
+                    return (tok, start);
                 }
                 Some('"') => {
                     self.advance_char(); // consume closing `"`
@@ -494,7 +550,7 @@ impl Lexer {
                     } else {
                         Token::StringLit(text, false)
                     };
-                    return Ok((tok, start));
+                    return (tok, start);
                 }
                 Some(ch) => {
                     self.advance_char();
@@ -504,7 +560,7 @@ impl Lexer {
         }
     }
 
-    fn scan_triple_string(&mut self, start: Span) -> Result<Scanned, Diagnostic> {
+    fn scan_triple_string(&mut self, start: Span) -> Scanned {
         // We've already consumed the opening `"""`.
         // Read raw content until closing `"""`.
         // No escape processing, no interpolation.
@@ -513,11 +569,12 @@ impl Lexer {
         loop {
             match self.peek() {
                 None => {
-                    return Err(Diagnostic::error(
+                    let error = Diagnostic::error(
                         Code::UnterminatedString,
                         start,
                         "unterminated triple-quoted string",
-                    ));
+                    );
+                    return self.invalid(start, error);
                 }
                 Some('"') if self.peek_ahead(1) == Some('"') && self.peek_ahead(2) == Some('"') => {
                     // Consume closing """
@@ -535,7 +592,7 @@ impl Lexer {
 
         // Apply indentation stripping.
         let result = Self::strip_triple_string_indentation(&raw);
-        Ok((Token::StringLit(result, true), start))
+        (Token::StringLit(result, true), start)
     }
 
     /// Strip indentation from a triple-quoted string based on the closing `"""`
@@ -597,7 +654,13 @@ impl Lexer {
         result_lines.join("\n")
     }
 
-    fn scan_number(&mut self, first: char, start: Span) -> Result<Scanned, Diagnostic> {
+    /// The error `message` for the number read from `start` to here.
+    fn invalid_number(&mut self, start: Span, message: &str) -> Scanned {
+        let error = Diagnostic::error(Code::InvalidNumber, self.since(start), message);
+        self.invalid(start, error)
+    }
+
+    fn scan_number(&mut self, first: char, start: Span) -> Scanned {
         // Handle hex (0x) and binary (0b) prefixes
         if first == '0'
             && let Some(prefix) = self.peek()
@@ -662,11 +725,7 @@ impl Lexer {
             }
             // Must have at least one digit after e
             if !self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                return Err(Diagnostic::error(
-                    Code::InvalidNumber,
-                    self.since(start),
-                    "expected digit after exponent",
-                ));
+                return self.invalid_number(start, "expected digit after exponent");
             }
             while let Some(ch) = self.peek() {
                 if ch.is_ascii_digit() || ch == '_' {
@@ -681,34 +740,22 @@ impl Lexer {
         }
 
         if is_float {
-            let val: f64 = num.parse().map_err(|_| {
-                Diagnostic::error(
-                    Code::InvalidNumber,
-                    self.since(start),
-                    "number literal too large",
-                )
-            })?;
+            let Ok(val) = num.parse::<f64>() else {
+                return self.invalid_number(start, "number literal too large");
+            };
             if !val.is_finite() {
-                return Err(Diagnostic::error(
-                    Code::InvalidNumber,
-                    self.since(start),
-                    "number literal out of range (not finite)",
-                ));
+                return self.invalid_number(start, "number literal out of range (not finite)");
             }
-            Ok((Token::Float(val), start))
+            (Token::Float(val), start)
         } else {
-            let val = int_magnitude(&num, 10).ok_or_else(|| {
-                Diagnostic::error(
-                    Code::InvalidNumber,
-                    self.since(start),
-                    "number literal too large",
-                )
-            })?;
-            Ok((Token::Int(val), start))
+            match int_magnitude(&num, 10) {
+                Some(val) => (Token::Int(val), start),
+                None => self.invalid_number(start, "number literal too large"),
+            }
         }
     }
 
-    fn scan_hex_int(&mut self, start: Span) -> Result<Scanned, Diagnostic> {
+    fn scan_hex_int(&mut self, start: Span) -> Scanned {
         let mut digits = String::new();
         while let Some(ch) = self.peek() {
             if ch.is_ascii_hexdigit() || ch == '_' {
@@ -721,23 +768,15 @@ impl Lexer {
             }
         }
         if digits.is_empty() {
-            return Err(Diagnostic::error(
-                Code::InvalidNumber,
-                self.since(start),
-                "expected hex digit after 0x",
-            ));
+            return self.invalid_number(start, "expected hex digit after 0x");
         }
-        let val = int_magnitude(&digits, 16).ok_or_else(|| {
-            Diagnostic::error(
-                Code::InvalidNumber,
-                self.since(start),
-                "hex literal too large",
-            )
-        })?;
-        Ok((Token::Int(val), start))
+        match int_magnitude(&digits, 16) {
+            Some(val) => (Token::Int(val), start),
+            None => self.invalid_number(start, "hex literal too large"),
+        }
     }
 
-    fn scan_binary_int(&mut self, start: Span) -> Result<Scanned, Diagnostic> {
+    fn scan_binary_int(&mut self, start: Span) -> Scanned {
         let mut digits = String::new();
         while let Some(ch) = self.peek() {
             if ch == '0' || ch == '1' || ch == '_' {
@@ -750,20 +789,12 @@ impl Lexer {
             }
         }
         if digits.is_empty() {
-            return Err(Diagnostic::error(
-                Code::InvalidNumber,
-                self.since(start),
-                "expected binary digit after 0b",
-            ));
+            return self.invalid_number(start, "expected binary digit after 0b");
         }
-        let val = int_magnitude(&digits, 2).ok_or_else(|| {
-            Diagnostic::error(
-                Code::InvalidNumber,
-                self.since(start),
-                "binary literal too large",
-            )
-        })?;
-        Ok((Token::Int(val), start))
+        match int_magnitude(&digits, 2) {
+            Some(val) => (Token::Int(val), start),
+            None => self.invalid_number(start, "binary literal too large"),
+        }
     }
 
     fn scan_ident_or_keyword(&mut self, first: char, start: Span) -> Scanned {
@@ -802,7 +833,7 @@ impl Lexer {
         (tok, start)
     }
 
-    fn next_token(&mut self) -> Result<Scanned, Diagnostic> {
+    fn next_token(&mut self) -> Scanned {
         // Skip whitespace, counting the line breaks.
         self.skip_whitespace();
 
@@ -820,7 +851,7 @@ impl Lexer {
                     let comment_span = self.span();
                     self.advance_char();
                     self.advance_char();
-                    self.skip_block_comment()?;
+                    self.skip_block_comment();
                     self.record_comment(CommentKind::Block, comment_span);
                     self.skip_whitespace();
                     continue;
@@ -833,7 +864,7 @@ impl Lexer {
 
         // Check if we're at EOF
         let Some(ch) = self.advance_char() else {
-            return Ok((Token::Eof, start));
+            return (Token::Eof, start);
         };
 
         match ch {
@@ -852,15 +883,15 @@ impl Lexer {
             '0'..='9' => self.scan_number(ch, start),
 
             // Identifiers and keywords
-            'a'..='z' | 'A'..='Z' | '_' => Ok(self.scan_ident_or_keyword(ch, start)),
+            'a'..='z' | 'A'..='Z' | '_' => self.scan_ident_or_keyword(ch, start),
 
             // Operators and punctuation
-            '+' => Ok((Token::Plus, start)),
-            '*' => Ok((Token::Star, start)),
-            '%' => Ok((Token::Percent, start)),
-            '?' => Ok((Token::Question, start)),
-            '^' => Ok((Token::Caret, start)),
-            ',' => Ok((Token::Comma, start)),
+            '+' => (Token::Plus, start),
+            '*' => (Token::Star, start),
+            '%' => (Token::Percent, start),
+            '?' => (Token::Question, start),
+            '^' => (Token::Caret, start),
+            ',' => (Token::Comma, start),
             ':' => {
                 // Associated-type projection: `Self::Item` and
                 // `<a as Trait>::Item` use `::` as a 2-char token. A
@@ -869,30 +900,30 @@ impl Lexer {
                 // any existing single-`:` site.
                 if self.peek() == Some(':') {
                     self.advance_char();
-                    Ok((Token::ColonColon, start))
+                    (Token::ColonColon, start)
                 } else {
-                    Ok((Token::Colon, start))
+                    (Token::Colon, start)
                 }
             }
-            '(' => Ok((Token::LParen, start)),
-            ')' => Ok((Token::RParen, start)),
-            '[' => Ok((Token::LBracket, start)),
-            ']' => Ok((Token::RBracket, start)),
+            '(' => (Token::LParen, start),
+            ')' => (Token::RParen, start),
+            '[' => (Token::LBracket, start),
+            ']' => (Token::RBracket, start),
 
             '#' if self.peek() == Some('{') => {
                 self.advance_char();
                 self.brace_depth += 1;
-                Ok((Token::HashBrace, start))
+                (Token::HashBrace, start)
             }
 
             '#' if self.peek() == Some('[') => {
                 self.advance_char();
-                Ok((Token::HashBracket, start))
+                (Token::HashBracket, start)
             }
 
             '{' => {
                 self.brace_depth += 1;
-                Ok((Token::LBrace, start))
+                (Token::LBrace, start)
             }
 
             '}' => {
@@ -907,13 +938,13 @@ impl Lexer {
                     return self.scan_string(true, cont_start);
                 }
                 self.brace_depth = self.brace_depth.saturating_sub(1);
-                Ok((Token::RBrace, start))
+                (Token::RBrace, start)
             }
 
             '-' => {
                 if self.peek() == Some('>') {
                     self.advance_char();
-                    Ok((Token::Arrow, start))
+                    (Token::Arrow, start)
                 } else if self.peek() == Some('-') {
                     // Line comment — shouldn't happen here since we skip comments above,
                     // but handle it just in case
@@ -921,102 +952,96 @@ impl Lexer {
                     self.record_comment(CommentKind::Line, start);
                     self.next_token()
                 } else {
-                    Ok((Token::Minus, start))
+                    (Token::Minus, start)
                 }
             }
 
-            '/' => Ok((Token::Slash, start)),
+            '/' => (Token::Slash, start),
 
             '.' => {
                 if self.peek() == Some('.') {
                     self.advance_char();
                     if self.peek() == Some('.') {
                         self.advance_char();
-                        Ok((Token::DotDotDot, start))
+                        (Token::DotDotDot, start)
                     } else {
-                        Ok((Token::DotDot, start))
+                        (Token::DotDot, start)
                     }
                 } else {
-                    Ok((Token::Dot, start))
+                    (Token::Dot, start)
                 }
             }
 
             '=' => {
                 if self.peek() == Some('=') {
                     self.advance_char();
-                    Ok((Token::EqEq, start))
+                    (Token::EqEq, start)
                 } else {
-                    Ok((Token::Eq, start))
+                    (Token::Eq, start)
                 }
             }
 
             '!' => {
                 if self.peek() == Some('=') {
                     self.advance_char();
-                    Ok((Token::NotEq, start))
+                    (Token::NotEq, start)
                 } else {
-                    Ok((Token::Not, start))
+                    (Token::Not, start)
                 }
             }
 
             '<' => {
                 if self.peek() == Some('=') {
                     self.advance_char();
-                    Ok((Token::LtEq, start))
+                    (Token::LtEq, start)
                 } else {
-                    Ok((Token::Lt, start))
+                    (Token::Lt, start)
                 }
             }
 
             '>' => {
                 if self.peek() == Some('=') {
                     self.advance_char();
-                    Ok((Token::GtEq, start))
+                    (Token::GtEq, start)
                 } else {
-                    Ok((Token::Gt, start))
+                    (Token::Gt, start)
                 }
             }
 
             '|' => {
                 if self.peek() == Some('>') {
                     self.advance_char();
-                    Ok((Token::Pipe, start))
+                    (Token::Pipe, start)
                 } else if self.peek() == Some('|') {
                     self.advance_char();
-                    Ok((Token::OrOr, start))
+                    (Token::OrOr, start)
                 } else {
-                    Ok((Token::Bar, start))
+                    (Token::Bar, start)
                 }
             }
 
             '&' => {
                 if self.peek() == Some('&') {
                     self.advance_char();
-                    Ok((Token::AndAnd, start))
+                    (Token::AndAnd, start)
                 } else {
-                    Err(Diagnostic::error(
-                        Code::UnexpectedChar,
-                        self.since(start),
-                        "unexpected character '&', did you mean '&&'?",
-                    ))
+                    self.unexpected(start, "unexpected character '&', did you mean '&&'?")
                 }
             }
 
-            ';' => Err(Diagnostic::error(
-                Code::UnexpectedChar,
-                self.since(start),
+            ';' => self.unexpected(
+                start,
                 "semicolons are not used in silt — use a newline to separate statements",
-            )),
+            ),
             // A BOM after the start of the file (the leading one is
             // skipped in `Lexer::new`) is invisible and zero-width, so
             // quoting the raw char would render an empty-looking error.
             // Name it instead.
-            '\u{FEFF}' => Err(Diagnostic::error(
-                Code::UnexpectedChar,
-                self.since(start),
+            '\u{FEFF}' => self.unexpected(
+                start,
                 "unexpected character: byte-order mark (U+FEFF); \
-                          a BOM is only permitted at the very start of the file",
-            )),
+                 a BOM is only permitted at the very start of the file",
+            ),
             // ASCII/Unicode control characters (U+0001–U+001F, U+007F,
             // …) are invisible, so quoting the raw byte renders an
             // empty-looking error in any non-`cat -v` sink (log files,
@@ -1025,26 +1050,71 @@ impl Lexer {
             // to every invisible control char. `escape_default` yields
             // `\u{1}`, `\t`, etc.; printable chars (`@`, …) are not
             // control and keep their plain quoted form.
-            _ if ch.is_control() => Err(Diagnostic::error(
-                Code::UnexpectedChar,
-                self.since(start),
-                format!("unexpected character: '{}'", ch.escape_default()),
-            )),
+            // The control characters directly behind one are the same
+            // stray bytes: one error.
+            _ if ch.is_control() => {
+                let error = self.unexpected(
+                    start,
+                    format!("unexpected character: '{}'", ch.escape_default()),
+                );
+                while self
+                    .peek()
+                    .is_some_and(|c| c.is_control() && !c.is_ascii_whitespace())
+                {
+                    self.advance_char();
+                }
+                error
+            }
             // A letter or digit outside ASCII, at the start of a name or
-            // inside one (`café` ends at the `f`).
-            _ if ch.is_alphanumeric() => Err(Diagnostic::error(
-                Code::UnexpectedChar,
-                self.since(start),
-                format!(
-                    "unexpected character: '{ch}'; a name is made of ASCII letters, digits and '_'"
-                ),
-            )),
-            _ => Err(Diagnostic::error(
-                Code::UnexpectedChar,
-                self.since(start),
-                format!("unexpected character: '{ch}'"),
-            )),
+            // inside one (`café` ends at the `f`). The letters and digits
+            // that follow it are of the same word: one error.
+            _ if ch.is_alphanumeric() => {
+                let error = self.unexpected(
+                    start,
+                    format!(
+                        "unexpected character: '{ch}'; a name is made of ASCII letters, digits and '_'"
+                    ),
+                );
+                while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                    self.advance_char();
+                }
+                error
+            }
+            // A quotation mark that is not silt's: the text up to its
+            // partner on the line is the string that was meant (`'a'`,
+            // `` `x` ``, one pasted from a word processor), and one
+            // error.
+            '\'' | '`' | '“' | '”' | '‘' | '’' => {
+                let error = self.unexpected(start, format!("unexpected character: '{ch}'"));
+                let rest = &self.source[self.pos..];
+                let line = rest.iter().position(|&c| c == '\n').unwrap_or(rest.len());
+                let partner = rest[..line].iter().position(|&c| match ch {
+                    '\'' | '`' => c == ch,
+                    _ => matches!(c, '“' | '”' | '‘' | '’'),
+                });
+                if let Some(partner) = partner {
+                    for _ in 0..=partner {
+                        self.advance_char();
+                    }
+                }
+                error
+            }
+            // Any other character, and its repetitions behind it (`@@@`,
+            // a pasted ``` fence): one error.
+            _ => {
+                let error = self.unexpected(start, format!("unexpected character: '{ch}'"));
+                while self.peek() == Some(ch) {
+                    self.advance_char();
+                }
+                error
+            }
         }
+    }
+
+    /// The error `message` for the character read from `start` to here.
+    fn unexpected(&mut self, start: Span, message: impl Into<String>) -> Scanned {
+        let error = Diagnostic::error(Code::UnexpectedChar, self.since(start), message);
+        self.invalid(start, error)
     }
 }
 
@@ -1098,6 +1168,7 @@ mod tests {
     fn lex(input: &str) -> Vec<Token> {
         Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
+            .checked()
             .unwrap()
             .tokens
             .into_iter()
@@ -1112,6 +1183,7 @@ mod tests {
     fn trivia(input: &str) -> String {
         let lexed = Lexer::new(crate::source::FileId::default(), input)
             .tokenize()
+            .checked()
             .unwrap();
         let mut seen = 0;
         let mut out = Vec::new();
@@ -1444,6 +1516,7 @@ mod tests {
             assert!(
                 Lexer::new(crate::source::FileId::default(), src)
                     .tokenize()
+                    .checked()
                     .is_err(),
                 "{src}"
             );
@@ -1492,25 +1565,170 @@ mod tests {
     #[test]
     fn test_scientific_rejects_overflow() {
         // 1e999 is not finite — must be rejected
-        let result = Lexer::new(crate::source::FileId::default(), "1e999").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "1e999")
+            .tokenize()
+            .checked();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_hex_empty_digits_error() {
-        let result = Lexer::new(crate::source::FileId::default(), "0x").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "0x")
+            .tokenize()
+            .checked();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_binary_empty_digits_error() {
-        let result = Lexer::new(crate::source::FileId::default(), "0b").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "0b")
+            .tokenize()
+            .checked();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_scientific_no_digit_after_e_error() {
-        let result = Lexer::new(crate::source::FileId::default(), "1e").tokenize();
+        let result = Lexer::new(crate::source::FileId::default(), "1e")
+            .tokenize()
+            .checked();
         assert!(result.is_err());
+    }
+
+    /// The tokens of `input` (without the Eof) and its errors' messages.
+    fn lex_all(input: &str) -> (Vec<Token>, Vec<String>) {
+        let lexed = Lexer::new(crate::source::FileId::default(), input).tokenize();
+        (
+            lexed
+                .tokens
+                .into_iter()
+                .map(|tok| tok.kind)
+                .filter(|tok| !matches!(tok, Token::Eof))
+                .collect(),
+            lexed.errors.into_iter().map(|e| e.message).collect(),
+        )
+    }
+
+    #[test]
+    fn test_the_lexer_goes_on_behind_an_error() {
+        let name = |s: &str| Token::Ident(intern::intern(s));
+        // Text that is no token is an Error token, and what follows it
+        // is read.
+        let (tokens, errors) = lex_all("1 @ 2 ; 3");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Int(1),
+                Token::Error,
+                Token::Int(2),
+                Token::Error,
+                Token::Int(3)
+            ]
+        );
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        // Numbers that are none.
+        let (tokens, errors) = lex_all("0x 1e 5 99999999999999999999");
+        assert_eq!(
+            tokens,
+            vec![Token::Error, Token::Error, Token::Int(5), Token::Error]
+        );
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        // One error for a character and its repetitions, for the rest of
+        // a word behind a letter outside ASCII, and for a pair of
+        // typographic quotation marks with what they hold.
+        let (tokens, errors) = lex_all("@@@ x");
+        assert_eq!(tokens, vec![Token::Error, name("x")]);
+        assert_eq!(errors, vec!["unexpected character: '@'"]);
+        let (tokens, errors) = lex_all("größe = 1");
+        assert_eq!(
+            tokens,
+            vec![name("gr"), Token::Error, Token::Eq, Token::Int(1)]
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        let (tokens, errors) = lex_all("f(“a b”, 1)");
+        assert_eq!(
+            tokens,
+            vec![
+                name("f"),
+                Token::LParen,
+                Token::Error,
+                Token::Comma,
+                Token::Int(1),
+                Token::RParen
+            ]
+        );
+        assert_eq!(errors, vec!["unexpected character: '“'"]);
+        let (tokens, errors) = lex_all("c = 'a' + `b c` + \u{1}\u{2}1");
+        assert_eq!(
+            tokens,
+            vec![
+                name("c"),
+                Token::Eq,
+                Token::Error,
+                Token::Plus,
+                Token::Error,
+                Token::Plus,
+                Token::Error,
+                Token::Int(1)
+            ]
+        );
+        assert_eq!(errors.len(), 3, "{errors:?}");
+    }
+
+    #[test]
+    fn test_a_wrong_escape_is_an_error_of_a_string_that_goes_on() {
+        let (tokens, errors) = lex_all(r#"x = "a\qb\zc" + 1"#);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Ident(intern::intern("x")),
+                Token::Eq,
+                Token::StringLit("abc".into(), false),
+                Token::Plus,
+                Token::Int(1)
+            ]
+        );
+        assert_eq!(
+            errors,
+            vec![
+                "unknown escape sequence: \\q",
+                "unknown escape sequence: \\z"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_text_that_ends_in_a_string_or_comment_is_cut_short() {
+        let lex = |input: &str| Lexer::new(crate::source::FileId::default(), input).tokenize();
+        for (input, tokens, message) in [
+            (
+                "1 \"abc",
+                vec![Token::Int(1), Token::Error],
+                "unterminated string",
+            ),
+            (
+                "1 \"\"\"abc\"",
+                vec![Token::Int(1), Token::Error],
+                "unterminated triple-quoted string",
+            ),
+            (
+                "1 {- abc",
+                vec![Token::Int(1)],
+                "unterminated block comment",
+            ),
+        ] {
+            let lexed = lex(input);
+            assert!(lexed.is_cut_short(), "{input}");
+            assert_eq!(lexed.errors.len(), 1, "{input}");
+            assert_eq!(lexed.errors[0].message, message, "{input}");
+            let kinds: Vec<Token> = lexed
+                .tokens
+                .into_iter()
+                .map(|tok| tok.kind)
+                .filter(|tok| !matches!(tok, Token::Eof))
+                .collect();
+            assert_eq!(kinds, tokens, "{input}");
+        }
+        assert!(!lex("1 @ 2 \"a\\q\"").is_cut_short());
     }
 }

@@ -1,0 +1,15 @@
+error[parse]: expected ')' or ',' to continue function call argument list, found fn
+ --> unclosed_brace__a_declaration_at_the_margin_is_read.silt:10:1
+    |
+ 10 | fn helper() -> Int {
+    | ^^ expected ')' or ',' to continue function call argument list, found fn
+ ::: unclosed_brace__a_declaration_at_the_margin_is_read.silt:8:18
+   |
+ 8 |   let total = add(1,
+   |                  - the function call argument list starts here
+
+error[type]: type mismatch: expected String, got Int
+ --> unclosed_brace__a_declaration_at_the_margin_is_read.silt:15:19
+    |
+ 15 |   let n: String = helper()
+    |                   ^^^^^^^^ type mismatch: expected String, got Int

@@ -108,6 +108,7 @@ enum Kind {
 fn lex_single_number(src: &str) -> Option<Kind> {
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .ok()?;
     let significant: Vec<Token> = tokens
         .tokens

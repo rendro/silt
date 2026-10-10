@@ -1,0 +1,10 @@
+fn first() -> Int {
+  1
+}
+
+fn main() {
+  let n = first()
+  println("n is {n})
+}
+
+fn later() { 2 }

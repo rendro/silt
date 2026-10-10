@@ -20,6 +20,7 @@ use silt::parser::Parser;
 fn parse_ok(src: &str) -> Vec<Decl> {
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .expect("lexer");
     let program = Parser::new(tokens, src).parse_program().expect("parse");
     program.decls

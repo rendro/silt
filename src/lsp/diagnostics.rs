@@ -71,21 +71,15 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
     let mut sources = SourceMap::new();
     let file = sources.add(SourceName::Path(path.clone()), text.clone());
     let (program, _) = parse_text(file, &text);
-    let definitions = program
-        .as_ref()
-        .map(|p| build_definitions(p, None, &RecordFields::new()))
-        .unwrap_or_default();
-    let locals = program
-        .as_ref()
-        .map(|p| collect_local_bindings(p, &text, None, &RecordFields::new()))
-        .unwrap_or_default();
+    let definitions = build_definitions(&program, None, &RecordFields::new());
+    let locals = collect_local_bindings(&program, &text, None, &RecordFields::new());
     Document {
         source: SourceFile::new(SourceName::Path(path.clone()), text),
         key: path_key(&path),
         path,
         open: false,
         module: None,
-        program: program.map(Arc::new),
+        program: Some(Arc::new(program)),
         definitions,
         locals,
     }
@@ -516,7 +510,7 @@ mod tests {
     }
 
     /// A lexer error on a multi-byte character yields a diagnostic over
-    /// that character; the text is stored without a program.
+    /// that character; the text is stored with what parses of it.
     #[test]
     fn lex_error_on_non_ascii_character_is_a_diagnostic() {
         let (connection, client) = Connection::memory();
@@ -528,7 +522,7 @@ mod tests {
 
         let doc = server.documents.get(&uri).expect("document is stored");
         assert_eq!(&*doc.source.text, source);
-        assert!(doc.program.is_none());
+        assert!(doc.program.is_some());
         let published = published_diagnostics(&client);
         assert_eq!(published.len(), 1);
         assert_eq!(published[0].len(), 1);

@@ -112,6 +112,9 @@ codes! {
     /// on an impl, an annotated `type` parameter, a lowercase type
     /// name, ...).
     InvalidDeclaration = "E0113", Parse;
+    /// The count of the lex and parse errors of a file that are not
+    /// shown (see `parser::MAX_SYNTAX_ERRORS`), at the first of them.
+    TooManyErrors = "E0114", Parse;
     // ── resolve ──
     /// A name that resolves to nothing where it is used.
     UnresolvedName = "E0201", Resolve;

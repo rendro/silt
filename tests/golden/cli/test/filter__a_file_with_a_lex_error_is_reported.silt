@@ -1,0 +1,11 @@
+-- cmd: test --filter test_sum
+-- exit: 1
+-- A file with a lex error cannot be asked for its tests: with a filter
+-- that selects none of the tests that were read of it, it is reported
+-- all the same.
+-- stderr-contains: error[lex]: unexpected character: '@'
+import test
+
+fn test_other() {
+  test.assert_eq(1 @ 2, 3)
+}

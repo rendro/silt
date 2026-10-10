@@ -1,0 +1,5 @@
+fn main() {
+  let a = 0x + 0b + 1e + 99999999999999999999 + 1e999
+  let s = "a\q{a}\z" + "ok"
+  println(s)
+}

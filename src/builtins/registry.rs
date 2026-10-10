@@ -347,6 +347,7 @@ use module;
 pub(crate) fn parse(text: &str) -> ast::Program {
     let tokens = Lexer::new(FileId::BUILTIN, text)
         .tokenize()
+        .checked()
         .unwrap_or_else(|e| panic!("the builtin registry does not lex: {}\n{text}", e.message));
     Parser::new(tokens, text)
         .parse_program()

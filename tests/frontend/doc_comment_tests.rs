@@ -10,6 +10,7 @@ use silt::source::FileId;
 fn docs(source: &str) -> Vec<Option<String>> {
     let lexed = Lexer::new(FileId::default(), source)
         .tokenize()
+        .checked()
         .expect("lexes");
     let program = Parser::new(lexed, source)
         .with_docs()

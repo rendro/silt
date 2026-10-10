@@ -20,11 +20,11 @@ fn main() {
 }
 "#;
     let mut lexer = Lexer::new(silt::source::FileId::default(), source);
-    let _tokens = lexer.tokenize().expect("lex");
+    let _tokens = lexer.tokenize().checked().expect("lex");
     let formatted = silt::format::format(silt::source::FileId::default(), source).expect("format");
     // Re-parse the formatted output — must succeed.
     let mut lexer2 = Lexer::new(silt::source::FileId::default(), &formatted);
-    let tokens2 = lexer2.tokenize().expect("lex2");
+    let tokens2 = lexer2.tokenize().checked().expect("lex2");
     let mut parser2 = Parser::new(tokens2, &formatted);
     let _ = parser2.parse_program().expect("parse2 of formatted output");
 }

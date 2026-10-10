@@ -55,6 +55,7 @@ fn shape(e: &Expr) -> String {
 fn expr_shape(src: &str) -> String {
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .unwrap_or_else(|e| panic!("lex {src}: {e:?}"));
     let expr = Parser::new(tokens, src)
         .parse_expr()

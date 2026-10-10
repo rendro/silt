@@ -70,8 +70,8 @@ pub(super) struct Document {
     /// For an open document, its module in its project's session.
     pub(super) module: Option<ModuleRef>,
     /// The declarations: for an open document, the session's checked
-    /// module, with the types the checker filled in. `None` when the text
-    /// does not lex.
+    /// module, with the types the checker filled in, as far as the text
+    /// parses. `None` when the analysis failed.
     pub(super) program: Option<Arc<Program>>,
     /// Definition map: name → definition info (built from top-level declarations).
     pub(super) definitions: HashMap<Symbol, DefInfo>,

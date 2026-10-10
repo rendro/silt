@@ -21,7 +21,8 @@ use crate::diagnostic::{Code, Diagnostic};
 use crate::lexer::{Lexed, Tok, Token};
 use crate::source::Span;
 
-/// Verify structural invariants on a successful `Lexer::tokenize` result.
+/// Verify structural invariants on what `Lexer::tokenize` makes of any
+/// text, with or without lex errors.
 ///
 /// Current checks:
 ///
@@ -37,6 +38,8 @@ use crate::source::Span;
 /// 6. The comment ranges of the tokens follow each other and leave no
 ///    comment out, and each comment lies between the token before it
 ///    and the token that carries it.
+/// 7. A `Token::Error` has an error: the lexer recorded at least one,
+///    and every error it recorded lies in the source.
 pub fn check_lexer_invariants(source: &str, lexed: &Lexed) -> Result<(), String> {
     let tokens = &lexed.tokens;
     if tokens.is_empty() {
@@ -140,6 +143,18 @@ pub fn check_lexer_invariants(source: &str, lexed: &Lexed) -> Result<(), String>
             "{} comments, of which the tokens carry {next_comment}",
             lexed.comments.len()
         ));
+    }
+
+    if lexed.errors.is_empty() && tokens.iter().any(|tok| tok.kind == Token::Error) {
+        return Err("an Error token without a lex error".into());
+    }
+    for error in &lexed.errors {
+        if error.span.end < error.span.start || error.span.end as usize > src_len {
+            return Err(format!(
+                "lex error at {}..{} beyond source length {src_len}",
+                error.span.start, error.span.end
+            ));
+        }
     }
 
     Ok(())
@@ -280,6 +295,7 @@ mod tests {
         let src = "let x = 1\nlet y = 2\n";
         let tokens = Lexer::new(crate::source::FileId::default(), src)
             .tokenize()
+            .checked()
             .unwrap();
         check_lexer_invariants(src, &tokens).unwrap();
     }

@@ -146,30 +146,24 @@ fn arb_formattable_program() -> impl Strategy<Value = String> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2000))]
 
-    /// The lexer must never panic on arbitrary byte strings, even invalid UTF-8
-    /// re-encoded as strings.
+    /// The lexer must never panic on arbitrary strings, and what it makes
+    /// of one, with lex errors or without, keeps its invariants (spans in
+    /// order and in the text, one Eof at the end, an error for every
+    /// Error token).
     #[test]
     fn lexer_never_panics(input in "\\PC{0,200}") {
-        // We only care that it doesn't panic — errors are fine.
-        let _ = Lexer::new(silt::source::FileId::default(), &input).tokenize();
+        let lexed = Lexer::new(silt::source::FileId::default(), &input).tokenize();
+        prop_assert_eq!(silt::fuzz_invariants::check_lexer_invariants(&input, &lexed), Ok(()));
     }
 
-    /// The parser must never panic on arbitrary strings.
+    /// The parser must never panic on arbitrary strings, whatever the
+    /// tokens (the lexer's Error tokens among them), and reports at
+    /// most its cap of errors and the line that counts the rest.
     #[test]
     fn parser_never_panics(input in "\\PC{0,200}") {
-        if let Ok(tokens) = Lexer::new(silt::source::FileId::default(), &input).tokenize() {
-            let mut parser = Parser::new(tokens, &input);
-            let _ = parser.parse_program();
-        }
-    }
-
-    /// The parser's error-recovering mode must never panic.
-    #[test]
-    fn parser_recovery_never_panics(input in "\\PC{0,200}") {
-        if let Ok(tokens) = Lexer::new(silt::source::FileId::default(), &input).tokenize() {
-            let mut parser = Parser::new(tokens, &input);
-            let _ = parser.parse_program_recovering();
-        }
+        let lexed = Lexer::new(silt::source::FileId::default(), &input).tokenize();
+        let (_, errors) = Parser::new(lexed, &input).parse_program_recovering();
+        prop_assert!(errors.len() <= 51, "{} errors", errors.len());
     }
 
     /// The formatter must never panic, even on garbage input.
@@ -199,7 +193,7 @@ proptest! {
     /// if s parses, then format(s) also parses.
     #[test]
     fn formatter_preserves_parseability(source in arb_formattable_program()) {
-        let tokens = Lexer::new(silt::source::FileId::default(), &source).tokenize();
+        let tokens = Lexer::new(silt::source::FileId::default(), &source).tokenize().checked();
         if tokens.is_err() { return Ok(()); }
         let tokens = tokens.unwrap();
         let result = Parser::new(tokens, &source).parse_program();
@@ -207,7 +201,7 @@ proptest! {
 
         // Source parses — formatted version must also parse.
         if let Ok(formatted) = silt::format::format(silt::source::FileId::default(), &source) {
-            let tokens2 = Lexer::new(silt::source::FileId::default(), &formatted).tokenize()
+            let tokens2 = Lexer::new(silt::source::FileId::default(), &formatted).tokenize().checked()
                 .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to lex: {}", e.message).into()))?;
             Parser::new(tokens2, &formatted).parse_program()
                 .map_err(|e| TestCaseError::Fail(format!("Formatted code fails to parse: {}", e.message).into()))?;
@@ -224,7 +218,7 @@ proptest! {
     /// parses without errors. Type errors are fine, panics are not.
     #[test]
     fn typechecker_never_panics(input in "\\PC{0,200}") {
-        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize().checked() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
@@ -239,7 +233,7 @@ proptest! {
     /// and typechecks without errors. Compile errors are fine, panics are not.
     #[test]
     fn compiler_never_panics(input in "\\PC{0,200}") {
-        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize() {
+        let tokens = match Lexer::new(silt::source::FileId::default(), &input).tokenize().checked() {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };

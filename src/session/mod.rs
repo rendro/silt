@@ -517,16 +517,23 @@ impl Session {
                 tables: &mut self.tables,
             },
         );
+        // Of a text that is cut short only the lexer's error is
+        // reported: the declarations behind the cut are missing, and
+        // every use of one would be an error of its own.
+        let diagnostics = match self.graph.module(id).cut_short() {
+            true => bugs,
+            false => bugs
+                .into_iter()
+                .chain(resolution.diagnostics)
+                .chain(check.diagnostics)
+                .collect(),
+        };
         ModuleAnalysis {
             ast: Arc::new(ast),
             scope: resolution.scope,
             top_level: check.top_level,
             let_order: check.let_order,
-            diagnostics: bugs
-                .into_iter()
-                .chain(resolution.diagnostics)
-                .chain(check.diagnostics)
-                .collect(),
+            diagnostics,
         }
     }
 

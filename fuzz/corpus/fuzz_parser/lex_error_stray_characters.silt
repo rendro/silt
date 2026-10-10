@@ -1,0 +1,9 @@
+fn main() {
+  let a = 1 @ 2 ; 3
+  let größe = `x` + 'c' + “str”
+  println(a) $$$
+}
+
+fn other() -> Int {
+  1 & 2
+}

@@ -129,7 +129,10 @@ impl Server {
 /// a name. `_`, which binds nothing, a keyword, and anything the lexer
 /// reads as more or less than one name (`x9é`, `a b`, `1x`) are not.
 pub fn is_valid_silt_ident(name: &str) -> bool {
-    let Ok(lexed) = lexer::Lexer::new(crate::source::FileId::default(), name).tokenize() else {
+    let Ok(lexed) = lexer::Lexer::new(crate::source::FileId::default(), name)
+        .tokenize()
+        .checked()
+    else {
         return false;
     };
     let mut tokens = lexed.tokens.iter().map(|tok| &tok.kind);
