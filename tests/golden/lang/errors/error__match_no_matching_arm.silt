@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: non-exhaustive match: not all patterns are covered
+-- stderr-contains: non-exhaustive match: `(0, _, _)` is not covered
 fn main() {
   let x = (1, 2, 3)
   match x {

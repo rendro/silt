@@ -71,6 +71,32 @@ pub(super) enum CtorId {
     Cons,
 }
 
+/// A value no row matches, as far as the search tells values apart.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum Witness {
+    /// Any value: nothing more had to be said of it.
+    Any,
+    /// A value built with the constructor, of these fields.
+    Ctor(CtorId, Vec<Witness>),
+    /// The integer.
+    Int(i64),
+}
+
+impl Witness {
+    /// Whether the value is told apart from others of its type: a tuple
+    /// or a record of parts nothing is said of is any value of its type.
+    fn says_something(&self) -> bool {
+        match self {
+            Witness::Any => false,
+            Witness::Int(_) => true,
+            Witness::Ctor(CtorId::Tuple | CtorId::Record(_), fields) => {
+                fields.iter().any(Witness::says_something)
+            }
+            Witness::Ctor(..) => true,
+        }
+    }
+}
+
 /// The search gave up at one of its bounds: nothing was shown either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Unverified;
@@ -113,18 +139,36 @@ impl<'a> Search<'a> {
         Search { enums, cells }
     }
 
-    /// Whether the rows together match every row of values. The rows
-    /// have one width.
-    fn covers<'p>(&mut self, mut rows: Vec<Row<'p>>, depth: usize) -> Result<bool, Unverified> {
+    /// Whether the rows together match every row of `width` values. The
+    /// rows have that width.
+    fn covers(
+        &mut self,
+        rows: Vec<Row<'_>>,
+        width: usize,
+        depth: usize,
+    ) -> Result<bool, Unverified> {
+        Ok(self.uncovered(rows, width, depth)?.is_none())
+    }
+
+    /// A row of `width` values that none of the rows matches, or `None`
+    /// when the rows together match every one. The rows have that
+    /// width. This is the one search: `covers` asks it whether there is
+    /// such a row, a diagnostic shows the row.
+    fn uncovered<'p>(
+        &mut self,
+        mut rows: Vec<Row<'p>>,
+        width: usize,
+        depth: usize,
+    ) -> Result<Option<Vec<Witness>>, Unverified> {
         // A row with a test that covers nothing takes part in no answer.
         rows.retain(|row| !row.iter().any(|pat| covers_nothing(pat)));
-        let Some(first) = rows.first() else {
-            return Ok(false);
-        };
-        if first.is_empty() {
-            return Ok(true);
+        if rows.is_empty() {
+            return Ok(Some(vec![Witness::Any; width]));
         }
-        self.cells += rows.len() * first.len();
+        if width == 0 {
+            return Ok(None);
+        }
+        self.cells += rows.len() * width;
         if self.cells > MAX_CELLS || depth > MAX_DEPTH {
             return Err(Unverified);
         }
@@ -133,7 +177,7 @@ impl<'a> Search<'a> {
             .iter()
             .any(|row| row.iter().all(|pat| matches!(pat, Pat::Wild)))
         {
-            return Ok(true);
+            return Ok(None);
         }
         // The column to split the values by: the first one the first row
         // tests. That row has to be looked at in any case, and rows
@@ -161,33 +205,46 @@ impl<'a> Search<'a> {
         let head = firsts()
             .find(|p| matches!(p, Pat::Ctor(..)))
             .or_else(|| firsts().find(|p| matches!(p, Pat::IntRange(..))));
-        match head {
-            Some(Pat::Ctor(id, _)) => {
-                let Some(signature) = self.signature(id, &expanded) else {
-                    return self.covers(default_rows(&expanded), depth + 1);
-                };
-                // The matrices shown to be covered. Two constructors
-                // often leave the same rows (those of an or-pattern that
-                // names both, and the rows that do not test the column):
-                // the rows are looked at once.
-                let mut covered: Vec<Vec<Row<'p>>> = Vec::new();
-                for (ctor, arity) in &signature {
-                    let rows = specialize(&expanded, ctor, *arity);
-                    if covered.iter().any(|done| same_rows(done, &rows)) {
-                        continue;
+        // Of a value the rows left do not test, nothing is said.
+        let untested = |search: &mut Self| {
+            let rest = search.uncovered(default_rows(&expanded), width - 1, depth + 1)?;
+            Ok(rest.map(|rest| with_first(Witness::Any, rest)))
+        };
+        let found = match head {
+            Some(Pat::Ctor(id, _)) => match self.signature(id, &expanded) {
+                None => untested(self)?,
+                Some(signature) => {
+                    // The matrices shown to be covered. Two constructors
+                    // often leave the same rows (those of an or-pattern
+                    // that names both, and the rows that do not test the
+                    // column): the rows are looked at once.
+                    let mut covered: Vec<Vec<Row<'p>>> = Vec::new();
+                    let mut found = None;
+                    for (ctor, arity) in &signature {
+                        let rows = specialize(&expanded, ctor, *arity);
+                        if covered.iter().any(|done| same_rows(done, &rows)) {
+                            continue;
+                        }
+                        let fields = self.uncovered(rows.clone(), arity + width - 1, depth + 1)?;
+                        if let Some(mut fields) = fields {
+                            let rest = fields.split_off(*arity);
+                            found = Some(with_first(Witness::Ctor(ctor.clone(), fields), rest));
+                            break;
+                        }
+                        covered.push(rows);
                     }
-                    if !self.covers(rows.clone(), depth + 1)? {
-                        return Ok(false);
-                    }
-                    covered.push(rows);
+                    found
                 }
-                Ok(true)
-            }
-            Some(Pat::IntRange(..)) => self.covers_int_column(&expanded, depth),
+            },
+            Some(Pat::IntRange(..)) => self.uncovered_int_column(&expanded, width, depth)?,
             // No row tests the column after all (an or-pattern with an
             // alternative that takes every value).
-            _ => self.covers(default_rows(&expanded), depth + 1),
-        }
+            _ => untested(self)?,
+        };
+        Ok(found.map(|mut row| {
+            row.swap(0, column);
+            row
+        }))
     }
 
     /// Every constructor of the type `id` is a constructor of, with its
@@ -228,17 +285,18 @@ impl<'a> Search<'a> {
         })
     }
 
-    /// `covers` for rows whose first column tests integers. The ranges
-    /// cut the integers into intervals no range divides. An interval no
-    /// range holds is covered by the rows that do not test the column
-    /// only, and they are rows of every other interval too: with such a
-    /// gap they decide alone. Without one, every interval must be
-    /// covered by the rows whose range holds it and those rows.
-    fn covers_int_column<'p>(
+    /// `uncovered` for rows whose first column tests integers. The
+    /// ranges cut the integers into intervals no range divides. An
+    /// interval no range holds is covered by the rows that do not test
+    /// the column only, and they are rows of every other interval too:
+    /// with such a gap they decide alone. Without one, every interval
+    /// must be covered by the rows whose range holds it and those rows.
+    fn uncovered_int_column<'p>(
         &mut self,
         rows: &[Row<'p>],
+        width: usize,
         depth: usize,
-    ) -> Result<bool, Unverified> {
+    ) -> Result<Option<Vec<Witness>>, Unverified> {
         let end = i128::from(i64::MAX) + 1;
         let mut ranges: Vec<(i128, i128)> = rows
             .iter()
@@ -257,7 +315,8 @@ impl<'a> Search<'a> {
             next = next.max(hi + 1);
         }
         if next < end {
-            return self.covers(default_rows(rows), depth + 1);
+            let rest = self.uncovered(default_rows(rows), width - 1, depth + 1)?;
+            return Ok(rest.map(|rest| with_first(Witness::Int(outside(&ranges)), rest)));
         }
         let mut cuts: Vec<i128> = ranges.iter().flat_map(|(lo, hi)| [*lo, hi + 1]).collect();
         cuts.sort_unstable();
@@ -273,12 +332,43 @@ impl<'a> Search<'a> {
                 .filter(|row| matches!(row[0], Pat::Wild) || holds(row, from, to))
                 .map(|row| row[1..].to_vec())
                 .collect();
-            if !self.covers(kept, depth + 1)? {
-                return Ok(false);
+            if let Some(rest) = self.uncovered(kept, width - 1, depth + 1)? {
+                // The integer of the interval nearest to zero.
+                let shown = 0.clamp(from, to) as i64;
+                return Ok(Some(with_first(Witness::Int(shown), rest)));
             }
         }
-        Ok(true)
+        Ok(None)
     }
+}
+
+/// `first` and then `rest`.
+fn with_first(first: Witness, rest: Vec<Witness>) -> Vec<Witness> {
+    let mut row = Vec::with_capacity(rest.len() + 1);
+    row.push(first);
+    row.extend(rest);
+    row
+}
+
+/// An integer in none of the `ranges` (sorted, and leaving one out): the
+/// one nearest to zero, a positive one before a negative one.
+fn outside(ranges: &[(i128, i128)]) -> i64 {
+    let mut up: i128 = 0;
+    for (lo, hi) in ranges {
+        if *lo <= up && up <= *hi {
+            up = hi + 1;
+        }
+    }
+    if let Ok(up) = i64::try_from(up) {
+        return up;
+    }
+    let mut down: i128 = -1;
+    for (lo, hi) in ranges.iter().rev() {
+        if *lo <= down && down <= *hi {
+            down = lo - 1;
+        }
+    }
+    down as i64
 }
 
 /// Whether `pat` matches no value that could be counted on: a test whose
@@ -375,9 +465,18 @@ impl TypeChecker {
         cells: &mut usize,
     ) -> Result<bool, Unverified> {
         let mut search = Search::new(&self.tables.enums, *cells);
-        let answer = search.covers(pats.iter().map(|pat| vec![*pat]).collect(), 0);
+        let answer = search.covers(pats.iter().map(|pat| vec![*pat]).collect(), 1, 0);
         *cells = search.cells;
         answer
+    }
+
+    /// A value none of `pats`, each a pattern for the same value,
+    /// matches; `None` when there is none, or none was found within the
+    /// search's bounds.
+    fn uncovered_by(&self, pats: &[&Pat]) -> Option<Witness> {
+        let rows = pats.iter().map(|pat| vec![*pat]).collect();
+        let found = Search::new(&self.tables.enums, 0).uncovered(rows, 1, 0);
+        found.ok().flatten()?.pop()
     }
 
     /// Whether a value built with the constructor `id` is every value of
@@ -394,14 +493,24 @@ impl TypeChecker {
         }
     }
 
-    /// Whether `rows`, each a pattern for the same value, cover every
-    /// value built with `ctor`, which has `arity` fields.
-    fn covers_ctor(&self, rows: &[&Pat], ctor: &CtorId, arity: usize) -> Result<bool, Unverified> {
+    /// The fields of a value built with `ctor`, which has `arity` fields,
+    /// that none of `rows` matches, each a pattern for the same value;
+    /// `None` when they cover every such value (or the search gave up).
+    /// With it, whether any row matches a value built with `ctor` at all.
+    fn uncovered_of_ctor(
+        &self,
+        rows: &[&Pat],
+        ctor: &CtorId,
+        arity: usize,
+    ) -> Option<(Vec<Witness>, bool)> {
         let mut expanded = Vec::new();
         for row in rows {
             expand_or(vec![*row], &mut expanded);
         }
-        Search::new(&self.tables.enums, 0).covers(specialize(&expanded, ctor, arity), 0)
+        let rows = specialize(&expanded, ctor, arity);
+        let matched = !rows.is_empty();
+        let found = Search::new(&self.tables.enums, 0).uncovered(rows, arity, 0);
+        Some((found.ok().flatten()?, matched))
     }
 
     /// Report a `match` whose arms leave a value of the scrutinee's type
@@ -495,18 +604,20 @@ impl TypeChecker {
     }
 
     /// What the rows of a non-exhaustive match on a value of type `ty`
-    /// leave out, for the diagnostic: the variants of an enum, the values
-    /// of a `Bool`, or the first field of a record whose own patterns
-    /// leave something out.
+    /// leave out, for the diagnostic: the variants of an enum no row
+    /// names, the values of a `Bool`, the first field of a record whose
+    /// own patterns leave something out, and otherwise a value no row
+    /// matches (`Some(None)`, `(true, false)`, `[_, _, .._]`, `2`).
     fn missing_description(&self, rows: &[&Pat], ty: &Type) -> std::string::String {
         const UNSPECIFIC: &str = "not all patterns are covered";
-        let missing =
-            |ctor: CtorId, arity: usize| matches!(self.covers_ctor(rows, &ctor, arity), Ok(false));
         match ty {
             Type::Bool => {
                 let values: Vec<&str> = [(true, "true"), (false, "false")]
                     .into_iter()
-                    .filter(|(value, _)| missing(CtorId::Bool(*value), 0))
+                    .filter(|(value, _)| {
+                        self.uncovered_of_ctor(rows, &CtorId::Bool(*value), 0)
+                            .is_some()
+                    })
                     .map(|(_, name)| name)
                     .collect();
                 if values.is_empty() {
@@ -517,20 +628,55 @@ impl TypeChecker {
             }
             Type::Generic(name, type_args) => {
                 if let Some(enum_info) = self.tables.enums.get(name) {
-                    let variants: Vec<std::string::String> = distinct_variants(enum_info)
-                        .filter(|(i, variant)| {
-                            missing(CtorId::Variant(*name, *i), variant.field_types.len())
-                        })
-                        .map(|(_, variant)| variant.name.to_string())
-                        .collect();
-                    if variants.is_empty() {
+                    // A variant no row names is missing. Of a variant
+                    // some rows name, a value they leave out is shown;
+                    // when the search tells no such value apart (the
+                    // rows test strings, say), that it is covered in
+                    // part.
+                    let (mut missing, mut left_out, mut in_part) =
+                        (Vec::new(), Vec::new(), Vec::new());
+                    for (i, variant) in distinct_variants(enum_info) {
+                        let ctor = CtorId::Variant(*name, i);
+                        let arity = variant.field_types.len();
+                        let Some((fields, matched)) = self.uncovered_of_ctor(rows, &ctor, arity)
+                        else {
+                            continue;
+                        };
+                        let told_apart = fields.iter().any(Witness::says_something);
+                        let shown =
+                            format!("`{}`", self.show_witness(&Witness::Ctor(ctor, fields), ty));
+                        match (matched, told_apart) {
+                            (false, _) => missing.push(variant.name.to_string()),
+                            (true, true) => left_out.push(shown),
+                            (true, false) => in_part.push(shown),
+                        }
+                    }
+                    let mut parts: Vec<std::string::String> = Vec::new();
+                    if !missing.is_empty() {
+                        parts.push(format!(
+                            "missing {} {}",
+                            plural(missing.len(), "variant", "variants"),
+                            missing.join(", ")
+                        ));
+                    }
+                    if !left_out.is_empty() {
+                        parts.push(format!(
+                            "{} {} not covered",
+                            left_out.join(", "),
+                            plural(left_out.len(), "is", "are")
+                        ));
+                    }
+                    if !in_part.is_empty() {
+                        parts.push(format!(
+                            "{} {} covered only in part",
+                            in_part.join(", "),
+                            plural(in_part.len(), "is", "are")
+                        ));
+                    }
+                    if parts.is_empty() {
                         UNSPECIFIC.into()
                     } else {
-                        format!(
-                            "missing {} {}",
-                            plural(variants.len(), "variant", "variants"),
-                            variants.join(", ")
-                        )
+                        parts.join("; ")
                     }
                 } else if let Some(rec_info) = self.tables.records.get(name) {
                     // A record type as a signature names it.
@@ -564,12 +710,123 @@ impl TypeChecker {
                             return format!("in {rec_name}.{fname}: {child}");
                         }
                     }
-                    format!("not all patterns of {rec_name} are covered")
+                    // No field leaves something out alone: the fields
+                    // do together.
+                    match self.uncovered_by(rows) {
+                        Some(value) if value.says_something() => {
+                            format!("`{}` is not covered", self.show_witness(&value, ty))
+                        }
+                        _ => format!("not all patterns of {rec_name} are covered"),
+                    }
                 } else {
                     UNSPECIFIC.into()
                 }
             }
-            _ => UNSPECIFIC.into(),
+            _ => match self.uncovered_by(rows) {
+                Some(value) if value.says_something() => {
+                    format!("`{}` is not covered", self.show_witness(&value, ty))
+                }
+                _ => UNSPECIFIC.into(),
+            },
+        }
+    }
+
+    /// The value `value` of type `ty` as a pattern would write it. A
+    /// part nothing is said of is `_`; a list of which only the first
+    /// elements are said ends in `.._`, a record in `..`.
+    fn show_witness(&self, value: &Witness, ty: &Type) -> std::string::String {
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+        let (ctor, fields) = match value {
+            Witness::Any => return "_".into(),
+            Witness::Int(n) => return n.to_string(),
+            Witness::Ctor(ctor, fields) => (ctor, fields),
+        };
+        let unknown = Type::Error;
+        match ctor {
+            CtorId::Bool(value) => value.to_string(),
+            CtorId::Tuple => {
+                let types: &[Type] = match &ty {
+                    Type::Tuple(types) => types,
+                    _ => &[],
+                };
+                let shown: Vec<_> = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, field)| self.show_witness(field, types.get(i).unwrap_or(&unknown)))
+                    .collect();
+                format!("({})", shown.join(", "))
+            }
+            CtorId::Nil | CtorId::Cons => {
+                let elem = match &ty {
+                    Type::List(elem) => elem,
+                    _ => &unknown,
+                };
+                let mut shown: Vec<std::string::String> = Vec::new();
+                let mut rest = value;
+                loop {
+                    match rest {
+                        Witness::Ctor(CtorId::Cons, parts) if parts.len() == 2 => {
+                            shown.push(self.show_witness(&parts[0], elem));
+                            rest = &parts[1];
+                        }
+                        Witness::Ctor(CtorId::Nil, _) => break,
+                        _ => {
+                            shown.push(".._".into());
+                            break;
+                        }
+                    }
+                }
+                format!("[{}]", shown.join(", "))
+            }
+            CtorId::Variant(enum_ty, i) => {
+                let Some(variant) = self
+                    .tables
+                    .enums
+                    .get(enum_ty)
+                    .and_then(|e| e.variants.get(*i))
+                else {
+                    return "_".into();
+                };
+                if fields.is_empty() {
+                    return variant.name.to_string();
+                }
+                let shown: Vec<_> = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, field)| {
+                        self.show_witness(field, variant.field_types.get(i).unwrap_or(&unknown))
+                    })
+                    .collect();
+                format!("{}({})", variant.name, shown.join(", "))
+            }
+            CtorId::Record(names) => {
+                let (type_name, declared) = match &ty {
+                    Type::Generic(name, _) => (
+                        self.show_type(&Type::Generic(*name, Vec::new())) + " ",
+                        self.tables.records.get(name).map(|info| &info.fields),
+                    ),
+                    _ => (std::string::String::new(), None),
+                };
+                let all = match &ty {
+                    Type::AnonRecord { fields, .. } => Some(fields.len()),
+                    _ => declared.map(Vec::len),
+                };
+                let mut shown: Vec<std::string::String> = names
+                    .iter()
+                    .zip(fields)
+                    .filter(|(_, field)| **field != Witness::Any)
+                    .map(|(name, field)| {
+                        let field_ty = declared
+                            .and_then(|fields| fields.iter().find(|(n, _)| n == name))
+                            .map_or(&unknown, |(_, t)| t);
+                        format!("{name}: {}", self.show_witness(field, field_ty))
+                    })
+                    .collect();
+                if all != Some(shown.len()) {
+                    shown.push("..".into());
+                }
+                format!("{type_name}{{ {} }}", shown.join(", "))
+            }
         }
     }
 }

@@ -1,0 +1,89 @@
+error[type]: non-exhaustive match: `Some(None)` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:21:9
+    |
+ 21 |   match o {
+    |         ^ non-exhaustive match: `Some(None)` is not covered
+
+error[type]: non-exhaustive match: missing variant Dot; `Circle(1)`, `Rect(_, 0)` are not covered
+ --> missing_case__a_value_no_arm_matches.silt:28:9
+    |
+ 28 |   match s {
+    |         ^ non-exhaustive match: missing variant Dot; `Circle(1)`, `Rect(_, 0)` are not covered
+
+error[type]: non-exhaustive match: `(true, false)` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:35:9
+    |
+ 35 |   match t {
+    |         ^ non-exhaustive match: `(true, false)` is not covered
+
+error[type]: non-exhaustive match: `[_, _, .._]` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:42:9
+    |
+ 42 |   match xs {
+    |         ^^ non-exhaustive match: `[_, _, .._]` is not covered
+
+error[type]: non-exhaustive match: `[false, .._]` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:49:9
+    |
+ 49 |   match xs {
+    |         ^^ non-exhaustive match: `[false, .._]` is not covered
+
+error[type]: non-exhaustive match: `2` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:56:9
+    |
+ 56 |   match n {
+    |         ^ non-exhaustive match: `2` is not covered
+
+error[type]: non-exhaustive match: `21` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:63:9
+    |
+ 63 |   match n {
+    |         ^ non-exhaustive match: `21` is not covered
+
+error[type]: non-exhaustive match: `(1, false)` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:70:9
+    |
+ 70 |   match (n, b) {
+    |         ^^^^^^ non-exhaustive match: `(1, false)` is not covered
+
+error[type]: non-exhaustive match: `Ok(0)` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:77:9
+    |
+ 77 |   match r {
+    |         ^ non-exhaustive match: `Ok(0)` is not covered
+
+error[type]: non-exhaustive match: `Some(_)` is covered only in part
+ --> missing_case__a_value_no_arm_matches.silt:84:9
+    |
+ 84 |   match o {
+    |         ^ non-exhaustive match: `Some(_)` is covered only in part
+
+error[type]: non-exhaustive match: not all patterns are covered
+ --> missing_case__a_value_no_arm_matches.silt:91:9
+    |
+ 91 |   match s {
+    |         ^ non-exhaustive match: not all patterns are covered
+
+error[type]: non-exhaustive match: `P { on: true, kind: None }` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:97:9
+    |
+ 97 |   match p {
+    |         ^ non-exhaustive match: `P { on: true, kind: None }` is not covered
+
+error[type]: non-exhaustive match: in P.kind: missing variant None
+ --> missing_case__a_value_no_arm_matches.silt:104:9
+     |
+ 104 |   match p {
+     |         ^ non-exhaustive match: in P.kind: missing variant None
+
+error[type]: non-exhaustive match: `{ a: false, .. }` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:110:9
+     |
+ 110 |   match r {
+     |         ^ non-exhaustive match: `{ a: false, .. }` is not covered
+
+error[type]: non-exhaustive match: `(Dot, [Some(false), .._])` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:116:9
+     |
+ 116 |   match t {
+     |         ^ non-exhaustive match: `(Dot, [Some(false), .._])` is not covered

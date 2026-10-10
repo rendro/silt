@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: non-exhaustive match
--- stderr-contains: not all patterns are covered
+-- stderr-contains: `(Pair { a: 1, .. }, _)` is not covered
 type Pair { a: Int, b: Int }
 type Color { Red, Green, Blue }
 fn main() {
