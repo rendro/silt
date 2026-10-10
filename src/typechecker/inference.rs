@@ -401,6 +401,20 @@ impl TypeChecker {
             (None, Some(op)) => format!(", which {op} needs"),
             (None, None) => String::new(),
         };
+        // The `self` of an impl for every function or every tuple has
+        // no name a `where` clause could bound.
+        if let Some((what, _)) = self.shape_vars.get(&r.var) {
+            self.error(
+                Code::MissingConstraint,
+                format!(
+                    "in an impl for `{}`, `self` is some {what}: it is not known to \
+                     implement trait '{bound}'{needs}",
+                    r.name
+                ),
+                origin.span,
+            );
+            return;
+        }
         let diagnostic = Diagnostic::error(
             Code::MissingConstraint,
             origin.span,
@@ -799,12 +813,44 @@ impl TypeChecker {
                 if self.ambiguous_method_call(name, field, span) {
                     return Some(Type::Error);
                 }
+                if self.of_every_shape(name, &entry, field, span) {
+                    return Some(Type::Error);
+                }
                 self.method_trait = self.entry_trait(&entry, field);
                 let scheme = self.method_scheme(&entry);
                 let instantiated = self.instantiate_method(&scheme, field, span);
                 Some(self.apply(&instantiated))
             }
         }
+    }
+
+    /// `Fn.field` or `Tuple.field` where `entry` is the method of an impl
+    /// for every function (`trait T for Fn`) or every tuple: reported.
+    /// That impl is found by the receiver; as far as the method's
+    /// signature says its `self` is of any type, so written through the
+    /// type it would be a function of anything.
+    fn of_every_shape(
+        &mut self,
+        ty: TypeRef,
+        entry: &MethodEntry,
+        field: Symbol,
+        span: Span,
+    ) -> bool {
+        let every = (ty.is_builtin("Fn") || ty.is_builtin("Tuple"))
+            && matches!(&entry.method_type, Type::Fun(params, _)
+                if matches!(params.first(), Some(Type::Var(_))));
+        if every {
+            self.error(
+                Code::InvalidMethodCall,
+                format!(
+                    "method `{field}` of the impl for every `{0}` is called on a value: \
+                     write `x.{field}(..)`, not `{0}.{field}`",
+                    ty.name
+                ),
+                span,
+            );
+        }
+        every
     }
 
     /// Report `T.field` where the type `T` has no method `field`. A builtin
@@ -1387,11 +1433,22 @@ impl TypeChecker {
                     (Type::Error, _) => Type::Error,
                     (Type::Never, _) => Type::Never,
                     (_, CallForm::Call) => {
-                        self.error(
+                        let mut d = Diagnostic::error(
                             Code::TypeMismatch,
-                            format!("`{other}` is not callable"),
                             span,
+                            format!("`{other}` is not callable"),
                         );
+                        // The `self` of an impl for every function.
+                        if let Type::Rigid(r) = other
+                            && let Some((what, parts)) = self.shape_vars.get(&r.var)
+                        {
+                            d = d.with_note(format!(
+                                "in an impl for `{}`, `self` is some {what}: {parts} are not \
+                                 known",
+                                r.name
+                            ));
+                        }
+                        self.errors.push(d);
                         self.fresh_var()
                     }
                     (_, CallForm::BarePipe) => {
@@ -1743,6 +1800,10 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         if self.ambiguous_method_call(key.0, field, span) {
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
+                        if self.of_every_shape(key.0, &entry, field, span) {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }

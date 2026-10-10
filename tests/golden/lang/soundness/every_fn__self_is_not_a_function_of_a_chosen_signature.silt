@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Fn(Int) -> Cents, got Fn
+-- stderr-contains: note: in an impl for `Fn`, `self` is some function: its parameters and its result are not known
+-- In an impl for every function (`trait Cast for Fn`) `self` is some function: it is not a `Fn(Int) -> Cents`. (It was, and a `Secret` reached the pattern `Cents(n)`.)
+type Cents { Cents(Int) }
+type Secret { Hidden(String), Open }
+trait Cast { fn cast(self) -> Fn(Int) -> Cents }
+trait Cast for Fn {
+  fn cast(self) -> Fn(Int) -> Cents { self }
+}
+fn secret(n: Int) -> Secret { Hidden("s3cr3t") }
+fn open(n: Int) -> Secret { Open }
+fn show(c: Cents) -> String {
+  match c {
+    Cents(n) -> "cents: {n}"
+  }
+}
+fn main() {
+  let f = secret.cast()
+  println(show(f(1)))
+  let Cents(k) = f(2)
+  println("bound: {k}")
+  let g = open.cast()
+  println(show(g(1)))
+}

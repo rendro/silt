@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected (Wrap, Int), got Tuple
+-- The `self` of an impl for every tuple is not returned as a tuple of elements the impl chooses.
+type Wrap { Wrap(Int) }
+type Point { x: String, y: String }
+trait Cast { fn cast(self) -> (Wrap, Int) }
+trait Cast for Tuple {
+  fn cast(self) -> (Wrap, Int) { self }
+}
+fn main() {
+  let (Wrap(n), k) = (Point { x: "px", y: "py" }, 2).cast()
+  println(n + k)
+}

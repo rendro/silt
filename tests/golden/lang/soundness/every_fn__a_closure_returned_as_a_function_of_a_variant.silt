@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Fn(Int) -> Solo, got Fn
+-- A closure of Ints does not become a `Fn(Int) -> Solo` through an impl for every function.
+type Solo { Solo(String) }
+trait Cast { fn cast(self) -> Fn(Int) -> Solo }
+trait Cast for Fn {
+  fn cast(self) -> Fn(Int) -> Solo { self }
+}
+fn main() {
+  let f = { n -> n * 2 }.cast()
+  match f(21) {
+    Solo(s) -> println("got {s}")
+  }
+}

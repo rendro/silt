@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected (Point, Int), got Tuple
+-- The same for a record element taken apart by a `let`.
+type Wrap { Wrap(Int) }
+type Point { x: String, y: String }
+trait Cast { fn cast(self) -> (Point, Int) }
+trait Cast for Tuple {
+  fn cast(self) -> (Point, Int) { self }
+}
+fn main() {
+  let (Point { x, y }, k) = (Wrap(7), 2).cast()
+  println("{x} {y} {k}")
+}

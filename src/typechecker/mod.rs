@@ -170,6 +170,10 @@ pub struct TypeChecker {
     /// Where each annotation variable was first written: a mismatch
     /// against one shows it.
     pub(super) var_written: HashMap<TyVar, Span>,
+    /// The self types of the impls for every function (`trait T for
+    /// Fn`) and for every tuple (`trait T for Tuple`): a variable, with
+    /// what it is ("function") and what is not known of it.
+    pub(super) shape_vars: HashMap<TyVar, (&'static str, &'static str)>,
     /// The annotation variables with a `where` clause whose trait is
     /// unknown (reported): what bounds them is not known, so a method
     /// call or a bound owed on one is not reported as well.
@@ -311,6 +315,7 @@ impl TypeChecker {
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),
+            shape_vars: HashMap::new(),
             unknown_bounds: std::collections::HashSet::new(),
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),

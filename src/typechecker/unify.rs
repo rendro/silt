@@ -728,6 +728,16 @@ impl TypeChecker {
                 );
             }
         }
+        // The `self` of an impl for every function or every tuple.
+        if let Some((r, what, parts)) = named.iter().find_map(|r| {
+            let (what, parts) = self.shape_vars.get(&r.var)?;
+            Some((r, *what, *parts))
+        }) {
+            return d.with_note(format!(
+                "in an impl for `{}`, `self` is some {what}: {parts} are not known",
+                r.name
+            ));
+        }
         match named.as_slice() {
             [] => d,
             [r] => d.with_note(format!(
@@ -740,6 +750,34 @@ impl TypeChecker {
                  type, so the code must check whichever types they are",
                 r.name, s.name
             )),
+        }
+    }
+
+    /// A projection from the `self` of an impl for every function or
+    /// every tuple (`Self::Item` in `trait T for Tuple`), as a
+    /// projection from a function or a tuple: the impl's own binding is
+    /// what it reduces to, whatever function or tuple `self` is.
+    fn of_shape_self(&self, ty: Type) -> Type {
+        let Type::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } = &ty
+        else {
+            return ty;
+        };
+        let stand_in = match &**receiver {
+            Type::Rigid(r) => match self.shape_vars.get(&r.var) {
+                Some(("function", _)) => Type::Fun(Vec::new(), Box::new(Type::Unit)),
+                Some(_) => Type::Tuple(Vec::new()),
+                None => return ty,
+            },
+            _ => return ty,
+        };
+        Type::AssocProj {
+            receiver: Box::new(stand_in),
+            trait_name: *trait_name,
+            assoc_name: *assoc_name,
         }
     }
 
@@ -766,12 +804,14 @@ impl TypeChecker {
         // is an AssocProj — keeps the cost out of the hot unification
         // path for normal types.
         let t1 = if matches!(&t1, Type::AssocProj { .. }) {
-            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(&t1))
+            let t1 = self.of_shape_self(self.apply(&t1));
+            crate::types::canonical::canonicalize(&self.tables.resolver, &t1)
         } else {
             t1
         };
         let t2 = if matches!(&t2, Type::AssocProj { .. }) {
-            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(&t2))
+            let t2 = self.of_shape_self(self.apply(&t2));
+            crate::types::canonical::canonicalize(&self.tables.resolver, &t2)
         } else {
             t2
         };
@@ -860,36 +900,6 @@ impl TypeChecker {
                     self.unify_into(r1, r2, out);
                 }
             }
-
-            // `trait T for Fn { ... }` registers a self_type of
-            // `Generic("Fn", [])` because `Fn` is variadic — the parser
-            // accepts only `Named`/`Generic` as impl targets, with no
-            // surface form to express "any function type". A receiver
-            // dispatched into this impl arrives as `Type::Fun(_, _)`,
-            // which has no element-level constraints to match against
-            // the empty Generic args. Treat the bare-`Fn` Generic as a
-            // wildcard for any function shape so user impls dispatch.
-            // `canonical_head` collapses `Fun → Fn` at
-            // registration time, so the deprecated surface alias is
-            // covered by the same arm.
-            (Type::Fun(_, _), Type::Generic(name, args))
-            | (Type::Generic(name, args), Type::Fun(_, _))
-                if args.is_empty() && name.is_builtin("Fn") => {}
-
-            // `trait T for Tuple { ... }` likewise registers a self_type
-            // of `Generic("Tuple", [])` — tuples are variadic, so unlike
-            // List/Map/Set/Channel there is no fresh-var element shape
-            // `register_trait_impl` could synthesize for the bare target.
-            // Treat the bare-`Tuple` Generic as a wildcard for any tuple
-            // shape so direct receiver dispatch (`(1, 2).pretty()`)
-            // matches the where-bound path, which already dispatched via
-            // the head-keyed obligation. Bare `Tuple` is rejected as a
-            // type annotation (`resolve_type_expr`'s uppercase fallback
-            // errors "unknown type"), so this arm is reachable only via
-            // trait-impl self-types, mirroring the `Fn` arm above.
-            (Type::Tuple(_), Type::Generic(name, args))
-            | (Type::Generic(name, args), Type::Tuple(_))
-                if args.is_empty() && name.is_builtin("Tuple") => {}
 
             (Type::List(a), Type::List(b)) => {
                 self.unify_into(a, b, out);

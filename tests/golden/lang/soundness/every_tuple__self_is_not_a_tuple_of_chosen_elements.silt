@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected (Meters, Int), got Tuple
+-- stderr-contains: note: in an impl for `Tuple`, `self` is some tuple: its elements are not known
+-- In an impl for every tuple `self` is some tuple: it is not a `(Meters, Int)`. (It was, and a `Feet` was read as a `Meters`.)
+type Meters { v: Int, unit: String }
+type Feet { v: Int, unit: String }
+trait Cast { fn cast(self) -> (Meters, Int) }
+trait Cast for Tuple {
+  fn cast(self) -> (Meters, Int) { self }
+}
+fn len(m: Meters) -> String {
+  match m {
+    Meters { v, unit } -> "{v} {unit} (as Meters)"
+  }
+}
+fn main() {
+  let (m, _) = (Feet { v: 3, unit: "ft" }, 0).cast()
+  println(len(m))
+  let Meters { v, .. } = m
+  println(v)
+}

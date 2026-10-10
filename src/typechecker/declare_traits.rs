@@ -905,10 +905,14 @@ impl TypeChecker {
                     // user-arity branches: `method_scheme`
                     // quantifies them, new at each use.
                     //
-                    // Variadic `Tuple` has no fresh-var shape; it keeps
-                    // the `Generic("Tuple", [])` fallback and is matched
-                    // by the bare-`Tuple` wildcard arm in `unify` (same
-                    // strategy as `Fn`).
+                    // `Fn` and `Tuple` have no one shape: the impl is
+                    // for every function, or every tuple, and its self
+                    // type is a variable of the impl (`shape_vars`),
+                    // which a use decides by the receiver's type. In
+                    // the impl's bodies it is rigid like the `a` of
+                    // `List(a)`: `self` is some function, to be handed
+                    // on but not called, and not a function of any
+                    // signature one may wish for.
                     match builtin_type_name(target_type) {
                         Some("List") => Type::List(Box::new(self.fresh_var())),
                         Some("Set") => Type::Set(Box::new(self.fresh_var())),
@@ -916,16 +920,15 @@ impl TypeChecker {
                         Some("Map") => {
                             Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
                         }
-                        // Use the canonicalised target name so the
-                        // self_type built here matches the `method_table`
-                        // registration key (also canonicalised). Without
-                        // this, `trait T for Fun` produces a self_type of
-                        // `Generic("Fun", [])` while the impl_key is
-                        // `("T", "Fn")` — and the dispatch unify of
-                        // `Type::Fun(_, _)` against `Generic("Fun", [])`
-                        // misses the `(Type::Fun, Generic("Fn", []))` arm
-                        // we added in `unify`. Round 71 follow-up TYPE-3
-                        // canonical-name unification.
+                        Some(shape @ ("Fn" | "Tuple")) => {
+                            let (ty, var) = self.fresh_tv();
+                            let about = match shape {
+                                "Fn" => ("function", "its parameters and its result"),
+                                _ => ("tuple", "its elements"),
+                            };
+                            self.shape_vars.insert(var, about);
+                            ty
+                        }
                         _ => Self::type_from_name(target_type),
                     }
                 } else {
@@ -1431,10 +1434,15 @@ impl TypeChecker {
             if rigid.iter().any(|r| r.var == var) {
                 continue;
             }
-            let name = letters
-                .by_ref()
-                .find(|name| !impl_param_map.contains_key(name))
-                .unwrap_or_else(|| intern("_"));
+            // (The self type of an impl for every function or tuple
+            // is shown by the target's name.)
+            let name = match self.shape_vars.contains_key(&var) {
+                true => target_type.name,
+                false => letters
+                    .by_ref()
+                    .find(|name| !impl_param_map.contains_key(name))
+                    .unwrap_or_else(|| intern("_")),
+            };
             rigid.push(RigidId { var, name });
         }
         let body_self = rigidify(&self_type, &rigid);
@@ -1698,6 +1706,24 @@ impl TypeChecker {
             );
 
             // What the body is checked against (`check_decl_bodies`).
+            // A self type that is a variable (an impl for every function
+            // or tuple) has the trait in the body: `self.other()` is
+            // the impl's own method.
+            let mut body_bounds = method_constraints;
+            if let Type::Var(var) = &self_type
+                && self.shape_vars.contains_key(var)
+            {
+                body_bounds.push(Pred::Trait {
+                    tr: trait_key,
+                    args: self
+                        .tables
+                        .impl_trait_args
+                        .get(&impl_key)
+                        .cloned()
+                        .unwrap_or_default(),
+                    subject: self_type.clone(),
+                });
+            }
             if let Type::Fun(params, ret) = body_type {
                 self.impl_sigs.insert(
                     (target_type, method.name, trait_key),
@@ -1706,7 +1732,7 @@ impl TypeChecker {
                         ret: *ret,
                         names: param_map,
                         rigid: method_rigid,
-                        bounds: method_constraints,
+                        bounds: body_bounds,
                         complete: true,
                     },
                 );

@@ -1,0 +1,30 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type '(Int, Int, Int)' does not implement trait 'T': the only impl is for '(Int, Int)'
+-- stderr-contains: type 'Fn(Int, Int) -> Int' does not implement trait 'U': the only impl is for 'Fn(Int) -> Int'
+-- stderr-contains: type 'Fn(Int) -> Tag' does not implement trait 'U': the only impl is for 'Fn(Int) -> Int'
+-- An impl for one tuple or function type (written through an alias) is no
+-- impl for a tuple of another length or a function of other parameters:
+-- a bound is refused. (A length that differs was not compared.)
+type P2 = (Int, Int)
+type Op = Fn(Int) -> Int
+type Tag { Tag(String) }
+trait T { fn sum(self) -> Int }
+trait T for P2 {
+  fn sum(self) -> Int {
+    let (a, b) = self
+    a + b
+  }
+}
+trait U { fn ap(self) -> Int }
+trait U for Op { fn ap(self) -> Int { self(1) + 1 } }
+fn s(x: a) -> Int where a: T { x.sum() }
+fn u(x: a) -> Int where a: U { x.ap() }
+fn two(a: Int, b: Int) -> Int { a + b }
+fn tag(n: Int) -> Tag { Tag("t") }
+fn main() {
+  println(s((1, 2)))
+  println(s((1, 2, 3)))
+  println(u(two))
+  println(u(tag))
+}

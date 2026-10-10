@@ -1335,11 +1335,10 @@ impl TypeChecker {
             // compared as empty-vs-empty and ANY tuple/function satisfied
             // a bound whose only impl targeted a concrete alias shape
             // (round-102 hole, same class as the head-key-only bug it
-            // fixed). Differing arities land on the caller's equal-length
-            // conservative-skip guard, so the bare `trait T for Tuple`
-            // wildcard (`Generic("Tuple", [])`, zero args) keeps matching
-            // every tuple, and mismatched-arity functions defer to the
-            // direct-dispatch unify.
+            // fixed). A subject of another length than such an impl's
+            // self type is refused by the caller; the impl for every
+            // tuple (`trait T for Tuple`) has a variable for its self
+            // type and no positional args at all.
             Type::Tuple(elems) => elems.clone(),
             Type::Fun(params, ret) => {
                 let mut args = params.clone();
@@ -1757,12 +1756,12 @@ impl TypeChecker {
         // compared with the impl self type's: a concrete mismatch is
         // reported; a repeated binder of a NON-LINEAR impl self type
         // (`type Pair(a) = (a, a)`) must see equal types
-        // (`impl_self_args_consistent`). A length mismatch means the two
-        // sides describe differently shaped representations of the same
-        // head (a `Record` receiver against a `Generic` impl form, the
-        // bare `Tuple`/`Fn` wildcard): skipped. Impls without a stored
-        // self type (the stamps of the structural traits) skip the
-        // check.
+        // (`impl_self_args_consistent`). A length mismatch between two
+        // tuples or two functions is a mismatch; otherwise the impl's
+        // self type says nothing of the subject's parts (the impl for
+        // every tuple or function, whose self type is a variable):
+        // skipped. Impls without a stored self type (the stamps of the
+        // structural traits) skip the check.
         let obligated_args = self.type_args_of(&resolved);
         // Whether the impl's variables are the subject's parts by now.
         let mut linked = false;
@@ -1790,6 +1789,27 @@ impl TypeChecker {
                     let _ = self.unify_types(ob, im);
                 }
                 linked = true;
+            } else if matches!(
+                (&resolved, &impl_self),
+                (Type::Tuple(_), Type::Tuple(_)) | (Type::Fun(..), Type::Fun(..))
+            ) {
+                // An impl for one tuple or function type (through an
+                // alias: `type P2 = (Int, Int)`) is no impl for a tuple
+                // of another length or a function of other parameters.
+                // (The impl for every tuple has a variable for its self
+                // type, and says nothing of the subject's parts.)
+                let (obligated, only) = self.show_apart(&resolved, &impl_self);
+                self.error(
+                    Code::MissingTraitImpl,
+                    format!(
+                        "type '{}' does not implement trait '{}': the only impl is for '{}'",
+                        obligated,
+                        self.show_bound(trait_name, bound_trait_args),
+                        only
+                    ),
+                    span,
+                );
+                return;
             }
         }
         // The bound's trait arguments are the impl's
@@ -1823,9 +1843,8 @@ impl TypeChecker {
             }
         }
         // What the impl's header asks of its variables, which are the
-        // subject's parts now, is owed by the same use. (An impl whose
-        // self type is another shape than the subject's, a bare `Tuple`
-        // or `Fn` target, says nothing of the parts.)
+        // subject's parts now, is owed by the same use. (The impl for
+        // every tuple or function says nothing of the parts.)
         if linked {
             for pred in header {
                 self.want(pred.substitute(&fresh), origin);
