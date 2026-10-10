@@ -886,28 +886,21 @@ pub fn to_lsp(
                     );
                 }
             }
-            // A place without a width (the count of the errors that are
-            // not shown, a wrong escape, the end of the text) is shown
-            // on one character: the one at it, or at the end of a line
-            // the one in front of it. An editor draws nothing under an
-            // empty range.
+            // A place without a width (a wrong escape, a closer that is
+            // missing) is shown on the character at it: an editor draws
+            // nothing under an empty range. It starts where every door
+            // says the error is; at the end of a line there is no
+            // character, and it stays as it is.
             if shown.start == shown.end {
                 let line = file.line_text(shown.start.line + 1).unwrap_or("");
                 let line = line.strip_suffix('\r').unwrap_or(line);
                 let mut units = 0;
-                let mut before = 0;
-                let mut at = None;
                 for c in line.chars() {
                     if units >= shown.start.character {
-                        at = Some(c.len_utf16() as u32);
+                        shown.end.character += c.len_utf16() as u32;
                         break;
                     }
-                    before = c.len_utf16() as u32;
-                    units += before;
-                }
-                match at {
-                    Some(width) => shown.end.character += width,
-                    None => shown.start.character -= before.min(shown.start.character),
+                    units += c.len_utf16() as u32;
                 }
             }
         }
@@ -992,15 +985,12 @@ mod tests {
         // On a character: that character.
         assert_eq!(range(1, 1), ((0, 1), (0, 2)));
         assert_eq!(range(3, 3), ((1, 0), (1, 1)));
-        // At the end of a line, and at the end of the text: the
-        // character in front.
-        assert_eq!(range(2, 2), ((0, 1), (0, 2)));
-        assert_eq!(range(6, 6), ((1, 1), (1, 2)));
-        // A place with a width is as it is; an empty text has none.
+        // At the end of a line, and at the end of the text, there is
+        // none: the place is where the other doors say it is.
+        assert_eq!(range(2, 2), ((0, 2), (0, 2)));
+        assert_eq!(range(6, 6), ((1, 2), (1, 2)));
+        // A place with a width is as it is.
         assert_eq!(range(0, 2), ((0, 0), (0, 2)));
-        let d = Diagnostic::error(Code::ExpectedToken, span(0, 0), "x");
-        let r = to_lsp(&sources(""), &d, &|_| None).range;
-        assert_eq!(r.start, r.end);
     }
 
     #[test]

@@ -951,14 +951,23 @@ impl<'src> Parser<'src> {
         let (twice, more_twice) = top_level_name_errors(&decls, MAX_SYNTAX_ERRORS - errors.len());
         errors.extend(twice);
         more += more_twice;
-        // The count stands behind the last error that is shown, in
-        // source order.
+        // The count stands at the end of the last error that is shown,
+        // in source order: on its last character.
         if let Some(last) = errors.iter().max_by_key(|error| error.span.start)
             && more > 0
         {
+            let end = (last.span.end as usize).min(self.source.len());
+            let start = self.source[..end]
+                .char_indices()
+                .next_back()
+                .map_or(end, |(at, _)| at);
             errors.push(Diagnostic::error(
                 Code::TooManyErrors,
-                Span::point(last.span.file, last.span.end),
+                Span {
+                    file: last.span.file,
+                    start: start as u32,
+                    end: end as u32,
+                },
                 format!(
                     "{more} more syntax error{} in this file {} not shown",
                     if more == 1 { "" } else { "s" },
@@ -4738,9 +4747,11 @@ fn main() {
             errs.last().unwrap().message,
             "1 more syntax error in this file is not shown"
         );
-        // The count stands behind the last error that is shown.
+        // The count stands on the last character of the last error
+        // that is shown.
         let last = &errs[MAX_SYNTAX_ERRORS - 1];
-        assert_eq!(errs.last().unwrap().span.start, last.span.end);
+        let count = errs.last().unwrap().span;
+        assert_eq!((count.start + 1, count.end), (last.span.end, last.span.end));
         // And the first error is the one `parse_program` returns.
         let lexed = Lexer::new(crate::source::FileId::default(), &source).tokenize();
         let first = Parser::new(lexed, &source).parse_program().unwrap_err();
