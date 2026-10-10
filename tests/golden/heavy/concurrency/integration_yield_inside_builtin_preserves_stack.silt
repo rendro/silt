@@ -24,7 +24,7 @@ fn program() {
   when let channel.Message(first) = channel.receive(ch) else { panic("pattern did not match") }
 
   -- Now the worker can complete its send.
-  task.join(worker)
+  let _ = task.join(worker)
 
   -- Read the worker's value.
   when let channel.Message(second) = channel.receive(ch) else { panic("pattern did not match") }

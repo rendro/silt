@@ -233,7 +233,7 @@ only while a sender is.
 ```silt
 let ch = channel.new() -- capacity 0, true rendezvous
 
-task.spawn { ->
+let _ = task.spawn { ->
   -- this blocks until the main task calls channel.receive
   channel.send(ch, "hello")
 }
@@ -277,7 +277,7 @@ you only need to wait on one channel:
 ```silt
 let ch = channel.new(10)
 
-task.spawn { -> channel.send(ch, 42) }
+let _ = task.spawn { -> channel.send(ch, 42) }
 
 match channel.recv_timeout(ch, time.ms(500)) {
   Ok(val) -> println("got: {val}")
@@ -871,13 +871,13 @@ fn main() {
   let alerts = channel.new(5)
   let logs = channel.new(5)
 
-  task.spawn { ->
+  let _ = task.spawn { ->
     channel.send(logs, "background task done")
     channel.send(logs, "log rotation complete")
     channel.close(logs)
   }
 
-  task.spawn { ->
+  let _ = task.spawn { ->
     channel.send(alerts, "disk full!")
     channel.close(alerts)
   }
@@ -1060,7 +1060,7 @@ fn worker_body(id, jobs, outcomes) {
 }
 
 fn spawn_worker(id, jobs, outcomes) {
-  task.spawn { -> worker_body(id, jobs, outcomes) }
+  let _ = task.spawn { -> worker_body(id, jobs, outcomes) }
 }
 
 fn supervise(jobs, outcomes, outstanding, remaining_restarts) {

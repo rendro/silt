@@ -8,6 +8,6 @@ import task
 fn main() {
   let ch = channel.new(0)
   let h = task.spawn({ -> 1 })
-  task.join(h)
+  let _ = task.join(h)
   channel.send(ch, 2)
 }

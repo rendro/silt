@@ -10,6 +10,6 @@ fn main() {
   let never_read = stream.from_range(1, 100)
   println("before")
   let fresh = channel.new(0)
-  channel.receive(fresh)
+  let _ = channel.receive(fresh)
   println("unreachable")
 }

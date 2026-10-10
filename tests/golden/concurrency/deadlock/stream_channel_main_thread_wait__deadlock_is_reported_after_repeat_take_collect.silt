@@ -8,6 +8,6 @@ import stream
 fn main() {
   println(stream.repeat("x") |> stream.take(3) |> stream.collect)
   let fresh = channel.new(0)
-  channel.receive(fresh)
+  let _ = channel.receive(fresh)
   println("unreachable")
 }

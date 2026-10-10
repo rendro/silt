@@ -1,6 +1,6 @@
 pub fn run() {
-  "this is completely unrelated"
-  42
-  1 * 2
+  let _ = "this is completely unrelated"
+  let _ = 42
+  let _ = 1 * 2
   let z = 99
 }
