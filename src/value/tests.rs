@@ -225,6 +225,62 @@ fn variants_of_one_name_in_two_enums_stay_apart() {
     assert_eq!(hash_of(&value(&a, "Red")), hash_of(&value(&a, "Red")));
 }
 
+/// A variant without fields is its type, counted once more: nothing
+/// is made for it. A variant with fields is made once, and a clone of
+/// it has the same fields, not a copy of them.
+#[test]
+fn a_variant_is_shared_not_copied() {
+    use crate::defs::{DefId, TypeId};
+    let ty = TypeInfo::new_enum(TypeId(DefId(9003)), "Chain", &[("End", 0), ("Link", 2)]);
+    let tag = |name: &str| Tag::named(&ty, name).expect("a variant");
+    let held = Arc::strong_count(&ty);
+
+    let end = Value::variant(tag("End"), vec![]);
+    let ends = vec![end.clone(); 3];
+    assert_eq!(Arc::strong_count(&ty), held + 4);
+    let Value::Variant(variant) = &end else {
+        panic!("a variant");
+    };
+    assert_eq!((variant.name(), variant.ordinal()), ("End", 0));
+    assert!(variant.fields().is_empty());
+    assert!(Arc::ptr_eq(variant.ty(), &ty));
+    drop(ends);
+
+    let link = Value::variant(tag("Link"), vec![Value::Int(1), end.clone()]);
+    let copy = link.clone();
+    let (Value::Variant(first), Value::Variant(second)) = (&link, &copy) else {
+        panic!("two variants");
+    };
+    assert_eq!((first.name(), first.ordinal()), ("Link", 1));
+    assert_eq!(first.fields(), [Value::Int(1), end.clone()]);
+    assert!(std::ptr::eq(first.fields(), second.fields()));
+    assert!(Arc::ptr_eq(first.ty(), &ty) && first.has_tag(&tag("Link")));
+    assert_eq!(link, copy);
+    assert_eq!(hash_of(&link), hash_of(&copy));
+
+    drop((end, link, copy));
+    assert_eq!(Arc::strong_count(&ty), held);
+}
+
+/// A clone of a string or of a tuple is the same text and the same
+/// items, counted once more.
+#[test]
+fn a_string_and_a_tuple_are_shared_not_copied() {
+    let text = Value::String("silt".repeat(1000).into());
+    let tuple = Value::tuple(vec![text.clone(), Value::Int(1)]);
+    let (text_again, tuple_again) = (text.clone(), tuple.clone());
+    let (Value::String(a), Value::String(b)) = (&text, &text_again) else {
+        panic!("two strings");
+    };
+    assert!(Arc::ptr_eq(a, b));
+    assert_eq!(Arc::strong_count(a), 3, "the two names' and the tuple's");
+    let (Value::Tuple(a), Value::Tuple(b)) = (&tuple, &tuple_again) else {
+        panic!("two tuples");
+    };
+    assert!(Arc::ptr_eq(a, b));
+    assert_eq!(a[..], [text.clone(), Value::Int(1)]);
+}
+
 /// A program's record type named like a builtin one prints as a
 /// record: Display is keyed by the builtin type's id, not its name.
 #[test]
