@@ -122,7 +122,7 @@ impl TypeChecker {
             // Every method the trait declares is registered for the type:
             // written in the impl, or the trait's default
             // (`register_trait_impl`).
-            for (method_name, _) in &trait_info.methods {
+            for (method_name, method_ty) in &trait_info.methods {
                 let provided = self
                     .tables
                     .impl_methods
@@ -139,6 +139,42 @@ impl TypeChecker {
                             trait_name, type_name, method_name
                         ),
                         diag_span,
+                    );
+                    // That is the impl's one error. The type has the
+                    // trait by this impl for every question, a call of
+                    // the method among them: it is entered with the
+                    // type the trait declares, so a use of it is not
+                    // reported as well.
+                    let impl_key = (*trait_name, *type_name);
+                    let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                    if let Some(self_type) = self.tables.impl_self_types.get(&impl_key) {
+                        mapping.insert(trait_info.self_var, self_type.clone());
+                    }
+                    if let Some(args) = self.tables.impl_trait_args.get(&impl_key)
+                        && args.len() == trait_info.param_var_ids.len()
+                    {
+                        mapping.extend(trait_info.param_var_ids.iter().copied().zip(args.clone()));
+                    }
+                    for v in free_vars_in(method_ty) {
+                        mapping.entry(v).or_insert_with(|| self.fresh_var());
+                    }
+                    let mut preds = self
+                        .tables
+                        .impl_preds
+                        .get(&impl_key)
+                        .cloned()
+                        .unwrap_or_default();
+                    preds.extend(Self::bounds_under(&trait_info, *method_name, &mapping));
+                    self.register_method_entry(
+                        *type_name,
+                        *method_name,
+                        MethodEntry {
+                            method_type: substitute_vars(method_ty, &mapping),
+                            structural: false,
+                            trait_name: Some(*trait_name),
+                            receiver: trait_info.receivers.contains(method_name),
+                            preds,
+                        },
                     );
                 }
             }

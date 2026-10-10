@@ -1,0 +1,11 @@
+error[type]: trait impl 'Display' for 'D' is missing method 'display'
+ --> display_impl__an_empty_impl_lacks_its_method.silt:14:1
+    |
+ 14 | trait Display for D {}
+    | ^^^^^^^^^^^^^^^^^^^^^^ trait impl 'Display' for 'D' is missing method 'display'
+
+error[type]: trait impl 'Display' for 'F' is missing method 'display'
+ --> display_impl__an_empty_impl_lacks_its_method.silt:20:1
+    |
+ 20 | trait Display for F {}
+    | ^^^^^^^^^^^^^^^^^^^^^^ trait impl 'Display' for 'F' is missing method 'display'
