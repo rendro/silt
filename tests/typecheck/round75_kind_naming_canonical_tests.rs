@@ -73,7 +73,7 @@ fn point_type() -> Arc<silt::typeinfo::TypeInfo> {
     silt::typeinfo::TypeInfo::new_record(
         silt::defs::TypeId(silt::defs::DefId(9000)),
         "Point",
-        Vec::new(),
+        vec![("x".to_string(), silt::typeinfo::FieldType::Int)],
     )
 }
 
@@ -92,9 +92,6 @@ fn build_all_variants() -> AllVariants {
     let tcp_listener_handle = TcpListenerHandle::new(1, fresh_listener);
     let tcp_stream_handle = TcpStreamHandle::plain(2, client_stream);
 
-    let mut record_fields = BTreeMap::new();
-    record_fields.insert("x".to_string(), Value::Int(1));
-
     AllVariants {
         int: Value::Int(7),
         float: Value::Float(1.5),
@@ -112,7 +109,7 @@ fn build_all_variants() -> AllVariants {
             s
         })),
         tuple: Value::tuple(vec![Value::Int(1), Value::Int(2)]),
-        record: Value::Record(point_type(), Arc::new(record_fields)),
+        record: Value::record(point_type(), vec![Value::Int(1)]),
         // A variant names its enum type.
         variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
         vm_closure: Value::VmClosure(Arc::new(VmClosure {
@@ -213,7 +210,7 @@ fn user_facing_type_name_titlecase_aligned_with_kind() {
         // Match-by-shape: equality with type_name OR a documented
         // deliberate alias: a variant is named by its enum type.
         let ok = match v {
-            Value::Record(ty, _) => ufn == ty.name,
+            Value::Record(record) => ufn == record.ty().name,
             Value::Variant(variant) => ufn == variant.ty().name,
             Value::VariantConstructor(tag) => ufn == format!("VariantConstructor `{tag}`"),
             Value::TypeDescriptor(ty) => ufn == format!("TypeDescriptor `{}`", ty.name),

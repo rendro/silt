@@ -1201,7 +1201,14 @@ mod tests {
 
     #[test]
     fn dispatch_type_for_value_record_uses_carried_type() {
-        let v = Value::builtin_record(crate::typeinfo::ty::DATE, Default::default());
+        let v = Value::builtin_record(
+            crate::typeinfo::ty::DATE,
+            [
+                ("year", Value::Int(2024)),
+                ("month", Value::Int(1)),
+                ("day", Value::Int(2)),
+            ],
+        );
         assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::DATE);
         assert_eq!(dispatch_type_name(&v), "Date");
     }

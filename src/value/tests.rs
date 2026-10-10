@@ -11,20 +11,35 @@ fn hash_of(v: &Value) -> u64 {
 }
 
 fn make_date(year: i64, month: i64, day: i64) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("year".to_string(), Value::Int(year));
-    fields.insert("month".to_string(), Value::Int(month));
-    fields.insert("day".to_string(), Value::Int(day));
-    Value::builtin_record(ty::DATE, fields)
+    Value::builtin_record(
+        ty::DATE,
+        [
+            ("year", Value::Int(year)),
+            ("month", Value::Int(month)),
+            ("day", Value::Int(day)),
+        ],
+    )
 }
 
 fn make_time(hour: i64, minute: i64, second: i64, ns: i64) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("hour".to_string(), Value::Int(hour));
-    fields.insert("minute".to_string(), Value::Int(minute));
-    fields.insert("second".to_string(), Value::Int(second));
-    fields.insert("ns".to_string(), Value::Int(ns));
-    Value::builtin_record(ty::TIME, fields)
+    Value::builtin_record(
+        ty::TIME,
+        [
+            ("hour", Value::Int(hour)),
+            ("minute", Value::Int(minute)),
+            ("second", Value::Int(second)),
+            ("ns", Value::Int(ns)),
+        ],
+    )
+}
+
+/// The record type `name` with the id `id` and the `Int` fields
+/// `fields`.
+fn record_type(id: u32, name: &str, fields: &[&str]) -> Arc<TypeInfo> {
+    use crate::defs::{DefId, TypeId};
+    use crate::typeinfo::FieldType;
+    let fields = fields.iter().map(|field| (field.to_string(), FieldType::Int));
+    TypeInfo::new_record(TypeId(DefId(id)), name, fields.collect())
 }
 
 // ── Hash/Eq consistency ────────────────────────────────────────
@@ -285,11 +300,7 @@ fn a_string_and_a_tuple_are_shared_not_copied() {
 /// record: Display is keyed by the builtin type's id, not its name.
 #[test]
 fn a_program_type_named_time_is_not_the_builtin_time() {
-    use crate::defs::{DefId, TypeId};
-    let ty = TypeInfo::new_record(TypeId(DefId(9002)), "Time", Vec::new());
-    let mut fields = BTreeMap::new();
-    fields.insert("h".to_string(), Value::Int(1));
-    let rec = Value::Record(ty, Arc::new(fields));
+    let rec = Value::record(record_type(9002, "Time", &["h"]), vec![Value::Int(1)]);
     assert_eq!(format!("{rec}"), "Time {h: 1}");
 }
 
@@ -378,15 +389,8 @@ fn display_time_record_with_ns() {
 
 #[test]
 fn display_generic_record() {
-    let mut fields = BTreeMap::new();
-    fields.insert("x".to_string(), Value::Int(10));
-    fields.insert("y".to_string(), Value::Int(20));
-    let ty = TypeInfo::new_record(
-        crate::defs::TypeId(crate::defs::DefId(9003)),
-        "Point",
-        Vec::new(),
-    );
-    let rec = Value::Record(ty, Arc::new(fields));
+    let ty = record_type(9003, "Point", &["x", "y"]);
+    let rec = Value::record(ty, vec![Value::Int(10), Value::Int(20)]);
     assert_eq!(format!("{}", rec), "Point {x: 10, y: 20}");
 }
 

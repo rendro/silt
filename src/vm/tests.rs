@@ -2625,11 +2625,7 @@ mod type_confusion {
     }
 
     fn record(fields: &[(&str, Value)]) -> Value {
-        let fields: BTreeMap<String, Value> = fields
-            .iter()
-            .map(|(name, value)| (name.to_string(), value.clone()))
-            .collect();
-        Value::builtin_record(crate::typeinfo::ty::ANON_RECORD, fields)
+        Value::anon_record(fields.iter().cloned())
     }
 
     fn function(arity: u8) -> Value {
@@ -2845,12 +2841,20 @@ mod type_confusion {
         confused("cannot access field 'x' on Int", |e| {
             push(e, Value::Int(1));
             let x = name(e, "x");
-            e.emit(Asm::GetField { name: x }, span()).unwrap();
+            e.emit(Asm::GetFieldNamed { name: x }, span()).unwrap();
         });
         confused("record has no field 'x'", |e| {
             push(e, record(&[("y", Value::Int(1))]));
             let x = name(e, "x");
-            e.emit(Asm::GetField { name: x }, span()).unwrap();
+            e.emit(Asm::GetFieldNamed { name: x }, span()).unwrap();
+        });
+        confused("cannot access field 0 of Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::GetField { index: 0 }, span()).unwrap();
+        });
+        confused("cannot access field 1 of an anonymous record", |e| {
+            push(e, record(&[("y", Value::Int(1))]));
+            e.emit(Asm::GetField { index: 1 }, span()).unwrap();
         });
     }
 
@@ -2916,13 +2920,23 @@ mod type_confusion {
         confused("record destructure: expected record, got Int", |e| {
             push(e, Value::Int(1));
             let x = name(e, "x");
-            e.emit(Asm::DestructRecordField { name: x }, span())
+            e.emit(Asm::DestructRecordFieldNamed { name: x }, span())
                 .unwrap();
         });
         confused("record has no field 'x'", |e| {
             push(e, record(&[("y", Value::Int(1))]));
             let x = name(e, "x");
-            e.emit(Asm::DestructRecordField { name: x }, span())
+            e.emit(Asm::DestructRecordFieldNamed { name: x }, span())
+                .unwrap();
+        });
+        confused("record destructure: no field 0 in Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructRecordField { index: 0 }, span())
+                .unwrap();
+        });
+        confused("record destructure: no field 1 in an anonymous record", |e| {
+            push(e, record(&[("y", Value::Int(1))]));
+            e.emit(Asm::DestructRecordField { index: 1 }, span())
                 .unwrap();
         });
         confused("record rest destructure: expected record, got Int", |e| {

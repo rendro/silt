@@ -107,10 +107,16 @@ fn err_msg(v: Value) -> String {
     }
 }
 
-/// Extract the BTreeMap backing a Record value.
+/// The type name of a Record value, and its fields by name.
 fn record_fields(v: Value) -> (String, BTreeMap<String, Value>) {
     match v {
-        Value::Record(ty, fields) => (ty.name.clone(), (*fields).clone()),
+        Value::Record(record) => (
+            record.ty().name.clone(),
+            record
+                .named()
+                .map(|(name, value)| (name.to_string(), value.clone()))
+                .collect(),
+        ),
         other => panic!("expected Record, got {other:?}"),
     }
 }

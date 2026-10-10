@@ -90,6 +90,19 @@ impl Value {
     }
 }
 
+impl fmt::Debug for Record {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {{", self.ty().name)?;
+        for (i, (k, v)) in record_fields(self).into_iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{k}: {v:?}")?;
+        }
+        write!(f, "}}")
+    }
+}
+
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -116,16 +129,7 @@ impl fmt::Debug for Value {
                 }
                 t.finish()
             }
-            Value::Record(record) => {
-                write!(f, "{} {{", record.ty().name)?;
-                for (i, (k, v)) in record_fields(record).into_iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{k}: {v:?}")?;
-                }
-                write!(f, "}}")
-            }
+            Value::Record(record) => record.fmt(f),
             Value::Variant(variant) => {
                 let (name, fields) = (variant.name(), variant.fields());
                 if fields.is_empty() {
