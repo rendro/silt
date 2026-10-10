@@ -328,7 +328,7 @@ impl Native for Each {
 /// spawned task; propagates scheduler.submit errors unchanged.
 fn spawn_with_deadline(
     vm: &mut Vm,
-    closure: &Arc<crate::bytecode::VmClosure>,
+    f: &Value,
     deadline: Option<Duration>,
 ) -> Result<Value, VmError> {
     let task_id = vm.next_task_id();
@@ -342,13 +342,36 @@ fn spawn_with_deadline(
     let mut child_vm = vm.spawn_child();
     child_vm.current_deadline = deadline;
 
-    child_vm.start_task(closure.clone());
+    match f {
+        Value::VmClosure(closure) => child_vm.start_task(closure.clone()),
+        // Any other function (a builtin, a host function): the task
+        // is a frame that calls it.
+        other => child_vm.push_native_frame(Box::new(Body(Some(other.clone())))),
+    }
     child_vm.spawned = true;
     vm.scheduler()
         .submit(task_id, child_vm, handle.clone())
         .map_err(VmError::new)?;
 
     Ok(Value::Handle(handle))
+}
+
+/// The body of a task that is no function of silt's own code
+/// (`task.spawn(uuid.v4)`): the function, until it is called. Its value
+/// is the task's.
+struct Body(Option<Value>);
+
+impl Native for Body {
+    fn name(&self) -> &str {
+        "task.spawn"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        match self.0.take() {
+            Some(callee) => Ok(vm.call(callee, [])),
+            None => Ok(Step::Done(input)),
+        }
+    }
 }
 
 /// `task.deadline(dur, fn)`: runs `fn` with a scoped wall-clock
@@ -414,15 +437,6 @@ fn joined(handle: &TaskHandle, result: Result<Value, VmError>) -> Result<Step, V
     }
 }
 
-/// The function a task is to run, the argument of `name`: a function
-/// of silt.
-fn task_fn<'a>(name: &str, f: &'a Value) -> Result<&'a Arc<crate::bytecode::VmClosure>, VmError> {
-    match f {
-        Value::VmClosure(closure) => Ok(closure),
-        _ => Err(VmError::new(format!("{name} requires a function argument"))),
-    }
-}
-
 /// `task.*`
 pub(crate) mod task {
     use super::*;
@@ -437,7 +451,7 @@ pub(crate) mod task {
         }
 
         fn spawn(vm, f: &Value) -> Result<Value, VmError> {
-            spawn_with_deadline(vm, task_fn("task.spawn", f)?, None)
+            spawn_with_deadline(vm, f, None)
         }
 
         fn join(vm, handle: Handle) -> Result<Step, VmError> {
@@ -469,9 +483,8 @@ pub(crate) mod task {
         // closure-wrapping boilerplate.
         fn spawn_until(vm, dur: time::Duration, f: &Value) -> Result<Value, VmError> {
             let after = span("task.spawn_until", dur)?;
-            let closure = task_fn("task.spawn_until", f)?;
             let deadline = vm.runtime.io.deadline_after(after);
-            spawn_with_deadline(vm, closure, deadline)
+            spawn_with_deadline(vm, f, deadline)
         }
     }
 }
