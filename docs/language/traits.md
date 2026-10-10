@@ -13,6 +13,11 @@ impl binds; see [Generics — Associated types](generics.md#associated-types)).
 ## Declaration and Implementation
 
 ```silt
+type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+}
+
 trait Greet {
   fn greet(self) -> String
 }
@@ -26,7 +31,9 @@ trait Greet for Shape {
   }
 }
 
-Circle(5.0).greet()   -- "hi from a circle of radius 5"
+fn main() {
+  println(Circle(5.0).greet()) -- hi from a circle of radius 5
+}
 ```
 
 A trait declares complete signatures: every parameter but `self` has a
@@ -90,8 +97,9 @@ Implementing `Cmp2` on a type requires that type to also implement `Eq2`
 (four of silt's six built-in traits — `Equal`, `Hash`, `Compare`,
 `Display` — are structural: the language answers them for every type
 made of types that have them, so for most types the obligation holds
-without an impl; a type that holds a function has none of the four. The
-fifth built-in, `Error`, is implemented by hand).
+without an impl; a type that holds a function has none of the four. Of
+the other two, `Error` is implemented by hand, and `Number` is `Int` and
+`Float` only).
 
 Multiple supertraits separate with `+`:
 
@@ -160,25 +168,35 @@ not a field that the implementing types happen to have.
 
 ```silt
 trait Show {
-  fn show(self) -> String { "default" }   -- default body
-  fn debug(self) -> String                 -- abstract method (no body)
+  -- default body
+  fn show(self) -> String {
+    "default"
+  }
+  -- abstract method (no body)
+  fn debug(self) -> String
 }
 
-type Item { v: Int }
+type Item {
+  v: Int,
+}
 
 trait Show for Item {
-  fn debug(self) -> String { "item-debug" }
-  -- show() is omitted — the default "default" is used at runtime
+  -- show() is omitted: the default body is used
+  fn debug(self) -> String {
+    "item-debug"
+  }
 }
 
-Item { v: 1 }.show()    -- "default"
-Item { v: 1 }.debug()   -- "item-debug"
+fn main() {
+  println(Item { v: 1 }.show()) -- default
+  println(Item { v: 1 }.debug()) -- item-debug
+}
 ```
 
 A trait can mix default and abstract methods freely:
 
-- Methods with `{ ... }` or `= ...` bodies are **defaults**. Impls may
-  omit them; if they do, the default body is used.
+- Methods with a `{ ... }` body are **defaults**. Impls may omit them; if
+  they do, the default body is used.
 - Methods without a body are **abstract**. Impls must provide them.
 
 Overriding a default is just writing the method in the impl as usual:
@@ -201,17 +219,27 @@ specialises per impl:
 
 ```silt
 trait Describable {
-  fn name(self) -> String                              -- abstract
-  fn greet(self) -> String { "hi, {self.name()}" }     -- default uses name()
+  -- abstract
+  fn name(self) -> String
+  -- the default uses name()
+  fn greet(self) -> String {
+    "hi, {self.name()}"
+  }
 }
 
-type Person { who: String }
+type Person {
+  who: String,
+}
 
 trait Describable for Person {
-  fn name(self) -> String { self.who }
+  fn name(self) -> String {
+    self.who
+  }
 }
 
-Person { who: "alice" }.greet()    -- "hi, alice"
+fn main() {
+  println(Person { who: "alice" }.greet()) -- hi, alice
+}
 ```
 
 Defaults compose with supertraits: a default body may call a supertrait
@@ -296,14 +324,18 @@ site — passing a `Box(v)` where `v`'s type does not implement the
 required trait is a compile-time error:
 
 ```silt
-type Box(T) { Box(T) }
+type Box(T) {
+  Box(T),
+}
 
 trait Greet {
   fn greet(self) -> String
 }
 
 trait Greet for Int {
-  fn greet(self) -> String { "int-greet" }
+  fn greet(self) -> String {
+    "int-greet"
+  }
 }
 
 trait Greet for Box(a) where a: Greet {
@@ -314,9 +346,13 @@ trait Greet for Box(a) where a: Greet {
   }
 }
 
-Box(5).greet()            -- "int-greet"
-Box("hello").greet()      -- error: type 'String' does not implement trait 'Greet'
+fn main() {
+  println(Box(5).greet()) -- int-greet
+}
 ```
+
+`Box("hello").greet()` is an error: type 'String' does not implement
+trait 'Greet'.
 
 Multi-trait bounds use `+` (or comma-separated clauses) — identical to
 fn-level `where`:
@@ -439,6 +475,11 @@ fn main() {
   println("{zero} {five}")
 }
 ```
+
+A method without `self` is called on a type, never on a value:
+`5.empty()` is an error that names the call to write (`Int.empty()`). An
+impl writes the parameters its trait declares: one that adds or drops
+`self` (or any other parameter) is an error at the impl.
 
 Dispatch is by the descriptor's carried type name — `Int.empty()` resolves
 to the `Monoid` impl for `Int`. Inside a generic function with
@@ -733,6 +774,8 @@ Constrain generic parameters to types implementing a trait. Where clauses
 **must** use explicit type annotations:
 
 ```silt
+import list
+
 -- CORRECT: 'a' appears in the parameter annotation
 fn print_all(items: List(a)) where a: Display {
   items |> list.each { item -> println(item.display()) }

@@ -227,13 +227,13 @@ fn get_or_die(opt) {
 ## Result and Option Utilities
 
 ```silt
-result.map_ok(Ok(1)) { x -> x + 1 } -- Ok(2)
-result.flat_map(Ok(1)) { x -> Ok(x + 1) } -- Ok(2)
-result.unwrap_or(Err("x"), 0) -- 0
+println(result.map_ok(Ok(1)) { x -> x + 1 }) -- Ok(2)
+println(result.flat_map(Ok(1)) { x -> Ok(x + 1) }) -- Ok(2)
+println(result.unwrap_or(Err("x"), 0)) -- 0
 
-option.map(Some(1)) { x -> x + 1 } -- Some(2)
-option.flat_map(Some(1)) { x -> Some(x + 1) } -- Some(2)
-option.unwrap_or(None, 0) -- 0
+println(option.map(Some(1)) { x -> x + 1 }) -- Some(2)
+println(option.flat_map(Some(1)) { x -> Some(x + 1) }) -- Some(2)
+println(option.unwrap_or(None, 0)) -- 0
 ```
 
 `result.flat_map` is symmetric with `option.flat_map` -- both take a value

@@ -74,8 +74,8 @@ See [Error Handling](error-handling.md) for the full semantics.
 
 ```silt
 -- these are equivalent:
-list.map(xs, { n -> n * 2 })
-xs |> list.map { n -> n * 2 }
+let a = list.map(xs, { n -> n * 2 })
+let b = xs |> list.map { n -> n * 2 }
 ```
 
 Pipe binds tighter than comparison and boolean operators, so `x |> f == y` parses as `(x |> f) == y`. It binds looser than range, so `1..10 |> list.sum()` works without parentheses.
@@ -132,9 +132,9 @@ let n = parse(input)
 ```
 
 ```silt
-xs |> list.map { x -> x + 1 }    -- OK
+let ys = xs |> list.map { x -> x + 1 } -- OK
 
-xs |> list.map
+let zs = xs |> list.map
   { x -> x + 1 }                 -- NOT a trailing closure
 ```
 
@@ -156,7 +156,7 @@ nominal wrapper that converts implicitly to and from `List(Int)`, so ranges
 work anywhere a list does:
 
 ```silt
-1..100 |> list.sum()              -- 5050
+println(1..100 |> list.sum())     -- 5050
 (1..n) |> list.each { i -> ... }
 let r: Range(Int) = 1..10         -- annotated
 let xs: List(Int) = 1..10         -- implicit Range→List

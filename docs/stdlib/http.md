@@ -259,9 +259,9 @@ http.segments(path: String) -> List(String)
 Splits a URL path into non-empty segments. Useful for pattern-matched routing.
 
 ```silt
-http.segments("/api/users/42") -- ["api", "users", "42"]
-http.segments("/") -- []
-http.segments("//foo//bar/") -- ["foo", "bar"]
+println(http.segments("/api/users/42")) -- [api, users, 42]
+println(http.segments("/")) -- []
+println(http.segments("//foo//bar/")) -- [foo, bar]
 ```
 
 This function has no dependencies and works even with `--no-default-features`.

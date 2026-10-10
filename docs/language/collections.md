@@ -106,7 +106,7 @@ let words = #["hello", "world", "hello"] -- duplicates removed
 Set equality with `==`/`!=` works:
 
 ```silt
-#[1, 2, 3] == #[3, 2, 1] -- true
+println(#[1, 2, 3] == #[3, 2, 1]) -- true
 ```
 
 Key functions: `set.new`, `set.from_list`, `set.to_list`, `set.contains`,

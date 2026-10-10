@@ -12,8 +12,8 @@ order: 6
 
 ```silt
 -- These are equivalent:
-list.filter(xs, { x -> x > 0 })
-xs |> list.filter { x -> x > 0 }
+let a = list.filter(xs, { x -> x > 0 })
+let b = xs |> list.filter { x -> x > 0 }
 ```
 
 The right side is a call like any other, so the rule is the same when it
