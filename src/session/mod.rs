@@ -598,12 +598,25 @@ impl Session {
         let helped = |id: ModuleId, d: &Diagnostic| {
             let mut d = d.clone();
             if !self.cells.info.contains_key(&id) {
-                let reach = self.graph.reach(id);
-                for (span, help) in
-                    typechecker::out_of_reach_helps(&self.tables, &self.defs, id, &reach)
-                {
-                    if span == d.span && d.is_error() && !d.help.contains(&help) {
-                        d.help.push(help);
+                // (Only an error that says a type has no such method:
+                // another error may stand at the same place.)
+                let about_a_method = matches!(
+                    d.code,
+                    Code::UnknownMethod | Code::UnknownField | Code::UnresolvedName
+                );
+                if about_a_method && d.is_error() {
+                    let reach = self.graph.reach(id);
+                    let imports_back = |owner| self.graph.reach(owner).contains(&id);
+                    for (span, help) in typechecker::out_of_reach_helps(
+                        &self.tables,
+                        &self.defs,
+                        id,
+                        &reach,
+                        imports_back,
+                    ) {
+                        if span == d.span && !d.help.contains(&help) {
+                            d.help.push(help);
+                        }
                     }
                 }
             }

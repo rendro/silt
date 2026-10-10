@@ -3099,11 +3099,14 @@ impl TypeChecker {
                 if let Some(te) = &ty {
                     let (declared, introduced) = self.resolve_let_annotation(te);
                     own = introduced;
+                    let reported = self.errors.len();
                     self.unify(&val_ty, &declared, value_span);
                     // A value of unknown type (from a module that failed
                     // to load) takes the declared type: `let y: Int = x`
-                    // makes `y` an Int.
-                    if matches!(self.apply(&val_ty), Type::Error) {
+                    // makes `y` an Int. So does a value that is not of
+                    // the declared type: that is reported here, and what
+                    // follows reads the name as it is declared.
+                    if self.errors.len() > reported || matches!(self.apply(&val_ty), Type::Error) {
                         val_ty = declared;
                     }
                 }

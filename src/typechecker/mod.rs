@@ -1096,10 +1096,12 @@ impl TypeChecker {
             // `let` that generalises is general in it, like a function
             // in its signature's.)
             let (declared, _) = self.resolve_let_annotation(te);
+            let reported = self.errors.len();
             self.unify(&val_ty, &declared, span);
             // A value of unknown type (from a module that failed to
-            // load) takes the declared type.
-            if matches!(self.apply(&val_ty), Type::Error) {
+            // load) takes the declared type, and so does a value that
+            // is not of it (see `infer_stmt`).
+            if self.errors.len() > reported || matches!(self.apply(&val_ty), Type::Error) {
                 val_ty = declared;
             }
         }
@@ -1280,16 +1282,18 @@ pub struct ModuleCheck {
 /// type whose module `module` does not reach (`reach`: the modules it
 /// imports, and theirs, and so on). It is made from the whole program's
 /// impls, so it does not depend on the order the modules were checked
-/// in.
+/// in. A module that itself imports `module` (`imports_back`) cannot be
+/// imported by it: the help then says where the trait would have to be.
 pub fn out_of_reach_helps(
     tables: &Tables,
     defs: &crate::defs::DefTable,
     module: crate::session::ModuleId,
     reach: &std::collections::HashSet<crate::session::ModuleId>,
+    imports_back: impl Fn(crate::session::ModuleId) -> bool,
 ) -> Vec<(Span, String)> {
     let mut helps = Vec::new();
     for (span, ty, method) in tables.unknown_methods.get(&module).into_iter().flatten() {
-        let mut found: Vec<(String, String)> = tables
+        let mut found: Vec<(String, String, bool)> = tables
             .trait_methods
             .keys()
             .filter(|(of, name, _)| of == ty && name == method)
@@ -1302,19 +1306,29 @@ pub fn out_of_reach_helps(
                 if owner == module || owner.is_builtin() || reach.contains(&owner) || private {
                     return None;
                 }
-                let owner = tables.module_names.get(&owner)?;
-                Some((resolve(t.name), resolve(*owner)))
+                let name = tables.module_names.get(&owner)?;
+                Some((resolve(t.name), resolve(*name), imports_back(owner)))
             })
             .collect();
-        found.sort();
-        if let Some((tr, owner)) = found.first() {
-            helps.push((
+        // (A module that can be imported first.)
+        found.sort_by(|a, b| (a.2, &a.0, &a.1).cmp(&(b.2, &b.0, &b.1)));
+        match found.first() {
+            Some((tr, owner, false)) => helps.push((
                 *span,
                 format!(
                     "trait '{tr}' of module '{owner}' has a method '{method}' for this type; \
                      import '{owner}' to call it"
                 ),
-            ));
+            )),
+            Some((tr, owner, true)) => helps.push((
+                *span,
+                format!(
+                    "trait '{tr}' of module '{owner}' has a method '{method}' for this type, \
+                     but '{owner}' imports this module and cannot be imported by it; the \
+                     trait would have to be declared in a module this one can import"
+                ),
+            )),
+            None => {}
         }
     }
     helps

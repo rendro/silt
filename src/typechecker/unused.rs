@@ -382,6 +382,11 @@ impl TypeChecker {
                          return it with `?`, or write `let _ = ...`"
                             .to_string()
                     }
+                    ty if holds_result(&ty) => format!(
+                        "this `{}` value is unused: it holds a `Result` whose error would go \
+                         unseen; handle it, or write `let _ = ...`",
+                        self.show_type(&ty)
+                    ),
                     ty => format!(
                         "this `{}` value is unused; write `let _ = ...` to discard it",
                         self.show_type(&ty)
@@ -447,6 +452,30 @@ fn holds(ty: &Type, v: TyVar) -> bool {
         // The caller's type decides the associated type.
         Type::AssocProj { receiver, .. } => holds(receiver, v),
         Type::Fun(..)
+        | Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Rigid(_)
+        | Type::Error
+        | Type::Never => false,
+    }
+}
+
+/// Whether a value of type `ty` holds a `Result`: in a list, an option,
+/// a tuple, a task's handle, a channel, a record's fields. (A function
+/// that returns one holds none.)
+fn holds_result(ty: &Type) -> bool {
+    match ty {
+        Type::Generic(_, args) => ty.is_builtin("Result") || args.iter().any(holds_result),
+        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => holds_result(t),
+        Type::Map(key, value) => holds_result(key) || holds_result(value),
+        Type::Tuple(ts) => ts.iter().any(holds_result),
+        Type::AnonRecord { fields, .. } => fields.values().any(holds_result),
+        Type::Fun(..)
+        | Type::AssocProj { .. }
+        | Type::Var(_)
         | Type::Int
         | Type::Float
         | Type::Bool
