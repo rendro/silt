@@ -74,25 +74,22 @@ fn sweep_broken(case: &str, entry: &str) -> (usize, usize, usize) {
 }
 
 /// A rename is the same program under another name, or it is refused:
-/// in a file that has a declaration with a lex error, no name of the
-/// file is renamed (the names in that declaration are not known).
+/// in a file that has a declaration with a lex error, no function is
+/// renamed (the names in that declaration are not known), and neither
+/// is the parameter of the function that failed. The parameters of the
+/// functions that are whole are (with a fresh name, and with the names
+/// in use that do not clash): each is used in its function only.
 #[test]
-fn e1_a_lex_error_refuses_every_rename() {
+fn e1_a_lex_error_refuses_what_the_failed_declaration_could_name() {
     let (asked, renamed, refused) = sweep_broken("e1", "main.silt");
-    assert!(
-        asked > 20 && renamed == 0 && refused == asked,
-        "{asked} {renamed} {refused}"
-    );
+    assert!(renamed >= 3 && refused > 100, "{asked} {renamed} {refused}");
 }
 
 /// The same for a declaration with a parse error.
 #[test]
-fn e2_a_parse_error_refuses_every_rename() {
+fn e2_a_parse_error_refuses_what_the_failed_declaration_could_name() {
     let (asked, renamed, refused) = sweep_broken("e2", "main.silt");
-    assert!(
-        asked > 20 && renamed == 0 && refused == asked,
-        "{asked} {renamed} {refused}"
-    );
+    assert!(renamed >= 3 && refused > 100, "{asked} {renamed} {refused}");
 }
 
 /// A string with a wrong escape is a lex error that leaves every

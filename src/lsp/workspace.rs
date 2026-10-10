@@ -96,6 +96,19 @@ fn def_of_key(session: &Session, key: &DefKey) -> Option<DefId> {
     }
 }
 
+/// Whether byte `at` of the text of `program` lies in the recovery stub
+/// of a function or method that failed to parse: its header was read,
+/// its body was not.
+fn in_recovery_stub(program: &Program, at: usize) -> bool {
+    let stub_at = |f: &FnDecl| f.is_recovery_stub && holds(f.span, at);
+    program.decls.iter().any(|decl| match decl {
+        Decl::Fn(f) => stub_at(f),
+        Decl::Trait(t) => t.methods.iter().any(stub_at),
+        Decl::TraitImpl(ti) => ti.methods.iter().any(stub_at),
+        _ => false,
+    })
+}
+
 /// What a name under the cursor is, for hover.
 pub(super) enum Named {
     /// A definition of a file, with what its module knows of it.
@@ -536,9 +549,13 @@ impl Server {
     /// so its names are unknown. The file and the place of its first
     /// error; `None` when every such file is whole.
     ///
-    /// The files: the document's own, and for a definition its module
-    /// and every checked module that imports it (a module that imports
-    /// a broken one sees its names as unknown, too).
+    /// The files, for a definition: the document's own, its module and
+    /// every checked module that imports it (a module that imports a
+    /// broken one sees its names as unknown, too). A parameter or a
+    /// local is used inside its declaration only: it is renamed
+    /// whatever failed beside it, unless its own declaration is the
+    /// recovery stub of one that failed (a parameter of a function
+    /// whose body did not parse).
     pub(super) fn incomplete_for_rename(&mut self, uri: &Uri, target: &Target) -> Option<String> {
         // (The importers that are not open are checked for the query.)
         self.places_of(uri, target, true);
@@ -562,14 +579,22 @@ impl Server {
             ))
         };
         let doc = self.documents.get(uri)?;
-        if let Some((session, module)) = self.checked(doc)
-            && let Some(broken) = broken(session, module)
-        {
-            return Some(broken);
-        }
-        let Target::Defs(keys) = target else {
-            return None;
+        let own = self
+            .checked(doc)
+            .and_then(|(session, module)| broken(session, module));
+        let keys = match target {
+            Target::Local(binding) => {
+                let in_stub = doc
+                    .program
+                    .as_ref()
+                    .is_some_and(|program| in_recovery_stub(program, *binding));
+                return own.filter(|_| in_stub);
+            }
+            Target::Defs(keys) => keys,
         };
+        if own.is_some() {
+            return own;
+        }
         for project in self.projects.values() {
             let session = &project.session;
             let homes: HashSet<ModuleId> = keys

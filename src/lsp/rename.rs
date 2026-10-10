@@ -31,18 +31,24 @@ use super::conversions::{position_to_offset, span_to_range};
 
 impl Server {
     /// `textDocument/prepareRename`: the range of the name under the
-    /// cursor, if it can be renamed.
+    /// cursor, if it can be renamed: not where `rename` would refuse
+    /// whatever the new name is (one of silt's own names, `self`, a name
+    /// that a declaration which failed to parse could hold).
     pub(super) fn prepare_rename(
-        &self,
+        &mut self,
         params: lsp_types::TextDocumentPositionParams,
     ) -> Option<PrepareRenameResponse> {
         let uri = &params.text_document.uri;
         let doc = self.documents.get(uri)?;
         let cursor = position_to_offset(&doc.source, &params.position);
         let (span, target) = self.target_at(uri, cursor)?;
-        self.not_renameable(uri, &target)
-            .is_none()
-            .then(|| PrepareRenameResponse::Range(span_to_range(&span, &doc.source)))
+        let range = span_to_range(&span, &doc.source);
+        if self.not_renameable(uri, &target).is_some()
+            || self.incomplete_for_rename(uri, &target).is_some()
+        {
+            return None;
+        }
+        Some(PrepareRenameResponse::Range(range))
     }
 
     /// `textDocument/rename`: one edit per place that names the target.

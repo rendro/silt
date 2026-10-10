@@ -1,12 +1,19 @@
 -- cmd: lsp
--- lsp: rename 10:4 sum
--- lsp: rename 20:10 m
--- lsp: references 10:4
--- lsp: highlight 10:4
+-- lsp: rename 17:4 sum
+-- lsp: prepare-rename 17:4
+-- lsp: rename 27:10 m
+-- lsp: prepare-rename 27:10
+-- lsp: rename 21:14 value
+-- lsp: prepare-rename 21:14
+-- lsp: references 17:4
+-- lsp: highlight 17:4
 -- A rename is the same program under another name, or it is refused:
 -- `has_error` does not parse, so the names in it are not known, and no
--- name of the file is renamed. References and highlight answer what is
--- known (the uses in `has_error` are not among them).
+-- function of the file is renamed. A parameter of a function that is
+-- whole is used in that function only, and is renamed; the parameter
+-- of `has_error` is not. prepareRename says no where rename refuses.
+-- References and highlight answer what is known (the uses in
+-- `has_error` are not among them).
 fn add(a: Int, b: Int) -> Int {
   a + b
 }

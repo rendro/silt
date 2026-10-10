@@ -1,13 +1,23 @@
-16:13 error unexpected character: '@'
-> rename 10:4 sum
-error: `add` cannot be renamed now: rename_beside_a_syntax_error.silt has a syntax error at 16:13 (unexpected character: '@'); what the names in the declaration that holds it mean is not known, and a rename would leave them as they are
-> rename 20:10 m
-error: `n` cannot be renamed now: rename_beside_a_syntax_error.silt has a syntax error at 16:13 (unexpected character: '@'); what the names in the declaration that holds it mean is not known, and a rename would leave them as they are
-> references 10:4
-rename_beside_a_syntax_error.silt:10:4-10:7
-rename_beside_a_syntax_error.silt:21:3-21:6
-rename_beside_a_syntax_error.silt:25:13-25:16
-> highlight 10:4
-10:4-10:7
-21:3-21:6
-25:13-25:16
+23:13 error unexpected character: '@'
+> rename 17:4 sum
+error: `add` cannot be renamed now: rename_beside_a_syntax_error.silt has a syntax error at 23:13 (unexpected character: '@'); what the names in the declaration that holds it mean is not known, and a rename would leave them as they are
+> prepare-rename 17:4
+(nothing)
+> rename 27:10 m
+rename_beside_a_syntax_error.silt:27:10-27:11 => m
+rename_beside_a_syntax_error.silt:28:7-28:8 => m
+rename_beside_a_syntax_error.silt:28:10-28:11 => m
+> prepare-rename 27:10
+27:10-27:11
+> rename 21:14 value
+error: `v` cannot be renamed now: rename_beside_a_syntax_error.silt has a syntax error at 23:13 (unexpected character: '@'); what the names in the declaration that holds it mean is not known, and a rename would leave them as they are
+> prepare-rename 21:14
+(nothing)
+> references 17:4
+rename_beside_a_syntax_error.silt:17:4-17:7
+rename_beside_a_syntax_error.silt:28:3-28:6
+rename_beside_a_syntax_error.silt:32:13-32:16
+> highlight 17:4
+17:4-17:7
+28:3-28:6
+32:13-32:16
