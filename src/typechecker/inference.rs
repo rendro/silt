@@ -1426,75 +1426,57 @@ impl TypeChecker {
                     let tv = self.fresh_var();
                     Type::List(Box::new(tv))
                 } else {
-                    // Infer each element first (without unifying), so we can
-                    // produce a single targeted "list elements must have the
-                    // same type" error pointing at the first mismatching
-                    // element instead of the old "expected X, got Y" which
-                    // read as if the user had declared the first type.
-                    let mut elem_infos: Vec<(Type, Span, bool)> = Vec::with_capacity(elems.len());
-                    for elem in elems.iter_mut() {
+                    // Each element is inferred first (without unifying),
+                    // so that one "list elements must have the same type"
+                    // error points at the first element that differs. What
+                    // `..xs` adds are the elements of `xs`, which must be
+                    // a list: a spread of anything else is reported as
+                    // that, and says nothing of the elements.
+                    let mut elem_infos: Vec<(usize, Type, Span)> = Vec::with_capacity(elems.len());
+                    for (idx, elem) in elems.iter_mut().enumerate() {
                         match elem {
                             ListElem::Single(e) => {
                                 let t = self.infer_expr(e, env);
-                                elem_infos.push((t, e.span, false));
+                                elem_infos.push((idx, t, e.span));
                             }
                             ListElem::Spread(e) => {
                                 let t = self.infer_expr(e, env);
-                                elem_infos.push((t, e.span, true));
+                                let inner = self.fresh_var();
+                                let list = Type::List(Box::new(inner.clone()));
+                                if self.unify_types(&t, &list).is_ok() {
+                                    elem_infos.push((idx, inner, e.span));
+                                } else {
+                                    let shown = self.show_type(&self.apply(&t));
+                                    self.error(
+                                        Code::TypeMismatch,
+                                        format!("`..` needs a list to spread, got {shown}"),
+                                        e.span,
+                                    );
+                                }
                             }
                         }
                     }
 
-                    // Establish the "first element type" once, up front.
-                    let first_ty = {
-                        let (t, _, is_spread) = &elem_infos[0];
-                        if *is_spread {
-                            // Spread contributes a List(inner); extract inner
-                            // for the "first element" description.
-                            let applied = self.apply(t);
-                            match applied {
-                                Type::List(inner) => *inner,
-                                _ => t.clone(),
-                            }
-                        } else {
-                            t.clone()
-                        }
-                    };
-
                     let elem_type = self.fresh_var();
-                    self.unify(&elem_type, &first_ty, elem_infos[0].1);
-
-                    for (idx, (t, espan, is_spread)) in elem_infos.iter().enumerate() {
-                        let unified = if *is_spread {
-                            let expected = Type::List(Box::new(elem_type.clone()));
-                            self.unify_types(&expected, t)
-                        } else {
-                            self.unify_types(&elem_type, t)
-                        };
-                        if unified.is_err() {
-                            // A list-level message, clearer than the
-                            // mismatch of the two types.
-                            let elem_ty = if *is_spread {
-                                let applied = self.apply(t);
-                                match applied {
-                                    Type::List(inner) => *inner,
-                                    other => other,
-                                }
-                            } else {
-                                self.apply(t)
-                            };
-                            let first_resolved = self.apply(&first_ty);
-                            let (first_shown, elem_shown) =
-                                self.show_apart(&first_resolved, &elem_ty);
-                            self.error(Code::TypeMismatch,
-                                format!(
-                                    "list elements must have the same type: first element is {}, but element {} is {}",
-                                    first_shown,
-                                    idx + 1,
-                                    elem_shown
-                                ),
-                                *espan,
-                            );
+                    if let Some((_, first_ty, first_span)) = elem_infos.first().cloned() {
+                        self.unify(&elem_type, &first_ty, first_span);
+                        for (idx, t, espan) in &elem_infos {
+                            if self.unify_types(&elem_type, t).is_err() {
+                                // A list-level message, clearer than the
+                                // mismatch of the two types.
+                                let (first_shown, elem_shown) =
+                                    self.show_apart(&self.apply(&first_ty), &self.apply(t));
+                                self.error(
+                                    Code::TypeMismatch,
+                                    format!(
+                                        "list elements must have the same type: first element is {}, but element {} is {}",
+                                        first_shown,
+                                        idx + 1,
+                                        elem_shown
+                                    ),
+                                    *espan,
+                                );
+                            }
                         }
                     }
 

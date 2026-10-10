@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: `..` needs a list to spread, got Int
+-- stderr-contains: error[type]: `..` needs a list to spread, got String
+-- stderr-contains: error[type]: `..` needs a list to spread, got Map(String, Int)
+-- stderr-contains: error[type]: list elements must have the same type: first element is Int, but element 2 is String
+-- stderr-not-contains: but element 2 is Int
+-- stderr-not-contains: first element is String, but element 1 is String
+-- `..x` in a list literal spreads the list `x`. Of anything else it is
+-- said that a list is needed (it was "first element is Int, but element
+-- 2 is Int"), and the other elements are still held to one type.
+fn main() {
+  let x = 3
+  let ys = [1, ..x]
+  println(ys)
+  let s = "a"
+  let zs = [..s, 2]
+  println(zs)
+  let m = #{ "a": 1 }
+  let ws = [1, ..m]
+  println(ws)
+  let names = ["a"]
+  let mixed = [1, ..names]
+  println(mixed)
+  let ok = [0, ..ys, ..[4, 5]]
+  println(ok)
+}
