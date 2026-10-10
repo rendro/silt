@@ -91,6 +91,8 @@ is unused; write `let _ = ...` to discard it``. A `Result` left unused is how
 an error goes unseen, so its message asks for more: handle it, return it with
 `?`, or discard it with `let _ = ...`. A call whose type nothing else decides
 (`f()` where `f` is a parameter) has type `()` when it stands as a statement.
+The last expression of a block, and of `main`, is its value and is not subject
+to the rule.
 
 ### Immutability as Default (and Only Option)
 
