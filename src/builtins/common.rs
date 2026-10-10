@@ -1,13 +1,8 @@
 //! Shared helper functions used by several builtin modules.
 //!
-//! The `require_*` functions are the kind checks of the modules whose
-//! bodies are not typed (`tcp`, `stream`); a typed body has none
-//! (`super::typed`).
 
 use crate::typeinfo::bv;
 use crate::value::Value;
-#[cfg(feature = "tcp")]
-use crate::vm::VmError;
 
 pub(crate) fn ok(v: Value) -> Value {
     Value::variant(bv::OK, vec![v])
@@ -15,42 +10,6 @@ pub(crate) fn ok(v: Value) -> Value {
 
 pub(super) fn err(s: impl Into<String>) -> Value {
     Value::variant(bv::ERR, vec![Value::String(s.into())])
-}
-
-#[cfg(feature = "tcp")]
-pub(super) fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
-    match arg {
-        Value::Int(n) => Ok(*n),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires Int, got {}",
-            value_kind(other)
-        ))),
-    }
-}
-
-#[cfg(feature = "tcp")]
-pub(super) fn require_bytes(
-    arg: &Value,
-    fn_label: &str,
-) -> Result<std::sync::Arc<Vec<u8>>, VmError> {
-    match arg {
-        Value::Bytes(b) => Ok(b.clone()),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires Bytes, got {}",
-            value_kind(other)
-        ))),
-    }
-}
-
-#[cfg(feature = "tcp")]
-pub(super) fn require_bool(arg: &Value, fn_label: &str) -> Result<bool, VmError> {
-    match arg {
-        Value::Bool(b) => Ok(*b),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires Bool, got {}",
-            value_kind(other)
-        ))),
-    }
 }
 
 /// Surface a `Value`'s kind as a TitleCase `&'static str`. Used by the
@@ -97,18 +56,6 @@ pub(crate) fn value_kind(v: &Value) -> &'static str {
         Value::TcpListener(_) => "TcpListener",
         Value::TcpStream(_) => "TcpStream",
         Value::Unit => "Unit",
-    }
-}
-
-/// The `&str` of a `String` argument.
-#[cfg(feature = "tcp")]
-pub(super) fn require_str_borrow<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
-    match arg {
-        Value::String(s) => Ok(s.as_str()),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires String, got {}",
-            value_kind(other)
-        ))),
     }
 }
 

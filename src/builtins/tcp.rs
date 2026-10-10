@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use super::common::ok;
+use super::typed::{self, Bytes, builtins};
 use crate::runtime::handle::{Accepted, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
 use crate::value::Value;
@@ -56,27 +57,8 @@ pub fn call_tcp_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError
     })
 }
 
-pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
-    match name {
-        "listen" => listen(vm, args).map(Step::Done),
-        "local_port" => local_port(args).map(Step::Done),
-        "accept" => accept(vm, args),
-        "connect" => connect(vm, args),
-        "read" => read(vm, args),
-        "read_exact" => read_exact(vm, args),
-        "write" => write(vm, args),
-        "close" => close(args).map(Step::Done),
-        "peer_addr" => peer_addr(args).map(Step::Done),
-        "set_nodelay" => set_nodelay(args).map(Step::Done),
-        #[cfg(feature = "tcp-tls")]
-        "connect_tls" => tls::connect_tls(vm, args),
-        #[cfg(feature = "tcp-tls")]
-        "accept_tls" => tls::accept_tls(vm, args),
-        #[cfg(feature = "tcp-tls")]
-        "accept_tls_mtls" => tls::accept_tls_mtls(vm, args),
-        _ => Err(VmError::new(format!("unknown tcp function: {name}"))),
-    }
-}
+#[cfg(feature = "tcp-tls")]
+pub(crate) use tls::{accept_tls, accept_tls_mtls, connect_tls};
 
 #[cfg(feature = "tcp-tls")]
 mod tls {
@@ -100,88 +82,87 @@ mod tls {
     use crate::typeinfo::bv;
 
     use super::{
-        Accepted, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, Vm, VmError, err,
-        require_bytes, require_listener, require_string, served, tcp_timeout_err,
+        Accepted, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, VmError, err, served,
+        tcp_timeout_err,
     };
+    use crate::builtins::typed::{self, Bytes, builtins};
     use crate::runtime::handle::ReadWrite;
 
-    /// `connect_tls(addr, hostname) -> Result(TcpStream, String)`. Opens a
-    /// TCP connection then performs the TLS client handshake using
-    /// `webpki-roots` for trust anchors. The returned stream wraps a
-    /// `rustls::StreamOwned<ClientConnection, TcpStream>` behind the same
-    /// `TcpStreamHandle` as plain TCP.
-    pub fn connect_tls(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-        if args.len() != 2 {
-            return Err(VmError::new("tcp.connect_tls takes 2 arguments".into()));
+    builtins! {
+        /// Opens a TCP connection then performs the TLS client handshake
+        /// using `webpki-roots` for trust anchors. The returned stream
+        /// wraps a `rustls::StreamOwned<ClientConnection, TcpStream>`
+        /// behind the same `TcpStreamHandle` as plain TCP.
+        fn connect_tls(vm, addr: &str, hostname: &str) -> Result<Step, VmError> {
+            let (addr, hostname) = (addr.to_string(), hostname.to_string());
+            let next_id = vm.next_tcp_id();
+            vm.io("tcp", tcp_timeout_err, move || {
+                match do_connect_tls(&addr, &hostname, next_id) {
+                    Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                    Err(e) => Value::variant(
+                        bv::ERR,
+                        vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
+                    ),
+                }
+            })
         }
-        let addr = require_string(&args[0], "tcp.connect_tls")?.to_string();
-        let hostname = require_string(&args[1], "tcp.connect_tls")?.to_string();
-        let next_id = vm.next_tcp_id();
-        vm.io("tcp", tcp_timeout_err, move || {
-            match do_connect_tls(&addr, &hostname, next_id) {
-                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-                Err(e) => Value::variant(
-                    bv::ERR,
-                    vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
-                ),
+
+        /// Waits for an incoming TCP connection then performs the TLS
+        /// server handshake using the supplied PEM-encoded cert chain +
+        /// private key. Returned stream is the same opaque `TcpStream`
+        /// handle as plain TCP.
+        fn accept_tls(
+            vm,
+            listener: typed::TcpListener,
+            cert_pem: Bytes,
+            key_pem: Bytes,
+        ) -> Result<Step, VmError> {
+            if let Some(served) = served(listener) {
+                return Ok(Step::Done(served));
             }
-        })
-    }
+            let (listener, cert_pem, key_pem) = (listener.clone(), cert_pem.clone(), key_pem.clone());
+            let next_id = vm.next_tcp_id();
+            let (giving_up, stop) = GivingUp::of(&listener);
+            vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+                accepted(do_accept_tls(
+                    &listener, &giving_up, &cert_pem, &key_pem, next_id,
+                ))
+            })
+        }
 
-    /// `accept_tls(listener, cert_pem, key_pem) -> Result(TcpStream, String)`.
-    /// Waits for an incoming TCP connection then performs the TLS server
-    /// handshake using the supplied PEM-encoded cert chain + private key.
-    /// Returned stream is the same opaque `TcpStream` handle as plain TCP.
-    pub fn accept_tls(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-        if args.len() != 3 {
-            return Err(VmError::new("tcp.accept_tls takes 3 arguments".into()));
+        /// Like `accept_tls` but also requires the connecting client to
+        /// present a certificate chaining to one of the CAs in
+        /// `client_ca_pem`. Built using
+        /// `rustls::server::WebPkiClientVerifier::builder(roots).build()`.
+        /// If the client does not present a cert, or the presented cert
+        /// does not chain to the supplied CA bundle, the handshake fails
+        /// and the call returns `Err(msg)`.
+        fn accept_tls_mtls(
+            vm,
+            listener: typed::TcpListener,
+            cert_pem: Bytes,
+            key_pem: Bytes,
+            client_ca_pem: Bytes,
+        ) -> Result<Step, VmError> {
+            if let Some(served) = served(listener) {
+                return Ok(Step::Done(served));
+            }
+            let listener = listener.clone();
+            let (cert_pem, key_pem) = (cert_pem.clone(), key_pem.clone());
+            let client_ca_pem = client_ca_pem.clone();
+            let next_id = vm.next_tcp_id();
+            let (giving_up, stop) = GivingUp::of(&listener);
+            vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+                accepted(do_accept_tls_mtls(
+                    &listener,
+                    &giving_up,
+                    &cert_pem,
+                    &key_pem,
+                    &client_ca_pem,
+                    next_id,
+                ))
+            })
         }
-        let listener = require_listener(&args[0], "tcp.accept_tls")?.clone();
-        if let Some(served) = served(&listener) {
-            return Ok(Step::Done(served));
-        }
-        let cert_pem = require_bytes(&args[1], "tcp.accept_tls")?;
-        let key_pem = require_bytes(&args[2], "tcp.accept_tls")?;
-        let next_id = vm.next_tcp_id();
-        let (giving_up, stop) = GivingUp::of(&listener);
-        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-            accepted(do_accept_tls(
-                &listener, &giving_up, &cert_pem, &key_pem, next_id,
-            ))
-        })
-    }
-
-    /// `accept_tls_mtls(listener, cert_pem, key_pem, client_ca_pem)
-    /// -> Result(TcpStream, String)`. Like `accept_tls` but also requires
-    /// the connecting client to present a certificate chaining to one of
-    /// the CAs in `client_ca_pem`. Built using
-    /// `rustls::server::WebPkiClientVerifier::builder(roots).build()`.
-    /// If the client does not present a cert, or the presented cert does
-    /// not chain to the supplied CA bundle, the handshake fails and the
-    /// call returns `Err(msg)`.
-    pub fn accept_tls_mtls(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-        if args.len() != 4 {
-            return Err(VmError::new("tcp.accept_tls_mtls takes 4 arguments".into()));
-        }
-        let listener = require_listener(&args[0], "tcp.accept_tls_mtls")?.clone();
-        if let Some(served) = served(&listener) {
-            return Ok(Step::Done(served));
-        }
-        let cert_pem = require_bytes(&args[1], "tcp.accept_tls_mtls")?;
-        let key_pem = require_bytes(&args[2], "tcp.accept_tls_mtls")?;
-        let client_ca_pem = require_bytes(&args[3], "tcp.accept_tls_mtls")?;
-        let next_id = vm.next_tcp_id();
-        let (giving_up, stop) = GivingUp::of(&listener);
-        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-            accepted(do_accept_tls_mtls(
-                &listener,
-                &giving_up,
-                &cert_pem,
-                &key_pem,
-                &client_ca_pem,
-                next_id,
-            ))
-        })
     }
 
     /// The value of a TLS accept: the connection, or why there is
@@ -484,67 +465,6 @@ fn err_closed() -> Value {
     Value::variant(bv::ERR, vec![Value::variant(bv::TCP_CLOSED, vec![])])
 }
 
-// Round 65 dedup (DC2): the byte-identical bodies of these helpers
-// previously lived in both `tcp.rs` and `stream.rs`. They now delegate
-// to `super::common::{require_str_borrow, require_int}`. The
-// thin wrappers preserve the local function names so the dozens of
-// existing call sites in this module stay unchanged.
-fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
-    super::common::require_str_borrow(arg, fn_label)
-}
-
-fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
-    super::common::require_int(arg, fn_label)
-}
-
-// Round 79 (F5 BLOAT/parity): the tcp-local `require_bool` /
-// `require_bytes` previously emitted `"<fn> requires Bool"` /
-// `"<fn> requires Bytes"` without the canonical `, got <kind>` tail
-// established in round 75 across `numeric.rs`, `string.rs`,
-// `collections.rs`, `bytes.rs`, `crypto.rs`, `encoding.rs`, and
-// `uuid.rs`. The TCP-specific `require_listener` / `require_stream`
-// were similarly truncated. We now route through the canonical
-// helpers in `super::common` (for Bool/Bytes) and use
-// `super::common::value_kind` to render the offending kind in the
-// listener/stream arms — keeping the diagnostic shape uniform.
-//
-// Round 79: `require_bytes` is no longer gated behind `tcp-tls` because
-// `tcp.write` (always available) needs the same canonical-shape error
-// when its second arg is not Bytes. The pre-fix `tcp.write` body had a
-// hand-rolled `"tcp.write requires Bytes"` (no `, got <kind>` tail) at
-// the inline match arm; routing through the common helper unifies the
-// shape.
-fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>, VmError> {
-    super::common::require_bytes(arg, fn_label)
-}
-
-fn require_bool(arg: &Value, fn_label: &str) -> Result<bool, VmError> {
-    super::common::require_bool(arg, fn_label)
-}
-
-fn require_listener<'a>(
-    arg: &'a Value,
-    fn_label: &str,
-) -> Result<&'a Arc<TcpListenerHandle>, VmError> {
-    match arg {
-        Value::TcpListener(l) => Ok(l),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires TcpListener, got {}",
-            super::common::value_kind(other)
-        ))),
-    }
-}
-
-fn require_stream<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<TcpStreamHandle>, VmError> {
-    match arg {
-        Value::TcpStream(s) => Ok(s),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires TcpStream, got {}",
-            super::common::value_kind(other)
-        ))),
-    }
-}
-
 /// The flag of an accept on `listener`, and what gives the accept up.
 fn accept_stop(
     listener: &Arc<TcpListenerHandle>,
@@ -552,88 +472,6 @@ fn accept_stop(
     let stopped = Arc::new(AtomicBool::new(false));
     let (listener, flag) = (listener.clone(), stopped.clone());
     (stopped, move || listener.stop(&flag))
-}
-
-// ── Non-blocking ops ───────────────────────────────────────────────────
-
-fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new("tcp.listen takes 1 argument".into()));
-    }
-    let addr = require_string(&args[0], "tcp.listen")?;
-    let id = vm.next_tcp_id();
-    match TcpListener::bind(addr) {
-        Ok(listener) => {
-            let listener = TcpListenerHandle::new(id, listener);
-            listener.widen_backlog();
-            Ok(ok(Value::TcpListener(Arc::new(listener))))
-        }
-        Err(e) => Ok(tcp_io_err(&e)),
-    }
-}
-
-fn local_port(args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new("tcp.local_port takes 1 argument".into()));
-    }
-    let listener = require_listener(&args[0], "tcp.local_port")?;
-    match listener.local_addr() {
-        Ok(addr) => Ok(Value::Int(i64::from(addr.port()))),
-        Err(e) => Err(VmError::new(format!(
-            "tcp.local_port: the listener has no address: {e}"
-        ))),
-    }
-}
-
-fn close(args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new("tcp.close takes 1 argument".into()));
-    }
-    require_stream(&args[0], "tcp.close")?.shut_down();
-    Ok(Value::Unit)
-}
-
-fn peer_addr(args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new("tcp.peer_addr takes 1 argument".into()));
-    }
-    let stream = require_stream(&args[0], "tcp.peer_addr")?;
-    if stream.is_closed() {
-        return Ok(err_closed());
-    }
-    Ok(match stream.peer_addr() {
-        Ok(addr) => ok(Value::String(addr.to_string())),
-        Err(e) => tcp_io_err(&e),
-    })
-}
-
-fn set_nodelay(args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 2 {
-        return Err(VmError::new("tcp.set_nodelay takes 2 arguments".into()));
-    }
-    let stream = require_stream(&args[0], "tcp.set_nodelay")?;
-    let on = require_bool(&args[1], "tcp.set_nodelay")?;
-    if stream.is_closed() {
-        return Ok(err_closed());
-    }
-    Ok(match stream.set_nodelay(on) {
-        Ok(()) => ok(Value::Unit),
-        Err(e) => tcp_io_err(&e),
-    })
-}
-
-// ── Cooperative I/O ops ────────────────────────────────────────────────
-
-fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new("tcp.accept takes 1 argument".into()));
-    }
-    let listener = require_listener(&args[0], "tcp.accept")?.clone();
-    if let Some(served) = served(&listener) {
-        return Ok(Step::Done(served));
-    }
-    let op = accept_op(vm, &listener, false);
-    vm.io_wait("tcp", tcp_timeout_err, op)
 }
 
 /// What an accept on a listener that an `http.serve` has to itself
@@ -693,117 +531,161 @@ pub(crate) fn accept_op(
         })
 }
 
-fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new("tcp.connect takes 1 argument".into()));
-    }
-    let addr = require_string(&args[0], "tcp.connect")?.to_string();
-    let next_id = vm.next_tcp_id();
-    vm.io("tcp", tcp_timeout_err, move || {
-        match TcpStream::connect(&addr) {
-            Ok(stream) => Value::variant(
-                bv::OK,
-                vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
-            ),
-            Err(e) => tcp_io_err(&e),
-        }
-    })
-}
-
-fn read(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 2 {
-        return Err(VmError::new("tcp.read takes 2 arguments".into()));
-    }
-    let stream = require_stream(&args[0], "tcp.read")?.clone();
-    let max = require_int(&args[1], "tcp.read")?;
-    if max < 0 {
-        return Ok(Step::Done(err(format!(
-            "max must be non-negative, got {max}"
-        ))));
-    }
-    let max = max as usize;
-    // A close() that races with a read in flight surfaces the read's
-    // actual result (typically Ok(empty) = EOF after shutdown). Only a
-    // call on a stream that was closed before is rejected here.
-    if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
-        return Ok(Step::Done(r));
-    }
-    if stream.is_closed() {
-        return Ok(Step::Done(err_closed()));
-    }
-    let stop = stopper(&stream);
-    vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-        let mut buf = vec![0u8; max];
-        match stream.read(&mut buf) {
-            Ok(n) => {
-                buf.truncate(n);
-                Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))])
-            }
-            Err(e) => {
-                // If the stream was closed (locally) while/before this
-                // read, surface as EOF rather than the platform-specific
-                // cancellation error (Windows: WSACancelBlockingCall /
-                // WSA_OPERATION_ABORTED from CancelIoEx in close()).
-                if stream.is_closed() {
-                    Value::variant(bv::OK, vec![Value::Bytes(Arc::new(Vec::new()))])
-                } else {
-                    tcp_io_err(&e)
-                }
-            }
-        }
-    })
-}
-
-fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 2 {
-        return Err(VmError::new("tcp.read_exact takes 2 arguments".into()));
-    }
-    let stream = require_stream(&args[0], "tcp.read_exact")?.clone();
-    let n = require_int(&args[1], "tcp.read_exact")?;
-    if n < 0 {
-        return Ok(Step::Done(err(format!("n must be non-negative, got {n}"))));
-    }
-    let n = n as usize;
-    if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
-        return Ok(Step::Done(r));
-    }
-    if stream.is_closed() {
-        return Ok(Step::Done(err_closed()));
-    }
-    let stop = stopper(&stream);
-    vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-        let mut buf = vec![0u8; n];
-        match stream.read_exact(&mut buf) {
-            Ok(()) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
-            Err(e) => tcp_io_err(&e),
-        }
-    })
-}
-
-fn write(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 2 {
-        return Err(VmError::new("tcp.write takes 2 arguments".into()));
-    }
-    let stream = require_stream(&args[0], "tcp.write")?.clone();
-    let buf = require_bytes(&args[1], "tcp.write")?;
-    if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
-        return Ok(Step::Done(r));
-    }
-    if stream.is_closed() {
-        return Ok(Step::Done(err_closed()));
-    }
-    let stop = stopper(&stream);
-    vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-        match stream.write_all(&buf) {
-            Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
-            Err(e) => tcp_io_err(&e),
-        }
-    })
-}
-
 /// What makes an operation on `stream` return when nobody waits for
 /// it any more: the connection is shut down.
 fn stopper(stream: &Arc<TcpStreamHandle>) -> impl FnOnce() + Send + 'static {
     let stream = stream.clone();
     move || stream.shut_down()
+}
+
+// ── The functions ──────────────────────────────────────────────────────
+
+builtins! {
+    // ── Without waiting ────────────────────────────────────────────────
+
+    fn listen(vm, addr: &str) -> Value {
+        let id = vm.next_tcp_id();
+        match TcpListener::bind(addr) {
+            Ok(listener) => {
+                let listener = TcpListenerHandle::new(id, listener);
+                listener.widen_backlog();
+                ok(Value::TcpListener(Arc::new(listener)))
+            }
+            Err(e) => tcp_io_err(&e),
+        }
+    }
+
+    fn local_port(listener: typed::TcpListener) -> Result<i64, VmError> {
+        match listener.local_addr() {
+            Ok(addr) => Ok(i64::from(addr.port())),
+            Err(e) => Err(VmError::new(format!(
+                "tcp.local_port: the listener has no address: {e}"
+            ))),
+        }
+    }
+
+    fn close(stream: typed::TcpStream) {
+        stream.shut_down();
+    }
+
+    fn peer_addr(stream: typed::TcpStream) -> Value {
+        if stream.is_closed() {
+            return err_closed();
+        }
+        match stream.peer_addr() {
+            Ok(addr) => ok(Value::String(addr.to_string())),
+            Err(e) => tcp_io_err(&e),
+        }
+    }
+
+    fn set_nodelay(stream: typed::TcpStream, on: bool) -> Value {
+        if stream.is_closed() {
+            return err_closed();
+        }
+        match stream.set_nodelay(on) {
+            Ok(()) => ok(Value::Unit),
+            Err(e) => tcp_io_err(&e),
+        }
+    }
+
+    // ── Cooperative I/O ────────────────────────────────────────────────
+
+    fn accept(vm, listener: typed::TcpListener) -> Result<Step, VmError> {
+        if let Some(served) = served(listener) {
+            return Ok(Step::Done(served));
+        }
+        let op = accept_op(vm, listener, false);
+        vm.io_wait("tcp", tcp_timeout_err, op)
+    }
+
+    fn connect(vm, addr: &str) -> Result<Step, VmError> {
+        let addr = addr.to_string();
+        let next_id = vm.next_tcp_id();
+        vm.io("tcp", tcp_timeout_err, move || {
+            match TcpStream::connect(&addr) {
+                Ok(stream) => Value::variant(
+                    bv::OK,
+                    vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
+                ),
+                Err(e) => tcp_io_err(&e),
+            }
+        })
+    }
+
+    fn read(vm, stream: typed::TcpStream, max: i64) -> Result<Step, VmError> {
+        let Ok(max) = usize::try_from(max) else {
+            return Ok(Step::Done(err(format!(
+                "max must be non-negative, got {max}"
+            ))));
+        };
+        let stream = stream.clone();
+        // A close() that races with a read in flight surfaces the read's
+        // actual result (typically Ok(empty) = EOF after shutdown). Only a
+        // call on a stream that was closed before is rejected here.
+        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+            return Ok(Step::Done(r));
+        }
+        if stream.is_closed() {
+            return Ok(Step::Done(err_closed()));
+        }
+        let stop = stopper(&stream);
+        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+            let mut buf = vec![0u8; max];
+            match stream.read(&mut buf) {
+                Ok(n) => {
+                    buf.truncate(n);
+                    Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))])
+                }
+                Err(e) => {
+                    // If the stream was closed (locally) while/before this
+                    // read, surface as EOF rather than the platform-specific
+                    // cancellation error (Windows: WSACancelBlockingCall /
+                    // WSA_OPERATION_ABORTED from CancelIoEx in close()).
+                    if stream.is_closed() {
+                        Value::variant(bv::OK, vec![Value::Bytes(Arc::new(Vec::new()))])
+                    } else {
+                        tcp_io_err(&e)
+                    }
+                }
+            }
+        })
+    }
+
+    fn read_exact(vm, stream: typed::TcpStream, n: i64) -> Result<Step, VmError> {
+        let Ok(n) = usize::try_from(n) else {
+            return Ok(Step::Done(err(format!("n must be non-negative, got {n}"))));
+        };
+        let stream = stream.clone();
+        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+            return Ok(Step::Done(r));
+        }
+        if stream.is_closed() {
+            return Ok(Step::Done(err_closed()));
+        }
+        let stop = stopper(&stream);
+        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+            let mut buf = vec![0u8; n];
+            match stream.read_exact(&mut buf) {
+                Ok(()) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
+                Err(e) => tcp_io_err(&e),
+            }
+        })
+    }
+
+    fn write(vm, stream: typed::TcpStream, data: Bytes) -> Result<Step, VmError> {
+        let (stream, buf) = (stream.clone(), data.clone());
+        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+            return Ok(Step::Done(r));
+        }
+        if stream.is_closed() {
+            return Ok(Step::Done(err_closed()));
+        }
+        let stop = stopper(&stream);
+        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+            match stream.write_all(&buf) {
+                Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
+                Err(e) => tcp_io_err(&e),
+            }
+        })
+    }
 }

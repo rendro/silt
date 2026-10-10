@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::runtime::handle::{TaskHandle, TcpStreamHandle};
+use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
 use crate::typeinfo::{FieldType, TypeInfo, bv};
 use crate::value::Value;
@@ -127,6 +127,19 @@ impl<'a> Arg<'a> for &'a Arc<TcpStreamHandle> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
             Value::TcpStream(stream) => Some(stream),
+            _ => None,
+        }
+    }
+}
+
+/// A `TcpListener` argument.
+#[cfg(feature = "tcp")]
+pub(crate) type TcpListener<'a> = &'a Arc<TcpListenerHandle>;
+
+impl<'a> Arg<'a> for &'a Arc<TcpListenerHandle> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::TcpListener(listener) => Some(listener),
             _ => None,
         }
     }
