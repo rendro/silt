@@ -1,16 +1,8 @@
 //! Shared helper functions used by several builtin modules.
 //!
-//! Round 57 collapsed four copy-pasted sets of helpers (`ok`, `err`,
-//! `require_string`, `require_int`, `require_bytes`, `value_kind`) that
-//! lived verbatim in `uuid.rs`, `encoding.rs`, `crypto.rs`, and
-//! `bytes.rs`. Each call site had the same bodies and the same error
-//! phrasing, so we hoist one canonical copy here.
-//!
-//! `require_str_borrow` is preserved alongside `require_string` because
-//! its signature genuinely differs (returns `&str` rather than cloning
-//! into `String`). The `err()` helpers stay local in each builtin
-//! module because they wrap module-specific error variants like
-//! `TcpUnknown` / `StreamErr`.
+//! The `require_*` functions are the kind checks of the modules whose
+//! bodies are not typed (`tcp`, `stream`); a typed body has none
+//! (`super::typed`).
 
 use std::sync::Arc;
 
@@ -24,16 +16,6 @@ pub(crate) fn ok(v: Value) -> Value {
 
 pub(super) fn err(s: impl Into<String>) -> Value {
     Value::variant(bv::ERR, vec![Value::String(s.into())])
-}
-
-pub(super) fn require_string(arg: &Value, fn_label: &str) -> Result<String, VmError> {
-    match arg {
-        Value::String(s) => Ok(s.clone()),
-        other => Err(VmError::new(format!(
-            "{fn_label} requires String, got {}",
-            value_kind(other)
-        ))),
-    }
 }
 
 pub(super) fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
@@ -114,9 +96,7 @@ pub(crate) fn value_kind(v: &Value) -> &'static str {
     }
 }
 
-/// `require_string` variant that borrows the underlying `&str` instead
-/// of cloning into a `String`. Shares `tcp.rs` / `stream.rs` byte-
-/// identical implementations (round 65 dedup).
+/// The `&str` of a `String` argument.
 pub(super) fn require_str_borrow<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
     match arg {
         Value::String(s) => Ok(s.as_str()),

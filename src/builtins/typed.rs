@@ -80,6 +80,9 @@ impl<'a> Arg<'a> for &'a str {
     }
 }
 
+/// A `Bytes` argument.
+pub(crate) type Bytes<'a> = &'a Arc<Vec<u8>>;
+
 /// A `Bytes`.
 impl<'a> Arg<'a> for &'a Arc<Vec<u8>> {
     fn take(value: &'a Value) -> Option<Self> {
@@ -240,6 +243,13 @@ impl Ret for String {
 impl Ret for Vec<Value> {
     fn ret(self) -> Result<Step, VmError> {
         Ok(Step::Done(Value::List(Arc::new(self))))
+    }
+}
+
+/// A `Bytes`.
+impl Ret for Vec<u8> {
+    fn ret(self) -> Result<Step, VmError> {
+        Ok(Step::Done(Value::Bytes(Arc::new(self))))
     }
 }
 
