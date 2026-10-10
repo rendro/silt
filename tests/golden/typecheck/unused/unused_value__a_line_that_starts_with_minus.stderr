@@ -1,6 +1,25 @@
 error[type]: this value is unused; write `let _ = ...` to discard it
- --> unused_value__a_line_that_starts_with_minus.silt:8:3
-   |
- 8 |   - discount * tax
-   |   ^^^^^^^^^^^^^^^^ this value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_line_that_starts_with_minus.silt:12:3
+    |
+ 12 |   - discount * tax
+    |   ^^^^^^^^^^^^^^^^ this value is unused; write `let _ = ...` to discard it
   = help: a line that starts with `-` is a statement of its own; to subtract from the line above, end that line with the `-`
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_line_that_starts_with_minus.silt:17:3
+    |
+ 17 |   a
+    |   ^ this `Int` value is unused; write `let _ = ...` to discard it
+  = help: the next line starts with `-`, so it is a statement of its own; to subtract it from this line, end this line with the `-`
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_line_that_starts_with_minus.silt:22:3
+    |
+ 22 |   -1
+    |   ^^ this `Int` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_line_that_starts_with_minus.silt:24:3
+    |
+ 24 |   -n
+    |   ^^ this `Int` value is unused; write `let _ = ...` to discard it

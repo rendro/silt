@@ -324,6 +324,21 @@ impl TypeChecker {
         self.errors.extend(found);
     }
 
+    /// Whether `stmt` gives a value a next line could subtract from: a
+    /// `let`, or an expression that is not of type `()`.
+    fn gives_a_value(&self, stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::Let { .. } => true,
+            Stmt::Expr(e) => e.ty.as_ref().is_some_and(|ty| {
+                !matches!(
+                    self.statement_type(ty),
+                    Type::Unit | Type::Never | Type::Error
+                )
+            }),
+            Stmt::When { .. } | Stmt::WhenBool { .. } => false,
+        }
+    }
+
     /// The type of a statement as the rule reads it: an associated type
     /// of a known type is the type its impl binds (`<Printer as
     /// Sink>::Out` is `()` where the impl says `type Out = ()`).
@@ -343,7 +358,7 @@ impl TypeChecker {
             let ExprKind::Block(stmts) = &expr.kind else {
                 return;
             };
-            let Some((_, rest)) = stmts.split_last() else {
+            let Some((last, rest)) = stmts.split_last() else {
                 return;
             };
             for (i, stmt) in rest.iter().enumerate() {
@@ -395,10 +410,22 @@ impl TypeChecker {
                     let at = Span::point(extent.file, extent.start);
                     d = d.with_fix("Discard with `let _ =`", vec![(at, "let _ = ".to_string())]);
                 }
-                if i > 0 && starts_with_minus(e) {
+                // A line that starts with `-` does not continue the
+                // line above. Said where the line above is something to
+                // subtract from, on whichever of the two is unused: this
+                // one behind a value, or this one in front of a `-` line
+                // that ends the block (and is its value).
+                if i > 0 && starts_with_minus(e) && self.gives_a_value(&rest[i - 1]) {
                     d = d.with_help(
                         "a line that starts with `-` is a statement of its own; to subtract \
                          from the line above, end that line with the `-`",
+                    );
+                } else if i + 1 == rest.len()
+                    && matches!(last, Stmt::Expr(next) if starts_with_minus(next))
+                {
+                    d = d.with_help(
+                        "the next line starts with `-`, so it is a statement of its own; to \
+                         subtract it from this line, end this line with the `-`",
                     );
                 }
                 found.push(d);
