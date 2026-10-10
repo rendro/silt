@@ -429,12 +429,22 @@ struct Server {
 impl Server {
     /// Count one more handler as being called; `None` at the bound.
     fn call(self: &Arc<Self>) -> Option<Called> {
-        self.handlers
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |handlers| {
-                (handlers < wire::HANDLERS_MAX).then_some(handlers + 1)
-            })
-            .ok()
-            .map(|_| Called(self.clone()))
+        let mut handlers = self.handlers.load(Ordering::Acquire);
+        loop {
+            if handlers >= wire::HANDLERS_MAX {
+                return None;
+            }
+            let counted = self.handlers.compare_exchange_weak(
+                handlers,
+                handlers + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            match counted {
+                Ok(_) => return Some(Called(self.clone())),
+                Err(now) => handlers = now,
+            }
+        }
     }
 }
 
