@@ -120,6 +120,26 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
+/// What a number that is no `Int` is called in a type mismatch.
+const NOT_IN_RANGE: &str = "a number out of Int's range";
+
+/// The `Int` that the number `f` of a document is: a whole number in
+/// `Int`'s range. Else what it is instead, for the type mismatch. The
+/// one rule of the JSON and the TOML decoders.
+pub(crate) fn whole(f: f64) -> Result<i64, &'static str> {
+    // `i64::MAX` is not exactly an `f64` (it rounds up to 2^63), so
+    // the upper bound is exclusive.
+    const I64_MIN_AS_F64: f64 = i64::MIN as f64;
+    const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
+    if !f.is_finite() || !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
+        Err(NOT_IN_RANGE)
+    } else if f.fract() != 0.0 {
+        Err("a number with a fraction")
+    } else {
+        Ok(f as i64)
+    }
+}
+
 fn json_type_name(v: &serde_json::Value) -> &'static str {
     match v {
         serde_json::Value::Null => "null",
@@ -395,26 +415,15 @@ fn json_to_typed_value(
             serde_json::Value::String(s) => Ok(Value::String(s.clone())),
             _ => Err(mismatch("String", json_type_name(json))),
         },
+        // A number is an `Int` when it is a whole number an `Int` can
+        // be (`1`, `1.0`, `1e3`); one with a fraction, or out of range,
+        // is no `Int`, and nothing is cut off or saturated.
         FieldType::Int => match json {
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Ok(Value::Int(i))
-                } else if let Some(f) = n.as_f64() {
-                    // Mirror the `float.to_int` range check (B7). A bare
-                    // `f as i64` would saturate to i64::MAX/MIN silently,
-                    // turning large JSON numbers like 1e100 into i64::MAX —
-                    // a data-corruption hazard. Reject values that aren't
-                    // finite or don't fit exactly in the i64 range.
-                    const I64_MIN_AS_F64: f64 = i64::MIN as f64;
-                    const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
-                    if !f.is_finite() || !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
-                        return Err(unknown(format!("number {f} out of Int range")));
-                    }
-                    Ok(Value::Int(f as i64))
-                } else {
-                    Err(unknown("expected Int, got number that doesn't fit".into()))
-                }
-            }
+            serde_json::Value::Number(n) => match (n.as_i64(), n.as_f64().map(whole)) {
+                (Some(i), _) | (None, Some(Ok(i))) => Ok(Value::Int(i)),
+                (None, Some(Err(what))) => Err(mismatch("Int", what)),
+                (None, None) => Err(mismatch("Int", NOT_IN_RANGE)),
+            },
             _ => Err(mismatch("Int", json_type_name(json))),
         },
         FieldType::Float => match json {

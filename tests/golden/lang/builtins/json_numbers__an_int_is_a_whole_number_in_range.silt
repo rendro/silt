@@ -1,0 +1,36 @@
+-- A number of a JSON or a TOML document goes into an `Int` when it is a
+-- whole number in `Int`'s range, however it is written (`1`, `1.0`,
+-- `1e3`). A number with a fraction, or one out of the range, is the
+-- error of a value of another type: `json.parse_map` took 1.5 as 1,
+-- and `json.parse` read 2.5 into an Int field as 2. One rule for
+-- `parse`, `parse_list` and `parse_map`, and for `toml`.
+import json
+import toml
+
+type Pt { x: Int, y: Int }
+
+fn main() {
+  println(json.parse("""{"x": 1.0, "y": 2}""", Pt))
+  println(json.parse("""{"x": 1.0, "y": 2.5}""", Pt))
+  println(json.parse("""[{"x": 1e3, "y": -0.0}]""" |> wrap, Pt))
+  println(json.parse_list("""[{"x": 1, "y": 2.5}]""", Pt))
+  println(json.parse_map("""{"a": 1.0, "b": 2}""", Int))
+  println(json.parse_map("""{"a": 1.5}""", Int))
+  println(json.parse("3.0", Int))
+  println(json.parse("3.25", Int))
+  println(json.parse("9223372036854775807", Int))
+  println(json.parse("9223372036854775808", Int))
+  println(json.parse("-9223372036854775808.0", Int))
+  println(json.parse("1e19", Int))
+  println(toml.parse("x = 1.0\ny = 2", Pt))
+  println(toml.parse("x = 1.5\ny = 2", Pt))
+  println(toml.parse_map("a = 2.0\nb = 1e30", Int))
+}
+
+-- The one record of a list, as a document of its own.
+fn wrap(list) {
+  match json.parse_list(list, Pt) {
+    Ok([only]) -> json.stringify(only)
+    _ -> "no single record"
+  }
+}
