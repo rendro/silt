@@ -587,11 +587,12 @@ impl Compiler {
             .partition(|decl| matches!(**decl, Decl::Let { .. }));
         // (A `let` the order does not name, which no checked module
         // has, keeps its place after the ones it names.)
+        let mut place: HashMap<Span, usize> = HashMap::with_capacity(let_order.len());
+        for (i, at) in let_order.iter().enumerate() {
+            place.entry(*at).or_insert(i);
+        }
         lets.sort_by_key(|decl| match decl {
-            Decl::Let { span, .. } => let_order
-                .iter()
-                .position(|at| at == span)
-                .unwrap_or(usize::MAX),
+            Decl::Let { span, .. } => place.get(span).copied().unwrap_or(usize::MAX),
             _ => usize::MAX,
         });
         definitions.into_iter().chain(lets).collect()

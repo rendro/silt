@@ -21,6 +21,15 @@
 //! made 2,000 of them take 28 s where the same module with each call
 //! bound by `let _ =` took 0.35 s.
 
+//!
+//! And in the number of a module's top-level `let`s (the compiler looked
+//! up each one's place in the initialisation order by reading the order:
+//! 20,000 took nine times as long as 5,000 in a debug build), and in the
+//! number of uses of one binding whose type is still open (each use
+//! added a link to a chain of type variables that every later use
+//! walked: 8,000 functions that read one channel took eleven times as
+//! long as 2,000).
+
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -174,12 +183,12 @@ fn calls_between_closures(n: usize, call: &str) -> String {
 ///
 /// The two modules are the same size, so the comparison does not depend
 /// on how the checker's time grows with a module's size on the machine
-/// at hand (on these modules it grows faster than linearly beyond a
-/// thousand definitions, whatever the calls are, and by how much differs
-/// between machines: a ratio between two sizes measures that too). A
-/// cost per waiting call that grows with their number shows here as
-/// soon as it doubles the check: reading every waiting call at every
-/// generalisation made this ratio 80 (functions) and 47 (closures).
+/// at hand (a ratio between two sizes measures that too:
+/// `four_times_the_uses_of_an_open_binding_take_about_four_times_as_long`
+/// is that test). A cost per waiting call that grows with their number
+/// shows here as soon as it doubles the check: reading every waiting
+/// call at every generalisation made this ratio 80 (functions) and 47
+/// (closures).
 #[test]
 fn statement_calls_that_wait_for_a_type_cost_the_same_each() {
     let shapes: [(&str, fn(usize, &str) -> String); 2] = [
@@ -207,6 +216,72 @@ fn statement_calls_that_wait_for_a_type_cost_the_same_each() {
                 shown(&over)
             );
         }
+    }
+}
+
+/// `small` and `large` are written, measured (`large` against `small`,
+/// at most `cap` times as long) and removed; what the measurements were
+/// when all three were over the cap.
+fn grows_within(
+    name: &str,
+    small: String,
+    large: String,
+    cap: f64,
+) -> Result<(), Vec<(Duration, Duration)>> {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_{name}_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("a temporary directory");
+    let (small_file, large_file) = (dir.join("small.silt"), dir.join("large.silt"));
+    std::fs::write(&small_file, small).expect("the small module is written");
+    std::fs::write(&large_file, large).expect("the large module is written");
+    let measured = within(cap, || best_times(&large_file, &small_file, 3));
+    let _ = std::fs::remove_dir_all(&dir);
+    measured
+}
+
+/// A module of `n` top-level `let`s and a `main` that reads one.
+fn lets_of(n: usize) -> String {
+    let mut source = String::new();
+    for i in 0..n {
+        source.push_str(&format!("let v{i} = {i}\n"));
+    }
+    source.push_str("fn main() { println(v0) }\n");
+    source
+}
+
+/// Four times the top-level `let`s take about four times as long, to
+/// check and to compile: at most six times. (Looking up each `let`'s
+/// place in the initialisation order by reading the order made it nine
+/// times.)
+#[test]
+fn four_times_the_top_level_lets_take_about_four_times_as_long() {
+    if let Err(over) = grows_within("lets", lets_of(5_000), lets_of(20_000), 6.0) {
+        panic!(
+            "`silt check` of 20,000 top-level lets took more than six times as long as \
+             that of 5,000 in each of three measurements ({}): it is no longer linear in \
+             the number of lets",
+            shown(&over)
+        );
+    }
+}
+
+/// Four times the uses of one binding whose type is still open (a
+/// top-level channel that `main` decides, read in every function) take
+/// about four times as long: at most six times. (When the older of two
+/// type variables was bound to the newer one, each use added a link to
+/// a chain that every later use walked, and it was eleven times.)
+#[test]
+fn four_times_the_uses_of_an_open_binding_take_about_four_times_as_long() {
+    let module = |n| calls_in_functions(n, "let _ = take(ch)");
+    if let Err(over) = grows_within("uses", module(2_000), module(8_000), 6.0) {
+        panic!(
+            "`silt check` of 8,000 functions that read one channel took more than six \
+             times as long as that of 2,000 in each of three measurements ({}): a use of \
+             a binding whose type is open costs more the more uses there are",
+            shown(&over)
+        );
     }
 }
 

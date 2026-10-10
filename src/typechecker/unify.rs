@@ -796,6 +796,17 @@ impl TypeChecker {
             // group being inferred has made the same.
             (Type::Rigid(r1), Type::Rigid(r2)) if r1 == r2 || self.same_in_group(*r1, *r2) => {}
 
+            // Two variables: the newer one becomes the older one. A
+            // variable that many uses are unified with (a parameter
+            // without an annotation, a `let` whose type is still open)
+            // then stays the one the others resolve to in one step;
+            // bound the other way round, each use would add a link to
+            // a chain every later `apply` walks.
+            (Type::Var(v1), Type::Var(v2)) => {
+                let (newer, older) = (*v1.max(v2), *v1.min(v2));
+                self.bind(newer, Type::Var(older), out);
+            }
+
             (Type::Var(v), t) | (t, Type::Var(v)) => {
                 if occurs_in(*v, t) {
                     // Special case: trying to unify a type var `a` with
