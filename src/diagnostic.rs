@@ -409,11 +409,9 @@ impl SourceMap {
     /// dependency's.
     pub fn position(&self, span: Span) -> Option<Position> {
         let file = self.get(span.file)?;
-        let text: &str = &file.text;
-        // The lines as `str::lines` counts them (a line break at the
-        // end of the text starts no line), from the file's line table:
-        // a file of many lines is not read again for each diagnostic.
-        let line_count = file.line_count() - usize::from(text.is_empty() || text.ends_with('\n'));
+        // (From the file's line table: a file of many lines is not read
+        // again for each diagnostic.)
+        let line_count = file.text_lines();
         let line_of = |line: usize| {
             file.line_text(line as u32)
                 .unwrap_or("")
@@ -877,7 +875,7 @@ pub fn to_lsp(
     let shown = |span: Span| -> Range {
         let mut shown = range(span);
         if let Some(file) = sources.get(span.file) {
-            let lines = file.text.lines().count() as u32;
+            let lines = file.text_lines() as u32;
             for p in [&mut shown.start, &mut shown.end] {
                 if lines > 0 && p.line >= lines {
                     let last = file.line_text(lines).unwrap_or("");
@@ -886,6 +884,30 @@ pub fn to_lsp(
                         lines - 1,
                         last.chars().map(char::len_utf16).sum::<usize>() as u32,
                     );
+                }
+            }
+            // A place without a width (the count of the errors that are
+            // not shown, a wrong escape, the end of the text) is shown
+            // on one character: the one at it, or at the end of a line
+            // the one in front of it. An editor draws nothing under an
+            // empty range.
+            if shown.start == shown.end {
+                let line = file.line_text(shown.start.line + 1).unwrap_or("");
+                let line = line.strip_suffix('\r').unwrap_or(line);
+                let mut units = 0;
+                let mut before = 0;
+                let mut at = None;
+                for c in line.chars() {
+                    if units >= shown.start.character {
+                        at = Some(c.len_utf16() as u32);
+                        break;
+                    }
+                    before = c.len_utf16() as u32;
+                    units += before;
+                }
+                match at {
+                    Some(width) => shown.end.character += width,
+                    None => shown.start.character -= before.min(shown.start.character),
                 }
             }
         }
@@ -953,6 +975,32 @@ mod tests {
             start,
             end,
         }
+    }
+
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn a_place_without_a_width_is_one_character_for_an_editor() {
+        let map = sources("ab\ncd\n");
+        let range = |start: u32, end: u32| {
+            let d = Diagnostic::error(Code::ExpectedToken, span(start, end), "x");
+            let r = to_lsp(&map, &d, &|_| None).range;
+            (
+                (r.start.line, r.start.character),
+                (r.end.line, r.end.character),
+            )
+        };
+        // On a character: that character.
+        assert_eq!(range(1, 1), ((0, 1), (0, 2)));
+        assert_eq!(range(3, 3), ((1, 0), (1, 1)));
+        // At the end of a line, and at the end of the text: the
+        // character in front.
+        assert_eq!(range(2, 2), ((0, 1), (0, 2)));
+        assert_eq!(range(6, 6), ((1, 1), (1, 2)));
+        // A place with a width is as it is; an empty text has none.
+        assert_eq!(range(0, 2), ((0, 0), (0, 2)));
+        let d = Diagnostic::error(Code::ExpectedToken, span(0, 0), "x");
+        let r = to_lsp(&sources(""), &d, &|_| None).range;
+        assert_eq!(r.start, r.end);
     }
 
     #[test]

@@ -610,8 +610,6 @@ mod tests {
         }
     }
 
-    // ── has_unclosed_delimiters tests ──────────────────────────────
-
     // ── Evaluation ────────────────────────────────────────────────
 
     fn repl() -> Repl {
