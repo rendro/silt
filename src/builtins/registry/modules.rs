@@ -1,18 +1,21 @@
 //! The builtin modules, one `module!` each: the rows in the order of
 //! the module's summary table.
 //!
-//! Every function row is `u(signature, summary)`: its body is the
-//! module's untyped `call`. A constant is `k("name: Type", summary,
-//! value)`.
+//! A function row is `f(signature, summary, body)`: the body is the
+//! function of that name among the module's typed bodies
+//! (`crate::builtins::typed`). A row `u(signature, summary)` has none
+//! yet: it runs the module's untyped `call`. A constant is `k("name:
+//! Type", summary, value)`.
 
-use super::{Module, UntypedCall, build_module, k, module, u};
+use super::{Module, UntypedCall, build_module, f, k, module, u};
+use crate::builtins::numeric::{float, int, math};
 #[cfg(feature = "postgres")]
 use crate::builtins::postgres;
 #[cfg(feature = "tcp")]
 use crate::builtins::tcp;
 use crate::builtins::{
-    bytes, collections, concurrency, core, crypto, encoding, http, io, json, numeric, regex,
-    stream, string, time, toml, uuid,
+    bytes, collections, concurrency, core, crypto, encoding, http, io, json, regex, stream, string,
+    time, toml, uuid,
 };
 
 #[rustfmt::skip]
@@ -81,33 +84,31 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type ParseError { ParseEmpty, ParseInvalidDigit(Int), ParseOverflow, ParseUnderflow }\n\
             ",
             error: "ParseError",
-            call: |_vm, name, args| numeric::call_int(name, args),
             rows: [
-                u("fn abs(n: Int) -> Int", "Absolute value"),
-                u("fn clamp(x: Int, lo: Int, hi: Int) -> Int", "Clamp value to `[lo, hi]`"),
-                u("fn max(a: Int, b: Int) -> Int", "Larger of two values"),
-                u("fn min(a: Int, b: Int) -> Int", "Smaller of two values"),
-                u("fn parse(s: String) -> Result(Int, ParseError)", "Parse string to integer"),
-                u("fn to_float(n: Int) -> Float", "Convert to float"),
-                u("fn to_string(n: Int) -> String", "Convert to string"),
+                f("fn abs(n: Int) -> Int", "Absolute value", int::abs),
+                f("fn clamp(x: Int, lo: Int, hi: Int) -> Int", "Clamp value to `[lo, hi]`", int::clamp),
+                f("fn max(a: Int, b: Int) -> Int", "Larger of two values", int::max),
+                f("fn min(a: Int, b: Int) -> Int", "Smaller of two values", int::min),
+                f("fn parse(s: String) -> Result(Int, ParseError)", "Parse string to integer", int::parse),
+                f("fn to_float(n: Int) -> Float", "Convert to float", int::to_float),
+                f("fn to_string(n: Int) -> String", "Convert to string", int::to_string),
             ],
         },
         module! {
             name: "float",
             page: "int-float.md",
             shares: [("int", "ParseError")],
-            call: |_vm, name, args| numeric::call_float(name, args),
             rows: [
-                u("fn abs(f: Float) -> Float", "Absolute value"),
-                u("fn ceil(f: Float) -> Float", "Round up to nearest integer (as Float)"),
-                u("fn clamp(x: Float, lo: Float, hi: Float) -> Float", "Clamp value to `[lo, hi]`"),
-                u("fn floor(f: Float) -> Float", "Round down to nearest integer (as Float)"),
-                u("fn max(a: Float, b: Float) -> Float", "Larger of two values"),
-                u("fn min(a: Float, b: Float) -> Float", "Smaller of two values"),
-                u("fn parse(s: String) -> Result(Float, ParseError)", "Parse string to float"),
-                u("fn round(f: Float) -> Float", "Round to nearest integer (as Float)"),
-                u("fn to_int(f: Float) -> Int", "Truncate to integer"),
-                u("fn to_string(f: Float, decimals: Int) -> String", "Shortest round-trippable representation; with `decimals`, that many decimal places").optional_last(),
+                f("fn abs(f: Float) -> Float", "Absolute value", float::abs),
+                f("fn ceil(f: Float) -> Float", "Round up to nearest integer (as Float)", float::ceil),
+                f("fn clamp(x: Float, lo: Float, hi: Float) -> Float", "Clamp value to `[lo, hi]`", float::clamp),
+                f("fn floor(f: Float) -> Float", "Round down to nearest integer (as Float)", float::floor),
+                f("fn max(a: Float, b: Float) -> Float", "Larger of two values", float::max),
+                f("fn min(a: Float, b: Float) -> Float", "Smaller of two values", float::min),
+                f("fn parse(s: String) -> Result(Float, ParseError)", "Parse string to float", float::parse),
+                f("fn round(f: Float) -> Float", "Round to nearest integer (as Float)", float::round),
+                f("fn to_int(f: Float) -> Int", "Truncate to integer", float::to_int),
+                f("fn to_string(f: Float, decimals: Int) -> String", "Shortest round-trippable representation; with `decimals`, that many decimal places", float::to_string).optional_last(),
                 k("max_value: Float", "Maximum finite value (`1.7976931348623157e+308`)", f64::MAX),
                 k("min_value: Float", "Minimum finite value (`-1.7976931348623157e+308`)", f64::MIN),
                 k("epsilon: Float", "Machine epsilon (`2.220446049250313e-16`)", f64::EPSILON),
@@ -339,23 +340,22 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "math",
             page: "math.md",
-            call: numeric::call_math,
             rows: [
-                u("fn acos(x: Float) -> Float", "Arccosine (radians)"),
-                u("fn asin(x: Float) -> Float", "Arcsine (radians)"),
-                u("fn atan(x: Float) -> Float", "Arctangent (radians)"),
-                u("fn atan2(y: Float, x: Float) -> Float", "Two-argument arctangent"),
-                u("fn cos(x: Float) -> Float", "Cosine"),
+                f("fn acos(x: Float) -> Float", "Arccosine (radians)", math::acos),
+                f("fn asin(x: Float) -> Float", "Arcsine (radians)", math::asin),
+                f("fn atan(x: Float) -> Float", "Arctangent (radians)", math::atan),
+                f("fn atan2(y: Float, x: Float) -> Float", "Two-argument arctangent", math::atan2),
+                f("fn cos(x: Float) -> Float", "Cosine", math::cos),
                 k("e: Float", "Euler's number (2.71828...)", std::f64::consts::E),
-                u("fn exp(x: Float) -> Float", "Exponential (e^x)"),
-                u("fn log(x: Float) -> Float", "Natural logarithm (ln)"),
-                u("fn log10(x: Float) -> Float", "Base-10 logarithm"),
+                f("fn exp(x: Float) -> Float", "Exponential (e^x)", math::exp),
+                f("fn log(x: Float) -> Float", "Natural logarithm (ln)", math::log),
+                f("fn log10(x: Float) -> Float", "Base-10 logarithm", math::log10),
                 k("pi: Float", "Pi (3.14159...)", std::f64::consts::PI),
-                u("fn pow(base: Float, exponent: Float) -> Float", "Exponentiation"),
-                u("fn random() -> Float", "Random float in [0.0, 1.0)"),
-                u("fn sin(x: Float) -> Float", "Sine"),
-                u("fn sqrt(x: Float) -> Float", "Square root"),
-                u("fn tan(x: Float) -> Float", "Tangent"),
+                f("fn pow(base: Float, exponent: Float) -> Float", "Exponentiation", math::pow),
+                f("fn random() -> Float", "Random float in [0.0, 1.0)", math::random),
+                f("fn sin(x: Float) -> Float", "Sine", math::sin),
+                f("fn sqrt(x: Float) -> Float", "Square root", math::sqrt),
+                f("fn tan(x: Float) -> Float", "Tangent", math::tan),
             ],
         },
         module! {

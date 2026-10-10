@@ -25,6 +25,7 @@ pub mod string;
 pub mod tcp;
 pub mod time;
 pub mod toml;
+pub(crate) mod typed;
 pub mod uuid;
 
 use crate::value::Value;

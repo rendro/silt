@@ -35,9 +35,11 @@
 //!   1. `value_kind_titlecase_for_all_value_variants` enumerates every
 //!      `Value` variant and asserts `value_kind == type_name` (i.e.
 //!      no variant falls back to the old `"value"` word).
-//!   2. `runtime_canonical_form_includes_real_kind_for_map` exercises
-//!      the runtime path: `int.abs(some_map)` must surface `got Map`,
-//!      not `got value`.
+//!   2. (The kind in the error of a builtin that is given a value of
+//!      another kind than its parameter's is locked where that error is
+//!      made: `builtins::registry`'s
+//!      `arguments_that_are_not_the_row_s_are_one_error`. No checked
+//!      program reaches it.)
 //!   3. `user_facing_type_name_titlecase_aligned_with_type_name`
 //!      enumerates every variant and asserts
 //!      `user_facing_type_name == type_name` modulo the four
@@ -55,13 +57,6 @@ use silt::value::Value;
 use silt::vm::Vm;
 
 // ── Test helpers ─────────────────────────────────────────────────────
-
-fn run_err(input: &str) -> String {
-    match silt::session::testing::run_str(input) {
-        Ok(v) => panic!("expected an error, got {v:?}"),
-        Err(e) => e,
-    }
-}
 
 /// Build one representative `Value` for each enum variant. TCP shapes
 /// require a real socket — bound to `127.0.0.1:0` so the OS picks an
@@ -216,36 +211,6 @@ fn value_kind_titlecase_for_all_value_variants() {
              surface again"
         );
     });
-}
-
-// ── Test 2: runtime path emits the real kind for Map ────────────────
-
-#[test]
-fn runtime_canonical_form_includes_real_kind_for_map() {
-    // Pre-fix `int.abs(map)` would surface `"int.abs requires Int, got
-    // value"` because `value_kind` collapsed Map onto the generic word.
-    // Post-fix the diagnostic names the offending kind: `"got Map"`.
-    //
-    // The typechecker rejects most direct mismatches, so we route the
-    // value through a generic `id` function whose return type is unconstrained
-    // — the typechecker can't know it's a Map at the call site.
-    let err = run_err(
-        r#"
-import int
-fn id(x) { x }
-fn main() { int.abs(id(#{ "k": 1 })) }
-"#,
-    );
-    assert!(
-        err.contains("got Map"),
-        "expected runtime error to name the offending kind as `Map`, \
-         got: {err}"
-    );
-    assert!(
-        !err.contains("got value"),
-        "round 75 ERR-1 GAP regression: runtime error fell back to \
-         the generic `\"value\"` word, got: {err}"
-    );
 }
 
 // ── Test 3: user_facing_type_name aligned with type_name ────────────

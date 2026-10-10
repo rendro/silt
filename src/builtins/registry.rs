@@ -1,7 +1,9 @@
 //! The builtin registry: every builtin module as rows.
 //!
 //! A builtin function is a [`Row`]: its signature as silt text (`fn
-//! trim(s: String) -> String`), a one-line summary, and what a call runs.
+//! trim(s: String) -> String`), a one-line summary, and what a call
+//! runs: a Rust function of the arguments as Rust types
+//! ([`super::typed`]).
 //! A builtin module ([`Module`]) is its rows, the types it declares (silt
 //! `pub type` text) and its reference page (`docs/stdlib/*.md`). The
 //! modules are listed in `registry/modules.rs`, one `module!` each.
@@ -31,6 +33,7 @@ mod modules;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use super::typed::TypedCall;
 use crate::ast::{self, Decl, ParamKind, PatternKind, TypeBody};
 use crate::intern::resolve;
 use crate::lexer::Lexer;
@@ -39,7 +42,7 @@ use crate::source::FileId;
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
 
-/// What a call of a row runs, until the row has a typed body: the
+/// What a call of a row runs where the row has no typed body: the
 /// module's `call_*` function, given the function's name and the
 /// arguments as values. It gives the function's value, or the frame
 /// the builtin goes on as ([`Step::Run`]).
@@ -47,6 +50,8 @@ pub(crate) type UntypedCall = fn(&mut Vm, &str, &[Value]) -> Result<Step, VmErro
 
 /// What a row is at run time.
 pub(crate) enum Body {
+    /// A function with a typed body.
+    Typed(TypedCall),
     /// A function: the module's untyped entry point, called with the
     /// row's name.
     Untyped(UntypedCall),
@@ -67,6 +72,8 @@ pub struct Row {
     pub summary: &'static str,
     /// The name, from the signature.
     pub name: &'static str,
+    /// The module the row is of.
+    pub module: &'static str,
     /// A function's parameter names, from the signature (`a` for a
     /// `type a` parameter). Empty for a constant.
     pub params: Vec<&'static str>,
@@ -120,11 +127,31 @@ impl Row {
     /// Call the row with `args`.
     pub(crate) fn call(&self, vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         match &self.body {
+            Body::Typed(call) => call(vm, args).unwrap_or_else(|| Err(self.misfit(args))),
             Body::Untyped(call) => call(vm, self.name, args),
             Body::Const(_) | Body::Off => {
                 Err(VmError::new(format!("{} is not a function", self.name)))
             }
         }
+    }
+
+    /// The error of a call whose arguments are not the row's: not as
+    /// many, or one of another kind than its parameter's type. It is
+    /// the one such error of every builtin, and no checked program
+    /// meets it: the checker read the same signature.
+    fn misfit(&self, args: &[Value]) -> VmError {
+        let params = self
+            .signature
+            .find('(')
+            .zip(self.signature.rfind(") ->"))
+            .map_or("()", |(open, close)| &self.signature[open..=close]);
+        let kinds: Vec<&str> = args.iter().map(super::value_kind).collect();
+        VmError::type_confusion(format!(
+            "{}.{} takes {params}, but was called with ({})",
+            self.module,
+            self.name,
+            kinds.join(", ")
+        ))
     }
 
     /// The row as the checker reads it: a function's header; for a
@@ -141,9 +168,19 @@ impl Row {
 pub struct RowSpec {
     signature: &'static str,
     summary: &'static str,
+    /// The typed body of a function row that has one.
+    typed: Option<TypedCall>,
     constant: Option<Value>,
     optional_last: bool,
     feature: Option<(&'static str, bool)>,
+}
+
+/// A function row with its typed body (see [`super::typed`]).
+fn f(signature: &'static str, summary: &'static str, body: TypedCall) -> RowSpec {
+    RowSpec {
+        typed: Some(body),
+        ..u(signature, summary)
+    }
 }
 
 /// A function row whose body is its module's untyped `call`.
@@ -151,6 +188,7 @@ fn u(signature: &'static str, summary: &'static str) -> RowSpec {
     RowSpec {
         signature,
         summary,
+        typed: None,
         constant: None,
         optional_last: false,
         feature: None,
@@ -162,6 +200,7 @@ fn k(signature: &'static str, summary: &'static str, value: f64) -> RowSpec {
     RowSpec {
         signature,
         summary,
+        typed: None,
         constant: Some(Value::Float(value)),
         optional_last: false,
         feature: None,
@@ -277,9 +316,10 @@ impl Module {
 }
 
 /// The module `$name`: see [`Module`] for the fields. `call` is the
-/// module's untyped entry point, the body of each function row, which
-/// gives a value; `steps` is one that gives a [`Step`], of a module
-/// with functions that call functions or wait. With a `feature`, it is
+/// untyped entry point of a module whose rows are not all typed, the
+/// body of each row that has none of its own (`u`), which gives a
+/// value; `steps` is one that gives a [`Step`], of a module with
+/// functions that call functions or wait. With a `feature`, it is
 /// compiled only when the feature is built.
 macro_rules! module {
     (
@@ -300,7 +340,12 @@ macro_rules! module {
         #[allow(unused_mut, unused_assignments)]
         let mut call: Option<UntypedCall> = None;
         module!(@call call, [$($feature)?], [$($call)?], [$($steps)?]);
-        $(feature = Some($feature);)?
+        #[allow(unused_mut, unused_assignments)]
+        let mut built = true;
+        $(
+            feature = Some($feature);
+            built = cfg!(feature = $feature);
+        )?
         #[allow(unused_mut, unused_assignments)]
         let mut types: &'static str = "";
         $(types = $types;)?
@@ -318,7 +363,7 @@ macro_rules! module {
         $(shares = &$shares;)?
         build_module(
             $name,
-            feature,
+            (feature, built),
             call,
             ($page, include_str!(concat!("../../../docs/stdlib/", $page))),
             (types, derives, opaque),
@@ -327,6 +372,7 @@ macro_rules! module {
             vec![$($row),*],
         )
     }};
+    (@call $slot:ident, [], [], []) => {};
     (@call $slot:ident, [], [$call:expr], []) => {
         $slot = Some(|vm, name, args| ($call)(vm, name, args).map(crate::vm::Step::Done));
     };
@@ -407,7 +453,7 @@ fn type_decls(
 #[allow(clippy::too_many_arguments)]
 fn build_module(
     name: &'static str,
-    feature: Option<&'static str>,
+    (feature, enabled): (Option<&'static str>, bool),
     call: Option<UntypedCall>,
     (page_file, page): (&'static str, &'static str),
     (types, derives, opaque): (
@@ -419,7 +465,6 @@ fn build_module(
     shares: &'static [(&'static str, &'static str)],
     specs: Vec<RowSpec>,
 ) -> Module {
-    let enabled = call.is_some();
     let mut rows: Vec<Row> = specs
         .into_iter()
         .map(|spec| {
@@ -428,15 +473,19 @@ fn build_module(
                 signature: spec.signature,
                 summary: spec.summary,
                 name: "",
+                module: name,
                 params: Vec::new(),
                 optional_last: spec.optional_last,
                 feature: spec.feature.map(|(feature, _)| feature),
                 enabled: on,
-                body: match (spec.constant, call) {
+                body: match (spec.constant, spec.typed, call) {
                     _ if !on => Body::Off,
-                    (Some(value), _) => Body::Const(value),
-                    (None, Some(call)) => Body::Untyped(call),
-                    (None, None) => Body::Off,
+                    (Some(value), _, _) => Body::Const(value),
+                    (None, Some(typed), _) => Body::Typed(typed),
+                    (None, None, Some(call)) => Body::Untyped(call),
+                    (None, None, None) => {
+                        panic!("the row `{}` of {name} has no body", spec.signature)
+                    }
                 },
             }
         })
@@ -584,6 +633,46 @@ mod tests {
                 assert!(!row.summary.is_empty(), "{}.{}", module.name, row.name);
             }
         }
+    }
+
+    /// A call whose arguments are not the row's (which no checked
+    /// program makes) is the one error of its kind, with one wording:
+    /// what the builtin takes, and the kinds of what it was given.
+    #[test]
+    fn arguments_that_are_not_the_row_s_are_one_error() {
+        let mut vm = Vm::new(crate::vm::HostIo::process());
+        let abs = registry().row("int", "abs").expect("int.abs");
+        let map = Value::Map(Default::default());
+        for (args, said) in [
+            (
+                vec![map.clone()],
+                "int.abs takes (n: Int), but was called with (Map)",
+            ),
+            (vec![], "int.abs takes (n: Int), but was called with ()"),
+            (
+                vec![Value::Int(1), Value::String("x".into())],
+                "int.abs takes (n: Int), but was called with (Int, String)",
+            ),
+        ] {
+            let Err(error) = abs.call(&mut vm, &args) else {
+                panic!("{said}");
+            };
+            assert_eq!(error.message, said);
+            assert!(error.type_confusion);
+        }
+        // An error of the builtin's own is no such error.
+        let Err(overflow) = abs.call(&mut vm, &[Value::Int(i64::MIN)]) else {
+            panic!("abs of the least Int");
+        };
+        assert!(!overflow.type_confusion, "{}", overflow.message);
+        let random = registry().row("math", "random").expect("math.random");
+        let Err(error) = random.call(&mut vm, &[map]) else {
+            panic!("math.random of a map");
+        };
+        assert_eq!(
+            error.message,
+            "math.random takes (), but was called with (Map)"
+        );
     }
 
     #[test]
