@@ -52,19 +52,20 @@ pub const HANDLERS_MAX: usize = 128;
 /// How long the server waits for the head of a request, from when it
 /// starts to wait (the connection was accepted, or the response
 /// before was sent) until the head is complete. A connection that is
-/// kept alive and sends nothing is closed after it, and so is one
-/// whose head trickles in.
+/// kept alive and sends nothing is closed after it; one whose head
+/// trickles in is answered 408 and closed.
 pub const REQUEST_TIME: Duration = Duration::from_secs(30);
 
 /// How long the body of a request may take to arrive once its head is
-/// there, and how long a response may take to be taken by the client.
-/// The connection is closed after it.
+/// there (408 after it), and how long a response may take to be taken
+/// by the client. The connection is closed after it.
 pub const TRANSFER_TIME: Duration = Duration::from_secs(5 * 60);
 
 /// How long the server goes on reading, and dropping what it reads,
-/// after it has refused a request, before it closes the connection. A
-/// connection closed with something unread is reset, and the reset
-/// can reach a client that is still sending before the refusal does.
+/// after it has refused a request or given up waiting for the rest of
+/// one, before it closes the connection. A connection closed with
+/// something unread is reset, and the reset can reach a client that
+/// is still sending before the answer does.
 pub const REFUSAL_TIME: Duration = Duration::from_secs(5);
 
 /// How long the server waits before it accepts again after an accept
@@ -133,6 +134,12 @@ impl<R: Read> Reader<R> {
             stream,
             buf: Vec::new(),
         }
+    }
+
+    /// Whether bytes were read that no request has used yet: the next
+    /// request has begun to arrive.
+    pub fn has_bytes(&self) -> bool {
+        !self.buf.is_empty()
     }
 
     /// Take in bytes of the connection that were read elsewhere.

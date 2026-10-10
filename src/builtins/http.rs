@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(feature = "http")]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(feature = "http")]
 use std::time::Duration;
 
@@ -559,14 +559,19 @@ impl Got {
     }
 }
 
-/// The read half of a connection, for the reader of its requests.
+/// The read half of a connection, for the reader of its requests. It
+/// notes when bytes have come: a request has begun to arrive.
 #[cfg(feature = "http")]
-struct Reads(Arc<TcpStreamHandle>);
+struct Reads(Arc<TcpStreamHandle>, Arc<AtomicBool>);
 
 #[cfg(feature = "http")]
 impl std::io::Read for Reads {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.0.read(buf)
+        let read = self.0.read(buf)?;
+        if read > 0 {
+            self.1.store(true, Ordering::SeqCst);
+        }
+        Ok(read)
     }
 }
 
@@ -670,6 +675,8 @@ struct Conn {
     /// Reads the requests; it holds what was read beyond the end of
     /// one. Locked by the operation that reads.
     reader: Arc<Mutex<wire::Reader<Reads>>>,
+    /// Bytes of the request that is being waited for have come.
+    begun: Arc<AtomicBool>,
     state: ConnState,
     /// Another task goes on with the connection (see
     /// [`Conn::go_on_in_a_new_task`]): this one leaves it open.
@@ -693,8 +700,8 @@ enum ConnState {
     Answering { bytes: Vec<u8>, then: Then },
     /// A response is being sent.
     Sending { op: crate::vm::IoOp, then: Then },
-    /// A request was refused: what the client still sends is read and
-    /// dropped.
+    /// The server has said its last word, a refusal: what the client
+    /// still sends is read and dropped.
     Draining(crate::vm::IoOp),
     /// The frame has returned.
     Ended,
@@ -770,6 +777,11 @@ impl Conn {
     /// deadline that passes ends the task's wait, and with it the
     /// read: the connection is shut down (see `IoOp`'s `Drop`).
     fn read(&mut self, vm: &mut Vm) -> Step {
+        // What was read already and is no whole request is its
+        // beginning.
+        if let Some(reader) = self.reader.try_lock() {
+            self.begun.store(reader.has_bytes(), Ordering::SeqCst);
+        }
         let got: Arc<Mutex<Option<Got>>> = Arc::default();
         let body_follows: Arc<Cell<()>> = Cell::new();
         let (reader, stream, stopped) = (
@@ -890,6 +902,7 @@ impl Conn {
             handle: handle.clone(),
             stream: self.stream.clone(),
             reader: self.reader.clone(),
+            begun: self.begun.clone(),
             state: ConnState::Answering {
                 bytes: plain_response(vm, 500, wire::reason(500), reply),
                 then: reply.then(),
@@ -937,8 +950,22 @@ impl Conn {
                         None => Conn::END,
                     }
                 }
-                // The request did not come in time.
-                Fired::Deadline => Conn::END,
+                // The request did not come in time. A connection that
+                // sent nothing of one is closed. A request that had
+                // begun is answered, and the read goes on for a moment
+                // as after a refusal: its bytes are dropped.
+                Fired::Deadline => match in_body || self.begun.load(Ordering::SeqCst) {
+                    false => Conn::END,
+                    true => {
+                        let bytes = plain_response(vm, 408, wire::reason(408), Reply::LAST);
+                        let _ = self.stream.write_now(&bytes);
+                        self.stream.end_writes();
+                        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
+                            .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
+                        self.state = ConnState::Draining(op);
+                        Go::Step(Step::Park(wait))
+                    }
+                },
             },
             ConnState::Calling { reply, called } => {
                 // The handler has returned.
@@ -1096,10 +1123,15 @@ impl Serve {
         }
         let mut child = vm.spawn_child();
         child.spawned = true;
+        let begun = Arc::new(AtomicBool::new(false));
         child.push_native_frame(Box::new(Conn {
             server: self.server.clone(),
             handle: handle.clone(),
-            reader: Arc::new(Mutex::new(wire::Reader::new(Reads(stream.clone())))),
+            reader: Arc::new(Mutex::new(wire::Reader::new(Reads(
+                stream.clone(),
+                begun.clone(),
+            )))),
+            begun,
             stream,
             state: ConnState::Next,
             handed_on: false,

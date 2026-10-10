@@ -230,9 +230,10 @@ one. There is no `Server` header.
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
 | Handlers being called | 128 | `503` |
-| Time for the head of a request, from when the server starts to wait for it. This is also how long a kept connection that sends nothing stays open. | 30 s | connection closed |
-| Time for the body of a request to arrive after its head, and for a response to be taken by the client | 5 min | connection closed |
-| Time the server goes on reading (and dropping) what a client still sends after a refusal, so that the refusal reaches it | 5 s | connection closed |
+| Time for the head of a request, from when the server starts to wait for it. This is also how long a kept connection that sends nothing stays open. | 30 s | `408` if part of the request has come, and the connection closed; a connection that sent nothing is closed without a word |
+| Time for the body of a request to arrive after its head | 5 min | `408`, connection closed |
+| Time for a response to be taken by the client | 5 min | connection closed |
+| Time the server goes on reading (and dropping) what a client still sends after a refusal or a `408`, so that the answer reaches it | 5 s | connection closed |
 
 A request whose length is not certain is refused with `400`, never
 guessed at: `Content-Length` together with `Transfer-Encoding`;
@@ -260,7 +261,9 @@ When the task that serves has been cancelled, the server ends:
 - Its accept is given up. A client that connects afterwards waits in the
   listener for whoever accepts next.
 - A request whose handler has not returned is answered `503`, and its
-  connection is closed. A connection between two requests is closed.
+  connection is closed. A connection between two requests is closed. A
+  response that is being sent at that moment is cut off: the client
+  gets less than its `Content-Length` says.
 - The listener is the program's again as soon as `task.cancel` has
   returned: `tcp.accept` on it gets the next client, and another
   `http.serve` serves it.

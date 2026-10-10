@@ -231,8 +231,22 @@ impl Client {
         rest
     }
 
-    /// Whether the server has closed the connection: a look, without
-    /// waiting. `false` is "not yet".
+    /// Whether the server has sent something, or closed the
+    /// connection: a look, without waiting. `false` is "not yet".
+    fn has_word(&mut self) -> bool {
+        let conn = self.0.get_mut();
+        conn.set_nonblocking(true).expect("nonblocking");
+        let mut byte = [0u8; 1];
+        let word = match conn.peek(&mut byte) {
+            Ok(_) => true,
+            Err(e) => e.kind() != std::io::ErrorKind::WouldBlock,
+        };
+        conn.set_nonblocking(false).expect("blocking");
+        word
+    }
+
+    /// Whether the server has closed the connection, having sent
+    /// nothing: a look, without waiting. `false` is "not yet".
     fn is_closed(&mut self) -> bool {
         let conn = self.0.get_mut();
         conn.set_nonblocking(true).expect("nonblocking");
@@ -674,7 +688,8 @@ fn an_idle_connection_is_closed_after_the_time_for_a_head() {
 }
 
 /// The time for a head is from when the server began to wait for it:
-/// a head that trickles in does not get more by trickling.
+/// a head that trickles in does not get more by trickling. The client
+/// is told (408), and the connection closed.
 #[test]
 fn a_head_that_trickles_in_does_not_get_more_time() {
     let clock = TestClock::default();
@@ -683,25 +698,32 @@ fn a_head_that_trickles_in_does_not_get_more_time() {
     client.send(b"GET /slow HTTP/1.1\r\n");
     let mut sent = 0;
     let patience = Instant::now() + PATIENCE;
-    while !client.is_closed() {
+    while !client.has_word() {
         assert!(
             Instant::now() < patience,
-            "a trickling head is never closed"
+            "a trickling head is waited for without end"
         );
         // Never as long as the limit without a byte.
         clock.advance(REQUEST_TIME * 2 / 3);
-        // The server may have closed already.
-        let _ = client
-            .0
-            .get_mut()
-            .write_all(format!("X-{sent}: v\r\n").as_bytes());
-        sent += 1;
-        thread::sleep(Duration::from_millis(2));
+        // The answer to that step, if it is one, before more is sent.
+        for _ in 0..20 {
+            if client.has_word() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        if !client.has_word() {
+            client.send(format!("X-{sent}: v\r\n").as_bytes());
+            sent += 1;
+        }
     }
+    assert_eq!(client.response().status, 408);
+    assert_eq!(client.rest(), b"");
 }
 
 /// The body has its own time, longer than the head's and counted from
-/// the head: a body that does not come in it is not waited for.
+/// the head: a body that does not come in it is not waited for. The
+/// client is told (408), and the connection closed.
 #[test]
 fn a_body_that_does_not_come_is_not_waited_for() {
     let clock = TestClock::default();
@@ -729,8 +751,10 @@ fn a_body_that_does_not_come_is_not_waited_for() {
         &clock,
         TRANSFER_TIME,
         "a body that stops is waited for without end",
-        || client.is_closed(),
+        || client.has_word(),
     );
+    assert_eq!(client.response().status, 408);
+    assert_eq!(client.rest(), b"");
 }
 
 /// A response that the client does not take is given up after the
