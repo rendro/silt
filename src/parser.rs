@@ -873,14 +873,18 @@ impl<'src> Parser<'src> {
     }
 
     /// Record the error `error` of the item that starts at token `start`
-    /// and failed where the parser stands, unless the lexer reported an
-    /// error in the text of the tokens it read (a `Token::Error`, or a
-    /// string with a wrong escape): what is wrong there is said, and
-    /// what the parser makes of it is no second error.
+    /// and failed where the parser stands, unless the lexer rejected
+    /// text of the tokens it read (a `Token::Error`, or a string with a
+    /// wrong escape): what is wrong there is said, and what the parser
+    /// makes of it is no second error.
     fn report(&mut self, start: usize, error: Diagnostic) {
         // (Of a text that is cut short no parser error is reported, and
         // the lexer's errors of any other text are in source order.)
         if self.cut_short {
+            return;
+        }
+        let tokens = &self.tokens[start..=self.pos];
+        if tokens.iter().any(|tok| tok.kind == Token::Error) {
             return;
         }
         let read = self.tokens[start].span.start..self.tokens[self.pos].span.end;
@@ -4655,6 +4659,17 @@ fn main() {
                 "unexpected character: '$'"
             ]
         );
+        assert_eq!(fn_names(&prog), ["a?", "b?"]);
+    }
+
+    #[test]
+    fn test_a_name_outside_ascii_used_again_is_one_error_and_no_parse_error() {
+        // The second use has no lex error of its own, and its
+        // declaration is no parse error either.
+        let (prog, errs) =
+            parse_recovering("fn a() {\n  let café = 1\n  café\n}\n\nfn b() {\n  café(2)\n}\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(errs[0].notes, ["'café' is written in 2 more places"]);
         assert_eq!(fn_names(&prog), ["a?", "b?"]);
     }
 

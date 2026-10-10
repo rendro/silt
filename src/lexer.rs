@@ -209,9 +209,13 @@ impl Comment {
 pub struct Lexed {
     pub tokens: Vec<Tok>,
     pub comments: Vec<Comment>,
-    /// Every lex error, in source order. Text that is no token is a
+    /// The lex errors, in source order. Text that is no token is a
     /// `Token::Error` among the tokens; a string with a wrong escape is
-    /// still its string token. A text with an error is never run or
+    /// still its string token. A mistake that is made again (a name
+    /// with a letter outside ASCII that is used again, another
+    /// semicolon) is one error, at its first place, with a note that
+    /// counts the others: their tokens are `Token::Error`s without an
+    /// error of their own. A text with an error is never run or
     /// formatted.
     pub errors: Vec<Diagnostic>,
 }
@@ -328,6 +332,10 @@ pub struct Lexer {
     gap_comments: u32,
     /// Every error so far, in source order.
     errors: Vec<Diagnostic>,
+    /// The errors that are one mistake when they come again: what was
+    /// written (for the note that counts the other places) and the
+    /// error's index in `errors`.
+    repeatable: Vec<(String, usize)>,
 }
 
 impl Lexer {
@@ -344,6 +352,7 @@ impl Lexer {
             gap_newlines: 0,
             gap_comments: 0,
             errors: Vec::new(),
+            repeatable: Vec::new(),
         };
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
         // (Notepad, PowerShell `>` redirects) prepend one by default,
@@ -386,11 +395,44 @@ impl Lexer {
                 break;
             }
         }
+        self.fold_repeated_errors();
         Lexed {
             tokens,
             comments: std::mem::take(&mut self.comments),
             errors: std::mem::take(&mut self.errors),
         }
+    }
+
+    /// Make one error of a mistake that is made again (see
+    /// `repeatable`): the first stays, with a note that counts the
+    /// other places, and the errors of those are dropped.
+    fn fold_repeated_errors(&mut self) {
+        // What was written, the index of its first error, the places
+        // behind it.
+        let mut firsts: Vec<(String, usize, usize)> = Vec::new();
+        let mut dropped = std::collections::HashSet::new();
+        for (written, index) in std::mem::take(&mut self.repeatable) {
+            match firsts.iter_mut().find(|(first, ..)| *first == written) {
+                Some((.., more)) => {
+                    *more += 1;
+                    dropped.insert(index);
+                }
+                None => firsts.push((written, index, 0)),
+            }
+        }
+        for (written, index, more) in firsts {
+            if more > 0 {
+                let places = if more == 1 { "place" } else { "places" };
+                self.errors[index]
+                    .notes
+                    .push(format!("{written} is written in {more} more {places}"));
+            }
+        }
+        let mut index = 0;
+        self.errors.retain(|_| {
+            index += 1;
+            !dropped.contains(&(index - 1))
+        });
     }
 
     /// Record `error` for the text from `start` to the current position,
@@ -1050,10 +1092,15 @@ impl Lexer {
                 }
             }
 
-            ';' => self.unexpected(
-                start,
-                "semicolons are not used in silt — use a newline to separate statements",
-            ),
+            ';' => {
+                let error = self.unexpected(
+                    start,
+                    "semicolons are not used in silt — use a newline to separate statements",
+                );
+                self.repeatable
+                    .push(("a semicolon".to_string(), self.errors.len() - 1));
+                error
+            }
             // A BOM after the start of the file (the leading one is
             // skipped in `Lexer::new`) is invisible and zero-width, so
             // quoting the raw char would render an empty-looking error.
@@ -1088,7 +1135,8 @@ impl Lexer {
             }
             // A letter or digit outside ASCII, at the start of a name or
             // inside one (`café` ends at the `f`). The letters and digits
-            // that follow it are of the same word: one error.
+            // that follow it are of the same word: one error, and the
+            // same word written again is the same mistake.
             _ if ch.is_alphanumeric() => {
                 let error = self.unexpected(
                     start,
@@ -1096,9 +1144,17 @@ impl Lexer {
                         "unexpected character: '{ch}'; a name is made of ASCII letters, digits and '_'"
                     ),
                 );
-                while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                let word = |c: char| c.is_alphanumeric() || c == '_';
+                let mut begin = self.pos - 1;
+                while begin > 0 && word(self.source[begin - 1]) {
+                    begin -= 1;
+                }
+                while self.peek().is_some_and(word) {
                     self.advance_char();
                 }
+                let written: String = self.source[begin..self.pos].iter().collect();
+                self.repeatable
+                    .push((format!("'{written}'"), self.errors.len() - 1));
                 error
             }
             // A quotation mark that is not silt's: the text up to its
@@ -1694,6 +1750,51 @@ mod tests {
             ]
         );
         assert_eq!(errors.len(), 3, "{errors:?}");
+    }
+
+    #[test]
+    fn test_a_mistake_made_again_is_one_error_that_counts_the_places() {
+        let lexed = Lexer::new(
+            crate::source::FileId::default(),
+            "let café = 1; let naïve = café + café; naïve",
+        )
+        .tokenize();
+        let errors: Vec<(u32, &str, &[String])> = lexed
+            .errors
+            .iter()
+            .map(|e| (e.span.start, e.message.as_str(), e.notes.as_slice()))
+            .collect();
+        let name = "; a name is made of ASCII letters, digits and '_'";
+        assert_eq!(
+            errors,
+            vec![
+                (
+                    7,
+                    format!("unexpected character: 'é'{name}").as_str(),
+                    &["'café' is written in 2 more places".to_string()][..]
+                ),
+                (
+                    13,
+                    "semicolons are not used in silt — use a newline to separate statements",
+                    &["a semicolon is written in 1 more place".to_string()][..]
+                ),
+                (
+                    21,
+                    format!("unexpected character: 'ï'{name}").as_str(),
+                    &["'naïve' is written in 1 more place".to_string()][..]
+                ),
+            ]
+        );
+        // Each place is an Error token all the same.
+        let invalid = lexed
+            .tokens
+            .iter()
+            .filter(|tok| tok.kind == Token::Error)
+            .count();
+        assert_eq!(invalid, 7);
+        // A name written once has no note.
+        let lexed = Lexer::new(crate::source::FileId::default(), "größe").tokenize();
+        assert!(lexed.errors[0].notes.is_empty());
     }
 
     #[test]
