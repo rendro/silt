@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A pipeline that ends in a value is a value: `list.each` ends in `()`,
+-- `list.map` and `list.length` do not.
+import list
+
+fn main() {
+  let xs = [1, 2, 3]
+  xs |> list.each { x -> println(x) }
+  xs |> list.map { x -> x + 1 }
+  xs
+    |> list.filter { x -> x > 1 }
+    |> list.length
+  println("done")
+}

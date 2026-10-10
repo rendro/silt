@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A method call whose trait is found when the function is generalised:
+-- its String is unused all the same.
+trait Greet {
+  fn greet(self) -> String
+}
+
+trait Greet for Int {
+  fn greet(self) -> String {
+    "hi"
+  }
+}
+
+fn hello(x) {
+  x.greet()
+  2
+}
+
+fn main() {
+  println(hello(1))
+}

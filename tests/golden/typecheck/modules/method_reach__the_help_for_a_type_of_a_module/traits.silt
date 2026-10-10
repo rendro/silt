@@ -1,0 +1,15 @@
+import shapes
+
+pub trait Area {
+  fn area(self) -> Int
+}
+
+trait Area for shapes.Square {
+  fn area(self) -> Int {
+    self.side * self.side
+  }
+}
+
+pub fn touch() -> Int {
+  0
+}

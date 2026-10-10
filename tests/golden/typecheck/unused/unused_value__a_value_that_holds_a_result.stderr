@@ -1,0 +1,29 @@
+error[type]: this `List(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
+ --> unused_value__a_value_that_holds_a_result.silt:14:3
+    |
+ 14 |   [risky()]
+    |   ^^^^^^^^^ this `List(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
+
+error[type]: this `Option(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
+ --> unused_value__a_value_that_holds_a_result.silt:15:3
+    |
+ 15 |   Some(risky())
+    |   ^^^^^^^^^^^^^ this `Option(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
+
+error[type]: this `(Result(Int, String), Int)` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
+ --> unused_value__a_value_that_holds_a_result.silt:16:3
+    |
+ 16 |   (risky(), 1)
+    |   ^^^^^^^^^^^^ this `(Result(Int, String), Int)` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
+
+error[type]: this `Handle(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
+ --> unused_value__a_value_that_holds_a_result.silt:17:3
+    |
+ 17 |   task.spawn { -> risky() }
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^ this `Handle(Result(Int, String))` value is unused: it holds a `Result` whose error would go unseen; handle it, or write `let _ = ...`
+
+error[type]: this `Fn() -> Result(Int, String)` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_holds_a_result.silt:18:3
+    |
+ 18 |   risky
+    |   ^^^^^ this `Fn() -> Result(Int, String)` value is unused; write `let _ = ...` to discard it

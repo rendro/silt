@@ -20,7 +20,7 @@ fn parks(count, asks, answers) {
       true -> i
       false -> {
         channel.send(asks, i)
-        channel.receive(answers)
+        let _ = channel.receive(answers)
         loop(i + 1)
       }
     }

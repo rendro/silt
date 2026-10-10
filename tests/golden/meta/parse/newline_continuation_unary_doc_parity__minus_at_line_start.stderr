@@ -1,0 +1,6 @@
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> newline_continuation_unary_doc_parity__minus_at_line_start.silt:7:5
+   |
+ 7 |     - 20
+   |     ^^^^ this `Int` value is unused; write `let _ = ...` to discard it
+  = help: a line that starts with `-` is a statement of its own; to subtract from the line above, end that line with the `-`

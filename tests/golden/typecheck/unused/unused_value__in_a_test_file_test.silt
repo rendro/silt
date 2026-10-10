@@ -1,0 +1,13 @@
+-- cmd: test
+-- exit: 1
+-- A test function's statements are checked like any other's.
+import test
+
+fn double(n: Int) -> Int {
+  n * 2
+}
+
+fn test_double() {
+  double(2)
+  test.assert_eq(double(2), 4, "double")
+}

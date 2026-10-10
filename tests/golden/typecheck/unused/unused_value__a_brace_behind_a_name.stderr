@@ -1,0 +1,6 @@
+error[type]: this `{x: Int}` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_brace_behind_a_name.silt:14:17
+    |
+ 14 |   let p = point { x: 1 }
+    |                 ^^^^^^^^ this `{x: Int}` value is unused; write `let _ = ...` to discard it
+  = help: a record literal's type name starts with an upper-case letter (`Point { ... }`); a `{` behind a value starts a statement of its own

@@ -193,17 +193,17 @@ pub(super) fn format_unknown_method_message(
 
 impl TypeChecker {
     /// The "unknown method" message for `field` of the type `ty`, with
-    /// its help: the module to import when a trait out of reach has the
-    /// method, or a method of a similar name.
+    /// a method of a similar name as its help. That it was reported is
+    /// kept (`note_unknown_method`).
     fn unknown_method_message(
-        &self,
+        &mut self,
         field: Symbol,
         display: &str,
         ty: TypeRef,
+        span: Span,
     ) -> (String, Option<String>) {
-        let (message, similar) =
-            format_unknown_method_message(field, display, &self.tables.method_table, ty);
-        (message, self.unreached_help(ty, field).or(similar))
+        self.note_unknown_method(span, ty, field);
+        format_unknown_method_message(field, display, &self.tables.method_table, ty)
     }
 
     /// Put `var: trait_name` (at the trait arguments `args`) in scope,
@@ -719,9 +719,10 @@ impl TypeChecker {
             format!("type '{type_name}' has no method '{field}'"),
         );
         let qualified = intern(&format!("{module}.{field}"));
-        if let Some(help) = ty.and_then(|ty| self.unreached_help(ty, field)) {
-            d = d.with_help(help);
-        } else if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
+        if let Some(ty) = ty {
+            self.note_unknown_method(span, ty, field);
+        }
+        if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
             d = d.with_help(format!(
                 "did you mean `{module}.{field}`, a function of module `{module}`?"
             ));
@@ -826,7 +827,13 @@ impl TypeChecker {
         let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
         // Infer the body and unify with declared return type
+        let owner = self.frame_owner.take();
+        self.fn_frames.push(unused::FnFrame {
+            owner,
+            params: param_types,
+        });
         let body_type = self.infer_expr(&mut f.body, env);
+        self.fn_frames.pop();
         env.pop();
         let ret_unify_err_count = self.errors.len();
         self.unify(&body_type, &ret_type, f.body.span);
@@ -1201,9 +1208,18 @@ impl TypeChecker {
                             CallForm::Call => arg.span,
                             CallForm::BarePipe => span,
                         };
+                        // A parameter the callee calls as a statement.
+                        let statement = match is_method_call {
+                            true => None,
+                            false => self.statement_unit(callee, i),
+                        };
+                        let passed_on = statement.map(|_| self.frames_sharing(&arg_ty));
                         let reported = self.errors.len();
                         self.unify(&arg_ty, param, at);
                         mismatched |= self.errors.len() > reported;
+                        if let (Some(statement), Some(passed_on)) = (statement, passed_on) {
+                            self.name_statement_unit(statement, reported, passed_on);
+                        }
                     }
                 }
                 // An argument of the wrong type is the one thing wrong
@@ -1816,6 +1832,7 @@ impl TypeChecker {
                         // through the Generic/named-record field-access
                         // path so `u.nam` on `type User { name, age }`
                         // prints `did you mean 'name'?`.
+                        self.note_unknown_method(span, *type_name, field);
                         let shown = self.show_type(&Type::Generic(*type_name, vec![]));
                         let base = format!("unknown field or method '{field}' on type {shown}");
                         let msg = if let Some(rec_info) = self.tables.records.get(type_name) {
@@ -1866,11 +1883,8 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         let display = format!("type {type_name}");
-                        self.error_help(
-                            Code::UnknownMethod,
-                            self.unknown_method_message(field, &display, type_name),
-                            span,
-                        );
+                        let message = self.unknown_method_message(field, &display, type_name, span);
+                        self.error_help(Code::UnknownMethod, message, span);
                         Type::Error
                     }
                     // Collection types. Phase B: Range receivers were
@@ -1934,11 +1948,8 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         let display = resolve(type_name.name).to_string();
-                        self.error_help(
-                            Code::UnknownMethod,
-                            self.unknown_method_message(field, &display, type_name),
-                            span,
-                        );
+                        let message = self.unknown_method_message(field, &display, type_name, span);
+                        self.error_help(Code::UnknownMethod, message, span);
                         Type::Error
                     }
                     Type::Rigid(r) => {
@@ -2235,6 +2246,7 @@ impl TypeChecker {
             }
 
             ExprKind::Lambda { params, body } => {
+                let owner = self.frame_owner.take();
                 env.push();
                 // Soundness: lambda param lists are a single conjunctive
                 // scope too — `|a, a| ...` must be rejected the same way
@@ -2288,7 +2300,12 @@ impl TypeChecker {
                 let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
                 let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
+                self.fn_frames.push(unused::FnFrame {
+                    owner,
+                    params: param_types.clone(),
+                });
                 let body_type = self.infer_expr(body, env);
+                self.fn_frames.pop();
                 env.pop();
                 let ret_unify_err_count = self.errors.len();
                 self.unify(&body_type, &lambda_ret, body.span);
@@ -2824,8 +2841,12 @@ impl TypeChecker {
             ExprKind::Block(stmts) => {
                 let mut last_ty = Type::Unit;
                 env.push();
-                for stmt in stmts {
+                let last = stmts.len().saturating_sub(1);
+                for (i, stmt) in stmts.iter_mut().enumerate() {
                     last_ty = self.infer_stmt(stmt, env);
+                    if i != last {
+                        self.note_statement(stmt, &last_ty);
+                    }
                 }
                 env.pop();
 
@@ -3066,6 +3087,11 @@ impl TypeChecker {
                 if is_value {
                     self.enter_level();
                 }
+                if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) =
+                    (&pattern.kind, &value.kind)
+                {
+                    self.frame_owner = Some(unused::FrameOwner::Local(*name));
+                }
                 let mut val_ty = self.infer_expr(value, env);
 
                 // The type variables the annotation introduces.
@@ -3073,11 +3099,14 @@ impl TypeChecker {
                 if let Some(te) = &ty {
                     let (declared, introduced) = self.resolve_let_annotation(te);
                     own = introduced;
+                    let reported = self.errors.len();
                     self.unify(&val_ty, &declared, value_span);
                     // A value of unknown type (from a module that failed
                     // to load) takes the declared type: `let y: Int = x`
-                    // makes `y` an Int.
-                    if matches!(self.apply(&val_ty), Type::Error) {
+                    // makes `y` an Int. So does a value that is not of
+                    // the declared type: that is reported here, and what
+                    // follows reads the name as it is declared.
+                    if self.errors.len() > reported || matches!(self.apply(&val_ty), Type::Error) {
                         val_ty = declared;
                     }
                 }

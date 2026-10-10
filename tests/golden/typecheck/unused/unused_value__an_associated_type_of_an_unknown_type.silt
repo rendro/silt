@@ -1,0 +1,38 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- Where the type the associated type belongs to is not known (`Self` in
+-- a default method, a bounded parameter, a parameter with no annotation)
+-- the caller's type decides what `next` returns: it is a value, and it
+-- is unused. It is not given the type `()`.
+trait Source {
+  type Item
+  fn next(self) -> Self::Item
+  fn skip(self) -> String {
+    self.next()
+    "skipped"
+  }
+}
+
+fn drain(s: a) -> String where a: Source {
+  s.next()
+  "drained"
+}
+
+fn drain_inferred(s) {
+  s.next()
+  "drained"
+}
+
+trait Source for Int {
+  type Item = Int
+  fn next(self) -> Int {
+    self
+  }
+}
+
+fn main() {
+  println(1.skip())
+  println(drain(1))
+  println(drain_inferred(1))
+}

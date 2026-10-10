@@ -75,6 +75,17 @@ impl TyVarSupply {
         self.levels[v] > self.level
     }
 
+    /// The current level.
+    pub(super) fn level(&self) -> u32 {
+        self.level
+    }
+
+    /// The level of the unresolved variable `v`: the outermost scope
+    /// that mentions it.
+    pub(super) fn level_of(&self, v: TyVar) -> u32 {
+        self.levels[v]
+    }
+
     /// Start the check of `module`: its variables come next.
     pub(super) fn begin(&mut self, module: crate::session::ModuleId) {
         self.level = 0;

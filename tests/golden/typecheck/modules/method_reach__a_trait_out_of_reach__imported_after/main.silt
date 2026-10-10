@@ -1,11 +1,13 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: unknown method 'tagged' on type Int
+-- stderr-contains: trait 'Tag' of module 'a' has a method 'tagged' for this type; import 'a' to call it
 -- A module calls the methods of the traits whose modules it imports
 -- (or they import, and so on). `c` does not import `a`: whether `a`
 -- was checked before `c` or after it, `c` has no method `tagged`.
--- (It once had it when an earlier import had brought the impl in. The
--- help that names the module is there only when `a` is checked first.)
+-- (It once had it when an earlier import had brought the impl in.) The
+-- help that names the module is made once all modules are checked: it
+-- is there in both orders.
 import c
 import a
 

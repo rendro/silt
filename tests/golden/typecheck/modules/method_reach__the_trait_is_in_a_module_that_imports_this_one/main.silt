@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- stderr-contains: c.silt:4:3
+-- stderr-contains: unknown field or method 'area' on type Square
+-- stderr-contains: trait 'Area' of module 'main' has a method 'area' for this type, but 'main' imports this module and cannot be imported by it
+-- stderr-not-contains: import 'main' to call it
+-- The trait that has the method is declared in a module that imports
+-- the one that calls it: importing it there would be a cycle, so the
+-- help does not say to. It says where the trait would have to be.
+import c
+import shapes
+
+pub trait Area {
+  fn area(self) -> Int
+}
+
+trait Area for shapes.Square {
+  fn area(self) -> Int {
+    self.side * self.side
+  }
+}
+
+fn main() {
+  println(c.on_a_value())
+}

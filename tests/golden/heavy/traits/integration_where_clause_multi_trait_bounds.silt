@@ -6,7 +6,7 @@ fn check(a: t, b: t) where t: Equal + Compare {
 }
 
 fn program() {
-  check(1, 2)
+  let _ = check(1, 2)
   check(3, 3)
 }
 

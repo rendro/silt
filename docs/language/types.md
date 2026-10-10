@@ -49,9 +49,9 @@ silt treats silent wrong answers as worse than crashes. The numeric types are de
 `Int` is 64-bit signed. Arithmetic that would overflow is a **runtime error**, not silent wrapping:
 
 ```silt
-9223372036854775807 + 1 -- runtime error: integer overflow
+println(9223372036854775807 + 1) -- runtime error: integer overflow
 let min = -9223372036854775808 -- the smallest Int
-int.abs(min) -- runtime error: integer overflow: abs(-9223372036854775808)
+println(int.abs(min)) -- runtime error: integer overflow: abs(-9223372036854775808)
 ```
 
 The smallest `Int` is written `-9223372036854775808`: the minus sign and
@@ -64,10 +64,10 @@ the digits are one literal there. Without the minus sign,
 A `Float` is always finite: never `NaN`, never infinite. An operation whose result would be `NaN` or infinite is a **runtime error** that names the operation, matching the integer rule:
 
 ```silt
-1.0 / 2.0 -- 0.5
-1.0 / 0.0 -- runtime error: float division by zero
-float.max_value * 2.0 -- runtime error: float overflow
-math.sqrt(-4.0) -- runtime error: math.sqrt of a negative number: -4
+println(1.0 / 2.0) -- 0.5
+println(1.0 / 0.0) -- runtime error: float division by zero
+println(float.max_value * 2.0) -- runtime error: float overflow
+println(math.sqrt(-4.0)) -- runtime error: math.sqrt of a negative number: -4
 ```
 
 The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum_float` / `list.product_float` overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.

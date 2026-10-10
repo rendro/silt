@@ -11,6 +11,6 @@ fn main() {
   let long = stream.from_range(1, 1000)
   println(stream.zip(short, long) |> stream.collect)
   let fresh = channel.new(0)
-  channel.receive(fresh)
+  let _ = channel.receive(fresh)
   println("unreachable")
 }

@@ -1,0 +1,32 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A line that starts with `-` does not continue the line above: it is
+-- a statement. The help says so on whichever of the two lines is the
+-- unused value: the `-` line behind a value (`net`), or the line in
+-- front of a `-` line that ends the block (`total`). It is not given
+-- where there is nothing above to subtract from: behind a statement of
+-- type `()`, or on the first line of a block (`plain`).
+fn net(price, discount, tax) {
+  let total = price
+  - discount * tax
+  total
+}
+
+fn total(a: Int, b: Int) -> Int {
+  a
+  - b
+}
+
+fn plain(n: Int) {
+  -1
+  println("x")
+  -n
+  println("y")
+}
+
+fn main() {
+  println(net(100, 30, 2))
+  println(total(10, 3))
+  plain(4)
+}

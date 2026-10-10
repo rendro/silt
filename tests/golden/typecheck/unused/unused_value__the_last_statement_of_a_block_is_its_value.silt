@@ -1,0 +1,28 @@
+-- verdict: same
+-- The last statement of a block is the block's value: of a function
+-- body, of a block in a `let`, of a match arm, of a closure.
+import list
+
+fn three() -> Int {
+  println("three")
+  3
+}
+
+fn main() {
+  let a = {
+    println("a")
+    1
+  }
+  let b = match a {
+    1 -> {
+      println("b")
+      2
+    }
+    _ -> 0
+  }
+  let cs = [1, 2] |> list.map { x ->
+    println("c {x}")
+    x * 10
+  }
+  println("{a} {b} {three()} {cs}")
+}

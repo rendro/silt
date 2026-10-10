@@ -19,6 +19,13 @@ match parse_int(input) {
 }
 ```
 
+A `Result` that stands as a statement cannot be dropped by accident: with
+nothing looking at it, it is an error, ``this `Result` is unused: an error in
+it would go unseen; handle it, return it with `?`, or write `let _ = ...` ``.
+(A `Result` that a callback returns to a function which ignores what its
+callback returns, like `channel.each`, is not a statement: handle it inside
+the callback.)
+
 ## Typed Stdlib Errors
 
 Every fallible stdlib module except `crypto`, `encoding`, `uuid`, and `regex`

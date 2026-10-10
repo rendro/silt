@@ -28,6 +28,7 @@ mod structural;
 mod tables;
 mod typeexpr;
 mod unify;
+mod unused;
 // `pub(crate)`: round 93 — `module::sibling_module_suggestion` reuses
 // the shared did-you-mean threshold policy for import-path hints.
 pub(crate) mod suggest;
@@ -221,6 +222,20 @@ pub struct TypeChecker {
     /// The session's definitions, which the resolver's `Res` slots
     /// name. `None` for a checker that has no program (the builtins).
     pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
+    /// The calls that stand as statements and whose type is still
+    /// unknown (see `unused`), by the level of the variable each is:
+    /// the scope that decides it.
+    pub(super) statement_calls: Vec<Vec<unused::StatementCall>>,
+    /// The functions and closures whose body is being checked,
+    /// outermost first, each with its parameters' types.
+    pub(super) fn_frames: Vec<unused::FnFrame>,
+    /// What the next function or closure to be checked is the value of:
+    /// the top-level definition, or the `let` of a block, that names it.
+    pub(super) frame_owner: Option<unused::FrameOwner>,
+    /// The parameters whose function type returns `()` because the body
+    /// calls them as a statement: by the function or closure, the
+    /// parameter's index and the statement.
+    pub(super) statement_units: HashMap<unused::Callee, Vec<(usize, Span)>>,
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
     /// Its name, for diagnostics.
@@ -302,6 +317,10 @@ impl TypeChecker {
             reach: None,
             cells: std::collections::HashSet::new(),
             defs: None,
+            statement_calls: Vec::new(),
+            fn_frames: Vec::new(),
+            frame_owner: None,
+            statement_units: HashMap::new(),
             module: crate::session::ModuleId(0),
             module_name: intern("main"),
             own_types: HashMap::new(),
@@ -867,6 +886,11 @@ impl TypeChecker {
         self.check_decl_bodies(&mut program.decls, &mut env);
         self.exit_level();
 
+        // A statement leaves no value unused.
+        let fixed = self.fix_statement_calls(true);
+        self.recheck_fixed(&fixed, |checker| checker.solve_wanted(0));
+        self.check_unused_values(program);
+
         // Detect unresolved type variables on let-binding values where
         // the user did not provide a type annotation.
         self.check_unresolved_let_types(program);
@@ -930,6 +954,7 @@ impl TypeChecker {
                 // module's functions have no bodies.
                 (Decl::Fn(f), Some(sig)) => {
                     if !f.is_recovery_stub && !self.signatures_only {
+                        self.frame_owner = Some(unused::FrameOwner::TopLevel(f.name));
                         self.check_body(f, sig, env);
                     }
                 }
@@ -1045,6 +1070,7 @@ impl TypeChecker {
         }
         self.group_rigid.clear();
         self.settle_bounds();
+        self.forget_local_statement_units();
         self.enter_level();
     }
 
@@ -1061,16 +1087,21 @@ impl TypeChecker {
         env: &mut TypeEnv,
     ) -> bool {
         let is_value = self.is_syntactic_value(value);
+        if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) = (&pattern.kind, &value.kind) {
+            self.frame_owner = Some(unused::FrameOwner::TopLevel(*name));
+        }
         let mut val_ty = self.infer_expr(value, env);
         if let Some(te) = ty {
             // (A type variable the annotation introduces is rigid; a
             // `let` that generalises is general in it, like a function
             // in its signature's.)
             let (declared, _) = self.resolve_let_annotation(te);
+            let reported = self.errors.len();
             self.unify(&val_ty, &declared, span);
             // A value of unknown type (from a module that failed to
-            // load) takes the declared type.
-            if matches!(self.apply(&val_ty), Type::Error) {
+            // load) takes the declared type, and so does a value that
+            // is not of it (see `infer_stmt`).
+            if self.errors.len() > reported || matches!(self.apply(&val_ty), Type::Error) {
                 val_ty = declared;
             }
         }
@@ -1156,6 +1187,7 @@ impl TypeChecker {
         self.solve_wanted(0);
         self.exit_level();
         self.settle_bounds();
+        self.forget_local_statement_units();
     }
 }
 
@@ -1242,6 +1274,64 @@ pub struct ModuleCheck {
     /// they are initialised in: each after the `let`s its initialiser
     /// can reach, and in source order where nothing orders two.
     pub let_order: Vec<Span>,
+}
+
+/// For the module `module`, checked, with every other module of its
+/// program: at each place it reported that a type has no method of
+/// some name, the help that names a trait with such a method for the
+/// type whose module `module` does not reach (`reach`: the modules it
+/// imports, and theirs, and so on). It is made from the whole program's
+/// impls, so it does not depend on the order the modules were checked
+/// in. A module that itself imports `module` (`imports_back`) cannot be
+/// imported by it: the help then says where the trait would have to be.
+pub fn out_of_reach_helps(
+    tables: &Tables,
+    defs: &crate::defs::DefTable,
+    module: crate::session::ModuleId,
+    reach: &std::collections::HashSet<crate::session::ModuleId>,
+    imports_back: impl Fn(crate::session::ModuleId) -> bool,
+) -> Vec<(Span, String)> {
+    let mut helps = Vec::new();
+    for (span, ty, method) in tables.unknown_methods.get(&module).into_iter().flatten() {
+        let mut found: Vec<(String, String, bool)> = tables
+            .trait_methods
+            .keys()
+            .filter(|(of, name, _)| of == ty && name == method)
+            .filter_map(|(_, _, t)| {
+                let owner = defs.get(t.id.0).module;
+                let private = tables
+                    .traits
+                    .get(t)
+                    .is_some_and(|info| info.private_to.is_some());
+                if owner == module || owner.is_builtin() || reach.contains(&owner) || private {
+                    return None;
+                }
+                let name = tables.module_names.get(&owner)?;
+                Some((resolve(t.name), resolve(*name), imports_back(owner)))
+            })
+            .collect();
+        // (A module that can be imported first.)
+        found.sort_by(|a, b| (a.2, &a.0, &a.1).cmp(&(b.2, &b.0, &b.1)));
+        match found.first() {
+            Some((tr, owner, false)) => helps.push((
+                *span,
+                format!(
+                    "trait '{tr}' of module '{owner}' has a method '{method}' for this type; \
+                     import '{owner}' to call it"
+                ),
+            )),
+            Some((tr, owner, true)) => helps.push((
+                *span,
+                format!(
+                    "trait '{tr}' of module '{owner}' has a method '{method}' for this type, \
+                     but '{owner}' imports this module and cannot be imported by it; the \
+                     trait would have to be declared in a module this one can import"
+                ),
+            )),
+            None => {}
+        }
+    }
+    helps
 }
 
 /// The context a module is checked in, from the session.

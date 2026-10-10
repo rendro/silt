@@ -1,0 +1,29 @@
+-- verdict: same
+-- A statement of type Never (a `return`, a `panic`, a `match` whose
+-- arms all leave) has no value to use.
+fn sign(n: Int) -> String {
+  match n < 0 {
+    true -> return "negative"
+    false -> ()
+  }
+  match n == 0 {
+    true -> return "zero"
+    false -> ()
+  }
+  "positive"
+}
+
+fn checked(n: Int) -> Int {
+  match n > 100 {
+    true -> panic("too large: {n}")
+    false -> ()
+  }
+  n
+}
+
+fn main() {
+  println(sign(-1))
+  println(sign(0))
+  println(sign(5))
+  println(checked(7))
+}

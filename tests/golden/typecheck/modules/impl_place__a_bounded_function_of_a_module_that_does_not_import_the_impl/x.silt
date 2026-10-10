@@ -1,0 +1,9 @@
+import t
+
+pub fn f(v: a) -> String where a: t.T {
+  "f: {v.m()}"
+}
+
+pub fn shown(v: a) -> String where a: Display {
+  "shown: {v}"
+}

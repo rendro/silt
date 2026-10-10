@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A value that is not of the type its `let` declares is reported at
+-- the `let`; what follows reads the name as it is declared. `f()` is
+-- `()` as `f`'s annotation says: it is not also called an unused
+-- Result.
+fn risky() -> Result(Int, String) {
+  Err("lost")
+}
+
+fn main() {
+  let f: Fn() -> () = { -> risky() }
+  f()
+  let g: Fn() -> () = risky
+  g()
+  let n: Int = "three"
+  println(n + 1)
+}

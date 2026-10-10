@@ -80,6 +80,7 @@ impl CellInfo {
     pub fn compiled(&self, checked: &ast::Program) -> ast::Program {
         ast::Program {
             decls: checked.decls[self.cell_imports..].to_vec(),
+            statements: Default::default(),
         }
     }
 }
@@ -279,7 +280,12 @@ impl Cells {
             .collect();
         self.committed.push(Committed {
             id,
-            types: (!types.is_empty()).then(|| Arc::new(ast::Program { decls: types })),
+            types: (!types.is_empty()).then(|| {
+                Arc::new(ast::Program {
+                    decls: types,
+                    statements: Default::default(),
+                })
+            }),
         });
         self.installed.extend(
             modules

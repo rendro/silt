@@ -1,0 +1,29 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- An operator expression, a literal, a name, a field and a constructor
+-- are unused values whatever their type: also when the type is a
+-- variable of the function (`x`, `pair.first`).
+type Pair(a) {
+  first: a,
+  second: a,
+}
+
+fn generic(x, pair: Pair(a)) {
+  x
+  pair.first
+  0
+}
+
+fn main() {
+  let n = 4
+  n
+  n * 2
+  "text"
+  [n, n]
+  (n, "n")
+  Some(n)
+  Pair { first: n, second: n }
+  { m -> m + n }
+  println(generic(n, Pair { first: 1, second: 2 }))
+}
