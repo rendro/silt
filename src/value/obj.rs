@@ -41,8 +41,8 @@ enum Of {
 }
 
 impl Variant {
-    /// The variant `tag` with the fields `fields`.
-    pub fn new(tag: Tag, fields: Vec<Value>) -> Variant {
+    /// The variant `tag` with the fields `fields` ([`Value::variant`]).
+    pub(super) fn new(tag: Tag, fields: Vec<Value>) -> Variant {
         debug_assert_eq!(tag.arity(), fields.len(), "the fields of {tag}");
         let ordinal = tag.ordinal();
         let ty = tag.into_ty();

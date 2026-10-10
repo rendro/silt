@@ -5,13 +5,13 @@
 //! `postgres` crate + `r2d2_postgres` connection pool, mirroring the
 //! pattern used by the `http` builtin (sync ureq + io_pool bridge).
 //!
-//! Pool handles are opaque to silt code: a `Value::Variant("PgPool",
-//! [Value::Int(id)])` carries an integer id into a process-global side
+//! Pool handles are opaque to silt code: a `PgPool` variant with one
+//! field, an `Int`, carries an integer id into a process-global side
 //! table that owns the actual `r2d2::Pool`. Explicit `postgres.close`
 //! is required to drop the pool.
 //!
 //! Transactions pin a single `r2d2::PooledConnection` for the callback's
-//! entire lifetime. A `Value::Variant("PgTx", [Value::Int(id)])` handle
+//! entire lifetime. A `PgTx` variant with one field, an `Int`,
 //! identifies the pinned connection in a separate registry. `query` /
 //! `execute` accept either a `PgPool` (fresh checkout per call) or a
 //! `PgTx` (reuses the pinned conn), so statements inside `transact`'s

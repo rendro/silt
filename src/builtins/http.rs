@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 #[cfg(feature = "http")]
 use std::collections::HashMap;
+#[cfg(feature = "http")]
 use std::sync::Arc;
 #[cfg(feature = "http")]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

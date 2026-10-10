@@ -1,7 +1,7 @@
 -- Reading a local, passing an argument and taking a pattern's part
 -- share the value: none of them copies a string, a tuple or a variant.
 -- (Each copied all of it, so the walk of a list of one's own took the
--- square of its length: 18 s for 2,000 elements in a debug build, and
+-- square of its length: 8 s for 2,000 links in a debug build, and
 -- every call that carried a long string copied the string.)
 import list
 import string
