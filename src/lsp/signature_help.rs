@@ -7,8 +7,7 @@ use lsp_types::{
 };
 
 use crate::intern::{intern, resolve};
-use crate::lexer::{Lexer, Tok, Token};
-use crate::source::FileId;
+use crate::lexer::{Tok, Token};
 use crate::types::Type;
 
 use super::Server;
@@ -26,13 +25,19 @@ impl Server {
         let pos = params.text_document_position_params.position;
         let doc = self.documents.get(uri)?;
 
-        // The tokens of the text in front of the cursor say which call
-        // it is in: the lexer goes on behind an error, so a call that is
-        // being typed (an argument that is no token yet, a string that
-        // is not closed) has its tokens all the same.
+        // The document's tokens that start in front of the cursor say
+        // which call it is in: the lexer goes on behind an error, so a
+        // call that is being typed (an argument that is no token yet, a
+        // string that is not closed) has its tokens all the same. (A
+        // token is what it is whatever follows it, so these are the
+        // tokens of the text in front of the cursor, but for the one the
+        // cursor is in, which opens and closes nothing: a closer is one
+        // character, and the end of an interpolation starts behind its
+        // brace.)
         let cursor = position_to_offset(&doc.source, &pos);
-        let lexed = Lexer::new(FileId::default(), &doc.source.text[..cursor]).tokenize();
-        let (fn_name, active_param) = call_site(&lexed.tokens)?;
+        let tokens = doc.tokens();
+        let before = tokens.partition_point(|tok| (tok.span.start as usize) < cursor);
+        let (fn_name, active_param) = call_site(&tokens[..before])?;
 
         // Look up in definitions first, then builtins.
         let fn_sym = intern(&fn_name);

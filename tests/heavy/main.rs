@@ -14,5 +14,6 @@ mod lsp_workspace_perf;
 #[path = "../lsp/rename_sweep.rs"]
 mod rename_sweep;
 mod rename_sweep_examples;
+mod repl_paste;
 #[path = "../lsp/support.rs"]
 mod support;

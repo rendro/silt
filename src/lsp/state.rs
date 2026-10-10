@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use crate::ast::*;
 use crate::intern::Symbol;
+use crate::lexer::{Lexed, Lexer, Tok};
 use crate::session::ModuleId;
-use crate::source::SourceFile;
+use crate::source::{FileId, SourceFile};
 use crate::types::Type;
 
 // ── Document state ─────────────────────────────────────────────────
@@ -77,6 +78,26 @@ pub(super) struct Document {
     pub(super) definitions: HashMap<Symbol, DefInfo>,
     /// Local bindings (let, params, match/when) with approximate source positions.
     pub(super) locals: Vec<LocalBinding>,
+    /// The tokens of `source`, made when a request first asks for them
+    /// (see `tokens`) and kept until the text changes (`set_text`).
+    pub(super) lexed: std::cell::OnceCell<Lexed>,
+}
+
+impl Document {
+    /// The tokens of the document's text: lexed once for each text, not
+    /// for each request that reads them.
+    pub(super) fn tokens(&self) -> &[Tok] {
+        &self
+            .lexed
+            .get_or_init(|| Lexer::new(FileId::default(), &self.source.text).tokenize())
+            .tokens
+    }
+
+    /// Give the document the text `source`.
+    pub(super) fn set_text(&mut self, source: SourceFile) {
+        self.source = source;
+        self.lexed = std::cell::OnceCell::new();
+    }
 }
 
 /// A module of a project's session.

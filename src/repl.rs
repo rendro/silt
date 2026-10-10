@@ -197,11 +197,20 @@ pub fn run_repl() {
                     }
                 }
 
+                // An entry that is being read was open at the end of the
+                // line before. A line without a closer and without a
+                // quote leaves it open: it is not lexed again for such a
+                // line, so a list of thousands of lines that is pasted
+                // is read once, at its last line.
+                let still_open = !buffer.is_empty() && !line.contains([')', ']', '}', '"']);
                 if buffer.is_empty() {
                     buffer = line.to_string();
                 } else {
                     buffer.push('\n');
                     buffer.push_str(line);
+                }
+                if still_open {
+                    continue;
                 }
 
                 // An input that more lines can finish (an open

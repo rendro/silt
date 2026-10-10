@@ -82,6 +82,7 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
         program: Some(Arc::new(program)),
         definitions,
         locals,
+        lexed: std::cell::OnceCell::new(),
     }
 }
 
@@ -127,8 +128,9 @@ impl Server {
                 program: None,
                 definitions: HashMap::new(),
                 locals: Vec::new(),
+                lexed: std::cell::OnceCell::new(),
             });
-        doc.source = source;
+        doc.set_text(source);
         doc.open = true;
         self.pending.insert(uri);
         self.deadline = Some(Instant::now() + DEBOUNCE);
