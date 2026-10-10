@@ -152,7 +152,7 @@ fn a_run_that_fails_where_success_is_expected_is_a_finding() {
     assert_finding(
         verdict_with(unjoined, succeeds()),
         Kind::Expectation,
-        "a report on stderr",
+        "a task failed and nobody joined it: division by zero",
     );
 }
 
