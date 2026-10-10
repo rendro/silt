@@ -229,7 +229,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 checker
                     .tables
                     .records
-                    .insert(ty, RecordInfo { fields: Vec::new() });
+                    .insert(ty, RecordInfo::default());
             }
             TypeBody::Alias(_) => {}
         }

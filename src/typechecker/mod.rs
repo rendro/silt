@@ -790,7 +790,7 @@ impl TypeChecker {
                         self.tables
                             .records
                             .entry(ty)
-                            .or_insert_with(|| RecordInfo { fields: Vec::new() });
+                            .or_insert_with(|| RecordInfo::default());
                     }
                     TypeBody::Alias(_) => {
                         // Phase D: alias names are pre-registered into
