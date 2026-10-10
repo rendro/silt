@@ -1,0 +1,36 @@
+-- cmd: disasm
+-- A pattern that matches every value of its type is compiled without a
+-- test of the value's tag: the one variant of an enum and a record
+-- type, as a parameter (`area`), in a `let` (`first`) and as the only
+-- arm of a match (`only`). The output holds no TestTag, no
+-- TestRecordTag and no TestTupleLen, and no Panic but the one that
+-- closes every match (nothing jumps to it here).
+type Wrap {
+  Wrap(Int),
+}
+
+type Point {
+  x: Int,
+  y: Int,
+}
+
+fn area(Wrap(scale), Point { x, y }) -> Int {
+  scale * x * y
+}
+
+fn first(pair: (Wrap, Point)) -> Int {
+  let (Wrap(n), Point { x, .. }) = pair
+  n + x
+}
+
+fn only(w: Wrap) -> Int {
+  match w {
+    Wrap(n) -> n + 1
+  }
+}
+
+fn main() {
+  println(area(Wrap(2), Point { x: 3, y: 4 }))
+  println(first((Wrap(1), Point { x: 2, y: 0 })))
+  println(only(Wrap(5)))
+}
