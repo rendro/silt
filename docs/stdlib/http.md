@@ -203,6 +203,16 @@ The handler receives a `Request` and must return a `Response` whose
 | The method is none of `Method`'s (e.g. `TRACE`) | `405`, with an `Allow` header that names the seven |
 | The method is `HEAD` | the handler is called; its response is sent without the body, with the length the body has |
 
+**A client that leaves is not noticed while its handler runs.** The
+server looks at a connection when it reads from it or writes to it. If a
+client closes its connection while its handler waits (a long poll), the
+handler goes on waiting: it keeps its place among the 128, and the
+connection its descriptor, until the handler returns and the response
+cannot be sent. Clients that come and go without waiting for their
+answers can so fill every place, and every later request gets `503`. A
+handler that waits needs a limit of its own, for example
+`channel.recv_timeout` instead of `channel.receive`.
+
 ### What the server reads and sends
 
 The server speaks HTTP/1.1, and HTTP/1.0 to a client that does (the
