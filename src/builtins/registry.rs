@@ -3,7 +3,7 @@
 //! A builtin function is a [`Row`]: its signature as silt text (`fn
 //! trim(s: String) -> String`), a one-line summary, and what a call
 //! runs: a Rust function of the arguments as Rust types
-//! ([`super::typed`]).
+//! (`builtins::typed`).
 //! A builtin module ([`Module`]) is its rows, the types it declares (silt
 //! `pub type` text) and its reference page (`docs/stdlib/*.md`). The
 //! modules are listed in `registry/modules.rs`, one `module!` each.
