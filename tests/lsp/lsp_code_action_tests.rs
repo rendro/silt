@@ -134,6 +134,206 @@ fn discard_quickfix_offered_for_an_unused_value() {
     client.shutdown();
 }
 
+/// The byte offset of the LSP position (`line`, UTF-16 `character`) in
+/// `text`.
+fn offset_of(text: &str, line: u64, character: u64) -> usize {
+    let mut offset = 0;
+    for (i, l) in text.split_inclusive('\n').enumerate() {
+        if i as u64 == line {
+            let mut units = 0;
+            for (at, c) in l.char_indices() {
+                if units >= character {
+                    return offset + at;
+                }
+                units += c.len_utf16() as u64;
+            }
+            return offset + l.trim_end_matches(['\n', '\r']).len();
+        }
+        offset += l.len();
+    }
+    text.len()
+}
+
+/// Open `source`, ask for the code actions of every unused-value
+/// diagnostic and apply each "Discard with `let _ =`" edit. Returns the
+/// number of unused-value diagnostics, the number of fixes offered, and
+/// the text with the fixes applied.
+fn apply_discard_fixes(client: &mut LspClient, uri: &str, source: &str) -> (usize, usize, String) {
+    let diags = client.did_open_and_collect_diagnostics(uri, source);
+    let unused: Vec<Value> = diags
+        .iter()
+        .filter(|d| d.get("code").and_then(|c| c.as_str()) == Some("E0340"))
+        .cloned()
+        .collect();
+    let mut inserts: Vec<(usize, String)> = Vec::new();
+    for diag in &unused {
+        let resp = client.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": { "uri": uri },
+                "range": diag.get("range").cloned().expect("the diagnostic has a range"),
+                "context": { "diagnostics": [diag] }
+            }),
+        );
+        for action in code_actions(&resp) {
+            if action.get("title").and_then(|t| t.as_str()) != Some("Discard with `let _ =`") {
+                continue;
+            }
+            let edits = action
+                .pointer("/edit/changes")
+                .and_then(|c| c.get(uri))
+                .and_then(|v| v.as_array())
+                .expect("edits for our uri");
+            for edit in edits {
+                let start = edit.pointer("/range/start").expect("an edit has a start");
+                assert_eq!(
+                    edit.pointer("/range/end"),
+                    Some(start),
+                    "the fix only inserts"
+                );
+                let at = offset_of(
+                    source,
+                    start["line"].as_u64().expect("a line"),
+                    start["character"].as_u64().expect("a character"),
+                );
+                let text = edit["newText"].as_str().expect("new text").to_string();
+                inserts.push((at, text));
+            }
+        }
+    }
+    let offered = inserts.len();
+    inserts.sort();
+    let mut fixed = source.to_string();
+    for (at, text) in inserts.into_iter().rev() {
+        fixed.insert_str(at, &text);
+    }
+    (unused.len(), offered, fixed)
+}
+
+/// The quick fix on every shape a statement can have: a statement that
+/// starts with a parenthesis, the literals, a closure, a line that
+/// starts with `-`, a loop, a match, a pipeline over several lines, a
+/// string, and statements behind text that is not ASCII. Each unused
+/// value has the fix, and the text with every fix applied checks.
+#[test]
+fn discard_quickfix_gives_a_program_that_checks_on_every_statement_shape() {
+    let source = r#"import channel
+import list
+
+type Holder {
+  f: Fn() -> Result(Int, String),
+}
+
+fn risky() -> Result(Int, String) {
+  Err("lost")
+}
+
+fn generic(x, y) {
+  x
+  y
+  0
+}
+
+fn parenthesised() {
+  let h = Holder { f: risky }
+  let a = 1
+  (h.f)()
+  (a + 1) * 2
+  (risky() as Result(Int, String))
+  (risky())
+  ((a))
+  println("done")
+}
+
+fn kinds() {
+  let n = 3
+  []
+  None
+  #{}
+  Ok(1)
+  channel.new(1)
+  { x -> x }
+  { -> risky() }
+  -n
+  - n * 2
+  loop i = 0 {
+    match i < 3 {
+      true -> loop(i + 1)
+      false -> i
+    }
+  }
+  match n {
+    3 -> "three"
+    _ -> "other"
+  }
+  [1, 2]
+    |> list.map { x -> x + 1 }
+    |> list.length
+  "text {n}"
+  println("done")
+}
+
+fn main() {
+  let s = "é"
+  println("ünï { { risky()
+    s } } çödé { { risky()
+    1 } }")
+  match s {
+    "é" -> { risky()
+      println("x") }
+    _ -> ()
+  }
+  parenthesised()
+  kinds()
+  println(generic(1, 2))
+}
+"#;
+    let mut client = LspClient::spawn();
+    let (unused, offered, fixed) = apply_discard_fixes(
+        &mut client,
+        "file:///tmp/silt_ca_unused_shapes.silt",
+        source,
+    );
+    assert_eq!(
+        unused, 23,
+        "every statement that leaves a value is reported"
+    );
+    assert_eq!(offered, 23, "each has the fix");
+    assert_eq!(fixed.matches("let _ = ").count(), 23);
+    assert!(
+        fixed.contains("  let _ = (h.f)()\n") && fixed.contains("  let _ = ((a))\n"),
+        "the fix stands before the statement's first token:\n{fixed}"
+    );
+    let after = client
+        .did_open_and_collect_diagnostics("file:///tmp/silt_ca_unused_shapes_fixed.silt", &fixed);
+    assert!(
+        after.is_empty(),
+        "the fixed program has no diagnostics; got {after:?}\n{fixed}"
+    );
+    client.shutdown();
+}
+
+/// `let p = point { x: 1 }` is two statements, and `let _ = ` before the
+/// `{` would not parse: the unused value there has no fix, and a help
+/// that names the likely mistake.
+#[test]
+fn no_discard_quickfix_for_a_brace_behind_a_name() {
+    let source = "type Point {\n  x: Int,\n}\n\nfn main() {\n  let point = Point { x: 0 }\n  let p = point { x: 1 }\n  println(p.x)\n}\n";
+    let mut client = LspClient::spawn();
+    let uri = "file:///tmp/silt_ca_unused_brace.silt";
+    let (unused, offered, fixed) = apply_discard_fixes(&mut client, uri, source);
+    assert_eq!(unused, 1, "the `{{ x: 1 }}` is an unused value");
+    assert_eq!(offered, 0, "no fix is offered");
+    assert_eq!(fixed, source);
+    let diags = client.did_open_and_collect_diagnostics(uri, source);
+    let message = diags[0]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("a record literal's type name starts with an upper-case letter"),
+        "the help names the likely mistake; got {message:?}"
+    );
+    client.shutdown();
+}
+
 #[test]
 fn no_action_when_diagnostic_is_unrelated() {
     let mut client = LspClient::spawn();

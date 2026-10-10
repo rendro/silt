@@ -1,0 +1,23 @@
+error[type]: this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+ --> unused_value__a_statement_that_starts_with_a_parenthesis.silt:17:3
+    |
+ 17 |   (h.f)()
+    |   ^^^^^^^ this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_statement_that_starts_with_a_parenthesis.silt:18:3
+    |
+ 18 |   (a + 1) * 2
+    |   ^^^^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+ --> unused_value__a_statement_that_starts_with_a_parenthesis.silt:19:3
+    |
+ 19 |   (risky())
+    |   ^^^^^^^^^ this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_statement_that_starts_with_a_parenthesis.silt:20:3
+    |
+ 20 |   ((a))
+    |   ^^^^^ this `Int` value is unused; write `let _ = ...` to discard it

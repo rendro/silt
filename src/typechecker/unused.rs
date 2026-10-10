@@ -84,23 +84,25 @@ impl TypeChecker {
     /// being final.
     pub(super) fn check_unused_values(&mut self, program: &mut Program) {
         let mut found: Vec<Diagnostic> = Vec::new();
+        let marks = std::mem::take(&mut program.statements);
         for decl in &mut program.decls {
             match decl {
-                Decl::Fn(f) => self.unused_in(&mut f.body, &mut found),
+                Decl::Fn(f) => self.unused_in(&mut f.body, &marks, &mut found),
                 Decl::TraitImpl(ti) => {
                     for m in &mut ti.methods {
-                        self.unused_in(&mut m.body, &mut found);
+                        self.unused_in(&mut m.body, &marks, &mut found);
                     }
                 }
                 Decl::Trait(t) => {
                     for m in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
-                        self.unused_in(&mut m.body, &mut found);
+                        self.unused_in(&mut m.body, &marks, &mut found);
                     }
                 }
-                Decl::Let { value, .. } => self.unused_in(value, &mut found),
+                Decl::Let { value, .. } => self.unused_in(value, &marks, &mut found),
                 _ => {}
             }
         }
+        program.statements = marks;
         self.errors.extend(found);
     }
 
@@ -116,7 +118,9 @@ impl TypeChecker {
         }
     }
 
-    fn unused_in(&self, expr: &mut Expr, found: &mut Vec<Diagnostic>) {
+    /// Report the unused values of `expr`'s blocks. `marks` are the
+    /// program's.
+    fn unused_in(&self, expr: &mut Expr, marks: &StatementMarks, found: &mut Vec<Diagnostic>) {
         resolve::each_expr_mut(expr, &mut |expr| {
             let ExprKind::Block(stmts) = &expr.kind else {
                 return;
@@ -150,9 +154,29 @@ impl TypeChecker {
                         self.show_type(&ty)
                     ),
                 };
-                let at = Span::point(e.span.file, e.span.start);
-                let mut d = Diagnostic::error(Code::UnusedValue, e.span, message)
-                    .with_fix("Discard with `let _ =`", vec![(at, "let _ = ".to_string())]);
+                // The statement, from its first token: the parentheses
+                // around what it starts with are part of it.
+                let extent = marks
+                    .parenthesised
+                    .iter()
+                    .find(|(inner, _)| *inner == e.span)
+                    .map_or(e.span, |(_, extent)| *extent);
+                let mut d = Diagnostic::error(Code::UnusedValue, extent, message);
+                // `point { x: 1 }`: `let _ = ` before the `{` would not
+                // parse, and is not what is missing.
+                if marks
+                    .brace_after_name
+                    .iter()
+                    .any(|at| at.file == extent.file && at.start == extent.start)
+                {
+                    d = d.with_help(
+                        "a record literal's type name starts with an upper-case letter \
+                         (`Point { ... }`); a `{` behind a value starts a statement of its own",
+                    );
+                } else {
+                    let at = Span::point(extent.file, extent.start);
+                    d = d.with_fix("Discard with `let _ =`", vec![(at, "let _ = ".to_string())]);
+                }
                 if i > 0 && starts_with_minus(e) {
                     d = d.with_help(
                         "a line that starts with `-` is a statement of its own; to subtract \
