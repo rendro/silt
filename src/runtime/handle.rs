@@ -416,7 +416,7 @@ enum TcpIo {
         writing: Mutex<()>,
         /// Held while the socket is switched to non-blocking for one
         /// call, where the system has no call that does not wait
-        /// (see [`without_waiting`]). Nowhere on Unix.
+        /// (see `without_waiting`). Nowhere on Unix.
         switching: Mutex<()>,
     },
     Tls {
@@ -580,7 +580,7 @@ impl TcpStreamHandle {
     /// connection is closed or not a plain one.
     ///
     /// A read of the connection may be in flight on another thread
-    /// meanwhile: it is not disturbed (see [`send_now`]).
+    /// meanwhile: it is not disturbed (see `send_now`).
     pub fn write_now(&self, bytes: &[u8]) -> usize {
         if self.is_closed() {
             return 0;
@@ -795,7 +795,7 @@ fn without_waiting<T>(
 }
 
 /// Whether a call that waits found nothing to do because the socket
-/// was non-blocking for another thread's call ([`without_waiting`]):
+/// was non-blocking for another thread's call (`without_waiting`):
 /// it waits for that call's lock and tries again. Never on Unix,
 /// where no socket of a connection is switched.
 fn switched_meanwhile(error: &std::io::Error) -> bool {
