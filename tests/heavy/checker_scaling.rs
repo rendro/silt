@@ -57,6 +57,58 @@ fn check_time(file: &Path) -> Duration {
     elapsed
 }
 
+/// The best check times of `first` and of `second`, `runs` runs of each,
+/// in turn: the machine may be busy.
+fn best_times(first: &Path, second: &Path, runs: usize) -> (Duration, Duration) {
+    let mut best_first = Duration::MAX;
+    let mut best_second = Duration::MAX;
+    for _ in 0..runs {
+        best_first = best_first.min(check_time(first));
+        best_second = best_second.min(check_time(second));
+    }
+    (best_first, best_second)
+}
+
+/// `first` over `second`.
+fn ratio((first, second): (Duration, Duration)) -> f64 {
+    first.as_secs_f64() / second.as_secs_f64()
+}
+
+/// Measure two times with `measure` until the first is at most `cap`
+/// times the second, at most three times. A machine that was busy
+/// during one measurement is measured again; a ratio that is over the
+/// cap because of what the checker does is over it every time. Returns
+/// the measurements if all three were over, for the failure message.
+fn within(
+    cap: f64,
+    mut measure: impl FnMut() -> (Duration, Duration),
+) -> Result<(), Vec<(Duration, Duration)>> {
+    let mut over = Vec::new();
+    for _ in 0..3 {
+        let measured = measure();
+        if ratio(measured) <= cap {
+            return Ok(());
+        }
+        over.push(measured);
+    }
+    Err(over)
+}
+
+/// The measurements of a failed `within`, for a message: each pair of
+/// times with its ratio.
+fn shown(over: &[(Duration, Duration)]) -> String {
+    let each: Vec<String> = over
+        .iter()
+        .map(|&(first, second)| {
+            format!(
+                "{first:?} against {second:?} ({:.2})",
+                ratio((first, second))
+            )
+        })
+        .collect();
+    each.join(", ")
+}
+
 #[test]
 fn checking_4000_functions_takes_about_twice_as_long_as_2000() {
     let dir = std::env::temp_dir().join(format!("silt_checker_scaling_{}", std::process::id()));
@@ -65,21 +117,16 @@ fn checking_4000_functions_takes_about_twice_as_long_as_2000() {
     let large = dir.join("large.silt");
     std::fs::write(&small, module_of(2_000)).expect("the small module is written");
     std::fs::write(&large, module_of(4_000)).expect("the large module is written");
-    // The best of several runs of each, in turn: the machine may be busy.
-    let mut best_small = Duration::MAX;
-    let mut best_large = Duration::MAX;
-    for _ in 0..7 {
-        best_small = best_small.min(check_time(&small));
-        best_large = best_large.min(check_time(&large));
-    }
+    let measured = within(2.3, || best_times(&large, &small, 5));
     let _ = std::fs::remove_dir_all(&dir);
-    let ratio = best_large.as_secs_f64() / best_small.as_secs_f64();
-    assert!(
-        ratio <= 2.3,
-        "`silt check` of 4,000 functions took {best_large:?}, {ratio:.2} times the \
-         {best_small:?} of 2,000 functions: it is no longer linear in the number of \
-         definitions"
-    );
+    if let Err(over) = measured {
+        panic!(
+            "`silt check` of 4,000 functions took more than 2.3 times as long as that of \
+             2,000 functions in each of three measurements ({}): it is no longer linear in \
+             the number of definitions",
+            shown(&over)
+        );
+    }
 }
 
 /// What the statement-call modules start with: `take` returns what the
@@ -114,29 +161,6 @@ fn calls_between_closures(n: usize, call: &str) -> String {
     source
 }
 
-/// The best check times of `module` with 2,000 calls that wait and with
-/// 2,000 calls that do not (each bound by `let _ =`), measured in turn.
-fn waiting_and_bound(name: &str, module: fn(usize, &str) -> String) -> (Duration, Duration) {
-    let dir = std::env::temp_dir().join(format!(
-        "silt_checker_scaling_{name}_{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).expect("a temporary directory");
-    let waiting = dir.join("waiting.silt");
-    let bound = dir.join("bound.silt");
-    std::fs::write(&waiting, module(2_000, "take(ch)")).expect("the module is written");
-    std::fs::write(&bound, module(2_000, "let _ = take(ch)")).expect("the module is written");
-    // The best of several runs of each, in turn: the machine may be busy.
-    let mut best_waiting = Duration::MAX;
-    let mut best_bound = Duration::MAX;
-    for _ in 0..7 {
-        best_waiting = best_waiting.min(check_time(&waiting));
-        best_bound = best_bound.min(check_time(&bound));
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-    (best_waiting, best_bound)
-}
-
 /// A call that waits for its type costs about what a call that does not
 /// wait costs: a module of 2,000 of them checks in at most twice the
 /// time of the same module with each call bound by `let _ =`.
@@ -156,13 +180,25 @@ fn statement_calls_that_wait_for_a_type_cost_the_same_each() {
         ("closures", calls_between_closures),
     ];
     for (name, module) in shapes {
-        let (waiting, bound) = waiting_and_bound(name, module);
-        let ratio = waiting.as_secs_f64() / bound.as_secs_f64();
-        assert!(
-            ratio <= 2.0,
-            "`silt check` of 2,000 statement calls that wait for a type ({name}) took \
-             {waiting:?}, {ratio:.2} times the {bound:?} of the same calls bound by \
-             `let _ =`: the calls that wait are read again and again"
-        );
+        let dir = std::env::temp_dir().join(format!(
+            "silt_checker_scaling_{name}_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("a temporary directory");
+        let waiting = dir.join("waiting.silt");
+        let bound = dir.join("bound.silt");
+        std::fs::write(&waiting, module(2_000, "take(ch)")).expect("the module is written");
+        std::fs::write(&bound, module(2_000, "let _ = take(ch)")).expect("the module is written");
+        let measured = within(2.0, || best_times(&waiting, &bound, 3));
+        let _ = std::fs::remove_dir_all(&dir);
+        if let Err(over) = measured {
+            panic!(
+                "`silt check` of 2,000 statement calls that wait for a type ({name}) took \
+                 more than twice as long as that of the same calls bound by `let _ =` in \
+                 each of three measurements ({}): the calls that wait are read again and \
+                 again",
+                shown(&over)
+            );
+        }
     }
 }
