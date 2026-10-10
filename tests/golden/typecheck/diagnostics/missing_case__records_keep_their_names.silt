@@ -1,0 +1,64 @@
+-- cmd: check
+-- exit: 1
+-- A value no arm matches is written as a pattern one could write: a
+-- declared record keeps its name wherever it stands (alone, in a tuple,
+-- under a variant, in a list) and says `..` only when it leaves fields
+-- out; an anonymous record names the fields it tests. One wording for a
+-- miss inside a record: the whole value. Where no value can be written
+-- (a record tested by a string) the record is said not to be covered.
+type U { U(Bool) }
+type R { p: Bool, q: U }
+fn anon(v: { a: Bool, b: Option(U) }) -> Int {
+  match v {
+    { a: false, b: _ } -> 0
+  }
+}
+fn top(v: R) -> Int {
+  match v {
+    R { p: true, q: _ } -> 0
+  }
+}
+fn top_full(v: R) -> Int {
+  match v {
+    R { p: true, q: U(true) } -> 0
+    R { p: false, q: U(false) } -> 0
+  }
+}
+fn in_tuple(v: (R, Bool)) -> Int {
+  match v {
+    (R { p: true, q: _ }, _) -> 0
+  }
+}
+fn in_some(v: Option(R)) -> Int {
+  match v {
+    None -> 0
+    Some(R { p: false, .. }) -> 1
+  }
+}
+fn in_some_full(v: Option(R)) -> Int {
+  match v {
+    None -> 0
+    Some(R { p: true, q: _ }) -> 1
+    Some(R { p: false, q: U(false) }) -> 2
+  }
+}
+fn in_list(v: List(R)) -> Int {
+  match v {
+    [] -> 0
+    [R { p: true, .. }, .._] -> 1
+  }
+}
+fn one_field(v: R) -> Int {
+  match v {
+    R { p: true, q: U(false) } -> 0
+    R { p: false, q: U(false) } -> 1
+  }
+}
+
+type Named { name: String }
+fn by_name(v: Named) -> Int {
+  match v {
+    Named { name: "a" } -> 0
+  }
+}
+fn main() { println("x") }

@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stderr-contains: undefined variable 'undefined_thing'
+-- stdin: type U { U(Int) }\ntrait Display for U { fn display(self) -> String { undefined_thing } }\n"{U(1)}"\ntype W { w: U }\n"{W { w: U(1) }}"\n:quit\n
+-- The same for an undefined name in the impl's body, and for a record that
+-- holds the type.

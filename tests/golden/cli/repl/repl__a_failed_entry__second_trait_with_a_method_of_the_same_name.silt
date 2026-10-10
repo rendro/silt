@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stderr-contains: type mismatch: expected Int, got String
+-- stderr-contains: ambiguous method 'm' on type 'U': provided by traits
+-- stdin: type U { U(Int) }\ntrait A { fn m(self) -> String }\ntrait A for U { fn m(self) -> String { "a" } }\nU(1).m()\ntrait B { fn m(self) -> Int }\nU(1).m()\ntrait B for U { fn m(self) -> Int { "bad" } }\nU(1).m()\nfn go(x: U) -> String { x.m() }\ngo(U(2))\ntrait B for U { fn m(self) -> Int { 7 } }\nU(1).m()\n:quit\n
+-- Two traits with a method `m`: the failed impl of the second leaves the
+-- first one's `m` (it was lost: the row of the method table was written
+-- over). With both impls the call is ambiguous.

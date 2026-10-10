@@ -1,0 +1,69 @@
+error[type]: type mismatch: expected a, got Int
+ --> rigid_variable_mismatch__names_the_variable.silt:7:18
+   |
+ 7 | fn id(x: a) -> a {
+   |                  ^ type mismatch: expected a, got Int
+ ::: rigid_variable_mismatch__names_the_variable.silt:7:10
+   |
+ 7 | fn id(x: a) -> a {
+   |          - the type variable `a` is declared here
+  = note: `a` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
+
+error[type]: type mismatch: expected a, got b
+ --> rigid_variable_mismatch__names_the_variable.silt:11:26
+    |
+ 11 | fn pair(x: a, y: b) -> a {
+    |                          ^ type mismatch: expected a, got b
+ ::: rigid_variable_mismatch__names_the_variable.silt:11:12
+    |
+ 11 | fn pair(x: a, y: b) -> a {
+    |            - the type variable `a` is declared here
+ ::: rigid_variable_mismatch__names_the_variable.silt:11:18
+    |
+ 11 | fn pair(x: a, y: b) -> a {
+    |                  - the type variable `b` is declared here
+  = note: `a` and `b` are type variables of the annotation: each stands for any type, so the code must check whichever types they are
+
+error[type]: type mismatch: expected a, got Int
+ --> rigid_variable_mismatch__names_the_variable.silt:16:7
+    |
+ 16 |   x + 1
+    |       ^ type mismatch: expected a, got Int
+ ::: rigid_variable_mismatch__names_the_variable.silt:15:11
+    |
+ 15 | fn add(x: a) -> Int {
+    |           - the type variable `a` is declared here
+  = note: `a` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
+
+error[type]: type mismatch: expected t, got Int
+ --> rigid_variable_mismatch__names_the_variable.silt:23:38
+    |
+ 23 | fn area_of(s: t) -> t where t: Shape {
+    |                                      ^ type mismatch: expected t, got Int
+ ::: rigid_variable_mismatch__names_the_variable.silt:23:15
+    |
+ 23 | fn area_of(s: t) -> t where t: Shape {
+    |               - the type variable `t` is declared here
+  = note: `t` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
+
+error[type]: type mismatch: expected e, got Int
+ --> rigid_variable_mismatch__names_the_variable.silt:27:26
+    |
+ 27 | fn wrap(x: e) -> List(e) {
+    |                          ^ type mismatch: expected e, got Int
+ ::: rigid_variable_mismatch__names_the_variable.silt:27:12
+    |
+ 27 | fn wrap(x: e) -> List(e) {
+    |            - the type variable `e` is declared here
+  = note: `e` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
+
+error[type]: type mismatch: expected c, got String
+ --> rigid_variable_mismatch__names_the_variable.silt:32:23
+    |
+ 32 |   let f: Fn(c) -> c = { x -> "s" }
+    |                       ^^^^^^^^^^^^ type mismatch: expected c, got String
+ ::: rigid_variable_mismatch__names_the_variable.silt:32:13
+    |
+ 32 |   let f: Fn(c) -> c = { x -> "s" }
+    |             - the type variable `c` is declared here
+  = note: `c` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is

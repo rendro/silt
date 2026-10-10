@@ -34,10 +34,11 @@ fn record_info_size_locked() {
 fn trait_info_size_locked() {
     // Stage 5 shrank its spans from 24 to 12 bytes; stage 6 added `self_var`,
     // `var_names` and `method_bounds`, which a default body and an impl
-    // are checked with.
+    // are checked with, and `receivers`, which says where `x.m(..)` may
+    // call a method.
     assert_eq!(
         std::mem::size_of::<TraitInfo>(),
-        312,
+        360,
         "TraitInfo size changed — see module doc"
     );
 }

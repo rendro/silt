@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
--- A non-exhaustive match on a generic record names the record field in the witness.
+-- A non-exhaustive match on a generic record shows a value of the record no arm matches.
 -- stderr-contains: non-exhaustive
--- stderr-contains: Pair.first
+-- stderr-contains: `Pair { first: false, .. }` is not covered
 -- stderr-not-contains: not all patterns are covered
 type Pair(a, b) { first: a, second: b }
 fn check(p: Pair(Bool, Int)) -> Int { match p { Pair{first: true, second} -> second } }

@@ -191,6 +191,34 @@ impl Resolver {
         self.aliases.remove(&alias.id);
     }
 
+    /// Forget the associated-type bindings of the impl of `trait_name`
+    /// for the type with the head `target_head`: the impl is gone (its
+    /// module is checked again, or its REPL entry failed).
+    pub fn unregister_assoc_bindings(&mut self, trait_name: TraitKey, target_head: TypeRef) {
+        self.assoc_bindings
+            .retain(|(tr, head, _), _| !(*tr == trait_name && *head == target_head));
+    }
+
+    /// What the registries hold, for a test that compares two states of
+    /// a session: each alias and each binding, in a fixed order.
+    #[doc(hidden)]
+    pub fn fingerprint(&self) -> Vec<String> {
+        let mut rows: Vec<String> = self
+            .aliases
+            .keys()
+            .map(|id| format!("alias {id:?}"))
+            .chain(
+                self.assoc_bindings
+                    .iter()
+                    .map(|((tr, head, name), binding)| {
+                        format!("binding {tr:?} {head:?} {name} = {:?}", binding.ty)
+                    }),
+            )
+            .collect();
+        rows.sort();
+        rows
+    }
+
     /// Register an `assoc-type` impl binding.
     ///
     /// Called by the typechecker when processing a `TraitImpl`: for

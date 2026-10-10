@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- `helper.run` calls its parameter as a statement, so the parameter
+-- returns `()`. A mismatch with that `()` in the module that calls
+-- `run` names the statement in the module that wrote it, by the
+-- qualified name and by the imported one.
+import helper
+import helper.{ run }
+
+fn main() {
+  println(helper.run { -> 3 })
+  println(run { -> "x" })
+}

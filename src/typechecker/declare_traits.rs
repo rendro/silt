@@ -7,28 +7,17 @@ impl TypeChecker {
         // (a) An unknown supertrait is reported where the trait is
         // registered (`register_trait_decl_inner`).
 
-        // Validate using method_table + trait_impl_set (the new system).
-        let impl_pairs: Vec<(TraitKey, TypeRef)> =
-            self.tables.trait_impl_set.iter().cloned().collect();
+        // The impls this module writes: an impl is validated where it
+        // is written, once, and not again by every module checked after
+        // it in the session.
+        let impl_pairs: Vec<(TraitKey, TypeRef)> = self.tables.trait_impl_set.added().collect();
         for (trait_name, type_name) in &impl_pairs {
-            // GAP-2: Prefer the impl block's real span (stored at
-            // registration time) over a method span. Fall back to the
-            // method table for a structural trait, which has no impl
-            // block, and to `Span::BUILTIN` for what silt declares
-            // itself.
-            let diag_span = self
-                .tables
-                .trait_impl_spans
-                .get(&(*trait_name, *type_name))
-                .copied()
-                .or_else(|| {
-                    self.tables
-                        .method_table
-                        .iter()
-                        .find(|((t, _), _)| t == type_name)
-                        .map(|(_, e)| e.span)
-                })
-                .unwrap_or(Span::BUILTIN);
+            // The impl block, for the messages. (A row without one is
+            // no written impl: nothing to validate.)
+            let Some(&diag_span) = self.tables.trait_impl_spans.get(&(*trait_name, *type_name))
+            else {
+                continue;
+            };
 
             // Check that the trait exists first.
             let Some(trait_info) = self.tables.traits.get(trait_name).cloned() else {
@@ -40,28 +29,11 @@ impl TypeChecker {
                 continue;
             };
 
-            // (A structural trait has no impl to validate, unless one is
-            // written: `trait Display for T {}` is an impl, and lacks
-            // its method.)
-            let written = self
-                .tables
-                .trait_impl_spans
-                .contains_key(&(*trait_name, *type_name));
-            let is_auto = trait_info
-                .methods
-                .first()
-                .and_then(|(m, _)| self.tables.method_table.get(&(*type_name, *m)))
-                .map(|e| e.structural)
-                .unwrap_or(false);
-            if is_auto && !written {
-                continue;
-            }
-
             // (b) Supertrait obligation: implementing a trait on a type
             // requires every supertrait to also be implemented for the
-            // same type. The structural traits (Display/Equal/Hash/Compare)
-            // are in `trait_impl_set` for the types that have them, so
-            // `trait Ordered: Equal { ... }` followed by
+            // same type. A structural supertrait (Display/Equal/Hash/
+            // Compare) is the judgement's to answer (`head_has_trait`),
+            // so `trait Ordered: Equal { ... }` followed by
             // `trait Ordered for MyType { ... }` holds when MyType has
             // Equal by its structure.
             //
@@ -80,11 +52,7 @@ impl TypeChecker {
                 .cloned()
                 .unwrap_or_default();
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
-                if !self
-                    .tables
-                    .trait_impl_set
-                    .contains(&(*supertrait, *type_name))
-                {
+                if !self.head_has_trait(*supertrait, *type_name) {
                     self.error(Code::MissingTraitImpl,
                         format!(
                             "type '{type_name}' implements '{trait_name}' but does not implement supertrait '{supertrait}'"
@@ -154,15 +122,12 @@ impl TypeChecker {
             // Every method the trait declares is registered for the type:
             // written in the impl, or the trait's default
             // (`register_trait_impl`).
-            for (method_name, _) in &trait_info.methods {
-                let key = (*type_name, *method_name);
-                // (What the type has by its structure is not the
-                // impl's method.)
+            for (method_name, method_ty) in &trait_info.methods {
                 let provided = self
                     .tables
-                    .method_table
-                    .get(&key)
-                    .is_some_and(|entry| !entry.structural);
+                    .impl_methods
+                    .get(*type_name, *method_name, *trait_name)
+                    .is_some();
                 if !provided && !trait_info.default_method_bodies.contains_key(method_name) {
                     // No impl method AND the trait does not provide a
                     // default body — the impl is genuinely missing a
@@ -174,6 +139,42 @@ impl TypeChecker {
                             trait_name, type_name, method_name
                         ),
                         diag_span,
+                    );
+                    // That is the impl's one error. The type has the
+                    // trait by this impl for every question, a call of
+                    // the method among them: it is entered with the
+                    // type the trait declares, so a use of it is not
+                    // reported as well.
+                    let impl_key = (*trait_name, *type_name);
+                    let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                    if let Some(self_type) = self.tables.impl_self_types.get(&impl_key) {
+                        mapping.insert(trait_info.self_var, self_type.clone());
+                    }
+                    if let Some(args) = self.tables.impl_trait_args.get(&impl_key)
+                        && args.len() == trait_info.param_var_ids.len()
+                    {
+                        mapping.extend(trait_info.param_var_ids.iter().copied().zip(args.clone()));
+                    }
+                    for v in free_vars_in(method_ty) {
+                        mapping.entry(v).or_insert_with(|| self.fresh_var());
+                    }
+                    let mut preds = self
+                        .tables
+                        .impl_preds
+                        .get(&impl_key)
+                        .cloned()
+                        .unwrap_or_default();
+                    preds.extend(Self::bounds_under(&trait_info, *method_name, &mapping));
+                    self.register_method_entry(
+                        *type_name,
+                        *method_name,
+                        MethodEntry {
+                            method_type: substitute_vars(method_ty, &mapping),
+                            structural: false,
+                            trait_name: Some(*trait_name),
+                            receiver: trait_info.receivers.contains(method_name),
+                            preds,
+                        },
                     );
                 }
             }
@@ -332,6 +333,7 @@ impl TypeChecker {
                 supertrait_args: Vec::new(),
                 param_where_clauses: Vec::new(),
                 methods: Vec::new(),
+                receivers: std::collections::HashSet::new(),
                 method_bounds: HashMap::new(),
                 self_var: 0,
                 var_names: Vec::new(),
@@ -366,8 +368,12 @@ impl TypeChecker {
         // An impl's method has the declared type whatever the impl
         // writes, and a default body is checked against it.
         let mut methods: Vec<(Symbol, Type)> = Vec::with_capacity(t.methods.len());
+        let mut receivers: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
         let mut method_bounds: HashMap<Symbol, Vec<Pred>> = HashMap::new();
         for m in &t.methods {
+            if writes_self(m) {
+                receivers.insert(m.name);
+            }
             let mut param_map = HashMap::new();
             param_map.insert(self_sym, self_var.clone());
             for (name, ty) in &trait_param_vars {
@@ -383,10 +389,7 @@ impl TypeChecker {
                                 unreachable!("parser guarantees `type` params use an Ident pattern")
                             }
                         };
-                        let var = param_map
-                            .entry(name)
-                            .or_insert_with(|| self.fresh_var())
-                            .clone();
+                        let var = self.type_param_var(&mut param_map, name, param.pattern.span);
                         Type::type_of(var)
                     }
                     ParamKind::Data => {
@@ -522,6 +525,7 @@ impl TypeChecker {
                 supertrait_args,
                 param_where_clauses,
                 methods,
+                receivers,
                 method_bounds,
                 self_var: self_var_id,
                 var_names,
@@ -666,21 +670,17 @@ impl TypeChecker {
     ///   of another module that is named reaches every impl `I` writes
     ///   for traits it does not declare).
     fn impl_in_its_module(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
+        if self.impl_is_here(ti, target_type) {
+            return true;
+        }
         let Some(defs) = self.defs.clone() else {
             return true;
         };
-        // An unknown trait is reported elsewhere.
         let Some(tr) = self.impl_trait(ti) else {
             return true;
         };
-        let here = |module: crate::session::ModuleId| {
-            module == self.module || (self.is_cell && self.cells.contains(&module))
-        };
         let of_trait = defs.get(tr.id.0).module;
         let of_type = defs.get(target_type.id.0).module;
-        if here(of_trait) || here(of_type) {
-            return true;
-        }
         let named = |module: crate::session::ModuleId| {
             (!module.is_builtin()).then(|| {
                 self.tables
@@ -716,6 +716,24 @@ impl TypeChecker {
             ti.span,
         );
         false
+    }
+
+    /// Whether the impl `ti`, for the type `target_type`, is written
+    /// where it may be: in the module of its trait or of its type (the
+    /// rule `impl_in_its_module` reports). An impl elsewhere is no impl:
+    /// nothing of it is registered, and nothing may count on it.
+    pub(super) fn impl_is_here(&self, ti: &TraitImpl, target_type: TypeRef) -> bool {
+        let Some(defs) = &self.defs else {
+            return true;
+        };
+        // An unknown trait is reported elsewhere.
+        let Some(tr) = self.impl_trait(ti) else {
+            return true;
+        };
+        let here = |module: crate::session::ModuleId| {
+            module == self.module || (self.is_cell && self.cells.contains(&module))
+        };
+        here(defs.get(tr.id.0).module) || here(defs.get(target_type.id.0).module)
     }
 
     /// Register the impl `ti`: its methods for its type, with the types
@@ -783,31 +801,20 @@ impl TypeChecker {
 
         // Coherence check: reject duplicate user-defined impls.
         if self.tables.trait_impl_set.contains(&impl_key) {
-            // A written impl takes the place of the structural trait
-            // (only `Display` can be written by hand: see
-            // `reject_sealed_trait_impls`).
-            let first_method = ti
-                .methods
-                .first()
-                .map(|m| m.name)
-                .unwrap_or_else(|| intern("display"));
-            // The impl of this trait already registered, not a method of
-            // another trait of one name (`trait Describe for Pt { fn
-            // display }` is no impl of Display).
-            let existing = self
-                .tables
-                .trait_methods
-                .get(&(target_type, first_method, trait_key))
-                .cloned()
-                .or_else(|| {
-                    self.tables
-                        .method_table
-                        .get(&(target_type, first_method))
-                        .filter(|e| self.entry_trait(e, first_method) == Some(trait_key))
-                        .cloned()
-                });
-            let is_overriding_auto = existing.map(|e| e.structural).unwrap_or(true);
-            if !is_overriding_auto {
+            // A builtin type is stamped with the structural traits it
+            // has: that is no impl. (Where an impl of one may be
+            // written is `impl_in_its_module`'s to say.)
+            let structural_method = STRUCTURAL_METHODS
+                .iter()
+                .find(|(name, _)| trait_key.is_builtin(name))
+                .map(|(_, method)| intern(method));
+            let stamp = structural_method.is_some_and(|method| {
+                self.tables
+                    .impl_methods
+                    .get(target_type, method, trait_key)
+                    .is_none()
+            });
+            if !stamp {
                 self.error(
                     Code::DuplicateDeclaration,
                     format!(
@@ -937,10 +944,14 @@ impl TypeChecker {
                     // user-arity branches: `method_scheme`
                     // quantifies them, new at each use.
                     //
-                    // Variadic `Tuple` has no fresh-var shape; it keeps
-                    // the `Generic("Tuple", [])` fallback and is matched
-                    // by the bare-`Tuple` wildcard arm in `unify` (same
-                    // strategy as `Fn`).
+                    // `Fn` and `Tuple` have no one shape: the impl is
+                    // for every function, or every tuple, and its self
+                    // type is a variable of the impl (`shape_vars`),
+                    // which a use decides by the receiver's type. In
+                    // the impl's bodies it is rigid like the `a` of
+                    // `List(a)`: `self` is some function, to be handed
+                    // on but not called, and not a function of any
+                    // signature one may wish for.
                     match builtin_type_name(target_type) {
                         Some("List") => Type::List(Box::new(self.fresh_var())),
                         Some("Set") => Type::Set(Box::new(self.fresh_var())),
@@ -948,16 +959,15 @@ impl TypeChecker {
                         Some("Map") => {
                             Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
                         }
-                        // Use the canonicalised target name so the
-                        // self_type built here matches the `method_table`
-                        // registration key (also canonicalised). Without
-                        // this, `trait T for Fun` produces a self_type of
-                        // `Generic("Fun", [])` while the impl_key is
-                        // `("T", "Fn")` — and the dispatch unify of
-                        // `Type::Fun(_, _)` against `Generic("Fun", [])`
-                        // misses the `(Type::Fun, Generic("Fn", []))` arm
-                        // we added in `unify`. Round 71 follow-up TYPE-3
-                        // canonical-name unification.
+                        Some(shape @ ("Fn" | "Tuple")) => {
+                            let (ty, var) = self.fresh_tv();
+                            let about = match shape {
+                                "Fn" => ("function", "its parameters and its result"),
+                                _ => ("tuple", "its elements"),
+                            };
+                            self.shape_vars.insert(var, about);
+                            ty
+                        }
                         _ => Self::type_from_name(target_type),
                     }
                 } else {
@@ -1463,10 +1473,15 @@ impl TypeChecker {
             if rigid.iter().any(|r| r.var == var) {
                 continue;
             }
-            let name = letters
-                .by_ref()
-                .find(|name| !impl_param_map.contains_key(name))
-                .unwrap_or_else(|| intern("_"));
+            // (The self type of an impl for every function or tuple
+            // is shown by the target's name.)
+            let name = match self.shape_vars.contains_key(&var) {
+                true => target_type.name,
+                false => letters
+                    .by_ref()
+                    .find(|name| !impl_param_map.contains_key(name))
+                    .unwrap_or_else(|| intern("_")),
+            };
             rigid.push(RigidId { var, name });
         }
         let body_self = rigidify(&self_type, &rigid);
@@ -1518,6 +1533,8 @@ impl TypeChecker {
                 substitute_vars(ty, &mapping)
             });
             let has_declared_type = seeded.is_some();
+            // Whether the trait declares the method with a receiver.
+            let declared_receiver = declared.map(|(info, _)| info.receivers.contains(&method.name));
             let expected = seeded.as_ref().map(|ty| rigidify(ty, &method_rigid));
             let (expected_params, expected_ret) = match &expected {
                 Some(Type::Fun(params, ret)) => (params.clone(), Some((**ret).clone())),
@@ -1537,10 +1554,7 @@ impl TypeChecker {
                                 unreachable!("parser guarantees `type` params use an Ident pattern")
                             }
                         };
-                        let var = param_map
-                            .entry(name)
-                            .or_insert_with(|| self.fresh_var())
-                            .clone();
+                        let var = self.type_param_var(&mut param_map, name, param.pattern.span);
                         Type::type_of(var)
                     }
                     ParamKind::Data => {
@@ -1570,6 +1584,20 @@ impl TypeChecker {
             // Where the two disagree, the body is checked against what
             // the impl wrote, so the disagreement is reported once.
             let body_type = match &expected {
+                // The impl writes the parameters the trait declares, the
+                // receiver among them: one more or one less is not a
+                // method of the trait.
+                Some(Type::Fun(declared, _)) if declared.len() != method.params.len() => {
+                    self.impl_method_arity(ti, method, declared.len());
+                    written
+                }
+                // And the receiver where the trait declares one, there
+                // only: `self` is no name for a parameter of a method
+                // that is called on the type.
+                Some(_) if declared_receiver.is_some_and(|takes| takes != writes_self(method)) => {
+                    self.impl_method_receiver(ti, method);
+                    written
+                }
                 Some(expected) => match self.unify_types(&written, expected) {
                     Ok(()) => expected.clone(),
                     Err(mismatch) => {
@@ -1588,7 +1616,7 @@ impl TypeChecker {
             // Two traits may each provide a method of one name for one
             // type (two modules' `Show` for `Int`): each impl is kept, by
             // its trait, and a call means the one whose trait the module
-            // of the call sees (`select_visible_methods`); a call that
+            // of the call sees (`method_entry`); a call that
             // sees both is ambiguous.
 
             // What a use of the method owes: the bounds of the impl's
@@ -1716,16 +1744,32 @@ impl TypeChecker {
                 method.name,
                 MethodEntry {
                     method_type: fn_type,
-                    // The method's own span (not `ti.span`, the impl
-                    // block's header), for what is reported about it.
-                    span: method.span,
                     structural: false,
                     trait_name: Some(trait_key),
+                    receiver: declared_receiver.unwrap_or_else(|| writes_self(method)),
                     preds: method_constraints.clone(),
                 },
             );
 
             // What the body is checked against (`check_decl_bodies`).
+            // A self type that is a variable (an impl for every function
+            // or tuple) has the trait in the body: `self.other()` is
+            // the impl's own method.
+            let mut body_bounds = method_constraints;
+            if let Type::Var(var) = &self_type
+                && self.shape_vars.contains_key(var)
+            {
+                body_bounds.push(Pred::Trait {
+                    tr: trait_key,
+                    args: self
+                        .tables
+                        .impl_trait_args
+                        .get(&impl_key)
+                        .cloned()
+                        .unwrap_or_default(),
+                    subject: self_type.clone(),
+                });
+            }
             if let Type::Fun(params, ret) = body_type {
                 self.impl_sigs.insert(
                     (target_type, method.name, trait_key),
@@ -1734,7 +1778,7 @@ impl TypeChecker {
                         ret: *ret,
                         names: param_map,
                         rigid: method_rigid,
-                        bounds: method_constraints,
+                        bounds: body_bounds,
                         complete: true,
                     },
                 );
@@ -1762,14 +1806,75 @@ impl TypeChecker {
                     *name,
                     MethodEntry {
                         method_type: substitute_vars(ty, &mapping),
-                        span: ti.span,
                         structural: false,
                         trait_name: Some(trait_key),
+                        receiver: info.receivers.contains(name),
                         preds: method_constraints,
                     },
                 );
             }
         }
+    }
+
+    /// Report the impl method `method`, written with a number of
+    /// parameters other than the `declared` ones of its trait.
+    fn impl_method_arity(&mut self, ti: &TraitImpl, method: &FnDecl, declared: usize) {
+        let (name, tr) = (method.name, ti.trait_name);
+        let written = method.params.len();
+        let takes_self = writes_self(method);
+        let mut d = Diagnostic::error(
+            Code::ArityMismatch,
+            method.span,
+            format!(
+                "method `{name}` takes {written} {} in this impl, but trait `{tr}` \
+                 declares it with {declared}",
+                super::inference::plural(written, "parameter", "parameters")
+            ),
+        );
+        if declared == 0 && takes_self {
+            d = d.with_help(format!(
+                "trait `{tr}` declares `{name}` without `self`: it is called on the type \
+                 (`{}.{name}()`), not on a value",
+                resolve(ti.target_type)
+            ));
+        } else if declared == 1 && written == 0 {
+            d = d.with_help(format!(
+                "trait `{tr}` declares `{name}` with a receiver: write `fn {name}(self)`"
+            ));
+        }
+        self.errors.push(d);
+    }
+
+    /// Report the impl method `method`, written with `self` where its
+    /// trait declares none, or without where it declares one (with as
+    /// many parameters as the trait's).
+    fn impl_method_receiver(&mut self, ti: &TraitImpl, method: &FnDecl) {
+        let (name, tr) = (method.name, ti.trait_name);
+        let (message, help) = match writes_self(method) {
+            true => (
+                format!(
+                    "method `{name}` takes `self` in this impl, but trait `{tr}` declares it \
+                     without"
+                ),
+                format!(
+                    "trait `{tr}` declares `{name}` without `self`: it is called on the type \
+                     (`{}.{name}(..)`), not on a value; name the parameter as the trait does",
+                    resolve(ti.target_type)
+                ),
+            ),
+            false => (
+                format!(
+                    "method `{name}` takes no `self` in this impl, but trait `{tr}` declares \
+                     it with one"
+                ),
+                format!(
+                    "trait `{tr}` declares `{name}` with a receiver: write `self` as its first \
+                     parameter"
+                ),
+            ),
+        };
+        self.errors
+            .push(Diagnostic::error(Code::ArityMismatch, method.span, message).with_help(help));
     }
 
     /// Whether `var: tr(args)` follows from the bounds `declared`: it is
@@ -1815,41 +1920,14 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Enter a method of an impl in the method table, and by its trait
-    /// in `trait_methods` when the impl is written.
+    /// Enter a method of an impl among the impls' methods, by its type,
+    /// its name and its trait: the row is the module's that writes the
+    /// impl.
     fn register_method_entry(&mut self, target_type: TypeRef, method: Symbol, entry: MethodEntry) {
         let trait_key = entry.trait_name.expect("an impl's method has its trait");
-        // The method of another trait this impl's method shares its
-        // name with, for its type, is kept by its trait: a builtin
-        // trait's method of a builtin type (`display` of Int) has no
-        // trait in the method table.
-        if let Some(existing) = self
-            .tables
-            .method_table
-            .get(&(target_type, method))
-            .cloned()
-            && let Some(existing_trait) = existing.trait_name.or_else(|| {
-                crate::defs::builtin_trait_of_method(&resolve(method))
-                    .and_then(|t| self.trait_key(t.0))
-            })
-            && existing_trait != trait_key
-        {
-            self.tables
-                .trait_methods
-                .entry((target_type, method, existing_trait))
-                .or_insert(MethodEntry {
-                    trait_name: Some(existing_trait),
-                    ..existing
-                });
-        }
-        if !entry.structural {
-            self.tables
-                .trait_methods
-                .insert((target_type, method, trait_key), entry.clone());
-        }
         self.tables
-            .method_table
-            .insert((target_type, method), entry);
+            .impl_methods
+            .insert(target_type, method, trait_key, entry);
     }
 
     /// Round 60 G1, extended round 101: a where-clause bound must
@@ -1905,45 +1983,10 @@ impl TypeChecker {
     }
 }
 
-impl TypeChecker {
-    /// For each type and method name that the impls of two or more traits
-    /// provide, put in the method table the one the module checked
-    /// means: the one whose trait the module sees, by `scope`: a trait it
-    /// declares, a trait it names by an import, a trait of a module it
-    /// imports, or a builtin trait. Where it sees none or several of the
-    /// traits, a call is ambiguous (`ambiguous_methods`). Run once the
-    /// module's impls are registered.
-    pub(super) fn select_visible_methods(&mut self) {
-        let mut providers: HashMap<(TypeRef, Symbol), Vec<TraitKey>> = HashMap::new();
-        for (ty, method, t) in self.tables.trait_methods.keys() {
-            providers.entry((*ty, *method)).or_default().push(*t);
-        }
-        let seen: std::collections::HashSet<TraitKey> = providers
-            .values()
-            .flatten()
-            .copied()
-            .filter(|t| self.sees_trait(*t))
-            .collect();
-        let sees = |t: &TraitKey| seen.contains(t);
-        self.ambiguous_methods.clear();
-        for ((ty, method), mut traits) in providers {
-            if traits.len() < 2 {
-                continue;
-            }
-            traits.sort_by_key(|t| self.show_trait(*t));
-            let seen: Vec<TraitKey> = traits.iter().copied().filter(|t| sees(t)).collect();
-            match seen.as_slice() {
-                [t] => {
-                    let entry = self.tables.trait_methods[&(ty, method, *t)].clone();
-                    self.tables.method_table.insert((ty, method), entry);
-                }
-                [] => {
-                    self.ambiguous_methods.insert((ty, method), traits);
-                }
-                _ => {
-                    self.ambiguous_methods.insert((ty, method), seen);
-                }
-            }
-        }
-    }
+/// Whether the method `method` is written with a receiver: its first
+/// parameter is `self`.
+fn writes_self(method: &FnDecl) -> bool {
+    method.params.first().is_some_and(
+        |param| matches!(&param.pattern.kind, PatternKind::Ident(n) if resolve(*n) == "self"),
+    )
 }

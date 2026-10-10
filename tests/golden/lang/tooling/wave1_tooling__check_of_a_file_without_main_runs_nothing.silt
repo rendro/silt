@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 0
+-- `check` runs nothing: the initialiser of a top-level `let` prints
+-- only when the program is run (the expected stdout is empty).
+let x = println("side effect")

@@ -4,11 +4,11 @@
 //! twice.
 //!
 //! No time is asked of the first walk: it checks every file, and how
-//! long that takes is the machine's business (a debug build on a loaded
-//! runner needs a quarter of a minute for a thousand files). What is
-//! asked is what the machine's speed does not decide: a highlight is
-//! answered as for a document alone, and the second "find references"
-//! in a fraction of the time of the first.
+//! long that takes is the machine's business (a debug build needs 2.6 s
+//! for a thousand files on a quiet machine; a loaded runner several
+//! times that). What is asked is what the machine's speed does not
+//! decide: a highlight is answered as for a document alone, and the
+//! second "find references" in a fraction of the time of the first.
 
 use std::time::{Duration, Instant};
 
@@ -16,10 +16,8 @@ use serde_json::{Value, json};
 
 use crate::support::LspClient;
 
-/// The importers: a thousand for an optimised server; a quarter of that
-/// for a debug build, where the first walk of a thousand takes ten
-/// times as long as that of 250.
-const FILES: usize = if cfg!(debug_assertions) { 250 } else { 1000 };
+/// The importers.
+const FILES: usize = 1000;
 
 /// How long an answer is waited for. The times are judged by the
 /// assertions at the end, which say what is wrong; this only ends the
@@ -108,7 +106,7 @@ fn highlight_stays_in_the_document_and_references_are_walked_once() {
         "a highlight took {highlight:?} (all: {highlights:?}): it reads more than its document"
     );
     // The first answer checked every importer; the second reads what
-    // the first learned, in a ninth of the time here. Half of it is a
+    // the first learned, in a fifth of the time here. Half of it is a
     // server that checked them again, on a machine of any speed.
     assert!(
         again * 2 < walk,

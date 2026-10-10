@@ -167,6 +167,13 @@ pub struct TypeChecker {
     /// The type variables `let` annotations introduced: no `where`
     /// clause can bound one.
     pub(super) let_vars: std::collections::HashSet<TyVar>,
+    /// Where each annotation variable was first written: a mismatch
+    /// against one shows it.
+    pub(super) var_written: HashMap<TyVar, Span>,
+    /// The self types of the impls for every function (`trait T for
+    /// Fn`) and for every tuple (`trait T for Tuple`): a variable, with
+    /// what it is ("function") and what is not known of it.
+    pub(super) shape_vars: HashMap<TyVar, (&'static str, &'static str)>,
     /// The annotation variables with a `where` clause whose trait is
     /// unknown (reported): what bounds them is not known, so a method
     /// call or a bound owed on one is not reported as well.
@@ -204,10 +211,6 @@ pub struct TypeChecker {
     /// the span of the access; `resolve_all_types` records each on its
     /// access.
     pub(super) deferred_method_traits: HashMap<Span, TraitKey>,
-    /// The methods the impls of two or more traits provide for one type,
-    /// with the traits, where this module sees none or several of the
-    /// traits: a call of one is ambiguous.
-    pub(super) ambiguous_methods: HashMap<(TypeRef, Symbol), Vec<TraitKey>>,
     /// The traits the module names by its imports (`import m.{ T }`),
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
@@ -232,10 +235,15 @@ pub struct TypeChecker {
     /// What the next function or closure to be checked is the value of:
     /// the top-level definition, or the `let` of a block, that names it.
     pub(super) frame_owner: Option<unused::FrameOwner>,
-    /// The parameters whose function type returns `()` because the body
-    /// calls them as a statement: by the function or closure, the
-    /// parameter's index and the statement.
-    pub(super) statement_units: HashMap<unused::Callee, Vec<(usize, Span)>>,
+    /// The statements whose type is being fixed to `()`, while what
+    /// their scope owes is checked again (`recheck_fixed`).
+    pub(super) fixed_statements: Vec<Span>,
+    /// The parameters of the closures a body binds with `let` whose
+    /// function type returns `()` because the closure calls them as a
+    /// statement: by the `let`'s name, the parameter's index and the
+    /// statement. (Those of a top-level definition are the session's:
+    /// `Tables::statement_units`.)
+    pub(super) local_statement_units: HashMap<Symbol, Vec<(usize, Span)>>,
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
     /// Its name, for diagnostics.
@@ -302,6 +310,8 @@ impl TypeChecker {
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
+            var_written: HashMap::new(),
+            shape_vars: HashMap::new(),
             unknown_bounds: std::collections::HashSet::new(),
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),
@@ -311,7 +321,6 @@ impl TypeChecker {
             last_field_access_was_method: false,
             method_trait: None,
             deferred_method_traits: HashMap::new(),
-            ambiguous_methods: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
             reach: None,
@@ -320,7 +329,8 @@ impl TypeChecker {
             statement_calls: Vec::new(),
             fn_frames: Vec::new(),
             frame_owner: None,
-            statement_units: HashMap::new(),
+            local_statement_units: HashMap::new(),
+            fixed_statements: Vec::new(),
             module: crate::session::ModuleId(0),
             module_name: intern("main"),
             own_types: HashMap::new(),
@@ -868,8 +878,6 @@ impl TypeChecker {
                 _ => None,
             });
         }
-        self.select_visible_methods();
-
         // Validate trait implementations against their declarations
         self.validate_trait_impls();
 
@@ -1070,7 +1078,7 @@ impl TypeChecker {
         }
         self.group_rigid.clear();
         self.settle_bounds();
-        self.forget_local_statement_units();
+        self.local_statement_units.clear();
         self.enter_level();
     }
 
@@ -1195,7 +1203,7 @@ impl TypeChecker {
         self.solve_wanted(0);
         self.exit_level();
         self.settle_bounds();
-        self.forget_local_statement_units();
+        self.local_statement_units.clear();
     }
 }
 
@@ -1302,10 +1310,10 @@ pub fn out_of_reach_helps(
     let mut helps = Vec::new();
     for (span, ty, method) in tables.unknown_methods.get(&module).into_iter().flatten() {
         let mut found: Vec<(String, String, bool)> = tables
-            .trait_methods
-            .keys()
-            .filter(|(of, name, _)| of == ty && name == method)
-            .filter_map(|(_, _, t)| {
+            .impl_methods
+            .providers(*ty, *method)
+            .iter()
+            .filter_map(|t| {
                 let owner = defs.get(t.id.0).module;
                 let private = tables
                     .traits
@@ -1386,7 +1394,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     } = context;
     tables.forget(module);
     tables.vars.begin(module);
-    let before = tables.keys();
+    tables.begin_rows();
     let (mut checker, mut env) = builtin_env().start();
     tables.module_names.insert(module, module_name);
     checker.tables = std::mem::take(tables);
@@ -1459,8 +1467,34 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
             }
         }
     }
+    // No check writes over a row of another module: `forget` removes
+    // what a module's check entered, and nothing else.
+    let overwritten = checker.tables.take_overwritten();
+    debug_assert_eq!(
+        overwritten, 0,
+        "the check of '{module_name}' wrote over a row of another module"
+    );
+    if overwritten > 0 {
+        let at = match program.decls.first() {
+            Some(Decl::Fn(f)) => f.span,
+            Some(Decl::Type(t)) => t.span,
+            Some(Decl::Trait(t)) => t.span,
+            Some(Decl::TraitImpl(i)) => i.span,
+            Some(Decl::Import(_, span) | Decl::Let { span, .. }) => *span,
+            None => Span::BUILTIN,
+        };
+        checker.errors.push(Diagnostic::error(
+            Code::CompilerBug,
+            at,
+            format!(
+                "compiler bug: the check of module '{module_name}' declared again what \
+                 another module declares ({overwritten} of the session's rows); the earlier \
+                 declarations stand"
+            ),
+        ));
+    }
     *tables = std::mem::take(&mut checker.tables);
-    let rows = tables.added_since(&before);
+    let rows = tables.take_rows();
     tables.rows.insert(module, rows);
     ModuleCheck {
         diagnostics: {

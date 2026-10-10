@@ -1,6 +1,7 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: non-exhaustive match: not all patterns are covered
+-- stderr-contains: non-exhaustive match: `(_, 11)` is not covered
+-- stderr-contains: non-exhaustive match: `Some(101)` is not covered
 -- Port of repros/type_soundness/ex6.silt, two statements on one line split.
 fn s(x: String, y: Int) -> Int {
   match (x, y) {

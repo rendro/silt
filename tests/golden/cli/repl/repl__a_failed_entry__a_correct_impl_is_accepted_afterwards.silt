@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stderr-contains: type mismatch: expected Int, got String
+-- stdin: type U { U(Int) }\ntrait Display for U { fn display(self) -> String { "fine" } }; let z: Int = "s"\n"{U(1)}"\ntrait Display for U { fn display(self) -> String { "second" } }\n"{U(1)}"\n:quit\n
+-- An entry that fails after its Display impl checked leaves no impl: a
+-- correct one is accepted afterwards, not refused as a duplicate.

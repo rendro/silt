@@ -1,0 +1,5 @@
+error[type]: undefined variable 'nothing_of_that_name'
+ --> display_impl__a_body_that_does_not_check_is_the_one_error.silt:14:5
+    |
+ 14 |     nothing_of_that_name
+    |     ^^^^^^^^^^^^^^^^^^^^ undefined variable 'nothing_of_that_name'

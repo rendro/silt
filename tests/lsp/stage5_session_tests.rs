@@ -118,6 +118,50 @@ fn editing_an_imported_file_republishes_its_importer() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Two modules each give one type a method `m`, by a trait of their own.
+/// A module that sees only one of the traits means that trait's `m`,
+/// also after the other module was edited and closed: closing a module
+/// forgets its rows and no other module's. (The method table had one
+/// row for a type and a method name; the second impl wrote over the
+/// first module's row, which was gone for good when the second module
+/// was forgotten: "unknown field or method 'm' on type T".)
+#[test]
+fn closing_a_module_leaves_the_method_rows_of_the_others() {
+    const A: &str = "pub type T { T(Int) }\npub trait Ta { fn m(self) -> String }\n\
+        trait Ta for T { fn m(self) -> String { \"a\" } }\n\
+        pub fn via_a(t: T) -> String { t.m() }\n";
+    const B: &str = "import a\nimport a.{ T }\npub trait Tb { fn m(self) -> String }\n\
+        trait Tb for T { fn m(self) -> String { \"b\" } }\n\
+        pub fn via_b(t: T) -> String { t.m() }\n";
+    const C: &str = "import a\nimport a.{ T, Ta }\nfn main() {\n  println(T(1).m())\n  \
+        println(a.via_a(T(2)))\n}\n";
+    let dir = project("rows", &[("a.silt", A), ("b.silt", B), ("c.silt", C)]);
+    let [a_uri, b_uri, c_uri] = ["a.silt", "b.silt", "c.silt"].map(|name| uri(&dir.join(name)));
+    let mut client = LspClient::spawn_with_root(Some(&uri(&dir)));
+    client.did_open_and_wait(&a_uri, A);
+    client.did_open_and_wait(&b_uri, B);
+    let opened = client.did_open_and_wait(&c_uri, C);
+    assert_eq!(messages(&opened), Vec::<String>::new(), "{opened}");
+
+    did_change(&mut client, &b_uri, 2, &format!("{B}\n"));
+    client.wait_for_diagnostics(&b_uri);
+    client.send_notification(
+        "textDocument/didClose",
+        json!({ "textDocument": { "uri": b_uri } }),
+    );
+    for (version, text) in [(2, format!("{C}\n")), (3, format!("{C}\n\n"))] {
+        did_change(&mut client, &c_uri, version, &text);
+        let published = client.wait_for_diagnostics(&c_uri);
+        assert_eq!(
+            messages(&published),
+            Vec::<String>::new(),
+            "c.silt still means `Ta`'s `m` after b.silt was closed: {published}"
+        );
+    }
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 fn position_of(text: &str, needle: &str, offset: usize) -> (u32, u32) {
     let at = text.find(needle).expect("needle in text") + offset;
     let line = text[..at].matches('\n').count() as u32;

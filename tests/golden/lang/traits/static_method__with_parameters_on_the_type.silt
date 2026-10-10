@@ -1,0 +1,34 @@
+-- What works: a method without `self` on the type and on a `type`
+-- parameter, and as a function value; a method with `self` on a value
+-- and, with the receiver as its first argument, on the type.
+trait Mk {
+  fn make(n: Int) -> Self
+  fn join(a: Self, b: Self) -> Self
+  fn twice(self) -> Self
+}
+
+trait Mk for Int {
+  fn make(n: Int) -> Int {
+    n
+  }
+  fn join(a: Int, b: Int) -> Int {
+    a + b
+  }
+  fn twice(self) -> Int {
+    self * 2
+  }
+}
+
+fn build(n: Int, type a) -> a where a: Mk {
+  a.make(n).twice()
+}
+
+fn main() {
+  println(Int.make(4))
+  println(Int.join(1, 2))
+  println(build(5, Int))
+  let f = Int.make
+  println(f(3))
+  println(4.twice())
+  println(Int.twice(4))
+}

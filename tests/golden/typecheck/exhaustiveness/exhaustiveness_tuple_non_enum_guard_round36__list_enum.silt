@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: non-exhaustive match
--- stderr-contains: not all patterns are covered
+-- stderr-contains: `([], _)` is not covered
 type Color { Red, Green, Blue }
 fn main() {
   let t = ([1, 2, 3], Red)

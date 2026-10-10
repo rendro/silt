@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method `total` takes no `self` — call it on the type instead: `SomeType.total()`
+-- stderr-contains: :20:3
+-- stderr-contains: :28:18
+-- A receiver whose type is not known where the call is written: the one
+-- trait that declares `total` declares it without `self`, so the call is
+-- refused (it used to check, and fail when run).
+trait Vals {
+  fn total() -> Int
+}
+
+trait Vals for Int {
+  fn total() -> Int {
+    3
+  }
+}
+
+fn go(x) {
+  x.total()
+}
+
+fn first(x: a) -> a {
+  x
+}
+
+fn main() {
+  let f = { x -> first(x).total() }
+  println(go(7))
+  println(f(7))
+}

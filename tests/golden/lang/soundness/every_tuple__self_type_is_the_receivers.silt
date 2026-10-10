@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: tuple length mismatch: expected 2, got 3
+-- `Self` in an impl for every tuple is the receiver's own type at a call: another tuple is not a `Self`.
+type Cents { Cents(Int) }
+type Secret { Hidden(String), Open }
+trait Same { fn other(self, o: Self) -> Self }
+trait Same for Tuple {
+  fn other(self, o: Self) -> Self { o }
+}
+fn main() {
+  let (Cents(k), _) = (Cents(1), 2).other((Hidden("s3cr3t"), 2, 3))
+  println("bound: {k}")
+}

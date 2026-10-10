@@ -1,0 +1,129 @@
+== <script> (arity=0, upvalues=0) ==
+0000  Constant             0     ; <fn:area>
+0003  SetGlobal            0     ; area
+0006  Pop
+0007  Constant             1     ; <fn:first>
+0010  SetGlobal            1     ; first
+0013  Pop
+0014  Constant             2     ; <fn:only>
+0017  SetGlobal            2     ; only
+0020  Pop
+0021  Constant             3     ; <fn:main>
+0024  SetGlobal            3     ; main
+0027  Pop
+0028  GetGlobal            3     ; main
+0031  Call                 0
+0033  Return
+
+== area (arity=2, upvalues=0) ==
+0000  GetLocal             0
+0003  SetLocal             2
+0006  Dup
+0007  SetLocal             3
+0010  GetLocal             3
+0013  DestructVariant      0
+0015  Dup
+0016  SetLocal             6
+0019  GetLocal             1
+0022  SetLocal             7
+0025  Dup
+0026  SetLocal             8
+0029  GetLocal             8
+0032  DestructRecordField  0     ; "x"
+0035  Dup
+0036  SetLocal             11
+0039  GetLocal             8
+0042  DestructRecordField  1     ; "y"
+0045  Dup
+0046  SetLocal             14
+0049  GetLocal             6
+0052  GetLocal             11
+0055  Mul
+0056  GetLocal             14
+0059  Mul
+0060  Return
+
+== first (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  SetLocal             1
+0006  Dup
+0007  SetLocal             2
+0010  GetLocal             2
+0013  DestructTuple        0
+0015  Dup
+0016  SetLocal             5
+0019  GetLocal             5
+0022  DestructVariant      0
+0024  Dup
+0025  SetLocal             8
+0028  GetLocal             2
+0031  DestructTuple        1
+0033  Dup
+0034  SetLocal             11
+0037  GetLocal             11
+0040  DestructRecordField  0     ; "x"
+0043  Dup
+0044  SetLocal             14
+0047  GetLocal             8
+0050  GetLocal             14
+0053  Add
+0054  Return
+
+== only (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  SetLocal             1
+0006  GetLocal             1
+0009  Pop
+0010  GetLocal             1
+0013  SetLocal             2
+0016  Dup
+0017  SetLocal             3
+0020  GetLocal             3
+0023  DestructVariant      0
+0025  Dup
+0026  SetLocal             6
+0029  GetLocal             6
+0032  Constant             0     ; 1
+0035  Add
+0036  Jump                 4     -> 0045
+0041  Constant             1     ; "non-exhaustive match: no arm matched"
+0044  Panic
+0045  Return
+
+== main (arity=0, upvalues=0) ==
+0000  Constant             0     ; <builtin:println>
+0003  GetGlobal            0     ; area
+0006  Constant             1     ; <constructor:Wrap>
+0009  Constant             2     ; 2
+0012  Call                 1
+0014  Constant             3     ; 3
+0017  Constant             4     ; 4
+0020  MakeRecord           5     2   ; <type:Point>
+      |  field 6     ; "x"
+      |  field 7     ; "y"
+0028  Call                 2
+0030  Call                 1
+0032  Pop
+0033  Constant             0     ; <builtin:println>
+0036  GetGlobal            1     ; first
+0039  Constant             1     ; <constructor:Wrap>
+0042  Constant             8     ; 1
+0045  Call                 1
+0047  Constant             2     ; 2
+0050  Constant             9     ; 0
+0053  MakeRecord           5     2   ; <type:Point>
+      |  field 6     ; "x"
+      |  field 7     ; "y"
+0061  MakeTuple            2
+0063  Call                 1
+0065  Call                 1
+0067  Pop
+0068  Constant             0     ; <builtin:println>
+0071  GetGlobal            2     ; only
+0074  Constant             1     ; <constructor:Wrap>
+0077  Constant             10    ; 5
+0080  Call                 1
+0082  Call                 1
+0084  TailCall             1
+0086  Return
+

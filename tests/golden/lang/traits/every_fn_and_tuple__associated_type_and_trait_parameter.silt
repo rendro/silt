@@ -1,0 +1,15 @@
+-- An impl for every tuple binds an associated type, and `Self::Item` in
+-- its methods is that binding; an impl of a parameterized trait for every
+-- function answers a bound.
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(Int) for Fn { fn conv(self) -> Int { 1 } }
+trait Has { type Item
+  fn item(self) -> Self::Item }
+trait Has for Tuple { type Item = Int
+  fn item(self) -> Int { 2 } }
+fn c(x: a, type b) -> b where a: Conv(b) { x.conv() }
+fn main() {
+  println({ x -> x }.conv())
+  println(c({ x -> x + 1 }, Int))
+  println((1, 2).item())
+}

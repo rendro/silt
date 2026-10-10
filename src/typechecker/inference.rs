@@ -45,6 +45,26 @@ enum CallForm {
     BarePipe,
 }
 
+/// The call to write for a method without `self` where only a type
+/// variable is at hand: on a `type` parameter of that variable.
+pub(super) fn on_type_parameter(var: Symbol, method: Symbol, method_ty: &Type) -> String {
+    format!(
+        "{}, where `{var}` is a `type {var}` parameter",
+        on_type_call(&resolve(var), method, method_ty)
+    )
+}
+
+/// The call of the method `method`, of the type `method_ty`, on the type
+/// `on`, as a message writes it: `` `Int.empty()` ``, or with `..` for
+/// the method's parameters, `` `Int.make(..)` ``.
+pub(super) fn on_type_call(on: &str, method: Symbol, method_ty: &Type) -> String {
+    let args = match method_ty {
+        Type::Fun(params, _) if !params.is_empty() => "..",
+        _ => "",
+    };
+    format!("`{on}.{method}({args})`")
+}
+
 /// The arity rule of every call form — `f(a, b)`, `a |> f(b)` and
 /// `a |> f`: a call supplies exactly as many arguments as the callee has
 /// parameters, or one fewer when the callee's signature declares its last
@@ -167,25 +187,17 @@ pub(super) fn format_record_field_suggestion(
     (base, help)
 }
 
-/// GAP (round 23 #3): append a "did you mean `<cand>`?" hint to an
-/// "unknown method '<field>' on <Type>" diagnostic when the method table
-/// has a close edit-distance match for the given type name. The
-/// method_table is keyed on `(type_name, method_name)`; we walk it once
-/// to collect every method registered on the target type and feed them
-/// to the existing `suggest::suggest_similar` policy.
+/// The "unknown method '<field>' on <Type>" message, with a "did you
+/// mean `<cand>`?" help when one of `methods`, the names of the type's
+/// methods, is close to `field` (`suggest::suggest_similar`).
 pub(super) fn format_unknown_method_message(
     field: Symbol,
     display_type_name: &str,
-    method_table: &HashMap<(TypeRef, Symbol), MethodEntry>,
-    table_key: TypeRef,
+    methods: &[Symbol],
 ) -> (String, Option<String>) {
     let field_str = resolve(field);
     let base = format!("unknown method '{field_str}' on {display_type_name}");
-    let candidates: Vec<String> = method_table
-        .keys()
-        .filter(|(ty, _)| *ty == table_key)
-        .map(|(_, m)| resolve(*m).to_string())
-        .collect();
+    let candidates: Vec<String> = methods.iter().map(|m| resolve(*m).to_string()).collect();
     let help = suggest_similar(&field_str, candidates.iter())
         .map(|hint| format!("did you mean `{hint}`?"));
     (base, help)
@@ -203,7 +215,7 @@ impl TypeChecker {
         span: Span,
     ) -> (String, Option<String>) {
         self.note_unknown_method(span, ty, field);
-        format_unknown_method_message(field, display, &self.tables.method_table, ty)
+        format_unknown_method_message(field, display, &self.method_names(ty))
     }
 
     /// Put `var: trait_name` (at the trait arguments `args`) in scope,
@@ -243,10 +255,11 @@ impl TypeChecker {
     }
 
     /// `recv.method` where `method` is the method of a builtin
-    /// structural trait (`compare`, `equal`, `hash`, `display`) and the
-    /// receiver's type has no entry for it in the method table: the
-    /// type has the method when it has the trait by its structure,
-    /// which the access owes.
+    /// structural trait (`compare`, `equal`, `hash`, `display`) and no
+    /// impl of the trait is written for the receiver's type: the type
+    /// has the method when it has the trait by its structure, which the
+    /// access owes. The other operand of `compare` and `equal` is of
+    /// the receiver's type.
     pub(super) fn structural_method(
         &mut self,
         recv: &Type,
@@ -394,6 +407,20 @@ impl TypeChecker {
             (None, Some(op)) => format!(", which {op} needs"),
             (None, None) => String::new(),
         };
+        // The `self` of an impl for every function or every tuple has
+        // no name a `where` clause could bound.
+        if let Some((what, _)) = self.shape_vars.get(&r.var) {
+            self.error(
+                Code::MissingConstraint,
+                format!(
+                    "in an impl for `{}`, `self` is some {what}: it is not known to \
+                     implement trait '{bound}'{needs}",
+                    r.name
+                ),
+                origin.span,
+            );
+            return;
+        }
         let diagnostic = Diagnostic::error(
             Code::MissingConstraint,
             origin.span,
@@ -498,15 +525,19 @@ impl TypeChecker {
     /// every impl that has a method of that name is of such a trait, and
     /// no trait this module may name declares it.
     fn only_private_provider(&self, method: Symbol) -> Option<TraitKey> {
+        // (A structural trait's method is every type's.)
+        let name = resolve(method);
+        if STRUCTURAL_METHODS.iter().any(|(_, m)| *m == name) {
+            return None;
+        }
         let mut providers = self
             .tables
-            .method_table
-            .iter()
-            .filter(|((_, m), _)| *m == method)
-            .map(|(_, entry)| entry.trait_name);
-        let first = providers.next()??;
-        if self.private_owner(first).is_none()
-            || providers.any(|t| t.is_none_or(|t| self.private_owner(t).is_none()))
+            .impl_methods
+            .keys()
+            .filter(|(_, m, _)| *m == method)
+            .map(|(_, _, tr)| *tr);
+        let first = providers.next()?;
+        if self.private_owner(first).is_none() || providers.any(|t| self.private_owner(t).is_none())
         {
             return None;
         }
@@ -514,6 +545,111 @@ impl TypeChecker {
             self.private_owner(*key).is_none() && info.methods.iter().any(|(n, _)| *n == method)
         });
         (!visible_declares).then_some(first)
+    }
+
+    /// The method `field` of a value whose type is the annotation
+    /// variable `r`, with the trait that declares it; `None` when there
+    /// is none, which is reported. An annotation variable has the
+    /// methods of its bounds, and nothing else: no field, no method of a
+    /// trait the declaration does not promise. This is the one answer,
+    /// whether the receiver was known where the call is written or
+    /// became known later.
+    pub(super) fn bound_method(
+        &mut self,
+        r: RigidId,
+        field: Symbol,
+        span: Span,
+    ) -> Option<(TraitKey, Type)> {
+        let matches = self.bound_methods(r, field);
+        if matches.len() > 1 {
+            let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
+            self.ambiguous_method(
+                field,
+                &format!("a value of type `{}`", r.name),
+                &traits,
+                span,
+            );
+            return None;
+        }
+        if let Some((trait_name, scheme)) = matches.first() {
+            let receiver = self
+                .tables
+                .traits
+                .get(trait_name)
+                .is_none_or(|info| info.receivers.contains(&field));
+            let method_ty = self.instantiate_method(scheme, field, span);
+            let on_type = on_type_parameter(r.name, field, &method_ty);
+            return match self.takes_no_self(receiver, field, &on_type, span) {
+                true => None,
+                false => Some((*trait_name, method_ty)),
+            };
+        }
+        // One of its bounds names an unknown trait (reported): the
+        // method may be that trait's.
+        if self.unknown_bounds.contains(&r.var) {
+            return None;
+        }
+        let bounds: Vec<TraitKey> = self
+            .bounds
+            .get(&r.var)
+            .map(|bounds| bounds.iter().map(|(t, _)| *t).collect())
+            .unwrap_or_default();
+        if bounds.is_empty() {
+            self.errors.push(
+                Diagnostic::error(
+                    Code::UnknownMethod,
+                    span,
+                    format!(
+                        "no field or method '{field}' on a value of type `{}`: \
+                         the type variable has no trait bound",
+                        r.name
+                    ),
+                )
+                .with_help(format!(
+                    "a value of type `{0}` has only the methods its bounds \
+                     promise: add `where {0}: SomeTrait`",
+                    r.name
+                )),
+            );
+        } else {
+            let bounds = bounds
+                .iter()
+                .map(|s| format!("{s}"))
+                .collect::<Vec<_>>()
+                .join(" + ");
+            self.error(
+                Code::UnknownMethod,
+                format!("no method '{field}' found in trait constraints ({bounds})"),
+                span,
+            );
+        }
+        None
+    }
+
+    /// `value.method` where the method has no `self` (`receiver`, the
+    /// fact its trait declares: `TraitInfo::receivers`): reported, with
+    /// `on_type` as the call to write instead (`` `Int.empty()` ``). A
+    /// method without `self` is called on a type, never on a value: none
+    /// of its parameters is for the receiver.
+    pub(super) fn takes_no_self(
+        &mut self,
+        receiver: bool,
+        method_name: Symbol,
+        on_type: &str,
+        span: Span,
+    ) -> bool {
+        let no_self = !receiver;
+        if no_self {
+            self.error(
+                Code::InvalidMethodCall,
+                format!(
+                    "method `{method_name}` takes no `self` — \
+                     call it on the type instead: {on_type}"
+                ),
+                span,
+            );
+        }
+        no_self
     }
 
     /// The type of `receiver.method` for the impl method `entry`: the
@@ -544,6 +680,14 @@ impl TypeChecker {
         {
             return Type::Error;
         }
+        // A method of a structural trait: the type has it when it has
+        // the trait by its structure, which the call owes. The entry
+        // only says that the name is the trait's.
+        if entry.structural
+            && let Some(method_ty) = self.structural_method(receiver_ty, method_name, span)
+        {
+            return method_ty;
+        }
         self.method_trait = self.entry_trait(entry, method_name);
         // What the impl and the method ask of the receiver's parts and
         // of the method's own type variables is owed, and checked once
@@ -551,27 +695,12 @@ impl TypeChecker {
         let owed_before = self.wanted.len();
         let scheme = self.method_scheme(entry);
         let instantiated_ty = self.instantiate_method(&scheme, method_name, span);
-        // Reject value-receiver calls on no-self trait methods (`empty`,
-        // `default`, etc.). The method has no slot for the receiver, so
-        // invoking it via `instance.method()` is meaningless. Point the
-        // user at the type-level form `TypeName.method()` and return
-        // `Type::Error` so the downstream Call arm doesn't pile an arity
-        // mismatch on top of the real diagnostic.
-        if let Type::Fun(params, _) = &instantiated_ty
-            && params.is_empty()
-        {
-            let suggestion = self
-                .type_name_for_impl(&self.apply(receiver_ty))
-                .map(|ty| format!("`{ty}.{method_name}()`"))
-                .unwrap_or_else(|| format!("`SomeType.{method_name}()`"));
-            self.error(
-                Code::InvalidMethodCall,
-                format!(
-                    "method `{method_name}` takes no `self` — \
-                     call it on the type instead: {suggestion}"
-                ),
-                span,
-            );
+        // A method without `self` has no place for the receiver.
+        let on = self
+            .type_name_for_impl(&self.apply(receiver_ty))
+            .map_or_else(|| "SomeType".to_string(), |ty| ty.to_string());
+        let on_type = on_type_call(&on, method_name, &instantiated_ty);
+        if self.takes_no_self(entry.receiver, method_name, &on_type, span) {
             return Type::Error;
         }
         // Unify the receiver with the method's self param so concrete
@@ -700,12 +829,44 @@ impl TypeChecker {
                 if self.ambiguous_method_call(name, field, span) {
                     return Some(Type::Error);
                 }
+                if self.of_every_shape(name, &entry, field, span) {
+                    return Some(Type::Error);
+                }
                 self.method_trait = self.entry_trait(&entry, field);
                 let scheme = self.method_scheme(&entry);
                 let instantiated = self.instantiate_method(&scheme, field, span);
                 Some(self.apply(&instantiated))
             }
         }
+    }
+
+    /// `Fn.field` or `Tuple.field` where `entry` is the method of an impl
+    /// for every function (`trait T for Fn`) or every tuple: reported.
+    /// That impl is found by the receiver; as far as the method's
+    /// signature says its `self` is of any type, so written through the
+    /// type it would be a function of anything.
+    fn of_every_shape(
+        &mut self,
+        ty: TypeRef,
+        entry: &MethodEntry,
+        field: Symbol,
+        span: Span,
+    ) -> bool {
+        let every = (ty.is_builtin("Fn") || ty.is_builtin("Tuple"))
+            && matches!(&entry.method_type, Type::Fun(params, _)
+                if matches!(params.first(), Some(Type::Var(_))));
+        if every {
+            self.error(
+                Code::InvalidMethodCall,
+                format!(
+                    "method `{field}` of the impl for every `{0}` is called on a value: \
+                     write `x.{field}(..)`, not `{0}.{field}`",
+                    ty.name
+                ),
+                span,
+            );
+        }
+        every
     }
 
     /// Report `T.field` where the type `T` has no method `field`. A builtin
@@ -1173,6 +1334,9 @@ impl TypeChecker {
                 // (`dispatch_method_entry` has unified it with the
                 // receiver), so the arguments line up with `params[1..]`.
                 let implicit_self = usize::from(is_method_call);
+                // (A method has its `self`: `takes_no_self` refused the
+                // access otherwise.)
+                let written_params = params.len().saturating_sub(implicit_self);
                 // What the callee's use owes for a type variable of a
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
@@ -1250,10 +1414,7 @@ impl TypeChecker {
                             };
                             format!(
                                 "{what} expects {}, got {}",
-                                accepted_arity_text(
-                                    params.len() - implicit_self,
-                                    optional_last_param
-                                ),
+                                accepted_arity_text(written_params, optional_last_param),
                                 args.len()
                             )
                         }
@@ -1262,8 +1423,8 @@ impl TypeChecker {
                         // call forgets the remaining ones.
                         CallForm::BarePipe => format!(
                             "cannot pipe into function taking {} {}; wrap in a call or use partial application",
-                            params.len() - implicit_self,
-                            plural(params.len() - implicit_self, "argument", "arguments")
+                            written_params,
+                            plural(written_params, "argument", "arguments")
                         ),
                     };
                     self.error(Code::ArityMismatch, message, span);
@@ -1288,11 +1449,22 @@ impl TypeChecker {
                     (Type::Error, _) => Type::Error,
                     (Type::Never, _) => Type::Never,
                     (_, CallForm::Call) => {
-                        self.error(
+                        let mut d = Diagnostic::error(
                             Code::TypeMismatch,
-                            format!("`{other}` is not callable"),
                             span,
+                            format!("`{other}` is not callable"),
                         );
+                        // The `self` of an impl for every function.
+                        if let Type::Rigid(r) = other
+                            && let Some((what, parts)) = self.shape_vars.get(&r.var)
+                        {
+                            d = d.with_note(format!(
+                                "in an impl for `{}`, `self` is some {what}: {parts} are not \
+                                 known",
+                                r.name
+                            ));
+                        }
+                        self.errors.push(d);
                         self.fresh_var()
                     }
                     (_, CallForm::BarePipe) => {
@@ -1401,75 +1573,57 @@ impl TypeChecker {
                     let tv = self.fresh_var();
                     Type::List(Box::new(tv))
                 } else {
-                    // Infer each element first (without unifying), so we can
-                    // produce a single targeted "list elements must have the
-                    // same type" error pointing at the first mismatching
-                    // element instead of the old "expected X, got Y" which
-                    // read as if the user had declared the first type.
-                    let mut elem_infos: Vec<(Type, Span, bool)> = Vec::with_capacity(elems.len());
-                    for elem in elems.iter_mut() {
+                    // Each element is inferred first (without unifying),
+                    // so that one "list elements must have the same type"
+                    // error points at the first element that differs. What
+                    // `..xs` adds are the elements of `xs`, which must be
+                    // a list: a spread of anything else is reported as
+                    // that, and says nothing of the elements.
+                    let mut elem_infos: Vec<(usize, Type, Span)> = Vec::with_capacity(elems.len());
+                    for (idx, elem) in elems.iter_mut().enumerate() {
                         match elem {
                             ListElem::Single(e) => {
                                 let t = self.infer_expr(e, env);
-                                elem_infos.push((t, e.span, false));
+                                elem_infos.push((idx, t, e.span));
                             }
                             ListElem::Spread(e) => {
                                 let t = self.infer_expr(e, env);
-                                elem_infos.push((t, e.span, true));
+                                let inner = self.fresh_var();
+                                let list = Type::List(Box::new(inner.clone()));
+                                if self.unify_types(&t, &list).is_ok() {
+                                    elem_infos.push((idx, inner, e.span));
+                                } else {
+                                    let shown = self.show_type(&self.apply(&t));
+                                    self.error(
+                                        Code::TypeMismatch,
+                                        format!("`..` needs a list to spread, got {shown}"),
+                                        e.span,
+                                    );
+                                }
                             }
                         }
                     }
 
-                    // Establish the "first element type" once, up front.
-                    let first_ty = {
-                        let (t, _, is_spread) = &elem_infos[0];
-                        if *is_spread {
-                            // Spread contributes a List(inner); extract inner
-                            // for the "first element" description.
-                            let applied = self.apply(t);
-                            match applied {
-                                Type::List(inner) => *inner,
-                                _ => t.clone(),
-                            }
-                        } else {
-                            t.clone()
-                        }
-                    };
-
                     let elem_type = self.fresh_var();
-                    self.unify(&elem_type, &first_ty, elem_infos[0].1);
-
-                    for (idx, (t, espan, is_spread)) in elem_infos.iter().enumerate() {
-                        let unified = if *is_spread {
-                            let expected = Type::List(Box::new(elem_type.clone()));
-                            self.unify_types(&expected, t)
-                        } else {
-                            self.unify_types(&elem_type, t)
-                        };
-                        if unified.is_err() {
-                            // A list-level message, clearer than the
-                            // mismatch of the two types.
-                            let elem_ty = if *is_spread {
-                                let applied = self.apply(t);
-                                match applied {
-                                    Type::List(inner) => *inner,
-                                    other => other,
-                                }
-                            } else {
-                                self.apply(t)
-                            };
-                            let first_resolved = self.apply(&first_ty);
-                            let (first_shown, elem_shown) =
-                                self.show_apart(&first_resolved, &elem_ty);
-                            self.error(Code::TypeMismatch,
-                                format!(
-                                    "list elements must have the same type: first element is {}, but element {} is {}",
-                                    first_shown,
-                                    idx + 1,
-                                    elem_shown
-                                ),
-                                *espan,
-                            );
+                    if let Some((_, first_ty, first_span)) = elem_infos.first().cloned() {
+                        self.unify(&elem_type, &first_ty, first_span);
+                        for (idx, t, espan) in &elem_infos {
+                            if self.unify_types(&elem_type, t).is_err() {
+                                // A list-level message, clearer than the
+                                // mismatch of the two types.
+                                let (first_shown, elem_shown) =
+                                    self.show_apart(&self.apply(&first_ty), &self.apply(t));
+                                self.error(
+                                    Code::TypeMismatch,
+                                    format!(
+                                        "list elements must have the same type: first element is {}, but element {} is {}",
+                                        first_shown,
+                                        idx + 1,
+                                        elem_shown
+                                    ),
+                                    *espan,
+                                );
+                            }
                         }
                     }
 
@@ -1662,6 +1816,10 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         if self.ambiguous_method_call(key.0, field, span) {
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
+                        if self.of_every_shape(key.0, &entry, field, span) {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
@@ -1952,71 +2110,16 @@ impl TypeChecker {
                         self.error_help(Code::UnknownMethod, message, span);
                         Type::Error
                     }
-                    Type::Rigid(r) => {
-                        // An annotation variable has the methods of its
-                        // bounds, and nothing else: no field, no method
-                        // of a trait the declaration does not promise.
-                        let trait_names: Vec<TraitKey> = self
-                            .bounds
-                            .get(&r.var)
-                            .map(|bounds| bounds.iter().map(|(t, _)| *t).collect())
-                            .unwrap_or_default();
-                        let matches = self.bound_methods(*r, field);
-                        if matches.len() > 1 {
-                            let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-                            self.ambiguous_method(
-                                field,
-                                &format!("a value of type `{}`", r.name),
-                                &traits,
-                                span,
-                            );
-                            Type::Error
-                        } else if let Some((trait_name, scheme)) = matches.first() {
+                    Type::Rigid(r) => match self.bound_method(*r, field, span) {
+                        Some((trait_name, method_ty)) => {
                             self.last_field_access_was_method = true;
-                            self.method_trait = Some(*trait_name);
-                            let instantiated = self.instantiate_method(scheme, field, span);
-                            let resolved = self.apply(&instantiated);
+                            self.method_trait = Some(trait_name);
+                            let resolved = self.apply(&method_ty);
                             expr.ty = Some(resolved.clone());
                             return resolved;
-                        } else if self.unknown_bounds.contains(&r.var) {
-                            // One of its bounds names an unknown trait
-                            // (reported): the method may be that trait's.
-                            Type::Error
-                        } else if trait_names.is_empty() {
-                            self.errors.push(
-                                Diagnostic::error(
-                                    Code::UnknownMethod,
-                                    span,
-                                    format!(
-                                        "no field or method '{field}' on a value of type `{}`: \
-                                         the type variable has no trait bound",
-                                        r.name
-                                    ),
-                                )
-                                .with_help(format!(
-                                    "a value of type `{0}` has only the methods its bounds \
-                                     promise: add `where {0}: SomeTrait`",
-                                    r.name
-                                )),
-                            );
-                            Type::Error
-                        } else {
-                            // Method not found on any constrained trait — error
-                            let traits_str = trait_names
-                                .iter()
-                                .map(|s| format!("{s}"))
-                                .collect::<Vec<_>>()
-                                .join(" + ");
-                            self.error(
-                                Code::UnknownMethod,
-                                format!(
-                                    "no method '{field}' found in trait constraints ({traits_str})"
-                                ),
-                                span,
-                            );
-                            Type::Error
                         }
-                    }
+                        None => Type::Error,
+                    },
                     Type::Var(_) => {
                         // A method only another module's private trait
                         // provides cannot be called here, whatever the

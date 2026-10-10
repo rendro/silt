@@ -54,7 +54,7 @@ fn empty_file_run_check_test_disasm() {
     // (subcommand, expected exit, needle, needle is in stdout (else stderr))
     let cases = [
         ("run", 1, "no main()", false),
-        ("check", 1, "no main()", false),
+        ("check", 0, "", false),
         ("test", 0, "0 tests", false),
         ("disasm", 0, "<script>", true),
     ];

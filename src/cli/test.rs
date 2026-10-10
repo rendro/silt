@@ -172,7 +172,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     "{path}: failed to read — {}",
                     silt::diagnostic::io_error_text(&e)
                 );
-                counts.file_errors += 1;
+                counts.file_errors.unreadable += 1;
                 continue;
             }
         };
@@ -210,7 +210,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let program = match compiled {
             Ok(program) if !failed_to_compile => program,
             _ => {
-                counts.file_errors += 1;
+                counts.file_errors.not_compiled += 1;
                 continue;
             }
         };
@@ -235,17 +235,16 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             vm.wait_until_idle();
         }
         if let Err(e) = setup {
-            // G2 (audit round 21): frame and error-header paths follow
-            // the style of the path the user typed, as under `silt run`.
-            //
-            // Lock: tests/cli/cli_test_rendering_tests.rs
-            // `test_test_setup_error_paths_normalized`.
-            eprintln!("{path}: setup error:");
+            // Frame and error-header paths follow the style of the path
+            // the user typed, as under `silt run`. The header says what
+            // the summary counts ("the top-level code of 1 file
+            // failed").
+            eprintln!("{path}: the file's top-level code failed:");
             eprintln!(
                 "{}",
                 render_runtime_error(&e, path, &owners.files[file_index].sources)
             );
-            counts.file_errors += 1;
+            counts.file_errors.setup += 1;
             continue;
         }
         // A task of the file's top-level code that failed and that
@@ -356,20 +355,20 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         file_errors,
     } = counts;
     let test_word = if total == 1 { "test" } else { "tests" };
-    if file_errors > 0 {
+    if file_errors.any() {
         eprintln!(
-            "\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped ({file_errors} file{} failed to compile)",
-            if file_errors == 1 { "" } else { "s" }
+            "\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped ({})",
+            file_errors.describe()
         );
     } else {
         eprintln!("\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped");
     }
-    if total == 0 && file_errors == 0 {
+    if total == 0 && !file_errors.any() {
         eprintln!(
             "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'"
         );
     }
-    if failed > 0 || file_errors > 0 {
+    if failed > 0 || file_errors.any() {
         process::exit(1);
     }
 }
@@ -379,12 +378,62 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
 struct Counts {
     passed: usize,
     failed: usize,
-    /// Files that failed to lex, parse, type-check or compile, or whose
-    /// top-level code failed. These are tracked separately from the
-    /// per-test failure counter so that `X tests: Y passed, Z failed`
-    /// still reflects what actually ran: a file that does not compile
-    /// may contain dozens of tests that could not even be counted.
-    file_errors: usize,
+    /// The files that failed as files, by what happened. These are
+    /// tracked separately from the per-test failure counter so that `X
+    /// tests: Y passed, Z failed` still reflects what actually ran: a
+    /// file that does not compile may contain dozens of tests that
+    /// could not even be counted.
+    file_errors: FileErrors,
+}
+
+/// The files of a `silt test` run that failed as files, by what happened
+/// to each.
+#[derive(Default)]
+struct FileErrors {
+    /// Files that could not be read.
+    unreadable: usize,
+    /// Files that failed to lex, parse, type-check or compile.
+    not_compiled: usize,
+    /// Files whose top-level code raised an error before any test ran.
+    setup: usize,
+    /// Files of which a task spawned by the top-level code failed.
+    tasks: usize,
+    /// Failed tasks that no file can be named for.
+    stray_tasks: usize,
+}
+
+impl FileErrors {
+    fn any(&self) -> bool {
+        self.unreadable + self.not_compiled + self.setup + self.tasks + self.stray_tasks > 0
+    }
+
+    /// What happened, for the summary line: each kind with its count.
+    fn describe(&self) -> String {
+        let files = |n: usize| if n == 1 { "file" } else { "files" };
+        let mut parts: Vec<String> = Vec::new();
+        if self.unreadable > 0 {
+            let n = self.unreadable;
+            parts.push(format!("{n} {} could not be read", files(n)));
+        }
+        if self.not_compiled > 0 {
+            let n = self.not_compiled;
+            parts.push(format!("{n} {} failed to compile", files(n)));
+        }
+        if self.setup > 0 {
+            let n = self.setup;
+            parts.push(format!("the top-level code of {n} {} failed", files(n)));
+        }
+        if self.tasks > 0 {
+            let n = self.tasks;
+            parts.push(format!("a top-level task of {n} {} failed", files(n)));
+        }
+        if self.stray_tasks > 0 {
+            let n = self.stray_tasks;
+            let tasks = if n == 1 { "task" } else { "tasks" };
+            parts.push(format!("{n} {tasks} of no test failed"));
+        }
+        parts.join(", ")
+    }
 }
 
 /// A test file whose code has run, kept to render the failures of the
@@ -495,7 +544,7 @@ impl TaskOwners {
             // run: this is a failure that nothing can be charged with.
             None => {
                 eprintln!("  FAIL a task that no test can be named for failed");
-                counts.file_errors += 1;
+                counts.file_errors.stray_tasks += 1;
                 for report in &reports {
                     eprint_indented(report);
                 }
@@ -517,7 +566,7 @@ impl TaskOwners {
         }
         let path = self.files[owner.file].path.as_str();
         eprintln!("  FAIL {path} (a task spawned by the file's top-level code failed)");
-        counts.file_errors += 1;
+        counts.file_errors.tasks += 1;
         for report in &reports {
             eprint_indented(report);
         }

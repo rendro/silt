@@ -1,0 +1,20 @@
+-- cmd: run
+-- exit: 1
+-- stderr-contains: error[compile]: program has no main() function
+-- stderr-contains: = note: add one as the entry point
+-- `run` starts a program at `main`: a file without one cannot be run,
+-- though it checks (the case of that name).
+type Point {
+  x: Int,
+  y: Int,
+}
+
+trait Shown {
+  fn shown(self) -> String
+}
+
+trait Shown for Point {
+  fn shown(self) -> String {
+    "({self.x}, {self.y})"
+  }
+}

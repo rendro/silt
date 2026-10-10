@@ -130,8 +130,10 @@ type User {
   active: Bool,
 }
 
-let alice = User { name: "Alice", age: 30, active: true }
-alice.name   -- "Alice"
+fn main() {
+  let alice = User { name: "Alice", age: 30, active: true }
+  println(alice.name) -- Alice
+}
 ```
 
 Records declared in another module can be constructed with a
@@ -167,7 +169,7 @@ type — there is no `type Foo { ... }` declaration to anchor identity.
 ```silt
 let alice = { name: "Alice", age: 30 }
 let bob = { name: "Bob", age: 25 } -- same type as alice
-alice.name -- "Alice"
+println(alice.name) -- Alice
 ```
 
 An anonymous record is shown as it is written, without a name, its
@@ -310,12 +312,18 @@ A record type **without** `...r` is closed: the caller must supply
 exactly the listed fields, no more, no less:
 
 ```silt
-fn ident(x: {a: Int, b: String}) -> {a: Int, b: String} { x }
+fn ident(x: { a: Int, b: String }) -> { a: Int, b: String } {
+  x
+}
 
-ident({a: 1, b: "hi"})            -- OK
-ident({a: 1, b: "hi", c: 9})      -- error: extra field `c`
-ident({a: 1})                     -- error: missing field `b`
+fn main() {
+  println(ident({ a: 1, b: "hi" })) -- {a: 1, b: hi}
+}
 ```
+
+`ident({ a: 1, b: "hi", c: 9 })` is an error ("record literal has
+unexpected field not declared in target type: c"), and so is
+`ident({ a: 1 })` ("record literal is missing required field: b").
 
 ### Record extension: `{...p, ...}`
 
@@ -374,14 +382,27 @@ spreads, with or without fields after the spread. Convert first,
 `copy({...person})`:
 
 ```silt
-fn copy(p) { {...p} }
-fn ext(p) { {...p, city: "x"} }
+type Person {
+  name: String,
+  age: Int,
+}
 
-copy({name: "Bob"})                       -- OK
-copy(Person { name: "Bob", age: 42 })
--- error: cannot spread a `Person` through 'copy': convert it where its type is known, `{...p}`
-ext({...Person { name: "Bob", age: 42 }}) -- OK
+fn copy(p) {
+  { ...p }
+}
+
+fn ext(p) {
+  { ...p, city: "x" }
+}
+
+fn main() {
+  println(copy({ name: "Bob" })) -- {name: Bob}
+  println(ext({ ...Person { name: "Bob", age: 42 } })) -- {age: 42, city: x, name: Bob}
+}
 ```
+
+`copy(Person { name: "Bob", age: 42 })` is an error: "cannot spread a
+`Person` through 'copy': convert it where its type is known, `{...p}`".
 
 The same holds for a closure bound with `let`, for a function whose
 signature writes the row (`fn tag(p: {name: String, ...r}) -> ...`
@@ -407,7 +428,7 @@ type Person {
 fn main() {
   let p = { name: "A", age: 30 }
   match p {
-    { name: nm } -> println(nm) -- "A"
+    { name: nm } -> println(nm) -- A
   }
   let { name, ...rest } = Person { name: "B", age: 42 } -- rest is {age: Int}
   println(rest.age) -- 42

@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A type variable first written as a `type a` parameter is shown where
+-- that parameter is, like one first written in an annotation.
+fn parse(body: String, type a) -> a {
+  a
+}
+fn conv(x: a, type b) -> b {
+  x
+}
+fn plain(x: a, y: b) -> a {
+  y
+}
+fn main() { println("x") }

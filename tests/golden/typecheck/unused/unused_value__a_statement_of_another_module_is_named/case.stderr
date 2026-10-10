@@ -1,0 +1,19 @@
+error[type]: type mismatch: expected (), got Int
+ --> main.silt:11:22
+    |
+ 11 |   println(helper.run { -> 3 })
+    |                      ^^^^^^^^ type mismatch: expected (), got Int
+ ::: helper.silt:2:3
+   |
+ 2 |   f()
+   |   --- `()` because this call is a statement: its value would be unused
+
+error[type]: type mismatch: expected (), got String
+ --> main.silt:12:15
+    |
+ 12 |   println(run { -> "x" })
+    |               ^^^^^^^^^^ type mismatch: expected (), got String
+ ::: helper.silt:2:3
+   |
+ 2 |   f()
+   |   --- `()` because this call is a statement: its value would be unused

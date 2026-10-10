@@ -60,6 +60,11 @@ pub(crate) enum Callee {
 /// The label of an error about a `()` that a statement call was given.
 const STATEMENT_UNIT: &str = "`()` because this call is a statement: its value would be unused";
 
+/// Whether `inner` is inside `outer`.
+fn within(inner: Span, outer: Span) -> bool {
+    outer.file == inner.file && outer.start <= inner.start && inner.end <= outer.end
+}
+
 impl TypeChecker {
     /// Note the statement `stmt` of type `ty`, which is not the last of
     /// its block: a call whose type is still unknown waits for
@@ -117,8 +122,7 @@ impl TypeChecker {
                         if self.unify_types(&call.ty, &Type::Unit).is_ok() {
                             fixed.push(call.span);
                             for (callee, param) in handed {
-                                let units = self.statement_units.entry(callee).or_default();
-                                units.push((param, call.span));
+                                self.statement_units_of(callee).push((param, call.span));
                             }
                         }
                     }
@@ -139,14 +143,20 @@ impl TypeChecker {
             return;
         }
         let from = self.errors.len();
+        self.fixed_statements = fixed.to_vec();
         recheck(self);
+        self.fixed_statements.clear();
         for d in self.errors.iter_mut().skip(from) {
-            let within =
-                |s: &&Span| s.file == d.span.file && s.start <= d.span.start && d.span.end <= s.end;
-            if let Some(statement) = fixed.iter().find(within) {
+            if let Some(statement) = fixed.iter().find(|s| within(d.span, **s)) {
                 d.labels.push((*statement, STATEMENT_UNIT.to_string()));
             }
         }
+    }
+
+    /// Whether `span` is inside one of the statements whose type is
+    /// being fixed to `()`: an error there is about that `()`.
+    pub(super) fn in_fixed_statement(&self, span: Span) -> bool {
+        self.fixed_statements.iter().any(|s| within(span, *s))
     }
 
     /// Whether a value of the type `v` is given to one of the functions
@@ -198,29 +208,29 @@ impl TypeChecker {
         }
     }
 
+    /// The parameters of the function `callee` names that return `()`
+    /// because of a statement.
+    fn statement_units_of(&mut self, callee: Callee) -> &mut Vec<(usize, Span)> {
+        match callee {
+            Callee::Def(id) => self.tables.statement_units.entry(id).or_default(),
+            Callee::Local(name) => self.local_statement_units.entry(name).or_default(),
+        }
+    }
+
     /// The statement because of which the parameter `param` of the
     /// function `callee` names takes a function that returns `()`.
     pub(super) fn statement_unit(&self, callee: &Expr, param: usize) -> Option<Span> {
-        if self.statement_units.is_empty() {
-            return None;
-        }
-        let callee = match (callee.res, &callee.kind) {
-            (Some(crate::defs::Res::Def(id)), _) => Callee::Def(id),
-            (Some(crate::defs::Res::Local), ExprKind::Ident(name)) => Callee::Local(*name),
+        let units = match (callee.res, &callee.kind) {
+            (Some(crate::defs::Res::Def(id)), _) => self.tables.statement_units.get(&id)?,
+            (Some(crate::defs::Res::Local), ExprKind::Ident(name)) => {
+                self.local_statement_units.get(name)?
+            }
             _ => return None,
         };
-        let units = self.statement_units.get(&callee)?;
         units
             .iter()
             .find(|(i, _)| *i == param)
             .map(|(_, statement)| *statement)
-    }
-
-    /// Forget what is known of the closures a body bound with `let`:
-    /// the names are the body's.
-    pub(super) fn forget_local_statement_units(&mut self) {
-        self.statement_units
-            .retain(|callee, _| matches!(callee, Callee::Def(_)));
     }
 
     /// The parameters of the enclosing functions whose types share a
@@ -253,7 +263,7 @@ impl TypeChecker {
     ) {
         if self.errors.len() == from {
             for (callee, param) in passed_on {
-                let units = self.statement_units.entry(callee).or_default();
+                let units = self.statement_units_of(callee);
                 if !units.contains(&(param, statement)) {
                     units.push((param, statement));
                 }

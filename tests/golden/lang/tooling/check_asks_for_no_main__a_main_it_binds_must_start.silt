@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it declares 1 parameter
+-- A file needs no `main`, but one it binds is the program's entry point
+-- and must be able to start.
+fn main(x: Int) {
+  println(x)
+}
