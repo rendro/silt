@@ -1,0 +1,10 @@
+error[type]: method 'make' of the impl of 'Make' for 'H' is named like a field of 'H'
+ --> field_method__method_without_receiver.silt:7:23
+   |
+ 7 | trait Make for H { fn make() -> H { H { make: 1 } } }
+   |                       ^^^^ method 'make' of the impl of 'Make' for 'H' is named like a field of 'H'
+ ::: field_method__method_without_receiver.silt:6:10
+   |
+ 6 | type H { make: Int }
+   |          ---- the field 'make' of 'H'
+  = help: a field and a method of one type cannot share a name: rename the method or the field

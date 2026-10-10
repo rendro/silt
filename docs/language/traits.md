@@ -72,6 +72,32 @@ illustrate trait *declaration* use a fresh local name; impls of the
 real built-in `Display` trait look identical and are shown in
 [Built-in Traits](#built-in-traits) below.)
 
+An impl gives a record type no method named like one of the record's
+fields, whether the impl writes the method or takes it as the trait's
+default: `job.run(5)` on a record is always a call of the function its
+field `run` holds.
+
+```silt
+type Job {
+  name: String,
+  run: Fn(Int) -> Int,
+}
+
+trait Run {
+  fn run(self, x: Int) -> Int
+}
+
+-- error: method 'run' of the impl of 'Run' for 'Job' is named like a
+-- field of 'Job'
+-- help: a field and a method of one type cannot share a name: rename
+-- the method or the field
+trait Run for Job {
+  fn run(self, x: Int) -> Int {
+    x
+  }
+}
+```
+
 ## Supertrait Bounds
 
 A trait can declare other traits as **supertraits** using `: Trait` after
@@ -525,7 +551,7 @@ decided by what is written, not by which names happen to exist:
 - `x.f` is a field: `fn name_of(p) { p.name }` takes any record with a
   field `name`, whatever methods traits declare.
 - `r.f(..)` on a record with a field `f` calls the function the field
-  holds, even if a trait has a method `f` for the record's type.
+  holds: a record type has no method named like one of its fields.
 - `x.m(..)` means the one trait in sight that declares a method `m`, and
   bounds `x` by it: `fn g(x) { x.greet() }` is `fn g(x: a) -> String
   where a: Greet`. If no trait declares `m`, `x` is a record whose field

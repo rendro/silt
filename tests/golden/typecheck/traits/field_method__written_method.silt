@@ -1,0 +1,20 @@
+-- exit: 1
+-- verdict: same
+-- An impl that gives a record type a method named like one of its
+-- fields is an error at the method in the impl. (Before the rule,
+-- `r.run(x)` called the field's function where the type of `r` was
+-- known, and the method where it was not: through a bound, in a
+-- function with no annotations, in a closure.)
+type H { run: Fn(Int) -> Int, n: Int }
+trait Run { fn run(self, x: Int) -> Int }
+trait Run for H { fn run(self, x: Int) -> Int { -1 } }
+fn bounded(r: a, x: Int) -> Int where a: Run { r.run(x) }
+fn inferred(r, x) { r.run(x) }
+fn main() {
+  let h = H { run: { x -> x + 1 }, n: 0 }
+  println(h.run(1))
+  println(bounded(h, 1))
+  println(inferred(h, 1))
+  let k = { r -> r.run(2) }
+  println(k(h))
+}

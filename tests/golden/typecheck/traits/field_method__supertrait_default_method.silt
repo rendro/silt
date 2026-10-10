@@ -1,0 +1,13 @@
+-- exit: 1
+-- verdict: same
+-- A type has a supertrait's methods through its impl of the
+-- supertrait: that impl is where a default method of the supertrait
+-- named like a field is reported, not the impl of the trait below it.
+trait Base { fn size(self) -> Int { 0 } }
+trait Top: Base { fn top(self) -> Int }
+type H { size: Int }
+trait Base for H {}
+trait Top for H { fn top(self) -> Int { self.size } }
+fn main() {
+  println(H { size: 2 }.top())
+}

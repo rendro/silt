@@ -1440,6 +1440,8 @@ impl TypeChecker {
             }
         }
 
+        self.methods_named_like_fields(ti, target_type, trait_info_clone.as_ref());
+
         // ── The methods ─────────────────────────────────────────────
         //
         // An impl's method has the type its trait declares, with the
@@ -1813,6 +1815,83 @@ impl TypeChecker {
                     },
                 );
             }
+        }
+    }
+
+    /// Report each method the impl `ti` gives its type, the record
+    /// `target_type`, that is named like a field of the record: by the
+    /// name alone, whatever the field holds. `r.name(..)` is then a call
+    /// of what the field holds, on every record, and a method's call on
+    /// everything else, whether or not the receiver's type is known
+    /// where the call is written.
+    ///
+    /// A method the impl writes is reported where it is written; a
+    /// default method of the trait the impl leaves out, at the impl.
+    /// (A supertrait's methods are those of the supertrait's own impl.)
+    fn methods_named_like_fields(
+        &mut self,
+        ti: &TraitImpl,
+        target_type: TypeRef,
+        info: Option<&TraitInfo>,
+    ) {
+        let Some(record) = self.tables.records.get(&target_type).cloned() else {
+            return;
+        };
+        // Where the record declares the field `name`, if it has one.
+        let field_span = |name: Symbol| {
+            let at = record.fields.iter().position(|(field, _)| *field == name)?;
+            record.field_spans.get(at).copied()
+        };
+        // The impl as it is written (its target may be an alias of the
+        // record), the record by its name.
+        let (tr, of) = (ti.trait_name, ti.target_type);
+        let ty = self.show_type(&Type::Generic(target_type, vec![]));
+        let mut found: Vec<(Span, String, Symbol, Span)> = Vec::new();
+        let mut written: Vec<Symbol> = Vec::new();
+        for method in &ti.methods {
+            if written.contains(&method.name) {
+                continue;
+            }
+            written.push(method.name);
+            // (A method the trait does not declare is reported as that.)
+            let declared =
+                info.is_none_or(|info| info.methods.iter().any(|(name, _)| *name == method.name));
+            if declared && let Some(field) = field_span(method.name) {
+                let message = format!(
+                    "method '{}' of the impl of '{tr}' for '{of}' is named like a field of '{ty}'",
+                    method.name
+                );
+                found.push((method.name_span, message, method.name, field));
+            }
+        }
+        let defaults = info.into_iter().flat_map(|info| {
+            info.methods
+                .iter()
+                .map(|(name, _)| *name)
+                .filter(|name| info.default_method_bodies.contains_key(name))
+        });
+        for name in defaults {
+            if written.contains(&name) {
+                continue;
+            }
+            if let Some(field) = field_span(name) {
+                let message = format!(
+                    "the impl of '{tr}' for '{of}' takes the default method '{name}' of the \
+                     trait, which is named like a field of '{ty}'"
+                );
+                found.push((ti.span, message, name, field));
+            }
+        }
+        for (span, message, name, field) in found {
+            let mut d = Diagnostic::error(Code::MethodNamedLikeField, span, message);
+            // (A builtin record's fields are declared in no file.)
+            if field.is_in_source() {
+                d = d.with_label(field, format!("the field '{name}' of '{ty}'"));
+            }
+            self.errors.push(d.with_help(
+                "a field and a method of one type cannot share a name: rename the method or \
+                 the field",
+            ));
         }
     }
 

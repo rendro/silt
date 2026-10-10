@@ -18,9 +18,12 @@ pub(super) struct VariantInfo {
 }
 
 /// Information about a declared record type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct RecordInfo {
     pub(super) fields: Vec<(Symbol, Type)>,
+    /// Where each field is named in the declaration, in the order of
+    /// `fields`: what a diagnostic about a field points at.
+    pub(super) field_spans: Vec<Span>,
 }
 
 /// Information about a declared trait.
