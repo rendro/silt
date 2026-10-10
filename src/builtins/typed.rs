@@ -90,6 +90,24 @@ impl<'a> Arg<'a> for &'a Arc<Vec<u8>> {
     }
 }
 
+/// A `Map` argument.
+pub(crate) type Map<'a> = &'a Arc<BTreeMap<Value, Value>>;
+
+/// A `Set` argument.
+pub(crate) type Set<'a> = &'a Arc<BTreeSet<Value>>;
+
+/// The error of a body that finds, inside an argument of the right
+/// kind, a value that the parameter's type does not have: an element
+/// of a `List(Int)` that is no `Int`, a result of a function argument
+/// that is not of the type the function returns. Like arguments that
+/// do not fit a row, no checked program reaches it, and it has one
+/// wording.
+pub(crate) fn unsound(name: &str) -> VmError {
+    VmError::type_confusion(format!(
+        "{name} was given a value that its signature does not allow"
+    ))
+}
+
 /// A `Map`.
 impl<'a> Arg<'a> for &'a Arc<BTreeMap<Value, Value>> {
     fn take(value: &'a Value) -> Option<Self> {
@@ -199,6 +217,20 @@ impl Ret for String {
 impl Ret for Vec<Value> {
     fn ret(self) -> Result<Step, VmError> {
         Ok(Step::Done(Value::List(Arc::new(self))))
+    }
+}
+
+/// A `Map`.
+impl Ret for BTreeMap<Value, Value> {
+    fn ret(self) -> Result<Step, VmError> {
+        Ok(Step::Done(Value::Map(Arc::new(self))))
+    }
+}
+
+/// A `Set`.
+impl Ret for BTreeSet<Value> {
+    fn ret(self) -> Result<Step, VmError> {
+        Ok(Step::Done(Value::Set(Arc::new(self))))
     }
 }
 

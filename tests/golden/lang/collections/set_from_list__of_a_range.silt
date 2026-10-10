@@ -1,0 +1,4 @@
+import set
+fn main() {
+  println(set.to_list(set.from_list(3..5)))
+}
