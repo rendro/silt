@@ -110,6 +110,39 @@ impl<'a> Arg<'a> for &'a Arc<BTreeSet<Value>> {
     }
 }
 
+/// A `List`: a list's elements, or the range of Ints that stands for
+/// them. (A range is a list to the checker. The value of its own goes
+/// in step V3, and this with it: a `List` is then the elements.)
+#[derive(Clone, Copy)]
+pub(crate) enum List<'a> {
+    Items(&'a Arc<Vec<Value>>),
+    Range(i64, i64),
+}
+
+impl<'a> Arg<'a> for List<'a> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::List(items) => Some(List::Items(items)),
+            Value::Range(lo, hi) => Some(List::Range(*lo, *hi)),
+            _ => None,
+        }
+    }
+}
+
+impl List<'_> {
+    /// The elements, each a value of its own. A range of more elements
+    /// than a list may have is an error.
+    pub(crate) fn to_vec(self) -> Result<Vec<Value>, VmError> {
+        match self {
+            List::Items(items) => Ok((**items).clone()),
+            List::Range(lo, hi) => {
+                crate::value::checked_range_len(lo, hi).map_err(VmError::new)?;
+                Ok((lo..=hi).map(Value::Int).collect())
+            }
+        }
+    }
+}
+
 /// The result of a typed body, made the result of the call.
 pub(crate) trait Ret {
     fn ret(self) -> Result<Step, VmError>;
