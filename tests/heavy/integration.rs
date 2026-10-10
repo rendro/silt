@@ -1,5 +1,7 @@
 use silt::value::Value;
 
+use crate::port_file::PortFile;
+
 fn run(input: &str) -> Value {
     silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
@@ -131,39 +133,35 @@ fn main() {
 #[test]
 fn test_http_serve_non_blocking_in_task() {
     // Spawn http.serve in a task; verify other tasks can still run.
-    // The accept loop runs on a dedicated OS thread and the silt task
-    // yields via BlockReason::Join, so scheduler workers stay free.
+    // The server's task waits for its accept, an operation of the I/O
+    // pool, so scheduler workers stay free.
     //
-    // Port is OS-assigned (ephemeral) rather than hardcoded, so
-    // parallel test runs / a stuck previous process can't cause
-    // `AddrInUse` flakes. Same pattern as the sibling
-    // `test_http_serve_basic_get_response` (see `find_free_port`).
-    let port = find_free_port();
-    let input = format!(
-        r#"
+    // The listener is on a port the system chooses.
+    let input = r#"
 import http
 import task
 import channel
+import tcp
 
-fn main() {{
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let done = channel.new(1)
-  let server = task.spawn({{ ->
-    http.serve({port}, {{ req ->
-      http.Response {{ status: 200, body: "ok", headers: #{{}} }}
-    }})
-  }})
-  let worker = task.spawn({{ ->
+  let server = task.spawn({ ->
+    http.serve(listener, { req ->
+      http.Response { status: 200, body: "ok", headers: #{} }
+    })
+  })
+  let worker = task.spawn({ ->
     channel.send(done, "ready")
-  }})
+  })
   let result = channel.receive(done)
-  match result {{
+  match result {
     channel.Message(v) -> v
     _ -> "failed"
-  }}
-}}
-"#
-    );
-    let result = run(&input);
+  }
+}
+"#;
+    let result = run(input);
     assert_eq!(result, Value::String("ready".into()));
 }
 
@@ -171,25 +169,34 @@ fn main() {{
 fn test_http_serve_concurrent_requests() {
     // Start a server on the main thread (it blocks), send concurrent
     // HTTP requests from Rust threads, and verify all get correct
-    // responses — proving per-request concurrency.
+    // responses: connections are served concurrently.
     //
-    // Port is OS-assigned (ephemeral) rather than hardcoded 19081, so
-    // parallel test runs / a stuck previous process can't cause
-    // `AddrInUse` flakes. The brief bind→connect race is handled by
-    // `wait_for_port` — same pattern as the sibling
-    // `test_http_serve_basic_get_response`.
+    // The program listens on a port the system chooses and writes it to
+    // a file the test waits for (`PortFile`).
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     // Run the silt server in a background thread (http.serve blocks the main thread).
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
@@ -199,10 +206,7 @@ fn main() {{
     });
 
     // Wait for the server to bind and start accepting
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     // Send 5 concurrent requests
     let mut request_handles = Vec::new();
@@ -224,41 +228,33 @@ fn main() {{
 
 // ── http.serve functional tests ─────────────────────────────────
 
-/// Find a free ephemeral port by binding to port 0, recording the
-/// assigned port, then dropping the listener so `http.serve` can bind it.
-fn find_free_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().port()
-}
-
-/// Spin-wait for a TCP port to become connectable, with a timeout.
-/// Returns `true` if the port is ready, `false` if timed out.
-fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
-    let start = std::time::Instant::now();
-    while start.elapsed() < timeout {
-        if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    false
-}
-
 #[test]
 fn test_http_serve_basic_get_response() {
     // Start a server that echoes a fixed body, make a GET request, verify
     // the response body matches.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     http.Response {{ status: 200, body: "hello from silt", headers: #{{}} }}
   }})
 }}
@@ -267,10 +263,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -291,15 +284,27 @@ fn test_http_serve_returns_custom_status_code() {
     // Handler returns a 404 status — verify the client sees it.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     http.Response {{ status: 404, body: "not found", headers: #{{}} }}
   }})
 }}
@@ -308,10 +313,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -332,15 +334,27 @@ fn test_http_serve_echoes_request_path() {
     // Handler echoes back the request path in the body.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
@@ -349,10 +363,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -377,15 +388,27 @@ fn test_http_serve_echoes_query_string() {
     // Handler echoes back the query string from the request.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     http.Response {{ status: 200, body: req.query, headers: #{{}} }}
   }})
 }}
@@ -394,10 +417,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -419,15 +439,27 @@ fn test_http_serve_reads_request_body() {
     // POST a body to the server and verify the handler receives it.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     http.Response {{ status: 200, body: req.body, headers: #{{}} }}
   }})
 }}
@@ -436,10 +468,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -460,15 +489,27 @@ fn test_http_serve_reads_request_method() {
     // Handler pattern-matches on the request method and returns its name.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     let method_name = match req.method {{
       http.GET -> "got-get"
       http.POST -> "got-post"
@@ -484,10 +525,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -528,15 +566,27 @@ fn test_http_serve_sets_response_headers() {
     // Handler sets custom response headers — verify the client sees them.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     http.Response {{
       status: 200,
       body: "ok",
@@ -549,10 +599,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -583,15 +630,27 @@ fn test_http_serve_routing_by_path() {
     // Handler routes requests based on path, returning different responses.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     match req.path {{
       "/health" -> http.Response {{ status: 200, body: "ok", headers: #{{}} }}
       "/greet" -> http.Response {{ status: 200, body: "hello!", headers: #{{}} }}
@@ -604,10 +663,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -645,15 +701,27 @@ fn test_http_serve_concurrent_requests_stress() {
     // Verifies the server handles high concurrency correctly.
     use std::thread;
 
-    let port = find_free_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
 
     thread::spawn(move || {
         let input = format!(
             r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn main() {{
-  http.serve({port}, {{ req ->
+  http.serve(bound("{port_path}"), {{ req ->
     http.Response {{ status: 200, body: req.path, headers: #{{}} }}
   }})
 }}
@@ -662,10 +730,7 @@ fn main() {{
         run(&input);
     });
 
-    assert!(
-        wait_for_port(port, std::time::Duration::from_secs(3)),
-        "server did not start"
-    );
+    let port = port_file.wait();
 
     let count = 20;
     let mut handles = Vec::new();
@@ -692,53 +757,48 @@ fn main() {{
 #[test]
 fn test_http_serve_from_task_with_silt_client() {
     // Start the server in a spawned task, then use http.get() from another
-    // task to make a request to it — fully within Silt's runtime.
-    // The client retries in a functional loop until the server is ready.
+    // task to make a request to it — fully within Silt's runtime. The
+    // listener is bound before either task starts, on a port the system
+    // chooses, so the client's first request is queued for the server.
     use std::thread;
-
-    let port = find_free_port();
 
     // Run the entire program in a background Rust thread to prevent
     // hanging the test runner if something goes wrong.
     let handle = thread::spawn(move || {
-        let input = format!(
-            r#"
+        let input = r#"
 import http
 import task
 import channel
+import tcp
 
-fn main() {{
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
   let result_ch = channel.new(1)
 
   -- Start the server in a task
-  let server = task.spawn({{ ->
-    http.serve({port}, {{ req ->
-      http.Response {{ status: 200, body: "silt-response", headers: #{{}} }}
-    }})
-  }})
+  let server = task.spawn({ ->
+    http.serve(listener, { req ->
+      http.Response { status: 200, body: "silt-response", headers: #{} }
+    })
+  })
 
-  -- Make a request from another task, retrying until the server is up
-  let client = task.spawn({{ ->
-    let body = loop attempts = 0 {{
-      match attempts > 100 {{
-        true -> "gave up"
-        _ -> match http.get("http://127.0.0.1:{port}/test") {{
-          Ok(resp) -> resp.body
-          Err(_) -> loop(attempts + 1)
-        }}
-      }}
-    }}
+  -- Make a request from another task
+  let client = task.spawn({ ->
+    let body = match http.get("http://127.0.0.1:{port}/test") {
+      Ok(resp) -> resp.body
+      Err(e) -> "the request failed: {e.message()}"
+    }
     channel.send(result_ch, body)
-  }})
+  })
 
-  match channel.receive(result_ch) {{
+  match channel.receive(result_ch) {
     channel.Message(body) -> body
     _ -> "the channel closed"
-  }}
-}}
-"#
-        );
-        run(&input)
+  }
+}
+"#;
+        run(input)
     });
 
     let result = handle.join().expect("silt program panicked");

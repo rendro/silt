@@ -3107,7 +3107,9 @@ mod abandon {
         let mut main = Vm::new(crate::HostIo::process());
         let (handle, abandoned) = spawn_probe(&mut main, None);
         let wait = Wait::new(vec![Arm::Cell(handle.done())]);
-        main.scheduler().block_thread(wait, false).unwrap();
+        main.scheduler()
+            .block_thread(wait, crate::scheduler::Blocks::Thread)
+            .unwrap();
         let err = handle.try_get().unwrap().unwrap_err();
         handle.mark_joined();
         assert_eq!(err.message, "the probe failed");

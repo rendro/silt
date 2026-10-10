@@ -1,0 +1,5 @@
+error[lex]: unexpected character: byte-order mark (U+FEFF); a BOM is only permitted at the very start of the file
+ --> one_error__a_byte_order_mark_in_front_of_an_import.silt:8:1
+   |
+ 8 | ﻿import list
+   | ^ unexpected character: byte-order mark (U+FEFF); a BOM is only permitted at the very start of the file

@@ -1,0 +1,5 @@
+error[parse]: expected expression, found EOF
+ --> <repl:2>:1:13
+   |
+ 1 | let b = (a +
+   |             ^ expected expression, found EOF

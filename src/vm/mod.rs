@@ -15,44 +15,24 @@ mod show;
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
+pub use runtime::IoFailure;
 pub use runtime::Runtime;
 pub(crate) use runtime::{CallFrame, ErrFactory, Frame, IoOp, Native, Step};
 
-/// Test-only: report the worker count of the I/O pool attached to this
-/// VM. Used by the `SILT_IO_POOL_SIZE` env-knob integration tests to
-/// verify the env var actually shaped pool construction (no silent
-/// regression to the old hardcoded `min(cores, 4)` form).
-///
-/// Gated on `cfg(any(test, feature = "test-hooks"))` so it does not
-/// appear in the release surface area. Returns the pool worker count.
+/// Test-only: how many threads the I/O pool of this VM has: those
+/// that run an operation somebody waits for, and those that wait for
+/// work.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn io_pool_worker_count(vm: &Vm) -> usize {
-    vm.runtime.io_pool.worker_count()
+pub fn io_pool_threads(vm: &Vm) -> usize {
+    vm.runtime.io_pool.threads()
 }
 
-/// Test-only: return [`runtime::resolve_io_pool_size`] without
-/// requiring the caller to construct a full `Vm`. Lets integration
-/// tests assert the env-var → resolved-size mapping directly. Same
-/// gating as [`io_pool_worker_count`].
+/// Test-only: how many threads of the I/O pool of this VM exist. It
+/// equals [`io_pool_threads`] unless a thread still runs an operation
+/// that nobody waits for: such a thread has not ended.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn resolve_io_pool_size() -> usize {
-    runtime::resolve_io_pool_size()
-}
-
-/// Test-only: the cap [`runtime::resolve_io_pool_size`] clamps at when
-/// the env var is set to an absurdly large value. Re-exported so the
-/// integration test asserts the same constant the resolver uses.
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn io_pool_size_cap() -> usize {
-    runtime::IO_POOL_SIZE_CAP
-}
-
-/// Test-only: the unset-env default for the I/O pool worker count.
-/// Re-exported so the integration test compares against the same
-/// definition the production resolver falls back to.
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn default_io_pool_size() -> usize {
-    runtime::default_io_pool_size()
+pub fn io_pool_live_threads(vm: &Vm) -> usize {
+    vm.runtime.io_pool.live_threads()
 }
 
 /// Test-only: run a panicking operation on this VM's I/O pool, wait
@@ -61,12 +41,15 @@ pub fn default_io_pool_size() -> usize {
 /// error of a builtin module, so the value has the shape that module's
 /// callers match on.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(&str) -> Value) -> Value {
+pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value) -> Value {
     let op = vm.runtime.io_pool.submit(failure, || {
         panic!("synthetic IO worker panic for round-76 lock");
     });
     let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
-    let _ = vm.runtime.scheduler.block_thread(wait, false);
+    let _ = vm
+        .runtime
+        .scheduler
+        .block_thread(wait, crate::scheduler::Blocks::Thread);
     op.cell.get().cloned().expect("the operation has ended")
 }
 
@@ -117,6 +100,10 @@ pub struct Vm {
     pub(crate) woken: Option<Fired>,
     /// True for the VM of a task made by `task.spawn`.
     pub(crate) spawned: bool,
+    /// The cancel flag of the task this is the VM of; `None` for the
+    /// VM that runs the program itself. Set when the task is started
+    /// (`Scheduler::submit`).
+    pub(crate) cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Scoped deadline in effect for this task, as a reading of the
     /// host clock ([`Clock::monotonic`]). Set by
     /// `task.deadline(dur, fn)` for the duration of the callback; a
@@ -183,9 +170,9 @@ impl Vm {
     pub(crate) fn deadline_exceeded_with(&self, timeout_err: ErrFactory) -> Option<Value> {
         let deadline = self.current_deadline?;
         if self.runtime.io.monotonic() >= deadline {
-            Some(timeout_err(
+            Some(timeout_err(IoFailure::Timeout(
                 crate::scheduler::DeadlineSource::Task.message(),
-            ))
+            )))
         } else {
             None
         }
@@ -221,6 +208,33 @@ impl Vm {
         op: impl FnOnce() -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
         let op = self.runtime.io_pool.submit(timeout_err, op);
+        self.io_wait(name, timeout_err, op)
+    }
+
+    /// [`Vm::io_started`] for an operation that can be made to return:
+    /// `stop` is called if the task stops waiting while the operation
+    /// runs (its deadline passed, it was cancelled, it was dropped at
+    /// the end of the program), so that the thread of the operation
+    /// ends.
+    #[cfg(feature = "tcp")]
+    pub(crate) fn io_stoppable(
+        &mut self,
+        name: &'static str,
+        timeout_err: ErrFactory,
+        stop: impl FnOnce() + Send + 'static,
+        op: impl FnOnce() -> Value + Send + 'static,
+    ) -> Result<Step, VmError> {
+        let op = self.runtime.io_pool.submit(timeout_err, op).stop_with(stop);
+        self.io_wait(name, timeout_err, op)
+    }
+
+    /// Wait for `op`.
+    pub(crate) fn io_wait(
+        &mut self,
+        name: &'static str,
+        timeout_err: ErrFactory,
+        op: IoOp,
+    ) -> Result<Step, VmError> {
         let (deadline, source) = match self.runtime.scheduler.io_deadline(self.current_deadline) {
             Some((deadline, source)) => (Some(deadline), source),
             None => (None, crate::scheduler::DeadlineSource::Task),
@@ -230,10 +244,15 @@ impl Vm {
         // it ends, the operation has no waiter and no longer counts as
         // pending for the program (`IoOp`'s `Drop`).
         Ok(self.park(name, wait, move |_, fired| {
-            Ok(Step::Done(match (fired, op.cell.get()) {
-                (Fired::Arm(..), Some(value)) => value.clone(),
-                _ => timeout_err(source.message()),
-            }))
+            // The value is taken only by a wait that it ended: one
+            // that came as the deadline passed stays unheard.
+            let value = match fired {
+                Fired::Arm(..) => op.take(),
+                _ => None,
+            };
+            Ok(Step::Done(value.unwrap_or_else(|| {
+                timeout_err(IoFailure::Timeout(source.message()))
+            })))
         }))
     }
 
@@ -249,11 +268,7 @@ impl Vm {
         let scheduler = Arc::new(Scheduler::new(io.clone()));
         Vm {
             runtime: Arc::new(Runtime {
-                io_pool: IoPool::new(
-                    runtime::resolve_io_pool_size(),
-                    io.clone(),
-                    scheduler.clone(),
-                ),
+                io_pool: IoPool::new(scheduler.clone()),
                 scheduler,
                 io,
                 rng: parking_lot::Mutex::new(None),
@@ -271,6 +286,7 @@ impl Vm {
             next_task_id: Arc::new(AtomicU64::new(0)),
             woken: None,
             spawned: false,
+            cancelled: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
@@ -412,6 +428,7 @@ impl Vm {
             next_task_id: self.next_task_id.clone(),
             woken: None,
             spawned: false,
+            cancelled: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),

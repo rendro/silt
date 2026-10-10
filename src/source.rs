@@ -140,6 +140,14 @@ impl SourceFile {
         self.line_starts.len()
     }
 
+    /// The number of lines that have text or stand in front of a line
+    /// break, as `str::lines` counts them: a line break at the end of
+    /// the text starts no line. From the line table, not by reading the
+    /// text.
+    pub fn text_lines(&self) -> usize {
+        self.line_starts.len() - usize::from(self.text.is_empty() || self.text.ends_with('\n'))
+    }
+
     /// The 1-based line and the 1-based column, counted in characters, of
     /// byte `at`. An offset past the end counts as the end; an offset
     /// inside a character counts as that character.

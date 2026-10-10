@@ -21,7 +21,10 @@ fuzz_target!(|data: &[u8]| {
     };
 
     // 2. Lex — typechecker only sees token streams that lexed cleanly.
-    let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() else {
+    let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s)
+        .tokenize()
+        .checked()
+    else {
         return;
     };
 

@@ -1,0 +1,15 @@
+-- exit: 1
+-- repeat: 50
+-- stderr-contains: deadlock on main thread: channel receive with no counterparty
+-- stderr-contains: help: task.deadline does not bound channel waits; use channel.recv_timeout or a channel.timeout arm
+-- `task.deadline` bounds I/O and sleeps. A receive that nobody will
+-- answer is a deadlock inside it as outside it, and the report says
+-- what would bound the wait.
+import channel
+import task
+import time
+
+fn main() {
+  let never = channel.new(0)
+  println(task.deadline(time.ms(100), { -> channel.receive(never) }))
+}

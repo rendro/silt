@@ -290,7 +290,7 @@ pub fn doc_snippets() -> Vec<Input> {
 /// continues a string after an interpolation hole has no gap in front of
 /// it: what is put there is string text.
 pub fn gaps(text: &str) -> Vec<usize> {
-    let Ok(lexed) = Lexer::new(FileId::default(), text).tokenize() else {
+    let Ok(lexed) = Lexer::new(FileId::default(), text).tokenize().checked() else {
         return Vec::new();
     };
     lexed
@@ -317,6 +317,7 @@ fn parse(inputs: &[Input]) -> Vec<bool> {
                         let text = &input.text;
                         Lexer::new(FileId::default(), text)
                             .tokenize()
+                            .checked()
                             .is_ok_and(|lexed| Parser::new(lexed, text).parse_program().is_ok())
                     })
                     .collect()
@@ -445,7 +446,10 @@ pub struct Report {
 /// The comments of `text`, each with every run of white space as one
 /// space, sorted. `None` when `text` does not lex and parse.
 fn parsed_comments(text: &str) -> Option<Vec<String>> {
-    let lexed = Lexer::new(FileId::default(), text).tokenize().ok()?;
+    let lexed = Lexer::new(FileId::default(), text)
+        .tokenize()
+        .checked()
+        .ok()?;
     let mut comments: Vec<String> = lexed
         .comments
         .iter()
@@ -469,7 +473,7 @@ fn parsed_comments(text: &str) -> Option<Vec<String>> {
 /// result starts with exactly these bytes. Empty when `text` does not
 /// lex or starts with no comment.
 fn header(text: &str) -> String {
-    let Ok(lexed) = Lexer::new(FileId::default(), text).tokenize() else {
+    let Ok(lexed) = Lexer::new(FileId::default(), text).tokenize().checked() else {
         return String::new();
     };
     let Some(first) = lexed.tokens.first() else {

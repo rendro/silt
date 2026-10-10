@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::bytecode::{Instr, Op, VmClosure, record_type_matches};
-use crate::scheduler::SliceResult;
+use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
@@ -246,7 +246,13 @@ impl Vm {
                 // of its own has no need to.
                 Slice::OutOfBudget => {}
                 Slice::Parked(wait) => {
-                    self.woken = Some(scheduler.block_thread(wait, self.is_program())?);
+                    let who = match self.is_program() {
+                        true => Blocks::Program {
+                            in_deadline: self.current_deadline.is_some(),
+                        },
+                        false => Blocks::Thread,
+                    };
+                    self.woken = Some(scheduler.block_thread(wait, who)?);
                 }
             }
             run = self.run_frames(floor, usize::MAX)?;

@@ -25,8 +25,56 @@ fn lexer_invariants_accept_real_tokenization() {
     let src = "let x = 1 + 2\nfn main() { x }\n";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .unwrap();
     check_lexer_invariants(src, &tokens).expect("real source must satisfy invariants");
+}
+
+/// Every text of the committed fuzz corpora, of every target.
+fn corpus_texts() -> Vec<(std::path::PathBuf, String)> {
+    let corpora = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus");
+    let mut texts = Vec::new();
+    for target in std::fs::read_dir(&corpora).expect("fuzz/corpus") {
+        let target = target.unwrap().path();
+        if !target.is_dir() {
+            continue;
+        }
+        for file in std::fs::read_dir(&target).unwrap() {
+            let file = file.unwrap().path();
+            if let Ok(text) = std::fs::read_to_string(&file) {
+                texts.push((file, text));
+            }
+        }
+    }
+    assert!(texts.len() > 100, "only {} corpus texts", texts.len());
+    texts
+}
+
+/// What `fuzz_lexer` and `fuzz_parser` do with an input, on every text
+/// of the corpora: the lexer goes on behind an error and the parser
+/// reads whatever tokens that gives, so both run on all of them.
+#[test]
+fn the_lexer_and_parser_targets_hold_on_the_corpora() {
+    let mut with_errors = 0;
+    for (file, text) in corpus_texts() {
+        let lexed = Lexer::new(silt::source::FileId::default(), &text).tokenize();
+        check_lexer_invariants(&text, &lexed)
+            .unwrap_or_else(|err| panic!("{}: lexer invariant violated: {err}", file.display()));
+        with_errors += usize::from(!lexed.errors.is_empty());
+        let (program, errors) = Parser::new(lexed.clone(), &text).parse_program_recovering();
+        assert!(
+            errors.len() <= 51,
+            "{}: {} errors",
+            file.display(),
+            errors.len()
+        );
+        if errors.is_empty() {
+            check_parser_invariants(&text, &lexed, &program).unwrap_or_else(|err| {
+                panic!("{}: parser invariant violated: {err}", file.display())
+            });
+        }
+    }
+    assert!(with_errors > 0, "no corpus text has a lex error");
 }
 
 /// A hand-made token stream with no trivia, as the lexer would return it.
@@ -41,7 +89,7 @@ fn lexed(tokens: Vec<(Token, Span)>) -> Lexed {
                 comments: 0..0,
             })
             .collect(),
-        comments: Vec::new(),
+        ..Lexed::default()
     }
 }
 
@@ -198,6 +246,7 @@ fn parser_invariants_accept_real_parse() {
     let src = "let x = 1\nfn main() { x }\n";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .unwrap();
     let program = Parser::new(tokens.clone(), src).parse_program().unwrap();
     check_parser_invariants(src, &tokens, &program)
@@ -210,6 +259,7 @@ fn parser_invariants_accept_empty_source() {
     let src = "";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .unwrap();
     let program = Parser::new(tokens.clone(), src).parse_program().unwrap();
     check_parser_invariants(src, &tokens, &program).expect("empty source must satisfy invariants");
@@ -220,6 +270,7 @@ fn parser_invariants_accept_whitespace_only_source() {
     let src = "\n\n   \n";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .unwrap();
     let program = Parser::new(tokens.clone(), src).parse_program().unwrap();
     check_parser_invariants(src, &tokens, &program)
@@ -234,12 +285,14 @@ fn parser_invariants_reject_decl_span_past_source() {
     let src = "import foo\n";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .unwrap();
     let bogus_program = Program {
         decls: vec![Decl::Import(
             ImportTarget::Module(silt::intern::intern("foo")),
             Span::point(silt::source::FileId::default(), 9999),
         )],
+        unknown: Vec::new(),
         statements: Default::default(),
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
@@ -257,11 +310,9 @@ fn parser_invariants_reject_empty_decls_for_nontrivial_source() {
     let src = "let x = 1\n";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .unwrap();
-    let empty_program = Program {
-        decls: vec![],
-        statements: Default::default(),
-    };
+    let empty_program = Program::default();
     let err = check_parser_invariants(src, &tokens, &empty_program).unwrap_err();
     assert!(err.contains("zero decls"), "unexpected error: {err}");
 }
@@ -272,12 +323,14 @@ fn parser_invariants_reject_decls_from_empty_source() {
     let src = "";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .unwrap();
     let bogus_program = Program {
         decls: vec![Decl::Import(
             ImportTarget::Module(silt::intern::intern("ghost")),
             Span::point(silt::source::FileId::default(), 0),
         )],
+        unknown: Vec::new(),
         statements: Default::default(),
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();

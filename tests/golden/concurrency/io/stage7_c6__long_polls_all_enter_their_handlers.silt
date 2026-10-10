@@ -1,0 +1,42 @@
+-- timeout: 30
+-- repeat: 50
+-- requires-feature: http
+-- Twelve requests at once, each of whose handlers waits on a channel:
+-- every one of them is in its handler before any is released. No
+-- request waits for another connection to end. (A handler that did
+-- not start would leave `main` waiting for it: the case would time
+-- out.)
+import channel
+import http
+import list
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let release = channel.new(0)
+  let entered = channel.new(0)
+  let server = task.spawn { ->
+    http.serve(listener) { _req ->
+      channel.send(entered, ())
+      let _ = channel.receive(release)
+      http.Response { status: 200, body: "released", headers: #{} }
+    }
+  }
+  let clients = 1..12 |> list.map { _ ->
+    task.spawn { ->
+      match http.get("http://127.0.0.1:{port}/wait") {
+        Ok(r) -> "{r.status} {r.body}"
+        Err(e) -> "error: {e.message()}"
+      }
+    }
+  }
+  1..12 |> list.each { _ ->
+    let _ = channel.receive(entered)
+  }
+  println("12 handlers wait")
+  channel.close(release)
+  println(clients |> list.map { client -> task.join(client) } |> list.unique)
+  task.cancel(server)
+}

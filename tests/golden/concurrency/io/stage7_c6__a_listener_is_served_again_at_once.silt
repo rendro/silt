@@ -1,0 +1,35 @@
+-- timeout: 120
+-- requires-feature: http
+-- One listener; a server is started on it, answers a request and is
+-- cancelled, and the next server is started on the same listener at
+-- once: 300 times. Every request is answered by the server of its
+-- round. (With a server that had an accept of its own on the listener
+-- a cancelled server went on taking connections, and about one request
+-- in ten was never answered.)
+import http
+import list
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let wrong = 1..300 |> list.fold(0) { wrong, round ->
+    let server = task.spawn { ->
+      http.serve(listener) { _req -> http.Response { status: 200, body: "round {round}", headers: #{} } }
+    }
+    let answer = match http.get(url) {
+      Ok(r) -> r.body
+      Err(e) -> e.message()
+    }
+    task.cancel(server)
+    match answer == "round {round}" {
+      true -> wrong
+      false -> {
+        println("round {round}: {answer}")
+        wrong + 1
+      }
+    }
+  }
+  println("{wrong} of 300 requests were not answered by their server")
+}

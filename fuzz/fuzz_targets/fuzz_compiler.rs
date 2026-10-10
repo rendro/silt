@@ -30,7 +30,10 @@ fuzz_target!(|data: &[u8]| {
 
     // 2. Lex — skip inputs that don't lex; lexer panic-freedom is
     //    fuzz_lexer's subject.
-    let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() else {
+    let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s)
+        .tokenize()
+        .checked()
+    else {
         return;
     };
 

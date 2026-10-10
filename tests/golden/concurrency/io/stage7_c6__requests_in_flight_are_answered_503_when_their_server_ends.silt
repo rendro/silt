@@ -1,0 +1,46 @@
+-- timeout: 30
+-- requires-feature: http
+-- The task of a server is cancelled while five requests wait in their
+-- handlers. Each of them is answered 503 at the cancel and its
+-- connection closed: no client waits for a server that is gone. A
+-- request that was answered before is not touched, and the program
+-- ends.
+import channel
+import http
+import list
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let never = channel.new(0)
+  let entered = channel.new(0)
+  let server = task.spawn { ->
+    http.serve(listener) { req ->
+      match req.path {
+        "/quick" -> http.Response { status: 200, body: "quick", headers: #{} }
+        _ -> {
+          channel.send(entered, ())
+          let _ = channel.receive(never)
+          http.Response { status: 200, body: "late", headers: #{} }
+        }
+      }
+    }
+  }
+  let get = { path ->
+    match http.get("http://127.0.0.1:{port}{path}") {
+      Ok(r) -> "{r.status} {r.body}"
+      Err(e) -> "error: {e.message()}"
+    }
+  }
+  let clients = 1..5 |> list.map { _ -> task.spawn { -> get("/wait") } }
+  1..5 |> list.each { _ ->
+    let _ = channel.receive(entered)
+  }
+  println(get("/quick"))
+  task.cancel(server)
+  println("server cancelled")
+  clients |> list.each { client -> println(task.join(client)) }
+  println("main returns")
+}

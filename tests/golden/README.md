@@ -153,6 +153,7 @@ a range is `line:col-line:col`, its end exclusive.
 | `rename L:C NAME` | `textDocument/rename` | `geo.silt:1:8-1:10 => NAME` |
 | `symbols QUERY` | `workspace/symbol` (every symbol without QUERY) | `geo.silt:1:8-1:10 function mk`, a variant ends in ` in Shape` |
 | `hover L:C` | `textDocument/hover` | the text, as it is |
+| `signature L:C` | `textDocument/signatureHelp` | the signature, then `argument N: PARAMETER` for the argument the position is in (`(none)` when the function has no such parameter) |
 | `format` | `textDocument/formatting`, and gives the server the result as the file's new text; the requests behind it are about that text | the new text (`(nothing)` when nothing changes) |
 
 ## Verdicts

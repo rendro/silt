@@ -437,10 +437,7 @@ impl Session {
     /// that failed or that close a cycle: those are poisoned.
     fn check(&mut self, id: ModuleId, ordering: &Ordering) -> ModuleAnalysis {
         let module = self.graph.module(id);
-        let mut ast = module.ast.clone().unwrap_or(ast::Program {
-            decls: Vec::new(),
-            statements: Default::default(),
-        });
+        let mut ast = module.ast.clone().unwrap_or_default();
         let mut imported: HashMap<Symbol, Imported<'_>> = HashMap::new();
         let mut bugs = Vec::new();
         for import in &module.imports {
@@ -515,16 +512,23 @@ impl Session {
                 tables: &mut self.tables,
             },
         );
+        // Of a text that is cut short only the lexer's error is
+        // reported: the declarations behind the cut are missing, and
+        // every use of one would be an error of its own.
+        let diagnostics = match self.graph.module(id).cut_short {
+            true => bugs,
+            false => bugs
+                .into_iter()
+                .chain(resolution.diagnostics)
+                .chain(check.diagnostics)
+                .collect(),
+        };
         ModuleAnalysis {
             ast: Arc::new(ast),
             scope: resolution.scope,
             top_level: check.top_level,
             let_order: check.let_order,
-            diagnostics: bugs
-                .into_iter()
-                .chain(resolution.diagnostics)
-                .chain(check.diagnostics)
-                .collect(),
+            diagnostics,
         }
     }
 

@@ -1,0 +1,5 @@
+error[lex]: unexpected character: '@'
+ --> one_error__a_stray_character_in_an_impl_method.silt:10:28
+    |
+ 10 |   fn m(self) -> Int { self @ }
+    |                            ^ unexpected character: '@'

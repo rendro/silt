@@ -1,0 +1,29 @@
+-- timeout: 20
+-- requires-feature: tcp
+-- Eight accepts time out. Each gives up when its task no longer waits,
+-- so its thread is free: a file read afterwards runs at once. (With
+-- the old pool the four threads stayed in their accepts for ever, and
+-- the read never ran.)
+import io
+import list
+import string
+import task
+import tcp
+import time
+
+fn main() {
+  let outcomes = 1..8 |> list.map { _ ->
+    when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+    task.spawn { ->
+      match task.deadline(time.ms(30), { -> tcp.accept(listener) }) {
+        Err(tcp.TcpTimeout) -> "timed out"
+        _ -> "something else"
+      }
+    }
+  }
+  outcomes |> list.each { h -> println(task.join(h)) }
+  when let Ok(text) = io.read_file("stage7_c6__timed_out_operations_free_their_threads.silt") else {
+    panic("cannot read the file")
+  }
+  println("read the file: {string.length(text) > 0}")
+}

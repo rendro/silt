@@ -174,17 +174,32 @@ pub(crate) struct Outcome {
     pub(crate) broken: Vec<String>,
 }
 
-/// Sweep the file `entry` of the case directory `case`. `run`: also
-/// compare what `silt run <run_entry>` prints. `clash`: also ask with
-/// names in use. `every`: verify every n-th distinct rename (1 = all).
+/// What a swept program is. (The heavy suite, which includes this
+/// module too, sweeps examples only.)
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Kind {
+    /// A case: a program that runs; what it prints is compared too.
+    Case,
+    /// An example: a program that checks.
+    Example,
+    /// A case with a syntax error: it does not run, and what every door
+    /// says of it is compared.
+    Broken,
+}
+
+/// Sweep the file `entry` of the case directory `case`, a program of
+/// kind `kind` whose entry is `run_entry`. `clash`: also ask with names
+/// in use. `every`: verify every n-th distinct rename (1 = all).
 pub(crate) fn sweep(
     case: &Path,
     entry: &str,
     run_entry: &str,
-    run: bool,
+    kind: Kind,
     clash: bool,
     every: usize,
 ) -> Outcome {
+    let run = kind != Kind::Example;
     let scratch = std::env::temp_dir().join("silt_rename_sweep").join(format!(
         "{}_{}_{}",
         case.file_name().unwrap().to_string_lossy(),
@@ -206,13 +221,16 @@ pub(crate) fn sweep(
     };
     let base = verdict(&root, &files, run_entry, run);
     // A case is a program that runs, an example one that checks: a
-    // rename of a broken program would be compared with its errors.
-    let (what, sound) = match run {
-        true => ("run", base.last().unwrap().starts_with("run: Some(0)\n")),
-        false => ("check", base[0].contains(".silt: Some(0)\n")),
+    // rename of a program that is broken without being meant to would
+    // be compared with its errors.
+    let runs = base.last().unwrap().starts_with("run: Some(0)\n");
+    let (what, as_meant) = match kind {
+        Kind::Case => ("run", runs),
+        Kind::Example => ("check", base[0].contains(".silt: Some(0)\n")),
+        Kind::Broken => ("fail to run", !runs),
     };
     assert!(
-        sound,
+        as_meant,
         "{}: {run_entry} does not {what}:\n{}",
         case.display(),
         base.join("\n")

@@ -1,0 +1,5 @@
+error[lex]: unterminated string
+ --> unterminated_string__only_the_lexer_reports.silt:14:2
+    |
+ 14 | }
+    |  ^ unterminated string

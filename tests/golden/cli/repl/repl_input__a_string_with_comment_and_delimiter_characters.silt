@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: import string\nlet s = "one \{- two\nthree"\ns\nprintln("{string.length("(\{-")}")\n:quit\n
+-- A string that spans lines and holds `{-` is a string, not the start
+-- of a comment; and a string inside a string interpolation that holds
+-- `(` and `{-` opens neither a paren nor a comment: the input is read
+-- at once, from its tokens.

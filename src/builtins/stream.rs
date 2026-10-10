@@ -114,14 +114,19 @@ enum Next {
     Emit(Value),
     /// Call a function with arguments.
     Call(Value, Vec<Value>),
-    /// Run a blocking operation on the I/O pool.
-    Io(Box<dyn FnOnce() -> Value + Send>),
+    /// Run a blocking operation on the I/O pool. If the pipe is
+    /// dropped while it runs, the second is called to make it return.
+    Io(Box<dyn FnOnce() -> Value + Send>, Option<Stop>),
     /// It is finished. A sink's value; a stage's is ignored.
     Done(Value),
 }
 
 /// The part of a stage or sink that is its own: given what happened,
 /// what comes next.
+/// What makes the blocking operations of a source or a sink return
+/// when nobody waits for them any more (a connection is shut down).
+type Stop = Arc<dyn Fn() + Send + Sync>;
+
 type Logic = Box<dyn FnMut(Got) -> Result<Next, VmError> + Send>;
 
 /// Where a pipe stands between two resumptions.
@@ -152,6 +157,10 @@ struct Pipe {
     /// Which input a wait for any of them tries first: each in turn.
     turn: usize,
     finished: bool,
+    /// What ends its blocking operations, for a pipe on a connection:
+    /// called when the pipe is stopped before its end, whether an
+    /// operation is in flight then or not.
+    stop: Option<Stop>,
 }
 
 /// How many steps a pipe takes without waiting before it gives way to
@@ -159,8 +168,8 @@ struct Pipe {
 const BURST: usize = 256;
 
 /// The error of an I/O operation of a pipe that could not run.
-fn io_failure(msg: &str) -> Value {
-    err_io_unknown(msg)
+fn io_failure(failure: crate::vm::IoFailure<'_>) -> Value {
+    err_io_unknown(failure.text())
 }
 
 fn internal(what: &str) -> VmError {
@@ -183,6 +192,7 @@ impl Pipe {
             state: State::Go(Got::Start),
             turn: 0,
             finished: false,
+            stop: None,
         }
     }
 
@@ -290,8 +300,12 @@ impl Native for Pipe {
                     self.state = State::Calling;
                     return Ok(vm.call(callee, args));
                 }
-                Next::Io(operation) => {
-                    let op = vm.runtime.io_pool.submit(io_failure, operation);
+                Next::Io(operation, stop) => {
+                    let mut op = vm.runtime.io_pool.submit(io_failure, operation);
+                    if let Some(stop) = stop {
+                        self.stop = Some(stop.clone());
+                        op = op.stop_with(move || stop());
+                    }
                     let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
                     self.state = State::Io(op);
                     return Ok(Step::Park(wait));
@@ -307,6 +321,14 @@ impl Native for Pipe {
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
+        // A pipe on a connection that is stopped before its end shuts
+        // the connection down, whatever it was doing: not only when a
+        // read happened to be in flight.
+        if !self.finished
+            && let Some(stop) = self.stop.take()
+        {
+            stop();
+        }
         // A stage that failed hands its failure to whoever reads its
         // output: that reader raises it, so it is not reported as a
         // failure that nobody joined. A stage that was stopped closes
@@ -574,11 +596,20 @@ fn unfold(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     })
 }
 
+/// For a source or a sink on `stream`: its operations return when the
+/// connection is shut down.
+#[cfg(feature = "tcp")]
+fn stopper(stream: &Arc<crate::runtime::handle::TcpStreamHandle>) -> Option<Stop> {
+    let stream = stream.clone();
+    Some(Arc::new(move || stream.shut_down()))
+}
+
 /// A source that reads from something that blocks: `read` gives the
 /// next item, `None` at the end. An `Err(_)` item is the last.
 fn reading(
     vm: &mut Vm,
     name: &'static str,
+    stop: Option<Stop>,
     read: impl FnMut() -> Option<Value> + Send + 'static,
 ) -> Result<Step, VmError> {
     let read = Arc::new(Mutex::new(read));
@@ -587,10 +618,13 @@ fn reading(
         Ok(match got {
             Got::Start | Got::Emitted if !failed => {
                 let read = read.clone();
-                Next::Io(Box::new(move || match (read.lock())() {
-                    Some(item) => Value::variant(bv::SOME, vec![item]),
-                    None => Value::variant(bv::NONE, vec![]),
-                }))
+                Next::Io(
+                    Box::new(move || match (read.lock())() {
+                        Some(item) => Value::variant(bv::SOME, vec![item]),
+                        None => Value::variant(bv::NONE, vec![]),
+                    }),
+                    stop.clone(),
+                )
             }
             Got::Io(Value::Variant(name, mut fields)) if name.is(bv::SOME) => {
                 let item = fields.pop().unwrap_or(Value::Unit);
@@ -615,7 +649,7 @@ fn file_chunks(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     }
     let n = n as usize;
     let mut file: Option<std::fs::File> = None;
-    reading(vm, "stream.file_chunks", move || {
+    reading(vm, "stream.file_chunks", None, move || {
         use std::io::Read;
         if file.is_none() {
             match std::fs::File::open(&path) {
@@ -641,7 +675,7 @@ fn file_lines(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     }
     let path = require_string(&args[0], "stream.file_lines")?.to_string();
     let mut lines: Option<std::io::Lines<std::io::BufReader<std::fs::File>>> = None;
-    reading(vm, "stream.file_lines", move || {
+    reading(vm, "stream.file_lines", None, move || {
         use std::io::BufRead;
         if lines.is_none() {
             match std::fs::File::open(&path) {
@@ -676,19 +710,23 @@ fn tcp_chunks(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         return Ok(closed_channel(vm));
     }
     let n = n as usize;
-    reading(vm, "stream.tcp_chunks", move || {
-        use std::io::Read;
-        let mut buf = vec![0u8; n];
-        let read = stream_handle.inner.lock().read(&mut buf);
-        match read {
-            Ok(0) => None,
-            Ok(read) => {
-                buf.truncate(read);
-                Some(ok(Value::Bytes(Arc::new(buf))))
+    reading(
+        vm,
+        "stream.tcp_chunks",
+        stopper(&stream_handle),
+        move || {
+            let mut buf = vec![0u8; n];
+            let read = stream_handle.read(&mut buf);
+            match read {
+                Ok(0) => None,
+                Ok(read) => {
+                    buf.truncate(read);
+                    Some(ok(Value::Bytes(Arc::new(buf))))
+                }
+                Err(e) => Some(err_tcp(&e)),
             }
-            Err(e) => Some(err_tcp(&e)),
-        }
-    })
+        },
+    )
 }
 
 #[cfg(not(feature = "tcp"))]
@@ -708,18 +746,17 @@ fn tcp_lines(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         _ => return Err(VmError::new("stream.tcp_lines requires a TcpStream".into())),
     };
     let mut at_end = false;
-    reading(vm, "stream.tcp_lines", move || {
+    reading(vm, "stream.tcp_lines", stopper(&stream_handle), move || {
         // The stream is behind a lock and cannot be wrapped in a
         // buffered reader that outlives one call, so a line is read
         // byte by byte: the network buffer dominates the cost.
-        use std::io::Read;
         if at_end {
             return None;
         }
         let mut current = Vec::new();
         loop {
             let mut byte = [0u8; 1];
-            let read = stream_handle.inner.lock().read(&mut byte);
+            let read = stream_handle.read(&mut byte);
             match read {
                 Ok(0) => {
                     at_end = true;
@@ -1408,6 +1445,7 @@ fn writing(
     name: &'static str,
     ch: Arc<Channel>,
     mismatch: fn(String) -> Value,
+    stop: Option<Stop>,
     write: impl FnMut(Option<&[u8]>) -> Result<(), Value> + Send + 'static,
 ) -> Result<Step, VmError> {
     let write = Arc::new(Mutex::new(write));
@@ -1415,12 +1453,15 @@ fn writing(
     sink(name, ch, move |got| {
         let run = |bytes: Option<Arc<Vec<u8>>>| {
             let write = write.clone();
-            Next::Io(Box::new(move || {
-                match (write.lock())(bytes.as_deref().map(Vec::as_slice)) {
-                    Ok(()) => ok(Value::Unit),
-                    Err(e) => e,
-                }
-            }))
+            Next::Io(
+                Box::new(
+                    move || match (write.lock())(bytes.as_deref().map(Vec::as_slice)) {
+                        Ok(()) => ok(Value::Unit),
+                        Err(e) => e,
+                    },
+                ),
+                stop.clone(),
+            )
         };
         Ok(match got {
             // The first operation opens what is written to.
@@ -1459,14 +1500,12 @@ fn write_to_tcp(args: &[Value]) -> Result<Step, VmError> {
     fn mismatch(msg: String) -> Value {
         err_tcp_unknown(msg)
     }
-    writing("stream.write_to_tcp", ch, mismatch, move |bytes| {
-        use std::io::Write;
+    let stop = stopper(&stream_handle);
+    writing("stream.write_to_tcp", ch, mismatch, stop, move |bytes| {
         let Some(bytes) = bytes else {
             return Ok(());
         };
-        let mut guard = stream_handle.inner.lock();
-        guard.write_all(bytes).map_err(|e| err_tcp(&e))?;
-        guard.flush().map_err(|e| err_tcp(&e))
+        stream_handle.write_all(bytes).map_err(|e| err_tcp(&e))
     })
 }
 
@@ -1489,7 +1528,7 @@ fn write_to_file(args: &[Value]) -> Result<Step, VmError> {
         err_io_unknown(msg)
     }
     let mut file: Option<std::fs::File> = None;
-    writing("stream.write_to_file", ch, mismatch, move |bytes| {
+    writing("stream.write_to_file", ch, mismatch, None, move |bytes| {
         use std::io::Write;
         if file.is_none() {
             file = Some(std::fs::File::create(&path).map_err(|e| err_io(&e))?);

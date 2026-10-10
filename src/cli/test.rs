@@ -179,10 +179,13 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
 
         // With a filter, a file without a test whose name it selects is
         // left alone: it is not analysed, and nothing is reported for it.
-        // A file that does not lex cannot be asked for its tests, so it
-        // is kept and its error reported.
+        // A file with a lex or parse error cannot be asked for its
+        // tests (what was read of it need not hold them), so it is kept
+        // and its error reported.
+        let module = session.graph().module(session.module_of(file));
         if filter.is_some()
-            && let Some(ast) = &session.graph().module(session.module_of(file)).ast
+            && module.problems.is_empty()
+            && let Some(ast) = &module.ast
             && selected_tests(ast, filter.as_deref()).next().is_none()
         {
             continue;

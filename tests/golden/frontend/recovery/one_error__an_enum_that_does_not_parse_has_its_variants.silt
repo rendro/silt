@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- An enum that does not parse has the variants that can be read of
+-- it: a use of one is no "undefined" error.
+type E {
+  A,
+  B(,
+}
+
+fn main() {
+  let e = A
+  match e {
+    A -> println("a")
+    B(_) -> println("b")
+  }
+}

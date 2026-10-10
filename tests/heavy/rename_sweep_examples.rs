@@ -2,7 +2,7 @@
 //! name at every identifier, a sample of the distinct renames applied
 //! and compared by default and every one with `SILT_RENAME_FULL=1`.
 
-use crate::rename_sweep::{repo, silt_files, sweep};
+use crate::rename_sweep::{Kind, repo, silt_files, sweep};
 
 /// The examples, each as a case of its own directory: a fresh name at
 /// every identifier; every eighth distinct rename is applied and
@@ -22,7 +22,7 @@ fn every_example_renames_by_meaning() {
             continue;
         }
         let entry = file.to_string_lossy().into_owned();
-        let outcome = sweep(&dir, &entry, &entry, false, false, every);
+        let outcome = sweep(&dir, &entry, &entry, Kind::Example, false, every);
         asked += outcome.asked;
         renamed += outcome.renamed;
         refused += outcome.refused;

@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- An enum that does not parse (its variants lack their commas) leaves
+-- its name and its variants declared. `Int` and `Point`, which stand
+-- among the fields behind a comma, are not variants of it: they stay
+-- the types they are, so the type error in `wrong` is still an error,
+-- and it is the only one beside the enum's.
+type Point {
+  x: Int,
+}
+
+type Shape {
+  Circle(Int)
+  Rect(Int, Int, Point)
+}
+
+fn wrong(a: Int, p: Point) -> Int {
+  a + p.x + "s"
+}
+
+fn main() {
+  let s = Circle(1)
+  println(wrong(1, Point { x: 2 }))
+}

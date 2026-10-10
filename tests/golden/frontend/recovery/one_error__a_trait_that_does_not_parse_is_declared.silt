@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A trait that does not parse is declared all the same: its impl and
+-- the calls of its method are no errors.
+trait T {
+  fn m(self) -> 
+}
+
+trait T for Int {
+  fn m(self) -> Int { self }
+}
+
+fn main() {
+  println("{1.m()}")
+}

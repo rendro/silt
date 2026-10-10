@@ -14,6 +14,7 @@ use silt::lexer::{self, Lexer, Token};
 fn first_token(src: &str) -> Token {
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
+        .checked()
         .expect("lexer error");
     tokens.tokens.into_iter().next().expect("no token").kind
 }
