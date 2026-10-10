@@ -204,45 +204,29 @@ pub fn run_repl() {
                     buffer.push_str(line);
                 }
 
-                // An input that ends inside a delimiter, a string or a
-                // block comment goes on in the next line: the lexer
+                // An input that more lines can finish (an open
+                // delimiter of code, a string or a block comment that
+                // is not closed) goes on in the next line: the lexer
                 // says so.
                 let lexed = Lexer::new(FileId::default(), &buffer).tokenize();
                 if lexed.ends_open() {
                     continue;
                 }
 
-                let input = buffer.trim().to_string();
-                buffer.clear();
-
-                if input.is_empty() {
-                    continue;
-                }
-
-                let _ = rl.add_history_entry(&input);
-
-                let evaluation = repl.eval(&input);
-                for d in &evaluation.diagnostics {
-                    eprintln!("{}", repl.render(d));
-                }
-                if let Some(value) = &evaluation.value
-                    && !matches!(value, Value::Unit)
-                {
-                    println!("{}", repl.show(value));
-                }
-                if evaluation.committed {
-                    let mut all = builtin_names();
-                    all.extend(evaluation.names);
-                    all.sort();
-                    all.dedup();
-                    *names.borrow_mut() = all;
-                }
+                let input = std::mem::take(&mut buffer);
+                evaluate(&mut rl, &mut repl, &names, input.trim());
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
                 println!("^C");
             }
-            Err(ReadlineError::Eof) => break,
+            // The input ends: an entry that was still being read is
+            // evaluated as it is, and says what it lacks.
+            Err(ReadlineError::Eof) => {
+                let input = std::mem::take(&mut buffer);
+                evaluate(&mut rl, &mut repl, &names, input.trim());
+                break;
+            }
             Err(err) => {
                 eprintln!("error: {err}");
                 break;
@@ -256,6 +240,36 @@ pub fn run_repl() {
 
     if let Some(ref p) = history_path {
         let _ = rl.save_history(p);
+    }
+}
+
+/// Evaluate the entry `input`, show its diagnostics and its value, and
+/// give its names to the completion.
+fn evaluate(
+    rl: &mut Editor<SiltHelper, DefaultHistory>,
+    repl: &mut Repl,
+    names: &Rc<RefCell<Vec<String>>>,
+    input: &str,
+) {
+    if input.is_empty() {
+        return;
+    }
+    let _ = rl.add_history_entry(input);
+    let evaluation = repl.eval(input);
+    for d in &evaluation.diagnostics {
+        eprintln!("{}", repl.render(d));
+    }
+    if let Some(value) = &evaluation.value
+        && !matches!(value, Value::Unit)
+    {
+        println!("{}", repl.show(value));
+    }
+    if evaluation.committed {
+        let mut all = builtin_names();
+        all.extend(evaluation.names);
+        all.sort();
+        all.dedup();
+        *names.borrow_mut() = all;
     }
 }
 
@@ -530,6 +544,7 @@ fn print_help() {
     println!(
         "Multi-line input: an open brace, paren, bracket, string or block comment continues on the next line."
     );
+    println!("A brace in a string starts an interpolation: write \\{{ for the character itself.");
 }
 
 /// Completion candidates for a given prefix, using the REPL's builtin name

@@ -245,25 +245,53 @@ impl Lexed {
         self.cut_short
     }
 
-    /// Whether the text is not finished: it ends inside a string or a
-    /// block comment (`is_cut_short`), or a delimiter it opens (`(`,
-    /// `[`, `{`, `#{`, `#[`, the `{` of a string interpolation) is not
-    /// closed at its end. A closer with nothing open closes nothing.
-    /// The REPL reads another line of such an input.
+    /// Whether more lines can finish the text: a delimiter of code
+    /// (`(`, `[`, `{`, `#{`, `#[`) or a string interpolation is open at
+    /// its end, or the text ends inside a string or a block comment
+    /// that is not closed and no string interpolation is open. The REPL
+    /// reads another line of such an input.
+    ///
+    /// A text that ends in a string inside a string interpolation is
+    /// not such a text: in `println("{")` the brace wants a backslash,
+    /// and the quote behind it opens a string that no later line is
+    /// meant to close. A closer with nothing of its kind open closes
+    /// nothing; the end of an interpolation closes what was opened
+    /// inside it.
     pub fn ends_open(&self) -> bool {
-        let open = self.tokens.iter().fold(0usize, |open, tok| match tok.kind {
-            Token::LParen
-            | Token::LBracket
-            | Token::LBrace
-            | Token::HashBrace
-            | Token::HashBracket
-            | Token::StringStart(_) => open + 1,
-            Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => {
-                open.saturating_sub(1)
+        #[derive(PartialEq)]
+        enum Open {
+            Code,
+            Interpolation,
+        }
+        let mut open = Vec::new();
+        for tok in &self.tokens {
+            match tok.kind {
+                Token::LParen
+                | Token::LBracket
+                | Token::LBrace
+                | Token::HashBrace
+                | Token::HashBracket => open.push(Open::Code),
+                Token::StringStart(_) => open.push(Open::Interpolation),
+                Token::RParen | Token::RBracket | Token::RBrace => {
+                    if open.last() == Some(&Open::Code) {
+                        open.pop();
+                    }
+                }
+                Token::StringEnd(_) => {
+                    if let Some(at) = open.iter().rposition(|o| *o == Open::Interpolation) {
+                        open.truncate(at);
+                    }
+                }
+                _ => {}
             }
-            _ => open,
-        });
-        open > 0 || self.is_cut_short()
+        }
+        if self.more_errors > 0 {
+            return false;
+        }
+        match self.cut_short {
+            true => !open.contains(&Open::Interpolation),
+            false => !open.is_empty(),
+        }
     }
 
     /// The comments between the token before `tok` and `tok`.
@@ -1910,6 +1938,51 @@ mod tests {
         );
         assert_eq!(errors.len(), 2, "{errors:?}");
         assert_eq!(errors[0], "unexpected character: '@'");
+    }
+
+    #[test]
+    fn test_what_more_lines_can_finish() {
+        let open = |input: &str| {
+            Lexer::new(crate::source::FileId::default(), input)
+                .tokenize()
+                .ends_open()
+        };
+        // Delimiters of code, a string, a block comment, an
+        // interpolation that is open.
+        for input in [
+            "f(",
+            "[1,",
+            "let x = {",
+            "#{ 1: ",
+            "#[",
+            "\"abc",
+            "\"\"\"abc",
+            "{- abc",
+            "\"a {",
+            "\"a { f(",
+            "(1, \"{",
+            "}{",
+            "([)",
+        ] {
+            assert!(open(input), "{input}");
+        }
+        // Finished, or what no later line is meant to finish: a string
+        // inside an interpolation, a closer of another kind.
+        for input in [
+            "",
+            "f(1)",
+            "\"a {x} b\"",
+            "\"{\"",
+            "println(\"{\")",
+            "println(\"a { b\")",
+            "\"{(}\"",
+            "(]",
+            "{)",
+            "1 }",
+            "\"a {\"b {\n\"c\"\n}\"}\"",
+        ] {
+            assert!(!open(input), "{input}");
+        }
     }
 
     #[test]
