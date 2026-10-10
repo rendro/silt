@@ -103,7 +103,7 @@ pub(crate) fn json_unknown_err<S: Into<String>>(msg: S) -> Value {
 }
 
 /// Dispatch the builtin `trait Error for JsonError` method table.
-/// Routed through `dispatch_builtin`'s "JsonError" module arm, exactly
+/// Called through the VM's `ERROR_TRAIT_DISPATCH`, exactly
 /// like `call_io_error_trait`. Scaffolding lives in
 /// `super::dispatch_error_trait`; this site just supplies the
 /// variant → message rendering.

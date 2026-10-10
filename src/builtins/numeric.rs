@@ -78,7 +78,7 @@ fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Valu
 }
 
 /// Dispatch the builtin `trait Error for ParseError` method table.
-/// Routed through `dispatch_builtin`'s "ParseError" module arm, mirroring
+/// Called through the VM's `ERROR_TRAIT_DISPATCH`, like
 /// `call_io_error_trait`. Scaffolding lives in
 /// `super::dispatch_error_trait`; this site just supplies the
 /// variant → message rendering.

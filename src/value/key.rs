@@ -157,7 +157,7 @@ impl PartialEq for Value {
             //   - VmClosure: Arc pointer equality (closures carry captured
             //     upvalues; two closures of the same function with different
             //     upvalues must NOT compare equal).
-            //   - BuiltinFn: string equality (builtins are by name).
+            //   - BuiltinFn: the same row of the builtin registry.
             //   - VariantConstructor: variant equality.
             // Cross-kind pairs still fall through to `_ => false`.
             (Value::Handle(a), Value::Handle(b)) => a.id == b.id,
@@ -476,9 +476,9 @@ impl Hash for Value {
                 state.write_u8(16);
                 // not meaningfully hashable
             }
-            Value::BuiltinFn(name) => {
+            Value::BuiltinFn(id) => {
                 state.write_u8(17);
-                name.hash(state);
+                id.hash(state);
             }
             Value::HostFn(h) => {
                 state.write_u8(21);

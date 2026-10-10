@@ -351,7 +351,13 @@ fn display_set() {
 #[test]
 fn display_builtin_fn() {
     assert_eq!(
-        format!("{}", Value::BuiltinFn("println".into())),
+        format!(
+            "{}",
+            crate::builtins::registry::registry()
+                .named("println")
+                .expect("println")
+                .value()
+        ),
         "<builtin:println>"
     );
 }

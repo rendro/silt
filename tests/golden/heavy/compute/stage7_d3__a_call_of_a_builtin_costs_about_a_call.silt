@@ -1,0 +1,96 @@
+-- timeout: 120
+-- A call of a builtin names its row by number, and nothing is looked up
+-- when it runs: 500,000 calls of builtins (`string.length` twice,
+-- `list.length`, `int.to_string` and `map.get`, 100,000 rounds) take
+-- less than one and a half times as long as 500,000 calls of silt
+-- functions that take the same arguments and do nothing with them.
+-- (They take about nine tenths; with the name looked up at each call
+-- it was eleven tenths.) Each is timed three times and the best is
+-- taken; no time is compared with a wall time.
+import int
+import list
+import map
+import string
+import time
+
+fn length(s) {
+  12
+}
+
+fn count(xs) {
+  8
+}
+
+fn text(n) {
+  "1"
+}
+
+fn one(s) {
+  1
+}
+
+fn get(m, key) {
+  Some(3)
+}
+
+fn builtins(rounds) {
+  let s = "hello, world"
+  let xs = [1, 2, 3, 4, 5, 6, 7, 8]
+  let m = #{ "a": 1, "b": 2, "c": 3, "d": 4 }
+  loop i = 0, acc = 0 {
+    match i >= rounds {
+      true -> acc
+      false -> {
+        let found = match map.get(m, "c") {
+          Some(n) -> n
+          None -> 0
+        }
+        loop(
+          i + 1,
+          acc + string.length(s) + list.length(xs) + string.length(int.to_string(1)) + found,
+        )
+      }
+    }
+  }
+}
+
+fn functions(rounds) {
+  let s = "hello, world"
+  let xs = [1, 2, 3, 4, 5, 6, 7, 8]
+  let m = #{ "a": 1, "b": 2, "c": 3, "d": 4 }
+  loop i = 0, acc = 0 {
+    match i >= rounds {
+      true -> acc
+      false -> {
+        let found = match get(m, "c") {
+          Some(n) -> n
+          None -> 0
+        }
+        loop(i + 1, acc + length(s) + count(xs) + one(text(1)) + found)
+      }
+    }
+  }
+}
+
+fn timed(run, rounds) {
+  let started = time.now()
+  let sum = run(rounds)
+  let took = time.now().epoch_ns - started.epoch_ns
+  match sum == rounds * 24 {
+    true -> took
+    false -> panic("wrong sum {sum}")
+  }
+}
+
+fn best(run, rounds) {
+  list.fold(1..2, timed(run, rounds)) { least, _ -> int.min(least, timed(run, rounds)) }
+}
+
+fn main() {
+  let builtin = best(builtins, 100000)
+  let function = best(functions, 100000)
+  match builtin * 2 < function * 3 {
+    true -> println("a call of a builtin costs about a call of a function")
+    false -> println("builtins {builtin / 1000000} ms, functions {function / 1000000} ms")
+  }
+}

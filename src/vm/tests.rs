@@ -1,4 +1,5 @@
 use super::*;
+use crate::builtins::registry::{Body, Row, registry};
 use crate::bytecode::{Asm, Emitter, Function};
 use crate::source::Span;
 use crate::typeinfo::bv;
@@ -221,12 +222,11 @@ fn test_jump_if_false() {
 #[test]
 fn test_builtin_println() {
     let script = make_function(|e| {
-        let name = e
-            .constant(Value::String("println".to_string()), span())
-            .unwrap();
+        let builtin = registry().named("println").expect("println").id;
         let val = e.constant(Value::Int(42), span()).unwrap();
         e.emit(Asm::Constant { k: val }, span()).unwrap();
-        e.emit(Asm::CallBuiltin { name, argc: 1 }, span()).unwrap();
+        e.emit(Asm::CallBuiltin { builtin, argc: 1 }, span())
+            .unwrap();
         e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
@@ -2542,24 +2542,40 @@ fn test_regex_cache_eviction_correctness() {
 
 #[test]
 fn test_builtin_panic_converted_to_vm_error() {
-    // Locks V1: panics inside builtin modules must be caught by
-    // `catch_builtin_panic` and converted to a clean `VmError`. A
-    // panicking builtin would otherwise tear down the current scheduler
-    // worker thread, stalling every other task on that worker.
+    // Locks V1: a panic inside a builtin must be caught where the
+    // builtin is called (`Vm::enter_row`) and converted to a clean
+    // `VmError`. A panicking builtin would otherwise tear down the
+    // current scheduler worker thread, stalling every other task on
+    // that worker.
     //
-    // We exercise this by routing through a `#[cfg(test)]`-only
-    // "__test_panic_builtin" arm in `dispatch_builtin` that always
-    // panics. If the wrapper is removed, this test unwinds and fails
-    // the whole test process; with the wrapper, it returns a VmError
-    // naming the module and the panic payload.
+    // No row of the registry panics, so the test calls a row of its
+    // own, as a call of a builtin does. If the wrapper is removed,
+    // this test unwinds and fails; with the wrapper, it returns a
+    // VmError naming the module and the panic payload.
+    fn boom(_vm: &mut Vm, _args: &[Value]) -> crate::builtins::typed::Called {
+        panic!("synthetic builtin panic for test")
+    }
+    let println = registry().named("println").expect("println");
+    let row = Row {
+        signature: "fn boom() -> ()",
+        summary: "panics",
+        name: "boom",
+        module: "test",
+        params: Vec::new(),
+        optional_last: false,
+        feature: None,
+        enabled: true,
+        id: println.id,
+        body: Body::Typed(boom),
+    };
     let mut vm = Vm::new(crate::HostIo::process());
     let err = vm
-        .dispatch_builtin("__test_panic_builtin.boom", &[])
+        .enter_row(&row, &[])
         .err()
         .expect("expected VmError from panicking builtin");
     let msg = format!("{err}");
     assert!(
-        msg.contains("builtin module") && msg.contains("panicked"),
+        msg.contains("builtin module 'test' panicked"),
         "expected wrapper message, got: {msg}"
     );
     assert!(
@@ -2568,67 +2584,45 @@ fn test_builtin_panic_converted_to_vm_error() {
     );
 }
 
-// ── Audit regression: println/print runtime arity guard ─────────────
+// ── println/print: a call with other arguments than one ─────────────
 
 #[test]
 fn test_println_rejects_wrong_arity() {
-    // Locks the defence-in-depth arity checks in `dispatch_builtin` for
-    // the built-in `println` and `print` functions. In well-typed silt
-    // programs the type checker (see `typechecker/builtin_env.rs`)
-    // rejects wrong-arity calls to both with arity 1, so these runtime
-    // guards exist purely to catch a hypothetical compiler or emitter
-    // bug that mis-emits argc. Mirrors `test_tail_call_rejects_arity_mismatch`
-    // in spirit: bypass the compiler by calling `dispatch_builtin`
-    // directly with the wrong number of arguments and assert we get a
-    // clean VmError naming the builtin and the actual count.
-    //
-    // A silent revert of either `args.len() != 1` check would otherwise
-    // slip through unnoticed.
+    // The checker rejects a call of `println` or `print` with other
+    // than one argument, so no program makes one. A call that is made
+    // all the same (a compiler or emitter bug that mis-emits argc) is
+    // the one error of arguments that do not fit a builtin.
     let mut vm = Vm::new(crate::HostIo::process());
-
-    // println with 0 args
-    let err = vm
-        .dispatch_builtin("println", &[])
-        .err()
-        .expect("expected VmError for println with 0 args");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("println takes 1 argument, got 0"),
-        "expected println 0-arg guard message, got: {msg}"
-    );
-
-    // println with 2 args
-    let err = vm
-        .dispatch_builtin("println", &[Value::Int(1), Value::Int(2)])
-        .err()
-        .expect("expected VmError for println with 2 args");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("println takes 1 argument, got 2"),
-        "expected println 2-arg guard message, got: {msg}"
-    );
-
-    // print with 0 args
-    let err = vm
-        .dispatch_builtin("print", &[])
-        .err()
-        .expect("expected VmError for print with 0 args");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("print takes 1 argument, got 0"),
-        "expected print 0-arg guard message, got: {msg}"
-    );
-
-    // print with 2 args
-    let err = vm
-        .dispatch_builtin("print", &[Value::Int(1), Value::Int(2)])
-        .err()
-        .expect("expected VmError for print with 2 args");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("print takes 1 argument, got 2"),
-        "expected print 2-arg guard message, got: {msg}"
-    );
+    for (name, args, said) in [
+        (
+            "println",
+            vec![],
+            "println takes (value: a), but was called with ()",
+        ),
+        (
+            "println",
+            vec![Value::Int(1), Value::Int(2)],
+            "println takes (value: a), but was called with (Int, Int)",
+        ),
+        (
+            "print",
+            vec![],
+            "print takes (value: a), but was called with ()",
+        ),
+        (
+            "print",
+            vec![Value::Int(1), Value::Int(2)],
+            "print takes (value: a), but was called with (Int, Int)",
+        ),
+    ] {
+        let id = registry().named(name).expect(name).id;
+        let err = vm
+            .enter_builtin(id, &args)
+            .err()
+            .unwrap_or_else(|| panic!("{said}"));
+        assert_eq!(err.message, said);
+        assert!(err.type_confusion);
+    }
 }
 
 // ── Type confusion: one test per guard family ───────────────────────

@@ -8,17 +8,6 @@ use crate::builtins;
 use crate::typeinfo::Tag;
 use crate::value::{HostFn, Value};
 
-/// Write `text` to the host's stdout for `print` / `println`. A failure
-/// is a runtime error.
-fn write_stdout(vm: &Vm, text: &str) -> Result<(), VmError> {
-    vm.runtime.io.out(text).map_err(|e| {
-        VmError::new(format!(
-            "cannot write to stdout: {}",
-            crate::diagnostic::io_error_text(&e)
-        ))
-    })
-}
-
 /// Call the host function `host` while catching panics that escape it.
 ///
 /// A panicking host function would otherwise tear down the scheduler
@@ -69,15 +58,14 @@ fn decode_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-/// Run a builtin module dispatch arm under `catch_unwind`, converting any
+/// Run a builtin of `module` under `catch_unwind`, converting any
 /// panic that escapes the builtin into a clean `VmError`. This mirrors
 /// [`invoke_host_fn`] for host functions — a panic in a builtin
 /// would otherwise tear down the current scheduler worker thread.
 ///
-/// Intended to wrap each arm of the module-name match in `dispatch_builtin`.
 /// Callers that capture `&mut Vm` (or other non-`UnwindSafe` state) should
 /// wrap the closure in [`AssertUnwindSafe`] before passing it here.
-fn catch_builtin_panic<F, T>(module: &str, f: F) -> Result<T, VmError>
+pub(super) fn catch_builtin_panic<F, T>(module: &str, f: F) -> Result<T, VmError>
 where
     F: FnOnce() -> Result<T, VmError> + std::panic::UnwindSafe,
 {
@@ -114,12 +102,8 @@ pub(super) fn resume_native(
 /// Uniform signature shared by every `call_<x>_error_trait` helper.
 type ErrorTraitFn = fn(&str, &[Value]) -> Result<Value, VmError>;
 
-/// Round-73 BLOAT-3: dispatch table for built-in `trait Error` impls.
-///
-/// Each `(enum_name, fn_ptr)` entry corresponds to a previous match
-/// arm in `dispatch_builtin` of the form
-/// `"<Enum>" => catch_builtin_panic("<Enum>",
-///   AssertUnwindSafe(|| <module>::call_<x>_error_trait(func, args)))`.
+/// The dispatch table for built-in `trait Error` impls: for each
+/// error enum, by its name, the helper that gives its `message`.
 ///
 /// PgError / TcpError stay cfg-gated by being conditionally included
 /// in the table — the gate must match the gate on the corresponding
@@ -384,85 +368,6 @@ impl Vm {
                 ))
             }
             _ => None,
-        }
-    }
-
-    // ── Builtin dispatch ──────────────────────────────────────────
-
-    /// Call the builtin `name`. A host clock that has panicked, in
-    /// this call or on one of the runtime's threads, fails the call:
-    /// the readings the builtin got since are not real, and the waits
-    /// it was woken from have not ended.
-    pub(super) fn dispatch_builtin(&mut self, name: &str, args: &[Value]) -> Result<Step, VmError> {
-        let step = self.dispatch_builtin_unchecked(name, args)?;
-        match self.runtime.io.clock_failure() {
-            Some(failure) => Err(VmError::new(failure)),
-            None => Ok(step),
-        }
-    }
-
-    fn dispatch_builtin_unchecked(&mut self, name: &str, args: &[Value]) -> Result<Step, VmError> {
-        if let Some((module, func)) = name.split_once('.') {
-            // A builtin module's function: the body of its row in the
-            // builtin registry. A panic inside it becomes a clean
-            // `VmError` instead of tearing down the current scheduler
-            // worker thread, as for a host function (`invoke_host_fn`).
-            #[cfg(test)]
-            if module == "__test_panic_builtin" {
-                // The test harness uses this name to verify that
-                // `catch_builtin_panic` converts a panic into a `VmError`.
-                return catch_builtin_panic(
-                    "__test_panic_builtin",
-                    AssertUnwindSafe(|| {
-                        let _ = (&*self, func, args);
-                        panic!("synthetic builtin panic for test")
-                    }),
-                );
-            }
-            match builtins::registry::registry().module(module) {
-                Some(entry) if entry.enabled => match entry.row(func) {
-                    Some(row) => {
-                        catch_builtin_panic(entry.name, AssertUnwindSafe(|| row.call(self, args)))
-                    }
-                    None => Err(VmError::new(format!("unknown {module} function: {func}"))),
-                },
-                _ => Err(VmError::new(format!("unknown builtin namespace: {module}"))),
-            }
-        } else {
-            match name {
-                "println" => {
-                    if args.len() != 1 {
-                        return Err(VmError::new(format!(
-                            "println takes 1 argument, got {}",
-                            args.len()
-                        )));
-                    }
-                    self.show(&args[0], |vm, mut text| {
-                        text.push('\n');
-                        write_stdout(vm, &text)?;
-                        Ok(Step::Done(Value::Unit))
-                    })
-                }
-                "print" => {
-                    if args.len() != 1 {
-                        return Err(VmError::new(format!(
-                            "print takes 1 argument, got {}",
-                            args.len()
-                        )));
-                    }
-                    self.show(&args[0], |vm, text| {
-                        write_stdout(vm, &text)?;
-                        Ok(Step::Done(Value::Unit))
-                    })
-                }
-                "panic" => match args.first() {
-                    Some(msg) => {
-                        self.show(msg, |_, text| Err(VmError::new(format!("panic: {text}"))))
-                    }
-                    None => Err(VmError::new("panic: ".into())),
-                },
-                _ => Err(VmError::new(format!("unknown builtin: {name}"))),
-            }
         }
     }
 }

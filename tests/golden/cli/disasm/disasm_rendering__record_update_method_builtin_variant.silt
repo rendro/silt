@@ -7,8 +7,8 @@
 -- stdout-contains: RecordUpdate         1
 -- stdout-contains: |  field 3     ; "x"
 -- stdout-contains: CallMethod           7     1   ; "display" of Display
--- stdout-contains: CallBuiltin          9     1   ; "string.length"
--- stdout-contains: Constant             10    ; <constructor:Circle>
+-- stdout-contains: CallBuiltin          1     ; string.length
+-- stdout-contains: Constant             9     ; <constructor:Circle>
 import string
 
 type Point { x: Int, y: Int }

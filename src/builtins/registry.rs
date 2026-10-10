@@ -21,7 +21,9 @@
 //!   reference pages, and the generated parts of the pages (each
 //!   module's summary table, each function's signature block) are
 //!   written from the rows ([`docs::render_page`]);
-//! - a call of a builtin finds its row by name and runs its body.
+//! - a call of a builtin carries its row's number ([`BuiltinId`]),
+//!   which the compiler took from the row it names, and runs the row's
+//!   body; a builtin function as a value is that number.
 //!
 //! A module of a cargo feature that is not built keeps its rows; the
 //! checker does not enter them, and `import` of the module is an error
@@ -61,6 +63,24 @@ pub(crate) enum Body {
     Off,
 }
 
+/// A row's number: what a call of a builtin carries
+/// ([`Instr::CallBuiltin`](crate::bytecode::Instr)) and what a builtin
+/// function is as a value ([`Value::BuiltinFn`]). It is the row's place
+/// among all rows ([`Registry::builtin`]) in this build of silt, and
+/// means nothing in another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BuiltinId(pub(crate) u16);
+
+impl std::fmt::Display for BuiltinId {
+    /// The row's name as a program calls it: `list.map`, `println`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match registry().builtin(*self) {
+            Some(row) => f.write_str(&row.qualified()),
+            None => write!(f, "{}", self.0),
+        }
+    }
+}
+
 /// One builtin function or constant.
 pub struct Row {
     /// A function's header, `fn trim(s: String) -> String`, read by the
@@ -85,6 +105,7 @@ pub struct Row {
     pub feature: Option<&'static str>,
     /// Whether the row's feature and its module's are built.
     pub enabled: bool,
+    pub id: BuiltinId,
     pub(crate) body: Body,
 }
 
@@ -124,14 +145,32 @@ impl Row {
         Some((label, ranges))
     }
 
+    /// The row's name as a program calls it: `list.map`; the bare name
+    /// of a function of the prelude (`println`).
+    pub fn qualified(&self) -> String {
+        match self.module {
+            "" => self.name.to_string(),
+            module => format!("{module}.{}", self.name),
+        }
+    }
+
+    /// The row as a value: a constant's value, a function.
+    pub fn value(&self) -> Value {
+        match &self.body {
+            Body::Const(value) => value.clone(),
+            _ => Value::BuiltinFn(self.id),
+        }
+    }
+
     /// Call the row with `args`.
     pub(crate) fn call(&self, vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         match &self.body {
             Body::Typed(call) => call(vm, args).unwrap_or_else(|| Err(self.misfit(args))),
             Body::Untyped(call) => call(vm, self.name, args),
-            Body::Const(_) | Body::Off => {
-                Err(VmError::new(format!("{} is not a function", self.name)))
-            }
+            Body::Const(_) | Body::Off => Err(VmError::new(format!(
+                "{} is not a function",
+                self.qualified()
+            ))),
         }
     }
 
@@ -147,9 +186,8 @@ impl Row {
             .map_or("()", |(open, close)| &self.signature[open..=close]);
         let kinds: Vec<&str> = args.iter().map(super::value_kind).collect();
         VmError::type_confusion(format!(
-            "{}.{} takes {params}, but was called with ({})",
-            self.module,
-            self.name,
+            "{} takes {params}, but was called with ({})",
+            self.qualified(),
             kinds.join(", ")
         ))
     }
@@ -491,6 +529,30 @@ fn build_module(
     shares: &'static [(&'static str, &'static str)],
     specs: Vec<RowSpec>,
 ) -> Module {
+    Module {
+        name,
+        feature,
+        enabled,
+        page_file,
+        page,
+        types,
+        type_decls: type_decls(types, derives),
+        derives,
+        opaque,
+        error,
+        shares,
+        rows: rows(name, enabled, call, specs),
+    }
+}
+
+/// The rows of `specs`, of the module `name` (of the prelude: `""`),
+/// which is built or not.
+fn rows(
+    name: &'static str,
+    enabled: bool,
+    call: Option<UntypedCall>,
+    specs: Vec<RowSpec>,
+) -> Vec<Row> {
     let mut rows: Vec<Row> = specs
         .into_iter()
         .map(|spec| {
@@ -504,6 +566,8 @@ fn build_module(
                 optional_last: spec.optional_last,
                 feature: spec.feature.map(|(feature, _)| feature),
                 enabled: on,
+                // (Its place among all rows: the registry's to say.)
+                id: BuiltinId(0),
                 body: match (spec.constant, spec.typed, call) {
                     _ if !on => Body::Off,
                     (Some(value), _, _) => Body::Const(value),
@@ -541,20 +605,7 @@ fn build_module(
                 .collect();
         }
     }
-    Module {
-        name,
-        feature,
-        enabled,
-        page_file,
-        page,
-        types,
-        type_decls: type_decls(types, derives),
-        derives,
-        opaque,
-        error,
-        shares,
-        rows,
-    }
+    rows
 }
 
 /// The prelude's opaque types: `Bytes`, and `TypeOf(a)`, the type of a
@@ -573,25 +624,46 @@ pub type Result(a, e) { Ok(a), Err(e) }
 pub type Option(a) { Some(a), None }
 ";
 
-/// The functions of the prelude, each a row's header: called by their
-/// bare names. What they run is the VM's (`Vm::dispatch_builtin`), which
-/// formats the argument with `Display`.
-pub const PRELUDE_FNS: &str = "\
-fn print(value: a) -> () where a: Display
-fn println(value: a) -> () where a: Display
-fn panic(message: a) -> Never where a: Display
-";
-
 /// Every builtin module, and what is derived from all of them at once.
 pub struct Registry {
     pub modules: Vec<Module>,
     /// The types of [`PRELUDE_TYPES`].
     pub prelude_types: Vec<TypeDecl>,
+    /// The functions of the prelude, called by their bare names
+    /// (`println`): rows of no module.
+    pub prelude: Vec<Row>,
     /// Each module's place in `modules`, by name.
     by_name: HashMap<&'static str, usize>,
+    /// Where each row is, by its id: the module's place in `modules`
+    /// (none for the prelude), and the row's place in its rows.
+    by_id: Vec<(Option<usize>, usize)>,
 }
 
 impl Registry {
+    /// The row with the id.
+    pub fn builtin(&self, id: BuiltinId) -> Option<&Row> {
+        let (module, row) = *self.by_id.get(usize::from(id.0))?;
+        Some(match module {
+            Some(module) => &self.modules[module].rows[row],
+            None => &self.prelude[row],
+        })
+    }
+
+    /// The row a program names `qualified`: `list.map`, or a function
+    /// of the prelude by its bare name; if its features are built.
+    pub fn named(&self, qualified: &str) -> Option<&Row> {
+        match qualified.split_once('.') {
+            Some((module, function)) => self.row(module, function),
+            None => self.prelude.iter().find(|row| row.name == qualified),
+        }
+    }
+
+    /// The prelude's functions as the checker reads them: each row's
+    /// header.
+    pub fn prelude_text(&self) -> String {
+        self.prelude.iter().map(|row| row.header() + "\n").collect()
+    }
+
     /// The module `name`, built or not.
     pub fn module(&self, name: &str) -> Option<&Module> {
         self.by_name.get(name).map(|k| &self.modules[*k])
@@ -632,16 +704,34 @@ impl Registry {
 pub fn registry() -> &'static Registry {
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        let modules = modules::modules();
+        let mut modules = modules::modules();
+        let mut prelude = rows("", true, None, modules::prelude());
         let by_name = modules
             .iter()
             .enumerate()
             .map(|(k, m)| (m.name, k))
             .collect();
+        // Every row's id: its place among all rows, the modules' in
+        // their order, then the prelude's.
+        let mut by_id = Vec::new();
+        let groups = modules
+            .iter_mut()
+            .enumerate()
+            .map(|(k, module)| (Some(k), &mut module.rows))
+            .chain([(None, &mut prelude)]);
+        for (module, rows) in groups {
+            for (k, row) in rows.iter_mut().enumerate() {
+                let id = u16::try_from(by_id.len()).expect("more builtins than an id counts");
+                row.id = BuiltinId(id);
+                by_id.push((module, k));
+            }
+        }
         Registry {
             modules,
             prelude_types: type_decls(PRELUDE_TYPES, PRELUDE_DERIVES),
+            prelude,
             by_name,
+            by_id,
         }
     })
 }

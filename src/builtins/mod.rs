@@ -17,6 +17,7 @@ pub mod json;
 pub mod numeric;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+pub(crate) mod prelude;
 pub mod regex;
 pub mod registry;
 pub mod stream;

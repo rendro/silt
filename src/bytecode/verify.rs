@@ -270,6 +270,17 @@ fn check(
             )),
             Operand::Upvalue(_) => Ok(()),
             Operand::Const(k, kind) => constant(k, kind),
+            Operand::Builtin(id) => match crate::builtins::registry::registry().builtin(id) {
+                Some(row) if row.enabled && !row.is_constant() => Ok(()),
+                Some(row) => Err(format!(
+                    "`{op}` names the builtin {}, which is no function of this build",
+                    row.qualified()
+                )),
+                None => Err(format!(
+                    "`{op}` names the builtin {}, and there is none",
+                    id.0
+                )),
+            },
             Operand::Strs(names) => names
                 .iter(chunk.code())
                 .try_for_each(|k| constant(k, ConstKind::Str)),
@@ -662,6 +673,38 @@ mod tests {
             rejected(code, vec![]),
             "at offset 1: no instruction is encoded here"
         );
+    }
+
+    #[test]
+    fn bad_16_builtin_that_is_no_function() {
+        use crate::builtins::registry::registry;
+        // A call of a builtin with a number no row has.
+        let code = vec![op(Op::CallBuiltin), 0xff, 0xff, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 0: `CallBuiltin` names the builtin 65535, and there is none"
+        );
+        // A call of a row that is a constant.
+        let [lo, hi] = registry()
+            .named("math.pi")
+            .expect("math.pi")
+            .id
+            .0
+            .to_le_bytes();
+        let code = vec![op(Op::CallBuiltin), lo, hi, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 0: `CallBuiltin` names the builtin math.pi, which is no function of this build"
+        );
+        // A call of a function is fine.
+        let [lo, hi] = registry()
+            .named("math.random")
+            .expect("math.random")
+            .id
+            .0
+            .to_le_bytes();
+        let code = vec![op(Op::CallBuiltin), lo, hi, 0, op(Op::Return)];
+        verify(&Function::unverified(0, 0, code, vec![])).unwrap();
     }
 
     #[test]

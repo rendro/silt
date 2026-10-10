@@ -7,17 +7,40 @@
 //! yet: it runs the module's untyped `call`. A constant is `k("name:
 //! Type", summary, value)`.
 
-use super::{Module, UntypedCall, build_module, f, k, module, u};
+use super::{Module, RowSpec, UntypedCall, build_module, f, k, module, u};
 use crate::builtins::collections::{list, map, set};
 use crate::builtins::numeric::{float, int, math};
 #[cfg(feature = "postgres")]
 use crate::builtins::postgres;
+use crate::builtins::prelude;
 #[cfg(feature = "tcp")]
 use crate::builtins::tcp;
 use crate::builtins::{
     bytes, concurrency, core, crypto, encoding, http, io, json, regex, stream, string, time, toml,
     uuid,
 };
+
+/// The functions of the prelude: called by their bare names, each
+/// shows its argument as `Display` says.
+pub(super) fn prelude() -> Vec<RowSpec> {
+    vec![
+        f(
+            "fn print(value: a) -> () where a: Display",
+            "Write a value to stdout",
+            prelude::print,
+        ),
+        f(
+            "fn println(value: a) -> () where a: Display",
+            "Write a value and a newline to stdout",
+            prelude::println,
+        ),
+        f(
+            "fn panic(message: a) -> Never where a: Display",
+            "Stop the program with an error",
+            prelude::panic,
+        ),
+    ]
+}
 
 #[rustfmt::skip]
 pub(super) fn modules() -> Vec<Module> {

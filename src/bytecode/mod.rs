@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::builtins::registry::BuiltinId;
 use crate::defs::{DefId, TraitId, TypeId};
 use crate::source::Span;
 use crate::typeinfo::TypeInfo;
@@ -39,7 +40,7 @@ enum ConstantKey {
     /// A type descriptor (a record literal's or pattern's type).
     Type(TypeId),
     /// A builtin function used as a value (`println`), by its name.
-    Builtin(String),
+    Builtin(BuiltinId),
     /// A primitive type's descriptor (`Int` as a value), by its name.
     Primitive(String),
 }
@@ -394,7 +395,7 @@ impl Chunk {
                 Some(ConstantKey::Nullary(tag.type_id(), tag.ordinal()))
             }
             Value::TypeDescriptor(ty) => Some(ConstantKey::Type(ty.id)),
-            Value::BuiltinFn(name) => Some(ConstantKey::Builtin(name.clone())),
+            Value::BuiltinFn(id) => Some(ConstantKey::Builtin(*id)),
             Value::PrimitiveDescriptor(name) => Some(ConstantKey::Primitive(name.clone())),
             _ => None,
         };

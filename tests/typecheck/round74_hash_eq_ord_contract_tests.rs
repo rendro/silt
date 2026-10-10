@@ -18,6 +18,14 @@ use silt::bytecode::{Function, VmClosure};
 use silt::runtime::handle::TaskHandle;
 use silt::value::Value;
 
+/// The builtin function `name` (`println`, `list.map`) as a value.
+fn builtin(name: &str) -> Value {
+    silt::builtins::registry::registry()
+        .named(name)
+        .unwrap_or_else(|| panic!("the builtin {name}"))
+        .value()
+}
+
 fn hash_of(v: &Value) -> u64 {
     let mut h = DefaultHasher::new();
     v.hash(&mut h);
@@ -175,8 +183,8 @@ fn vm_closure_reflexive_eq_hash_dedup() {
 #[test]
 fn builtin_fn_reflexive_eq_hash_dedup() {
     // BuiltinFn equality is by name string.
-    let a = Value::BuiltinFn("println".into());
-    let b = Value::BuiltinFn("println".into());
+    let a = builtin("println");
+    let b = builtin("println");
     assert_eq!(
         a, b,
         "BuiltinFn(name) == BuiltinFn(name) (same name) must hold"
@@ -247,7 +255,7 @@ fn opaque_values_distinct_across_discriminants() {
     });
     let handle = Value::Handle(h);
     let vm_closure = Value::VmClosure(closure);
-    let builtin = Value::BuiltinFn("f".into());
+    let builtin = builtin("panic");
     let ctor = Value::VariantConstructor(bv::OK.tag());
     // Pairwise: must all be unequal.
     assert_ne!(handle, vm_closure);

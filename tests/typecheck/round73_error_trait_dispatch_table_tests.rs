@@ -1,6 +1,5 @@
-//! Round-73 BLOAT-3 (L6) regression lock: the 11 byte-near-identical
-//! per-enum `catch_builtin_panic` arms in `dispatch_builtin` were
-//! collapsed onto a single dispatch-table lookup
+//! Round-73 BLOAT-3 (L6) regression lock: `.message()` of a builtin
+//! error enum is a single dispatch-table lookup
 //! (`ERROR_TRAIT_DISPATCH`) keyed by enum name.
 //!
 //! Behavioural lock: every typed-error enum registered in

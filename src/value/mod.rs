@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::builtins::registry::BuiltinId;
 use crate::bytecode;
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
@@ -54,7 +55,8 @@ pub enum Value {
     /// A variant: which variant of which enum, and its fields.
     Variant(Tag, Vec<Value>),
     VmClosure(Arc<bytecode::VmClosure>),
-    BuiltinFn(String),
+    /// A builtin function: its row of the builtin registry.
+    BuiltinFn(BuiltinId),
     /// A function of a host module an embedder declared to the session
     /// (see `session::HostModule`), installed by the program that
     /// imports the module.

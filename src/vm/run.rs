@@ -713,14 +713,9 @@ impl Vm {
                 let result = self.pop();
                 return Ok(DispatchResult::Return(result));
             }
-            Instr::CallBuiltin { name, argc } => {
-                // The name stays where it is, in the function's constants,
-                // which the function's closure keeps while the builtin
-                // has the VM.
-                let closure = self.frame().closure.clone();
-                let name = closure.function.chunk().string(name);
+            Instr::CallBuiltin { builtin, argc } => {
                 let args = self.stack.split_off(self.stack.len() - argc);
-                let entered = self.enter_builtin(name, &args)?;
+                let entered = self.enter_builtin(builtin, &args)?;
                 return Ok(self.entered(entered));
             }
             Instr::MakeClosure { f, captures } => {

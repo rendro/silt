@@ -55,7 +55,7 @@ impl fmt::Debug for Value {
                 }
             }
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name()),
-            Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
+            Value::BuiltinFn(id) => write!(f, "<builtin:{id}>"),
             Value::HostFn(h) => write!(f, "<host:{}>", h.name),
             Value::VariantConstructor(tag) => write!(f, "<constructor:{tag}>"),
             Value::TypeDescriptor(ty) => write!(f, "<type:{}>", ty.name),
@@ -411,7 +411,7 @@ impl Value {
                 }
             }
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name()),
-            Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
+            Value::BuiltinFn(id) => write!(f, "<builtin:{id}>"),
             Value::HostFn(h) => write!(f, "<host:{}>", h.name),
             Value::VariantConstructor(tag) => write!(f, "<constructor:{tag}>"),
             Value::TypeDescriptor(ty) => write!(f, "<type:{}>", ty.name),

@@ -154,7 +154,11 @@ fn disassemble_instruction(
         // ── Jumps: the distance and the target offset ─────────
         Instr::Jump { to } | Instr::JumpIfFalse { to } | Instr::JumpIfTrue { to } => jump(to),
 
-        Instr::CallBuiltin { name, argc } => with_constant_and_count(name, argc),
+        // CallBuiltin: the number of arguments, and the builtin by its
+        // name (its id is its place among the rows of this build).
+        Instr::CallBuiltin { builtin, argc } => {
+            format!("{offset:04}  {name:<20} {argc:<5} ; {builtin}")
+        }
         // CallMethod: the method name, argc, and the trait whose method
         // it calls (shown after the name when the call names one).
         Instr::CallMethod { method, argc, of } | Instr::TailCallMethod { method, argc, of } => {
@@ -400,12 +404,16 @@ mod tests {
     #[test]
     fn test_call_builtin() {
         let output = disassembly(1, 0, |e| {
-            let name = e.constant(Value::String("print".into()), span()).unwrap();
-            e.emit(Asm::CallBuiltin { name, argc: 1 }, span()).unwrap();
+            let builtin = crate::builtins::registry::registry()
+                .named("print")
+                .expect("print")
+                .id;
+            e.emit(Asm::CallBuiltin { builtin, argc: 1 }, span())
+                .unwrap();
             e.emit(Asm::Return, span()).unwrap();
         });
         assert!(
-            output.contains("0000  CallBuiltin          0     1   ; \"print\""),
+            output.contains("0000  CallBuiltin          1     ; print"),
             "{output}"
         );
     }

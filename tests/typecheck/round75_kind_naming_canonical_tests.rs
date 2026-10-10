@@ -56,6 +56,14 @@ use silt::runtime::sync::Channel;
 use silt::value::Value;
 use silt::vm::Vm;
 
+/// The builtin function `name` (`println`, `list.map`) as a value.
+fn builtin(name: &str) -> Value {
+    silt::builtins::registry::registry()
+        .named(name)
+        .unwrap_or_else(|| panic!("the builtin {name}"))
+        .value()
+}
+
 // ── Test helpers ─────────────────────────────────────────────────────
 
 /// Build one representative `Value` for each enum variant. TCP shapes
@@ -139,7 +147,7 @@ fn build_all_variants() -> AllVariants {
             function: Arc::new(Function::returning_unit("f".to_string(), 0)),
             upvalues: Vec::new(),
         })),
-        builtin_fn: Value::BuiltinFn("println".to_string()),
+        builtin_fn: builtin("println"),
         variant_constructor: Value::VariantConstructor(bv::SOME.tag()),
         type_descriptor: Value::TypeDescriptor(point_type()),
         primitive_descriptor: Value::PrimitiveDescriptor("Int".to_string()),
