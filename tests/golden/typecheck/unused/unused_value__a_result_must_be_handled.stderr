@@ -1,0 +1,11 @@
+error[type]: this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+ --> unused_value__a_result_must_be_handled.silt:13:3
+    |
+ 13 |   io.write_file(path, "a")
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^ this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_result_must_be_handled.silt:19:3
+    |
+ 19 |   int.parse(a)?
+    |   ^^^^^^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it

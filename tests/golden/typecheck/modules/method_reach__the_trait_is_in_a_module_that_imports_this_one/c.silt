@@ -1,0 +1,5 @@
+import shapes
+
+pub fn on_a_value() -> Int {
+  shapes.Square { side: 2 }.area()
+}

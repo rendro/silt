@@ -2283,7 +2283,7 @@ fn test_scheduler_channel_communication() {
             import channel
             fn main() {
                 let ch = channel.new()
-                task.spawn({ -> channel.send(ch, 99) })
+                let _ = task.spawn({ -> channel.send(ch, 99) })
                 channel.receive(ch)
             }
             "#,

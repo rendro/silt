@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown field or method 'area' on type Square
+-- stderr-contains: type 'Square' has no method 'area'
+-- stderr-contains: trait 'Area' of module 'traits' has a method 'area' for this type; import 'traits' to call it
+-- The help names the module to import for a method called on a value
+-- of a declared type and through the type, with the trait's module
+-- checked after the caller.
+import c
+import traits
+
+fn main() {
+  println(c.on_a_value() + c.through_the_type() + traits.touch())
+}

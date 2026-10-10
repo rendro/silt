@@ -1,0 +1,17 @@
+error[type]: this `<Self as Source>::Item` value is unused; write `let _ = ...` to discard it
+ --> unused_value__an_associated_type_of_an_unknown_type.silt:12:5
+    |
+ 12 |     self.next()
+    |     ^^^^^^^^^^^ this `<Self as Source>::Item` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `<a as Source>::Item` value is unused; write `let _ = ...` to discard it
+ --> unused_value__an_associated_type_of_an_unknown_type.silt:18:3
+    |
+ 18 |   s.next()
+    |   ^^^^^^^^ this `<a as Source>::Item` value is unused; write `let _ = ...` to discard it
+
+error[type]: this value is unused; write `let _ = ...` to discard it
+ --> unused_value__an_associated_type_of_an_unknown_type.silt:23:3
+    |
+ 23 |   s.next()
+    |   ^^^^^^^^ this value is unused; write `let _ = ...` to discard it

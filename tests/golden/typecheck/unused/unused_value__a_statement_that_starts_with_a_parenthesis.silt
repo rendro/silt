@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A statement starts at its first token: the error (and the fix an
+-- editor offers) stands at the parenthesis, not behind it.
+type Holder {
+  f: Fn() -> Result(Int, String),
+}
+
+fn risky() -> Result(Int, String) {
+  Err("lost")
+}
+
+fn main() {
+  let h = Holder { f: risky }
+  let a = 1
+  (h.f)()
+  (a + 1) * 2
+  (risky())
+  ((a))
+  println("done")
+}

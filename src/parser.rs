@@ -337,6 +337,8 @@ pub struct Parser<'src> {
     /// count errs on the high side. Checked against
     /// `MAX_EXPR_OPERATIONS` by `check_expr_height`.
     expr_height: usize,
+    /// The program's `StatementMarks`.
+    statements: StatementMarks,
     errors: Vec<Diagnostic>,
     depth: usize,
     /// Depth guard for recovery-stub generation. When recovery fires inside
@@ -411,6 +413,7 @@ impl<'src> Parser<'src> {
             pos: 0,
             header: None,
             expr_height: 0,
+            statements: StatementMarks::default(),
             errors: Vec::new(),
             depth: 0,
             in_fn_recovery: false,
@@ -453,7 +456,13 @@ impl<'src> Parser<'src> {
         let start = self.span();
         let stmts = match self.parse_stmt_list(&Token::Eof) {
             Ok(stmts) => stmts,
-            Err(e) => return (Program { decls: Vec::new() }, vec![e]),
+            Err(e) => {
+                let program = Program {
+                    decls: Vec::new(),
+                    statements: StatementMarks::default(),
+                };
+                return (program, vec![e]);
+            }
         };
         let span = self.close(start);
         let body = Expr::new(ExprKind::Block(stmts), span);
@@ -473,6 +482,7 @@ impl<'src> Parser<'src> {
         (
             Program {
                 decls: vec![Decl::Fn(wrapper)],
+                statements: std::mem::take(&mut self.statements),
             },
             Vec::new(),
         )
@@ -840,7 +850,10 @@ impl<'src> Parser<'src> {
         if let Some(err) = top_level_name_errors(&decls).into_iter().next() {
             return Err(err);
         }
-        Ok(Program { decls })
+        Ok(Program {
+            decls,
+            statements: std::mem::take(&mut self.statements),
+        })
     }
 
     /// Like `parse_program`, but recovers from errors and continues parsing.
@@ -926,7 +939,11 @@ impl<'src> Parser<'src> {
             }
         }
         self.errors.extend(top_level_name_errors(&decls));
-        (Program { decls }, std::mem::take(&mut self.errors))
+        let program = Program {
+            decls,
+            statements: std::mem::take(&mut self.statements),
+        };
+        (program, std::mem::take(&mut self.errors))
     }
 
     /// The recovering counterpart of the same-line check in
@@ -2214,11 +2231,11 @@ impl<'src> Parser<'src> {
         let mut stmts = Vec::new();
         while !self.at(terminator) && !self.at(&Token::Eof) {
             stmts.push(self.parse_stmt()?);
-            if !self.nl_before()
-                && Self::starts_statement(self.peek())
-                && !self.at_lowercase_record_literal_brace()
-            {
-                return Err(self.same_line_err("statement"));
+            if !self.nl_before() && Self::starts_statement(self.peek()) {
+                if !self.at_lowercase_record_literal_brace() {
+                    return Err(self.same_line_err("statement"));
+                }
+                self.statements.brace_after_name.push(self.span());
             }
         }
         Ok(stmts)
@@ -2430,7 +2447,14 @@ impl<'src> Parser<'src> {
             Token::Let => self.parse_let_stmt(),
             Token::When => self.parse_when_stmt(),
             _ => {
+                let start = self.span();
                 let expr = self.parse_expr()?;
+                // The expression's span starts behind parentheses that
+                // are its own; the statement starts at the first.
+                if expr.span.start != start.start {
+                    let extent = self.close(start);
+                    self.statements.parenthesised.push((expr.span, extent));
+                }
                 Ok(Stmt::Expr(expr))
             }
         }

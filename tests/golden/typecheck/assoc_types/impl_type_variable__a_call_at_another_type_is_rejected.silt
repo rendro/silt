@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: operator '+' requires Int or Float, got 'String'
+-- stderr-contains: type mismatch: expected Int, got String
+-- stderr-contains: type mismatch: expected String, got Int
+-- The variable stands for the receiver's argument and nothing else:
+-- `Box(Int)`'s `unwrap` gives an Int, and its `holds` takes one.
+type Box(a) {
+  item: a,
+}
+
+trait Container {
+  type Item
+  fn unwrap(self) -> Self::Item
+  fn holds(self, x: Self::Item) -> Bool
+}
+
+trait Container for Box(a) where a: Equal {
+  type Item = a
+  fn unwrap(self) -> a {
+    self.item
+  }
+  fn holds(self, x: a) -> Bool {
+    self.item == x
+  }
+}
+
+fn main() {
+  let w = Box { item: 2 }
+  println(w.unwrap() + "x")
+  println(w.holds("two"))
+  let n: String = Box { item: 1 }.unwrap()
+}

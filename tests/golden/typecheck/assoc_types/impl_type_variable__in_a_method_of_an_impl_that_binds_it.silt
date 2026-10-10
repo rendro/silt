@@ -1,0 +1,79 @@
+-- An impl's type variable that an associated type is bound to
+-- (`type Item = a` in `trait Container for Box(a)`) stands for the
+-- argument of the receiver at each call, in a method's return type, a
+-- parameter, inside a container type, through a bounded variable, in a
+-- default method, through the type, and nested. (`Box { item: 2
+-- }.unwrap() + 1` was "type mismatch: expected a, got Int": checking
+-- the impl's body bound the impl's variable to the body's own `a`.)
+import list
+
+type Box(a) {
+  item: a,
+}
+
+type Pair(a, b) {
+  left: a,
+  right: b,
+}
+
+trait Container {
+  type Item
+  fn unwrap(self) -> Self::Item
+  fn holds(self, x: Self::Item) -> Bool
+  fn all(self) -> List(Self::Item)
+  fn twice(self) -> (Self::Item, Self::Item) {
+    (self.unwrap(), self.unwrap())
+  }
+}
+
+trait Container for Box(a) where a: Equal {
+  type Item = a
+  fn unwrap(self) -> a {
+    self.item
+  }
+  fn holds(self, x: a) -> Bool {
+    self.item == x
+  }
+  fn all(self) -> List(a) {
+    [self.item]
+  }
+}
+
+trait Container for Pair(a, b) where a: Equal, b: Equal {
+  type Item = (b, a)
+  fn unwrap(self) -> (b, a) {
+    (self.right, self.left)
+  }
+  fn holds(self, x: (b, a)) -> Bool {
+    self.unwrap() == x
+  }
+  fn all(self) -> List((b, a)) {
+    [self.unwrap()]
+  }
+}
+
+fn first(c: c) -> <c as Container>::Item where c: Container {
+  c.unwrap()
+}
+
+fn main() {
+  let w = Box { item: 2 }
+  println(w.unwrap() + 1)
+  println(w.holds(2))
+  println(list.map(w.all(), { n -> n * 10 }))
+  let (p, q) = w.twice()
+  println(p + q)
+  println(first(w) + 5)
+  let s = Box { item: "s" }
+  println("{s.unwrap()}!")
+  println(s.holds("t"))
+  println(first(s))
+  let pr = Pair { left: 1, right: "r" }
+  let (r, l) = pr.unwrap()
+  println("{r} {l + 1}")
+  println(pr.holds(("r", 1)))
+  let ((r2, l2), _) = pr.twice()
+  println("{r2} {l2 + 2}")
+  println(Box.unwrap(Box { item: 4 }) + 1)
+  println(Box { item: Box { item: 7 } }.unwrap().unwrap() + 1)
+}

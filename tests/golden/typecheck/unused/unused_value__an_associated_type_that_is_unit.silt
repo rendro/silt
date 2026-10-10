@@ -1,0 +1,25 @@
+-- verdict: same
+-- A method that returns an associated type which its impl binds to `()`
+-- gives no value: the call is a statement like any other of type `()`.
+type Printer {
+  name: String,
+}
+
+trait Sink {
+  type Out
+  fn emit(self) -> Self::Out
+}
+
+trait Sink for Printer {
+  type Out = ()
+  fn emit(self) -> () {
+    println("emit {self.name}")
+  }
+}
+
+fn main() {
+  let p = Printer { name: "p" }
+  p.emit()
+  let u: () = p.emit()
+  println("done {u}")
+}

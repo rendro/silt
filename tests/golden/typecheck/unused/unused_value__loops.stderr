@@ -1,0 +1,5 @@
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__loops.silt:16:3
+    |
+ 16 |   loop i = 0 {
+    |   ^^^^^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it

@@ -1,0 +1,5 @@
+error[type]: this `String` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_method_of_a_bounded_receiver.silt:17:3
+    |
+ 17 |   x.greet()
+    |   ^^^^^^^^^ this `String` value is unused; write `let _ = ...` to discard it

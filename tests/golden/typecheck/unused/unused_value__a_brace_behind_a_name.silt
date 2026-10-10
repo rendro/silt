@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- `point { x: 1 }` with a lower-case name is two statements: the name,
+-- and a record literal that nothing uses. The help names the likely
+-- mistake.
+type Point {
+  x: Int,
+  y: Int,
+}
+
+fn main() {
+  let point = Point { x: 0, y: 0 }
+  let p = point { x: 1 }
+  println(p.x)
+}

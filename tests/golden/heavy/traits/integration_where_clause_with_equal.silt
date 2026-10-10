@@ -4,7 +4,7 @@ fn are_same(a: t, b: t) where t: Equal {
 }
 
 fn program() {
-  are_same(1, 2)
+  let _ = are_same(1, 2)
   are_same("hello", "hello")
 }
 

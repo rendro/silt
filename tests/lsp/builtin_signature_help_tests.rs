@@ -130,9 +130,8 @@ fn a_function_of_no_parameters_has_none_to_mark() {
 
 #[test]
 fn a_type_parameter_and_a_where_bound_are_shown_as_written() {
-    let source =
-        "import json\nimport map\nfn main() {\n  json.parse(\"1\", Int)\n  map.get(#{}, 1)\n}\n";
-    let help = signature_help("json_parse", source, 3, 13);
+    let source = "import json\nimport map\nfn main() {\n  let _ = json.parse(\"1\", Int)\n  map.get(#{}, 1)\n}\n";
+    let help = signature_help("json_parse", source, 3, 21);
     let signature = &help["signatures"][0];
     assert_eq!(
         signature["label"],

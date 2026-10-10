@@ -51,13 +51,13 @@ Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So 
 `?` binds tightly, like a call: it applies to the operand right before it. The one exception is a pipeline: a `?` that ends a pipeline applies to the whole pipeline.
 
 ```silt
-int.parse(a)? + int.parse(b)? -- (int.parse(a)?) + (int.parse(b)?)
--x? -- -(x?)
-a == b? -- a == (b?)
-x |> f |> g? -- (x |> f |> g)?   -- the whole pipeline
-x |> f? |> g -- (x |> f)? |> g   -- the pipeline so far
-x |> f? + 1 -- (x |> f)? + 1    -- infix after ? uses the unwrapped value
-a |> (f?) -- parentheses keep ? on the stage
+let _ = int.parse(a)? + int.parse(b)? -- (int.parse(a)?) + (int.parse(b)?)
+let _ = -x? -- -(x?)
+let _ = a == b? -- a == (b?)
+let _ = x |> f |> g? -- (x |> f |> g)?   -- the whole pipeline
+let _ = x |> f? |> g -- (x |> f)? |> g   -- the pipeline so far
+let _ = x |> f? + 1 -- (x |> f)? + 1    -- infix after ? uses the unwrapped value
+let _ = a |> (f?) -- parentheses keep ? on the stage
 ```
 
 An infix operator after a `?` that ends a pipeline applies to the unwrapped
@@ -117,7 +117,8 @@ let y = 10
 
 let z = 10
   - 20            -- NOT a continuation — `z = 10`, then `-20` is a new
-                  -- unary-negation expression statement
+                  -- statement, and an error: its value is unused
+println(z)
 ```
 
 **Postfix operators do not cross newlines.** Call, `?`, and trailing closure must appear on the same line as their operand:

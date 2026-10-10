@@ -1,0 +1,6 @@
+import x
+import y
+
+pub let early = x.f(y.Y { n: 1 })
+
+pub let early_shown = x.shown([y.Y { n: 1 }])

@@ -4,7 +4,7 @@ fn is_less(a: t, b: t) where t: Compare {
 }
 
 fn program() {
-  is_less(1, 2)
+  let _ = is_less(1, 2)
   is_less("a", "b")
 }
 

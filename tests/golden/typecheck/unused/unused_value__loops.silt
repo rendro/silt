@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A loop that is a statement must end in `()`: the first one does, the
+-- second leaves the Int it counted to.
+fn main() {
+  loop i = 0 {
+    match i < 3 {
+      true -> {
+        println(i)
+        loop(i + 1)
+      }
+      false -> ()
+    }
+  }
+  loop i = 0 {
+    match i < 3 {
+      true -> loop(i + 1)
+      false -> i
+    }
+  }
+  println("done")
+}

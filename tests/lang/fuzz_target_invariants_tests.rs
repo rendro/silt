@@ -240,6 +240,7 @@ fn parser_invariants_reject_decl_span_past_source() {
             ImportTarget::Module(silt::intern::intern("foo")),
             Span::point(silt::source::FileId::default(), 9999),
         )],
+        statements: Default::default(),
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
     assert!(
@@ -257,7 +258,10 @@ fn parser_invariants_reject_empty_decls_for_nontrivial_source() {
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .unwrap();
-    let empty_program = Program { decls: vec![] };
+    let empty_program = Program {
+        decls: vec![],
+        statements: Default::default(),
+    };
     let err = check_parser_invariants(src, &tokens, &empty_program).unwrap_err();
     assert!(err.contains("zero decls"), "unexpected error: {err}");
 }
@@ -274,6 +278,7 @@ fn parser_invariants_reject_decls_from_empty_source() {
             ImportTarget::Module(silt::intern::intern("ghost")),
             Span::point(silt::source::FileId::default(), 0),
         )],
+        statements: Default::default(),
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
     assert!(err.contains("empty-of-tokens"), "unexpected error: {err}");

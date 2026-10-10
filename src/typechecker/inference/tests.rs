@@ -424,7 +424,7 @@ type Box(a) { value: a }
 fn main() {
   let int_box = Box { value: 42 }
   let str_box = Box { value: "hello" }
-  int_box.value + 1
+  let _ = int_box.value + 1
   str_box.value == "hello"
 }
         "#,

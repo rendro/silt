@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A call, an operator expression and a failing write as statements: each
+-- leaves a value nobody looks at. (STAGE6-DESIGN 1.7.)
+import io
+
+fn f() -> Int {
+  1
+}
+
+fn main() {
+  f()
+  1 + 2
+  io.write_file("/nonexistent-dir/x.txt", "data")
+  println("done")
+}

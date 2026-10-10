@@ -98,6 +98,12 @@ impl TypeChecker {
     }
 
     fn generalize_decided(&mut self, ty: &Type) -> Scheme {
+        let fixed = self.fix_statement_calls(false);
+        self.recheck_fixed(&fixed, |checker| {
+            checker.reopen_level();
+            checker.solve_wanted(checker.closed_mark);
+            checker.close_level();
+        });
         let ty = self.apply(ty);
         let mut vars: Vec<TyVar> = free_vars_in(&ty)
             .into_iter()
@@ -186,6 +192,8 @@ impl TypeChecker {
     /// structural trait, fixes its subject to `()`.
     pub(super) fn settle_bounds(&mut self) {
         self.decide_closed();
+        let fixed = self.fix_statement_calls(false);
+        self.recheck_fixed(&fixed, Self::decide_closed);
         let recorded = self.wanted.split_off(self.closed_mark);
         for wanted in recorded {
             if wanted.solved {

@@ -1,0 +1,39 @@
+error[type]: type mismatch: expected (), got Int
+ --> unused_value__a_function_called_as_a_statement_returns_unit.silt:23:15
+    |
+ 23 |   println(run { -> 3 })
+    |               ^^^^^^^^ type mismatch: expected (), got Int
+ ::: unused_value__a_function_called_as_a_statement_returns_unit.silt:10:3
+    |
+ 10 |   f()
+    |   --- `()` because this call is a statement: its value would be unused
+
+error[type]: type mismatch: expected (), got Result(Int, String)
+ --> unused_value__a_function_called_as_a_statement_returns_unit.silt:24:15
+    |
+ 24 |   println(run(risky))
+    |               ^^^^^ type mismatch: expected (), got Result(Int, String)
+ ::: unused_value__a_function_called_as_a_statement_returns_unit.silt:10:3
+    |
+ 10 |   f()
+    |   --- `()` because this call is a statement: its value would be unused
+
+error[type]: type mismatch: expected (), got Int
+ --> unused_value__a_function_called_as_a_statement_returns_unit.silt:25:19
+    |
+ 25 |   println(through { -> 4 })
+    |                   ^^^^^^^^ type mismatch: expected (), got Int
+ ::: unused_value__a_function_called_as_a_statement_returns_unit.silt:10:3
+    |
+ 10 |   f()
+    |   --- `()` because this call is a statement: its value would be unused
+
+error[type]: type mismatch: expected (), got String
+ --> unused_value__a_function_called_as_a_statement_returns_unit.silt:30:16
+    |
+ 30 |   println(also { -> "x" })
+    |                ^^^^^^^^^^ type mismatch: expected (), got String
+ ::: unused_value__a_function_called_as_a_statement_returns_unit.silt:27:5
+    |
+ 27 |     g()
+    |     --- `()` because this call is a statement: its value would be unused

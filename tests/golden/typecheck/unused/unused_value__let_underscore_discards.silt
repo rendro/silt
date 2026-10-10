@@ -1,0 +1,17 @@
+-- verdict: same
+-- `let _ = ...` is how a value is discarded on purpose: any value, a
+-- Result too.
+import io
+import list
+
+fn f() -> Int {
+  1
+}
+
+fn main() {
+  let _ = f()
+  let _ = 1 + 2
+  let _ = io.write_file("/nonexistent-dir/x.txt", "data")
+  let _ = [1, 2] |> list.map { x -> x + 1 }
+  println("done")
+}

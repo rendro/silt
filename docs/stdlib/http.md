@@ -393,15 +393,16 @@ keys accumulate into the same list in the order they appear, so a query like
 
 ```silt
 import http
+import io
 
 fn main() {
-  http.parse_query("name=alice&tag=dev&tag=admin")
+  println(io.inspect(http.parse_query("name=alice&tag=dev&tag=admin")))
   -- #{"name": ["alice"], "tag": ["dev", "admin"]}
 
-  http.parse_query("?q=hello%20world")
+  println(io.inspect(http.parse_query("?q=hello%20world")))
   -- #{"q": ["hello world"]}
 
-  http.parse_query("")
+  println(io.inspect(http.parse_query("")))
   -- #{}
 }
 ```

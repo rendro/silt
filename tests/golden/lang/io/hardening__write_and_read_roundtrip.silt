@@ -2,7 +2,7 @@ import fs
 import io
 fn main() {
   let path = "hardening__write_and_read_roundtrip.tmp"
-  io.write_file(path, "hello silt")
+  io.write_file(path, "hello silt")?
   match io.read_file(path) {
     Ok(content) -> println(content)
     Err(e) -> println(e.message())

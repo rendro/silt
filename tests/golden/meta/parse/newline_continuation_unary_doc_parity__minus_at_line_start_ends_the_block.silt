@@ -1,0 +1,13 @@
+-- verdict: same
+-- A line starting with `-` is a statement of its own, also as the last
+-- line of a block: there it is the block's value. `y` is 10 and the
+-- function returns -20. (In front of another statement the `- 20` is
+-- an unused value: see ..__minus_at_line_start.)
+fn tail() -> Int {
+  let y = 10
+    - 20
+}
+
+fn main() {
+  println(tail())
+}

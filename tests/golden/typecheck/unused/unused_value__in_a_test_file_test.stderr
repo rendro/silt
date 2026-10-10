@@ -1,0 +1,8 @@
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__in_a_test_file_test.silt:11:3
+    |
+ 11 |   double(2)
+    |   ^^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it
+unused_value__in_a_test_file_test.silt: failed to compile — type errors (see above)
+
+0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)

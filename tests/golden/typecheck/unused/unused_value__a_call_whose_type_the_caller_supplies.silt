@@ -1,0 +1,80 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A call that stands as a statement and whose type is the type of
+-- something the function's caller gives it (a parameter, or data in
+-- one) is a value, and it is unused: the error is at the statement, as
+-- it is when the parameter is annotated. The parameter does not become
+-- `()`, and no call of the function is blamed.
+import channel
+import channel.{ Message }
+import list
+
+fn dbg(v: a) -> a where a: Display {
+  println("dbg: {v}")
+  v
+}
+
+fn count(x) {
+  dbg(x)
+  1
+}
+
+fn count_annotated(x: a) -> Int where a: Display {
+  dbg(x)
+  1
+}
+
+fn plain(n) {
+  n + 1
+}
+
+fn timed(run, n) {
+  run(n)
+  let depth = run(n)
+  depth == n
+}
+
+fn best(run, n) {
+  timed(run, n)
+}
+
+fn first_or(xs, fallback) {
+  match list.head(xs) {
+    Some(x) -> x
+    None -> fallback
+  }
+}
+
+fn peek(xs) {
+  first_or(xs, 0)
+  list.length(xs)
+}
+
+fn take(ch: Channel(a)) -> a {
+  match channel.receive(ch) {
+    Message(v) -> v
+    _ -> panic("closed")
+  }
+}
+
+fn drain(ch) {
+  take(ch)
+  "drained"
+}
+
+fn main() {
+  println(count(5))
+  println(count("five"))
+  println(count_annotated(5))
+  println(best(plain, 3))
+  println(peek([1, 2]))
+  let ch = channel.new(1)
+  channel.send(ch, 1)
+  println(drain(ch))
+  let local = { x ->
+    dbg(x)
+    2
+  }
+  println(local(1))
+}

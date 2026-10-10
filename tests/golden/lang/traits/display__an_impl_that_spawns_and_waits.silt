@@ -22,10 +22,10 @@ trait Display for Asked {
   fn display(self) -> String {
     let ch = channel.new(0)
     let n = self.n
-    task.spawn({ -> channel.send(ch, "answer {n}") })
-    task.spawn({ -> println("late {n}") })
+    let _ = task.spawn({ -> channel.send(ch, "answer {n}") })
+    let _ = task.spawn({ -> println("late {n}") })
     let never = channel.new(0)
-    task.spawn({ -> channel.receive(never) })
+    let _ = task.spawn({ -> channel.receive(never) })
     match channel.receive(ch) {
       channel.Message(text) -> text
       _ -> "nothing"
