@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process;
 
-use silt::diagnostic::{Code, Diagnostic, Phase, render_human};
+use silt::diagnostic::{Code, Diagnostic, render_human};
 use silt::scheduler::UnjoinedFailures;
 use silt::session::{Entry, EntryPoint, LockPolicy, TestKind, selected_tests};
 use silt::source::{FileId, SourceMap, Span};
@@ -179,13 +179,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
 
         // With a filter, a file without a test whose name it selects is
         // left alone: it is not analysed, and nothing is reported for it.
-        // A file with a lex error cannot be asked for its tests (what
-        // was read of it need not hold them), so it is kept and its
-        // error reported.
+        // A file with a lex or parse error cannot be asked for its
+        // tests (what was read of it need not hold them), so it is kept
+        // and its error reported.
         let module = session.graph().module(session.module_of(file));
-        let lexes = !module.problems.iter().any(|d| d.phase() == Phase::Lex);
         if filter.is_some()
-            && lexes
+            && module.problems.is_empty()
             && let Some(ast) = &module.ast
             && selected_tests(ast, filter.as_deref()).next().is_none()
         {

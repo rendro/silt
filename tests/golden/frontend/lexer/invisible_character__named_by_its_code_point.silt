@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A character that shows as nothing or as a space (a no-break space
+-- here, a zero-width space in `main`) is named by its code point.
+fn f() -> Int {
+  1
+}
+
+fn main() {
+  let a​ = f()
+  println(a)
+}

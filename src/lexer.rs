@@ -1216,6 +1216,12 @@ impl Lexer {
                     _ if ch.is_control() => {
                         format!("unexpected character: '{}'", ch.escape_default())
                     }
+                    // A space that is not ASCII's, a zero-width
+                    // character: quoted, it would show as nothing or
+                    // as a space. Its code point names it.
+                    _ if is_invisible(ch) => {
+                        format!("unexpected character: U+{:04X} (invisible)", ch as u32)
+                    }
                     _ => format!("unexpected character: '{ch}'"),
                 });
                 while self.peek().is_some_and(is_stray) {
@@ -1233,6 +1239,21 @@ impl Lexer {
         self.error(|| Diagnostic::error(Code::UnexpectedChar, span, message()));
         (Token::Error, start)
     }
+}
+
+/// Whether `c` shows as nothing or as white space: the spaces outside
+/// ASCII, the zero-width and directional marks, the variation
+/// selectors.
+fn is_invisible(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{FE00}'..='\u{FE0F}'
+        )
 }
 
 /// Whether `c` is no part of silt in any place outside a string or a
