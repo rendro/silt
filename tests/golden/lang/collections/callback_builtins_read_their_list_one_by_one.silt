@@ -1,0 +1,40 @@
+-- exit: 1
+-- stderr-contains: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+-- A builtin that calls a function for the elements of a list takes
+-- them from the list one by one: one that only reads them (`list.find`,
+-- `list.any`, `list.all`, `list.fold`, `list.fold_until`, `list.each`,
+-- `list.min_by`, `list.max_by`) reads a range of any length, and stops
+-- where its function says so. (Each copied its whole list before its
+-- first call, so each of the first four lines was the error
+-- "materializing more than 10000000 is not allowed".) One that makes a
+-- list of the elements (`list.map`, `list.filter`, ...) still needs
+-- them to be few enough for a list: the last line.
+import list
+import list.{ Continue, Stop }
+
+fn main() {
+  let all = 1..9223372036854775807
+  println(list.find(all) { x -> x * x > 50 })
+  println(list.any(all) { x -> x == 3 })
+  println(list.all(all) { x -> x < 3 })
+  println(list.fold_until(all, 0) { acc, x ->
+    match acc > 20 {
+      true -> Stop(acc)
+      false -> Continue(acc + x)
+    }
+  })
+
+  -- A callback is not called for an element behind the one that
+  -- stopped the builtin.
+  println(list.find([1, 2, 3, 4]) { x ->
+    println("asked {x}")
+    x == 2
+  })
+
+  -- The list it was given is as it was.
+  let xs = [3, 1, 2]
+  println(list.map(xs) { x -> x * 10 })
+  println(xs)
+
+  println(list.map(0..10000000) { x -> x })
+}

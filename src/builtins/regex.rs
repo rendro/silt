@@ -68,7 +68,7 @@ builtins! {
         // The matches are the items; each carries where it ends, and the
         // state is the text built so far and the rest of the text with
         // where it starts.
-        let matches = re
+        let matches: Vec<Value> = re
             .find_iter(text)
             .map(|m| {
                 Value::Tuple(vec![

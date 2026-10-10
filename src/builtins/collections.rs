@@ -65,6 +65,16 @@ fn truthy(v: &Value) -> bool {
     }
 }
 
+/// The list `xs` for a builtin that makes a list with an element for
+/// each of its elements, or for some of them: of a list that holds no
+/// element (`a..b`) there may be too many for that. (A builtin that
+/// only reads the elements, like `list.fold` or `list.find`, reads them
+/// one by one however many there are.)
+fn made(xs: List) -> Result<crate::value::List, VmError> {
+    xs.writable()?;
+    Ok(xs.clone())
+}
+
 /// The arguments of a function that takes the state and the item
 /// (`list.fold`).
 fn acc_and_item(acc: &Value, item: &Value, stack: &mut Vec<Value>) {
@@ -291,7 +301,7 @@ pub(crate) mod list {
         fn map(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.map",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -303,7 +313,7 @@ pub(crate) mod list {
         fn filter(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.filter",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -312,26 +322,26 @@ pub(crate) mod list {
             ))
         }
 
-        fn each(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate("list.each", xs.to_vec()?, f.clone(), (), item_arg, ignore, unit))
+        fn each(xs: List, f: &Value) -> Step {
+            iterate("list.each", xs.clone(), f.clone(), (), item_arg, ignore, unit)
         }
 
-        fn fold(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn fold(xs: List, init: &Value, f: &Value) -> Step {
+            iterate(
                 "list.fold",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 init.clone(),
                 acc_and_item,
                 set_acc,
                 take_acc,
-            ))
+            )
         }
 
-        fn find(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn find(xs: List, f: &Value) -> Step {
+            iterate(
                 "list.find",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 (),
                 item_arg,
@@ -340,13 +350,13 @@ pub(crate) mod list {
                     false => next(),
                 },
                 |_| Ok(none()),
-            ))
+            )
         }
 
-        fn any(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn any(xs: List, f: &Value) -> Step {
+            iterate(
                 "list.any",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 (),
                 item_arg,
@@ -355,13 +365,13 @@ pub(crate) mod list {
                     false => next(),
                 },
                 |_| Ok(Value::Bool(false)),
-            ))
+            )
         }
 
-        fn all(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn all(xs: List, f: &Value) -> Step {
+            iterate(
                 "list.all",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 (),
                 item_arg,
@@ -370,13 +380,13 @@ pub(crate) mod list {
                     false => stop(Value::Bool(false)),
                 },
                 |_| Ok(Value::Bool(true)),
-            ))
+            )
         }
 
         fn flat_map(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.flat_map",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -388,7 +398,7 @@ pub(crate) mod list {
         fn filter_map(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.filter_map",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -400,7 +410,7 @@ pub(crate) mod list {
         fn sort_by(xs: List, key: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.sort_by",
-                xs.to_vec()?,
+                made(xs)?,
                 key.clone(),
                 Vec::<(Value, Value)>::new(),
                 item_arg,
@@ -418,16 +428,16 @@ pub(crate) mod list {
             ))
         }
 
-        fn fold_until(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn fold_until(xs: List, init: &Value, f: &Value) -> Step {
+            iterate(
                 "list.fold_until",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 init.clone(),
                 acc_and_item,
                 fold_until_step,
                 take_acc,
-            ))
+            )
         }
 
         fn unfold(seed: &Value, f: &Value) -> Step {
@@ -442,7 +452,7 @@ pub(crate) mod list {
         fn group_by(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.group_by",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 BTreeMap::<Value, Vec<Value>>::new(),
                 item_arg,
@@ -460,10 +470,10 @@ pub(crate) mod list {
             ))
         }
 
-        fn min_by(xs: List, key: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn min_by(xs: List, key: &Value) -> Step {
+            iterate(
                 "list.min_by",
-                xs.to_vec()?,
+                xs.clone(),
                 key.clone(),
                 None,
                 item_arg,
@@ -471,13 +481,13 @@ pub(crate) mod list {
                     best_step("list.min_by", std::cmp::Ordering::Less, best, item, key)
                 },
                 best_item,
-            ))
+            )
         }
 
-        fn max_by(xs: List, key: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn max_by(xs: List, key: &Value) -> Step {
+            iterate(
                 "list.max_by",
-                xs.to_vec()?,
+                xs.clone(),
                 key.clone(),
                 None,
                 item_arg,
@@ -485,7 +495,7 @@ pub(crate) mod list {
                     best_step("list.max_by", std::cmp::Ordering::Greater, best, item, key)
                 },
                 best_item,
-            ))
+            )
         }
 
         // The running value, and the list of the values it had, the
@@ -493,7 +503,7 @@ pub(crate) mod list {
         fn scan(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.scan",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 (init.clone(), vec![init.clone()]),
                 |(running, _), item, stack| acc_and_item(running, item, stack),
