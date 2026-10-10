@@ -7,28 +7,17 @@ impl TypeChecker {
         // (a) An unknown supertrait is reported where the trait is
         // registered (`register_trait_decl_inner`).
 
-        // Validate using method_table + trait_impl_set (the new system).
-        let impl_pairs: Vec<(TraitKey, TypeRef)> =
-            self.tables.trait_impl_set.iter().cloned().collect();
+        // The impls this module writes: an impl is validated where it
+        // is written, once, and not again by every module checked after
+        // it in the session.
+        let impl_pairs: Vec<(TraitKey, TypeRef)> = self.tables.trait_impl_set.added().collect();
         for (trait_name, type_name) in &impl_pairs {
-            // GAP-2: Prefer the impl block's real span (stored at
-            // registration time) over a method span. Fall back to the
-            // method table for a structural trait, which has no impl
-            // block, and to `Span::BUILTIN` for what silt declares
-            // itself.
-            let diag_span = self
-                .tables
-                .trait_impl_spans
-                .get(&(*trait_name, *type_name))
-                .copied()
-                .or_else(|| {
-                    self.tables
-                        .method_table
-                        .iter()
-                        .find(|((t, _), _)| t == type_name)
-                        .map(|(_, e)| e.span)
-                })
-                .unwrap_or(Span::BUILTIN);
+            // The impl block, for the messages. (A row without one is
+            // no written impl: nothing to validate.)
+            let Some(&diag_span) = self.tables.trait_impl_spans.get(&(*trait_name, *type_name))
+            else {
+                continue;
+            };
 
             // Check that the trait exists first.
             let Some(trait_info) = self.tables.traits.get(trait_name).cloned() else {
@@ -39,23 +28,6 @@ impl TypeChecker {
                 );
                 continue;
             };
-
-            // (A structural trait has no impl to validate, unless one is
-            // written: `trait Display for T {}` is an impl, and lacks
-            // its method.)
-            let written = self
-                .tables
-                .trait_impl_spans
-                .contains_key(&(*trait_name, *type_name));
-            let is_auto = trait_info
-                .methods
-                .first()
-                .and_then(|(m, _)| self.tables.method_table.get(&(*type_name, *m)))
-                .map(|e| e.structural)
-                .unwrap_or(false);
-            if is_auto && !written {
-                continue;
-            }
 
             // (b) Supertrait obligation: implementing a trait on a type
             // requires every supertrait to also be implemented for the
@@ -1712,9 +1684,6 @@ impl TypeChecker {
                 method.name,
                 MethodEntry {
                     method_type: fn_type,
-                    // The method's own span (not `ti.span`, the impl
-                    // block's header), for what is reported about it.
-                    span: method.span,
                     structural: false,
                     trait_name: Some(trait_key),
                     preds: method_constraints.clone(),
@@ -1758,7 +1727,6 @@ impl TypeChecker {
                     *name,
                     MethodEntry {
                         method_type: substitute_vars(ty, &mapping),
-                        span: ti.span,
                         structural: false,
                         trait_name: Some(trait_key),
                         preds: method_constraints,

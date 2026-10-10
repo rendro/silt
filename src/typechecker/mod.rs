@@ -1378,7 +1378,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     } = context;
     tables.forget(module);
     tables.vars.begin(module);
-    let before = tables.keys();
+    tables.begin_rows();
     let (mut checker, mut env) = builtin_env().start();
     tables.module_names.insert(module, module_name);
     checker.tables = std::mem::take(tables);
@@ -1452,7 +1452,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         }
     }
     *tables = std::mem::take(&mut checker.tables);
-    let rows = tables.added_since(&before);
+    let rows = tables.take_rows();
     tables.rows.insert(module, rows);
     ModuleCheck {
         diagnostics: {

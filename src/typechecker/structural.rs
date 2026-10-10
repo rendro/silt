@@ -2,15 +2,17 @@
 //! sealed `Equal`, `Compare` and `Hash`). Whether a type has one is the
 //! structural judgement's to say (`TypeChecker::structure_gap`), for a
 //! method call, an operator, a bound and a supertrait alike; what is
-//! settled here is which types have a `Display` impl written for them,
+//! settled here is which types the module writes a `Display` impl for,
 //! which that judgement does not answer for.
 
 use super::*;
 
 impl TypeChecker {
-    /// Note the types a `Display` impl is written for (in the module,
-    /// or brought in by an import or an earlier REPL cell): their
-    /// `Display` is that impl and not the structural one.
+    /// Note the types the module writes a `Display` impl for: their
+    /// `Display` is that impl and not the structural one, also before
+    /// the impl is entered. (An impl of another module or of an earlier
+    /// REPL cell is in the session's tables: `by_structure` reads it
+    /// there.)
     pub(super) fn settle_structural_traits(&mut self, decls: &[Decl]) {
         let display = TraitKey::builtin("Display");
         let mut written: std::collections::HashSet<TypeRef> = std::collections::HashSet::new();
@@ -20,12 +22,6 @@ impl TypeChecker {
                 && let Some(target) = self.impl_target(ti)
             {
                 written.insert(target);
-            }
-        }
-        let display_method = intern("display");
-        for ((type_name, method), entry) in &self.tables.method_table {
-            if *method == display_method && !entry.structural && entry.trait_name == Some(display) {
-                written.insert(*type_name);
             }
         }
         self.display_written = written

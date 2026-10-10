@@ -292,7 +292,6 @@ impl TypeChecker {
         // method is called, an operator used or a bound owed
         // (`structure_gap`): no impl is made and nothing is stamped. The
         // VM has each trait natively, over the structure of the value.
-        let dummy_span = td.span;
         let builtin_methods: &[(&str, Type)] = &[
             (
                 "display",
@@ -322,7 +321,6 @@ impl TypeChecker {
                 (ty, intern(method_name)),
                 MethodEntry {
                     method_type: method_type.clone(),
-                    span: dummy_span,
                     structural: true,
                     trait_name: None,
                     preds: Vec::new(),

@@ -319,7 +319,6 @@ pub(super) fn register_structural_traits_for(
     type_names: &[&str],
     trait_names: &[&str],
 ) {
-    let dummy_span = Span::BUILTIN;
     let has_display = trait_names.contains(&"Display");
     let has_equal = trait_names.contains(&"Equal");
     let has_compare = trait_names.contains(&"Compare");
@@ -368,7 +367,6 @@ pub(super) fn register_structural_traits_for(
                 (TypeRef::builtin(type_name), intern(method_name)),
                 MethodEntry {
                     method_type: method_type.clone(),
-                    span: dummy_span,
                     structural: true,
                     trait_name: None,
                     preds: Vec::new(),

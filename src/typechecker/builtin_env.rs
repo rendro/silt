@@ -40,7 +40,9 @@ impl BuiltinEnv {
         for (name, scheme) in variants {
             env.define(name, scheme);
         }
-        let tables = std::mem::take(&mut checker.tables);
+        let mut tables = std::mem::take(&mut checker.tables);
+        // (The builtins' rows are no module's.)
+        tables.begin_rows();
         BuiltinEnv {
             checker,
             tables,
@@ -291,7 +293,6 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     (ty, intern(method)),
                     MethodEntry {
                         method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
-                        span: Span::BUILTIN,
                         structural: false,
                         trait_name: Some(key),
                         preds: Vec::new(),

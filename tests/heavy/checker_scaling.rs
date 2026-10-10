@@ -8,6 +8,13 @@
 //! type variables and its body is checked in a frame pushed on the one
 //! environment; the parser finds a declaration's line in a table.
 //!
+//! And in the number of a program's modules: the session's tables note
+//! which rows a module's check enters as they are entered, and an impl
+//! is validated by the module that writes it. Before, every module's
+//! check took two snapshots of every key of every table and validated
+//! every impl of the session again, so 4,000 small modules took 100 s
+//! in a debug build where 1,000 took 7 s and 250 took 0.7 s.
+//!
 //! The same for the calls that stand as statements and wait for a type
 //! (the unused-value rule): each waits under the scope that decides it
 //! and is read when that scope ends, not at every generalisation, which
@@ -197,6 +204,60 @@ fn statement_calls_that_wait_for_a_type_cost_the_same_each() {
                  more than twice as long as that of the same calls bound by `let _ =` in \
                  each of three measurements ({}): the calls that wait are read again and \
                  again",
+                shown(&over)
+            );
+        }
+    }
+}
+
+/// A program of `n` small modules beside its `main.silt`, which imports
+/// them all: each declares a type and two functions.
+fn program_of_modules(dir: &Path, n: usize) {
+    std::fs::create_dir_all(dir).expect("a directory for the program");
+    let mut main = String::new();
+    for i in 0..n {
+        let module = format!(
+            "pub type T{i} {{\n  n: Int,\n}}\n\n\
+             pub fn make{i}(n: Int) -> T{i} {{\n  T{i} {{ n: n + {i} }}\n}}\n\n\
+             pub fn f{i}(x: Int) -> Int {{\n  make{i}(x).n + {i}\n}}\n"
+        );
+        std::fs::write(dir.join(format!("m{i}.silt")), module).expect("a module is written");
+        main.push_str(&format!("import m{i}\n"));
+    }
+    main.push_str("\nfn main() {\n  println(m0.f0(1))\n}\n");
+    std::fs::write(dir.join("main.silt"), main).expect("the main module is written");
+}
+
+/// Four times the modules take about four times as long to check, from
+/// 250 to 1,000 and from 1,000 to 4,000: at most six times. (When every
+/// module's check read the whole session's tables, 1,000 modules took
+/// nine times as long as 250, and 4,000 fifteen times as long as 1,000.)
+#[test]
+fn checking_four_times_the_modules_takes_about_four_times_as_long() {
+    let dir = std::env::temp_dir().join(format!(
+        "silt_checker_scaling_modules_{}",
+        std::process::id()
+    ));
+    let sizes = [250, 1_000, 4_000];
+    for n in sizes {
+        program_of_modules(&dir.join(n.to_string()), n);
+    }
+    let main_of = |n: usize| dir.join(n.to_string()).join("main.silt");
+    let measured: Vec<_> = sizes
+        .windows(2)
+        .map(|pair| {
+            let (small, large) = (pair[0], pair[1]);
+            let measured = within(6.0, || best_times(&main_of(large), &main_of(small), 3));
+            (small, large, measured)
+        })
+        .collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    for (small, large, measured) in measured {
+        if let Err(over) = measured {
+            panic!(
+                "`silt check` of a program of {large} modules took more than six times as \
+                 long as that of one of {small} in each of three measurements ({}): it is \
+                 no longer linear in the number of modules",
                 shown(&over)
             );
         }

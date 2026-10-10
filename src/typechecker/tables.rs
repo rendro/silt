@@ -103,7 +103,6 @@ pub(super) struct AssocTypeInfo {
 #[derive(Debug, Clone)]
 pub(crate) struct MethodEntry {
     pub(super) method_type: Type,
-    pub(super) span: Span,
     pub(super) structural: bool,
     /// GAP (round 17 F3): name of the trait that provided this method.
     /// Used for coherence diagnostics when two distinct traits supply
@@ -118,6 +117,99 @@ pub(crate) struct MethodEntry {
     pub(super) preds: Vec<Pred>,
 }
 
+/// A table of the session (a map or a set, `M`, with keys `K`) that
+/// notes each row when it is entered: `take_added` gives the keys
+/// entered since it was last asked that are still in the table. Read
+/// like the map or set it holds; `insert` and `entry` are its own.
+#[derive(Clone)]
+pub(super) struct Table<M, K> {
+    rows: M,
+    added: Vec<K>,
+}
+
+impl<M: Default, K> Default for Table<M, K> {
+    fn default() -> Self {
+        Table {
+            rows: M::default(),
+            added: Vec::new(),
+        }
+    }
+}
+
+impl<M, K> std::ops::Deref for Table<M, K> {
+    type Target = M;
+    fn deref(&self) -> &M {
+        &self.rows
+    }
+}
+
+/// (For `get_mut`, `remove` and `retain`: what enters a row goes
+/// through `insert` or `entry` below, which a call finds first.)
+impl<M, K> std::ops::DerefMut for Table<M, K> {
+    fn deref_mut(&mut self) -> &mut M {
+        &mut self.rows
+    }
+}
+
+impl<'a, M, K> IntoIterator for &'a Table<M, K>
+where
+    &'a M: IntoIterator,
+{
+    type Item = <&'a M as IntoIterator>::Item;
+    type IntoIter = <&'a M as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        (&self.rows).into_iter()
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash, V> Table<HashMap<K, V>, K> {
+    pub(super) fn insert(&mut self, key: K, value: V) -> Option<V> {
+        let before = self.rows.insert(key, value);
+        if before.is_none() {
+            self.added.push(key);
+        }
+        before
+    }
+
+    pub(super) fn entry(&mut self, key: K) -> std::collections::hash_map::Entry<'_, K, V> {
+        if !self.rows.contains_key(&key) {
+            self.added.push(key);
+        }
+        self.rows.entry(key)
+    }
+
+    fn take_added(&mut self) -> Vec<K> {
+        let mut added = std::mem::take(&mut self.added);
+        added.retain(|key| self.rows.contains_key(key));
+        added
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash> Table<std::collections::HashSet<K>, K> {
+    pub(super) fn insert(&mut self, key: K) -> bool {
+        let new = self.rows.insert(key);
+        if new {
+            self.added.push(key);
+        }
+        new
+    }
+
+    /// The keys entered so far by the check under way, in the order
+    /// they were entered.
+    pub(super) fn added(&self) -> impl Iterator<Item = K> + '_ {
+        self.added
+            .iter()
+            .copied()
+            .filter(|key| self.rows.contains(key))
+    }
+
+    fn take_added(&mut self) -> Vec<K> {
+        let mut added = std::mem::take(&mut self.added);
+        added.retain(|key| self.rows.contains(key));
+        added
+    }
+}
+
 /// What the checks of one session share: the type variables, the
 /// types, traits and impls every module declares (the builtins' first),
 /// and the scheme of every definition a module offers, once the module
@@ -127,19 +219,20 @@ pub(crate) struct MethodEntry {
 pub struct Tables {
     pub(super) vars: TyVarSupply,
     /// Declared enum types.
-    pub(super) enums: HashMap<TypeRef, EnumInfo>,
+    pub(super) enums: Table<HashMap<TypeRef, EnumInfo>, TypeRef>,
     /// Declared record types.
-    pub(super) records: HashMap<TypeRef, RecordInfo>,
+    pub(super) records: Table<HashMap<TypeRef, RecordInfo>, TypeRef>,
     /// Declared traits.
-    pub(super) traits: HashMap<TraitKey, TraitInfo>,
+    pub(super) traits: Table<HashMap<TraitKey, TraitInfo>, TraitKey>,
     /// Method table: (type, method_name) → method entry. For a type and
     /// name that the impls of two traits provide (two modules' `Show`
     /// for `Int`), it holds the one the module being checked means (see
     /// `TypeChecker::select_visible_methods`).
-    pub(super) method_table: HashMap<(TypeRef, Symbol), MethodEntry>,
+    pub(super) method_table: Table<HashMap<(TypeRef, Symbol), MethodEntry>, (TypeRef, Symbol)>,
     /// Every method of a written trait impl, by its type, its name and
     /// its trait.
-    pub(super) trait_methods: HashMap<(TypeRef, Symbol, TraitKey), MethodEntry>,
+    pub(super) trait_methods:
+        Table<HashMap<(TypeRef, Symbol, TraitKey), MethodEntry>, (TypeRef, Symbol, TraitKey)>,
     /// Where each module reported that a type has no method of some
     /// name: the place, the type, the name. Once every module of a
     /// program is checked, a trait out of the module's reach that has
@@ -147,7 +240,8 @@ pub struct Tables {
     pub(super) unknown_methods:
         HashMap<crate::session::ModuleId, Vec<(crate::source::Span, TypeRef, Symbol)>>,
     /// Tracks which (trait_name, type) pairs have been implemented.
-    pub(super) trait_impl_set: std::collections::HashSet<(TraitKey, TypeRef)>,
+    pub(super) trait_impl_set:
+        Table<std::collections::HashSet<(TraitKey, TypeRef)>, (TraitKey, TypeRef)>,
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
@@ -194,7 +288,7 @@ pub struct Tables {
     /// alias / assoc-binding store the canonicaliser reads); this
     /// set is just a fast-path so the typechecker doesn't have to go
     /// through the resolver on every type-expr resolution.
-    pub(super) type_aliases: std::collections::HashSet<TypeRef>,
+    pub(super) type_aliases: Table<std::collections::HashSet<TypeRef>, TypeRef>,
     /// Phase D: parameter arity of each declared alias, for arity-
     /// error diagnostics at use sites. Parallel to `type_aliases`
     /// (the alias is in `type_aliases` iff it is a key here).
@@ -208,7 +302,7 @@ pub struct Tables {
     /// The scheme of each definition of a checked module: a function, a
     /// `let`, a variant's constructor, a type written as a value. (A
     /// builtin's is the builtin scope's.)
-    pub(super) schemes: HashMap<crate::defs::DefId, Scheme>,
+    pub(super) schemes: Table<HashMap<crate::defs::DefId, Scheme>, crate::defs::DefId>,
     /// What the check of each REPL cell left waiting for the type of a
     /// `let` that a later cell may decide (see [`Waiting`]).
     pub(super) waiting: HashMap<crate::session::ModuleId, Waiting>,
@@ -258,16 +352,6 @@ pub struct Rows {
     schemes: Vec<crate::defs::DefId>,
 }
 
-/// The keys of the session's tables, to tell what a check added.
-pub struct TableKeys {
-    types: std::collections::HashSet<TypeRef>,
-    traits: std::collections::HashSet<TraitKey>,
-    methods: std::collections::HashSet<(TypeRef, Symbol)>,
-    trait_methods: std::collections::HashSet<(TypeRef, Symbol, TraitKey)>,
-    impls: std::collections::HashSet<(TraitKey, TypeRef)>,
-    schemes: std::collections::HashSet<crate::defs::DefId>,
-}
-
 impl Tables {
     /// The tables a session starts from: the builtins'.
     pub fn for_session() -> Tables {
@@ -293,37 +377,27 @@ impl Tables {
         &self.resolver
     }
 
-    pub(super) fn keys(&self) -> TableKeys {
-        TableKeys {
-            types: self
-                .enums
-                .keys()
-                .chain(self.records.keys())
-                .chain(self.type_aliases.iter())
-                .copied()
-                .collect(),
-            traits: self.traits.keys().copied().collect(),
-            methods: self.method_table.keys().copied().collect(),
-            trait_methods: self.trait_methods.keys().copied().collect(),
-            impls: self.trait_impl_set.iter().copied().collect(),
-            schemes: self.schemes.keys().copied().collect(),
-        }
+    /// Start the account of what a module's check adds: the rows
+    /// entered from here on are the module's (`take_rows`).
+    pub(super) fn begin_rows(&mut self) {
+        self.take_rows();
     }
 
-    pub(super) fn added_since(&self, before: &TableKeys) -> Rows {
-        let after = self.keys();
+    /// The rows entered since `begin_rows`, and still there. Each table
+    /// notes a row when it is entered, so the account costs what the
+    /// module adds, not what the session holds.
+    pub(super) fn take_rows(&mut self) -> Rows {
+        let mut types = self.enums.take_added();
+        types.extend(self.records.take_added());
+        types.extend(self.type_aliases.take_added());
         Rows {
             trail: self.vars.trail.clone(),
-            types: after.types.difference(&before.types).copied().collect(),
-            traits: after.traits.difference(&before.traits).copied().collect(),
-            methods: after.methods.difference(&before.methods).copied().collect(),
-            trait_methods: after
-                .trait_methods
-                .difference(&before.trait_methods)
-                .copied()
-                .collect(),
-            impls: after.impls.difference(&before.impls).copied().collect(),
-            schemes: after.schemes.difference(&before.schemes).copied().collect(),
+            types,
+            traits: self.traits.take_added(),
+            methods: self.method_table.take_added(),
+            trait_methods: self.trait_methods.take_added(),
+            impls: self.trait_impl_set.take_added(),
+            schemes: self.schemes.take_added(),
         }
     }
 

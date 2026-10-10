@@ -1444,13 +1444,24 @@ impl TypeChecker {
         {
             return true;
         }
-        // (A method `display` of another trait is no `Display` impl.)
+        // A `Display` impl is written for the head: in this module
+        // (`display_written`, known before its impls are entered), in
+        // another one or in an earlier REPL cell (its method is in
+        // `trait_methods`), or by silt itself (a builtin error enum's,
+        // in the method table). A method `display` of another trait is
+        // no `Display` impl.
+        let display = intern("display");
         trait_name.is_builtin("Display")
             && !self.display_written.contains(&head)
             && self
                 .tables
+                .trait_methods
+                .get(&(head, display, trait_name))
+                .is_none_or(|entry| entry.structural)
+            && self
+                .tables
                 .method_table
-                .get(&(head, intern("display")))
+                .get(&(head, display))
                 .is_none_or(|entry| entry.structural || entry.trait_name != Some(trait_name))
     }
 
