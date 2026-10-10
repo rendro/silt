@@ -167,6 +167,9 @@ pub struct TypeChecker {
     /// The type variables `let` annotations introduced: no `where`
     /// clause can bound one.
     pub(super) let_vars: std::collections::HashSet<TyVar>,
+    /// Where each annotation variable was first written: a mismatch
+    /// against one shows it.
+    pub(super) var_written: HashMap<TyVar, Span>,
     /// The annotation variables with a `where` clause whose trait is
     /// unknown (reported): what bounds them is not known, so a method
     /// call or a bound owed on one is not reported as well.
@@ -302,6 +305,7 @@ impl TypeChecker {
             sig_names: HashMap::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
+            var_written: HashMap::new(),
             unknown_bounds: std::collections::HashSet::new(),
             group_rigid: HashMap::new(),
             rigid_alias: HashMap::new(),

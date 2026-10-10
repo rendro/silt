@@ -242,7 +242,8 @@ impl TypeChecker {
                             );
                             return Type::Error;
                         }
-                        let tv = self.fresh_var();
+                        let (tv, var) = self.fresh_tv();
+                        self.var_written.insert(var, te.span);
                         param_vars.insert(*name, tv.clone());
                         return tv;
                     }

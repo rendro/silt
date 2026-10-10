@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- A mismatch against a type variable of an annotation says which
+-- variable it is and shows where it was written: of a function's
+-- signature, of two variables, under a bound, of a `let`, and inside a
+-- type the annotation builds.
+fn id(x: a) -> a {
+  1
+}
+
+fn pair(x: a, y: b) -> a {
+  y
+}
+
+fn add(x: a) -> Int {
+  x + 1
+}
+
+trait Shape {
+  fn area(self) -> Int
+}
+
+fn area_of(s: t) -> t where t: Shape {
+  s.area()
+}
+
+fn wrap(x: e) -> List(e) {
+  [1]
+}
+
+fn main() {
+  let f: Fn(c) -> c = { x -> "s" }
+  println(id(1))
+  println(pair(1, 2))
+  println(add(1))
+  println(f(1))
+}

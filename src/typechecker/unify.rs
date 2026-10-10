@@ -697,8 +697,49 @@ impl TypeChecker {
             d.help.extend(fault.help);
             if let Some((got, expected)) = &fault.apart {
                 Self::add_ok_wrap_fix(&mut d, got, expected);
+                d = self.name_annotation_variables(d, expected, got);
             }
             self.errors.push(d);
+        }
+    }
+
+    /// A mismatch of which one side (or each) is an annotation variable
+    /// says which variable that is and shows where it was written: `a`
+    /// in "expected a, got Int" is not a type the reader can look up.
+    fn name_annotation_variables(
+        &self,
+        mut d: Diagnostic,
+        expected: &Type,
+        got: &Type,
+    ) -> Diagnostic {
+        let mut named: Vec<RigidId> = Vec::new();
+        for ty in [expected, got] {
+            if let Type::Rigid(r) = ty
+                && !named.contains(r)
+            {
+                named.push(*r);
+            }
+        }
+        for r in &named {
+            if let Some(written) = self.var_written.get(&r.var) {
+                d = d.with_label(
+                    *written,
+                    format!("the type variable `{}` is declared here", r.name),
+                );
+            }
+        }
+        match named.as_slice() {
+            [] => d,
+            [r] => d.with_note(format!(
+                "`{}` is a type variable of the annotation: it stands for any type, so the \
+                 code must check whichever type that is",
+                r.name
+            )),
+            [r, s, ..] => d.with_note(format!(
+                "`{}` and `{}` are type variables of the annotation: each stands for any \
+                 type, so the code must check whichever types they are",
+                r.name, s.name
+            )),
         }
     }
 
