@@ -172,11 +172,11 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
             let items: Result<Vec<_>, _> = vs.iter().map(value_to_toml).collect();
             ::toml::Value::Array(items?)
         }
-        Value::Record(name, fields) => {
+        Value::Record(fields) => {
             // Special handling for built-in Date / Time / DateTime records:
             // emit them as TOML native datetime literals so round-trips
             // through `toml.parse` preserve type.
-            match name.id {
+            match fields.type_id() {
                 ty::DATE => {
                     if let (Some(Value::Int(y)), Some(Value::Int(m)), Some(Value::Int(d))) =
                         (fields.get("year"), fields.get("month"), fields.get("day"))
@@ -206,10 +206,8 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                     }
                 }
                 ty::DATE_TIME => {
-                    if let (
-                        Some(Value::Record(_, date_fields)),
-                        Some(Value::Record(_, time_fields)),
-                    ) = (fields.get("date"), fields.get("time"))
+                    if let (Some(Value::Record(date_fields)), Some(Value::Record(time_fields))) =
+                        (fields.get("date"), fields.get("time"))
                         && let (
                             Some(Value::Int(y)),
                             Some(Value::Int(mo)),
@@ -236,7 +234,7 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                 _ => {}
             }
             let mut table = ::toml::map::Map::new();
-            for (k, v) in fields.iter() {
+            for (k, v) in fields.named() {
                 // TOML has no null. An `Option::None` field is omitted from the
                 // table entirely; on parse-back, a missing Option field decodes
                 // back to None (see `toml_to_record`). Emitting a placeholder
@@ -247,7 +245,7 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                 {
                     continue;
                 }
-                table.insert(k.clone(), value_to_toml(v)?);
+                table.insert(k.to_string(), value_to_toml(v)?);
             }
             ::toml::Value::Table(table)
         }
@@ -344,13 +342,12 @@ fn toml_to_record(
     let ::toml::Value::Table(table) = tv else {
         return Ok(toml_type_mismatch_err("table", toml_type_name(tv)));
     };
-    let mut record_fields: BTreeMap<String, Value> = BTreeMap::new();
+    // (In the order the type declares them: the record's own.)
+    let mut record_fields = Vec::with_capacity(fields.len());
     for (field_name, field_type) in fields {
         match table.get(field_name) {
             Some(val) => match toml_to_typed_value(vm, val, field_type) {
-                Ok(v) => {
-                    record_fields.insert(field_name.clone(), v);
-                }
+                Ok(v) => record_fields.push(v),
                 Err(TomlDecodeErr::Unsupported(declared)) => {
                     return Ok(toml_unknown_err(unsupported_field_type_message(
                         &ty.name, field_name, &declared,
@@ -359,9 +356,7 @@ fn toml_to_record(
                 Err(e) => return Ok(decode_err_to_silt(e)),
             },
             None => match field_type {
-                FieldType::Option(_) => {
-                    record_fields.insert(field_name.clone(), Value::variant(bv::NONE, Vec::new()));
-                }
+                FieldType::Option(_) => record_fields.push(Value::variant(bv::NONE, Vec::new())),
                 _ => {
                     return Ok(toml_missing_field_err(field_name));
                 }
@@ -370,7 +365,7 @@ fn toml_to_record(
     }
     Ok(Value::variant(
         bv::OK,
-        vec![Value::Record(ty.clone(), Arc::new(record_fields))],
+        vec![Value::record(ty.clone(), record_fields)],
     ))
 }
 

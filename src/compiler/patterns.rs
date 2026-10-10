@@ -6,7 +6,7 @@
 
 use crate::ast::{Pattern, PatternKind};
 use crate::bytecode::{Asm, Label};
-use crate::intern::{Symbol, intern, resolve};
+use crate::intern::{Symbol, intern};
 use crate::source::Span;
 use crate::value::Value;
 

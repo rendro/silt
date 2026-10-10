@@ -15,8 +15,6 @@ use super::typed::builtins;
 #[cfg(feature = "http")]
 use super::typed::{Arg, Map, TcpListener, unsound};
 #[cfg(feature = "http")]
-use crate::bytecode::record_type_matches;
-#[cfg(feature = "http")]
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
 use crate::runtime::sync::{Arm, Cell, Fired, Wait};
@@ -61,11 +59,14 @@ fn make_http_response(
     headers: BTreeMap<Value, Value>,
     body: std::string::String,
 ) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("status".into(), Value::Int(status as i64));
-    fields.insert("body".into(), Value::String(body.into()));
-    fields.insert("headers".into(), Value::Map(Arc::new(headers)));
-    Value::builtin_record(ty::RESPONSE, fields)
+    Value::builtin_record(
+        ty::RESPONSE,
+        [
+            ("status", Value::Int(status as i64)),
+            ("body", Value::String(body.into())),
+            ("headers", Value::Map(Arc::new(headers))),
+        ],
+    )
 }
 
 #[cfg(feature = "http")]
@@ -76,29 +77,28 @@ fn make_http_request_value(
     headers: BTreeMap<Value, Value>,
     body: std::string::String,
 ) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("method".into(), Value::variant(method, vec![]));
-    fields.insert("path".into(), Value::String(path.into()));
-    fields.insert("query".into(), Value::String(query.into()));
-    fields.insert("headers".into(), Value::Map(Arc::new(headers)));
-    fields.insert("body".into(), Value::String(body.into()));
-    Value::builtin_record(ty::REQUEST, fields)
+    Value::builtin_record(
+        ty::REQUEST,
+        [
+            ("method", Value::variant(method, vec![])),
+            ("path", Value::String(path.into())),
+            ("query", Value::String(query.into())),
+            ("headers", Value::Map(Arc::new(headers))),
+            ("body", Value::String(body.into())),
+        ],
+    )
 }
 
 #[cfg(feature = "http")]
 fn extract_http_response(
     val: &Value,
 ) -> Result<
-    (
-        u16,
-        std::string::String,
-        &BTreeMap<std::string::String, Value>,
-    ),
+    (u16, std::string::String, &crate::value::Record),
     VmError,
 > {
     // (What is no `Response` is no value the handler's type has.)
     let fields = match val {
-        Value::Record(name, fields) if record_type_matches(name, ty::RESPONSE) => fields,
+        Value::Record(record) if record.type_id() == ty::RESPONSE => record,
         _ => return Err(unsound("http.serve", "handler")),
     };
     let (Some(given), Some(body)) = (
@@ -1399,11 +1399,14 @@ mod http_response_tests {
     use super::*;
 
     fn make_response(status: i64) -> Value {
-        let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-        fields.insert("status".to_string(), Value::Int(status));
-        fields.insert("body".to_string(), Value::String(String::new().into()));
-        fields.insert("headers".to_string(), Value::Map(Arc::new(BTreeMap::new())));
-        Value::builtin_record(ty::RESPONSE, fields)
+        Value::builtin_record(
+            ty::RESPONSE,
+            [
+                ("status", Value::Int(status)),
+                ("body", Value::String(String::new().into())),
+                ("headers", Value::Map(Arc::new(BTreeMap::new()))),
+            ],
+        )
     }
 
     #[test]

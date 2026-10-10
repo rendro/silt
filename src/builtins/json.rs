@@ -177,11 +177,11 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
             let items: Result<Vec<_>, _> = vs.iter().map(value_to_json).collect();
             serde_json::Value::Array(items?)
         }
-        Value::Record(_name, fields) => {
+        Value::Record(record) => {
             let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> =
-                fields
-                    .iter()
-                    .map(|(k, v)| Ok((k.clone(), value_to_json(v)?)))
+                record
+                    .named()
+                    .map(|(k, v)| Ok((k.to_string(), value_to_json(v)?)))
                     .collect();
             serde_json::Value::Object(obj?)
         }
@@ -214,25 +214,18 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
 /// The record type `ty` a decoder builds, with its fields. `caller` is
 /// the builtin on whose behalf the type is looked up (`json.parse`,
 /// `toml.parse_list`, ...); it starts the error message. A builtin
-/// record type (`Date`) lists no fields and has no decoder.
+/// record type (`Date`) has no decoder.
 pub(crate) fn decodable_record(
     caller: &str,
     ty: &Arc<TypeInfo>,
 ) -> Result<Vec<(std::string::String, FieldType)>, VmError> {
     match &ty.shape {
-        Shape::Record(fields) if !fields.is_empty() || !is_builtin_type(ty) => Ok(fields.clone()),
+        Shape::Record(fields) if !ty.is_builtin() => Ok(fields.clone()),
         _ => Err(VmError::new(format!(
             "{caller}: unknown record type '{}'",
             ty.name
         ))),
     }
-}
-
-/// Whether `ty` is a builtin type.
-fn is_builtin_type(ty: &TypeInfo) -> bool {
-    crate::defs::builtin_types()
-        .get(ty.id.0.0 as usize)
-        .is_some()
 }
 
 /// The record type `id` a record field names, from the program's types.
@@ -295,13 +288,12 @@ fn json_to_record(
     let serde_json::Value::Object(obj) = json else {
         return Ok(json_type_mismatch_err("object", json_type_name(json)));
     };
-    let mut record_fields = BTreeMap::new();
+    // (In the order the type declares them: the record's own.)
+    let mut record_fields = Vec::with_capacity(fields.len());
     for (field_name, field_type) in fields {
         match obj.get(field_name) {
             Some(json_val) => match json_to_typed_value(vm, json_val, field_type) {
-                Ok(val) => {
-                    record_fields.insert(field_name.clone(), val);
-                }
+                Ok(val) => record_fields.push(val),
                 Err(JsonDecodeErr::Unsupported(declared)) => {
                     return Ok(json_unknown_err(unsupported_field_type_message(
                         &ty.name, field_name, &declared,
@@ -310,9 +302,7 @@ fn json_to_record(
                 Err(e) => return Ok(decode_err_to_silt(e)),
             },
             None => match field_type {
-                FieldType::Option(_) => {
-                    record_fields.insert(field_name.clone(), Value::variant(bv::NONE, Vec::new()));
-                }
+                FieldType::Option(_) => record_fields.push(Value::variant(bv::NONE, Vec::new())),
                 _ => {
                     return Ok(json_missing_field_err(field_name));
                 }
@@ -321,7 +311,7 @@ fn json_to_record(
     }
     Ok(Value::variant(
         bv::OK,
-        vec![Value::Record(ty.clone(), Arc::new(record_fields))],
+        vec![Value::record(ty.clone(), record_fields)],
     ))
 }
 

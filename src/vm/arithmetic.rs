@@ -120,8 +120,8 @@ impl Vm {
             // ends up compared against an anon-typed value at runtime —
             // the same-type guard alone would skip the dispatch and
             // fall to the catch-all error.
-            (Value::Record(ta, _), Value::Record(tb, _))
-                if ta.id == tb.id || ta.is_anon() || tb.is_anon() =>
+            (Value::Record(ra), Value::Record(rb))
+                if ra.type_id() == rb.type_id() || ra.ty().is_anon() || rb.ty().is_anon() =>
             {
                 Self::ordering_with_fn_gate(&a, &b)?
             }

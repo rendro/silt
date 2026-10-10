@@ -853,17 +853,23 @@ fn row_to_map(row: &postgres::Row) -> Value {
 
 fn make_query_result(rows: Vec<Value>) -> Value {
     let row_count = rows.len() as i64;
-    let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-    fields.insert("rows".to_string(), Value::list(rows));
-    fields.insert("row_count".to_string(), Value::Int(row_count));
-    Value::builtin_record(ty::QUERY_RESULT, fields)
+    Value::builtin_record(
+        ty::QUERY_RESULT,
+        [
+            ("row_count", Value::Int(row_count)),
+            ("rows", Value::list(rows)),
+        ],
+    )
 }
 
 fn make_exec_result(affected: u64, returning: Vec<Value>) -> Value {
-    let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-    fields.insert("affected".to_string(), Value::Int(affected as i64));
-    fields.insert("returning".to_string(), Value::list(returning));
-    Value::builtin_record(ty::EXEC_RESULT, fields)
+    Value::builtin_record(
+        ty::EXEC_RESULT,
+        [
+            ("affected", Value::Int(affected as i64)),
+            ("returning", Value::list(returning)),
+        ],
+    )
 }
 
 // ── Handle helpers ──────────────────────────────────────────────────
@@ -1614,11 +1620,14 @@ fn is_valid_ident(s: &str) -> bool {
 
 /// Build a silt `Notification` record from a tokio-postgres notification.
 fn notification_to_record(n: &postgres::Notification) -> Value {
-    let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-    fields.insert("channel".to_string(), Value::String(n.channel().into()));
-    fields.insert("payload".to_string(), Value::String(n.payload().into()));
-    fields.insert("pid".to_string(), Value::Int(n.process_id() as i64));
-    Value::builtin_record(ty::NOTIFICATION, fields)
+    Value::builtin_record(
+        ty::NOTIFICATION,
+        [
+            ("channel", Value::String(n.channel().into())),
+            ("payload", Value::String(n.payload().into())),
+            ("pid", Value::Int(n.process_id() as i64)),
+        ],
+    )
 }
 
 /// Long-lived worker for `listen`. Owns the `PooledConnection` for the
@@ -2285,7 +2294,7 @@ mod tests {
         // Payload is `QueryResult { rows: [...] }`. Pull out the rows
         // list and confirm one row with `?column?` = 1.
         let record = queried.fields().first().expect("query result record");
-        let Value::Record(_, fields) = record else {
+        let Value::Record(fields) = record else {
             panic!("expected Record, got {record:?}");
         };
         let rows = fields.get("rows").expect("rows field");

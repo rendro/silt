@@ -75,7 +75,7 @@ impl Vm {
     /// record or a variant, is kept.
     fn written_slot(&self, value: &Value) -> Option<u16> {
         let ty = match value {
-            Value::Record(ty, _) => ty.id,
+            Value::Record(record) => record.type_id(),
             Value::Variant(variant) => variant.type_id(),
             _ => return None,
         };

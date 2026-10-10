@@ -694,7 +694,8 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
     let builtin = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
     match val {
         Value::Variant(variant) => variant.type_id(),
-        Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.id,
+        Value::Record(record) => record.type_id(),
+        Value::TypeDescriptor(ty) => ty.id,
         Value::PrimitiveDescriptor(name) => TypeRef::builtin(name).id,
         Value::Int(_) => builtin(Type::Int),
         Value::Float(_) => builtin(Type::Float),
@@ -722,7 +723,8 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
 pub fn dispatch_type_name(val: &Value) -> String {
     match val {
         Value::Variant(variant) => variant.ty().name.clone(),
-        Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.name.clone(),
+        Value::Record(record) => record.ty().name.clone(),
+        Value::TypeDescriptor(ty) => ty.name.clone(),
         _ => crate::typeinfo::builtin_type(dispatch_type_for_value(val))
             .name
             .clone(),

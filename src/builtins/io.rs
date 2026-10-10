@@ -1,7 +1,6 @@
 //! IO, filesystem and environment builtin functions (`io.*`, `fs.*`,
 //! `env.*`).
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -309,7 +308,7 @@ pub(crate) mod fs {
                 // statx(2) on Linux, and not exposed at all on some
                 // Unixes. Both map to Option(DateTime) so callers can
                 // pattern-match rather than probe for sentinels.
-                let fields = [
+                Value::builtin_record(ty::FILE_STAT, [
                     ("size", Value::Int(md.len() as i64)),
                     ("is_file", Value::Bool(md.is_file())),
                     ("is_dir", Value::Bool(md.is_dir())),
@@ -319,10 +318,7 @@ pub(crate) mod fs {
                     ("mode", Value::Int(mode)),
                     ("accessed", system_time_to_option_datetime(md.accessed())),
                     ("created", system_time_to_option_datetime(md.created())),
-                ];
-                let fields: BTreeMap<String, Value> =
-                    fields.into_iter().map(|(name, value)| (name.into(), value)).collect();
-                Value::builtin_record(ty::FILE_STAT, fields)
+                ])
             })
         }
 

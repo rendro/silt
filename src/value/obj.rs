@@ -111,6 +111,11 @@ impl Variant {
     }
 }
 
+/// Whether `name` is one of `names`.
+fn is_among<'a>(mut names: impl Iterator<Item = &'a str>, name: &str) -> bool {
+    names.any(|given| given == name)
+}
+
 /// A record: `Pt { x: 1, y: 2 }`, `{name: "a"}`.
 #[derive(Clone)]
 pub struct Record(Arc<Obj>);
@@ -222,10 +227,12 @@ impl Record {
         }
         let mut fields: Vec<(&str, Value)> = self
             .named()
-            .filter(|(name, _)| !names.clone().any(|given| given == *name))
+            .filter(|(name, _)| !is_among(names.clone(), name))
             .map(|(name, value)| (name, value.clone()))
             .collect();
-        fields.extend(names.zip(values));
+        for (name, value) in names.zip(values) {
+            fields.push((name, value));
+        }
         Some(Record::anon(fields))
     }
 
@@ -233,7 +240,7 @@ impl Record {
     /// what a rest pattern binds, `{x, ...rest}`, and with none
     /// excluded what a spread starts from, `{...r}`.
     pub fn rest<'a>(&self, excluded: impl Iterator<Item = &'a str> + Clone) -> Record {
-        let kept = |name: &str| !excluded.clone().any(|given| given == name);
+        let kept = |name: &str| !is_among(excluded.clone(), name);
         if self.0.ty.is_anon() && self.named().all(|(name, _)| kept(name)) {
             return self.clone();
         }

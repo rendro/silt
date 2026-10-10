@@ -1,15 +1,12 @@
 //! The `time.*` builtin functions.
 
-use std::collections::BTreeMap;
-
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use super::typed::{Arg, builtins};
-use crate::bytecode::record_type_matches;
 use crate::defs::TypeId;
 use crate::runtime::sync::Wait;
 use crate::typeinfo::{bv, ty};
-use crate::value::Value;
+use crate::value::{Record, Value};
 use crate::vm::{Step, VmError};
 
 /// Compute (year, month, day) from Unix epoch seconds.
@@ -84,59 +81,62 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 
 /// Build a Silt `Date` record Value from chrono NaiveDate.
 pub(crate) fn make_date(d: NaiveDate) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("year".into(), Value::Int(d.year() as i64));
-    fields.insert("month".into(), Value::Int(d.month() as i64));
-    fields.insert("day".into(), Value::Int(d.day() as i64));
-    Value::builtin_record(ty::DATE, fields)
+    Value::builtin_record(
+        ty::DATE,
+        [
+            ("year", Value::Int(d.year() as i64)),
+            ("month", Value::Int(d.month() as i64)),
+            ("day", Value::Int(d.day() as i64)),
+        ],
+    )
 }
 
 /// Build a Silt `Time` record Value from chrono NaiveTime.
 pub(crate) fn make_time(t: NaiveTime) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("hour".into(), Value::Int(t.hour() as i64));
-    fields.insert("minute".into(), Value::Int(t.minute() as i64));
-    fields.insert("second".into(), Value::Int(t.second() as i64));
-    fields.insert("ns".into(), Value::Int(t.nanosecond() as i64));
-    Value::builtin_record(ty::TIME, fields)
+    Value::builtin_record(
+        ty::TIME,
+        [
+            ("hour", Value::Int(t.hour() as i64)),
+            ("minute", Value::Int(t.minute() as i64)),
+            ("second", Value::Int(t.second() as i64)),
+            ("ns", Value::Int(t.nanosecond() as i64)),
+        ],
+    )
 }
 
 /// Build a Silt `DateTime` record Value from chrono NaiveDateTime.
 pub(crate) fn make_datetime(dt: NaiveDateTime) -> Value {
-    let date_val = make_date(dt.date());
-    let time_val = make_time(dt.time());
-    let mut fields = BTreeMap::new();
-    fields.insert("date".into(), date_val);
-    fields.insert("time".into(), time_val);
-    Value::builtin_record(ty::DATE_TIME, fields)
+    Value::builtin_record(
+        ty::DATE_TIME,
+        [
+            ("date", make_date(dt.date())),
+            ("time", make_time(dt.time())),
+        ],
+    )
 }
 
 /// Build a Silt `Instant` record Value.
 fn make_instant(epoch_ns: i64) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("epoch_ns".into(), Value::Int(epoch_ns));
-    Value::builtin_record(ty::INSTANT, fields)
+    Value::builtin_record(ty::INSTANT, [("epoch_ns", Value::Int(epoch_ns))])
 }
 
 /// Build a Silt `Duration` record Value.
 fn make_duration(ns: i64) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("ns".into(), Value::Int(ns));
-    Value::builtin_record(ty::DURATION, fields)
+    Value::builtin_record(ty::DURATION, [("ns", Value::Int(ns))])
 }
 
 // ── The arguments ───────────────────────────────────────────────────
 
-/// The fields of `value`, if it is a record of the builtin type `ty`.
-fn record(value: &Value, ty: TypeId) -> Option<&BTreeMap<String, Value>> {
+/// `value`, if it is a record of the builtin type `ty`.
+fn record(value: &Value, ty: TypeId) -> Option<&Record> {
     match value {
-        Value::Record(name, fields) if record_type_matches(name, ty) => Some(fields),
+        Value::Record(record) if record.type_id() == ty => Some(record),
         _ => None,
     }
 }
 
 /// The `Int` field `name` of a record.
-fn int(fields: &BTreeMap<String, Value>, name: &str) -> Option<i64> {
+fn int(fields: &Record, name: &str) -> Option<i64> {
     i64::take(fields.get(name)?)
 }
 
