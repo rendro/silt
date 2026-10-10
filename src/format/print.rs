@@ -1175,7 +1175,7 @@ impl Printer<'_> {
             ExprKind::Int(_) => self.tok(Token::Int(0)),
             ExprKind::Float(_) => self.tok(Token::Float(0.0)),
             ExprKind::Bool(_) => self.tok(Token::Bool(true)),
-            ExprKind::StringLit(..) => self.tok(Token::StringLit(String::new(), false)),
+            ExprKind::StringLit(..) => self.tok(Token::StringLit(String::new())),
             ExprKind::StringInterp(parts) => self.string_interp(parts),
             ExprKind::List(elems) => self.delimited(
                 Token::LBracket,
@@ -2156,7 +2156,7 @@ impl Printer<'_> {
             PatternKind::Range(..) => self.number_pattern(Token::Int(0), true),
             PatternKind::FloatRange(..) => self.number_pattern(Token::Float(0.0), true),
             PatternKind::Bool(_) => self.tok(Token::Bool(true)),
-            PatternKind::StringLit(..) => self.tok(Token::StringLit(String::new(), false)),
+            PatternKind::StringLit(..) => self.tok(Token::StringLit(String::new())),
             PatternKind::Tuple(elems) => self.tuple(elems, |p, elem| p.pattern(elem)),
             PatternKind::Constructor {
                 qualifier, args, ..
@@ -2233,7 +2233,7 @@ impl Printer<'_> {
                 entries,
                 |p, (_, sub)| {
                     Doc::concat(vec![
-                        p.tok(Token::StringLit(String::new(), false)),
+                        p.tok(Token::StringLit(String::new())),
                         p.tok(Token::Colon),
                         space(),
                         p.pattern(sub),

@@ -891,7 +891,7 @@ impl ShapeWriter {
                 self.open("bool");
                 self.flag(*b);
             }
-            PatternKind::StringLit(s, _) => {
+            PatternKind::StringLit(s) => {
                 self.open("string");
                 self.text(s);
             }
@@ -1041,7 +1041,7 @@ impl ShapeWriter {
                 self.open("bool");
                 self.flag(*b);
             }
-            ExprKind::StringLit(s, _) => {
+            ExprKind::StringLit(s) => {
                 self.open("string");
                 self.text(s);
             }

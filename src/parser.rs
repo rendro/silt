@@ -3015,9 +3015,9 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Ok(self.mk_expr(ExprKind::Bool(b), span))
             }
-            Token::StringLit(s, triple) => {
+            Token::StringLit(s) => {
                 self.advance();
-                Ok(self.mk_expr(ExprKind::StringLit(s, triple), span))
+                Ok(self.mk_expr(ExprKind::StringLit(s), span))
             }
             Token::StringStart(s) => {
                 self.advance();
@@ -4057,9 +4057,9 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Ok(mk(PatternKind::Bool(b)))
             }
-            Token::StringLit(s, triple) => {
+            Token::StringLit(s) => {
                 self.advance();
-                Ok(mk(PatternKind::StringLit(s, triple)))
+                Ok(mk(PatternKind::StringLit(s)))
             }
             Token::LParen => {
                 self.advance();
@@ -4136,7 +4136,7 @@ impl<'src> Parser<'src> {
                 let entries =
                     self.comma_list("map pattern", start, ListEnd::Close(&Token::RBrace), |p| {
                         let key = match p.peek().clone() {
-                            Token::StringLit(s, _) => {
+                            Token::StringLit(s) => {
                                 p.advance();
                                 s
                             }

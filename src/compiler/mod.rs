@@ -1115,7 +1115,7 @@ impl Compiler {
                 }
             }
 
-            ExprKind::StringLit(s, _) => {
+            ExprKind::StringLit(s) => {
                 let idx = self.add_constant(Value::String(s.clone()), span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
             }

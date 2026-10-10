@@ -66,8 +66,8 @@ pub enum ExprKind {
     Int(i64),
     Float(f64),
     Bool(bool),
-    /// String literal. The bool is `true` when written with triple-quote (`"""`) syntax.
-    StringLit(String, bool),
+    /// String literal.
+    StringLit(String),
     StringInterp(Vec<StringPart>),
 
     // Collections
@@ -316,8 +316,7 @@ pub enum PatternKind {
     Int(i64),
     Float(f64),
     Bool(bool),
-    /// The bool is `true` when written with triple-quote (`"""`) syntax.
-    StringLit(String, bool),
+    StringLit(String),
     Tuple(Vec<Pattern>),
     /// Enum-constructor pattern: `Some(x)`, `Rect(w, h)`, or a bare
     /// unit variant `Red`.
