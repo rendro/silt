@@ -247,6 +247,9 @@ impl Vm {
                 // of its own has no need to.
                 Slice::OutOfBudget => self.runtime.charge(self.own_slice())?,
                 Slice::Parked(wait) => {
+                    // A wait is a step of the budget (the error comes
+                    // where a slice ends).
+                    let _ = self.runtime.charge(1);
                     let who = match self.is_program() {
                         true => Blocks::Program {
                             in_deadline: self.current_deadline.is_some(),
@@ -299,7 +302,12 @@ impl Vm {
                 Ok(()) => SliceResult::Yielded,
                 Err(e) => SliceResult::Failed(e),
             },
-            Ok(Slice::Parked(wait)) => SliceResult::Blocked(wait),
+            Ok(Slice::Parked(wait)) => {
+                // A wait is a step of the budget: the task ends where
+                // its next slice would start.
+                let _ = self.runtime.charge(1);
+                SliceResult::Blocked(wait)
+            }
             Err(e) => SliceResult::Failed(e),
         }
     }

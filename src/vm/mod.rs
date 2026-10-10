@@ -331,8 +331,9 @@ impl Vm {
     /// full length, so the program is ended at the end of a slice, at
     /// most one slice of each of its threads late; with a budget the
     /// thread that runs the program's own code is sliced as the tasks
-    /// are (see [`Vm::set_time_slice`]). A wait is no step: a program
-    /// that waits for ever is not ended by its budget.
+    /// are (see [`Vm::set_time_slice`]). The start of a wait counts as
+    /// one step, so tasks that hand a value to and fro for ever end
+    /// too; a wait that never ends is not ended by the budget.
     pub fn set_step_budget(&mut self, steps: u64) {
         let steps = steps.min(u64::MAX - 1);
         self.runtime.steps_left.store(steps, Ordering::Relaxed);

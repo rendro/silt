@@ -405,9 +405,10 @@ whatever of the program still runs ends with a `VmError` whose
 and each task, whose join gives the error on. A program that loops for
 ever ends there. Steps are counted at the end of each slice that ran its
 full length, so the program may run up to one slice per thread more
-than its budget; with `set_time_slice(1)` the count is exact. A wait is
-no step: a program that waits for something that never comes is ended by
-the deadlock check or by dropping the `Vm`, not by its budget.
+than its budget; with `set_time_slice(1)` the count is exact. The start
+of a wait counts as one step, so tasks that pass a value to and fro for
+ever end too. A wait that never ends is not ended by the budget: that is
+the deadlock check's, or the host drops the `Vm`.
 
 ## Error Surfacing
 

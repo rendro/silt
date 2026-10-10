@@ -176,3 +176,35 @@ fn the_budget_ends_the_tasks_of_a_program_too() {
     assert_eq!(result.unwrap(), Value::Int(7));
     assert!(report.contains("the step budget is used up"), "{report}");
 }
+
+/// Two tasks that hand a value to and fro for ever never run a slice to
+/// its end: each wait counts as a step, so the budget ends them too.
+#[test]
+fn the_budget_ends_tasks_that_only_wait_for_each_other() {
+    let source = r#"
+import channel
+import task
+
+fn relay(from, to) {
+  loop {
+    match channel.receive(from) {
+      channel.Message(n) -> channel.send(to, n + 1)
+      _ -> ()
+    }
+    loop()
+  }
+}
+
+fn main() {
+  let a = channel.new(0)
+  let b = channel.new(0)
+  let left = task.spawn({ -> relay(a, b) })
+  let right = task.spawn({ -> relay(b, a) })
+  channel.send(a, 0)
+  task.join(left)
+}
+"#;
+    let (result, _) = run_whole(source, |vm| vm.set_step_budget(20_000));
+    let error = result.unwrap_err();
+    assert!(error.out_of_steps, "{error:?}");
+}
