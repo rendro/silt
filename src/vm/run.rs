@@ -281,7 +281,10 @@ impl Vm {
         // The call stack is read off the frames this run leaves, which
         // must not stay: the next run on this VM (a REPL's next entry,
         // a stage's next item) would show them as its own.
-        let enriched = self.enrich_error(error);
+        let mut enriched = self.enrich_error(error);
+        // Whatever the error says, a program whose step budget is used
+        // up was ended by it (a deadlock: the task waited for is gone).
+        enriched.out_of_steps |= self.runtime.charge(0).is_err();
         self.unwind(floor, stack_floor);
         Err(enriched)
     }

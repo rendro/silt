@@ -204,7 +204,12 @@ fn main() {
   task.join(left)
 }
 "#;
-    let (result, _) = run_whole(source, |vm| vm.set_step_budget(20_000));
-    let error = result.unwrap_err();
-    assert!(error.out_of_steps, "{error:?}");
+    // Whichever task the budget ends first, `main` ends for it: with
+    // the error of the task it joins, or, when that one waits for the
+    // other for ever, with a deadlock that is the budget's too.
+    for _ in 0..20 {
+        let (result, _) = run_whole(source, |vm| vm.set_step_budget(20_000));
+        let error = result.unwrap_err();
+        assert!(error.out_of_steps, "{error:?}");
+    }
 }

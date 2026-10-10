@@ -324,7 +324,9 @@ impl Vm {
     /// included. When they are used up, whatever of the program still
     /// runs ends with an error whose [`VmError::out_of_steps`] is set
     /// (`main`, and each task: a join of one gives the error on): a
-    /// program that does not end by itself ends there.
+    /// program that does not end by itself ends there. Any error the
+    /// program's own code ends with from then on has it set, a
+    /// deadlock for one: the task it waited for was ended.
     ///
     /// A step is an instruction, or a step of a builtin that calls back
     /// into the program. They are counted where a slice has run its

@@ -11,8 +11,9 @@ pub struct VmError {
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
     pub type_confusion: bool,
-    /// If true, the program was ended because it had run the steps its
-    /// embedder gave it ([`Vm::set_step_budget`](super::Vm::set_step_budget)).
+    /// If true, the program had run the steps its embedder gave it
+    /// ([`Vm::set_step_budget`](super::Vm::set_step_budget)) and was
+    /// ended for it: by this error, or by one that followed from it.
     pub out_of_steps: bool,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
