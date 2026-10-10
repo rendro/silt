@@ -1,0 +1,1 @@
+pub type H { run: Fn(Int) -> Int, n: Int }

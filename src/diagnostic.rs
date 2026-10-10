@@ -195,6 +195,9 @@ codes! {
     InitCycle = "E0339", Type;
     /// A statement whose value nothing uses.
     UnusedValue = "E0340", Type;
+    /// An impl that gives a record type a method named like one of the
+    /// type's fields.
+    MethodNamedLikeField = "E0341", Type;
     // ── compile ──
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;

@@ -1,0 +1,13 @@
+error[type]: method 'day' of the impl of 'Part' for 'Date' is named like a field of 'Date'
+ --> field_method__builtin_record.silt:9:31
+   |
+ 9 | trait Part for time.Date { fn day(self) -> Int { 1 } }
+   |                               ^^^ method 'day' of the impl of 'Part' for 'Date' is named like a field of 'Date'
+  = help: a field and a method of one type cannot share a name: rename the method or the field
+
+error[type]: the impl of 'Span' for 'Duration' takes the default method 'ns' of the trait, which is named like a field of 'Duration'
+ --> field_method__builtin_record.silt:13:1
+    |
+ 13 | trait Span for time.Duration {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the impl of 'Span' for 'Duration' takes the default method 'ns' of the trait, which is named like a field of 'Duration'
+  = help: a field and a method of one type cannot share a name: rename the method or the field

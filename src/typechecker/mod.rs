@@ -787,10 +787,7 @@ impl TypeChecker {
                         });
                     }
                     TypeBody::Record(_) => {
-                        self.tables
-                            .records
-                            .entry(ty)
-                            .or_insert_with(|| RecordInfo { fields: Vec::new() });
+                        self.tables.records.entry(ty).or_default();
                     }
                     TypeBody::Alias(_) => {
                         // Phase D: alias names are pre-registered into

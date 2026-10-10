@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: type H { run: Int, n: Int }\ntrait Run { fn run(self) -> Int }\ntrait Run for H { fn run(self) -> Int { 7 } }\nlet h = H { run: 1, n: 2 }\nh.run\nfn bounded(r: a) -> Int where a: Run { r.run() }\nbounded(h)\ntrait Run for Int { fn run(self) -> Int { self } }\nbounded(3)\n:quit\n
+-- An entry that adds an impl whose method is named like a field of a
+-- record of an earlier entry is the error, and adds nothing: the
+-- session goes on without the impl (`bounded(h)` has no `Run` for `H`).

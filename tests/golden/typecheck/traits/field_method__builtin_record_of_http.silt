@@ -1,0 +1,13 @@
+-- exit: 1
+-- verdict: same
+-- requires-feature: http
+-- `http.Response` and `http.Request` are records with the fields
+-- `body` and `path`.
+import http
+trait Size { fn body(self) -> Int }
+trait Size for http.Response { fn body(self) -> Int { 1 } }
+trait Route { fn path(self) -> String { "/" } }
+trait Route for http.Request {}
+fn main() {
+  println(1)
+}

@@ -1,0 +1,11 @@
+-- exit: 1
+-- verdict: same
+-- A field of a generic record whose type is the record's parameter
+-- clashes by its name as any other does, whatever the parameter is.
+type G(a) { run: a, tag: Int }
+trait Run { fn run(self, x: Int) -> Int }
+trait Run for G(a) { fn run(self, x: Int) -> Int { x + self.tag } }
+fn main() {
+  let g = G { run: "s", tag: 1 }
+  println(g.tag)
+}

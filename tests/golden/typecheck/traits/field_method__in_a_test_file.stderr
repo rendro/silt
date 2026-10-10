@@ -1,0 +1,13 @@
+error[type]: method 'run' of the impl of 'Run' for 'H' is named like a field of 'H'
+ --> field_method__in_a_test_file.silt:7:22
+   |
+ 7 | trait Run for H { fn run(self) -> Int { 1 } }
+   |                      ^^^ method 'run' of the impl of 'Run' for 'H' is named like a field of 'H'
+ ::: field_method__in_a_test_file.silt:5:10
+   |
+ 5 | type H { run: Int }
+   |          --- the field 'run' of 'H'
+  = help: a field and a method of one type cannot share a name: rename the method or the field
+field_method__in_a_test_file.silt: failed to compile — type errors (see above)
+
+0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)

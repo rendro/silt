@@ -1,0 +1,16 @@
+-- exit: 1
+-- verdict: same
+-- A builtin record type has fields as a program's record has: a
+-- program's trait implemented for one with a method named like a field
+-- is the same error. (The field is declared in no file, so there is no
+-- label for it.)
+import time
+trait Part { fn day(self) -> Int }
+trait Part for time.Date { fn day(self) -> Int { 1 } }
+trait Span {
+  fn ns(self) -> Int { 0 }
+}
+trait Span for time.Duration {}
+fn main() {
+  println(1)
+}
