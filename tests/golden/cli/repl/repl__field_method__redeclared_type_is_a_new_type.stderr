@@ -1,0 +1,15 @@
+error[type]: type '<repl:5>.H' does not implement trait 'Run'
+ --> <repl:11>:1:9
+   |
+ 1 | bounded(new)
+   |         ^^^ type '<repl:5>.H' does not implement trait 'Run'
+error[type]: method 'run' of the impl of 'Run' for 'H' is named like a field of '<repl:5>.H'
+ --> <repl:12>:1:22
+   |
+ 1 | trait Run for H { fn run(self) -> Int { 8 } }
+   |                      ^^^ method 'run' of the impl of 'Run' for 'H' is named like a field of '<repl:5>.H'
+ ::: <repl:5>:1:10
+   |
+ 1 | type H { run: Int, n: Int }
+   |          --- the field 'run' of '<repl:5>.H'
+  = help: a field and a method of one type cannot share a name: rename the method or the field

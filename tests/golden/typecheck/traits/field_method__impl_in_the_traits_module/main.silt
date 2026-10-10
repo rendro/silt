@@ -1,0 +1,12 @@
+-- exit: 1
+-- verdict: same
+-- An impl may be written in the module of its trait, for a record of
+-- another module: there too a method named like a field of the record
+-- is the error, and the label is at the field, in the record's module.
+import runner
+import shapes
+fn main() {
+  let h = shapes.H { run: { x -> x + 1 }, n: 0 }
+  println(h.run(1))
+  println(runner.go(3))
+}

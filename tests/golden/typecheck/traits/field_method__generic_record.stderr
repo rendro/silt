@@ -1,0 +1,10 @@
+error[type]: method 'run' of the impl of 'Run' for 'G' is named like a field of 'G'
+ --> field_method__generic_record.silt:7:25
+   |
+ 7 | trait Run for G(a) { fn run(self, x: Int) -> Int { x + self.tag } }
+   |                         ^^^ method 'run' of the impl of 'Run' for 'G' is named like a field of 'G'
+ ::: field_method__generic_record.silt:5:13
+   |
+ 5 | type G(a) { run: a, tag: Int }
+   |             --- the field 'run' of 'G'
+  = help: a field and a method of one type cannot share a name: rename the method or the field

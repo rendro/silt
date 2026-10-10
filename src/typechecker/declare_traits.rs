@@ -1837,22 +1837,28 @@ impl TypeChecker {
         let Some(record) = self.tables.records.get(&target_type).cloned() else {
             return;
         };
+        // Where the record declares the field `name`, if it has one.
         let field_span = |name: Symbol| {
             let at = record.fields.iter().position(|(field, _)| *field == name)?;
-            // (A builtin record's fields are declared in no file.)
-            Some(record.field_spans.get(at).copied())
+            record.field_spans.get(at).copied()
         };
-        let (tr, ty) = (ti.trait_name, target_type.name);
-        let mut found: Vec<(Span, String, Symbol, Option<Span>)> = Vec::new();
+        // The impl as it is written (its target may be an alias of the
+        // record), the record by its name.
+        let (tr, of) = (ti.trait_name, ti.target_type);
+        let ty = self.show_type(&Type::Generic(target_type, vec![]));
+        let mut found: Vec<(Span, String, Symbol, Span)> = Vec::new();
         let mut written: Vec<Symbol> = Vec::new();
         for method in &ti.methods {
             if written.contains(&method.name) {
                 continue;
             }
             written.push(method.name);
-            if let Some(field) = field_span(method.name) {
+            // (A method the trait does not declare is reported as that.)
+            let declared =
+                info.is_none_or(|info| info.methods.iter().any(|(name, _)| *name == method.name));
+            if declared && let Some(field) = field_span(method.name) {
                 let message = format!(
-                    "method '{}' of the impl of '{tr}' for '{ty}' is named like a field of '{ty}'",
+                    "method '{}' of the impl of '{tr}' for '{of}' is named like a field of '{ty}'",
                     method.name
                 );
                 found.push((method.name_span, message, method.name, field));
@@ -1870,7 +1876,7 @@ impl TypeChecker {
             }
             if let Some(field) = field_span(name) {
                 let message = format!(
-                    "the impl of '{tr}' for '{ty}' takes the default method '{name}' of the \
+                    "the impl of '{tr}' for '{of}' takes the default method '{name}' of the \
                      trait, which is named like a field of '{ty}'"
                 );
                 found.push((ti.span, message, name, field));
@@ -1878,13 +1884,14 @@ impl TypeChecker {
         }
         for (span, message, name, field) in found {
             let mut d = Diagnostic::error(Code::MethodNamedLikeField, span, message);
-            if let Some(field) = field.filter(|span| span.is_in_source()) {
+            // (A builtin record's fields are declared in no file.)
+            if field.is_in_source() {
                 d = d.with_label(field, format!("the field '{name}' of '{ty}'"));
             }
-            self.errors.push(d.with_help(format!(
-                "'x.{name}(..)' on a value of '{ty}' is a call of what the field holds: rename \
-                 the method or the field"
-            )));
+            self.errors.push(d.with_help(
+                "a field and a method of one type cannot share a name: rename the method or \
+                 the field",
+            ));
         }
     }
 

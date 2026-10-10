@@ -1,0 +1,10 @@
+-- exit: 1
+-- verdict: same
+-- An impl written for an alias of a record is the record's impl.
+type H { run: Int }
+type A = H
+trait Run { fn run(self) -> Int }
+trait Run for A { fn run(self) -> Int { 1 } }
+fn main() {
+  println(H { run: 2 }.run)
+}

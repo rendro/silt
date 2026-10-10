@@ -1,0 +1,10 @@
+-- exit: 1
+-- verdict: same
+-- The rule is by the name alone: a method the trait declares without
+-- `self`, called on the type (`H.make()`), is a method of the impl too.
+trait Make { fn make() -> Self }
+type H { make: Int }
+trait Make for H { fn make() -> H { H { make: 1 } } }
+fn main() {
+  println(H.make().make)
+}

@@ -1,0 +1,5 @@
+import shapes
+pub trait Run { fn run(self, x: Int) -> Int }
+trait Run for shapes.H { fn run(self, x: Int) -> Int { x + self.n } }
+trait Run for Int { fn run(self, x: Int) -> Int { self + x } }
+pub fn go(x: Int) -> Int { x.run(1) }

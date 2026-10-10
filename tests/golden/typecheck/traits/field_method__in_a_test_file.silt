@@ -1,0 +1,10 @@
+-- cmd: test
+-- exit: 1
+-- `silt test` checks a test file as `silt check` does.
+import test
+type H { run: Int }
+trait Run { fn run(self) -> Int }
+trait Run for H { fn run(self) -> Int { 1 } }
+fn test_field() {
+  test.assert_eq(H { run: 2 }.run, 2)
+}

@@ -1,0 +1,21 @@
+-- exit: 1
+-- verdict: same
+-- A default method of the trait that the impl leaves out is a method the
+-- impl gives the type: named like a field, it is the error, at the
+-- impl's header. The field's type does not matter: `run` holds an Int.
+-- A default method the impl writes itself is reported at the method.
+trait Run {
+  fn run(self, x: Int) -> Int { x }
+  fn name(self) -> String { "?" }
+  fn stop(self) -> Int
+}
+type H { run: Int, name: String }
+trait Run for H {
+  fn name(self) -> String { "h" }
+  fn stop(self) -> Int { 0 }
+}
+fn main() {
+  let h = H { run: 1, name: "n" }
+  println(h.run)
+  println(h.stop())
+}
