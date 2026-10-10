@@ -94,7 +94,7 @@ impl Compiler {
                 Ok(vec![(jump, base_depth)])
             }
 
-            PatternKind::StringLit(s, _) => {
+            PatternKind::StringLit(s) => {
                 let idx = self.add_constant(Value::String(s.clone().into()), span)?;
                 self.emit(Asm::TestEqual { k: idx }, span)?;
                 let jump = self.jump_if_false(span)?;
