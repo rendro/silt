@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::goldens::{REPROS, collect_cases, plain_input};
-use crate::oracle::{Expect, Input, Source};
+use crate::oracle::{Expect, Input, Source, Verdict};
 use crate::sweep::{conclude, name_of, repo_root, run, sample, skips};
 
 /// Without `SILT_ORACLE_FULL`, every n-th repro is run: the corpus has
@@ -43,6 +43,11 @@ fn files_of(dir: &Path, inputs: &mut Vec<Input>) {
             expect: Expect::default(),
         });
     }
+}
+
+/// Whether the sweep is over every input (no `SILT_ORACLE_ONLY`).
+fn only_unset() -> bool {
+    std::env::var_os("SILT_ORACLE_ONLY").is_none()
 }
 
 /// `inputs` without those whose text an earlier one has.
@@ -96,6 +101,23 @@ fn fuzz_corpora_and_examples() {
     let skips = skips();
     let inputs = sample(all, 1, &skips);
     let verdicts = run(&inputs, &skips);
+    // The seeds written for `fuzz_run` are programs the oracle runs to
+    // their end: one that it does not is no seed.
+    let mut seeds = 0;
+    for (input, (verdict, _)) in inputs.iter().zip(&verdicts) {
+        if input.name.starts_with("fuzz/corpus/fuzz_run/run_") {
+            seeds += 1;
+            assert!(
+                matches!(verdict, Verdict::Passed(_)),
+                "{} is not run to its end: {verdict:?}",
+                input.name
+            );
+        }
+    }
+    assert!(
+        seeds >= 10 || !only_unset(),
+        "only {seeds} seeds of fuzz_run"
+    );
     conclude("fuzz corpora and examples", &inputs, &verdicts, &skips);
 }
 

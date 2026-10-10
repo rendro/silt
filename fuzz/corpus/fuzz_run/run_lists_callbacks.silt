@@ -1,0 +1,16 @@
+import list
+import string
+
+fn main() {
+  let words = ["pear", "fig", "banana", "kiwi"]
+  let sorted = list.sort_by(words) { w -> string.length(w) }
+  println(sorted)
+  println(list.find(words) { w -> string.starts_with(w, "b") })
+  println(list.any(words) { w -> string.length(w) > 5 })
+  println(list.zip(words, [1, 2, 3, 4]))
+  list.each(list.reverse(sorted)) { w -> println(string.to_upper(w)) }
+  match sorted {
+    [first, ..rest] -> string.length(first) + list.length(rest)
+    [] -> 0
+  }
+}

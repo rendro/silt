@@ -273,6 +273,9 @@ jobs:
       - name: Replay fuzz_http_request corpus
         run: ./fuzz/replay.sh fuzz_http_request
 
+      - name: Replay fuzz_run corpus
+        run: ./fuzz/replay.sh fuzz_run
+
       - name: Upload reproducers on failure
         if: failure()
         uses: actions/upload-artifact@v7

@@ -1,0 +1,20 @@
+import list
+
+fn compose(f, g) {
+  { x -> g(f(x)) }
+}
+
+fn adder(n) {
+  { x -> x + n }
+}
+
+fn main() {
+  let inc_then_double = compose(adder(1), { x -> x * 2 })
+  let total = [1, 2, 3, 4]
+    |> list.map(inc_then_double)
+    |> list.filter { x -> x > 4 }
+    |> list.fold(0) { acc, x -> acc + x }
+  println(total)
+  println(({ v -> v + 1 }(41)))
+  (5 |> { v -> v + 10 })
+}

@@ -48,6 +48,7 @@ jobs:
           - fuzz_typechecker
           - fuzz_compiler
           - fuzz_http_request
+          - fuzz_run
     steps:
       - uses: actions/checkout@v6
 

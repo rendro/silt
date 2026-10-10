@@ -1,0 +1,35 @@
+import list
+
+type Shape {
+  Circle(Int),
+  Rect(Int, Int),
+}
+
+type Point { x: Int, y: Int }
+
+trait Display for Point {
+  fn display(self) -> String { "({self.x}, {self.y})" }
+}
+
+trait Area {
+  fn area(self) -> Int
+}
+
+trait Area for Shape {
+  fn area(self) -> Int {
+    match self {
+      Circle(r) -> 3 * r * r
+      Rect(w, h) -> w * h
+    }
+  }
+}
+
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let q = p.{ y: 5 }
+  println("{p} {q}")
+  println([p, q])
+  let shapes = [Circle(2), Rect(3, 4)]
+  println(list.map(shapes) { s -> s.area() })
+  q.x + q.y
+}
