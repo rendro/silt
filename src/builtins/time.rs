@@ -70,16 +70,13 @@ fn time_out_of_range_err(msg: String) -> Value {
     )
 }
 
-/// Dispatch the builtin `trait Error for TimeError` method table.
-/// Scaffolding lives in `super::dispatch_error_trait`; this site just
-/// supplies the variant → message rendering.
-pub fn call_time_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("TimeError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("TimeParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
-            ("TimeOutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
-            _ => return None,
-        })
+/// What `TimeError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("TimeParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
+        ("TimeOutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
+        _ => return None,
     })
 }
 

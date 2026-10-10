@@ -77,22 +77,17 @@ fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Valu
     Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(offset)])
 }
 
-/// Dispatch the builtin `trait Error for ParseError` method table.
-/// Called through the VM's `ERROR_TRAIT_DISPATCH`, like
-/// `call_io_error_trait`. Scaffolding lives in
-/// `super::dispatch_error_trait`; this site just supplies the
-/// variant → message rendering.
-pub fn call_parse_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("ParseError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("ParseEmpty", []) => "cannot parse empty string".to_string(),
-            ("ParseInvalidDigit", [Value::Int(offset)]) => {
-                format!("invalid digit at byte {offset}")
-            }
-            ("ParseOverflow", []) => "number too large".to_string(),
-            ("ParseUnderflow", []) => "number too small".to_string(),
-            _ => return None,
-        })
+/// What `ParseError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("ParseEmpty", []) => "cannot parse empty string".to_string(),
+        ("ParseInvalidDigit", [Value::Int(offset)]) => {
+            format!("invalid digit at byte {offset}")
+        }
+        ("ParseOverflow", []) => "number too large".to_string(),
+        ("ParseUnderflow", []) => "number too small".to_string(),
+        _ => return None,
     })
 }
 

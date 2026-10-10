@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::builtins::registry::registry;
 use crate::bytecode::{Instr, Op, VmClosure, record_type_matches};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
@@ -448,6 +449,17 @@ impl Vm {
             self.stack.truncate(receiver_slot);
             let step = self.shown(&receiver)?;
             return self.enter_step(step);
+        }
+        // `message` of a builtin error enum (`IoError`, ...): the row
+        // of the enum, found by the type's id, called as any builtin.
+        if method_name == "message"
+            && let Value::Variant(tag, _) = &receiver
+            && let Some(module) = registry().error_module(tag.ty().id)
+            && let Some(row) = module.message.as_ref().filter(|row| row.enabled)
+        {
+            let args = self.stack.split_off(receiver_slot);
+            let entered = self.enter_row(row, &args)?;
+            return Ok(self.entered(entered));
         }
         // A builtin trait's method the type has natively (display,
         // equal, compare, hash).

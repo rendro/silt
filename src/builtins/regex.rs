@@ -6,18 +6,15 @@ use super::typed::{builtins, unsound};
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError, iterate, next};
 
-/// Dispatch the builtin `trait Error for RegexError` method table.
-/// Scaffolding lives in `super::dispatch_error_trait`; this site just
-/// supplies the variant → message rendering.
-pub fn call_regex_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("RegexError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("RegexInvalidPattern", [Value::String(m), Value::Int(pos)]) => {
-                format!("invalid regex pattern at position {pos}: {m}")
-            }
-            ("RegexTooBig", []) => "compiled regex exceeds size budget".to_string(),
-            _ => return None,
-        })
+/// What `RegexError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("RegexInvalidPattern", [Value::String(m), Value::Int(pos)]) => {
+            format!("invalid regex pattern at position {pos}: {m}")
+        }
+        ("RegexTooBig", []) => "compiled regex exceeds size budget".to_string(),
+        _ => return None,
     })
 }
 

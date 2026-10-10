@@ -1,12 +1,10 @@
-//! Round-73 BLOAT-3 (L6) regression lock: `.message()` of a builtin
-//! error enum is a single dispatch-table lookup
-//! (`ERROR_TRAIT_DISPATCH`) keyed by enum name.
+//! `.message()` of a builtin error enum is a row of the builtin
+//! registry, found by the enum's type (`Registry::error_module`).
 //!
-//! Behavioural lock: every typed-error enum registered in
-//! `builtin_error_enum_variants_with_arity` has its `.message()`
-//! dispatch routed through the table and produces a typed message (no
-//! "unknown builtin namespace: <X>" leak). The test iterates the
-//! registry, so a newly registered enum without a table entry fails.
+//! Behavioural lock: every error enum of
+//! `builtin_error_enum_variants_with_arity` has a `.message()` that
+//! gives a text. The test iterates the registry, so a newly registered
+//! enum whose module says nothing of its variants fails.
 
 use silt::module::builtin_error_enum_variants_with_arity;
 
@@ -79,12 +77,10 @@ fn every_registry_enum_message_routes_through_table() {
             .expect("every stdlib error variant belongs to a module");
 
         // The script prints the raw `.message()` output. We don't pin
-        // the exact wording (that's a typed-message detail owned by the
-        // per-module `call_*_error_trait` helper) — we only require the
-        // dispatch path produced *some* non-empty string and exited
-        // cleanly. A regression in the table (wrong fn pointer, missing
-        // entry) would surface as either a non-zero exit, an "unknown
-        // builtin namespace" error, or empty stdout.
+        // the exact wording (that is the module's `error_text`) — we
+        // only require that the call gave *some* non-empty string and
+        // exited cleanly. An enum with no text would surface as a
+        // non-zero exit or empty stdout.
         let src = format!(
             "import {module}\n\
              fn main() {{\n\

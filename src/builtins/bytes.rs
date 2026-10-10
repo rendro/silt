@@ -19,27 +19,24 @@ use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
 
-/// Dispatch the builtin `trait Error for BytesError` method table.
-/// Scaffolding lives in `super::dispatch_error_trait`; this site just
-/// supplies the variant → message rendering.
-pub fn call_bytes_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("BytesError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("BytesInvalidUtf8", [Value::Int(offset)]) => {
-                format!("invalid UTF-8 at byte {offset}")
-            }
-            ("BytesInvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
-            ("BytesInvalidBase64", [Value::String(m)]) => {
-                format!("invalid base64: {m}")
-            }
-            ("BytesByteOutOfRange", [Value::Int(v)]) => {
-                format!("byte value out of range (expected 0..=255): {v}")
-            }
-            ("BytesOutOfBounds", [Value::Int(idx)]) => {
-                format!("index out of bounds: {idx}")
-            }
-            _ => return None,
-        })
+/// What `BytesError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("BytesInvalidUtf8", [Value::Int(offset)]) => {
+            format!("invalid UTF-8 at byte {offset}")
+        }
+        ("BytesInvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
+        ("BytesInvalidBase64", [Value::String(m)]) => {
+            format!("invalid base64: {m}")
+        }
+        ("BytesByteOutOfRange", [Value::Int(v)]) => {
+            format!("byte value out of range (expected 0..=255): {v}")
+        }
+        ("BytesOutOfBounds", [Value::Int(idx)]) => {
+            format!("index out of bounds: {idx}")
+        }
+        _ => return None,
     })
 }
 

@@ -110,26 +110,21 @@ pub(crate) fn toml_unknown_err<S: Into<String>>(msg: S) -> Value {
     ))
 }
 
-/// Dispatch the builtin `trait Error for TomlError` method table.
-/// Called through the VM's `ERROR_TRAIT_DISPATCH`, exactly
-/// like `call_io_error_trait`. Scaffolding lives in
-/// `super::dispatch_error_trait`; this site just supplies the
-/// variant → message rendering.
-pub fn call_toml_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("TomlError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("TomlSyntax", [Value::String(m), Value::Int(offset)]) => {
-                format!("toml syntax error at byte {offset}: {m}")
-            }
-            ("TomlTypeMismatch", [Value::String(exp), Value::String(act)]) => {
-                format!("toml type mismatch: expected {exp}, got {act}")
-            }
-            ("TomlMissingField", [Value::String(n)]) => {
-                format!("toml missing field: {n}")
-            }
-            ("TomlUnknown", [Value::String(m)]) => m.clone(),
-            _ => return None,
-        })
+/// What `TomlError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("TomlSyntax", [Value::String(m), Value::Int(offset)]) => {
+            format!("toml syntax error at byte {offset}: {m}")
+        }
+        ("TomlTypeMismatch", [Value::String(exp), Value::String(act)]) => {
+            format!("toml type mismatch: expected {exp}, got {act}")
+        }
+        ("TomlMissingField", [Value::String(n)]) => {
+            format!("toml missing field: {n}")
+        }
+        ("TomlUnknown", [Value::String(m)]) => m.clone(),
+        _ => return None,
     })
 }
 

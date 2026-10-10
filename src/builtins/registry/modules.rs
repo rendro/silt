@@ -10,7 +10,7 @@
 
 use super::{Module, RowSpec, build_module, f, k, module};
 use crate::builtins::collections::{list, map, set};
-use crate::builtins::numeric::{float, int, math};
+use crate::builtins::numeric::{self, float, int, math};
 #[cfg(feature = "postgres")]
 use crate::builtins::postgres;
 use crate::builtins::prelude;
@@ -52,7 +52,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type IoError { IoNotFound(String), IoPermissionDenied(String), IoAlreadyExists(String), IoInvalidInput(String), IoInterrupted, IoUnexpectedEof, IoWriteZero, IoUnknown(String) }\n\
             ",
-            error: "IoError",
+            error: "IoError" => io::error_text,
             rows: [
                 f("fn args() -> List(String)", "Command-line arguments", io::args),
                 f("fn inspect(x: a) -> String", "Debug representation of any value", io::inspect),
@@ -106,7 +106,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type ParseError { ParseEmpty, ParseInvalidDigit(Int), ParseOverflow, ParseUnderflow }\n\
             ",
-            error: "ParseError",
+            error: "ParseError" => numeric::error_text,
             rows: [
                 f("fn abs(n: Int) -> Int", "Absolute value", int::abs),
                 f("fn clamp(x: Int, lo: Int, hi: Int) -> Int", "Clamp value to `[lo, hi]`", int::clamp),
@@ -251,7 +251,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type ChannelError { ChannelTimeout, ChannelClosed }\n\
             ",
             derives: [("ChannelOp", &[])],
-            error: "ChannelError",
+            error: "ChannelError" => concurrency::error_text,
             rows: [
                 f("fn close(ch: Channel(a)) -> ()", "Close the channel", concurrency::channel::close),
                 f("fn each(ch: Channel(a), f: Fn(a) -> b) -> ()", "Iterate until channel closes", concurrency::channel::each),
@@ -283,7 +283,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type RegexError { RegexInvalidPattern(String, Int), RegexTooBig }\n\
             ",
-            error: "RegexError",
+            error: "RegexError" => regex::error_text,
             rows: [
                 f("fn captures(pattern: String, text: String) -> Option(List(String))", "Capture groups from first match", regex::captures),
                 f("fn captures_all(pattern: String, text: String) -> List(List(String))", "Capture groups from all matches", regex::captures_all),
@@ -303,7 +303,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type JsonError { JsonSyntax(String, Int), JsonTypeMismatch(String, String), JsonMissingField(String), JsonUnknown(String) }\n\
             ",
-            error: "JsonError",
+            error: "JsonError" => json::error_text,
             rows: [
                 f("fn parse(s: String, type a) -> Result(a, JsonError)", "Parse JSON object into record", json::parse),
                 f("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse JSON array into record list", json::parse_list),
@@ -318,7 +318,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type TomlError { TomlSyntax(String, Int), TomlTypeMismatch(String, String), TomlMissingField(String), TomlUnknown(String) }\n\
             ",
-            error: "TomlError",
+            error: "TomlError" => toml::error_text,
             rows: [
                 f("fn parse(s: String, type a) -> Result(a, TomlError)", "Parse a TOML document (top-level table) into a record", toml::parse),
                 f("fn parse_list(s: String, type a) -> Result(List(a), TomlError)", "Parse a single `[[items]]` section into a list of records", toml::parse_list),
@@ -382,7 +382,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }\n\
                 pub type TimeError { TimeParseFormat(String), TimeOutOfRange(String) }\n\
             ",
-            error: "TimeError",
+            error: "TimeError" => time::error_text,
             rows: [
                 f("fn now() -> Instant", "Current UTC time as nanosecond epoch", time::now),
                 f("fn today() -> Date", "Current local date", time::today),
@@ -424,7 +424,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type HttpError { HttpConnect(String), HttpTls(String), HttpTimeout, HttpInvalidUrl(String), HttpInvalidResponse(String), HttpClosedEarly, HttpStatusCode(Int, String), HttpUnknown(String) }\n\
             ",
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
-            error: "HttpError",
+            error: "HttpError" => http::error_text,
             rows: [
                 f("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request", http::get).feature("http"),
                 f("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
@@ -473,7 +473,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type PgError { PgConnect(String), PgTls(String), PgAuthFailed(String), PgQuery(String, String), PgTypeMismatch(String, String, String), PgNoSuchColumn(String), PgClosed, PgTimeout, PgTxnAborted, PgUnknown(String) }\n\
             ",
             opaque: [("PgPool", 0), ("PgTx", 0), ("PgCursor", 0), ("QueryResult", 0), ("ExecResult", 0), ("Value", 0)],
-            error: "PgError",
+            error: "PgError" => postgres::error_text,
             rows: [
                 f("fn connect(url: String) -> Result(PgPool, PgError)", "Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)", postgres::connect),
                 f("fn connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PgError)", "Like `connect` with a tunable options bag (see [Connect options](#connect-options))", postgres::connect_with),
@@ -496,7 +496,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type BytesError { BytesInvalidUtf8(Int), BytesInvalidHex(String), BytesInvalidBase64(String), BytesByteOutOfRange(Int), BytesOutOfBounds(Int) }\n\
             ",
-            error: "BytesError",
+            error: "BytesError" => bytes::error_text,
             rows: [
                 f("fn concat(a: Bytes, b: Bytes) -> Bytes", "Concatenate two byte sequences", bytes::concat),
                 f("fn concat_all(parts: List(Bytes)) -> Bytes", "Concatenate every element of a list", bytes::concat_all),
@@ -553,7 +553,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type TcpError { TcpConnect(String), TcpTls(String), TcpClosed, TcpTimeout, TcpUnknown(String) }\n\
             ",
             opaque: [("TcpListener", 0), ("TcpStream", 0)],
-            error: "TcpError",
+            error: "TcpError" => tcp::error_text,
             rows: [
                 f("fn accept(listener: TcpListener) -> Result(TcpStream, TcpError)", "Wait for an incoming connection (cooperative I/O)", tcp::accept),
                 f("fn close(stream: TcpStream) -> ()", "Shut the connection down: operations in flight on it return, later ones give `Err(TcpClosed)`", tcp::close),

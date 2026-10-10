@@ -392,9 +392,7 @@ impl Value {
                 // `format!("{e}")` and `e.message()` produce the same
                 // text — the "one way" principle. User enums are
                 // unaffected (the registry only covers stdlib errors).
-                if let Some(msg) =
-                    crate::vm::dispatch::render_stdlib_error_message(name, fields.as_slice())
-                {
+                if let Some(msg) = crate::builtins::error_text(name, fields.as_slice()) {
                     return write!(f, "{msg}");
                 }
                 if fields.is_empty() {

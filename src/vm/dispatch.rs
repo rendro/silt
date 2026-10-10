@@ -4,8 +4,6 @@ use std::panic::AssertUnwindSafe;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::builtins;
-use crate::typeinfo::Tag;
 use crate::value::{HostFn, Value};
 
 /// Call the host function `host` while catching panics that escape it.
@@ -96,65 +94,6 @@ pub(super) fn resume_native(
                 "builtin module '{module}' panicked: {msg}"
             )))
         }
-    }
-}
-
-/// Uniform signature shared by every `call_<x>_error_trait` helper.
-type ErrorTraitFn = fn(&str, &[Value]) -> Result<Value, VmError>;
-
-/// The dispatch table for built-in `trait Error` impls: for each
-/// error enum, by its name, the helper that gives its `message`.
-///
-/// PgError / TcpError stay cfg-gated by being conditionally included
-/// in the table — the gate must match the gate on the corresponding
-/// `call_*_error_trait` symbol.
-static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
-    ("IoError", builtins::io::call_io_error_trait),
-    ("JsonError", builtins::json::call_json_error_trait),
-    ("TomlError", builtins::toml::call_toml_error_trait),
-    ("ParseError", builtins::numeric::call_parse_error_trait),
-    ("HttpError", builtins::http::call_http_error_trait),
-    ("RegexError", builtins::regex::call_regex_error_trait),
-    #[cfg(feature = "postgres")]
-    ("PgError", builtins::postgres::call_pg_error_trait),
-    #[cfg(feature = "tcp")]
-    ("TcpError", builtins::tcp::call_tcp_error_trait),
-    ("TimeError", builtins::time::call_time_error_trait),
-    ("BytesError", builtins::bytes::call_bytes_error_trait),
-    (
-        "ChannelError",
-        builtins::concurrency::call_channel_error_trait,
-    ),
-];
-
-/// Look up the `trait Error` dispatch helper for a given builtin enum
-/// name. Returns `None` for any name not in the table (including
-/// cfg-gated names whose feature is disabled).
-pub(crate) fn error_trait_dispatch(enum_name: &str) -> Option<ErrorTraitFn> {
-    ERROR_TRAIT_DISPATCH
-        .iter()
-        .find(|(n, _)| *n == enum_name)
-        .map(|(_, f)| *f)
-}
-
-/// Render a stdlib error variant via its `Error::message()`
-/// implementation, returning `None` when the tag isn't a stdlib-error
-/// variant (or rendering fails for any reason — caller falls back to
-/// the default constructor-form render).
-///
-/// Used by `Value::Display` to collapse the dual shape between
-/// `format!("{e}")` and `e.message()` for stdlib error enums per the
-/// silt "explicit over implicit / one way" principle. User-defined
-/// enums are not affected: only a variant of a builtin error enum is
-/// rendered so, whatever its name.
-pub fn render_stdlib_error_message(tag: &Tag, fields: &[Value]) -> Option<String> {
-    let ty = tag.ty();
-    crate::defs::builtin_types().get(ty.id.0.0 as usize)?;
-    let dispatch_fn = error_trait_dispatch(&ty.name)?;
-    let variant_value = Value::Variant(tag.clone(), fields.to_vec());
-    match dispatch_fn("message", &[variant_value]).ok()? {
-        Value::String(s) => Some(s),
-        _ => None,
     }
 }
 
@@ -349,23 +288,6 @@ impl Vm {
                     }
                     _ => None,
                 }
-            }
-            // `trait Error` of the builtin error enums (`IoError`, ...):
-            // native, through the enum's dispatch helper.
-            "message" => {
-                let Value::Variant(tag, _) = receiver else {
-                    return None;
-                };
-                let ty = tag.ty();
-                crate::defs::builtin_types().get(ty.id.0.0 as usize)?;
-                let dispatch = error_trait_dispatch(&ty.name)?;
-                let mut args = Vec::with_capacity(1 + extra_args.len());
-                args.push(receiver.clone());
-                args.extend(extra_args.iter().cloned());
-                Some(catch_builtin_panic(
-                    &ty.name,
-                    AssertUnwindSafe(|| dispatch("message", &args)),
-                ))
             }
             _ => None,
         }
