@@ -1113,6 +1113,7 @@ fn a_last_word_beside_a_read_does_not_end_the_read() {
             answered += 1;
         }
     }
+    eprintln!("{answered} connections were answered 408 beside their reads");
     assert!(answered > 0, "no connection reached its time limit");
 
     // The server ends with bodies half read and still coming: every
