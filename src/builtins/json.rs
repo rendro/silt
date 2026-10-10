@@ -124,9 +124,8 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 const NOT_IN_RANGE: &str = "a number out of Int's range";
 
 /// The `Int` that the number `f` of a document is: a whole number in
-/// `Int`'s range. Else what it is instead, for the type mismatch. The
-/// one rule of the JSON and the TOML decoders.
-pub(crate) fn whole(f: f64) -> Result<i64, &'static str> {
+/// `Int`'s range. Else what it is instead, for the type mismatch.
+fn whole(f: f64) -> Result<i64, &'static str> {
     // `i64::MAX` is not exactly an `f64` (it rounds up to 2^63), so
     // the upper bound is exclusive.
     const I64_MIN_AS_F64: f64 = i64::MIN as f64;

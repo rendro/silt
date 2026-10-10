@@ -60,9 +60,10 @@ where `T` is again one of these types. Anything else (a `Set`, an enum, a
 generic record, a function, a `Map` whose key is not `String`, a type
 parameter) has no decoder.
 
-A number of the document goes into an `Int` when it is a whole number in
-`Int`'s range (`1`, `1.0`). A number with a fraction (`1.5`), or one out of
-that range, is `Err(TomlTypeMismatch("Int", ...))`: nothing is cut off or rounded.
+A TOML integer goes into an `Int`, and into a `Float` where one is
+expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
+field is `Err(TomlTypeMismatch("Int", "float"))`, because TOML says
+which kind a number is.
 
 When the type is written at the call, `toml.parse(text, Config)`, the
 compiler checks it. A record with a field no decoder exists for is a compile

@@ -48,7 +48,7 @@ use crate::typeinfo::{FieldType, TypeInfo, bv, ty};
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
-use super::json::{decodable_record, field_record_type, unsupported_field_type_message, whole};
+use super::json::{decodable_record, field_record_type, unsupported_field_type_message};
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
 
@@ -463,14 +463,11 @@ fn toml_to_typed_value(
             ::toml::Value::Datetime(dt) => Ok(Value::String(dt.to_string())),
             _ => Err(mismatch("String", toml_type_name(tv))),
         },
+        // (TOML says which kind a number is: a float is no `Int`,
+        // whatever its value. JSON has one kind of number, and its
+        // decoder takes a whole one.)
         FieldType::Int => match tv {
             ::toml::Value::Integer(n) => Ok(Value::Int(*n)),
-            // A float is an `Int` when it is a whole number an `Int`
-            // can be (`1.0`), as in the JSON decoder.
-            ::toml::Value::Float(f) => match whole(*f) {
-                Ok(n) => Ok(Value::Int(n)),
-                Err(what) => Err(mismatch("Int", what)),
-            },
             _ => Err(mismatch("Int", toml_type_name(tv))),
         },
         FieldType::Float => match tv {

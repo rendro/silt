@@ -1,9 +1,10 @@
--- A number of a JSON or a TOML document goes into an `Int` when it is a
--- whole number in `Int`'s range, however it is written (`1`, `1.0`,
--- `1e3`). A number with a fraction, or one out of the range, is the
--- error of a value of another type: `json.parse_map` took 1.5 as 1,
--- and `json.parse` read 2.5 into an Int field as 2. One rule for
--- `parse`, `parse_list` and `parse_map`, and for `toml`.
+-- A number of a JSON document goes into an `Int` when it is a whole
+-- number in `Int`'s range, however it is written (`1`, `1.0`, `1e3`).
+-- A number with a fraction, or one out of the range, is the error of a
+-- value of another type: `json.parse_map` took 1.5 as 1, and
+-- `json.parse` read 2.5 into an Int field as 2. One rule for `parse`,
+-- `parse_list` and `parse_map`. TOML says which kind a number is: its
+-- integers are Ints, and a float is none, whatever its value.
 import json
 import toml
 
@@ -22,9 +23,9 @@ fn main() {
   println(json.parse("9223372036854775808", Int))
   println(json.parse("-9223372036854775808.0", Int))
   println(json.parse("1e19", Int))
+  println(toml.parse("x = 1\ny = 2", Pt))
   println(toml.parse("x = 1.0\ny = 2", Pt))
-  println(toml.parse("x = 1.5\ny = 2", Pt))
-  println(toml.parse_map("a = 2.0\nb = 1e30", Int))
+  println(toml.parse_map("a = 2\nb = 1.5", Int))
 }
 
 -- The one record of a list, as a document of its own.
