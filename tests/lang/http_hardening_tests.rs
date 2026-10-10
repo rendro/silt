@@ -274,6 +274,67 @@ fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
     );
 }
 
+/// A server whose process has no file descriptor left cannot accept:
+/// it says so once, stays, and tries again, so that it serves when
+/// connections have ended. (An accept that failed used to end the
+/// server for good, without a word.)
+#[test]
+#[cfg(unix)]
+fn a_server_without_a_descriptor_left_waits_and_serves_again() {
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let tmp = tmp_silt_file("no_descriptor", &echo_server_src(&port_path));
+    let log = tmp.with_extension("stderr");
+    // 40 descriptors for the process: the server's own few, and some
+    // thirty connections.
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(r#"ulimit -n 40 && exec "$0" run "$1" 2> "$2""#)
+        .arg(silt_bin())
+        .arg(&tmp)
+        .arg(&log)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("failed to spawn silt");
+    let port = port_file.wait();
+
+    // More connections than the server has descriptors for. They
+    // send nothing: the server holds each, waiting for its request.
+    let held: Vec<TcpStream> = (0..60).map(|_| connect_with_retry(port)).collect();
+    let limit = Instant::now() + Duration::from_secs(60);
+    let said = loop {
+        let said = std::fs::read_to_string(&log).unwrap_or_default();
+        if said.contains("http.serve: cannot accept a connection") || Instant::now() >= limit {
+            break said;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    // The connections end; the server has descriptors again.
+    drop(held);
+    let mut client = connect_with_retry(port);
+    client.set_read_timeout(Some(Duration::from_secs(60))).ok();
+    client
+        .write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        .expect("client write");
+    let mut answer = Vec::new();
+    let _ = client.read_to_end(&mut answer);
+    let answer = String::from_utf8_lossy(&answer);
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_file(&log);
+    assert!(
+        said.contains("http.serve: cannot accept a connection") && said.contains("trying again"),
+        "the server did not say that it cannot accept: {said:?}"
+    );
+    assert!(
+        answer.starts_with("HTTP/1.1 200"),
+        "the server did not serve again: {answer:?}\n{said}"
+    );
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // HIGH-3: http.get returns Err bounded in time for a black-holed peer.
 // ────────────────────────────────────────────────────────────────────────
