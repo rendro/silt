@@ -454,9 +454,9 @@ macro_rules! module {
         $signature:expr, $summary:expr, $body:expr
     ) => {{
         #[cfg(all($(feature = $of,)? $(feature = $own,)?))]
-        let row = f($signature, $summary, $body);
+        let row = $crate::builtins::registry::f($signature, $summary, $body);
         #[cfg(not(all($(feature = $of,)? $(feature = $own,)?)))]
-        let row = u($signature, $summary);
+        let row = $crate::builtins::registry::u($signature, $summary);
         row
     }};
     (@call $slot:ident, [], [], []) => {};

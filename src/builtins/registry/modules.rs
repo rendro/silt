@@ -7,7 +7,7 @@
 //! yet: it runs the module's untyped `call`. A constant is `k("name:
 //! Type", summary, value)`.
 
-use super::{Module, RowSpec, UntypedCall, build_module, f, k, module, u};
+use super::{Module, RowSpec, UntypedCall, build_module, f, k, module};
 use crate::builtins::collections::{list, map, set};
 use crate::builtins::numeric::{float, int, math};
 #[cfg(feature = "postgres")]
@@ -424,13 +424,12 @@ pub(super) fn modules() -> Vec<Module> {
             ",
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
             error: "HttpError",
-            steps: http::call_http,
             rows: [
-                u("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request").feature("http", cfg!(feature = "http")),
-                u("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers").feature("http", cfg!(feature = "http")),
-                u("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per connection").feature("http", cfg!(feature = "http")),
-                u("fn segments(path: String) -> List(String)", "Split URL path into segments"),
-                u("fn parse_query(query: String) -> Map(String, List(String))", "Parse a URL query string into a multi-value map"),
+                f("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request", http::get).feature("http"),
+                f("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
+                f("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per connection", http::serve).feature("http"),
+                f("fn segments(path: String) -> List(String)", "Split URL path into segments", http::segments),
+                f("fn parse_query(query: String) -> Map(String, List(String))", "Parse a URL query string into a multi-value map", http::parse_query),
             ],
         },
         module! {
