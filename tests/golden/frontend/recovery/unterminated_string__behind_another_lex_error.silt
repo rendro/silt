@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- A brace in a string starts an interpolation, in which the backslash
+-- that was meant as an escape is a character the lexer rejects; the
+-- quotes behind it then open a string that is never closed. The text
+-- is cut short there, so the one error is the lexer's first, and
+-- `helper`, which is declared behind the cut, is no "undefined" error
+-- where `twice` calls it.
+fn twice() -> Int {
+  helper() + helper()
+}
+
+fn main() {
+  println("{\"a\": 1}")
+}
+
+fn helper() -> Int {
+  1
+}

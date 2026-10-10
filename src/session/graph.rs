@@ -56,6 +56,11 @@ pub struct Module {
     pub ast: Option<ast::Program>,
     /// Why the module could not be read, or its lex and parse errors.
     pub problems: Vec<Diagnostic>,
+    /// Whether the module's text ends inside an unclosed string or
+    /// comment (see `Lexed::is_cut_short`): its declarations are those
+    /// in front of it, and nothing but the lexer's first error is worth
+    /// reporting.
+    pub cut_short: bool,
     /// Why the module's file could not be read (the kind and text of the
     /// I/O error). Each import of the module reports it at its own span
     /// ([`Import::problem`]).
@@ -75,14 +80,6 @@ impl Module {
     /// errors is still checked as far as it parsed.
     pub fn failed(&self) -> bool {
         self.ast.is_none() || !self.problems.is_empty()
-    }
-
-    /// Whether the module's text ends inside an unclosed string or
-    /// comment (see `Lexed::is_cut_short`): its declarations are those
-    /// in front of it, and nothing but the lexer's error is worth
-    /// reporting.
-    pub fn cut_short(&self) -> bool {
-        self.problems.iter().any(crate::lexer::ends_text)
     }
 
     /// The modules this module imports, in source order, each once.
@@ -129,9 +126,25 @@ pub enum ImportResolution {
 /// as far as they can be read, with their doc comments, and its lex and
 /// parse errors.
 pub fn parse_text(file: FileId, text: &str) -> (ast::Program, Vec<Diagnostic>) {
-    Parser::new(Lexer::new(file, text).tokenize(), text)
-        .with_docs()
-        .parse_program_recovering()
+    let (program, errors, _) = parse_module(file, text, None);
+    (program, errors)
+}
+
+/// `parse_text` of a module file, or of the REPL entry `cell`, and
+/// whether the text is cut short (`Lexed::is_cut_short`).
+fn parse_module(
+    file: FileId,
+    text: &str,
+    cell: Option<usize>,
+) -> (ast::Program, Vec<Diagnostic>, bool) {
+    let lexed = Lexer::new(file, text).tokenize();
+    let cut_short = lexed.is_cut_short();
+    let mut parser = Parser::new(lexed, text);
+    let (program, errors) = match cell {
+        Some(n) => parser.parse_cell(intern(&cell_name(n))),
+        None => parser.with_docs().parse_program_recovering(),
+    };
+    (program, errors, cut_short)
 }
 
 /// Every module a session has read.
@@ -202,6 +215,7 @@ impl ModuleGraph {
                     file: None,
                     ast: None,
                     problems: Vec::new(),
+                    cut_short: false,
                     load_error: None,
                     first_import: None,
                     imports: Vec::new(),
@@ -247,6 +261,7 @@ impl ModuleGraph {
             file: None,
             ast: None,
             problems: Vec::new(),
+            cut_short: false,
             load_error: None,
             first_import: None,
             imports: Vec::new(),
@@ -420,13 +435,10 @@ impl ModuleGraph {
         module.file = Some(file);
         module.imports.clear();
         module.load_error = None;
-        let (ast, problems) = match cell {
-            Some(n) => Parser::new(Lexer::new(file, text).tokenize(), text)
-                .parse_cell(intern(&cell_name(n))),
-            None => parse_text(file, text),
-        };
+        let (ast, problems, cut_short) = parse_module(file, text, cell);
         module.ast = Some(ast);
         module.problems = problems;
+        module.cut_short = cut_short;
     }
 
     /// Resolve the imports of `entry` and of every module they reach,
@@ -589,6 +601,7 @@ impl ModuleGraph {
             file: None,
             ast: None,
             problems: Vec::new(),
+            cut_short: false,
             load_error: None,
             first_import: Some(import),
             imports: Vec::new(),

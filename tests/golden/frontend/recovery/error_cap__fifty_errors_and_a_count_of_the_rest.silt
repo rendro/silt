@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- Sixty declarations that do not parse: fifty errors are shown, and one
--- more counts the rest, where the first of them is.
+-- more counts the rest, behind the last of them.
 let v1 = )
 let v2 = )
 let v3 = )

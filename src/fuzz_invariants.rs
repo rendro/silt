@@ -40,6 +40,9 @@ use crate::source::Span;
 ///    and the token that carries it.
 /// 7. A `Token::Error` has an error: the lexer recorded at least one,
 ///    and every error it recorded lies in the source.
+/// 8. At most `MAX_SYNTAX_ERRORS` errors are kept; when more are
+///    counted, that many are kept and the tokens end in one
+///    `Token::Error` for the rest of the text.
 pub fn check_lexer_invariants(source: &str, lexed: &Lexed) -> Result<(), String> {
     let tokens = &lexed.tokens;
     if tokens.is_empty() {
@@ -147,6 +150,22 @@ pub fn check_lexer_invariants(source: &str, lexed: &Lexed) -> Result<(), String>
 
     if lexed.errors.is_empty() && tokens.iter().any(|tok| tok.kind == Token::Error) {
         return Err("an Error token without a lex error".into());
+    }
+    if lexed.errors.len() > crate::lexer::MAX_SYNTAX_ERRORS {
+        return Err(format!("{} lex errors kept", lexed.errors.len()));
+    }
+    if lexed.more_errors > 0 {
+        let rest = tokens.len().checked_sub(2).map(|i| &tokens[i]);
+        if lexed.errors.len() != crate::lexer::MAX_SYNTAX_ERRORS
+            || !rest.is_some_and(|tok| tok.kind == Token::Error && tok.span.end as usize == src_len)
+        {
+            return Err(format!(
+                "{} errors counted behind {} kept, and the tokens do not end in one Error \
+                 token for the rest",
+                lexed.more_errors,
+                lexed.errors.len()
+            ));
+        }
     }
     for error in &lexed.errors {
         if error.span.end < error.span.start || error.span.end as usize > src_len {

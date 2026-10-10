@@ -298,8 +298,8 @@ error[parse]: expected expression, found )
  54 | let v50 = )
     |           ^ expected expression, found )
 
-error[parse]: 10 more syntax errors in this file are not shown, from here on
- --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:55:11
+error[parse]: 10 more syntax errors in this file are not shown
+ --> error_cap__fifty_errors_and_a_count_of_the_rest.silt:54:12
     |
- 55 | let v51 = )
-    |           ^ 10 more syntax errors in this file are not shown, from here on
+ 54 | let v50 = )
+    |            ^ 10 more syntax errors in this file are not shown

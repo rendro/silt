@@ -89,8 +89,7 @@ fn lexed(tokens: Vec<(Token, Span)>) -> Lexed {
                 comments: 0..0,
             })
             .collect(),
-        comments: Vec::new(),
-        errors: Vec::new(),
+        ..Lexed::default()
     }
 }
 

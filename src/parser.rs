@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
-use crate::lexer::{Comment, CommentKind, Lexed, Tok, Token};
+use crate::lexer::{Comment, CommentKind, Lexed, MAX_SYNTAX_ERRORS, Tok, Token};
 use crate::source::Span;
 
 type Result<T> = std::result::Result<T, Diagnostic>;
@@ -192,10 +192,13 @@ pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) 
 /// body is unaffected.) Two items of `import m.{ ... }` lines are left
 /// to the resolver: they are one binding when they name one definition
 /// (`int.{ ParseError }` and `float.{ ParseError }`).
-fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
+///
+/// Returns the first `keep` of the errors, and how many more there are.
+fn top_level_name_errors(decls: &[Decl], keep: usize) -> (Vec<Diagnostic>, usize) {
     let mut first: std::collections::HashMap<Symbol, (Span, &'static str, bool)> =
         std::collections::HashMap::new();
     let mut errors = Vec::new();
+    let mut more = 0;
     for decl in decls {
         let is_item = matches!(decl, Decl::Import(ImportTarget::Items(..), _));
         for (name, span, kind) in top_level_binders(decl) {
@@ -204,6 +207,7 @@ fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
             }
             match first.get(&name) {
                 Some(&(_, _, true)) if is_item => {}
+                Some(_) if errors.len() >= keep => more += 1,
                 Some(&(first_span, first_kind, _)) => errors.push(
                     Diagnostic::error(
                         Code::DuplicateTopLevel,
@@ -222,16 +226,12 @@ fn top_level_name_errors(decls: &[Decl]) -> Vec<Diagnostic> {
             }
         }
     }
-    errors
+    (errors, more)
 }
 
 // ── Parser ───────────────────────────────────────────────────────────
 
 const MAX_DEPTH: usize = 128;
-
-/// How many lex and parse errors of one file are reported; the rest are
-/// one more error that counts them.
-const MAX_SYNTAX_ERRORS: usize = 50;
 
 /// Upper bound on the number of operations one expression tree may chain
 /// or nest (see `Parser::expr_height`). Every operator, pipe, call, index,
@@ -344,6 +344,10 @@ pub struct Parser<'src> {
     /// What the lexer found wrong with the text; reported with the
     /// parser's own errors.
     lex_errors: Vec<Diagnostic>,
+    /// The errors that are counted and not kept: the lexer's
+    /// (`Lexed::more_errors`), and the parser's own behind its first
+    /// `MAX_SYNTAX_ERRORS`.
+    more_errors: usize,
     /// Whether the text ends inside an unclosed string or comment
     /// (`Lexed::is_cut_short`): only the lexer's first error is reported
     /// then.
@@ -413,6 +417,7 @@ impl<'src> Parser<'src> {
         Self {
             comments: lexed.comments,
             lex_errors: lexed.errors,
+            more_errors: lexed.more_errors,
             cut_short,
             fn_stub: None,
             tokens,
@@ -462,7 +467,7 @@ impl<'src> Parser<'src> {
         let stmts = match self.parse_stmt_list(&Token::Eof) {
             Ok(stmts) => stmts,
             Err(e) => {
-                self.report(0, e);
+                self.report(0..self.tokens.len(), e);
                 return self.finish(Vec::new());
             }
         };
@@ -857,43 +862,58 @@ impl<'src> Parser<'src> {
                 Ok(decl) => {
                     decls.push(decl);
                     if let Some(err) = self.same_line_decl_err() {
-                        self.errors.push(err);
+                        self.keep_or_count(err);
                     }
                 }
                 Err(e) => {
-                    self.report(start, e);
                     if let Some(stub) = self.fn_stub.take().filter(|_| is_fn) {
                         decls.push(Decl::Fn(stub));
                     }
+                    // What is skipped is of the failed declaration.
                     self.synchronize(start);
+                    self.report(start..self.pos, e);
                 }
             }
         }
         self.finish(decls)
     }
 
-    /// Record the error `error` of the item that starts at token `start`
-    /// and failed where the parser stands, unless the lexer rejected
-    /// text of the tokens it read (a `Token::Error`, or a string with a
-    /// wrong escape): what is wrong there is said, and what the parser
+    /// Record the error `error` of the item whose tokens are `item` (a
+    /// declaration that failed, with what was skipped behind it), unless
+    /// the lexer rejected text of it (a `Token::Error`, or a string with
+    /// a wrong escape): what is wrong there is said, and what the parser
     /// makes of it is no second error.
-    fn report(&mut self, start: usize, error: Diagnostic) {
+    fn report(&mut self, item: std::ops::Range<usize>, error: Diagnostic) {
         // (Of a text that is cut short no parser error is reported, and
         // the lexer's errors of any other text are in source order.)
         if self.cut_short {
             return;
         }
-        let tokens = &self.tokens[start..=self.pos];
+        let tokens = &self.tokens[item];
         if tokens.iter().any(|tok| tok.kind == Token::Error) {
             return;
         }
-        let read = self.tokens[start].span.start..self.tokens[self.pos].span.end;
+        let (Some(first), Some(last)) = (tokens.first(), tokens.last()) else {
+            return self.keep_or_count(error);
+        };
+        let read = first.span.start..last.span.end;
         let behind = self
             .lex_errors
             .partition_point(|lex| lex.span.start < read.start);
         match self.lex_errors.get(behind) {
             Some(lex) if lex.span.start < read.end => {}
-            _ => self.errors.push(error),
+            _ => self.keep_or_count(error),
+        }
+    }
+
+    /// Keep `error` if it is among the parser's first
+    /// `MAX_SYNTAX_ERRORS` (they come in source order); count it
+    /// otherwise.
+    fn keep_or_count(&mut self, error: Diagnostic) {
+        if self.errors.len() < MAX_SYNTAX_ERRORS {
+            self.errors.push(error);
+        } else {
+            self.more_errors += 1;
         }
     }
 
@@ -909,21 +929,25 @@ impl<'src> Parser<'src> {
             // inside a string can open the string that is not closed.
             self.errors.clear();
             errors.truncate(1);
-        } else {
-            errors.append(&mut self.errors);
-            errors.sort_by_key(|error| error.span.start);
-            errors.extend(top_level_name_errors(&decls));
+            return (Program { decls }, errors);
         }
-        if errors.len() > MAX_SYNTAX_ERRORS {
-            let more = errors.len() - MAX_SYNTAX_ERRORS;
-            // The count stands where the first error it counts is.
-            let at = errors[MAX_SYNTAX_ERRORS].span;
-            errors.truncate(MAX_SYNTAX_ERRORS);
+        errors.append(&mut self.errors);
+        errors.sort_by_key(|error| error.span.start);
+        let mut more = self.more_errors + errors.len().saturating_sub(MAX_SYNTAX_ERRORS);
+        errors.truncate(MAX_SYNTAX_ERRORS);
+        let (twice, more_twice) = top_level_name_errors(&decls, MAX_SYNTAX_ERRORS - errors.len());
+        errors.extend(twice);
+        more += more_twice;
+        // The count stands behind the last error that is shown, in
+        // source order.
+        if let Some(last) = errors.iter().max_by_key(|error| error.span.start)
+            && more > 0
+        {
             errors.push(Diagnostic::error(
                 Code::TooManyErrors,
-                Span::point(at.file, at.start),
+                Span::point(last.span.file, last.span.end),
                 format!(
-                    "{more} more syntax error{} in this file {} not shown, from here on",
+                    "{more} more syntax error{} in this file {} not shown",
                     if more == 1 { "" } else { "s" },
                     if more == 1 { "is" } else { "are" },
                 ),
@@ -4691,7 +4715,7 @@ fn main() {
         assert_eq!(count.code, Code::TooManyErrors);
         assert_eq!(
             count.message,
-            "25 more syntax errors in this file are not shown, from here on"
+            "25 more syntax errors in this file are not shown"
         );
         // The lexer's errors count as well.
         let source = "@ ".repeat(51);
@@ -4699,8 +4723,11 @@ fn main() {
         assert_eq!(errs.len(), MAX_SYNTAX_ERRORS + 1);
         assert_eq!(
             errs.last().unwrap().message,
-            "1 more syntax error in this file is not shown, from here on"
+            "1 more syntax error in this file is not shown"
         );
+        // The count stands behind the last error that is shown.
+        let last = &errs[MAX_SYNTAX_ERRORS - 1];
+        assert_eq!(errs.last().unwrap().span.start, last.span.end);
         // And the first error is the one `parse_program` returns.
         let lexed = Lexer::new(crate::source::FileId::default(), &source).tokenize();
         let first = Parser::new(lexed, &source).parse_program().unwrap_err();

@@ -9,6 +9,7 @@ mod checker_scaling;
 mod fmt_property;
 mod fmt_property_sweep_tests;
 mod integration;
+mod lexer_scaling;
 mod lsp_workspace_perf;
 #[path = "../lsp/rename_sweep.rs"]
 mod rename_sweep;

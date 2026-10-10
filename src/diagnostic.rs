@@ -410,13 +410,16 @@ impl SourceMap {
     pub fn position(&self, span: Span) -> Option<Position> {
         let file = self.get(span.file)?;
         let text: &str = &file.text;
-        let line_count = text.lines().count();
-        let last_line_end = |line: usize| {
-            text.lines()
-                .nth(line - 1)
-                .map_or(0, |l| l.trim_end_matches('\r').chars().count())
-                + 1
+        // The lines as `str::lines` counts them (a line break at the
+        // end of the text starts no line), from the file's line table:
+        // a file of many lines is not read again for each diagnostic.
+        let line_count = file.line_count() - usize::from(text.is_empty() || text.ends_with('\n'));
+        let line_of = |line: usize| {
+            file.line_text(line as u32)
+                .unwrap_or("")
+                .trim_end_matches('\r')
         };
+        let last_line_end = |line: usize| line_of(line).chars().count() + 1;
         let clamp = |(line, col): (u32, u32)| {
             let (line, col) = (line as usize, col as usize);
             if line_count > 0 && line > line_count {
@@ -427,12 +430,7 @@ impl SourceMap {
         };
         let (line, col) = clamp(file.line_col(span.start));
         let (end_line, end_col) = clamp(file.line_col(span.end.max(span.start)));
-        let mut line_text = text
-            .lines()
-            .nth(line - 1)
-            .unwrap_or("")
-            .trim_end_matches('\r')
-            .to_string();
+        let mut line_text = line_of(line).to_string();
         if matches!(file.path, SourceName::Manifest(_)) {
             line_text = crate::git::escape_for_display(&line_text);
         }
@@ -717,8 +715,24 @@ pub(crate) struct Excerpt {
 pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
     const EXCERPT_CHARS: usize = 160;
     const BEFORE_CARET: usize = 60;
-    let chars: Vec<char> = line.chars().collect();
-    if chars.len() <= EXCERPT_CHARS {
+    // The characters that can be shown: those around `col`. A line of a
+    // megabyte is not read to its end for each error in it; `len` is its
+    // length when the window reaches its end, and otherwise long enough
+    // that the excerpt is cut behind the window either way.
+    let lead = col.saturating_sub(BEFORE_CARET + EXCERPT_CHARS);
+    let mut chars: Vec<char> = line
+        .chars()
+        .skip(lead)
+        .take(BEFORE_CARET + 2 * EXCERPT_CHARS + 2)
+        .collect();
+    let mut lead = lead;
+    if chars.is_empty() && lead > 0 {
+        // `col` is past the end of the line: the whole line it is.
+        chars = line.chars().collect();
+        lead = 0;
+    }
+    let len = lead + chars.len();
+    if len <= EXCERPT_CHARS {
         return Excerpt {
             text: line.to_string(),
             col,
@@ -726,10 +740,8 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
             cut_after: false,
         };
     }
-    let col = col.min(chars.len());
-    let start = col
-        .saturating_sub(BEFORE_CARET)
-        .min(chars.len() - EXCERPT_CHARS);
+    let col = col.min(len);
+    let start = col.saturating_sub(BEFORE_CARET).min(len - EXCERPT_CHARS);
     let end = start + EXCERPT_CHARS;
     let mut text = String::new();
     let mut shown_col = col - start;
@@ -738,8 +750,8 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
         text.push('…');
         shown_col += 1;
     }
-    text.extend(&chars[start..end]);
-    let cut_after = end < chars.len();
+    text.extend(&chars[start.saturating_sub(lead)..end - lead]);
+    let cut_after = end < len;
     if cut_after {
         text.push('…');
     }

@@ -520,7 +520,7 @@ impl Session {
         // Of a text that is cut short only the lexer's error is
         // reported: the declarations behind the cut are missing, and
         // every use of one would be an error of its own.
-        let diagnostics = match self.graph.module(id).cut_short() {
+        let diagnostics = match self.graph.module(id).cut_short {
             true => bugs,
             false => bugs
                 .into_iter()

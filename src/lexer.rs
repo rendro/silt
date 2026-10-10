@@ -209,15 +209,23 @@ impl Comment {
 pub struct Lexed {
     pub tokens: Vec<Tok>,
     pub comments: Vec<Comment>,
-    /// The lex errors, in source order. Text that is no token is a
-    /// `Token::Error` among the tokens; a string with a wrong escape is
-    /// still its string token. A mistake that is made again (a name
-    /// with a letter outside ASCII that is used again, another
-    /// semicolon) is one error, at its first place, with a note that
-    /// counts the others: their tokens are `Token::Error`s without an
-    /// error of their own. A text with an error is never run or
-    /// formatted.
+    /// The lex errors, in source order: the first `MAX_SYNTAX_ERRORS`
+    /// of them. Text that is no token is a `Token::Error` among the
+    /// tokens; a string with a wrong escape is still its string token.
+    /// A mistake that is made again (a name with a letter outside ASCII
+    /// that is used again, another semicolon) is one error, at its
+    /// first place, with a note that counts the others: their tokens
+    /// are `Token::Error`s without an error of their own. A text with
+    /// an error is never run or formatted.
     pub errors: Vec<Diagnostic>,
+    /// The errors behind those of `errors`, which are counted and not
+    /// kept. With the first of them the tokens end: the rest of the
+    /// text is one `Token::Error`, so what is kept of a text that is
+    /// no program at all does not grow with it.
+    pub more_errors: usize,
+    /// Whether the text ends inside a string or a block comment that is
+    /// not closed (see `is_cut_short`).
+    pub cut_short: bool,
 }
 
 impl Lexed {
@@ -234,7 +242,7 @@ impl Lexed {
     /// tokens before it are is unknown too: only the lexer's errors are
     /// worth reporting for such a text.
     pub fn is_cut_short(&self) -> bool {
-        self.errors.iter().any(ends_text)
+        self.cut_short
     }
 
     /// Whether the text is not finished: it ends inside a string or a
@@ -276,14 +284,9 @@ impl Lexed {
     }
 }
 
-/// Whether `error` is the lexer's for a string or a block comment that
-/// is not closed: the text ends inside it.
-pub fn ends_text(error: &Diagnostic) -> bool {
-    matches!(
-        error.code,
-        Code::UnterminatedString | Code::UnterminatedComment
-    )
-}
+/// How many lex and parse errors of one file are kept and reported; the
+/// rest are counted.
+pub const MAX_SYNTAX_ERRORS: usize = 50;
 
 /// A token and where it starts, as the scanners hand it to `tokenize`.
 type Scanned = (Token, Span);
@@ -330,12 +333,16 @@ pub struct Lexer {
     gap_newlines: u8,
     /// The first comment in `comments` that no token has taken yet.
     gap_comments: u32,
-    /// Every error so far, in source order.
+    /// The first `MAX_SYNTAX_ERRORS` errors, in source order.
     errors: Vec<Diagnostic>,
-    /// The errors that are one mistake when they come again: what was
-    /// written (for the note that counts the other places) and the
-    /// error's index in `errors`.
-    repeatable: Vec<(String, usize)>,
+    /// The errors behind them: counted, not kept.
+    more_errors: usize,
+    /// Whether the text ends inside an unclosed string or comment.
+    cut_short: bool,
+    /// The mistakes that are one error when they are made again: what
+    /// was written (for the note), the index in `errors` of its first
+    /// error, and the places it is written again.
+    repeats: std::collections::HashMap<String, (usize, usize)>,
 }
 
 impl Lexer {
@@ -352,7 +359,9 @@ impl Lexer {
             gap_newlines: 0,
             gap_comments: 0,
             errors: Vec::new(),
-            repeatable: Vec::new(),
+            more_errors: 0,
+            cut_short: false,
+            repeats: std::collections::HashMap::new(),
         };
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
         // (Notepad, PowerShell `>` redirects) prepend one by default,
@@ -370,57 +379,40 @@ impl Lexer {
 
     /// The tokens of the whole text. An error does not end it: the text
     /// that is no token becomes a `Token::Error`, the error is recorded
-    /// (`Lexed::errors`), and the lexer goes on behind it.
+    /// (`Lexed::errors`), and the lexer goes on behind it. With the
+    /// first error that is not kept (`Lexed::more_errors`) the tokens
+    /// end: the lexer goes on only to count, and the rest of the text is
+    /// one `Token::Error`.
     pub fn tokenize(&mut self) -> Lexed {
         let mut tokens = Vec::new();
+        // Where the token starts with which the tokens end.
+        let mut cut: Option<Span> = None;
         loop {
             let (kind, start) = self.next_token();
-            // Every scan stops right after its token, so the token ends
-            // where the lexer stands now.
-            let span = Span {
-                end: self.byte_offset as u32,
-                ..start
-            };
             let is_eof = kind == Token::Eof;
-            let end = self.comments.len() as u32;
-            let comments = self.gap_comments..end;
-            self.gap_comments = end;
-            tokens.push(Tok {
-                kind,
-                span,
-                newlines_before: std::mem::take(&mut self.gap_newlines),
-                comments,
-            });
+            if cut.is_none() && self.more_errors > 0 && !is_eof {
+                cut = Some(start);
+            }
+            match cut {
+                // Counting: nothing is kept but the comments in front of
+                // the cut, which the token of the rest carries.
+                Some(_) if !is_eof => {
+                    self.comments.truncate(self.gap_comments as usize);
+                    continue;
+                }
+                Some(cut) => {
+                    self.comments.truncate(self.gap_comments as usize);
+                    self.push_token(&mut tokens, Token::Error, cut);
+                    self.gap_newlines = 0;
+                }
+                None => {}
+            }
+            self.push_token(&mut tokens, kind, start);
             if is_eof {
                 break;
             }
         }
-        self.fold_repeated_errors();
-        Lexed {
-            tokens,
-            comments: std::mem::take(&mut self.comments),
-            errors: std::mem::take(&mut self.errors),
-        }
-    }
-
-    /// Make one error of a mistake that is made again (see
-    /// `repeatable`): the first stays, with a note that counts the
-    /// other places, and the errors of those are dropped.
-    fn fold_repeated_errors(&mut self) {
-        // What was written, the index of its first error, the places
-        // behind it.
-        let mut firsts: Vec<(String, usize, usize)> = Vec::new();
-        let mut dropped = std::collections::HashSet::new();
-        for (written, index) in std::mem::take(&mut self.repeatable) {
-            match firsts.iter_mut().find(|(first, ..)| *first == written) {
-                Some((.., more)) => {
-                    *more += 1;
-                    dropped.insert(index);
-                }
-                None => firsts.push((written, index, 0)),
-            }
-        }
-        for (written, index, more) in firsts {
+        for (written, (index, more)) in std::mem::take(&mut self.repeats) {
             if more > 0 {
                 let places = if more == 1 { "place" } else { "places" };
                 self.errors[index]
@@ -428,18 +420,54 @@ impl Lexer {
                     .push(format!("{written} is written in {more} more {places}"));
             }
         }
-        let mut index = 0;
-        self.errors.retain(|_| {
-            index += 1;
-            !dropped.contains(&(index - 1))
+        Lexed {
+            tokens,
+            comments: std::mem::take(&mut self.comments),
+            errors: std::mem::take(&mut self.errors),
+            more_errors: self.more_errors,
+            cut_short: self.cut_short,
+        }
+    }
+
+    /// Add the token `kind`, which starts at `start` and ends where the
+    /// lexer stands (every scan stops right after its token), with the
+    /// trivia in front of it.
+    fn push_token(&mut self, tokens: &mut Vec<Tok>, kind: Token, start: Span) {
+        let end = self.comments.len() as u32;
+        let comments = self.gap_comments..end;
+        self.gap_comments = end;
+        tokens.push(Tok {
+            kind,
+            span: self.since(start),
+            newlines_before: std::mem::take(&mut self.gap_newlines),
+            comments,
         });
     }
 
-    /// Record `error` for the text from `start` to the current position,
-    /// which is no token.
-    fn invalid(&mut self, start: Span, error: Diagnostic) -> Scanned {
-        self.errors.push(error);
-        (Token::Error, start)
+    /// Record the error that `error` makes, if it is among the first
+    /// `MAX_SYNTAX_ERRORS`; count it otherwise.
+    fn error(&mut self, error: impl FnOnce() -> Diagnostic) {
+        if self.errors.len() < MAX_SYNTAX_ERRORS {
+            self.errors.push(error());
+        } else {
+            self.more_errors += 1;
+        }
+    }
+
+    /// Record the error of a mistake that is one error however often it
+    /// is made: `written` names what was written. The first time it is
+    /// the error that `error` makes; again, it is counted for that
+    /// error's note. (A mistake whose first error was not kept counts
+    /// as an error each time.)
+    fn repeatable_error(&mut self, written: String, error: impl FnOnce() -> Diagnostic) {
+        if let Some((_, more)) = self.repeats.get_mut(&written) {
+            *more += 1;
+        } else if self.errors.len() < MAX_SYNTAX_ERRORS {
+            self.repeats.insert(written, (self.errors.len(), 0));
+            self.errors.push(error());
+        } else {
+            self.more_errors += 1;
+        }
     }
 
     /// Record the comment that starts at `start` and ends at the current
@@ -523,11 +551,14 @@ impl Lexer {
                 }
                 Some(_) => {}
                 None => {
-                    self.errors.push(Diagnostic::error(
-                        Code::UnterminatedComment,
-                        start,
-                        "unterminated block comment",
-                    ));
+                    self.cut_short = true;
+                    self.error(|| {
+                        Diagnostic::error(
+                            Code::UnterminatedComment,
+                            start,
+                            "unterminated block comment",
+                        )
+                    });
                     return;
                 }
             }
@@ -545,8 +576,7 @@ impl Lexer {
                     } else {
                         "unterminated string".to_string()
                     };
-                    let error = Diagnostic::error(Code::UnterminatedString, start, message);
-                    return self.invalid(start, error);
+                    return self.unterminated(start, message);
                 }
                 Some('\\') => {
                     // Capture the backslash's position BEFORE consuming
@@ -572,27 +602,23 @@ impl Lexer {
                         // An unknown escape is an error of the string,
                         // which goes on behind it.
                         Some(c) if c.is_control() => {
-                            self.errors.push(Diagnostic::error(
-                                Code::InvalidEscape,
-                                self.span(),
-                                format!("unknown escape sequence: \\{}", c.escape_default()),
-                            ));
+                            let at = self.span();
+                            self.error(|| {
+                                Diagnostic::error(
+                                    Code::InvalidEscape,
+                                    at,
+                                    format!("unknown escape sequence: \\{}", c.escape_default()),
+                                )
+                            });
                         }
-                        Some(c) => {
-                            self.errors.push(Diagnostic::error(
+                        Some(c) => self.error(|| {
+                            Diagnostic::error(
                                 Code::InvalidEscape,
                                 esc_span,
                                 format!("unknown escape sequence: \\{c}"),
-                            ));
-                        }
-                        None => {
-                            let error = Diagnostic::error(
-                                Code::UnterminatedString,
-                                start,
-                                "unterminated escape sequence",
-                            );
-                            return self.invalid(start, error);
-                        }
+                            )
+                        }),
+                        None => return self.unterminated(start, "unterminated escape sequence"),
                     }
                 }
                 Some('{') => {
@@ -631,14 +657,7 @@ impl Lexer {
 
         loop {
             match self.peek() {
-                None => {
-                    let error = Diagnostic::error(
-                        Code::UnterminatedString,
-                        start,
-                        "unterminated triple-quoted string",
-                    );
-                    return self.invalid(start, error);
-                }
+                None => return self.unterminated(start, "unterminated triple-quoted string"),
                 Some('"') if self.peek_ahead(1) == Some('"') && self.peek_ahead(2) == Some('"') => {
                     // Consume closing """
                     self.advance_char();
@@ -719,8 +738,17 @@ impl Lexer {
 
     /// The error `message` for the number read from `start` to here.
     fn invalid_number(&mut self, start: Span, message: &str) -> Scanned {
-        let error = Diagnostic::error(Code::InvalidNumber, self.since(start), message);
-        self.invalid(start, error)
+        let span = self.since(start);
+        self.error(|| Diagnostic::error(Code::InvalidNumber, span, message));
+        (Token::Error, start)
+    }
+
+    /// The error `message` for the string that starts at `start` and is
+    /// not closed where the text ends.
+    fn unterminated(&mut self, start: Span, message: impl Into<String>) -> Scanned {
+        self.cut_short = true;
+        self.error(|| Diagnostic::error(Code::UnterminatedString, start, message));
+        (Token::Error, start)
     }
 
     fn scan_number(&mut self, first: char, start: Span) -> Scanned {
@@ -1088,63 +1116,37 @@ impl Lexer {
                     self.advance_char();
                     (Token::AndAnd, start)
                 } else {
-                    self.unexpected(start, "unexpected character '&', did you mean '&&'?")
+                    self.unexpected(start, || {
+                        "unexpected character '&', did you mean '&&'?".to_string()
+                    })
                 }
             }
 
+            // A semicolon, and those directly behind it. One that is
+            // written again is the same mistake.
             ';' => {
-                let error = self.unexpected(
-                    start,
-                    "semicolons are not used in silt — use a newline to separate statements",
-                );
-                self.repeatable
-                    .push(("a semicolon".to_string(), self.errors.len() - 1));
-                error
-            }
-            // A BOM after the start of the file (the leading one is
-            // skipped in `Lexer::new`) is invisible and zero-width, so
-            // quoting the raw char would render an empty-looking error.
-            // Name it instead.
-            '\u{FEFF}' => self.unexpected(
-                start,
-                "unexpected character: byte-order mark (U+FEFF); \
-                 a BOM is only permitted at the very start of the file",
-            ),
-            // ASCII/Unicode control characters (U+0001–U+001F, U+007F,
-            // …) are invisible, so quoting the raw byte renders an
-            // empty-looking error in any non-`cat -v` sink (log files,
-            // LSP JSON diagnostics, captured test output). Escape them —
-            // the same reasoning the BOM arm above applies, generalised
-            // to every invisible control char. `escape_default` yields
-            // `\u{1}`, `\t`, etc.; printable chars (`@`, …) are not
-            // control and keep their plain quoted form.
-            // The control characters directly behind one are the same
-            // stray bytes: one error.
-            _ if ch.is_control() => {
-                let error = self.unexpected(
-                    start,
-                    format!("unexpected character: '{}'", ch.escape_default()),
-                );
-                while self
-                    .peek()
-                    .is_some_and(|c| c.is_control() && !c.is_ascii_whitespace())
-                {
+                let span = self.since(start);
+                self.repeatable_error("a semicolon".to_string(), || {
+                    Diagnostic::error(
+                        Code::UnexpectedChar,
+                        span,
+                        "semicolons are not used in silt — use a newline to separate statements",
+                    )
+                });
+                while self.peek() == Some(';') {
                     self.advance_char();
                 }
-                error
+                (Token::Error, start)
             }
             // A letter or digit outside ASCII, at the start of a name or
             // inside one (`café` ends at the `f`). The letters and digits
             // that follow it are of the same word: one error, and the
             // same word written again is the same mistake.
             _ if ch.is_alphanumeric() => {
-                let error = self.unexpected(
-                    start,
-                    format!(
-                        "unexpected character: '{ch}'; a name is made of ASCII letters, digits and '_'"
-                    ),
-                );
+                let span = self.since(start);
                 let word = |c: char| c.is_alphanumeric() || c == '_';
+                // The ASCII part of the word, which is the name token in
+                // front: read back once, for this one error of the word.
                 let mut begin = self.pos - 1;
                 while begin > 0 && word(self.source[begin - 1]) {
                     begin -= 1;
@@ -1153,22 +1155,38 @@ impl Lexer {
                     self.advance_char();
                 }
                 let written: String = self.source[begin..self.pos].iter().collect();
-                self.repeatable
-                    .push((format!("'{written}'"), self.errors.len() - 1));
-                error
+                self.repeatable_error(format!("'{written}'"), || {
+                    Diagnostic::error(
+                        Code::UnexpectedChar,
+                        span,
+                        format!(
+                            "unexpected character: '{ch}'; a name is made of ASCII letters, digits and '_'"
+                        ),
+                    )
+                });
+                (Token::Error, start)
             }
             // A quotation mark that is not silt's: the text up to its
             // partner on the line is the string that was meant (`'a'`,
             // `` `x` ``, one pasted from a word processor), and one
-            // error.
+            // error. The partner is looked for from here, once: a mark
+            // without one reads to the end of its line, and then no
+            // mark of its kind stands behind it on that line to read it
+            // again.
             '\'' | '`' | '“' | '”' | '‘' | '’' => {
-                let error = self.unexpected(start, format!("unexpected character: '{ch}'"));
-                let rest = &self.source[self.pos..];
-                let line = rest.iter().position(|&c| c == '\n').unwrap_or(rest.len());
-                let partner = rest[..line].iter().position(|&c| match ch {
+                let error = self.unexpected(start, || format!("unexpected character: '{ch}'"));
+                let is_partner = |c: char| match ch {
                     '\'' | '`' => c == ch,
                     _ => matches!(c, '“' | '”' | '‘' | '’'),
-                });
+                };
+                let mut ahead = 0;
+                let partner = loop {
+                    match self.peek_ahead(ahead) {
+                        None | Some('\n') => break None,
+                        Some(c) if is_partner(c) => break Some(ahead),
+                        Some(_) => ahead += 1,
+                    }
+                };
                 if let Some(partner) = partner {
                     for _ in 0..=partner {
                         self.advance_char();
@@ -1176,11 +1194,31 @@ impl Lexer {
                 }
                 error
             }
-            // Any other character, and its repetitions behind it (`@@@`,
-            // a pasted ``` fence): one error.
+            // Any other character is no part of silt: it and the
+            // characters like it that stand directly behind it (`@@@`,
+            // `@$~`, stray control bytes) are one error, named by the
+            // first.
             _ => {
-                let error = self.unexpected(start, format!("unexpected character: '{ch}'"));
-                while self.peek() == Some(ch) {
+                let error = self.unexpected(start, || match ch {
+                    // A BOM after the start of the file (the leading one
+                    // is skipped in `Lexer::new`) is invisible and
+                    // zero-width, so quoting the raw char would render
+                    // an empty-looking error. Name it instead.
+                    '\u{FEFF}' => "unexpected character: byte-order mark (U+FEFF); \
+                                   a BOM is only permitted at the very start of the file"
+                        .to_string(),
+                    // Control characters (U+0001–U+001F, U+007F, …) are
+                    // invisible, so quoting the raw byte renders an
+                    // empty-looking error in any non-`cat -v` sink (log
+                    // files, LSP JSON diagnostics, captured test
+                    // output): `escape_default` yields `\u{1}`, `\t`,
+                    // etc.
+                    _ if ch.is_control() => {
+                        format!("unexpected character: '{}'", ch.escape_default())
+                    }
+                    _ => format!("unexpected character: '{ch}'"),
+                });
+                while self.peek().is_some_and(is_stray) {
                     self.advance_char();
                 }
                 error
@@ -1188,10 +1226,26 @@ impl Lexer {
         }
     }
 
-    /// The error `message` for the character read from `start` to here.
-    fn unexpected(&mut self, start: Span, message: impl Into<String>) -> Scanned {
-        let error = Diagnostic::error(Code::UnexpectedChar, self.since(start), message);
-        self.invalid(start, error)
+    /// The error that `message` makes for the character read from
+    /// `start` to here, which starts text that is no token.
+    fn unexpected(&mut self, start: Span, message: impl FnOnce() -> String) -> Scanned {
+        let span = self.since(start);
+        self.error(|| Diagnostic::error(Code::UnexpectedChar, span, message()));
+        (Token::Error, start)
+    }
+}
+
+/// Whether `c` is no part of silt in any place outside a string or a
+/// comment: not white space, not a letter or digit (those have errors of
+/// their own), and none of the characters a token starts with or the
+/// quotation marks that are read in pairs.
+fn is_stray(c: char) -> bool {
+    match c {
+        ' ' | '\t' | '\r' | '\n' => false,
+        '@' | '$' | '~' | '\\' => true,
+        _ if c.is_ascii() => c.is_ascii_control(),
+        '“' | '”' | '‘' | '’' => false,
+        _ => !c.is_alphanumeric(),
     }
 }
 
@@ -1795,6 +1849,46 @@ mod tests {
         // A name written once has no note.
         let lexed = Lexer::new(crate::source::FileId::default(), "größe").tokenize();
         assert!(lexed.errors[0].notes.is_empty());
+    }
+
+    #[test]
+    fn test_errors_behind_the_fiftieth_are_counted_and_the_tokens_end() {
+        let text: String = (0..60).map(|i| format!("x{i} @ ")).collect();
+        let lexed = Lexer::new(crate::source::FileId::default(), &text).tokenize();
+        assert_eq!(lexed.errors.len(), MAX_SYNTAX_ERRORS);
+        assert_eq!(lexed.more_errors, 10);
+        // Fifty names with their errors, the fifty-first name, and one
+        // token for the rest of the text, from the first error that is
+        // not kept.
+        assert_eq!(lexed.tokens.len(), 2 * MAX_SYNTAX_ERRORS + 1 + 1 + 1);
+        let rest = &lexed.tokens[lexed.tokens.len() - 2];
+        assert_eq!(rest.kind, Token::Error);
+        assert_eq!(
+            &text[rest.span.start as usize..rest.span.end as usize],
+            &text[text.find("x50 @").unwrap() + 4..]
+        );
+        // Text without an error is not cut, however long.
+        let lexed = Lexer::new(crate::source::FileId::default(), &"x ".repeat(1000)).tokenize();
+        assert_eq!((lexed.tokens.len(), lexed.more_errors), (1001, 0));
+    }
+
+    #[test]
+    fn test_a_run_of_characters_that_are_no_part_of_silt_is_one_error() {
+        let (tokens, errors) = lex_all("1 @$~\\\u{1}\u{feff}€ 2 ;;; 3 ; 4");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Int(1),
+                Token::Error,
+                Token::Int(2),
+                Token::Error,
+                Token::Int(3),
+                Token::Error,
+                Token::Int(4)
+            ]
+        );
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert_eq!(errors[0], "unexpected character: '@'");
     }
 
     #[test]
