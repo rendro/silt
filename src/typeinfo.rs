@@ -49,7 +49,7 @@ pub enum Shape {
     /// in name order), which is the order a record value holds them in,
     /// with the type of each as far as the decoders of `json.parse` and
     /// `toml.parse` are concerned. The fields of a builtin record and of
-    /// an anonymous one have none ([`FieldType::undecoded`]): the
+    /// an anonymous one have none (`FieldType::undecoded`): the
     /// decoders refuse such a type before they read a field.
     Record(Vec<(String, FieldType)>),
     /// A type whose values are not records or variants (`Int`, `List`).

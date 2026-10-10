@@ -168,7 +168,7 @@ impl PartialOrd for Record {
 /// same type, and Ord must agree so that `a == b ⇒ cmp(a, b) == Equal`;
 /// otherwise BTreeSet / BTreeMap would treat equal values as distinct.
 /// An anonymous record, which has no declaration, orders by its fields
-/// in name order, and so does a builtin record ([`ordered_by_name`]).
+/// in name order, and so does a builtin record (`ordered_by_name`).
 impl Ord for Record {
     fn cmp(&self, other: &Record) -> Ordering {
         let (a, b) = (self.ty(), other.ty());
