@@ -253,7 +253,7 @@ fn door_verdict_and_stderr(
 ) -> (Verdict, Option<String>) {
     let roots = roots(dir);
     if door == Door::Lsp {
-        let session = lsp::session(dir, entry, timeout);
+        let session = lsp::session(dir, entry, timeout, &[]);
         if let Some(why) = session.error {
             return (Verdict::Failed(why), None);
         }

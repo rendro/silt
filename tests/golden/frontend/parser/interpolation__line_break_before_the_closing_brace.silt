@@ -1,0 +1,12 @@
+-- A line break may stand in front of the brace that closes an
+-- interpolation, as in front of any other closing bracket.
+fn main() {
+  let x = 1
+  let s = "{ x
+  }"
+  let t = "a {
+    x + 1 -- with a comment
+  } b"
+  println(s)
+  println(t)
+}

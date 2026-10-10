@@ -10,7 +10,6 @@ use lsp_types::Uri;
 use crate::ast::{Decl, ImportTarget, Program};
 use crate::intern::Symbol;
 use crate::session::{ImportResolution, ModuleAnalysis};
-use crate::source::SourceFile;
 
 use super::Server;
 use super::definitions::build_definitions;
@@ -19,9 +18,8 @@ use super::project::path_key;
 use super::state::{DefInfo, Document};
 
 /// An imported module, as the session has it.
-pub(super) struct ModuleView<'a> {
+pub(super) struct ModuleView {
     pub(super) uri: Uri,
-    pub(super) source: &'a SourceFile,
     /// Its top-level definitions, with the checker's types.
     pub(super) definitions: HashMap<Symbol, DefInfo>,
     /// What it exports, in declaration order: its `pub` functions,
@@ -84,7 +82,7 @@ impl Server {
 
     /// The module the name `name` stands for in the open document `doc`:
     /// the one `import name` imports, or `import m as name`.
-    pub(super) fn imported_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView<'_>> {
+    pub(super) fn imported_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView> {
         let program = doc.program.as_ref()?;
         let module_name = program
             .decls
@@ -101,7 +99,7 @@ impl Server {
 
     /// The module that binds `name` bare in the open document `doc`
     /// through `import m.{ name }`.
-    pub(super) fn item_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView<'_>> {
+    pub(super) fn item_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView> {
         let program = doc.program.as_ref()?;
         let module_name = program.decls.iter().find_map(|decl| match decl {
             Decl::Import(ImportTarget::Items(module, items), _)
@@ -115,7 +113,7 @@ impl Server {
     }
 
     /// The module the import of `module_name` in `doc` resolves to.
-    fn module_view(&self, doc: &Document, module_name: Symbol) -> Option<ModuleView<'_>> {
+    fn module_view(&self, doc: &Document, module_name: Symbol) -> Option<ModuleView> {
         let module = doc.module.as_ref()?;
         let session = &self.projects.get(&module.project)?.session;
         let graph = session.graph();
@@ -129,7 +127,7 @@ impl Server {
                     _ => None,
                 })?;
         let target_module = graph.module(target);
-        let source = session.sources().get(target_module.file?)?;
+        target_module.file?;
         let (definitions, members) = match session.module_analysis(target) {
             Some(checked) => (
                 build_definitions(
@@ -149,7 +147,6 @@ impl Server {
         };
         Some(ModuleView {
             uri: self.uri_for_path(&target_module.path)?,
-            source,
             definitions,
             members,
         })

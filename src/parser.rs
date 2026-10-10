@@ -1,440 +1,102 @@
 use crate::ast::*;
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
-use crate::lexer::{Lexed, Tok, Token};
+use crate::lexer::{Comment, CommentKind, Lexed, Tok, Token};
 use crate::source::Span;
 
 type Result<T> = std::result::Result<T, Diagnostic>;
 
-// ── Doc-comment scanner ──────────────────────────────────────────────
+// ── Doc comments ─────────────────────────────────────────────────────
 //
-// The lexer drops every comment. We want doc comments to attach to the
-// following top-level declaration (and to trait / impl methods) so hover,
-// completion, and signature-help can surface Markdown documentation.
-//
-// Approach: scan the raw source once (independent of the lexer) and
-// produce a per-source-line map `line -> doc_text`. For every line L
-// that starts a decl (after lexer-delivered newline handling, we just
-// use the line of the decl's first token as the "decl start line"), we
-// look up the doc block whose last-comment-line is `L - 1`
-// with no blank line between the comment block and the decl.
-//
-// A doc comment is one or more contiguous comments — `--` lines and/or
-// `{- ... -}` blocks — with no blank line between them or between the
-// last of them and the decl. The collected segments are concatenated
-// with `\n`, then leading whitespace common to all lines is stripped
-// (dedent the markdown).
+// The comments directly above a declaration (and above a trait's or an
+// impl's method) are its documentation, which hover, completion and
+// signature help show as Markdown. They are the comments the lexer
+// attached to the declaration's first token.
 
-/// Per-line doc comment index: for each source line L that ends a doc
-/// comment block, records the concatenated, dedented Markdown text.
+/// The documentation in `comments`, the comments in front of a
+/// declaration's first token, which stands `newlines_before` line breaks
+/// behind the last of them; `starts_file`: nothing stands in front of
+/// the first comment.
 ///
-/// Also tracks which source lines are "blank" (whitespace only) and
-/// which lines are part of a comment so the parser can verify that the
-/// decl on line L+1 is IMMEDIATELY adjacent to the doc block.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct DocIndex {
-    /// `docs_by_end_line[line]` = doc block ending at that line, if any.
-    /// The block ends on the line whose `--`/`-}` closes the block. The
-    /// decl that consumes this doc must begin on line `end_line + 1`.
-    docs_by_end_line: std::collections::HashMap<usize, String>,
-}
-
-impl DocIndex {
-    /// Build a doc-comment index from raw source text.
-    ///
-    /// The scan is string-aware (skips `"..."`, `"""..."""`, and
-    /// interpolation braces) but otherwise independent of the lexer.
-    pub(crate) fn from_source(source: &str) -> Self {
-        let bytes = source.as_bytes();
-        let n = bytes.len();
-
-        // First pass: classify each byte as Code / InString / InBlockComment
-        // so we correctly identify which `--` sequences are comments and
-        // which are inside strings. We record comment spans as Segment
-        // entries (see module-level `Segment` type below).
-        let mut segments: Vec<Segment> = Vec::new();
-        let mut line: usize = 1; // 1-based
-        let mut i: usize = 0;
-
-        // Mode stack for string/interp awareness: we only need to know
-        // "am I inside any string
-        // context" — if so, `--` is content, not a comment.
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum Mode {
-            Code,
-            InRegular, // inside a "..." string (escape-aware)
-            InTriple,  // inside a """...""" string
-        }
-        let mut stack: Vec<Mode> = vec![Mode::Code];
-        // For `{...}` interp inside a regular string: when we open a
-        // brace inside a string, we push Mode::Code so the inner
-        // expression is parsed like normal code. Mirrors the lexer.
-        let mut interp_depth_at_open: Vec<usize> = Vec::new();
-        let mut brace_depth: usize = 0;
-
-        while i < n {
-            let c = bytes[i];
-            let top = *stack.last().unwrap();
-
-            if c == b'\n' {
-                line += 1;
-                i += 1;
-                continue;
-            }
-
-            match top {
-                Mode::Code => {
-                    // Detect triple-quoted string first (three quotes).
-                    if c == b'"' && i + 2 < n && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
-                        stack.push(Mode::InTriple);
-                        i += 3;
-                        continue;
-                    }
-                    if c == b'"' {
-                        stack.push(Mode::InRegular);
-                        i += 1;
-                        continue;
-                    }
-                    // Line comment: -- ...
-                    if c == b'-' && i + 1 < n && bytes[i + 1] == b'-' {
-                        // Collect until end of line (or EOF).
-                        let start = i + 2; // skip the `--`
-                        let mut end = start;
-                        while end < n && bytes[end] != b'\n' {
-                            end += 1;
-                        }
-                        let raw = &source[start..end];
-                        // Strip one leading space if present, to produce
-                        // clean markdown. Further dedent happens later
-                        // when joining segments.
-                        let content = if let Some(stripped) = raw.strip_prefix(' ') {
-                            stripped.to_string()
-                        } else {
-                            raw.to_string()
-                        };
-                        segments.push(Segment::LineComment { line, content });
-                        i = end;
-                        continue;
-                    }
-                    // Block comment: {- ... -} (nested)
-                    if c == b'{' && i + 1 < n && bytes[i + 1] == b'-' {
-                        let start_line = line;
-                        i += 2;
-                        let mut depth = 1;
-                        let content_start = i;
-                        while i < n && depth > 0 {
-                            if i + 1 < n && bytes[i] == b'{' && bytes[i + 1] == b'-' {
-                                depth += 1;
-                                i += 2;
-                            } else if i + 1 < n && bytes[i] == b'-' && bytes[i + 1] == b'}' {
-                                depth -= 1;
-                                if depth == 0 {
-                                    // Content is [content_start .. i)
-                                    let raw = &source[content_start..i];
-                                    let end_line = line;
-                                    i += 2; // consume -}
-                                    let content_lines: Vec<String> =
-                                        raw.split('\n').map(|s| s.to_string()).collect();
-                                    segments.push(Segment::BlockComment {
-                                        start_line,
-                                        end_line,
-                                        content_lines,
-                                    });
-                                    break;
-                                }
-                                i += 2;
-                            } else {
-                                if bytes[i] == b'\n' {
-                                    line += 1;
-                                }
-                                i += 1;
-                            }
-                        }
-                        continue;
-                    }
-                    // Brace tracking for interp resumption
-                    if c == b'{' {
-                        brace_depth += 1;
-                    } else if c == b'}' {
-                        if let Some(&resume_at) = interp_depth_at_open.last()
-                            && brace_depth == resume_at + 1
-                        {
-                            // Closing an interp `{`: return to the
-                            // enclosing string.
-                            interp_depth_at_open.pop();
-                            brace_depth -= 1;
-                            // The parent is InRegular (interp lives
-                            // only inside regular strings). We pushed
-                            // Code when we opened the interp — reverse
-                            // it now (see open `{` side below).
-                            stack.pop();
-                            i += 1;
-                            continue;
-                        }
-                        brace_depth = brace_depth.saturating_sub(1);
-                    }
-                    i += 1;
-                }
-                Mode::InRegular => {
-                    if c == b'\\' && i + 1 < n {
-                        // Escape — skip the next char (could be `{`, `"`, etc.)
-                        i += 2;
-                        continue;
-                    }
-                    if c == b'"' {
-                        stack.pop();
-                        i += 1;
-                        continue;
-                    }
-                    if c == b'{' {
-                        // Open interp: switch to Code mode (push frame).
-                        interp_depth_at_open.push(brace_depth);
-                        brace_depth += 1;
-                        stack.push(Mode::Code);
-                        i += 1;
-                        continue;
-                    }
-                    i += 1;
-                }
-                Mode::InTriple => {
-                    if c == b'"' && i + 2 < n && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
-                        stack.pop();
-                        i += 3;
-                        continue;
-                    }
-                    i += 1;
-                }
-            }
-        }
-
-        // Line strings for comment-only detection.
-        let line_strs: Vec<&str> = source.split('\n').collect();
-
-        // Also track: for a given line L, does L contain any NON-comment
-        // code? If yes, comments on L cannot be a standalone doc block's
-        // tail (e.g. `fn f() -- trailing` is not a doc comment for the
-        // next decl — it's a trailing comment on `fn f()`). A comment
-        // is only eligible to be part of a doc block if it's the ONLY
-        // non-whitespace content on its line.
-        //
-        // Build a set of lines that are "comment-only lines".
-        let mut comment_only_line: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
-        for seg in &segments {
-            match seg {
-                Segment::LineComment { line, .. } => {
-                    let l = *line;
-                    // Find the raw source line and verify everything
-                    // before `--` is whitespace.
-                    if l == 0 || l > line_strs.len() {
-                        continue;
-                    }
-                    let src_line = line_strs[l - 1];
-                    // Locate the `--` position (the first one OUTSIDE
-                    // a string; but since this segment was produced by
-                    // the main scanner we know this `--` is real. The
-                    // test is: is everything before the first `--` pure
-                    // whitespace? If yes, this line is comment-only.
-                    // We approximate with: position of `--` in the line
-                    // — the first one is safe because a doc line by
-                    // convention has no code before it.
-                    if let Some(idx) = src_line.find("--") {
-                        let prefix = &src_line[..idx];
-                        if prefix
-                            .bytes()
-                            .all(|b| b == b' ' || b == b'\t' || b == b'\r')
-                        {
-                            comment_only_line.insert(l);
-                        }
-                    }
-                }
-                Segment::BlockComment {
-                    start_line,
-                    end_line,
-                    ..
-                } => {
-                    // Block comments are eligible if both the start
-                    // line's prefix (before `{-`) and the end line's
-                    // suffix (after `-}`) are whitespace-only. The
-                    // interior lines are automatically eligible.
-                    if *start_line == 0 || *start_line > line_strs.len() {
-                        continue;
-                    }
-                    let start_src = line_strs[start_line - 1];
-                    let start_ok = start_src
-                        .find("{-")
-                        .map(|idx| {
-                            start_src[..idx]
-                                .bytes()
-                                .all(|b| b == b' ' || b == b'\t' || b == b'\r')
-                        })
-                        .unwrap_or(false);
-                    let end_src = if *end_line <= line_strs.len() {
-                        line_strs[*end_line - 1]
-                    } else {
-                        ""
-                    };
-                    let end_ok = end_src
-                        .rfind("-}")
-                        .map(|idx| {
-                            end_src[idx + 2..]
-                                .bytes()
-                                .all(|b| b == b' ' || b == b'\t' || b == b'\r')
-                        })
-                        .unwrap_or(false);
-                    if start_ok && end_ok {
-                        for l in *start_line..=*end_line {
-                            comment_only_line.insert(l);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Now build doc blocks. Walk segments in source order; every
-        // maximal run of comment-only-line segments with NO blank line
-        // between adjacent segments forms a block. The block's end_line
-        // is the last segment's last line.
-        let mut docs_by_end_line: std::collections::HashMap<usize, String> =
-            std::collections::HashMap::new();
-
-        let mut i_seg = 0;
-        while i_seg < segments.len() {
-            // Start a run only if this segment is comment-only.
-            let (first_line, _) = segment_line_range(&segments[i_seg]);
-            if !comment_only_line.contains(&first_line) {
-                i_seg += 1;
-                continue;
-            }
-
-            // Collect contiguous segments.
-            let mut run_end = i_seg;
-            while run_end + 1 < segments.len() {
-                let (_, prev_end) = segment_line_range(&segments[run_end]);
-                let (next_start, _) = segment_line_range(&segments[run_end + 1]);
-                // Must be comment-only on start line.
-                if !comment_only_line.contains(&next_start) {
-                    break;
-                }
-                // No blank line between them. next_start must be
-                // prev_end + 1 (consecutive) or prev_end (same line,
-                // only possible for two block comments on same line —
-                // unusual but harmless).
-                if next_start > prev_end + 1 {
-                    break;
-                }
-                // Also verify all lines strictly between are NOT blank.
-                // (With next_start <= prev_end + 1 there are no such
-                // lines, so this is automatically true.)
-                run_end += 1;
-            }
-
-            // Build the doc text by concatenating segment contents.
-            let mut raw_lines: Vec<String> = Vec::new();
-            for s in &segments[i_seg..=run_end] {
-                match s {
-                    Segment::LineComment { content, .. } => {
-                        raw_lines.push(content.clone());
-                    }
-                    Segment::BlockComment { content_lines, .. } => {
-                        // Block content: each interior line is a raw
-                        // line. We drop a purely-empty leading line and
-                        // a purely-empty trailing line (common pattern
-                        // with `{-\n ... \n-}`).
-                        let mut lines = content_lines.clone();
-                        if lines.first().is_some_and(|s| s.trim().is_empty()) {
-                            lines.remove(0);
-                        }
-                        if lines.last().is_some_and(|s| s.trim().is_empty()) {
-                            lines.pop();
-                        }
-                        for l in lines {
-                            raw_lines.push(l);
-                        }
-                    }
-                }
-            }
-
-            // Dedent: find the minimum leading-whitespace prefix across
-            // all non-blank lines and strip that common prefix from
-            // each line (blank lines stay blank).
-            let min_indent = raw_lines
-                .iter()
-                .filter(|l| !l.trim().is_empty())
-                .map(|l| l.chars().take_while(|c| *c == ' ' || *c == '\t').count())
-                .min()
-                .unwrap_or(0);
-            let dedented: Vec<String> = raw_lines
-                .iter()
-                .map(|l| {
-                    if l.trim().is_empty() {
-                        String::new()
-                    } else {
-                        // Strip min_indent leading whitespace chars.
-                        let mut stripped = l.as_str();
-                        let mut n = 0;
-                        for ch in l.chars() {
-                            if n >= min_indent {
-                                break;
-                            }
-                            if ch == ' ' || ch == '\t' {
-                                stripped = &stripped[ch.len_utf8()..];
-                                n += 1;
-                            } else {
-                                break;
-                            }
-                        }
-                        stripped.to_string()
-                    }
-                })
-                .collect();
-
-            let text = dedented.join("\n");
-            let (_, end_line) = segment_line_range(&segments[run_end]);
-            docs_by_end_line.insert(end_line, text);
-
-            i_seg = run_end + 1;
-        }
-
-        DocIndex { docs_by_end_line }
+/// It is the last block of comments above the declaration's line: the
+/// block starts at a comment that starts a line, holds the comments that
+/// follow it on its line and on the next lines without an empty line
+/// between, and ends one line break above the declaration's line. A
+/// comment on the declaration's own line (`{- note -} fn f()`) is not
+/// part of it and does not cut it off. Their texts are joined line by
+/// line: a `--` comment without the `--` and one space, a block without
+/// its delimiters and without an empty first and last line; two
+/// comments on one line give two lines, as they do once `silt fmt` has
+/// put each on a line of its own. The indentation the lines share is
+/// taken off.
+fn doc_of(
+    comments: &[Comment],
+    newlines_before: u8,
+    starts_file: bool,
+    source: &str,
+) -> Option<String> {
+    // How many line breaks stand behind comment `k`.
+    let breaks_behind = |k: usize| match comments.get(k + 1) {
+        Some(next) => next.newlines_before,
+        None => newlines_before,
+    };
+    // The comments on the declaration's own line are not documentation.
+    let mut end = comments.len();
+    while end > 0 && breaks_behind(end - 1) == 0 {
+        end -= 1;
     }
-
-    /// Look up the doc comment block that ENDS on the line immediately
-    /// before `decl_line`. Returns `None` if there's no such block, or
-    /// if the line between is blank (meaning the comment isn't adjacent).
-    pub(crate) fn doc_for_decl_at_line(&self, decl_line: usize) -> Option<String> {
-        if decl_line == 0 {
-            return None;
+    if end == 0 || breaks_behind(end - 1) != 1 {
+        return None;
+    }
+    let mut first = end - 1;
+    while first > 0 && breaks_behind(first - 1) <= 1 {
+        first -= 1;
+    }
+    // A comment behind code on its line belongs to that code.
+    let starts_line = |k: usize| comments[k].newlines_before > 0 || (k == 0 && starts_file);
+    while first < end && !starts_line(first) {
+        first += 1;
+    }
+    if first == end {
+        return None;
+    }
+    let mut lines: Vec<&str> = Vec::new();
+    for comment in &comments[first..end] {
+        let text = comment.text(source);
+        match comment.kind {
+            CommentKind::Line => {
+                let text = text.strip_prefix("--").unwrap_or(text);
+                lines.push(text.strip_prefix(' ').unwrap_or(text));
+            }
+            CommentKind::Block => {
+                let inner = text.strip_prefix("{-").unwrap_or(text);
+                let inner = inner.strip_suffix("-}").unwrap_or(inner);
+                let mut block: Vec<&str> = inner.split('\n').collect();
+                if block.first().is_some_and(|line| line.trim().is_empty()) {
+                    block.remove(0);
+                }
+                if block.last().is_some_and(|line| line.trim().is_empty()) {
+                    block.pop();
+                }
+                lines.extend(block);
+            }
         }
-        self.docs_by_end_line.get(&(decl_line - 1)).cloned()
     }
-}
-
-fn segment_line_range(seg: &Segment) -> (usize, usize) {
-    match seg {
-        Segment::LineComment { line, .. } => (*line, *line),
-        Segment::BlockComment {
-            start_line,
-            end_line,
-            ..
-        } => (*start_line, *end_line),
-    }
-}
-
-/// Comment segment discovered during the doc scan. Public only to the
-/// parser module so `DocIndex::from_source` and `segment_line_range`
-/// can share the type.
-#[derive(Debug, Clone)]
-enum Segment {
-    LineComment {
-        line: usize,
-        content: String,
-    },
-    BlockComment {
-        start_line: usize,
-        end_line: usize,
-        content_lines: Vec<String>,
-    },
+    let indent_of = |line: &str| line.len() - line.trim_start_matches([' ', '\t']).len();
+    let indent = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| indent_of(line))
+        .min()
+        .unwrap_or(0);
+    let dedented: Vec<&str> = lines
+        .iter()
+        .map(|line| match line.trim().is_empty() {
+            true => "",
+            false => line[indent..].trim_end_matches('\r'),
+        })
+        .collect();
+    Some(dedented.join("\n"))
 }
 
 // ── Top-level names ──────────────────────────────────────────────────
@@ -656,6 +318,10 @@ pub struct Parser<'src> {
     /// tokens it encloses. Derived from the token positions alone, so
     /// backtracking (`restore`) cannot put it out of step.
     delim_depth: Vec<i32>,
+    /// For each token, whether it starts a line: a line break stands
+    /// between the token before it and this one (see
+    /// `Lexed::line_break_before`). The end of the file starts none.
+    starts_line: Vec<bool>,
     pos: usize,
     /// The innermost "expression followed by a block" header being
     /// parsed, if any.
@@ -680,12 +346,14 @@ pub struct Parser<'src> {
     /// stub and call ourselves again. Incremented on entry to the recovery
     /// path, checked on re-entry.
     in_fn_recovery: bool,
-    /// Optional doc-comment index. When `Some` (see `with_docs`), the
-    /// parser attaches preceding doc comments to each top-level decl and
-    /// each trait / impl method. When `None`, all `doc` fields are left
-    /// as `None`. The LSP builds the index; the paths that only compile
-    /// don't bother.
-    doc_index: Option<DocIndex>,
+    /// The comments of the source, when the parser is asked to attach
+    /// documentation (see `with_docs`): each top-level declaration and
+    /// each trait or impl method gets its `doc` from the comments in
+    /// front of its first token. `None` leaves every `doc` empty: only
+    /// the language server reads them.
+    docs: Option<Vec<Comment>>,
+    /// The comments the lexer found, kept for `with_docs`.
+    comments: Vec<Comment>,
     /// Name of the trait whose body the parser is currently inside.
     /// Used by `Self::Item` projection sugar to fill in the implicit
     /// trait-name. `None` outside a trait/impl body. The parser sets
@@ -697,9 +365,6 @@ pub struct Parser<'src> {
     /// "declaration" in a file, a "statement" in the REPL, whose entries
     /// are statements (see `parse_cell`).
     top_level_item: &'static str,
-    /// The offset each line of the source after the first starts at, in
-    /// order: `line_of` finds a line without reading the source again.
-    line_starts: Vec<usize>,
 }
 
 /// Delimiter depth before each token; see `Parser::delim_depth`.
@@ -730,11 +395,18 @@ fn delimiter_depths(tokens: &[Tok]) -> Vec<i32> {
 impl<'src> Parser<'src> {
     /// A parser for `lexed`, the tokens of `source`.
     pub fn new(lexed: Lexed, source: &'src str) -> Self {
+        let starts_line = lexed
+            .tokens
+            .iter()
+            .map(|tok| tok.kind != Token::Eof && lexed.line_break_before(tok))
+            .collect();
         let tokens = lexed.tokens;
         let delim_depth = delimiter_depths(&tokens);
         Self {
+            comments: lexed.comments,
             tokens,
             delim_depth,
+            starts_line,
             source,
             pos: 0,
             header: None,
@@ -742,23 +414,17 @@ impl<'src> Parser<'src> {
             errors: Vec::new(),
             depth: 0,
             in_fn_recovery: false,
-            doc_index: None,
+            docs: None,
             current_trait_name: None,
             top_level_item: "declaration",
-            line_starts: source
-                .bytes()
-                .enumerate()
-                .filter(|(_, b)| *b == b'\n')
-                .map(|(at, _)| at + 1)
-                .collect(),
         }
     }
 
-    /// Also attach doc comments: top-level decls (and trait / impl
-    /// methods) get their `doc` field from the adjacent `--` / `{- -}`
-    /// comments of the source.
+    /// Also attach documentation: each top-level declaration (and each
+    /// trait or impl method) gets its `doc` from the comments directly
+    /// above it.
     pub fn with_docs(mut self) -> Self {
-        self.doc_index = Some(DocIndex::from_source(self.source));
+        self.docs = Some(std::mem::take(&mut self.comments));
         self
     }
 
@@ -770,17 +436,18 @@ impl<'src> Parser<'src> {
     /// two on one line get "each statement must start on its own line".
     pub fn parse_cell(&mut self, wrapper: Symbol) -> (Program, Vec<Diagnostic>) {
         self.top_level_item = "statement";
-        self.skip_nl();
-        if matches!(
-            self.peek(),
-            Token::Fn
-                | Token::Type
-                | Token::Trait
-                | Token::Pub
-                | Token::Import
-                | Token::Let
-                | Token::Mod
-        ) {
+        if !self.nl_before()
+            && matches!(
+                self.peek(),
+                Token::Fn
+                    | Token::Type
+                    | Token::Trait
+                    | Token::Pub
+                    | Token::Import
+                    | Token::Let
+                    | Token::Mod
+            )
+        {
             return self.parse_program_recovering();
         }
         let start = self.span();
@@ -830,7 +497,6 @@ impl<'src> Parser<'src> {
     /// context is put back on success and on failure, so a parse error in
     /// a header cannot leak the context into the rest of the file.
     fn parse_header_expr(&mut self, kind: HeaderKind) -> Result<Expr> {
-        self.skip_nl();
         let depth = self.delim_depth_at(self.pos);
         let prev = self.header.replace(BlockHeader {
             kind,
@@ -863,13 +529,22 @@ impl<'src> Parser<'src> {
         Ok(())
     }
 
-    /// Look up a doc comment for a decl whose first-token span is `span`.
-    /// Returns `None` when no doc-index is attached or when no adjacent
-    /// comment block precedes the decl line.
+    /// The documentation of the declaration whose first token has the
+    /// span `span`: the comments directly above it. `None` when the
+    /// parser was not asked for documentation.
     fn doc_for_span(&self, span: Span) -> Option<String> {
-        self.doc_index
-            .as_ref()
-            .and_then(|idx| idx.doc_for_decl_at_line(self.line_of(span) as usize))
+        let comments = self.docs.as_ref()?;
+        let index = self
+            .tokens
+            .partition_point(|tok| tok.span.start < span.start);
+        let tok = self.tokens.get(index)?;
+        let range = tok.comments.start as usize..tok.comments.end as usize;
+        doc_of(
+            comments.get(range)?,
+            tok.newlines_before,
+            index == 0,
+            self.source,
+        )
     }
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -878,21 +553,9 @@ impl<'src> Parser<'src> {
         self.tokens[self.pos].span
     }
 
-    /// The 1-based line `span` starts on, for messages that name a line.
-    fn line_of(&self, span: Span) -> u32 {
-        let at = span.start_offset().min(self.source.len());
-        self.line_starts.partition_point(|start| *start <= at) as u32 + 1
-    }
-
-    /// End of the last token consumed: the token before `pos`, newlines
-    /// skipped (a newline token sits where the next line's first token
-    /// starts, so it says nothing about where the previous one ended).
+    /// End of the last token consumed: the token before `pos`.
     fn prev_end(&self) -> u32 {
-        self.tokens[..self.pos]
-            .iter()
-            .rev()
-            .find(|tok| !matches!(tok.kind, Token::Newline))
-            .map_or(0, |tok| tok.span.end)
+        self.tokens[..self.pos].last().map_or(0, |tok| tok.span.end)
     }
 
     /// The extent of a construct that starts at `start` and whose last
@@ -920,17 +583,31 @@ impl<'src> Parser<'src> {
         &self.tokens[self.pos].kind
     }
 
-    /// The token `n` places after the current one, if any.
-    fn peek_at(&self, n: usize) -> Option<&Token> {
-        self.tokens.get(self.pos + n).map(|t| &t.kind)
-    }
-
     fn at(&self, tok: &Token) -> bool {
         std::mem::discriminant(self.peek()) == std::mem::discriminant(tok)
     }
 
-    fn at_newline(&self) -> bool {
-        matches!(self.peek(), Token::Newline)
+    /// Whether the current token starts a line. A line break ends a
+    /// statement, a declaration and a match arm; what continues an
+    /// expression behind one is decided where it matters, by this.
+    fn nl_before(&self) -> bool {
+        self.starts_line[self.pos]
+    }
+
+    /// The token behind the current one, if it stands on the same line.
+    fn next_on_line(&self) -> Option<&Token> {
+        let next = self.pos + 1;
+        match self.starts_line.get(next) {
+            Some(false) => self.tokens.get(next).map(|tok| &tok.kind),
+            _ => None,
+        }
+    }
+
+    /// Whether the current token is of the kind of `tok` and stands on
+    /// the line of the token before it: what continues a construct only
+    /// on its own line (the `(` of a call, the `.` of a qualified name).
+    fn at_on_line(&self, tok: &Token) -> bool {
+        !self.nl_before() && self.at(tok)
     }
 
     fn advance(&mut self) -> Tok {
@@ -939,33 +616,6 @@ impl<'src> Parser<'src> {
             self.pos += 1;
         }
         tok
-    }
-
-    fn skip_nl(&mut self) {
-        while self.at_newline() {
-            self.pos += 1;
-        }
-    }
-
-    /// Undo `skip_nl` (and the newline skipping of `peek_skip_nl`): step
-    /// back to just after the last real token, so the newline that ends a
-    /// body-less declaration is seen by the same-line check.
-    fn unskip_nl(&mut self) {
-        while self.pos > 0 && matches!(self.tokens[self.pos - 1].kind, Token::Newline) {
-            self.pos -= 1;
-        }
-    }
-
-    /// Returns true if there is a newline token right at self.pos
-    /// (i.e., between the previous real token and the next real token).
-    fn has_newline_before(&self) -> bool {
-        matches!(
-            self.tokens.get(self.pos),
-            Some(Tok {
-                kind: Token::Newline,
-                ..
-            })
-        )
     }
 
     /// Round-93 hint guard: true when the current token is a `/` that
@@ -1012,7 +662,6 @@ impl<'src> Parser<'src> {
         "silt line comments use '--', not '//' (block comments are '{- ... -}')";
 
     fn expect(&mut self, expected: &Token) -> Result<Tok> {
-        self.skip_nl();
         if self.at(expected) {
             Ok(self.advance())
         } else {
@@ -1025,7 +674,6 @@ impl<'src> Parser<'src> {
     }
 
     fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
-        self.skip_nl();
         match self.peek().clone() {
             Token::Ident(name) => {
                 let span = self.span();
@@ -1099,7 +747,6 @@ impl<'src> Parser<'src> {
         let close = end.token();
         let mut items = Vec::new();
         loop {
-            self.skip_nl();
             if self.at(close) {
                 break;
             }
@@ -1107,7 +754,6 @@ impl<'src> Parser<'src> {
                 return Err(self.unclosed_list_err(what, open, close));
             }
             items.push(elem(self)?);
-            self.skip_nl();
             if self.at(&Token::Comma) {
                 self.advance();
             } else if self.at(close) {
@@ -1142,7 +788,7 @@ impl<'src> Parser<'src> {
     /// list element does: the list before it was not closed. `fn(` is
     /// left to the element parser, which has a hint for it in a type.
     fn at_fn_decl(&self) -> bool {
-        self.at(&Token::Fn) && !matches!(self.peek_at(1), Some(Token::LParen))
+        self.at(&Token::Fn) && !matches!(self.next_on_line(), Some(Token::LParen))
     }
 
     /// The error for a function type written `(A -> B)`, at its `->`,
@@ -1185,13 +831,11 @@ impl<'src> Parser<'src> {
 
     pub fn parse_program(&mut self) -> Result<Program> {
         let mut decls = Vec::new();
-        self.skip_nl();
         while !self.at(&Token::Eof) {
             decls.push(self.parse_decl()?);
             if let Some(err) = self.same_line_decl_err() {
                 return Err(err);
             }
-            self.skip_nl();
         }
         if let Some(err) = top_level_name_errors(&decls).into_iter().next() {
             return Err(err);
@@ -1211,7 +855,6 @@ impl<'src> Parser<'src> {
     /// variable" errors (Option B).
     pub fn parse_program_recovering(&mut self) -> (Program, Vec<Diagnostic>) {
         let mut decls = Vec::new();
-        self.skip_nl();
         while !self.at(&Token::Eof) {
             // Special-case `fn` and `pub fn` declarations so we can salvage
             // partial state on failure.
@@ -1231,7 +874,6 @@ impl<'src> Parser<'src> {
                         self.synchronize();
                     }
                 }
-                self.skip_nl();
                 continue;
             }
             if self.at(&Token::Pub) {
@@ -1240,7 +882,6 @@ impl<'src> Parser<'src> {
                 let pub_span = self.span();
                 let pub_doc = self.doc_for_span(pub_span);
                 self.advance();
-                self.skip_nl();
                 if self.at(&Token::Fn) {
                     match self.parse_fn_decl_recovering() {
                         Ok((mut decl, None)) => {
@@ -1267,7 +908,6 @@ impl<'src> Parser<'src> {
                             self.synchronize();
                         }
                     }
-                    self.skip_nl();
                     continue;
                 }
                 // Not `pub fn`: restore and fall through to normal decl parsing.
@@ -1284,7 +924,6 @@ impl<'src> Parser<'src> {
                     self.synchronize();
                 }
             }
-            self.skip_nl();
         }
         self.errors.extend(top_level_name_errors(&decls));
         (Program { decls }, std::mem::take(&mut self.errors))
@@ -1304,6 +943,9 @@ impl<'src> Parser<'src> {
     /// any other token (`with`, `5`, `!`, ...) is left to the plain
     /// "expected declaration" error the next `parse_decl` reports.
     fn same_line_decl_err(&self) -> Option<Diagnostic> {
+        if self.nl_before() {
+            return None;
+        }
         let starts_decl = matches!(
             self.peek(),
             Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let
@@ -1337,7 +979,6 @@ impl<'src> Parser<'src> {
     // ── Declarations ─────────────────────────────────────────────────
 
     fn parse_decl(&mut self) -> Result<Decl> {
-        self.skip_nl();
         match self.peek().clone() {
             Token::Pub => {
                 let span = self.span();
@@ -1345,7 +986,6 @@ impl<'src> Parser<'src> {
                 // that IS the decl's start line from the user's POV.
                 let pub_doc = self.doc_for_span(span);
                 self.advance();
-                self.skip_nl();
                 match self.peek() {
                     Token::Fn => {
                         let mut f = self.parse_fn_decl()?;
@@ -1443,7 +1083,7 @@ impl<'src> Parser<'src> {
         let (name, name_span) = self.expect_ident()?;
         let params = self.parse_fn_params()?;
 
-        let return_type = if self.peek_skip_nl() == &Token::Arrow {
+        let return_type = if self.peek() == &Token::Arrow {
             self.advance();
             Some(self.parse_type_expr()?)
         } else {
@@ -1452,11 +1092,9 @@ impl<'src> Parser<'src> {
 
         let where_clauses = self.parse_where_clauses_opt()?;
 
-        self.skip_nl();
         let (body, is_signature_only) = if self.at(&Token::LBrace) {
             (self.parse_block()?, false)
         } else {
-            self.unskip_nl();
             // Abstract method — no body (e.g. trait method declarations).
             // The Unit placeholder keeps the AST shape uniform; the
             // is_signature_only flag is the authoritative signal.
@@ -1553,7 +1191,7 @@ impl<'src> Parser<'src> {
         };
 
         // Try return type annotation.
-        let return_type = if self.peek_skip_nl() == &Token::Arrow {
+        let return_type = if self.peek() == &Token::Arrow {
             self.advance();
             match self.parse_type_expr() {
                 Ok(t) => Some(t),
@@ -1586,7 +1224,6 @@ impl<'src> Parser<'src> {
             }
         };
 
-        self.skip_nl();
         // Body. On failure, emit a stub that preserves the header.
         let (body, is_signature_only) = if self.at(&Token::LBrace) {
             match self.parse_block() {
@@ -1606,7 +1243,6 @@ impl<'src> Parser<'src> {
                 }
             }
         } else {
-            self.unskip_nl();
             // Abstract method — no body.
             (self.mk_expr(ExprKind::Unit, span), true)
         };
@@ -1665,7 +1301,7 @@ impl<'src> Parser<'src> {
                     let type_kw_span = p.span();
                     p.advance();
                     let pattern = p.parse_simple_param_pattern()?;
-                    if p.peek_skip_nl() == &Token::Colon {
+                    if p.peek() == &Token::Colon {
                         return Err(Diagnostic::error(
                             Code::InvalidDeclaration,
                             p.span(),
@@ -1701,9 +1337,8 @@ impl<'src> Parser<'src> {
     /// `pattern: Type`.
     fn parse_data_param(&mut self) -> Result<Param> {
         let pattern = self.parse_param_pattern()?;
-        let ty = if self.peek_skip_nl() == &Token::Colon {
+        let ty = if self.peek() == &Token::Colon {
             self.advance();
-            self.skip_nl();
             Some(self.parse_type_expr()?)
         } else {
             None
@@ -1720,7 +1355,6 @@ impl<'src> Parser<'src> {
     /// by the caller). A token that cannot start a pattern is reported
     /// as a missing parameter name.
     fn parse_param_pattern(&mut self) -> Result<Pattern> {
-        self.skip_nl();
         let start = self.pos;
         self.parse_pattern().map_err(|err| {
             if self.pos == start && err.code == Code::ExpectedPattern {
@@ -1736,7 +1370,6 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_simple_param_pattern(&mut self) -> Result<Pattern> {
-        self.skip_nl();
         let start = self.span();
         match self.peek().clone() {
             Token::Ident(name) => {
@@ -1758,7 +1391,7 @@ impl<'src> Parser<'src> {
         let (name, name_span) = self.expect_ident()?;
 
         // Optional type parameters: type Result(a, e) { ... } or type Pair(a) = (a, a)
-        let params = if self.peek_skip_nl() == &Token::LParen {
+        let params = if self.peek() == &Token::LParen {
             let open = self.advance().span;
             self.comma_list(
                 "type parameter list",
@@ -1774,10 +1407,8 @@ impl<'src> Parser<'src> {
         // `type Foo { ... }` (record/enum). The lookahead is exact —
         // there is no other top-level use of `=` after a `type Name`
         // header in silt today.
-        self.skip_nl();
         if self.at(&Token::Eq) {
             self.advance();
-            self.skip_nl();
             let target = self.parse_type_expr()?;
             let body = TypeBody::Alias(target);
             check_type_decl_names(name, name_span, &body)?;
@@ -1793,7 +1424,6 @@ impl<'src> Parser<'src> {
         }
 
         let open = self.expect(&Token::LBrace)?.span;
-        self.skip_nl();
 
         // Determine if this is an enum or record by peeking at the first field.
         // Record fields look like `name: Type`, enum variants look like `Name` or `Name(Type)`.
@@ -1818,12 +1448,7 @@ impl<'src> Parser<'src> {
     fn is_record_body(&self) -> bool {
         // Look ahead: if we see `ident :` it's a record. If we see `Ident(` or `Ident,` or `Ident }` it's enum.
         // Record field names start lowercase, enum variant names start uppercase.
-        let mut i = self.pos;
-        // skip newlines
-        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
-            i += 1;
-        }
-        if let Token::Ident(ref name) = self.tokens[i].kind {
+        if let Token::Ident(ref name) = self.tokens[self.pos].kind {
             // lowercase first char → likely record field
             intern::resolve(*name).starts_with(|c: char| c.is_lowercase())
         } else {
@@ -1840,7 +1465,7 @@ impl<'src> Parser<'src> {
             // The body was taken for a record because its first name is
             // lower case. A first name without `:` that looks like an
             // enum variant may be a variant spelled in lower case.
-            if std::mem::take(&mut first) && p.peek_skip_nl() != &Token::Colon {
+            if std::mem::take(&mut first) && p.peek() != &Token::Colon {
                 let text = intern::resolve(name);
                 return Err(Diagnostic::error(
                     Code::ExpectedToken,
@@ -1872,7 +1497,7 @@ impl<'src> Parser<'src> {
             ListEnd::Close(&Token::RBrace),
             |p| {
                 let (name, name_span) = p.expect_ident()?;
-                let fields = if p.peek() == &Token::LParen {
+                let fields = if p.at_on_line(&Token::LParen) {
                     let open = p.advance().span;
                     p.comma_list(
                         "enum variant field list",
@@ -1901,7 +1526,7 @@ impl<'src> Parser<'src> {
     /// The list ends in front of the `{` of the body, or with its last
     /// clause where there is no body (a trait's method signature).
     fn parse_where_clauses_opt(&mut self) -> Result<Vec<WhereClause>> {
-        if self.peek_skip_nl() != &Token::Where {
+        if self.peek() != &Token::Where {
             return Ok(Vec::new());
         }
         let open = self.advance().span;
@@ -1911,7 +1536,7 @@ impl<'src> Parser<'src> {
             p.expect(&Token::Colon)?;
             let mut bounds = vec![p.parse_trait_ref()?.bound_on(type_param)];
             // Multi-trait bounds: `where a: Equal + Hash`
-            while p.at(&Token::Plus) {
+            while p.at_on_line(&Token::Plus) {
                 p.advance();
                 bounds.push(p.parse_trait_ref()?.bound_on(type_param));
             }
@@ -1930,12 +1555,12 @@ impl<'src> Parser<'src> {
     /// (module paths have one segment).
     fn parse_qualified_name(&mut self, what: &str) -> Result<(Option<Qualifier>, Symbol, Span)> {
         let (first, first_span) = self.expect_ident()?;
-        if !self.at(&Token::Dot) || !matches!(self.peek_at(1), Some(Token::Ident(_))) {
+        if !self.at_on_line(&Token::Dot) || !matches!(self.next_on_line(), Some(Token::Ident(_))) {
             return Ok((None, first, first_span));
         }
         self.advance();
         let (name, name_span) = self.expect_ident()?;
-        if self.at(&Token::Dot) && matches!(self.peek_at(1), Some(Token::Ident(_))) {
+        if self.at_on_line(&Token::Dot) && matches!(self.next_on_line(), Some(Token::Ident(_))) {
             return Err(Diagnostic::error(
                 Code::UnsupportedSyntax,
                 self.span(),
@@ -1959,7 +1584,7 @@ impl<'src> Parser<'src> {
     /// `Convert(a, b)`).
     fn parse_trait_ref(&mut self) -> Result<TraitRef> {
         let (module, name, name_span) = self.parse_qualified_name("trait name")?;
-        let args = if self.at(&Token::LParen) {
+        let args = if self.at_on_line(&Token::LParen) {
             self.parse_trait_args()?
         } else {
             Vec::new()
@@ -2002,7 +1627,7 @@ impl<'src> Parser<'src> {
         // type-var binders). For the impl form, args can be any type
         // expression (concrete types, generics, or tyvars from a
         // parameterized impl target).
-        let trait_args: Vec<TypeExpr> = if self.at(&Token::LParen) {
+        let trait_args: Vec<TypeExpr> = if self.at_on_line(&Token::LParen) {
             self.parse_trait_args()?
         } else {
             Vec::new()
@@ -2012,10 +1637,10 @@ impl<'src> Parser<'src> {
         // or parameterized forms `trait Sub(a): Super(a) + Other(Int)`.
         // Disambiguation: `:` after the trait name is unambiguous because impls
         // use `for` and decls use `{` or `fn`.
-        let supertraits: Vec<TraitRef> = if self.at(&Token::Colon) {
+        let supertraits: Vec<TraitRef> = if self.at_on_line(&Token::Colon) {
             self.advance();
             let mut traits = vec![self.parse_trait_ref()?];
-            while self.at(&Token::Plus) {
+            while self.at_on_line(&Token::Plus) {
                 self.advance();
                 traits.push(self.parse_trait_ref()?);
             }
@@ -2024,7 +1649,6 @@ impl<'src> Parser<'src> {
             Vec::new()
         };
 
-        self.skip_nl();
         // `trait Display for User { ... }` is an impl
         // `trait Display { ... }` is a declaration. The disambiguation
         // accepts `where` too, for the form
@@ -2086,7 +1710,6 @@ impl<'src> Parser<'src> {
             // `trait Foo(a) where a: Display { ... }`. Each impl must
             // supply a concrete type arg satisfying the bounds.
             let param_where_clauses = self.parse_where_clauses_opt()?;
-            self.skip_nl();
             if self.at(&Token::LBrace) {
                 self.advance();
             }
@@ -2098,16 +1721,13 @@ impl<'src> Parser<'src> {
             let prev_trait = self.current_trait_name.replace(name);
             let mut methods = Vec::new();
             let mut assoc_types: Vec<crate::ast::AssocTypeDecl> = Vec::new();
-            self.skip_nl();
             while !self.at(&Token::RBrace) {
                 if self.at(&Token::Type) {
                     let assoc = self.parse_assoc_type_decl()?;
                     assoc_types.push(assoc);
-                    self.skip_nl();
                     continue;
                 }
                 methods.push(self.parse_fn_decl()?);
-                self.skip_nl();
             }
             self.current_trait_name = prev_trait;
             self.expect(&Token::RBrace)?;
@@ -2215,14 +1835,12 @@ impl<'src> Parser<'src> {
                 target_param_names.push(*arg_sym);
             }
 
-            self.skip_nl();
             // Optional impl-level where clauses:
             //   trait Greet for Box(a) where a: Greet { ... }
             // Constraints here apply to every method in the impl body
             // (appended to each method's scheme during register_trait_impl).
             // Multi-trait bounds via `+` are supported: `where a: Show + Hash`.
             let where_clauses = self.parse_where_clauses_opt()?;
-            self.skip_nl();
             self.expect(&Token::LBrace)?;
             // Impl body: methods (`fn ...`) interleaved with
             // associated-type bindings (`type Item = Int`). Each
@@ -2231,16 +1849,13 @@ impl<'src> Parser<'src> {
             let prev_trait = self.current_trait_name.replace(name);
             let mut methods = Vec::new();
             let mut assoc_type_bindings: Vec<crate::ast::AssocTypeBinding> = Vec::new();
-            self.skip_nl();
             while !self.at(&Token::RBrace) {
                 if self.at(&Token::Type) {
                     let binding = self.parse_assoc_type_binding()?;
                     assoc_type_bindings.push(binding);
-                    self.skip_nl();
                     continue;
                 }
                 methods.push(self.parse_fn_decl()?);
-                self.skip_nl();
             }
             self.current_trait_name = prev_trait;
             self.expect(&Token::RBrace)?;
@@ -2270,11 +1885,6 @@ impl<'src> Parser<'src> {
 
         // `.{ ... }` and `as` may continue the import on the next line;
         // anything else there starts the next declaration.
-        let saved = self.save();
-        self.skip_nl();
-        if !self.at(&Token::Dot) && !self.at(&Token::As) {
-            self.restore(saved);
-        }
         if self.at(&Token::Dot) {
             self.advance();
             let open = self.expect(&Token::LBrace)?.span;
@@ -2317,15 +1927,15 @@ impl<'src> Parser<'src> {
         self.expect(&Token::Type)?;
         let (name, _) = self.expect_ident()?;
         let mut bounds: Vec<TraitRef> = Vec::new();
-        if self.at(&Token::Colon) {
+        if self.at_on_line(&Token::Colon) {
             self.advance();
             bounds.push(self.parse_trait_ref()?);
-            while self.at(&Token::Plus) {
+            while self.at_on_line(&Token::Plus) {
                 self.advance();
                 bounds.push(self.parse_trait_ref()?);
             }
         }
-        if self.at(&Token::Eq) {
+        if self.at_on_line(&Token::Eq) {
             return Err(Diagnostic::error(
                 Code::UnsupportedSyntax,
                 span,
@@ -2391,7 +2001,6 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_type_expr_inner(&mut self) -> Result<TypeExpr> {
-        self.skip_nl();
         // Round-52 deferred item 2: capture the start-of-type-expr span
         // so every TypeExpr node anchors its own span. Used by trait-
         // header diagnostics (parse_trait_or_impl) to point at the
@@ -2403,12 +2012,10 @@ impl<'src> Parser<'src> {
         // the only legal opener is the qualified form.
         if self.at(&Token::Lt) {
             self.advance();
-            self.skip_nl();
             let receiver = self.parse_type_expr()?;
-            self.skip_nl();
             self.expect(&Token::As)?;
-            let (trait_module, trait_name, _) = self.parse_qualified_name("trait name")?;
-            self.skip_nl();
+            let (trait_module, trait_name, trait_name_span) =
+                self.parse_qualified_name("trait name")?;
             self.expect(&Token::Gt)?;
             self.expect(&Token::ColonColon)?;
             let (assoc_name, _) = self.expect_ident()?;
@@ -2417,6 +2024,7 @@ impl<'src> Parser<'src> {
                     receiver: Box::new(receiver),
                     trait_module,
                     trait_name,
+                    trait_name_span: Some(trait_name_span),
                     assoc_name,
                 },
                 start,
@@ -2432,25 +2040,13 @@ impl<'src> Parser<'src> {
         // peek-ahead, `for Fn { ... }` wedged the parser at `expected (`.
         // Round 71 follow-up canonical-name unification.
         if matches!(self.peek(), Token::Ident(s) if *s == intern::intern("Fn"))
-            && self
-                .tokens
-                .get(self.pos + 1)
-                .map(|t| matches!(t.kind, Token::LParen))
-                .unwrap_or(false)
+            && matches!(self.next_on_line(), Some(Token::LParen))
         {
             self.advance();
             return self.parse_fn_type_rest(start);
         }
         // `fn(Int) -> Int` in a type: the keyword spelling of `Fn`.
-        if self.at(&Token::Fn)
-            && matches!(
-                self.tokens.get(self.pos + 1),
-                Some(Tok {
-                    kind: Token::LParen,
-                    ..
-                })
-            )
-        {
+        if self.at(&Token::Fn) && matches!(self.next_on_line(), Some(Token::LParen)) {
             self.advance();
             // The type as it is written, behind `Fn` instead of `fn`.
             let rest = self.parse_fn_type_rest(start).ok().and_then(|ty| {
@@ -2476,7 +2072,6 @@ impl<'src> Parser<'src> {
         // is `T`, and a comma makes a tuple, `(T,)` the tuple of one.
         if self.at(&Token::LParen) {
             self.advance();
-            self.skip_nl();
             if self.at(&Token::RParen) {
                 self.advance();
                 return Ok(self.mk_type(TypeExprKind::Tuple(Vec::new()), start));
@@ -2486,10 +2081,9 @@ impl<'src> Parser<'src> {
                 return Err(self.unclosed_list_err("tuple type", start, &close));
             }
             let first = self.parse_type_expr()?;
-            if self.at(&Token::Arrow) {
+            if self.at_on_line(&Token::Arrow) {
                 return Err(self.arrow_fn_type_error(start, &first));
             }
-            self.skip_nl();
             if self.at(&Token::RParen) {
                 self.advance();
                 return Ok(first);
@@ -2527,7 +2121,6 @@ impl<'src> Parser<'src> {
                     }
                     let (fname, fname_span) = p.expect_ident()?;
                     p.expect(&Token::Colon)?;
-                    p.skip_nl();
                     let fty = p.parse_type_expr()?;
                     if !seen.insert(fname) {
                         return Err(Diagnostic::error(
@@ -2549,7 +2142,7 @@ impl<'src> Parser<'src> {
         // Outside a trait/impl body the projection is an error; it is
         // caught by the typechecker (current_trait_name absent).
         if module.is_none() && name == intern::intern("Self") {
-            if self.at(&Token::ColonColon) {
+            if self.at_on_line(&Token::ColonColon) {
                 self.advance();
                 let (assoc_name, _) = self.expect_ident()?;
                 let trait_name = self.current_trait_name.unwrap_or_else(|| {
@@ -2566,6 +2159,7 @@ impl<'src> Parser<'src> {
                         receiver: Box::new(recv),
                         trait_module: None,
                         trait_name,
+                        trait_name_span: None,
                         assoc_name,
                     },
                     start,
@@ -2573,7 +2167,7 @@ impl<'src> Parser<'src> {
             }
             return Ok(self.mk_type(TypeExprKind::SelfType, start));
         }
-        if self.peek() == &Token::LParen {
+        if self.at_on_line(&Token::LParen) {
             let open = self.advance().span;
             let args = self.comma_list(
                 "generic type argument list",
@@ -2609,7 +2203,6 @@ impl<'src> Parser<'src> {
         let opener = self.span();
         self.expect(&Token::LBrace)?;
         let stmts = self.parse_stmt_list(&Token::RBrace)?;
-        self.skip_nl();
         if self.at(&Token::Eof) {
             return Err(self.delim_unclosed_err_no_comma("block", '}', opener));
         }
@@ -2619,13 +2212,14 @@ impl<'src> Parser<'src> {
 
     fn parse_stmt_list(&mut self, terminator: &Token) -> Result<Vec<Stmt>> {
         let mut stmts = Vec::new();
-        self.skip_nl();
         while !self.at(terminator) && !self.at(&Token::Eof) {
             stmts.push(self.parse_stmt()?);
-            if Self::starts_statement(self.peek()) && !self.at_lowercase_record_literal_brace() {
+            if !self.nl_before()
+                && Self::starts_statement(self.peek())
+                && !self.at_lowercase_record_literal_brace()
+            {
                 return Err(self.same_line_err("statement"));
             }
-            self.skip_nl();
         }
         Ok(stmts)
     }
@@ -2749,7 +2343,7 @@ impl<'src> Parser<'src> {
     /// following a foreign keyword: an expression-start token (ident,
     /// literal, unary, brace, bracket). Deliberately excludes `(`
     /// because `if(...)` is a syntactically valid call of a variable
-    /// named `if`, and excludes Newline/EOF/closers because a bare
+    /// named `if`, and excludes EOF and closers because a bare
     /// identifier reference there is valid silt.
     fn g1_next_starts_expression(tok: &Token) -> bool {
         matches!(
@@ -2768,8 +2362,6 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
-        self.skip_nl();
-
         // Emit targeted hints for keywords silt doesn't have (`if`, `while`,
         // `for`, `break`, `continue`) and for mutable reassignment (`x = ...`).
         // Only fires at statement-start positions to avoid hijacking legitimate
@@ -2778,18 +2370,16 @@ impl<'src> Parser<'src> {
         // call still works.
         if let Token::Ident(name) = self.peek().clone() {
             let text = intern::resolve(name).to_string();
-            let next = self
-                .tokens
-                .get(self.pos + 1)
-                .map(|t| t.kind.clone())
-                .unwrap_or(Token::Eof);
+            // What follows on the line: a name alone on its line is a
+            // name.
+            let next = self.next_on_line().cloned().unwrap_or(Token::Eof);
             let span = self.span();
 
             // G1: if / while / for
             //
             // `break` and `continue` used to be guarded here too, but the
             // check fired on ANY bare identifier reference (next is
-            // Newline | RBrace | Eof), which made the formatter's
+            // on the next line, `}` or the end of the file), which made the formatter's
             // paren-stripping non-roundtrip: `(break)` → `break` would
             // re-parse as an error. Bare `break`/`continue` are valid
             // identifier references syntactically; if they're not
@@ -2849,14 +2439,13 @@ impl<'src> Parser<'src> {
     fn parse_let_stmt(&mut self) -> Result<Stmt> {
         self.expect(&Token::Let)?;
         let pattern = self.parse_pattern()?;
-        let ty = if self.peek_skip_nl() == &Token::Colon {
+        let ty = if self.peek() == &Token::Colon {
             self.advance();
             Some(self.parse_type_expr()?)
         } else {
             None
         };
         self.expect(&Token::Eq)?;
-        self.skip_nl();
         let value = self.parse_expr()?;
         Ok(Stmt::Let { pattern, ty, value })
     }
@@ -2875,14 +2464,13 @@ impl<'src> Parser<'src> {
             PatternKind::Ident(_) => Some(pattern.span),
             _ => None,
         };
-        let ty = if self.peek_skip_nl() == &Token::Colon {
+        let ty = if self.peek() == &Token::Colon {
             self.advance();
             Some(self.parse_type_expr()?)
         } else {
             None
         };
         self.expect(&Token::Eq)?;
-        self.skip_nl();
         let value = self.parse_expr()?;
         Ok(Decl::Let {
             pattern,
@@ -2900,12 +2488,12 @@ impl<'src> Parser<'src> {
 
         // Pattern form: when let <pattern> = <expr> else { <block> }
         // The `let` keyword is an unambiguous lookahead — it cannot begin
-        // a valid expression, so no backtracking is needed.
-        if self.at(&Token::Let) {
+        // a valid expression, so no backtracking is needed. It stands on
+        // the line of the `when`.
+        if self.at_on_line(&Token::Let) {
             self.advance(); // consume `let`
             let pattern = self.parse_pattern()?;
             self.expect(&Token::Eq)?;
-            self.skip_nl();
             let expr = self.parse_expr()?;
             self.expect(&Token::Else)?;
             let else_body = self.parse_block()?;
@@ -2929,39 +2517,30 @@ impl<'src> Parser<'src> {
     // ── Expressions (Pratt parser) ───────────────────────────────────
 
     pub fn parse_expr(&mut self) -> Result<Expr> {
-        self.skip_nl();
         self.parse_expr_bp(0)
     }
 
-    /// Shared tail for the infix-operator arms of the Pratt loop
-    /// (round-93 dedup: this exact sequence was copied verbatim across
-    /// the pipe / range / binary arms).
+    /// The right operand of an infix operator, which is the current
+    /// token: `None`, with nothing consumed, when the operator binds less
+    /// tightly than `min_bp` asks (the caller's loop ends there); else
+    /// the operand behind the operator, parsed at `r_bp`. The caller
+    /// wraps `left` and the operand in its own node.
     ///
-    ///   * `l_bp < min_bp` → restore `saved` (undoing the speculative
-    ///     newline skip) and return `Ok(None)`; the caller breaks out
-    ///     of the loop with `left` unchanged.
-    ///   * otherwise consume the operator token, skip newlines, parse
-    ///     the right-hand side at `r_bp`, and return it; the caller
-    ///     wraps `left` and the RHS in its own node kind.
-    ///
-    /// `pipe_rhs` marks the RHS as the right operand of `|>`. Inside a
-    /// header (see `BlockHeader`) that is the one place where a trailing
-    /// closure is allowed at the header's own depth:
+    /// `pipe_rhs` marks the operand as the right operand of `|>`. Inside
+    /// a header (see `BlockHeader`) that is the one place where a
+    /// trailing closure is allowed at the header's own depth:
     /// `match xs |> list.any { x -> x > 5 } { true -> ... }`.
     fn parse_infix_rhs(
         &mut self,
-        saved: usize,
         min_bp: u8,
         l_bp: u8,
         r_bp: u8,
         pipe_rhs: bool,
     ) -> Result<Option<Expr>> {
         if l_bp < min_bp {
-            self.restore(saved);
             return Ok(None);
         }
         self.advance();
-        self.skip_nl();
         // The right operand becomes a child of the node the caller
         // builds, and the operator loop counts that node. `parse_expr_bp`
         // adds one level for the operand as a nested expression; take it
@@ -3023,9 +2602,10 @@ impl<'src> Parser<'src> {
             }
             chained = true;
 
-            // First, try postfix operators — newline-sensitive.
-            // If a newline precedes the token, don't treat it as postfix.
-            if !self.has_newline_before() {
+            // The postfix operators, which stand on the line of their
+            // operand: a `(`, `[`, `?` or `{` that starts a line starts
+            // the next statement.
+            if !self.nl_before() {
                 match self.peek() {
                     Token::Question => {
                         // `?` is a tight postfix operator: it binds like a
@@ -3070,10 +2650,8 @@ impl<'src> Parser<'src> {
                 }
             }
 
-            // Save position, skip newlines, try infix operators.
-            let saved = self.save();
-            let had_newline = self.has_newline_before();
-            self.skip_nl();
+            // The infix operators, which may start a line.
+            let had_newline = self.nl_before();
 
             // Binary operators. + and - are newline-sensitive: `-` is
             // ambiguous with unary negation starting the next statement
@@ -3083,7 +2661,7 @@ impl<'src> Parser<'src> {
                 .filter(|op| !(had_newline && matches!(op, BinOp::Add | BinOp::Sub)));
             if let Some(op) = binary {
                 let (l_bp, r_bp) = op.binding_power();
-                let Some(right) = self.parse_infix_rhs(saved, min_bp, l_bp, r_bp, false)? else {
+                let Some(right) = self.parse_infix_rhs(min_bp, l_bp, r_bp, false)? else {
                     break;
                 };
                 let span = left.span;
@@ -3092,14 +2670,12 @@ impl<'src> Parser<'src> {
             }
 
             match self.peek() {
-                // Field access / record update (always allowed across newlines)
+                // Field access / record update (the `.` may start a line)
                 Token::Dot => {
                     if prec::FIELD < min_bp {
-                        self.restore(saved);
                         break;
                     }
                     self.advance();
-                    self.skip_nl();
                     if self.at(&Token::LBrace) {
                         // Record update: expr.{ field: value }
                         let span = left.span;
@@ -3146,7 +2722,7 @@ impl<'src> Parser<'src> {
                         //   * a `{` on the next line stays a separate
                         //     statement.
                         if is_constructor(field)
-                            && !self.has_newline_before()
+                            && !self.nl_before()
                             && self.at(&Token::LBrace)
                             && !self.is_trailing_closure()
                         {
@@ -3223,7 +2799,7 @@ impl<'src> Parser<'src> {
                     // `is_trailing_closure`):
                     //   match items |> list.head { Some(x) -> … }
                     let Some(right) =
-                        self.parse_infix_rhs(saved, min_bp, prec::PIPE.0, prec::PIPE.1, true)?
+                        self.parse_infix_rhs(min_bp, prec::PIPE.0, prec::PIPE.1, true)?
                     else {
                         break;
                     };
@@ -3235,8 +2811,7 @@ impl<'src> Parser<'src> {
                 // Range — binds tighter than pipe so `1..10 |> f()` works
                 Token::DotDot => {
                     let (l_bp, r_bp) = prec::RANGE;
-                    let Some(right) = self.parse_infix_rhs(saved, min_bp, l_bp, r_bp, false)?
-                    else {
+                    let Some(right) = self.parse_infix_rhs(min_bp, l_bp, r_bp, false)? else {
                         break;
                     };
                     let span = left.span;
@@ -3247,21 +2822,16 @@ impl<'src> Parser<'src> {
                 // Type ascription: expr as Type
                 Token::As => {
                     if prec::AS < min_bp {
-                        self.restore(saved);
                         break;
                     }
                     self.advance();
-                    self.skip_nl();
                     let type_expr = self.parse_type_expr()?;
                     let span = left.span;
                     left = self.mk_expr(ExprKind::Ascription(Box::new(left), type_expr), span);
                     continue;
                 }
 
-                _ => {
-                    self.restore(saved);
-                    break;
-                }
+                _ => break,
             }
         }
 
@@ -3269,14 +2839,13 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_unary(&mut self) -> Result<Expr> {
-        self.skip_nl();
         match self.peek() {
             Token::Minus => {
                 let span = self.span();
                 self.advance();
                 // The smallest Int: its magnitude is no Int, so the minus
                 // sign and the digits are one literal.
-                if matches!(self.peek(), Token::Int(i64::MIN)) {
+                if !self.nl_before() && matches!(self.peek(), Token::Int(i64::MIN)) {
                     self.advance();
                     return Ok(self.mk_expr(ExprKind::Int(i64::MIN), span));
                 }
@@ -3294,7 +2863,6 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_atom(&mut self) -> Result<Expr> {
-        self.skip_nl();
         let span = self.span();
 
         match self.peek().clone() {
@@ -3323,11 +2891,11 @@ impl<'src> Parser<'src> {
                 let name = *name;
                 self.advance();
                 // Could be: Constructor, Constructor(args), or RecordCreate { fields }
-                if !self.has_newline_before() && self.at(&Token::LParen) {
+                if !self.nl_before() && self.at(&Token::LParen) {
                     let callee = self.mk_expr(ExprKind::Ident(name), span);
                     let args = self.parse_call_args()?;
                     Ok(self.mk_expr(ExprKind::Call(Box::new(callee), args), span))
-                } else if !self.has_newline_before()
+                } else if !self.nl_before()
                     && self.at(&Token::LBrace)
                     && (!self.lbrace_may_be_header_block()
                         || self.scrutinee_lbrace_is_record_literal())
@@ -3354,7 +2922,6 @@ impl<'src> Parser<'src> {
             }
             Token::LParen => {
                 self.advance();
-                self.skip_nl();
                 // Unit: ()
                 if self.at(&Token::RParen) {
                     self.advance();
@@ -3371,7 +2938,6 @@ impl<'src> Parser<'src> {
                     ));
                 }
                 let first = self.parse_expr()?;
-                self.skip_nl();
                 if self.at(&Token::Comma) {
                     // Tuple: (a, b, c)
                     self.advance();
@@ -3447,7 +3013,7 @@ impl<'src> Parser<'src> {
             Token::Return => {
                 self.advance();
                 // Return may or may not have a value
-                if self.has_newline_before() || self.at(&Token::RBrace) || self.at(&Token::Eof) {
+                if self.nl_before() || self.at(&Token::RBrace) || self.at(&Token::Eof) {
                     Ok(self.mk_expr(ExprKind::Return(None), span))
                 } else {
                     let val = self.parse_expr()?;
@@ -3606,18 +3172,8 @@ impl<'src> Parser<'src> {
             // Unclosed braces: leave the report to the closure parser.
             return true;
         }
-        let mut next = close + 1;
-        let mut crossed_newline = false;
-        while matches!(
-            self.tokens.get(next),
-            Some(Tok {
-                kind: Token::Newline,
-                ..
-            })
-        ) {
-            crossed_newline = true;
-            next += 1;
-        }
+        let next = close + 1;
+        let crossed_newline = self.starts_line.get(next).copied().unwrap_or(false);
         match self.tokens.get(next).map(|t| &t.kind) {
             // A further block: the match body, or another closure.
             Some(Token::LBrace) => true,
@@ -3665,10 +3221,6 @@ impl<'src> Parser<'src> {
         }
         let inside = self.delim_depth_at(self.pos) + 1;
         let mut i = self.pos + 1; // skip `{`
-        // Skip leading newlines to find the first real token
-        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
-            i += 1;
-        }
         // If the first real token is a literal, this is a match body
         // (patterns like `0 ->`, `true ->`), not a trailing closure.
         // Note: `_` is NOT excluded here because it is a valid closure
@@ -3688,8 +3240,7 @@ impl<'src> Parser<'src> {
             }
             match &self.tokens[i].kind {
                 Token::Arrow => return true,
-                Token::Newline
-                | Token::Ident(_)
+                Token::Ident(_)
                 | Token::Comma
                 | Token::Bar
                 | Token::Colon
@@ -3723,16 +3274,10 @@ impl<'src> Parser<'src> {
             return false;
         }
         let mut i = self.pos + 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
-            i += 1;
-        }
         if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_))) {
             return false;
         }
         i += 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
-            i += 1;
-        }
         matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Colon))
     }
 
@@ -3763,7 +3308,6 @@ impl<'src> Parser<'src> {
         self.expect(&Token::LBrace)?;
         let params = self.parse_closure_params(span)?;
         self.expect(&Token::Arrow)?;
-        self.skip_nl();
 
         // Parse body statements
         let stmts = self.parse_stmt_list(&Token::RBrace)?;
@@ -3828,7 +3372,6 @@ impl<'src> Parser<'src> {
     fn parse_match_expr(&mut self) -> Result<Expr> {
         let span = self.span();
         self.expect(&Token::Match)?;
-        self.skip_nl();
 
         // Guardless match: `match { cond -> body ... }`
         let guardless = self.at(&Token::LBrace);
@@ -3843,14 +3386,13 @@ impl<'src> Parser<'src> {
         };
 
         self.expect(&Token::LBrace)?;
-        self.skip_nl();
 
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
             arms.push(self.parse_match_arm(guardless)?);
             // Arms are separated by line breaks, as statements are. A
             // comma behind an arm is what other languages write there.
-            if self.at(&Token::Comma) {
+            if self.at_on_line(&Token::Comma) {
                 let comma = self.span();
                 return Err(Diagnostic::error(
                     Code::UnsupportedSyntax,
@@ -3859,10 +3401,9 @@ impl<'src> Parser<'src> {
                 )
                 .with_fix("remove the comma", vec![(comma, String::new())]));
             }
-            if !self.at_newline() && !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
+            if !self.nl_before() && !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
                 return Err(self.same_line_err("match arm"));
             }
-            self.skip_nl();
         }
         self.expect(&Token::RBrace)?;
 
@@ -3876,8 +3417,6 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_match_arm(&mut self, guardless: bool) -> Result<MatchArm> {
-        self.skip_nl();
-
         if guardless {
             // Guardless match: each arm's LHS is a boolean expression or `_`
             let arm_start = self.span();
@@ -3886,7 +3425,6 @@ impl<'src> Parser<'src> {
             if is_wildcard {
                 self.advance();
                 self.expect(&Token::Arrow)?;
-                self.skip_nl();
                 let body = self.parse_expr()?;
                 return Ok(MatchArm {
                     pattern: Pattern::new(PatternKind::Wildcard, arm_start),
@@ -3896,7 +3434,6 @@ impl<'src> Parser<'src> {
             }
             let condition = self.parse_expr()?;
             self.expect(&Token::Arrow)?;
-            self.skip_nl();
             let body = self.parse_expr()?;
             return Ok(MatchArm {
                 pattern: Pattern::new(PatternKind::Wildcard, condition.span),
@@ -3908,17 +3445,14 @@ impl<'src> Parser<'src> {
         let pattern = self.parse_pattern()?;
 
         // Optional guard: `when condition`
-        self.skip_nl();
         let guard = if self.at(&Token::When) {
             self.advance();
-            self.skip_nl();
             Some(Box::new(self.parse_expr()?))
         } else {
             None
         };
 
         self.expect(&Token::Arrow)?;
-        self.skip_nl();
         let body = self.parse_expr()?;
 
         Ok(MatchArm {
@@ -3935,12 +3469,10 @@ impl<'src> Parser<'src> {
         self.expect(&Token::Loop)?;
 
         // Check for recur: `loop(args)` — LParen immediately (no newline)
-        if !self.has_newline_before() && self.at(&Token::LParen) {
+        if !self.nl_before() && self.at(&Token::LParen) {
             let args = self.parse_call_args()?;
             return Ok(self.mk_expr(ExprKind::Recur(args), span));
         }
-
-        self.skip_nl();
 
         // Zero-binding variant: `loop { body }`
         if self.at(&Token::LBrace) {
@@ -3959,7 +3491,6 @@ impl<'src> Parser<'src> {
         let bindings = self.comma_list("loop binding list", span, end, |p| {
             let (name, name_span) = p.expect_ident()?;
             p.expect(&Token::Eq)?;
-            p.skip_nl();
             // An initialiser is a header expression (see `BlockHeader`):
             // in `loop i = n, acc = Nil { ... }` the `{` opens the loop
             // body, it does not make `Nil { ... }` a record literal.
@@ -3991,21 +3522,15 @@ impl<'src> Parser<'src> {
             return false;
         }
         let mut i = self.pos + 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
-            i += 1;
-        }
         // Spread head is unambiguous.
         if matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::DotDotDot)) {
             return true;
         }
-        // `Ident COLON` (with possible newlines between) — anon record.
+        // `Ident COLON`: an anonymous record.
         if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_))) {
             return false;
         }
         i += 1;
-        while i < self.tokens.len() && matches!(self.tokens[i].kind, Token::Newline) {
-            i += 1;
-        }
         matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Colon))
     }
 
@@ -4115,10 +3640,10 @@ impl<'src> Parser<'src> {
         let first = self.parse_primary_pattern()?;
         // Check for or-pattern: pat1 | pat2 | ...
         // An alternative may start the next line with its `|`.
-        if self.at_bar_skip_nl() {
+        if self.at(&Token::Bar) {
             let or_span = first.span;
             let mut alts = vec![first];
-            while self.at_bar_skip_nl() {
+            while self.at(&Token::Bar) {
                 self.advance();
                 alts.push(self.parse_primary_pattern()?);
             }
@@ -4134,16 +3659,18 @@ impl<'src> Parser<'src> {
     /// (`-N..`) head paths in `parse_primary_pattern` so the four
     /// `..[-]N` exits stay in lock-step.
     fn parse_range_tail_int(&mut self, start: i64) -> Result<PatternKind> {
+        // The bound stands on the line of the `..`, and its digits on
+        // the line of its `-`.
         match self.peek().clone() {
-            Token::Int(m) => {
+            Token::Int(m) if !self.nl_before() => {
                 self.int_in_range(m)?;
                 self.advance();
                 Ok(PatternKind::Range(start, m))
             }
-            Token::Minus => {
+            Token::Minus if !self.nl_before() => {
                 self.advance();
                 match self.peek().clone() {
-                    Token::Int(m) => {
+                    Token::Int(m) if !self.nl_before() => {
                         self.advance();
                         Ok(PatternKind::Range(start, m.wrapping_neg()))
                     }
@@ -4168,14 +3695,14 @@ impl<'src> Parser<'src> {
     /// start bound.
     fn parse_range_tail_float(&mut self, start: f64) -> Result<PatternKind> {
         match self.peek().clone() {
-            Token::Float(m) => {
+            Token::Float(m) if !self.nl_before() => {
                 self.advance();
                 Ok(PatternKind::FloatRange(start, m))
             }
-            Token::Minus => {
+            Token::Minus if !self.nl_before() => {
                 self.advance();
                 match self.peek().clone() {
-                    Token::Float(m) => {
+                    Token::Float(m) if !self.nl_before() => {
                         self.advance();
                         Ok(PatternKind::FloatRange(start, -m))
                     }
@@ -4224,8 +3751,10 @@ impl<'src> Parser<'src> {
             name,
             span: name_span,
         } = head;
+        // The arguments or fields stand on the line of the name, as a
+        // call's do.
         // Constructor pattern: Some(x), Ok(value), Rect(w, h)
-        if self.at(&Token::LParen) {
+        if self.at_on_line(&Token::LParen) {
             let open = self.advance().span;
             let pats = self.comma_list(
                 "constructor pattern",
@@ -4239,7 +3768,7 @@ impl<'src> Parser<'src> {
                 name_span,
                 args: pats,
             }))
-        } else if self.at(&Token::LBrace) {
+        } else if self.at_on_line(&Token::LBrace) {
             // Record pattern: User { name, age, .. }
             let open = self.advance().span;
             let mut has_rest = false;
@@ -4290,7 +3819,7 @@ impl<'src> Parser<'src> {
     /// A field of a record pattern: `name` or `name: pattern`.
     fn parse_field_pattern(&mut self) -> Result<(Symbol, Span, Option<Pattern>)> {
         let (field_name, field_span) = self.expect_ident()?;
-        let sub = if self.peek_skip_nl() == &Token::Colon {
+        let sub = if self.peek() == &Token::Colon {
             self.advance();
             Some(self.parse_pattern()?)
         } else {
@@ -4307,7 +3836,6 @@ impl<'src> Parser<'src> {
 
     /// `parse_primary_pattern`, with the pattern's span not yet closed.
     fn parse_primary_pattern_open(&mut self) -> Result<Pattern> {
-        self.skip_nl();
         let start = self.span();
         let mk = |kind: PatternKind| Pattern::new(kind, start);
         match self.peek().clone() {
@@ -4318,7 +3846,7 @@ impl<'src> Parser<'src> {
             Token::Ident(name) => {
                 let name_span = self.advance().span;
                 // A lowercase name not followed by `.` binds a variable.
-                if !is_constructor(name) && !self.at(&Token::Dot) {
+                if !is_constructor(name) && !self.at_on_line(&Token::Dot) {
                     return Ok(mk(PatternKind::Ident(name)));
                 }
                 // A constructor or record head, with up to two segments
@@ -4332,7 +3860,7 @@ impl<'src> Parser<'src> {
                     name,
                     span: name_span,
                 }];
-                while self.at(&Token::Dot) {
+                while self.at_on_line(&Token::Dot) {
                     self.advance();
                     let (segment, segment_span) = self.expect_ident()?;
                     if !is_constructor(segment) {
@@ -4373,7 +3901,7 @@ impl<'src> Parser<'src> {
                 self.int_in_range(n)?;
                 self.advance();
                 // Check for range pattern: n..m
-                if self.at(&Token::DotDot) {
+                if self.at_on_line(&Token::DotDot) {
                     self.advance();
                     self.parse_range_tail_int(n).map(mk)
                 } else {
@@ -4382,7 +3910,7 @@ impl<'src> Parser<'src> {
             }
             Token::Float(n) => {
                 self.advance();
-                if self.at(&Token::DotDot) {
+                if self.at_on_line(&Token::DotDot) {
                     self.advance();
                     self.parse_range_tail_float(n).map(mk)
                 } else {
@@ -4399,13 +3927,11 @@ impl<'src> Parser<'src> {
             }
             Token::LParen => {
                 self.advance();
-                self.skip_nl();
                 if self.at(&Token::RParen) {
                     self.advance();
                     return Ok(mk(PatternKind::Tuple(Vec::new())));
                 }
                 let first = self.parse_pattern()?;
-                self.skip_nl();
                 if self.at(&Token::Comma) {
                     self.advance();
                     let mut pats = vec![first];
@@ -4492,24 +4018,25 @@ impl<'src> Parser<'src> {
                 Ok(mk(PatternKind::Map(entries)))
             }
             Token::Minus => {
-                // Negative number pattern
+                // Negative number pattern: the digits stand on the
+                // line of the `-`.
                 self.advance();
                 match self.peek().clone() {
-                    Token::Int(n) => {
+                    Token::Int(n) if !self.nl_before() => {
                         self.advance();
                         // Check for range pattern: -n..m
                         // `wrapping_neg`: the magnitude 2^63 is
                         // `i64::MIN` already (see `Token::Int`).
-                        if self.at(&Token::DotDot) {
+                        if self.at_on_line(&Token::DotDot) {
                             self.advance();
                             self.parse_range_tail_int(n.wrapping_neg()).map(mk)
                         } else {
                             Ok(mk(PatternKind::Int(n.wrapping_neg())))
                         }
                     }
-                    Token::Float(n) => {
+                    Token::Float(n) if !self.nl_before() => {
                         self.advance();
-                        if self.at(&Token::DotDot) {
+                        if self.at_on_line(&Token::DotDot) {
                             self.advance();
                             self.parse_range_tail_float(-n).map(mk)
                         } else {
@@ -4526,7 +4053,7 @@ impl<'src> Parser<'src> {
             Token::Caret => {
                 self.advance();
                 match self.peek().clone() {
-                    Token::Ident(name) => {
+                    Token::Ident(name) if !self.nl_before() => {
                         self.advance();
                         Ok(mk(PatternKind::Pin(name)))
                     }
@@ -4546,25 +4073,6 @@ impl<'src> Parser<'src> {
     }
 
     // ── Utility ──────────────────────────────────────────────────────
-
-    /// Is the next token, past any line breaks, a `|`? Skips the line
-    /// breaks only if so.
-    fn at_bar_skip_nl(&mut self) -> bool {
-        let mut n = 0;
-        while matches!(self.peek_at(n), Some(Token::Newline)) {
-            n += 1;
-        }
-        let bar = matches!(self.peek_at(n), Some(Token::Bar));
-        if bar {
-            self.pos += n;
-        }
-        bar
-    }
-
-    fn peek_skip_nl(&mut self) -> &Token {
-        self.skip_nl();
-        self.peek()
-    }
 }
 
 fn is_constructor(name: Symbol) -> bool {

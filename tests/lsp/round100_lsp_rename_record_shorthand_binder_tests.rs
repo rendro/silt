@@ -8,11 +8,11 @@
 //! binder untouched: applying it produced `let XXX { x, y } = p`, which no
 //! longer compiles.
 //!
-//! Fix: resolve the precise field-name offset within the pattern
-//! (mirroring `ast_walk::check_shorthand_field_binder`) so the edit
-//! targets the binder token. This test drives the live LSP server over
-//! stdio, applies the returned edits, and asserts the constructor survives
-//! and the binder + its use are renamed.
+//! The edit targets the field token and writes the field out, `x:
+//! renamed_x`: the field keeps its name, the binder gets the new one.
+//! This test drives the live LSP server over stdio, applies the returned
+//! edits, and asserts that the constructor survives, that the binder and
+//! its use are renamed, and that the result checks.
 //!
 //! Uses the shared LSP client in `support.rs`.
 
@@ -110,8 +110,9 @@ fn rename_record_shorthand_binder_targets_field_not_constructor() {
     // Applying every edit must keep `Point` intact and rename the binder
     // plus its use — the result must still be valid (compiling) code.
     let applied = apply_edits(text, edits);
+    // The field keeps its name; the binder behind it gets the new one.
     assert!(
-        applied.contains("let Point { renamed_x, y } ="),
+        applied.contains("let Point { x: renamed_x, y } ="),
         "constructor `Point` must survive and the binder be renamed; got:\n{applied}"
     );
     assert!(
@@ -123,4 +124,21 @@ fn rename_record_shorthand_binder_targets_field_not_constructor() {
         "the constructor name must NOT be clobbered; got:\n{applied}"
     );
     client.shutdown();
+
+    // And the result is a program that checks.
+    let dir = std::env::temp_dir().join(format!("silt_r100_shorthand_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("case.silt");
+    std::fs::write(&file, &applied).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("check")
+        .arg(&file)
+        .output()
+        .expect("run silt check");
+    assert!(
+        out.status.success(),
+        "the renamed program does not check:\n{}\n{applied}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

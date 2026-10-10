@@ -1,0 +1,7 @@
+import a
+import b
+import c
+
+fn main() {
+  println(a.fa() + b.fb() + c.fc())
+}

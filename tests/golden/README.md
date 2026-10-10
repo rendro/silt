@@ -137,6 +137,24 @@ relative to the case. A message's line breaks are written `\n`. Stderr
 is the server's stderr, and the exit status is the server's after `exit`
 (0). `-- cmd: lsp` implies `-- requires-feature: lsp`.
 
+`-- lsp: REQUEST` (repeatable) asks the server something about the entry
+file once its diagnostics are in, in the order written. The answer is
+appended to the output: the line `> REQUEST`, then one line per place,
+sorted by file and position (`(nothing)` for an empty answer, `error:
+MESSAGE` for an error response). Positions are `LINE:COLUMN` as above;
+a range is `line:col-line:col`, its end exclusive.
+
+| Request | Asks | A line of the answer |
+|---|---|---|
+| `references L:C` | `textDocument/references`, with the declaration | `geo.silt:1:8-1:10` |
+| `definition L:C` | `textDocument/definition` | `geo.silt:1:8-1:10` |
+| `highlight L:C` | `textDocument/documentHighlight` | `19:7-19:9` |
+| `prepare-rename L:C` | `textDocument/prepareRename` | `20:13-20:19` |
+| `rename L:C NAME` | `textDocument/rename` | `geo.silt:1:8-1:10 => NAME` |
+| `symbols QUERY` | `workspace/symbol` (every symbol without QUERY) | `geo.silt:1:8-1:10 function mk`, a variant ends in ` in Shape` |
+| `hover L:C` | `textDocument/hover` | the text, as it is |
+| `format` | `textDocument/formatting`, and gives the server the result as the file's new text; the requests behind it are about that text | the new text (`(nothing)` when nothing changes) |
+
 ## Verdicts
 
 A program's verdict is the set of static diagnostics a front door reports

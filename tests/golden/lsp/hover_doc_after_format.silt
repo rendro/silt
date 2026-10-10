@@ -1,0 +1,22 @@
+-- cmd: lsp
+-- lsp: hover 21:21
+-- lsp: format
+-- lsp: hover 27:11
+-- lsp: hover 27:15
+-- lsp: hover 15:4
+-- The comments directly above a declaration are its documentation, and
+-- stay that after `silt fmt`: the formatter keeps them where they are,
+-- and the parser reads them from the comments in front of the
+-- declaration's first token.
+
+-- Adds one to `x`.
+--
+--     inc(1) == 2
+fn  inc( x ) {x+1}
+
+{- Doubles `x`.
+   Twice as much.
+-}
+pub fn double( x ) { x*2 }
+fn main() { println(inc(double(1)))
+  println(inc(1)) }

@@ -1,0 +1,5 @@
+import geo.{ mk }
+
+pub fn four(w) {
+  mk(w) + mk(w)
+}

@@ -50,8 +50,8 @@ fn lexer_keywords_const_matches_lexer_behaviour() {
 fn lsp_rename_rejects_every_keyword() {
     for kw in lexer::KEYWORDS.iter().chain(lexer::KEYWORD_LITERALS) {
         assert!(
-            !silt::lsp::is_user_renameable(kw),
-            "is_user_renameable accepts the reserved word `{kw}`"
+            !silt::lsp::is_valid_silt_ident(kw),
+            "a rename accepts the reserved word `{kw}` as a new name"
         );
     }
 }

@@ -35,6 +35,9 @@ pub struct LspSession {
     pub code: Option<i32>,
     /// Everything the server wrote to stderr.
     pub stderr: String,
+    /// What the server answered to each request of the case, as the
+    /// lines `render` appends.
+    pub answers: String,
     /// Why the session failed, when it did: no publish for the entry file
     /// before the deadline, a protocol error, or a server that did not
     /// exit.
@@ -68,6 +71,7 @@ impl LspSession {
                 ));
             }
         }
+        out.push_str(&self.answers);
         out
     }
 }
@@ -177,6 +181,8 @@ struct Client {
     deadline: Instant,
     /// The latest `publishDiagnostics` params for each URI.
     published: BTreeMap<String, Value>,
+    /// The response `read_until` stopped at last.
+    last: Value,
 }
 
 impl Client {
@@ -217,6 +223,7 @@ impl Client {
                     .insert(uri.to_string(), msg["params"].clone());
             }
             if stop(&msg) {
+                self.last = msg;
                 return Ok(());
             }
         }
@@ -231,7 +238,7 @@ impl Client {
 /// workspace root, open `entry` (relative to `dir`), wait for its
 /// diagnostics, and shut the server down. Everything happens before
 /// `timeout` runs out.
-pub fn session(dir: &Path, entry: &str, timeout: Duration) -> LspSession {
+pub fn session(dir: &Path, entry: &str, timeout: Duration, requests: &[String]) -> LspSession {
     // The case directory as an editor names it, and as the server names
     // the files it publishes for: canonical (on Windows the long form of
     // a short 8.3 name such as `RUNNER~1`), without the `\\?\` prefix.
@@ -261,6 +268,7 @@ pub fn session(dir: &Path, entry: &str, timeout: Duration) -> LspSession {
         rx,
         deadline: Instant::now() + timeout,
         published: BTreeMap::new(),
+        last: Value::Null,
     };
 
     let entry_path = root.join(entry);
@@ -269,7 +277,25 @@ pub fn session(dir: &Path, entry: &str, timeout: Duration) -> LspSession {
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
     let unsaved = unsaved_buffers(&root);
-    let result = drive(&mut client, &root, &entry_uri, text, &unsaved);
+    let roots = vec![
+        root.to_string_lossy().replace('\\', "/"),
+        dir.to_string_lossy().replace('\\', "/"),
+    ];
+    let asked = Asked {
+        requests,
+        root: &root,
+        roots: &roots,
+    };
+    let mut answers = String::new();
+    let result = drive(
+        &mut client,
+        &root,
+        &entry_uri,
+        text,
+        &unsaved,
+        &asked,
+        &mut answers,
+    );
 
     // Close stdin so a server that ignored `exit` sees EOF, then give it
     // a moment before killing it.
@@ -297,10 +323,6 @@ pub fn session(dir: &Path, entry: &str, timeout: Duration) -> LspSession {
     };
     let stderr = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
 
-    let roots = vec![
-        root.to_string_lossy().replace('\\', "/"),
-        dir.to_string_lossy().replace('\\', "/"),
-    ];
     let mut files = BTreeMap::new();
     if !client.published.contains_key(&entry_uri) {
         error.get_or_insert_with(|| format!("no diagnostics were published for {entry}"));
@@ -342,6 +364,7 @@ pub fn session(dir: &Path, entry: &str, timeout: Duration) -> LspSession {
     }
     LspSession {
         files,
+        answers,
         code,
         stderr,
         error,
@@ -381,6 +404,8 @@ fn drive(
     entry_uri: &str,
     text: String,
     unsaved: &[(String, String)],
+    asked: &Asked,
+    answers: &mut String,
 ) -> Result<(), String> {
     let root_uri = file_uri(root);
     client.request(
@@ -427,9 +452,282 @@ fn drive(
     // along with the opened one.
     client.request(3, "workspace/symbol", json!({"query": ""}))?;
     client.response(3, "the second workspace/symbol response")?;
+    // The entry file's text as the server has it: `format` changes it.
+    let mut text = text;
+    for (k, request) in asked.requests.iter().enumerate() {
+        let id = 10 + k as u64;
+        answers.push_str(&format!("> {request}\n"));
+        if request == "format" {
+            client.request(
+                id,
+                "textDocument/formatting",
+                json!({"textDocument": {"uri": entry_uri},
+                       "options": {"tabSize": 2, "insertSpaces": true}}),
+            )?;
+            client.response(id, "the answer to `format`")?;
+            // The server answers with one edit, the whole new text, or
+            // with none for a text that is formatted or cannot be.
+            let edits = client.last["result"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let [edit] = edits.as_slice() else {
+                answers.push_str("(nothing)\n");
+                continue;
+            };
+            text = edit["newText"].as_str().unwrap_or_default().to_string();
+            client.published.remove(entry_uri);
+            client.notify(
+                "textDocument/didChange",
+                json!({"textDocument": {"uri": entry_uri, "version": 2 + k},
+                       "contentChanges": [{"text": text}]}),
+            )?;
+            client.read_until("diagnostics for the formatted file", |m| {
+                m["method"] == "textDocument/publishDiagnostics" && m["params"]["uri"] == entry_uri
+            })?;
+            answers.extend(text.lines().map(|line| format!("{line}\n")));
+            continue;
+        }
+        let (method, params) = asked.message(request, entry_uri, &text)?;
+        client.request(id, method, params)?;
+        client.response(id, &format!("the answer to `{request}`"))?;
+        answers.push_str(&asked.render(request, &client.last, &text));
+    }
     client.request(4, "shutdown", Value::Null)?;
     client.response(4, "the shutdown response")?;
     client.notify("exit", Value::Null)
+}
+
+/// The requests of a case (`-- lsp: <request>`), and what is needed to
+/// write them and to print their answers.
+struct Asked<'a> {
+    requests: &'a [String],
+    root: &'a Path,
+    roots: &'a [String],
+}
+
+/// The 0-based LSP position (UTF-16 code units) of the 1-based line and
+/// character column `at` (`L:C`) in `text`.
+fn lsp_position(text: &str, at: &str) -> Result<Value, String> {
+    let bad = || format!("bad position {at:?}: write LINE:COLUMN");
+    let (line, col) = at.split_once(':').ok_or_else(bad)?;
+    let line: usize = line.parse().map_err(|_| bad())?;
+    let col: usize = col.parse().map_err(|_| bad())?;
+    if line == 0 || col == 0 {
+        return Err(bad());
+    }
+    let line_text = text.split('\n').nth(line - 1).unwrap_or("");
+    let character: usize = line_text.chars().take(col - 1).map(char::len_utf16).sum();
+    Ok(json!({"line": line - 1, "character": character}))
+}
+
+impl Asked<'_> {
+    /// The method and the parameters of `request`, about the entry file
+    /// (`text`, at `entry_uri`).
+    fn message(
+        &self,
+        request: &str,
+        entry_uri: &str,
+        text: &str,
+    ) -> Result<(&'static str, Value), String> {
+        let mut words = request.split_whitespace();
+        let what = words.next().unwrap_or("");
+        let doc = json!({"uri": entry_uri});
+        let mut at = || lsp_position(text, words.next().unwrap_or(""));
+        Ok(match what {
+            "references" => (
+                "textDocument/references",
+                json!({"textDocument": doc, "position": at()?,
+                       "context": {"includeDeclaration": true}}),
+            ),
+            "definition" => (
+                "textDocument/definition",
+                json!({"textDocument": doc, "position": at()?}),
+            ),
+            "highlight" => (
+                "textDocument/documentHighlight",
+                json!({"textDocument": doc, "position": at()?}),
+            ),
+            "prepare-rename" => (
+                "textDocument/prepareRename",
+                json!({"textDocument": doc, "position": at()?}),
+            ),
+            "hover" => (
+                "textDocument/hover",
+                json!({"textDocument": doc, "position": at()?}),
+            ),
+            "rename" => {
+                let position = at()?;
+                let name = words
+                    .next()
+                    .ok_or("`rename LINE:COLUMN NAME` needs the name")?;
+                (
+                    "textDocument/rename",
+                    json!({"textDocument": doc, "position": position, "newName": name}),
+                )
+            }
+            "symbols" => (
+                "workspace/symbol",
+                json!({"query": words.next().unwrap_or("")}),
+            ),
+            other => return Err(format!("unknown `-- lsp:` request {other:?}")),
+        })
+    }
+
+    /// `uri` as the case names the file, and the file's text.
+    fn file(&self, uri: &str) -> (String, String) {
+        let rel = uri_path(uri)
+            .and_then(|p| relative_to(&p, self.roots))
+            .unwrap_or_else(|| uri.to_string());
+        let text = std::fs::read(self.root.join(&rel))
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        (rel, text)
+    }
+
+    /// `range` of `text` as `line:col-line:col`, as the CLI counts.
+    fn range(text: &str, range: &Value) -> String {
+        let end_of = |key: &str| {
+            let at = &range[key];
+            cli_position(
+                text,
+                at["line"].as_u64().unwrap_or(0),
+                at["character"].as_u64().unwrap_or(0),
+            )
+        };
+        let ((l1, c1), (l2, c2)) = (end_of("start"), end_of("end"));
+        format!("{l1}:{c1}-{l2}:{c2}")
+    }
+
+    /// `file:line:col-line:col` of a location.
+    fn location(&self, uri: &str, range: &Value) -> String {
+        let (rel, text) = self.file(uri);
+        format!("{rel}:{}", Self::range(&text, range))
+    }
+
+    /// The answer `response` to `request` as lines (`entry_text`: the
+    /// entry file's text as the server has it): one per location,
+    /// edit or symbol, sorted; `(nothing)` for an empty or null result;
+    /// `error: ...` for an error.
+    fn render(&self, request: &str, response: &Value, entry_text: &str) -> String {
+        if let Some(message) = response["error"]["message"].as_str() {
+            return format!("error: {message}\n");
+        }
+        let result = &response["result"];
+        let what = request.split_whitespace().next().unwrap_or("");
+        let mut lines: Vec<String> = match what {
+            // A definition is one location or a list of them.
+            "references" | "definition" => result
+                .as_array()
+                .map(|a| a.as_slice())
+                .unwrap_or(std::slice::from_ref(result))
+                .iter()
+                .filter(|loc| loc.is_object())
+                .map(|loc| self.location(loc["uri"].as_str().unwrap_or(""), &loc["range"]))
+                .collect(),
+            "highlight" => result
+                .as_array()
+                .map(|a| a.as_slice())
+                .unwrap_or_default()
+                .iter()
+                .map(|h| Self::range(entry_text, &h["range"]))
+                .collect(),
+            "prepare-rename" if result.is_object() => {
+                vec![Self::range(entry_text, result)]
+            }
+            "rename" => result["changes"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .flat_map(|(uri, edits)| {
+                    edits
+                        .as_array()
+                        .map(|a| a.as_slice())
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|edit| {
+                            format!(
+                                "{} => {}",
+                                self.location(uri, &edit["range"]),
+                                edit["newText"].as_str().unwrap_or("")
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+            "symbols" => result
+                .as_array()
+                .map(|a| a.as_slice())
+                .unwrap_or_default()
+                .iter()
+                .map(|symbol| {
+                    let location = &symbol["location"];
+                    let container = match symbol["containerName"].as_str() {
+                        Some(container) => format!(" in {container}"),
+                        None => String::new(),
+                    };
+                    format!(
+                        "{} {} {}{container}",
+                        self.location(location["uri"].as_str().unwrap_or(""), &location["range"]),
+                        symbol_kind(&symbol["kind"]),
+                        symbol["name"].as_str().unwrap_or(""),
+                    )
+                })
+                .collect(),
+            // The text, line by line as it is.
+            "hover" => {
+                return match result["contents"]["value"].as_str() {
+                    Some(text) => text.lines().map(|line| format!("{line}\n")).collect(),
+                    None => "(nothing)\n".to_string(),
+                };
+            }
+            _ => Vec::new(),
+        };
+        if lines.is_empty() {
+            return "(nothing)\n".to_string();
+        }
+        lines.sort_by_key(|line| sort_key(line));
+        lines.iter().map(|line| format!("{line}\n")).collect()
+    }
+}
+
+/// `file:line:col...` sorted by file, then by position as numbers.
+fn sort_key(line: &str) -> (String, u64, u64) {
+    let mut parts = line.splitn(3, ':');
+    let first = parts.next().unwrap_or("");
+    // A highlight has no file: `line:col-...`.
+    let (file, line_no) = match first.parse::<u64>() {
+        Ok(n) => (String::new(), Some(n)),
+        Err(_) => (first.to_string(), None),
+    };
+    let number = |text: Option<&str>| {
+        text.map(|t| {
+            t.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
+        .and_then(|digits| digits.parse::<u64>().ok())
+        .unwrap_or(0)
+    };
+    match line_no {
+        Some(n) => (file, n, number(parts.next())),
+        None => (file, number(parts.next()), number(parts.next())),
+    }
+}
+
+fn symbol_kind(kind: &Value) -> &'static str {
+    match kind.as_u64() {
+        Some(5) => "class",
+        Some(10) => "enum",
+        Some(11) => "interface",
+        Some(12) => "function",
+        Some(13) => "variable",
+        Some(14) => "constant",
+        Some(22) => "enum-member",
+        Some(23) => "struct",
+        Some(26) => "type-parameter",
+        _ => "symbol",
+    }
 }
 
 /// Decode `Content-Length` frames from the server's stdout and forward

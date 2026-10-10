@@ -1,0 +1,6 @@
+import a
+import geo.{ mk as make }
+
+pub fn fd() -> Int {
+  a.fa() + make(1)
+}

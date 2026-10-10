@@ -48,6 +48,7 @@ mod inlay_hints;
 mod local_bindings;
 mod locals;
 mod modules;
+mod names;
 mod preload;
 mod project;
 mod references;
@@ -69,10 +70,10 @@ use state::Document;
 /// Windows drive-letter fix-up.
 pub use preload::path_to_file_uri;
 
-/// `is_user_renameable` is exposed via this re-export so integration
-/// tests (see `tests/meta/lexer_keyword_parity_tests.rs`) can call into the
-/// rename guard without `pub`-ing the whole `rename` submodule.
-pub use rename::is_user_renameable;
+/// Whether a rename may give a name: exposed so that the test of the
+/// lexer's keyword list (`tests/meta/lexer_keyword_parity_tests.rs`) can
+/// ask the rename guard about each keyword.
+pub use rename::is_valid_silt_ident;
 
 // ── Server ─────────────────────────────────────────────────────────
 
@@ -109,6 +110,9 @@ struct Server {
     /// The diagnostics last published, per URI. The pull-based
     /// `textDocument/diagnostic` handler answers from it.
     published: HashMap<Uri, Vec<Diagnostic>>,
+    /// What references and rename learned about the workspace, kept
+    /// until the next analysis (a document or a file changed).
+    def_uses: Option<workspace::DefUses>,
 }
 
 impl Server {
@@ -126,6 +130,7 @@ impl Server {
             disk_events: Vec::new(),
             root: None,
             published: HashMap::new(),
+            def_uses: None,
         }
     }
 
@@ -517,7 +522,34 @@ pub fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
             decoded
         }
     };
-    Some(std::path::PathBuf::from(decoded))
+    Some(without_dot_segments(std::path::Path::new(&decoded)))
+}
+
+/// `path` without its `.` and `..` segments, each `..` taking the
+/// segment in front of it: `/x/../a.silt` and `/a.silt` name one file,
+/// and a document is found by its path.
+fn without_dot_segments(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Nothing is above the root; a relative path keeps a
+                // leading `..`.
+                let last = out.components().next_back();
+                match last {
+                    Some(Component::Normal(_)) => {
+                        out.pop();
+                    }
+                    Some(Component::RootDir | Component::Prefix(_)) => {}
+                    Some(Component::ParentDir | Component::CurDir) | None => out.push(".."),
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

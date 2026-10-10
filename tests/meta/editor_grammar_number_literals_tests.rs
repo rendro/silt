@@ -113,7 +113,7 @@ fn lex_single_number(src: &str) -> Option<Kind> {
         .tokens
         .into_iter()
         .map(|tok| tok.kind)
-        .filter(|tok| !matches!(tok, Token::Newline | Token::Eof))
+        .filter(|tok| !matches!(tok, Token::Eof))
         .collect();
     match significant.as_slice() {
         [Token::Int(_)] => Some(Kind::Int),

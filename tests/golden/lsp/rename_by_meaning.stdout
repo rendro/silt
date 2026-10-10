@@ -1,0 +1,59 @@
+> rename 33:7 Sizable
+rename_by_meaning.silt:33:7-33:12 => Sizable
+rename_by_meaning.silt:40:7-40:12 => Sizable
+rename_by_meaning.silt:51:32-51:37 => Sizable
+> rename 52:5 resize
+(nothing)
+> definition 52:5
+rename_by_meaning.silt:34:6-34:11
+> definition 52:18
+rename_by_meaning.silt:37:6-37:10
+> definition 100:88
+rename_by_meaning.silt:41:6-41:10
+> rename 34:12 me
+error: `self` is the receiver of a method and cannot be renamed: a method's first parameter is `self`
+> rename 56:13 width
+rename_by_meaning.silt:56:13-56:14 => w: width
+rename_by_meaning.silt:57:3-57:4 => width
+rename_by_meaning.silt:57:16-57:17 => width
+> rename 57:3 width
+rename_by_meaning.silt:56:13-56:14 => w: width
+rename_by_meaning.silt:57:3-57:4 => width
+rename_by_meaning.silt:57:16-57:17 => width
+> rename 62:10 m
+rename_by_meaning.silt:62:10-62:11 => m
+rename_by_meaning.silt:62:21-62:22 => m
+rename_by_meaning.silt:62:27-62:28 => m
+> definition 62:27
+rename_by_meaning.silt:62:10-62:11
+> rename 67:7 n
+error: `m` cannot be renamed to `n`: `n` is already a local name at rename_by_meaning.silt:67 (bound at line 66), and the rename would change what a name means
+> rename 67:7 total
+rename_by_meaning.silt:67:7-67:8 => total
+rename_by_meaning.silt:68:22-68:23 => total
+> rename 68:13 n
+error: `k` cannot be renamed to `n`: `n` is already a local name at rename_by_meaning.silt:68 (bound at line 66), and the rename would change what a name means
+> rename 67:7 println
+error: `m` cannot be renamed to `println`: `println` is one of silt's own names, and the rename would change what a name means
+> rename 67:7 _
+error: `_` is not a valid silt identifier
+> rename 74:9 inner
+rename_by_meaning.silt:74:9-74:10 => inner
+rename_by_meaning.silt:75:5-75:6 => inner
+> references 77:3
+rename_by_meaning.silt:72:11-72:12
+rename_by_meaning.silt:74:13-74:14
+rename_by_meaning.silt:77:3-77:4
+> references 81:8
+rename_by_meaning.silt:81:8-81:9
+rename_by_meaning.silt:82:11-82:12
+rename_by_meaning.silt:83:15-83:16
+rename_by_meaning.silt:84:21-84:22
+> references 80:10
+rename_by_meaning.silt:80:10-80:11
+rename_by_meaning.silt:81:12-81:13
+rename_by_meaning.silt:81:25-81:26
+> rename 94:24 Holder
+rename_by_meaning.silt:89:7-89:16 => Holder
+rename_by_meaning.silt:94:24-94:33 => Holder
+rename_by_meaning.silt:94:50-94:59 => Holder

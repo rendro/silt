@@ -1,0 +1,23 @@
+let base = 10
+
+fn outer(n: Int) -> Int {
+  let m = n + 1
+  let f = { k -> k + m + base }
+  f(n)
+}
+
+fn shadow(a: Int, b: Int) -> Int {
+  let c = a * 2
+  match b {
+    0 -> c
+    d -> c + d + a
+  }
+}
+
+fn helper(v: Int) -> Int {
+  v + 1
+}
+
+fn main() {
+  println(outer(1) + shadow(2, 3) + helper(4))
+}

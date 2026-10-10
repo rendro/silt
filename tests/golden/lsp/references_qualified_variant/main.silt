@@ -1,0 +1,32 @@
+-- cmd: lsp
+-- lsp: references 20:13
+-- lsp: references 20:7
+-- lsp: references 26:15
+-- lsp: rename 26:15 Disc
+-- lsp: prepare-rename 20:13
+-- lsp: prepare-rename 27:3
+-- lsp: rename 27:3 show
+-- lsp: symbols Circle
+-- Two modules declare a variant `Circle`. `m.Shape.Square(w)` names the
+-- variant `Square` of `Shape` of shapes.silt, and its segment `Shape`
+-- names that type; `lib.Circle(3)` names the `Circle` of lib.silt, which
+-- the `Circle` of shapes.silt is not. `println` is silt's own and
+-- cannot be renamed.
+import lib
+import shapes as m
+
+fn area(s: m.Shape) -> Int {
+  match s {
+    m.Shape.Square(w) -> w * w
+    m.Shape.Circle(r) -> 3 * r * r
+  }
+}
+
+fn main() {
+  let c = lib.Circle(3)
+  println(area(m.unit()))
+  match c {
+    lib.Circle(r) -> println(r)
+    lib.Dot -> println(0)
+  }
+}

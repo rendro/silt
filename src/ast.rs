@@ -477,6 +477,9 @@ pub enum TypeExprKind {
         /// The module qualifier of the trait: `<T as m.Iter>::Item`.
         trait_module: Option<Qualifier>,
         trait_name: Symbol,
+        /// The span of the trait name as written; `None` for `Self::Item`,
+        /// which names no trait.
+        trait_name_span: Option<Span>,
         assoc_name: Symbol,
     },
     /// Anonymous structural record type, optionally row-polymorphic:

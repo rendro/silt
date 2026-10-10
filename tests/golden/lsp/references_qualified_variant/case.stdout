@@ -1,0 +1,27 @@
+> references 20:13
+main.silt:20:13-20:19
+shapes.silt:2:3-2:9
+shapes.silt:7:3-7:9
+> references 20:7
+main.silt:18:14-18:19
+main.silt:20:7-20:12
+main.silt:21:7-21:12
+shapes.silt:1:10-1:15
+shapes.silt:6:18-6:23
+> references 26:15
+lib.silt:2:3-2:9
+main.silt:26:15-26:21
+main.silt:29:9-29:15
+> rename 26:15 Disc
+lib.silt:2:3-2:9 => Disc
+main.silt:26:15-26:21 => Disc
+main.silt:29:9-29:15 => Disc
+> prepare-rename 20:13
+20:13-20:19
+> prepare-rename 27:3
+(nothing)
+> rename 27:3 show
+error: `println` is a builtin and cannot be renamed
+> symbols Circle
+lib.silt:2:3-2:9 enum-member Circle in Round
+shapes.silt:3:3-3:9 enum-member Circle in Shape

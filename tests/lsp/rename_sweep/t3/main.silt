@@ -1,0 +1,24 @@
+import geo
+import geo.{ area, Circle }
+import other
+import util
+
+type Area {
+  Area(Int),
+}
+
+fn local(mk: Int) -> Int {
+  let area = mk + 1
+  area
+}
+
+fn main() {
+  let s: geo.Shape = geo.mk(2)
+  let Area(n) = Area(area(s))
+  println(n + area(Circle(1)) + other.mk(3) + util.mk2(1) + local(1))
+  println(other.label(s))
+  let p = other.pt()
+  println(p.x + geo.unit)
+  let q = geo.Point { x: 1, y: 2 }
+  println(q.y)
+}
