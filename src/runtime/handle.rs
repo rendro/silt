@@ -415,8 +415,8 @@ enum TcpIo {
         reading: Mutex<()>,
         writing: Mutex<()>,
         /// Held while the socket is switched to non-blocking for one
-        /// call, where the system has no call that does not wait
-        /// (see `without_waiting`). Nowhere on Unix.
+        /// call, where the system has no call that is certain not to
+        /// wait (see `without_waiting`). Nowhere on Linux.
         switching: Mutex<()>,
     },
     Tls {
@@ -706,27 +706,26 @@ impl TcpStreamHandle {
 // connection (the reader of a request while its 408 is written), and
 // must not find the socket non-blocking.
 //
-// - Unix: `send` and `recv` with `MSG_DONTWAIT`. The socket's mode is
+// - Linux: `send` and `recv` with `MSG_DONTWAIT`. The socket's mode is
 //   never touched.
-// - Elsewhere (Windows) no such call exists. The socket is switched to
+// - Elsewhere no call does that for certain. (Windows has no such
+//   flag. Apple's systems have the flag, and their `send` honours it
+//   only for the socket buffer's lock: with no room in the buffer it
+//   waits all the same, which held a worker in the write of a
+//   response that its client did not take.) The socket is switched to
 //   non-blocking for the one call, under the connection's `switching`
-//   lock ([`without_waiting`]); a call that blocks already is not
-//   affected by the switch, and one that another thread begins inside
-//   the switch and that finds nothing to do (`WouldBlock`) waits for
-//   the lock and tries again ([`switched_meanwhile`]): to its caller
-//   it has only waited.
+//   lock (`without_waiting`); a call that blocks already goes on, and
+//   one of another thread that finds nothing to do while the socket
+//   is switched (`WouldBlock`) waits for the lock and tries again
+//   (`switched_meanwhile`): to its caller it has only waited.
 
 /// Send what the system takes of `bytes` at once.
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn send_now(socket: &std::net::TcpStream, _: &Mutex<()>, bytes: &[u8]) -> std::io::Result<usize> {
     use std::os::unix::io::AsRawFd;
     // A connection that the peer has closed gives an error, not a
-    // signal. (Apple's systems have no such flag: there the socket
-    // has the option, set by the standard library.)
-    #[cfg(not(target_vendor = "apple"))]
+    // signal.
     const FLAGS: libc::c_int = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
-    #[cfg(target_vendor = "apple")]
-    const FLAGS: libc::c_int = libc::MSG_DONTWAIT;
     // SAFETY: the descriptor is the open socket's, and the pointer and
     // length are those of `bytes`, which outlives the call.
     let sent = unsafe {
@@ -741,7 +740,7 @@ fn send_now(socket: &std::net::TcpStream, _: &Mutex<()>, bytes: &[u8]) -> std::i
 }
 
 /// Receive what is there, into `buf`; an error if nothing is.
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn recv_now(socket: &std::net::TcpStream, _: &Mutex<()>, buf: &mut [u8]) -> std::io::Result<usize> {
     use std::os::unix::io::AsRawFd;
     // SAFETY: the descriptor is the open socket's, and the pointer and
@@ -758,7 +757,7 @@ fn recv_now(socket: &std::net::TcpStream, _: &Mutex<()>, buf: &mut [u8]) -> std:
     usize::try_from(received).map_err(|_| std::io::Error::last_os_error())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn send_now(
     socket: &std::net::TcpStream,
     switching: &Mutex<()>,
@@ -768,7 +767,7 @@ fn send_now(
     without_waiting(socket, switching, |mut socket| socket.write(bytes))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn recv_now(
     socket: &std::net::TcpStream,
     switching: &Mutex<()>,
@@ -781,7 +780,7 @@ fn recv_now(
 /// Do one call on `socket` that does not wait, where only a mode of
 /// the socket can say so: the socket is non-blocking for the call,
 /// under `switching`.
-#[cfg(any(not(unix), test))]
+#[cfg(any(not(any(target_os = "linux", target_os = "android")), test))]
 fn without_waiting<T>(
     socket: &std::net::TcpStream,
     switching: &Mutex<()>,
@@ -796,10 +795,11 @@ fn without_waiting<T>(
 
 /// Whether a call that waits found nothing to do because the socket
 /// was non-blocking for another thread's call (`without_waiting`):
-/// it waits for that call's lock and tries again. Never on Unix,
+/// it waits for that call's lock and tries again. Never on Linux,
 /// where no socket of a connection is switched.
 fn switched_meanwhile(error: &std::io::Error) -> bool {
-    cfg!(not(unix)) && error.kind() == std::io::ErrorKind::WouldBlock
+    cfg!(not(any(target_os = "linux", target_os = "android")))
+        && error.kind() == std::io::ErrorKind::WouldBlock
 }
 
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
