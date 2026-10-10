@@ -144,12 +144,16 @@ const VM_GONE: &str = "the VM that ran the program has been dropped";
 /// 4,096 of them about 100 MiB.
 pub(crate) const IO_POOL_THREADS_MAX: usize = 4096;
 
-/// How many operations may still run although nobody waits for them
-/// (their waiter was cancelled, timed out or dropped). One that can
-/// be made to return ([`IoOp::stop_with`]) is here for a moment; one
-/// that cannot (a read of a FIFO or a terminal that never ends) stays.
-/// Beyond the bound new operations fail at once: the stuck ones must
-/// not take a thread each without end.
+/// How many operations that cannot be interrupted may still run
+/// although nobody waits for them (their waiter was cancelled, timed
+/// out or dropped): a read of a FIFO or a terminal that never ends
+/// stays. Beyond the bound new operations fail at once: the stuck
+/// ones must not take a thread each without end.
+///
+/// An operation that was told to stop ([`IoOp::stop_with`]: its
+/// socket was shut down, its accept woken) does not count: it is on
+/// its way out, and a server that ends with a thousand connections
+/// has a thousand of them for a moment.
 pub(crate) const IO_POOL_UNHEARD_MAX: usize = 64;
 
 /// The stack of a thread of the pool. The operations are calls into
@@ -192,6 +196,10 @@ struct OpState {
     unheard: parking_lot::Mutex<Option<Unheard>>,
     /// Set when the waiter has taken the value ([`IoOp::take`]).
     taken: std::sync::atomic::AtomicBool,
+    /// Set, under the pool's lock, when the waiter went while the
+    /// operation ran and told it to stop: it is not one of those that
+    /// cannot be interrupted.
+    stopped: std::sync::atomic::AtomicBool,
 }
 
 type Unheard = Box<dyn FnOnce(&Value) + Send>;
@@ -203,6 +211,7 @@ impl OpState {
             cell: Cell::new(),
             unheard: parking_lot::Mutex::new(None),
             taken: std::sync::atomic::AtomicBool::new(false),
+            stopped: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -258,8 +267,9 @@ struct PoolState {
     threads: usize,
     /// Those of them that run an operation.
     busy: usize,
-    /// The threads that run an operation whose waiter is gone: no
-    /// longer the pool's, and not yet ended.
+    /// The threads that run an operation whose waiter is gone and
+    /// that cannot be told to stop: no longer the pool's, and not yet
+    /// ended.
     unheard: usize,
     /// Whether a thread was ever started.
     started: bool,
@@ -315,10 +325,10 @@ impl PoolShared {
             let finish = job();
             state = self.state.lock();
             let left = std::mem::replace(&mut *op.phase.lock(), Phase::Finishing) == Phase::Left;
-            if left {
-                state.unheard -= 1;
-            } else {
+            if !left {
                 state.busy -= 1;
+            } else if !op.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                state.unheard -= 1;
             }
             drop(state);
             finish();
@@ -645,7 +655,13 @@ impl Drop for IoOp {
                     *phase = Phase::Left;
                     state.threads -= 1;
                     state.busy -= 1;
-                    state.unheard += 1;
+                    match self.stop.is_some() {
+                        true => self
+                            .state
+                            .stopped
+                            .store(true, std::sync::atomic::Ordering::SeqCst),
+                        false => state.unheard += 1,
+                    }
                     (true, false)
                 }
                 // The thread sees that, and calls `unheard`.
@@ -958,6 +974,59 @@ mod tests {
         until("the stuck threads ended", || pool.live_threads() == 0);
         let next = pool.submit(failure, || Value::Int(2));
         until("the next runs", || next.cell.get().is_some());
+    }
+
+    /// Operations that were told to stop when their waiters went do
+    /// not count against the bound for those that cannot be: a server
+    /// that ends with more connections than that bound leaves the
+    /// pool to everybody else. (Here they take their time to stop;
+    /// with a count of them all, the last submit was refused with
+    /// "they cannot be interrupted".)
+    #[test]
+    fn operations_that_were_stopped_do_not_count_as_stuck() {
+        let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
+        let (release, held) = mpsc::channel::<()>();
+        let held = Arc::new(parking_lot::Mutex::new(held));
+        let running = Arc::new(AtomicUsize::new(0));
+        let told = Arc::new(AtomicUsize::new(0));
+        let many = 4 * IO_POOL_UNHEARD_MAX;
+        for _ in 0..many {
+            let (held, started, told) = (held.clone(), running.clone(), told.clone());
+            let before = running.load(Ordering::SeqCst);
+            let op = pool
+                .submit(failure, move || {
+                    started.fetch_add(1, Ordering::SeqCst);
+                    let _ = held.lock().recv();
+                    Value::Unit
+                })
+                .stop_with(move || {
+                    told.fetch_add(1, Ordering::SeqCst);
+                });
+            until("it runs", || running.load(Ordering::SeqCst) > before);
+            drop(op);
+        }
+        assert_eq!(told.load(Ordering::SeqCst), many);
+        // All of them are still on their way out.
+        assert_eq!(pool.live_threads(), many);
+        assert_eq!(pool.threads(), 0);
+        let next = pool.submit(failure, || Value::Int(1));
+        until("the next runs", || next.cell.get().is_some());
+        assert!(matches!(next.cell.get(), Some(Value::Int(1))));
+        // One that cannot be stopped still counts, beside them.
+        let (free, stuck) = mpsc::channel::<()>();
+        let op = pool.submit(failure, move || {
+            let _ = stuck.recv();
+            Value::Unit
+        });
+        until("it runs", || *op.state.phase.lock() == Phase::Running);
+        drop(op);
+        assert_eq!(pool.shared.state.lock().unheard, 1);
+        for _ in 0..many {
+            release.send(()).unwrap();
+        }
+        free.send(()).unwrap();
+        until("the threads ended", || pool.live_threads() == 0);
+        assert_eq!(pool.shared.state.lock().unheard, 0);
     }
 
     /// An operation whose waiter is gone is told to stop, and its
