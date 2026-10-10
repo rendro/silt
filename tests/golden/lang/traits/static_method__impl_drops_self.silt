@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method `total` takes 0 parameters in this impl, but trait `Vals` declares it with 1
+-- stderr-contains: help: trait `Vals` declares `total` with a receiver: write `fn total(self)`
+-- stderr-contains: error[type]: method `add` takes 1 parameter in this impl, but trait `Vals` declares it with 2
+-- stderr-not-contains: function expects
+trait Vals {
+  fn total(self) -> Int
+  fn add(self, other: Int) -> Int
+}
+
+trait Vals for Int {
+  fn total() -> Int {
+    3
+  }
+  fn add(self) -> Int {
+    self
+  }
+}
+
+fn main() {
+  println(7.total())
+}

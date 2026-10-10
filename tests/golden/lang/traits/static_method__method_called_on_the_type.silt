@@ -1,0 +1,27 @@
+-- A method with `self` called on its type takes the receiver as its
+-- first argument; a method without `self` is called on the type or on
+-- a `type` parameter.
+trait Vals {
+  fn total(self) -> Int
+  fn zero() -> Self
+}
+
+trait Vals for Int {
+  fn total(self) -> Int {
+    self + 1
+  }
+  fn zero() -> Self {
+    0
+  }
+}
+
+fn zero_of(type b) -> b where b: Vals {
+  b.zero()
+}
+
+fn main() {
+  println(Int.total(7))
+  println(7.total())
+  println(Int.zero())
+  println(zero_of(Int))
+}

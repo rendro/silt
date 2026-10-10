@@ -45,6 +45,12 @@ enum CallForm {
     BarePipe,
 }
 
+/// The call to write for a method without `self` where only a type
+/// variable is at hand: on a `type` parameter of that variable.
+pub(super) fn on_type_parameter(var: Symbol, method: Symbol) -> String {
+    format!("`{var}.{method}()`, where `{var}` is a `type {var}` parameter")
+}
+
 /// The arity rule of every call form — `f(a, b)`, `a |> f(b)` and
 /// `a |> f`: a call supplies exactly as many arguments as the callee has
 /// parameters, or one fewer when the callee's signature declares its last
@@ -517,6 +523,31 @@ impl TypeChecker {
         (!visible_declares).then_some(first)
     }
 
+    /// `value.method` where the method, of the type `method_ty`, has no
+    /// `self`: reported, with `on_type` as the call to write instead
+    /// (`` `Int.empty()` ``). A method without `self` is called on a
+    /// type, never on a value: it has no parameter for the receiver.
+    pub(super) fn takes_no_self(
+        &mut self,
+        method_ty: &Type,
+        method_name: Symbol,
+        on_type: &str,
+        span: Span,
+    ) -> bool {
+        let no_self = matches!(method_ty, Type::Fun(params, _) if params.is_empty());
+        if no_self {
+            self.error(
+                Code::InvalidMethodCall,
+                format!(
+                    "method `{method_name}` takes no `self` — \
+                     call it on the type instead: {on_type}"
+                ),
+                span,
+            );
+        }
+        no_self
+    }
+
     /// The type of `receiver.method` for the impl method `entry`: the
     /// method's scheme instantiated (`instantiate`), with the receiver
     /// unified with its `self` parameter, so that what the impl's header
@@ -560,27 +591,12 @@ impl TypeChecker {
         let owed_before = self.wanted.len();
         let scheme = self.method_scheme(entry);
         let instantiated_ty = self.instantiate_method(&scheme, method_name, span);
-        // Reject value-receiver calls on no-self trait methods (`empty`,
-        // `default`, etc.). The method has no slot for the receiver, so
-        // invoking it via `instance.method()` is meaningless. Point the
-        // user at the type-level form `TypeName.method()` and return
-        // `Type::Error` so the downstream Call arm doesn't pile an arity
-        // mismatch on top of the real diagnostic.
-        if let Type::Fun(params, _) = &instantiated_ty
-            && params.is_empty()
-        {
-            let suggestion = self
-                .type_name_for_impl(&self.apply(receiver_ty))
-                .map(|ty| format!("`{ty}.{method_name}()`"))
-                .unwrap_or_else(|| format!("`SomeType.{method_name}()`"));
-            self.error(
-                Code::InvalidMethodCall,
-                format!(
-                    "method `{method_name}` takes no `self` — \
-                     call it on the type instead: {suggestion}"
-                ),
-                span,
-            );
+        // A method without `self` has no place for the receiver.
+        let on_type = self
+            .type_name_for_impl(&self.apply(receiver_ty))
+            .map(|ty| format!("`{ty}.{method_name}()`"))
+            .unwrap_or_else(|| format!("`SomeType.{method_name}()`"));
+        if self.takes_no_self(&instantiated_ty, method_name, &on_type, span) {
             return Type::Error;
         }
         // Unify the receiver with the method's self param so concrete
@@ -1182,6 +1198,9 @@ impl TypeChecker {
                 // (`dispatch_method_entry` has unified it with the
                 // receiver), so the arguments line up with `params[1..]`.
                 let implicit_self = usize::from(is_method_call);
+                // (A method has its `self`: `takes_no_self` refused the
+                // access otherwise.)
+                let written_params = params.len().saturating_sub(implicit_self);
                 // What the callee's use owes for a type variable of a
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
@@ -1259,10 +1278,7 @@ impl TypeChecker {
                             };
                             format!(
                                 "{what} expects {}, got {}",
-                                accepted_arity_text(
-                                    params.len() - implicit_self,
-                                    optional_last_param
-                                ),
+                                accepted_arity_text(written_params, optional_last_param),
                                 args.len()
                             )
                         }
@@ -1271,8 +1287,8 @@ impl TypeChecker {
                         // call forgets the remaining ones.
                         CallForm::BarePipe => format!(
                             "cannot pipe into function taking {} {}; wrap in a call or use partial application",
-                            params.len() - implicit_self,
-                            plural(params.len() - implicit_self, "argument", "arguments")
+                            written_params,
+                            plural(written_params, "argument", "arguments")
                         ),
                     };
                     self.error(Code::ArityMismatch, message, span);
@@ -1984,7 +2000,15 @@ impl TypeChecker {
                             self.last_field_access_was_method = true;
                             self.method_trait = Some(*trait_name);
                             let instantiated = self.instantiate_method(scheme, field, span);
-                            let resolved = self.apply(&instantiated);
+                            let resolved = match self.takes_no_self(
+                                &instantiated,
+                                field,
+                                &on_type_parameter(r.name, field),
+                                span,
+                            ) {
+                                true => Type::Error,
+                                false => self.apply(&instantiated),
+                            };
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         } else if self.unknown_bounds.contains(&r.var) {

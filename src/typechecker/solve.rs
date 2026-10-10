@@ -357,8 +357,11 @@ impl TypeChecker {
             Type::Rigid(r) => match self.bound_methods(*r, field).as_slice() {
                 [(trait_name, scheme)] => {
                     let method_ty = self.instantiate_method(scheme, field, span);
-                    self.deferred_method_traits.insert(span, *trait_name);
-                    self.unify_deferred_method(&result_ty, &method_ty, span);
+                    let on_type = on_type_parameter(r.name, field);
+                    if !self.takes_no_self(&method_ty, field, &on_type, span) {
+                        self.deferred_method_traits.insert(span, *trait_name);
+                        self.unify_deferred_method(&result_ty, &method_ty, span);
+                    }
                 }
                 _ => self.error(
                     Code::UnknownMethod,
@@ -1165,6 +1168,12 @@ impl TypeChecker {
                     .iter()
                     .find(|(n, _)| *n == name)
                     .expect("the trait declares the method");
+                // A method without `self` is not what a value's `.{name}`
+                // calls, and says nothing of the receiver.
+                let on_type = format!("`SomeType.{name}()`");
+                if self.takes_no_self(method_ty, name, &on_type, span) {
+                    return;
+                }
                 // The trait's parameters are what the receiver's impl
                 // will say; the method's own variables are new.
                 let mut mapping: HashMap<TyVar, Type> = HashMap::new();

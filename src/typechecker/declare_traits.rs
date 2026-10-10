@@ -1538,6 +1538,13 @@ impl TypeChecker {
             // Where the two disagree, the body is checked against what
             // the impl wrote, so the disagreement is reported once.
             let body_type = match &expected {
+                // The impl writes the parameters the trait declares, the
+                // receiver among them: one more or one less is not a
+                // method of the trait.
+                Some(Type::Fun(declared, _)) if declared.len() != method.params.len() => {
+                    self.impl_method_arity(ti, method, declared.len());
+                    written
+                }
                 Some(expected) => match self.unify_types(&written, expected) {
                     Ok(()) => expected.clone(),
                     Err(mismatch) => {
@@ -1734,6 +1741,37 @@ impl TypeChecker {
                 );
             }
         }
+    }
+
+    /// Report the impl method `method`, written with a number of
+    /// parameters other than the `declared` ones of its trait.
+    fn impl_method_arity(&mut self, ti: &TraitImpl, method: &FnDecl, declared: usize) {
+        let (name, tr) = (method.name, ti.trait_name);
+        let written = method.params.len();
+        let takes_self = method.params.first().is_some_and(
+            |param| matches!(&param.pattern.kind, PatternKind::Ident(n) if resolve(*n) == "self"),
+        );
+        let mut d = Diagnostic::error(
+            Code::ArityMismatch,
+            method.span,
+            format!(
+                "method `{name}` takes {written} {} in this impl, but trait `{tr}` \
+                 declares it with {declared}",
+                super::inference::plural(written, "parameter", "parameters")
+            ),
+        );
+        if declared == 0 && takes_self {
+            d = d.with_help(format!(
+                "trait `{tr}` declares `{name}` without `self`: it is called on the type \
+                 (`{}.{name}()`), not on a value",
+                resolve(ti.target_type)
+            ));
+        } else if declared == 1 && written == 0 {
+            d = d.with_help(format!(
+                "trait `{tr}` declares `{name}` with a receiver: write `fn {name}(self)`"
+            ));
+        }
+        self.errors.push(d);
     }
 
     /// Whether `var: tr(args)` follows from the bounds `declared`: it is

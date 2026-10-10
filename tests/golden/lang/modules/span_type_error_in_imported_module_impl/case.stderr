@@ -1,5 +1,5 @@
-error[type]: function expects 1 argument, got 2
+error[type]: method `speak` takes 2 parameters in this impl, but trait `Speak` declares it with 1
  --> b.silt:3:23
    |
  3 | trait Speak for Cat { fn speak(self, times: Int) -> Int { times } }
-   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function expects 1 argument, got 2
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method `speak` takes 2 parameters in this impl, but trait `Speak` declares it with 1

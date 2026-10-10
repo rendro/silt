@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method `total` takes no `self` — call it on the type instead: `b.total()`, where `b` is a `type b` parameter
+-- stderr-not-contains: panicked
+-- A method the trait declares without `self` is called on a type. On a
+-- value of a bounded type variable it is an error of the call (the
+-- checker used to panic here).
+trait Vals {
+  fn total() -> Int
+}
+
+trait Vals for Int {
+  fn total() -> Int {
+    3
+  }
+}
+
+fn go(x: b) -> Int where b: Vals {
+  x.total()
+}
+
+fn main() {
+  println(go(7))
+}
