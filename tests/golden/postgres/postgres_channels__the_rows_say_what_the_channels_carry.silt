@@ -1,0 +1,40 @@
+-- cmd: check
+-- requires-feature: postgres
+-- `postgres.stream` gives a channel of rows, each `Ok(row)` or the
+-- error that ended the query, and `postgres.listen` a channel of
+-- `Notification` records: the signatures say so, and a program reads
+-- them as that.
+import channel
+import map
+import postgres
+
+fn rows(pool: postgres.PgPool) -> Int {
+  match postgres.stream(pool, "SELECT 1", []) {
+    Ok(ch) -> {
+      let typed: Channel(Result(Map(String, postgres.Value), postgres.PgError)) = ch
+      match channel.receive(typed) {
+        channel.Message(Ok(row)) -> map.length(row)
+        channel.Message(Err(e)) -> {
+          println(e.message())
+          0
+        }
+        _ -> 0
+      }
+    }
+    Err(_) -> 0
+  }
+}
+
+fn notes(pool: postgres.PgPool) -> String {
+  match postgres.listen(pool, "jobs") {
+    Ok(ch) -> match channel.receive(ch) {
+      channel.Message(note) -> "{note.channel}: {note.payload} from {note.pid}"
+      _ -> "closed"
+    }
+    Err(e) -> e.message()
+  }
+}
+
+fn main() {
+  println(1)
+}

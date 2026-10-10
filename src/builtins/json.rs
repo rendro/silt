@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-use super::common::value_kind;
 use super::time::{make_date, make_datetime, make_time};
+use super::typed::{Type, builtins};
 use crate::defs::TypeId;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
 use crate::value::{Value, checked_range_len};
@@ -102,27 +102,41 @@ pub(crate) fn json_unknown_err<S: Into<String>>(msg: S) -> Value {
     ))
 }
 
-/// Dispatch the builtin `trait Error for JsonError` method table.
-/// Routed through `dispatch_builtin`'s "JsonError" module arm, exactly
-/// like `call_io_error_trait`. Scaffolding lives in
-/// `super::dispatch_error_trait`; this site just supplies the
-/// variant → message rendering.
-pub fn call_json_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("JsonError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("JsonSyntax", [Value::String(m), Value::Int(offset)]) => {
-                format!("json syntax error at byte {offset}: {m}")
-            }
-            ("JsonTypeMismatch", [Value::String(exp), Value::String(act)]) => {
-                format!("json type mismatch: expected {exp}, got {act}")
-            }
-            ("JsonMissingField", [Value::String(n)]) => {
-                format!("json missing field: {n}")
-            }
-            ("JsonUnknown", [Value::String(m)]) => m.clone(),
-            _ => return None,
-        })
+/// What `JsonError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("JsonSyntax", [Value::String(m), Value::Int(offset)]) => {
+            format!("json syntax error at byte {offset}: {m}")
+        }
+        ("JsonTypeMismatch", [Value::String(exp), Value::String(act)]) => {
+            format!("json type mismatch: expected {exp}, got {act}")
+        }
+        ("JsonMissingField", [Value::String(n)]) => {
+            format!("json missing field: {n}")
+        }
+        ("JsonUnknown", [Value::String(m)]) => m.clone(),
+        _ => return None,
     })
+}
+
+/// What a number that is no `Int` is called in a type mismatch.
+const NOT_IN_RANGE: &str = "a number out of Int's range";
+
+/// The `Int` that the number `f` of a document is: a whole number in
+/// `Int`'s range. Else what it is instead, for the type mismatch.
+fn whole(f: f64) -> Result<i64, &'static str> {
+    // `i64::MAX` is not exactly an `f64` (it rounds up to 2^63), so
+    // the upper bound is exclusive.
+    const I64_MIN_AS_F64: f64 = i64::MIN as f64;
+    const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
+    if !f.is_finite() || !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
+        Err(NOT_IN_RANGE)
+    } else if f.fract() != 0.0 {
+        Err("a number with a fraction")
+    } else {
+        Ok(f as i64)
+    }
 }
 
 fn json_type_name(v: &serde_json::Value) -> &'static str {
@@ -347,27 +361,13 @@ fn json_to_record_list(
     Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(records))]))
 }
 
-fn json_to_map(
-    vm: &mut Vm,
-    value_type: &Value,
-    json: &serde_json::Value,
-) -> Result<Value, VmError> {
+fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Result<Value, VmError> {
     let serde_json::Value::Object(obj) = json else {
         return Ok(json_type_mismatch_err("object", json_type_name(json)));
     };
     let field_type = match value_type {
-        Value::PrimitiveDescriptor(name) => match name.as_str() {
-            "String" => FieldType::String,
-            "Int" => FieldType::Int,
-            "Float" => FieldType::Float,
-            "Bool" => FieldType::Bool,
-            other => {
-                return Ok(json_unknown_err(format!(
-                    "json.parse_map: unknown value type '{other}'"
-                )));
-            }
-        },
-        Value::TypeDescriptor(ty) => {
+        Type::Primitive(field_type) => field_type,
+        Type::Named(ty) => {
             if decodable_record("json.parse_map", ty).is_err() {
                 return Ok(json_unknown_err(format!(
                     "json.parse_map: unknown value type '{}'",
@@ -375,11 +375,6 @@ fn json_to_map(
                 )));
             }
             FieldType::Record(ty.id)
-        }
-        _ => {
-            return Err(VmError::new(
-                "json.parse_map: type argument must be a type (Int, Float, String, Bool, or a record type)".into(),
-            ));
         }
     };
     let mut map = BTreeMap::new();
@@ -419,26 +414,15 @@ fn json_to_typed_value(
             serde_json::Value::String(s) => Ok(Value::String(s.clone())),
             _ => Err(mismatch("String", json_type_name(json))),
         },
+        // A number is an `Int` when it is a whole number an `Int` can
+        // be (`1`, `1.0`, `1e3`); one with a fraction, or out of range,
+        // is no `Int`, and nothing is cut off or saturated.
         FieldType::Int => match json {
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Ok(Value::Int(i))
-                } else if let Some(f) = n.as_f64() {
-                    // Mirror the `float.to_int` range check (B7). A bare
-                    // `f as i64` would saturate to i64::MAX/MIN silently,
-                    // turning large JSON numbers like 1e100 into i64::MAX —
-                    // a data-corruption hazard. Reject values that aren't
-                    // finite or don't fit exactly in the i64 range.
-                    const I64_MIN_AS_F64: f64 = i64::MIN as f64;
-                    const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
-                    if !f.is_finite() || !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
-                        return Err(unknown(format!("number {f} out of Int range")));
-                    }
-                    Ok(Value::Int(f as i64))
-                } else {
-                    Err(unknown("expected Int, got number that doesn't fit".into()))
-                }
-            }
+            serde_json::Value::Number(n) => match (n.as_i64(), n.as_f64().map(whole)) {
+                (Some(i), _) | (None, Some(Ok(i))) => Ok(Value::Int(i)),
+                (None, Some(Err(what))) => Err(mismatch("Int", what)),
+                (None, None) => Err(mismatch("Int", NOT_IN_RANGE)),
+            },
             _ => Err(mismatch("Int", json_type_name(json))),
         },
         FieldType::Float => match json {
@@ -554,121 +538,56 @@ fn json_to_typed_value(
     }
 }
 
-// ── JSON dispatch ───────────────────────────────────────────────────
+// ── The functions ───────────────────────────────────────────────────
 
-/// Dispatch `json.<name>(args)`.
-pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "parse" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "json.parse takes 2 arguments: (String, type a)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "json.parse requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let s = s.clone();
-            match &args[1] {
-                Value::PrimitiveDescriptor(name) => {
-                    // Primitive descriptor path: decode JSON scalars directly
-                    // into `Value::Int / Float / String / Bool`,
-                    // returning the typed `Result(a, JsonError)` shape.
-                    let field_type = match name.as_str() {
-                        "Int" => FieldType::Int,
-                        "Float" => FieldType::Float,
-                        "String" => FieldType::String,
-                        "Bool" => FieldType::Bool,
-                        other => {
-                            return Err(VmError::new(format!(
-                                "json.parse: unsupported primitive descriptor '{other}'"
-                            )));
-                        }
-                    };
-                    match serde_json::from_str::<serde_json::Value>(&s) {
-                        Ok(json_val) => match json_to_typed_value(vm, &json_val, &field_type) {
-                            Ok(val) => Ok(Value::variant(bv::OK, vec![val])),
-                            Err(e) => Ok(decode_err_to_silt(e)),
-                        },
-                        Err(e) => Ok(json_result_err(&e)),
-                    }
+builtins! {
+    fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let parsed = serde_json::from_str::<serde_json::Value>(s);
+        match ty {
+            // A primitive type: a JSON scalar, decoded as it is.
+            Type::Primitive(field_type) => Ok(match parsed {
+                Ok(json) => match json_to_typed_value(vm, &json, &field_type) {
+                    Ok(val) => Value::variant(bv::OK, vec![val]),
+                    Err(e) => decode_err_to_silt(e),
+                },
+                Err(e) => json_result_err(&e),
+            }),
+            Type::Named(ty) => {
+                let fields = decodable_record("json.parse", ty)?;
+                match parsed {
+                    Ok(json) => json_to_record(vm, ty, &fields, &json),
+                    Err(e) => Ok(json_result_err(&e)),
                 }
-                Value::TypeDescriptor(ty) => {
-                    let ty = ty.clone();
-                    let fields = decodable_record("json.parse", &ty)?;
-                    match serde_json::from_str::<serde_json::Value>(&s) {
-                        Ok(json_val) => json_to_record(vm, &ty, &fields, &json_val),
-                        Err(e) => Ok(json_result_err(&e)),
-                    }
-                }
-                _ => Err(VmError::new(
-                    "json.parse: type argument must be a type (Int, Float, String, Bool, or a record type)".into(),
-                )),
             }
         }
-        "parse_list" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "json.parse_list takes 2 arguments: (String, type a)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "json.parse_list requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let s = s.clone();
-            let Value::TypeDescriptor(ty) = &args[1] else {
-                return Err(VmError::new(
-                    "json.parse_list: type argument must be a record type".into(),
-                ));
-            };
-            let ty = ty.clone();
-            let fields = decodable_record("json.parse_list", &ty)?;
-            match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(json_val) => json_to_record_list(vm, &ty, &fields, &json_val),
-                Err(e) => Ok(json_result_err(&e)),
-            }
+    }
+
+    fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let Type::Named(ty) = ty else {
+            return Err(VmError::new(
+                "json.parse_list: type argument must be a record type".into(),
+            ));
+        };
+        let fields = decodable_record("json.parse_list", ty)?;
+        match serde_json::from_str::<serde_json::Value>(s) {
+            Ok(json) => json_to_record_list(vm, ty, &fields, &json),
+            Err(e) => Ok(json_result_err(&e)),
         }
-        "parse_map" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "json.parse_map takes 2 arguments: (String, type v)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "json.parse_map requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let s = s.clone();
-            let value_type = args[1].clone();
-            match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(json_val) => json_to_map(vm, &value_type, &json_val),
-                Err(e) => Ok(json_result_err(&e)),
-            }
+    }
+
+    fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
+        match serde_json::from_str::<serde_json::Value>(s) {
+            Ok(json) => json_to_map(vm, value_type, &json),
+            Err(e) => Ok(json_result_err(&e)),
         }
-        "stringify" => {
-            if args.len() != 1 {
-                return Err(VmError::new("json.stringify takes 1 argument".into()));
-            }
-            let j = value_to_json(&args[0])?;
-            Ok(Value::String(j.to_string()))
-        }
-        "pretty" => {
-            if args.len() != 1 {
-                return Err(VmError::new("json.pretty takes 1 argument".into()));
-            }
-            let j = value_to_json(&args[0])?;
-            Ok(Value::String(
-                serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string()),
-            ))
-        }
-        _ => Err(VmError::new(format!("unknown json function: {name}"))),
+    }
+
+    fn stringify(value: &Value) -> Result<String, VmError> {
+        Ok(value_to_json(value)?.to_string())
+    }
+
+    fn pretty(value: &Value) -> Result<String, VmError> {
+        let json = value_to_json(value)?;
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string()))
     }
 }

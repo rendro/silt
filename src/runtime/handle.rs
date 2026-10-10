@@ -529,16 +529,28 @@ impl TcpStreamHandle {
         }
     }
 
-    pub fn read_exact(&self, buf: &mut [u8]) -> std::io::Result<()> {
+    /// Read exactly `n` bytes. The buffer grows as the bytes arrive: a
+    /// peer that sends few costs what it sent, however many were asked
+    /// for. A connection that ends before the `n`th byte is
+    /// `UnexpectedEof`.
+    pub fn read_exact(&self, n: usize) -> std::io::Result<Vec<u8>> {
         use std::io::Read;
+        let most = u64::try_from(n).unwrap_or(u64::MAX);
+        let mut buf = Vec::new();
         match &self.io {
             TcpIo::Plain {
                 socket, reading, ..
             } => {
                 let _turn = reading.lock();
-                (&*socket).read_exact(buf)
+                Read::take(socket, most).read_to_end(&mut buf)?;
             }
-            TcpIo::Tls { both, .. } => both.lock().read_exact(buf),
+            TcpIo::Tls { both, .. } => {
+                (&mut *both.lock()).take(most).read_to_end(&mut buf)?;
+            }
+        }
+        match buf.len() == n {
+            true => Ok(buf),
+            false => Err(std::io::ErrorKind::UnexpectedEof.into()),
         }
     }
 

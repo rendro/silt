@@ -9,7 +9,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(feature = "http")]
 use std::time::Duration;
 
-use super::common::value_kind;
+use super::encoding::form_decode_component;
+use super::typed::builtins;
+#[cfg(feature = "http")]
+use super::typed::{Arg, Map, TcpListener, unsound};
 #[cfg(feature = "http")]
 use crate::bytecode::record_type_matches;
 #[cfg(feature = "http")]
@@ -19,36 +22,33 @@ use crate::runtime::sync::{Arm, Cell, Fired, Wait};
 #[cfg(feature = "http")]
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{Step, Vm, VmError};
+use crate::vm::VmError;
+#[cfg(feature = "http")]
+use crate::vm::{Step, Vm};
 #[cfg(feature = "http")]
 use parking_lot::Mutex;
 
-/// Dispatch the builtin `trait Error for HttpError` method table.
-/// Scaffolding lives in `super::dispatch_error_trait`; this site just
-/// supplies the variant → message rendering.
-pub fn call_http_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("HttpError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("HttpConnect", [Value::String(m)]) => format!("http connect failed: {m}"),
-            ("HttpTls", [Value::String(m)]) => format!("http TLS error: {m}"),
-            ("HttpTimeout", []) => "http request timed out".to_string(),
-            ("HttpInvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
-            ("HttpInvalidResponse", [Value::String(m)]) => {
-                format!("http invalid response: {m}")
+/// What `HttpError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("HttpConnect", [Value::String(m)]) => format!("http connect failed: {m}"),
+        ("HttpTls", [Value::String(m)]) => format!("http TLS error: {m}"),
+        ("HttpTimeout", []) => "http request timed out".to_string(),
+        ("HttpInvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
+        ("HttpInvalidResponse", [Value::String(m)]) => {
+            format!("http invalid response: {m}")
+        }
+        ("HttpClosedEarly", []) => "http connection closed before response completed".to_string(),
+        ("HttpStatusCode", [Value::Int(code), Value::String(body)]) => {
+            if body.is_empty() {
+                format!("http status {code}")
+            } else {
+                format!("http status {code}: {body}")
             }
-            ("HttpClosedEarly", []) => {
-                "http connection closed before response completed".to_string()
-            }
-            ("HttpStatusCode", [Value::Int(code), Value::String(body)]) => {
-                if body.is_empty() {
-                    format!("http status {code}")
-                } else {
-                    format!("http status {code}: {body}")
-                }
-            }
-            ("HttpUnknown", [Value::String(m)]) => m.clone(),
-            _ => return None,
-        })
+        }
+        ("HttpUnknown", [Value::String(m)]) => m.clone(),
+        _ => return None,
     })
 }
 
@@ -95,45 +95,29 @@ fn extract_http_response(
     ),
     VmError,
 > {
-    let Value::Record(name, fields) = val else {
-        return Err(VmError::new("handler must return a Response record".into()));
+    // (What is no `Response` is no value the handler's type has.)
+    let fields = match val {
+        Value::Record(name, fields) if record_type_matches(name, ty::RESPONSE) => fields,
+        _ => return Err(unsound("http.serve", "handler")),
     };
-    if !record_type_matches(name, ty::RESPONSE) {
-        return Err(VmError::new(format!(
-            "handler must return Response, got {}",
-            name.name
-        )));
-    }
+    let (Some(given), Some(body)) = (
+        fields.get("status").and_then(i64::take),
+        fields.get("body").and_then(<&str>::take),
+    ) else {
+        return Err(unsound("http.serve", "handler"));
+    };
     // A status has three digits, and the one of a response is final:
     // 1xx only announces a response, and a client that got one would
     // wait for the response itself.
-    let status = match fields.get("status") {
-        Some(Value::Int(n)) => match u16::try_from(*n) {
-            Ok(s) if (200..=999).contains(&s) => s,
-            _ => {
-                return Err(VmError::new(format!(
-                    "Response.status out of range: {n} is not the status of a response (200..=999)"
-                )));
-            }
-        },
-        Some(other) => {
+    let status = match u16::try_from(given) {
+        Ok(status) if (200..=999).contains(&status) => status,
+        _ => {
             return Err(VmError::new(format!(
-                "Response.status requires Int, got {}",
-                value_kind(other)
+                "Response.status out of range: {given} is not the status of a response (200..=999)"
             )));
         }
-        None => return Err(VmError::new("Response.status missing".into())),
     };
-    let body = match fields.get("body") {
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => {
-            return Err(VmError::new(format!(
-                "Response.body requires String, got {}",
-                value_kind(other)
-            )));
-        }
-        None => return Err(VmError::new("Response.body missing".into())),
-    };
+    let body = body.to_string();
     Ok((status, body, fields))
 }
 
@@ -1301,235 +1285,109 @@ impl Drop for Serve {
     }
 }
 
-/// `http.serve(listener, handler)`: serve HTTP on a listener that
-/// `tcp.listen` bound. Which interfaces the server is reached on, and
-/// on which port, is what was written there.
+/// A `Method` argument: its name (`GET`).
 #[cfg(feature = "http")]
-fn serve(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 2 {
-        return Err(VmError::new(
-            "http.serve takes 2 arguments (listener, handler)".into(),
-        ));
-    }
-    let Value::TcpListener(listener) = &args[0] else {
-        return Err(VmError::new(format!(
-            "http.serve requires TcpListener, got {}",
-            value_kind(&args[0])
-        )));
-    };
-    // The listener is this server's alone while it serves: two that
-    // accept on one listener would take each other's connections.
-    let Some(token) = listener.serve(vm.cancelled.clone()) else {
-        return Err(VmError::new(
-            "http.serve: the listener is already served by another http.serve".into(),
-        ));
-    };
-    Ok(Step::Run(Box::new(Serve {
-        server: Arc::new(Server {
-            handler: args[1].clone(),
-            // The tasks of the connections belong to whoever serves.
-            owner: vm.scheduler().current_owner(),
-            handlers: AtomicUsize::new(0),
-            bodies: AtomicUsize::new(0),
-            conns: Mutex::new(Some(HashMap::new())),
-        }),
-        listener: listener.clone(),
-        token,
-        scheduler: Arc::downgrade(vm.scheduler()),
-        state: ServeState::Start,
-        failing: false,
-    })))
-}
+struct Method<'a>(&'a str);
 
-/// Dispatch `http.<name>(args)`.
-#[cfg_attr(not(feature = "http"), allow(unused_variables))]
-pub(crate) fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
-    match name {
-        "get" => {
-            #[cfg(feature = "http")]
-            {
-                if args.len() != 1 {
-                    return Err(VmError::new("http.get takes 1 argument (url)".into()));
-                }
-                let Value::String(url) = &args[0] else {
-                    return Err(VmError::new(format!(
-                        "http.get requires String, got {}",
-                        value_kind(&args[0])
-                    )));
-                };
-
-                let url = url.clone();
-                vm.io("http", http_timeout_err, move || do_http_get(&url))
+#[cfg(feature = "http")]
+impl<'a> Arg<'a> for Method<'a> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Variant(tag, fields) if fields.is_empty() && tag.of(ty::METHOD) => {
+                Some(Method(tag.name()))
             }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = args;
-                Err(VmError::new("http.get requires the 'http' feature".into()))
-            }
+            _ => None,
         }
-
-        "request" => {
-            #[cfg(feature = "http")]
-            {
-                if args.len() != 4 {
-                    return Err(VmError::new(
-                        "http.request takes 4 arguments (method, url, body, headers)".into(),
-                    ));
-                }
-                let Value::Variant(method_tag, method_args) = &args[0] else {
-                    return Err(VmError::new(format!(
-                        "http.request requires Method, got {}",
-                        value_kind(&args[0])
-                    )));
-                };
-                if !method_args.is_empty() || !method_tag.of(ty::METHOD) {
-                    return Err(VmError::new("http.request: invalid Method variant".into()));
-                }
-                let Value::String(url) = &args[1] else {
-                    return Err(VmError::new(format!(
-                        "http.request requires String, got {}",
-                        value_kind(&args[1])
-                    )));
-                };
-                let Value::String(body) = &args[2] else {
-                    return Err(VmError::new(format!(
-                        "http.request requires String, got {}",
-                        value_kind(&args[2])
-                    )));
-                };
-                let Value::Map(header_map) = &args[3] else {
-                    return Err(VmError::new(format!(
-                        "http.request requires Map, got {}",
-                        value_kind(&args[3])
-                    )));
-                };
-
-                let method_tag = method_tag.name().to_string();
-                let url = url.clone();
-                let body = body.clone();
-                let headers: Vec<(String, String)> = header_map
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        if let (Value::String(key), Value::String(val)) = (k, v) {
-                            Some((key.clone(), val.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                vm.io("http", http_timeout_err, move || {
-                    do_http_request(&method_tag, &url, &body, &headers)
-                })
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = args;
-                Err(VmError::new(
-                    "http.request requires the 'http' feature".into(),
-                ))
-            }
-        }
-
-        "serve" => {
-            #[cfg(feature = "http")]
-            {
-                serve(vm, args)
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = args;
-                Err(VmError::new(
-                    "http.serve requires the 'http' feature".into(),
-                ))
-            }
-        }
-
-        _ => http_plain(name, args).map(Step::Done),
     }
 }
 
-/// The `http` functions that do not wait.
-fn http_plain(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "segments" => {
-            if args.len() != 1 {
-                return Err(VmError::new("http.segments takes 1 argument (path)".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "http.segments requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let segments: Vec<Value> = path
-                .split('/')
-                .filter(|s| !s.is_empty())
-                .map(|s| Value::String(s.to_string()))
-                .collect();
-            Ok(Value::List(Arc::new(segments)))
-        }
+builtins! {
+    #[cfg(feature = "http")]
+    fn get(vm, url: &str) -> Result<Step, VmError> {
+        let url = url.to_string();
+        vm.io("http", http_timeout_err, move || do_http_get(&url))
+    }
 
-        "parse_query" => {
-            if args.len() != 1 {
-                return Err(VmError::new(
-                    "http.parse_query takes 1 argument (query)".into(),
-                ));
-            }
-            let Value::String(raw) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "http.parse_query requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            // Accept a leading `?` for convenience — e.g. directly
-            // passing a URL fragment like `?a=1&b=2` shouldn't require
-            // the caller to strip it first.
-            let body = raw.strip_prefix('?').unwrap_or(raw);
-            // Preserve insertion order of first appearance for each
-            // key. BTreeMap gives us stable ordering by key, which is
-            // fine for a value-semantic Map — repeated keys always
-            // append to the same List in encounter order.
-            let mut out: BTreeMap<Value, Value> = BTreeMap::new();
-            if body.is_empty() {
-                return Ok(Value::Map(Arc::new(out)));
-            }
-            for (i, segment) in body.split('&').enumerate() {
-                // Empty segments (leading `&`, `&&`, trailing `&`) are
-                // skipped, matching WHATWG's form-urlencoded parser and
-                // `encoding.form_decode`.
-                if segment.is_empty() {
-                    continue;
-                }
-                // Split on the FIRST `=`. Missing `=` → value is "".
-                // The spec says a bare key with no separator means
-                // "present with empty value", which matches how forms
-                // serialize a checkbox with value "".
-                let (raw_key, raw_val) = match segment.find('=') {
-                    Some(pos) => (&segment[..pos], &segment[pos + 1..]),
-                    None => (segment, ""),
-                };
-                let key =
-                    crate::builtins::encoding::form_decode_component(raw_key).map_err(|msg| {
-                        VmError::new(format!("http.parse_query: pair {i} key: {msg}"))
-                    })?;
-                let val =
-                    crate::builtins::encoding::form_decode_component(raw_val).map_err(|msg| {
-                        VmError::new(format!("http.parse_query: pair {i} value: {msg}"))
-                    })?;
-                let entry = out
-                    .entry(Value::String(key))
-                    .or_insert_with(|| Value::List(Arc::new(Vec::new())));
-                if let Value::List(list) = entry {
-                    // `Arc::make_mut` clones the Vec only on the
-                    // second and later pushes for the same key; the
-                    // first push sees refcount 1 and mutates in place.
-                    Arc::make_mut(list).push(Value::String(val));
-                }
-            }
-            Ok(Value::Map(Arc::new(out)))
-        }
+    #[cfg(feature = "http")]
+    fn request(vm, method: Method, url: &str, body: &str, headers: Map) -> Result<Step, VmError> {
+        let (method, url, body) = (method.0.to_string(), url.to_string(), body.to_string());
+        let headers: Vec<(String, String)> = headers
+            .iter()
+            .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
+            .collect();
+        vm.io("http", http_timeout_err, move || {
+            do_http_request(&method, &url, &body, &headers)
+        })
+    }
 
-        _ => Err(VmError::new(format!("unknown http function: {name}"))),
+    // Serves HTTP on a listener that `tcp.listen` bound. Which
+    // interfaces the server is reached on, and on which port, is what
+    // was written there.
+    #[cfg(feature = "http")]
+    fn serve(vm, listener: TcpListener, handler: &Value) -> Result<Step, VmError> {
+        // The listener is this server's alone while it serves: two that
+        // accept on one listener would take each other's connections.
+        let Some(token) = listener.serve(vm.cancelled.clone()) else {
+            return Err(VmError::new(
+                "http.serve: the listener is already served by another http.serve".into(),
+            ));
+        };
+        Ok(Step::Run(Box::new(Serve {
+            server: Arc::new(Server {
+                handler: handler.clone(),
+                // The tasks of the connections belong to whoever serves.
+                owner: vm.scheduler().current_owner(),
+                handlers: AtomicUsize::new(0),
+                bodies: AtomicUsize::new(0),
+                conns: Mutex::new(Some(HashMap::new())),
+            }),
+            listener: listener.clone(),
+            token,
+            scheduler: Arc::downgrade(vm.scheduler()),
+            state: ServeState::Start,
+            failing: false,
+        })))
+    }
+
+    fn segments(path: &str) -> Vec<Value> {
+        path.split('/')
+            .filter(|s| !s.is_empty())
+            .map(|s| Value::String(s.to_string()))
+            .collect()
+    }
+
+    fn parse_query(query: &str) -> Result<BTreeMap<Value, Value>, VmError> {
+        // Accept a leading `?` for convenience — e.g. directly
+        // passing a URL fragment like `?a=1&b=2` shouldn't require
+        // the caller to strip it first.
+        let body = query.strip_prefix('?').unwrap_or(query);
+        // Preserve insertion order of first appearance for each
+        // key. BTreeMap gives us stable ordering by key, which is
+        // fine for a value-semantic Map — repeated keys always
+        // append to the same List in encounter order.
+        let mut out: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
+        for (i, segment) in body.split('&').enumerate() {
+            // Empty segments (leading `&`, `&&`, trailing `&`) are
+            // skipped, matching WHATWG's form-urlencoded parser and
+            // `encoding.form_decode`.
+            if segment.is_empty() {
+                continue;
+            }
+            // Split on the FIRST `=`. Missing `=` → value is "".
+            // The spec says a bare key with no separator means
+            // "present with empty value", which matches how forms
+            // serialize a checkbox with value "".
+            let (raw_key, raw_val) = segment.split_once('=').unwrap_or((segment, ""));
+            let key = form_decode_component(raw_key)
+                .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} key: {msg}")))?;
+            let val = form_decode_component(raw_val)
+                .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} value: {msg}")))?;
+            out.entry(Value::String(key)).or_default().push(Value::String(val));
+        }
+        Ok(out
+            .into_iter()
+            .map(|(key, values)| (key, Value::List(Arc::new(values))))
+            .collect())
     }
 }
 

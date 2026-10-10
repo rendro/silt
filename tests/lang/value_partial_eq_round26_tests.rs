@@ -24,6 +24,14 @@ use silt::runtime::handle::TaskHandle;
 use silt::typeinfo::bv;
 use silt::value::Value;
 
+/// The builtin function `name` (`println`, `list.map`) as a value.
+fn builtin(name: &str) -> Value {
+    silt::builtins::registry::registry()
+        .named(name)
+        .unwrap_or_else(|| panic!("the builtin {name}"))
+        .value()
+}
+
 // ── Rust-level unit tests ──────────────────────────────────────────
 
 // ── Handle ────────────────────────────────────────────────────────
@@ -85,8 +93,8 @@ fn partial_eq_vmclosure_distinct_arcs_not_equal() {
 /// Same name → equal.
 #[test]
 fn partial_eq_builtin_fn_same_name() {
-    let a = Value::BuiltinFn("println".into());
-    let b = Value::BuiltinFn("println".into());
+    let a = builtin("println");
+    let b = builtin("println");
     assert_eq!(a, b);
     assert_eq!(a, a.clone());
 }
@@ -94,8 +102,8 @@ fn partial_eq_builtin_fn_same_name() {
 /// Different names → not equal.
 #[test]
 fn partial_eq_builtin_fn_different_names() {
-    let a = Value::BuiltinFn("println".into());
-    let b = Value::BuiltinFn("print".into());
+    let a = builtin("println");
+    let b = builtin("print");
     assert_ne!(a, b);
 }
 
@@ -147,7 +155,7 @@ fn partial_eq_reflexivity_every_variant() {
         Value::Tuple(vec![Value::Int(1), Value::String("x".into())]),
         Value::variant(bv::OK, vec![Value::Int(1)]),
         Value::VariantConstructor(bv::SOME.tag()),
-        Value::BuiltinFn("println".into()),
+        builtin("println"),
         Value::VmClosure(closure_arc),
         Value::Handle(handle_arc),
         Value::TypeDescriptor(silt::typeinfo::TypeInfo::new_record(
@@ -174,7 +182,7 @@ fn partial_eq_reflexivity_every_variant() {
 fn partial_eq_cross_kind_still_false() {
     let h = Value::Handle(Arc::new(TaskHandle::new(1)));
     let c = Value::VmClosure(mk_closure("f"));
-    let b = Value::BuiltinFn("println".into());
+    let b = builtin("println");
     let vc = Value::VariantConstructor(bv::SOME.tag());
 
     assert_ne!(h, c);

@@ -129,6 +129,13 @@ that write.) A TLS connection is different: its reads and writes take
 turns, so a task that waits in `tcp.read` holds up a `tcp.write` on the
 same TLS connection until the read returns.
 
+**How much a read takes.** `tcp.read(conn, max)` gives what one read
+finds, at most `max` bytes and at most 64 KiB (65536 bytes) at once: a
+larger `max` asks for no more. `tcp.read_exact(conn, n)` reads until it
+has `n` bytes; a connection that ends before that is `Err(TcpClosed)`.
+Neither sets memory aside for the number asked for, only for the bytes
+that arrive. The same holds for a chunk of `stream.tcp_chunks`.
+
 ## Stream lifetime
 
 `tcp.close(conn)` shuts the connection down: a `read` or `write` that

@@ -1765,14 +1765,8 @@ impl Compiler {
             self.check_decode_target(&builtin_name, args.last().copied(), span)?;
             self.compile_operands(args.iter().copied())?;
             let argc = args.len();
-            let name_idx = self.add_constant(Value::String(builtin_name), span)?;
-            self.emit(
-                Asm::CallBuiltin {
-                    name: name_idx,
-                    argc,
-                },
-                span,
-            )?;
+            let builtin = self.builtin_row(&builtin_name, span)?.id;
+            self.emit(Asm::CallBuiltin { builtin, argc }, span)?;
         } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
             let member = self.type_member(callee)?;
             if let Some(TypeMember::Native(t)) = member {
@@ -2132,6 +2126,18 @@ impl Compiler {
         })
     }
 
+    /// The row of the builtin registry that a program names `name`
+    /// (`list.map`, `println`).
+    fn builtin_row(
+        &self,
+        name: &str,
+        span: Span,
+    ) -> Result<&'static crate::builtins::registry::Row, Diagnostic> {
+        crate::builtins::registry::registry()
+            .named(name)
+            .ok_or_else(|| checker_missed(span, &format!("the builtin '{name}', which is none")))
+    }
+
     /// If the callee is a builtin module's function (`list.map`, or
     /// `l.map` after `import list as l`), its qualified name: the call is
     /// a `CallBuiltin`.
@@ -2146,7 +2152,7 @@ impl Compiler {
     /// builtin function or constant, the function or the constant.
     fn emit_global_value(&mut self, def: crate::defs::DefId, span: Span) -> Result<(), Diagnostic> {
         if let Some(name) = self.builtin_function(Some(crate::defs::Res::Def(def))) {
-            let value = module::builtin_constant_value(&name).unwrap_or(Value::BuiltinFn(name));
+            let value = self.builtin_row(&name, span)?.value();
             let idx = self.add_constant(value, span)?;
             self.emit(Asm::Constant { k: idx }, span)?;
             return Ok(());
@@ -2913,6 +2919,13 @@ mod tests {
         chunk.instrs().any(|(_, instr)| instr.op() == op)
     }
 
+    /// Check if the chunk's code calls the builtin `name` (`list.map`).
+    fn calls_builtin(chunk: &Chunk, name: &str) -> bool {
+        chunk.instrs().any(|(_, instr)| {
+            matches!(instr, crate::bytecode::Instr::CallBuiltin { builtin, .. } if builtin.to_string() == name)
+        })
+    }
+
     /// Check if a string constant exists in the chunk.
     fn has_string_constant(chunk: &Chunk, s: &str) -> bool {
         chunk
@@ -3641,8 +3654,7 @@ fn main() { list.length([1, 2, 3]) }
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_op(main.chunk(), Op::CallBuiltin));
-        assert!(has_string_constant(main.chunk(), "list.length"));
+        assert!(calls_builtin(main.chunk(), "list.length"));
     }
 
     // ── Method call compilation ────────────────────────────────────
@@ -3723,7 +3735,7 @@ fn main() { l.length([1]) }
 "#,
         );
         let main = find_fn(&fns, "main");
-        assert!(has_string_constant(main.chunk(), "list.length"));
+        assert!(calls_builtin(main.chunk(), "list.length"));
     }
 
     // ── Pattern destructuring in function params ───────────────────

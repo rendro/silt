@@ -31,6 +31,7 @@
 //! | `Upvalue` | `u8` | `usize` | `usize` | below the function's upvalue count |
 //! | `Global` | `u16` | `u16` | `u16` | |
 //! | `Trait` | `u16` | `u16` | `u16` | |
+//! | `Builtin` | `u16` | [`BuiltinId`] | [`BuiltinId`] | a function row of the builtin registry that is built |
 //! | `Const` | `u16` | [`Const`] | [`Const`] | in the pool |
 //! | `Str`, `Tag`, `Type`, `Func`, `Int`, `Float` | `u16` | [`Const`] | [`Const`] | in the pool, of that kind |
 //! | `Fwd` | `u16` distance forward from the next instruction | [`Label`] | target offset | an instruction starts there |
@@ -57,6 +58,7 @@
 use std::marker::PhantomData;
 
 use super::{Const, Label, UpvalueDesc};
+use crate::builtins::registry::BuiltinId;
 
 // ── What a row is made of ──────────────────────────────────────────
 
@@ -110,6 +112,7 @@ pub enum Operand {
     Slot(usize),
     Upvalue(usize),
     Const(Const, ConstKind),
+    Builtin(BuiltinId),
     Target(usize),
     Strs(Operands<Const>),
     Captures(Operands<UpvalueDesc>),
@@ -294,6 +297,9 @@ macro_rules! asm_ty {
     (Trait, $lt:lifetime) => {
         u16
     };
+    (Builtin, $lt:lifetime) => {
+        BuiltinId
+    };
     (Const, $lt:lifetime) => {
         Const
     };
@@ -338,6 +344,7 @@ macro_rules! instr_ty {
     (Upvalue) => { usize };
     (Global) => { u16 };
     (Trait) => { u16 };
+    (Builtin) => { BuiltinId };
     (Const) => { Const };
     (Str) => { Const };
     (Tag) => { Const };
@@ -373,6 +380,9 @@ macro_rules! encode_operand {
     };
     (Trait, $v:expr, $what:expr, $w:expr) => {
         $w.u16($v)
+    };
+    (Builtin, $v:expr, $what:expr, $w:expr) => {
+        $w.u16($v.0)
     };
     (Const, $v:expr, $what:expr, $w:expr) => {
         $w.u16($v.0)
@@ -445,6 +455,9 @@ macro_rules! decode_operand {
     (Trait, $r:expr) => {
         $r.u16()?
     };
+    (Builtin, $r:expr) => {
+        BuiltinId($r.u16()?)
+    };
     (Const, $r:expr) => {
         Const($r.u16()?)
     };
@@ -502,6 +515,9 @@ macro_rules! checked_operand {
     };
     (Trait, $v:expr) => {
         Operand::Plain
+    };
+    (Builtin, $v:expr) => {
+        Operand::Builtin($v)
     };
     (Const, $v:expr) => {
         Operand::Const($v, ConstKind::Any)
@@ -763,9 +779,9 @@ ops! {
     TailCall { argc: U8("arguments of a call") } => pops argc + 1, pushes 1;
     /// Return TOS to caller.
     Return => pops 1, pushes 0, end;
-    /// Call the builtin named by the constant with the top `argc`
-    /// values.
-    CallBuiltin { name: Str, argc: U8("arguments of a call") } => pops argc, pushes 1;
+    /// Call the builtin, a row of the builtin registry, with the top
+    /// `argc` values.
+    CallBuiltin { builtin: Builtin, argc: U8("arguments of a call") } => pops argc, pushes 1;
 
     // ── Closures ───────────────────────────────────────────────
     /// Create a closure of the function with the captured values.

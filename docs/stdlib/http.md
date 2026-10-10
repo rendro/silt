@@ -6,7 +6,7 @@ order: 14
 
 # http
 
-HTTP client and server. Included by default (the server needs [tcp](tcp.md), which the `http` feature brings with it). Exclude with `--no-default-features` for WASM or minimal builds (networking functions will return a runtime error, but `http.segments` still works).
+HTTP client and server. Included by default (the server needs [tcp](tcp.md), which the `http` feature brings with it). Exclude with `--no-default-features` for WASM or minimal builds: a program that names `http.get`, `http.request` or `http.serve` then does not check (the error names the cargo feature `http`), while `http.segments`, `http.parse_query` and the module's types remain.
 
 ## Types
 

@@ -1,14 +1,15 @@
-//! IO and filesystem builtin functions (`io.*`, `fs.*`).
+//! IO, filesystem and environment builtin functions (`io.*`, `fs.*`,
+//! `env.*`).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::common::value_kind;
+use super::typed::builtins;
 use crate::builtins::time::make_datetime;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{Step, Vm, VmError};
+use crate::vm::{Step, VmError};
 
 /// Program arguments forwarded by the CLI for `io.args()`.
 ///
@@ -84,6 +85,18 @@ fn fs_ok(inner: Value) -> Value {
     Value::variant(bv::OK, vec![inner])
 }
 
+/// What an operation on `path` gave, as a `Result(a, IoError)`.
+fn result<T>(done: std::io::Result<T>, path: &str, ok: impl FnOnce(T) -> Value) -> Value {
+    match done {
+        Ok(value) => fs_ok(ok(value)),
+        Err(e) => io_result_err(&e, path),
+    }
+}
+
+fn unit<T>(_: T) -> Value {
+    Value::Unit
+}
+
 /// Wrap an `IoError` variant value inside an `Err(...)` outer Result.
 fn io_err(inner: Value) -> Value {
     Value::variant(bv::ERR, vec![inner])
@@ -134,27 +147,21 @@ pub(crate) fn io_result_err_unknown<S: Into<String>>(msg: S) -> Value {
     ))
 }
 
-/// Dispatch the builtin `trait Error for IoError` method table. Today
-/// only `message` is implemented; additional Error-trait methods would
-/// land here too. The receiver (self) is the first argument — `CallMethod`
-/// compiles the receiver as arg 0 of the call. Scaffolding lives in
-/// `super::dispatch_error_trait`; this site just supplies the
-/// variant → message rendering.
-pub fn call_io_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("IoError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("IoNotFound", [Value::String(p)]) => format!("file not found: {p}"),
-            ("IoPermissionDenied", [Value::String(p)]) => {
-                format!("permission denied: {p}")
-            }
-            ("IoAlreadyExists", [Value::String(p)]) => format!("already exists: {p}"),
-            ("IoInvalidInput", [Value::String(m)]) => format!("invalid input: {m}"),
-            ("IoInterrupted", []) => "operation interrupted".to_string(),
-            ("IoUnexpectedEof", []) => "unexpected end of file".to_string(),
-            ("IoWriteZero", []) => "zero-byte write".to_string(),
-            ("IoUnknown", [Value::String(m)]) => m.clone(),
-            _ => return None,
-        })
+/// What `IoError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("IoNotFound", [Value::String(p)]) => format!("file not found: {p}"),
+        ("IoPermissionDenied", [Value::String(p)]) => {
+            format!("permission denied: {p}")
+        }
+        ("IoAlreadyExists", [Value::String(p)]) => format!("already exists: {p}"),
+        ("IoInvalidInput", [Value::String(m)]) => format!("invalid input: {m}"),
+        ("IoInterrupted", []) => "operation interrupted".to_string(),
+        ("IoUnexpectedEof", []) => "unexpected end of file".to_string(),
+        ("IoWriteZero", []) => "zero-byte write".to_string(),
+        ("IoUnknown", [Value::String(m)]) => m.clone(),
+        _ => return None,
     })
 }
 
@@ -168,335 +175,165 @@ fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
     ))
 }
 
-/// Dispatch `io.<name>(args)`.
-pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
-    match name {
-        "inspect" => {
-            if args.len() != 1 {
-                return Err(VmError::new("io.inspect takes 1 argument".into()));
-            }
-            Ok(Step::Done(Value::String(args[0].format_silt())))
-        }
-        "read_file" => {
-            if args.len() != 1 {
-                return Err(VmError::new("io.read_file takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "io.read_file requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let path = path.clone();
-            vm.io(
-                "io.read_file",
-                io_unknown_err,
-                move || match std::fs::read_to_string(&path) {
-                    Ok(content) => Value::variant(bv::OK, vec![Value::String(content)]),
-                    Err(e) => io_result_err(&e, &path),
-                },
-            )
-        }
-        "write_file" => {
-            if args.len() != 2 {
-                return Err(VmError::new("io.write_file takes 2 arguments".into()));
-            }
-            let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(format!(
-                    "io.write_file requires String, got ({}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1])
-                )));
-            };
-            let path = path.clone();
-            let content = content.clone();
-            vm.io(
-                "io.write_file",
-                io_unknown_err,
-                move || match std::fs::write(&path, &content) {
-                    Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
-                    Err(e) => io_result_err(&e, &path),
-                },
-            )
-        }
-        "read_line" => vm.io("io.read_line", io_unknown_err, move || {
+builtins! {
+    fn inspect(x: &Value) -> String {
+        x.format_silt()
+    }
+
+    fn read_file(vm, path: &str) -> Result<Step, VmError> {
+        let path = path.to_string();
+        vm.io("io.read_file", io_unknown_err, move || {
+            result(std::fs::read_to_string(&path), &path, Value::String)
+        })
+    }
+
+    fn write_file(vm, path: &str, contents: &str) -> Result<Step, VmError> {
+        let (path, contents) = (path.to_string(), contents.to_string());
+        vm.io("io.write_file", io_unknown_err, move || {
+            result(std::fs::write(&path, &contents), &path, unit)
+        })
+    }
+
+    fn read_line(vm) -> Result<Step, VmError> {
+        vm.io("io.read_line", io_unknown_err, move || {
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
                 // Ok(0) means EOF — surface as Err(IoUnexpectedEof) so
                 // match-against-Err loops terminate cleanly instead of
                 // spinning on "".
                 Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, vec![])),
-                Ok(_) => Value::variant(bv::OK, vec![Value::String(line.trim_end().to_string())]),
+                Ok(_) => fs_ok(Value::String(line.trim_end().to_string())),
                 Err(e) => io_result_err(&e, ""),
             }
-        }),
-        "args" => {
-            // Round-74: return only the program args explicitly forwarded
-            // by the CLI past a `--` separator (e.g.
-            // `silt run script.silt -- foo bar` → `["foo", "bar"]`).
-            // Pre-fix this returned `std::env::args()` directly, leaking
-            // the silt binary's own argv (`["silt", "run", "script.silt",
-            // ...]`) to user programs, which then had to know to drop the
-            // first 3. The `--` separator + dedicated forwarding channel
-            // collapses that to one obvious shape.
-            let args_list: Vec<Value> = program_args().into_iter().map(Value::String).collect();
-            Ok(Step::Done(Value::List(Arc::new(args_list))))
-        }
-        _ => Err(VmError::new(format!("unknown io function: {name}"))),
+        })
+    }
+
+    // Only the program args explicitly forwarded by the CLI past a `--`
+    // separator (`silt run script.silt -- foo bar` → `["foo", "bar"]`).
+    fn args() -> Vec<Value> {
+        program_args().into_iter().map(Value::String).collect()
     }
 }
 
-/// Dispatch `fs.<name>(args)`.
-pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "exists" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.exists takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.exists requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            Ok(Value::Bool(std::path::Path::new(path).exists()))
+/// `fs.*`
+pub(crate) mod fs {
+    use std::path::Path;
+
+    use super::*;
+
+    builtins! {
+        fn exists(path: &str) -> bool {
+            Path::new(path).exists()
         }
-        "is_file" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.is_file takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.is_file requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            Ok(Value::Bool(std::path::Path::new(path).is_file()))
+
+        fn is_file(path: &str) -> bool {
+            Path::new(path).is_file()
         }
-        "is_dir" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.is_dir takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.is_dir requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            Ok(Value::Bool(std::path::Path::new(path).is_dir()))
+
+        fn is_dir(path: &str) -> bool {
+            Path::new(path).is_dir()
         }
-        "list_dir" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.list_dir takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.list_dir requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            match std::fs::read_dir(path) {
-                Ok(entries) => {
-                    let mut items = Vec::new();
-                    for entry in entries {
-                        match entry {
-                            Ok(e) => {
-                                items.push(Value::String(
-                                    e.file_name().to_string_lossy().into_owned(),
-                                ));
-                            }
-                            Err(e) => {
-                                return Ok(io_result_err(&e, path));
-                            }
-                        }
-                    }
-                    Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(items))]))
-                }
-                Err(e) => Ok(io_result_err(&e, path)),
-            }
+
+        fn list_dir(path: &str) -> Value {
+            let names = std::fs::read_dir(path).and_then(|entries| {
+                let names = entries.map(|entry| {
+                    let name = entry?.file_name();
+                    Ok(Value::String(name.to_string_lossy().into_owned()))
+                });
+                names.collect::<std::io::Result<Vec<Value>>>()
+            });
+            result(names, path, |names| Value::List(Arc::new(names)))
         }
-        "mkdir" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.mkdir takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.mkdir requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            match std::fs::create_dir_all(path) {
-                Ok(()) => Ok(Value::variant(bv::OK, vec![Value::Unit])),
-                Err(e) => Ok(io_result_err(&e, path)),
-            }
+
+        fn mkdir(path: &str) -> Value {
+            result(std::fs::create_dir_all(path), path, unit)
         }
-        "remove" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.remove takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.remove requires String, got {}",
-                    value_kind(&args[0])
-                )));
+
+        fn remove(path: &str) -> Value {
+            let at = Path::new(path);
+            let removed = match at.is_dir() {
+                true => std::fs::remove_dir(at),
+                false => std::fs::remove_file(at),
             };
-            let p = std::path::Path::new(path);
-            let result = if p.is_dir() {
-                std::fs::remove_dir(p)
-            } else {
-                std::fs::remove_file(p)
-            };
-            match result {
-                Ok(()) => Ok(Value::variant(bv::OK, vec![Value::Unit])),
-                Err(e) => Ok(io_result_err(&e, path)),
-            }
+            result(removed, path, unit)
         }
-        "rename" => {
-            if args.len() != 2 {
-                return Err(VmError::new("fs.rename takes 2 arguments".into()));
-            }
-            let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(format!(
-                    "fs.rename requires String, got ({}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1])
-                )));
-            };
-            match std::fs::rename(from, to) {
-                Ok(()) => Ok(Value::variant(bv::OK, vec![Value::Unit])),
-                Err(e) => Ok(io_result_err(&e, from)),
-            }
+
+        fn rename(from: &str, to: &str) -> Value {
+            result(std::fs::rename(from, to), from, unit)
         }
-        "copy" => {
-            if args.len() != 2 {
-                return Err(VmError::new("fs.copy takes 2 arguments".into()));
-            }
-            let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(format!(
-                    "fs.copy requires String, got ({}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1])
-                )));
-            };
-            match std::fs::copy(from, to) {
-                Ok(_) => Ok(Value::variant(bv::OK, vec![Value::Unit])),
-                Err(e) => Ok(io_result_err(&e, from)),
-            }
+
+        fn copy(from: &str, to: &str) -> Value {
+            result(std::fs::copy(from, to), from, unit)
         }
-        "stat" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.stat takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.stat requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
+
+        fn stat(path: &str) -> Value {
             // Use symlink_metadata so the returned stat describes the path
             // itself (and `is_symlink` reflects that), rather than the
             // target's metadata. Users who want the target's metadata can
             // call `fs.read_link` then `fs.stat` on the result.
-            match std::fs::symlink_metadata(path) {
-                Ok(md) => {
-                    let ft = md.file_type();
-                    let is_symlink = ft.is_symlink();
-                    // When the entry is a symlink, symlink_metadata reports
-                    // is_file=false / is_dir=false. Surface that directly so
-                    // callers can see "this is a symlink, neither file nor
-                    // dir" without a follow step.
-                    let is_file = md.is_file();
-                    let is_dir = md.is_dir();
-                    // modified() can fail on platforms that don't track mtime
-                    // (rare, but the API requires us to handle it). Fall back
-                    // to 0 in that case rather than fail the whole stat call.
-                    let modified = md
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i64)
-                        .unwrap_or(0);
-                    let readonly = md.permissions().readonly();
-                    // Unix permission bits (e.g. 0o755). On Windows no
-                    // equivalent exists — std exposes `FILE_ATTRIBUTE_*`
-                    // bits via `MetadataExt::file_attributes()` but those
-                    // aren't permission bits, so we report 0 to signal
-                    // "not applicable". User code that actually needs
-                    // Unix perms should only read `mode` under `cfg(unix)`.
-                    #[cfg(unix)]
-                    let mode: i64 = {
-                        use std::os::unix::fs::MetadataExt;
-                        md.mode() as i64
-                    };
-                    #[cfg(not(unix))]
-                    let mode: i64 = 0;
-                    // accessed() may fail on filesystems mounted with
-                    // `noatime`, and created() (`btime`) is notoriously
-                    // flaky: it's absent on older ext4, only surfaced via
-                    // statx(2) on Linux, and not exposed at all on some
-                    // Unixes. Both map to Option(DateTime) so callers can
-                    // pattern-match rather than probe for sentinels.
-                    let accessed = system_time_to_option_datetime(md.accessed());
-                    let created = system_time_to_option_datetime(md.created());
-                    let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-                    fields.insert("size".into(), Value::Int(md.len() as i64));
-                    fields.insert("is_file".into(), Value::Bool(is_file));
-                    fields.insert("is_dir".into(), Value::Bool(is_dir));
-                    fields.insert("is_symlink".into(), Value::Bool(is_symlink));
-                    fields.insert("modified".into(), Value::Int(modified));
-                    fields.insert("readonly".into(), Value::Bool(readonly));
-                    fields.insert("mode".into(), Value::Int(mode));
-                    fields.insert("accessed".into(), accessed);
-                    fields.insert("created".into(), created);
-                    let rec = Value::builtin_record(ty::FILE_STAT, fields);
-                    Ok(fs_ok(rec))
-                }
-                Err(e) => Ok(io_result_err(&e, path)),
-            }
+            result(std::fs::symlink_metadata(path), path, |md| {
+                // When the entry is a symlink, symlink_metadata reports
+                // is_file=false / is_dir=false. Surface that directly so
+                // callers can see "this is a symlink, neither file nor
+                // dir" without a follow step.
+                //
+                // modified() can fail on platforms that don't track mtime
+                // (rare, but the API requires us to handle it). Fall back
+                // to 0 in that case rather than fail the whole stat call.
+                let modified = md
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                // Unix permission bits (e.g. 0o755). On Windows no
+                // equivalent exists — std exposes `FILE_ATTRIBUTE_*`
+                // bits via `MetadataExt::file_attributes()` but those
+                // aren't permission bits, so we report 0 to signal
+                // "not applicable". User code that actually needs
+                // Unix perms should only read `mode` under `cfg(unix)`.
+                #[cfg(unix)]
+                let mode: i64 = {
+                    use std::os::unix::fs::MetadataExt;
+                    md.mode() as i64
+                };
+                #[cfg(not(unix))]
+                let mode: i64 = 0;
+                // accessed() may fail on filesystems mounted with
+                // `noatime`, and created() (`btime`) is notoriously
+                // flaky: it's absent on older ext4, only surfaced via
+                // statx(2) on Linux, and not exposed at all on some
+                // Unixes. Both map to Option(DateTime) so callers can
+                // pattern-match rather than probe for sentinels.
+                let fields = [
+                    ("size", Value::Int(md.len() as i64)),
+                    ("is_file", Value::Bool(md.is_file())),
+                    ("is_dir", Value::Bool(md.is_dir())),
+                    ("is_symlink", Value::Bool(md.file_type().is_symlink())),
+                    ("modified", Value::Int(modified)),
+                    ("readonly", Value::Bool(md.permissions().readonly())),
+                    ("mode", Value::Int(mode)),
+                    ("accessed", system_time_to_option_datetime(md.accessed())),
+                    ("created", system_time_to_option_datetime(md.created())),
+                ];
+                let fields: BTreeMap<String, Value> =
+                    fields.into_iter().map(|(name, value)| (name.into(), value)).collect();
+                Value::builtin_record(ty::FILE_STAT, fields)
+            })
         }
-        "is_symlink" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.is_symlink takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.is_symlink requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            // Must use symlink_metadata here: `Path::is_symlink` would do
-            // the same thing, but std has made it stable only recently.
-            // Using symlink_metadata avoids a version-gate and is explicit.
-            let b = std::fs::symlink_metadata(path)
-                .map(|md| md.file_type().is_symlink())
-                .unwrap_or(false);
-            Ok(Value::Bool(b))
+
+        // (The link itself is asked, not what it leads to.)
+        fn is_symlink(path: &str) -> bool {
+            std::fs::symlink_metadata(path).is_ok_and(|md| md.file_type().is_symlink())
         }
-        "read_link" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.read_link takes 1 argument".into()));
-            }
-            let Value::String(path) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.read_link requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            match std::fs::read_link(path) {
-                Ok(target) => Ok(fs_ok(Value::String(target.to_string_lossy().into_owned()))),
-                Err(e) => Ok(io_result_err(&e, path)),
-            }
+
+        fn read_link(path: &str) -> Value {
+            result(std::fs::read_link(path), path, |target| {
+                Value::String(target.to_string_lossy().into_owned())
+            })
         }
-        "walk" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.walk takes 1 argument".into()));
-            }
-            let Value::String(root) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.walk requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
+
+        fn walk(root: &str) -> Value {
             // Default: do NOT follow symlinks. This avoids infinite loops
             // on cyclic trees and matches the principle of least surprise
             // for build tooling (a symlink loop in node_modules should not
@@ -504,157 +341,137 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let walker = walkdir::WalkDir::new(root).follow_links(false);
             let mut out: Vec<Value> = Vec::new();
             for entry in walker {
-                match entry {
-                    Ok(e) => {
-                        if out.len() >= MAX_FS_WALK_ENTRIES {
-                            return Ok(io_result_err_unknown(format!(
-                                "fs.walk: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
-                            )));
-                        }
-                        // Use absolute path where possible so callers can
-                        // pass the result straight into other fs.* calls
-                        // without worrying about cwd drift. Fall back to
-                        // the raw path if canonicalize fails (e.g. the
-                        // entry was already removed between the walk and
-                        // this call — a classic TOCTOU race — or it lives
-                        // in a directory we don't have read access to).
-                        let p = e.path();
-                        let s = std::fs::canonicalize(p)
-                            .map(|c| c.to_string_lossy().into_owned())
-                            .unwrap_or_else(|_| p.to_string_lossy().into_owned());
-                        out.push(Value::String(s));
-                    }
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    // walkdir::Error -> reconstruct an io::Error when
+                    // possible so variant classification is accurate;
+                    // fall back to IoUnknown when walkdir wraps a
+                    // non-io cause (cycle detection etc.).
                     Err(err) => {
-                        // walkdir::Error -> reconstruct an io::Error when
-                        // possible so variant classification is accurate;
-                        // fall back to IoUnknown when walkdir wraps a
-                        // non-io cause (cycle detection etc.).
-                        if let Some(io_err_ref) = err.io_error() {
-                            return Ok(io_result_err(io_err_ref, root));
-                        }
-                        return Ok(io_result_err_unknown(err.to_string()));
+                        return match err.io_error() {
+                            Some(io_error) => io_result_err(io_error, root),
+                            None => io_result_err_unknown(err.to_string()),
+                        };
                     }
+                };
+                if out.len() >= MAX_FS_WALK_ENTRIES {
+                    return io_result_err_unknown(format!(
+                        "fs.walk: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
+                    ));
                 }
+                // Use absolute path where possible so callers can
+                // pass the result straight into other fs.* calls
+                // without worrying about cwd drift. Fall back to
+                // the raw path if canonicalize fails (e.g. the
+                // entry was already removed between the walk and
+                // this call — a classic TOCTOU race — or it lives
+                // in a directory we don't have read access to).
+                let path = entry.path();
+                let absolute = std::fs::canonicalize(path);
+                let shown = absolute.as_deref().unwrap_or(path).to_string_lossy();
+                out.push(Value::String(shown.into_owned()));
             }
-            Ok(fs_ok(Value::List(Arc::new(out))))
+            fs_ok(Value::List(Arc::new(out)))
         }
-        "glob" => {
-            if args.len() != 1 {
-                return Err(VmError::new("fs.glob takes 1 argument".into()));
-            }
-            let Value::String(pattern) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "fs.glob requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            match glob::glob(pattern) {
-                Ok(paths) => {
-                    let mut out: Vec<Value> = Vec::new();
-                    for entry in paths {
-                        if out.len() >= MAX_FS_WALK_ENTRIES {
-                            return Ok(io_result_err_unknown(format!(
-                                "fs.glob: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
-                            )));
-                        }
-                        match entry {
-                            Ok(p) => out.push(Value::String(p.to_string_lossy().into_owned())),
-                            // glob's per-entry error wraps std::io::Error.
-                            Err(e) => return Ok(io_result_err(e.error(), pattern)),
-                        }
-                    }
-                    Ok(fs_ok(Value::List(Arc::new(out))))
-                }
+
+        fn glob(pattern: &str) -> Value {
+            let paths = match glob::glob(pattern) {
+                Ok(paths) => paths,
                 // PatternError (bad glob pattern) is a user-input problem;
                 // route to IoInvalidInput so callers can distinguish
                 // "your pattern was malformed" from fs failures.
-                Err(e) => Ok(io_err(Value::variant(
-                    bv::IO_INVALID_INPUT,
-                    vec![Value::String(e.to_string())],
-                ))),
+                Err(e) => {
+                    return io_err(Value::variant(
+                        bv::IO_INVALID_INPUT,
+                        vec![Value::String(e.to_string())],
+                    ));
+                }
+            };
+            let mut out: Vec<Value> = Vec::new();
+            for entry in paths {
+                if out.len() >= MAX_FS_WALK_ENTRIES {
+                    return io_result_err_unknown(format!(
+                        "fs.glob: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
+                    ));
+                }
+                match entry {
+                    Ok(path) => out.push(Value::String(path.to_string_lossy().into_owned())),
+                    // glob's per-entry error wraps std::io::Error.
+                    Err(e) => return io_result_err(e.error(), pattern),
+                }
             }
+            fs_ok(Value::List(Arc::new(out)))
         }
-        _ => Err(VmError::new(format!("unknown fs function: {name}"))),
     }
 }
 
-/// Dispatch `env.<name>(args)`.
-pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "get" => {
-            if args.len() != 1 {
-                return Err(VmError::new("env.get takes 1 argument".into()));
-            }
-            let Value::String(key) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "env.get requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            match std::env::var(key) {
-                Ok(val) => Ok(Value::variant(bv::SOME, vec![Value::String(val)])),
-                Err(_) => Ok(Value::variant(bv::NONE, vec![])),
-            }
+/// `env.*`
+pub(crate) mod env {
+    use super::*;
+
+    /// Refuses a change of the environment from a task: it is the
+    /// process's, a task that reads it would race with the change, and
+    /// libc's setenv/unsetenv are not synchronized. Only the program's
+    /// own thread changes it.
+    fn own_thread_only(vm: &crate::vm::Vm, name: &str) -> Result<(), VmError> {
+        match vm.spawned {
+            true => Err(VmError::new(format!(
+                "{name} cannot be called from a spawned task"
+            ))),
+            false => Ok(()),
         }
-        "set" => {
-            if args.len() != 2 {
-                return Err(VmError::new("env.set takes 2 arguments".into()));
-            }
-            if vm.spawned {
-                return Err(VmError::new(
-                    "env.set cannot be called from a spawned task".into(),
-                ));
-            }
-            let (Value::String(key), Value::String(val)) = (&args[0], &args[1]) else {
+    }
+
+    /// Refuses a name that no variable of the environment can have:
+    /// the empty one, one with `=` or one with a NUL character. (The
+    /// standard library panics on them.)
+    fn variable_name(name: &str, variable: &str) -> Result<(), VmError> {
+        match variable.is_empty() || variable.contains(['=', '\0']) {
+            true => Err(VmError::new(format!(
+                "{name}: the name of a variable is not empty and holds no `=` and no NUL \
+                 character, got {variable:?}"
+            ))),
+            false => Ok(()),
+        }
+    }
+
+    builtins! {
+        fn get(key: &str) -> Option<Value> {
+            std::env::var(key).ok().map(Value::String)
+        }
+
+        fn set(vm, key: &str, value: &str) -> Result<(), VmError> {
+            own_thread_only(vm, "env.set")?;
+            variable_name("env.set", key)?;
+            if value.contains('\0') {
                 return Err(VmError::new(format!(
-                    "env.set requires String, got ({}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1])
+                    "env.set: the value of a variable holds no NUL character, got {value:?}"
                 )));
-            };
+            }
             // SAFETY: Only reachable from the main thread (guarded above).
-            unsafe { std::env::set_var(key, val) };
-            Ok(Value::Unit)
+            unsafe { std::env::set_var(key, value) };
+            Ok(())
         }
-        "remove" => {
-            if args.len() != 1 {
-                return Err(VmError::new("env.remove takes 1 argument".into()));
-            }
-            if vm.spawned {
-                // Same rationale as env.set: mutating the process-wide
-                // environment from a spawned task races with any other
-                // task reading the env, and libc's setenv/unsetenv are
-                // not synchronized. Keep it to the main thread.
-                return Err(VmError::new(
-                    "env.remove cannot be called from a spawned task".into(),
-                ));
-            }
-            let Value::String(key) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "env.remove requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
+
+        fn remove(vm, name: &str) -> Result<(), VmError> {
+            own_thread_only(vm, "env.remove")?;
+            variable_name("env.remove", name)?;
             // Idempotent by contract: std::env::remove_var does not
             // error when the variable was not set, so we don't need to
             // pre-check with env::var. SAFETY: main thread (guarded).
-            unsafe { std::env::remove_var(key) };
-            Ok(Value::Unit)
+            unsafe { std::env::remove_var(name) };
+            Ok(())
         }
-        "vars" => {
-            if !args.is_empty() {
-                return Err(VmError::new("env.vars takes 0 arguments".into()));
-            }
-            // std::env::vars() snapshots the environment at call time
-            // into an iterator. The iteration order is unspecified (on
-            // glibc it's roughly insertion order into `environ`; we
-            // don't sort, to avoid lying about stability). Each entry
-            // becomes a `(String, String)` tuple.
-            let pairs: Vec<Value> = std::env::vars()
+
+        // std::env::vars() snapshots the environment at call time
+        // into an iterator. The iteration order is unspecified (on
+        // glibc it's roughly insertion order into `environ`; we
+        // don't sort, to avoid lying about stability). Each entry
+        // becomes a `(String, String)` tuple.
+        fn vars() -> Vec<Value> {
+            std::env::vars()
                 .map(|(k, v)| Value::Tuple(vec![Value::String(k), Value::String(v)]))
-                .collect();
-            Ok(Value::List(Arc::new(pairs)))
+                .collect()
         }
-        _ => Err(VmError::new(format!("unknown env function: {name}"))),
     }
 }

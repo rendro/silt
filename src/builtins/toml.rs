@@ -50,6 +50,7 @@ use crate::vm::{Vm, VmError};
 
 use super::json::{decodable_record, field_record_type, unsupported_field_type_message};
 use super::time::{make_date, make_datetime, make_time};
+use super::typed::{Type, builtins};
 
 // ── TomlError helpers ────────────────────────────────────────────────
 //
@@ -109,26 +110,21 @@ pub(crate) fn toml_unknown_err<S: Into<String>>(msg: S) -> Value {
     ))
 }
 
-/// Dispatch the builtin `trait Error for TomlError` method table.
-/// Routed through `dispatch_builtin`'s "TomlError" module arm, exactly
-/// like `call_io_error_trait`. Scaffolding lives in
-/// `super::dispatch_error_trait`; this site just supplies the
-/// variant → message rendering.
-pub fn call_toml_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("TomlError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("TomlSyntax", [Value::String(m), Value::Int(offset)]) => {
-                format!("toml syntax error at byte {offset}: {m}")
-            }
-            ("TomlTypeMismatch", [Value::String(exp), Value::String(act)]) => {
-                format!("toml type mismatch: expected {exp}, got {act}")
-            }
-            ("TomlMissingField", [Value::String(n)]) => {
-                format!("toml missing field: {n}")
-            }
-            ("TomlUnknown", [Value::String(m)]) => m.clone(),
-            _ => return None,
-        })
+/// What `TomlError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("TomlSyntax", [Value::String(m), Value::Int(offset)]) => {
+            format!("toml syntax error at byte {offset}: {m}")
+        }
+        ("TomlTypeMismatch", [Value::String(exp), Value::String(act)]) => {
+            format!("toml type mismatch: expected {exp}, got {act}")
+        }
+        ("TomlMissingField", [Value::String(n)]) => {
+            format!("toml missing field: {n}")
+        }
+        ("TomlUnknown", [Value::String(m)]) => m.clone(),
+        _ => return None,
     })
 }
 
@@ -417,23 +413,13 @@ fn toml_to_record_list(
     Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(records))]))
 }
 
-fn toml_to_map(vm: &mut Vm, value_type: &Value, tv: &::toml::Value) -> Result<Value, VmError> {
+fn toml_to_map(vm: &mut Vm, value_type: Type, tv: &::toml::Value) -> Result<Value, VmError> {
     let ::toml::Value::Table(table) = tv else {
         return Ok(toml_type_mismatch_err("table", toml_type_name(tv)));
     };
     let field_type = match value_type {
-        Value::PrimitiveDescriptor(name) => match name.as_str() {
-            "String" => FieldType::String,
-            "Int" => FieldType::Int,
-            "Float" => FieldType::Float,
-            "Bool" => FieldType::Bool,
-            other => {
-                return Ok(toml_unknown_err(format!(
-                    "toml.parse_map: unknown value type '{other}'"
-                )));
-            }
-        },
-        Value::TypeDescriptor(ty) => {
+        Type::Primitive(field_type) => field_type,
+        Type::Named(ty) => {
             if decodable_record("toml.parse_map", ty).is_err() {
                 return Ok(toml_unknown_err(format!(
                     "toml.parse_map: unknown value type '{}'",
@@ -441,11 +427,6 @@ fn toml_to_map(vm: &mut Vm, value_type: &Value, tv: &::toml::Value) -> Result<Va
                 )));
             }
             FieldType::Record(ty.id)
-        }
-        _ => {
-            return Err(VmError::new(
-                "toml.parse_map: type argument must be a type (Int, Float, String, Bool, or a record type)".into(),
-            ));
         }
     };
     let mut map = BTreeMap::new();
@@ -482,6 +463,9 @@ fn toml_to_typed_value(
             ::toml::Value::Datetime(dt) => Ok(Value::String(dt.to_string())),
             _ => Err(mismatch("String", toml_type_name(tv))),
         },
+        // (TOML says which kind a number is: a float is no `Int`,
+        // whatever its value. JSON has one kind of number, and its
+        // decoder takes a whole one.)
         FieldType::Int => match tv {
             ::toml::Value::Integer(n) => Ok(Value::Int(*n)),
             _ => Err(mismatch("Int", toml_type_name(tv))),
@@ -620,120 +604,82 @@ fn toml_to_typed_value(
     }
 }
 
-// ── Dispatch ────────────────────────────────────────────────────────
+// ── The functions ───────────────────────────────────────────────────
 
-/// Dispatch `toml.<name>(args)`.
-pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "parse" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "toml.parse takes 2 arguments: (String, type a)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(
-                    "toml.parse: first argument must be a string".into(),
-                ));
-            };
-            let s = s.clone();
-            let Value::TypeDescriptor(ty) = &args[1] else {
-                return Err(VmError::new(
-                    "toml.parse: type argument must be a record type".into(),
-                ));
-            };
-            let ty = ty.clone();
-            let fields = decodable_record("toml.parse", &ty)?;
-            match ::toml::from_str::<::toml::Value>(&s) {
-                Ok(tv) => toml_to_record(vm, &ty, &fields, &tv),
-                Err(e) => Ok(toml_de_result_err(&e)),
-            }
+/// The record type a `type a` argument of `toml.<name>` is.
+fn record_type<'a>(name: &str, ty: Type<'a>) -> Result<&'a Arc<TypeInfo>, VmError> {
+    match ty {
+        Type::Named(ty) => Ok(ty),
+        Type::Primitive(_) => Err(VmError::new(format!(
+            "toml.{name}: type argument must be a record type"
+        ))),
+    }
+}
+
+/// `value` as TOML text, for `toml.<name>`: `Ok(text)`, or the
+/// `TomlError` of a value that TOML has no form for.
+fn written(
+    name: &str,
+    value: &Value,
+    write: fn(&::toml::Value) -> Result<String, ::toml::ser::Error>,
+) -> Value {
+    let tv = match value_to_top_level_toml(value) {
+        Ok(tv) => tv,
+        Err(e) => return toml_unknown_err(e.message),
+    };
+    match write(&tv) {
+        Ok(s) => Value::variant(bv::OK, vec![Value::String(s)]),
+        Err(e) => toml_unknown_err(format!("toml.{name}: {e}")),
+    }
+}
+
+builtins! {
+    fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let ty = record_type("parse", ty)?;
+        let fields = decodable_record("toml.parse", ty)?;
+        match ::toml::from_str::<::toml::Value>(s) {
+            Ok(tv) => toml_to_record(vm, ty, &fields, &tv),
+            Err(e) => Ok(toml_de_result_err(&e)),
         }
-        "parse_list" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "toml.parse_list takes 2 arguments: (String, type a)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(
-                    "toml.parse_list: first argument must be a string".into(),
-                ));
-            };
-            let s = s.clone();
-            let Value::TypeDescriptor(ty) = &args[1] else {
-                return Err(VmError::new(
-                    "toml.parse_list: type argument must be a record type".into(),
-                ));
-            };
-            let ty = ty.clone();
-            let fields = decodable_record("toml.parse_list", &ty)?;
-            match ::toml::from_str::<::toml::Value>(&s) {
-                Ok(tv) => {
-                    // TOML's top-level is always a table. For `parse_list`
-                    // we expect that table to contain exactly one array-of-
-                    // tables key, whose values are the list elements. This
-                    // matches how `[[items]]` naturally renders.
-                    let ::toml::Value::Table(table) = &tv else {
-                        return Ok(toml_type_mismatch_err("table", toml_type_name(&tv)));
-                    };
-                    if table.len() != 1 {
-                        return Ok(toml_unknown_err(format!(
-                            "toml.parse_list({}): expected a document with exactly one top-level array-of-tables key, found {} keys",
-                            ty.name,
-                            table.len()
-                        )));
-                    }
-                    let (_k, v) = table.iter().next().expect("len==1 above");
-                    toml_to_record_list(vm, &ty, &fields, v)
-                }
-                Err(e) => Ok(toml_de_result_err(&e)),
-            }
+    }
+
+    fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let ty = record_type("parse_list", ty)?;
+        let fields = decodable_record("toml.parse_list", ty)?;
+        let tv = match ::toml::from_str::<::toml::Value>(s) {
+            Ok(tv) => tv,
+            Err(e) => return Ok(toml_de_result_err(&e)),
+        };
+        // TOML's top-level is always a table. For `parse_list` we
+        // expect that table to contain exactly one array-of-tables key,
+        // whose values are the list elements. This matches how
+        // `[[items]]` naturally renders.
+        let ::toml::Value::Table(table) = &tv else {
+            return Ok(toml_type_mismatch_err("table", toml_type_name(&tv)));
+        };
+        let mut values = table.values();
+        let (Some(only), None) = (values.next(), values.next()) else {
+            return Ok(toml_unknown_err(format!(
+                "toml.parse_list({}): expected a document with exactly one top-level array-of-tables key, found {} keys",
+                ty.name,
+                table.len()
+            )));
+        };
+        toml_to_record_list(vm, ty, &fields, only)
+    }
+
+    fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
+        match ::toml::from_str::<::toml::Value>(s) {
+            Ok(tv) => toml_to_map(vm, value_type, &tv),
+            Err(e) => Ok(toml_de_result_err(&e)),
         }
-        "parse_map" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "toml.parse_map takes 2 arguments: (String, type v)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(
-                    "toml.parse_map: first argument must be a string".into(),
-                ));
-            };
-            let s = s.clone();
-            let value_type = args[1].clone();
-            match ::toml::from_str::<::toml::Value>(&s) {
-                Ok(tv) => toml_to_map(vm, &value_type, &tv),
-                Err(e) => Ok(toml_de_result_err(&e)),
-            }
-        }
-        "stringify" => {
-            if args.len() != 1 {
-                return Err(VmError::new("toml.stringify takes 1 argument".into()));
-            }
-            let tv = match value_to_top_level_toml(&args[0]) {
-                Ok(t) => t,
-                Err(e) => return Ok(toml_unknown_err(e.message)),
-            };
-            match ::toml::to_string(&tv) {
-                Ok(s) => Ok(Value::variant(bv::OK, vec![Value::String(s)])),
-                Err(e) => Ok(toml_unknown_err(format!("toml.stringify: {e}"))),
-            }
-        }
-        "pretty" => {
-            if args.len() != 1 {
-                return Err(VmError::new("toml.pretty takes 1 argument".into()));
-            }
-            let tv = match value_to_top_level_toml(&args[0]) {
-                Ok(t) => t,
-                Err(e) => return Ok(toml_unknown_err(e.message)),
-            };
-            match ::toml::to_string_pretty(&tv) {
-                Ok(s) => Ok(Value::variant(bv::OK, vec![Value::String(s)])),
-                Err(e) => Ok(toml_unknown_err(format!("toml.pretty: {e}"))),
-            }
-        }
-        _ => Err(VmError::new(format!("unknown toml function: {name}"))),
+    }
+
+    fn stringify(value: &Value) -> Value {
+        written("stringify", value, ::toml::to_string)
+    }
+
+    fn pretty(value: &Value) -> Value {
+        written("pretty", value, ::toml::to_string_pretty)
     }
 }

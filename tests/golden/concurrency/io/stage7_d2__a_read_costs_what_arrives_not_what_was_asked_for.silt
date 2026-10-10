@@ -1,0 +1,49 @@
+-- A read that asks for more bytes than any machine holds gets what the
+-- peer sent: the buffer of a read is for the bytes that arrive, not for
+-- the number asked for (it was allocated whole, and the process ended
+-- with "memory allocation of 9223372036854775807 bytes failed").
+-- `tcp.read` gives the bytes that are there, `tcp.read_exact` the error
+-- of a connection that ended too early, and a chunk of a stream is no
+-- larger than what was read.
+import bytes
+import io
+import list
+import stream
+import task
+import tcp
+
+fn text(read) {
+  match read {
+    Ok(b) -> match bytes.to_string(b) {
+      Ok(s) -> "Ok({s})"
+      Err(e) -> "no text: {e}"
+    }
+    Err(e) -> "Err({e})"
+  }
+}
+
+fn main() {
+  let huge = 9223372036854775807
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("no listener") }
+  let addr = "127.0.0.1:{tcp.local_port(listener)}"
+  -- The peer: to each of three connections it sends three bytes and
+  -- closes.
+  let peer = task.spawn { ->
+    list.each(1..3) { _ ->
+      when let Ok(conn) = tcp.accept(listener) else { panic("no connection") }
+      let _ = tcp.write(conn, bytes.from_string("abc"))
+      tcp.close(conn)
+    }
+  }
+  when let Ok(a) = tcp.connect(addr) else { panic("no connection") }
+  println("read: {text(tcp.read(a, huge))}")
+  when let Ok(b) = tcp.connect(addr) else { panic("no connection") }
+  println("read_exact: {text(tcp.read_exact(b, huge))}")
+  when let Ok(c) = tcp.connect(addr) else { panic("no connection") }
+  let chunks = stream.collect(stream.tcp_chunks(c, huge))
+  println("tcp_chunks: {list.map(chunks) { chunk -> text(chunk) }}")
+  task.join(peer)
+  when let Ok(_) = io.write_file("five.txt", "hello") else { panic("no file") }
+  let chunks = stream.collect(stream.file_chunks("five.txt", huge))
+  println("file_chunks: {list.map(chunks) { chunk -> text(chunk) }}")
+}

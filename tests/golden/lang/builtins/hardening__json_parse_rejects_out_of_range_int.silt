@@ -4,7 +4,7 @@ fn main() {
   -- 1e100 does not fit in an Int; it must not saturate to i64::MAX
   match json.parse("""{"n": 1e100}""", Payload) {
     Ok(p) -> println("unexpected Ok: {p.n}")
-    Err(json.JsonUnknown(msg)) -> println(msg)
+    Err(json.JsonTypeMismatch(expected, got)) -> println("expected {expected}, got {got}")
     Err(other) -> println("unexpected error variant: {other}")
   }
 }
