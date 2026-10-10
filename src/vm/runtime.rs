@@ -710,7 +710,7 @@ impl Runtime {
         let take = |left: u64| Some(left.saturating_sub(used as u64));
         match self.steps_left.fetch_update(Relaxed, Relaxed, take) {
             Ok(left) if left > used as u64 => Ok(()),
-            _ => Err(VmError::out_of_steps()),
+            _ => Err(VmError::budget_used_up()),
         }
     }
 

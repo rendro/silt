@@ -48,7 +48,7 @@ impl VmError {
 
     /// The step budget of the program is used up: what still runs of
     /// it ends with this.
-    pub(crate) fn out_of_steps() -> Self {
+    pub(crate) fn budget_used_up() -> Self {
         VmError {
             out_of_steps: true,
             ..VmError::new("the step budget is used up".into())
