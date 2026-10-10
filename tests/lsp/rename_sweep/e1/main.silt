@@ -1,0 +1,17 @@
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+
+fn has_error(v: Int) -> Int {
+  let w = add(v, 1)
+  let x = 1 @ v
+  add(w, x)
+}
+
+fn after(n: Int) -> Int {
+  add(n, n)
+}
+
+fn main() {
+  println("{add(1, 2)} {after(3)}")
+}

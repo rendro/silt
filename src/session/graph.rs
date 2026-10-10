@@ -61,6 +61,11 @@ pub struct Module {
     /// in front of it, and nothing but the lexer's first error is worth
     /// reporting.
     pub cut_short: bool,
+    /// Whether the declarations are not all of the text: one failed and
+    /// was skipped (a recovery stub stands in for it, or nothing), or
+    /// the text is cut short. What the names in the missing part mean
+    /// is unknown.
+    pub incomplete: bool,
     /// Why the module's file could not be read (the kind and text of the
     /// I/O error). Each import of the module reports it at its own span
     /// ([`Import::problem`]).
@@ -126,25 +131,30 @@ pub enum ImportResolution {
 /// as far as they can be read, with their doc comments, and its lex and
 /// parse errors.
 pub fn parse_text(file: FileId, text: &str) -> (ast::Program, Vec<Diagnostic>) {
-    let (program, errors, _) = parse_module(file, text, None);
+    let (program, errors, ..) = parse_module(file, text, None);
     (program, errors)
 }
 
-/// `parse_text` of a module file, or of the REPL entry `cell`, and
-/// whether the text is cut short (`Lexed::is_cut_short`).
+/// `parse_text` of a module file, or of the REPL entry `cell`; whether
+/// the text is cut short (`Lexed::is_cut_short`); and whether the
+/// declarations are not all of the text (`Module::incomplete`).
 fn parse_module(
     file: FileId,
     text: &str,
     cell: Option<usize>,
-) -> (ast::Program, Vec<Diagnostic>, bool) {
+) -> (ast::Program, Vec<Diagnostic>, bool, bool) {
     let lexed = Lexer::new(file, text).tokenize();
     let cut_short = lexed.is_cut_short();
     let mut parser = Parser::new(lexed, text);
+    if cell.is_none() {
+        parser = parser.with_docs();
+    }
     let (program, errors) = match cell {
         Some(n) => parser.parse_cell(intern(&cell_name(n))),
-        None => parser.with_docs().parse_program_recovering(),
+        None => parser.parse_program_recovering(),
     };
-    (program, errors, cut_short)
+    let incomplete = cut_short || parser.skipped_a_declaration();
+    (program, errors, cut_short, incomplete)
 }
 
 /// Every module a session has read.
@@ -216,6 +226,7 @@ impl ModuleGraph {
                     ast: None,
                     problems: Vec::new(),
                     cut_short: false,
+                    incomplete: false,
                     load_error: None,
                     first_import: None,
                     imports: Vec::new(),
@@ -262,6 +273,7 @@ impl ModuleGraph {
             ast: None,
             problems: Vec::new(),
             cut_short: false,
+            incomplete: false,
             load_error: None,
             first_import: None,
             imports: Vec::new(),
@@ -435,10 +447,11 @@ impl ModuleGraph {
         module.file = Some(file);
         module.imports.clear();
         module.load_error = None;
-        let (ast, problems, cut_short) = parse_module(file, text, cell);
+        let (ast, problems, cut_short, incomplete) = parse_module(file, text, cell);
         module.ast = Some(ast);
         module.problems = problems;
         module.cut_short = cut_short;
+        module.incomplete = incomplete;
     }
 
     /// Resolve the imports of `entry` and of every module they reach,
@@ -602,6 +615,7 @@ impl ModuleGraph {
             ast: None,
             problems: Vec::new(),
             cut_short: false,
+            incomplete: false,
             load_error: None,
             first_import: Some(import),
             imports: Vec::new(),

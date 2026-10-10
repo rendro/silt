@@ -356,6 +356,9 @@ pub struct Parser<'src> {
     /// failed last, behind its name: it stands in for the function (see
     /// `parse_fn_decl`).
     fn_stub: Option<FnDecl>,
+    /// Whether a declaration (or a REPL entry's statements) failed and
+    /// was skipped: the program is not all of the text.
+    skipped: bool,
     depth: usize,
     /// The comments of the source, when the parser is asked to attach
     /// documentation (see `with_docs`): each top-level declaration and
@@ -420,6 +423,7 @@ impl<'src> Parser<'src> {
             more_errors: lexed.more_errors,
             cut_short,
             fn_stub: None,
+            skipped: false,
             tokens,
             delim_depth,
             starts_line,
@@ -467,6 +471,7 @@ impl<'src> Parser<'src> {
         let stmts = match self.parse_stmt_list(&Token::Eof) {
             Ok(stmts) => stmts,
             Err(e) => {
+                self.skipped = true;
                 self.report(0..self.tokens.len(), e);
                 return self.finish(Vec::new());
             }
@@ -832,6 +837,13 @@ impl<'src> Parser<'src> {
 
     // ── Program ──────────────────────────────────────────────────────
 
+    /// Whether the program that was parsed is not all of the text: a
+    /// declaration failed and was skipped (it is missing, or a recovery
+    /// stub stands in for it).
+    pub fn skipped_a_declaration(&self) -> bool {
+        self.skipped
+    }
+
     /// The declarations of the file, or the first thing wrong with its
     /// text (see `parse_program_recovering`, which this is).
     pub fn parse_program(&mut self) -> Result<Program> {
@@ -870,6 +882,7 @@ impl<'src> Parser<'src> {
                         decls.push(Decl::Fn(stub));
                     }
                     // What is skipped is of the failed declaration.
+                    self.skipped = true;
                     self.synchronize(start);
                     self.report(start..self.pos, e);
                 }

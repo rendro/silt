@@ -1,0 +1,7 @@
+pub fn mk(w: Int) -> Int {
+  w + 1
+}
+
+pub fn twice(w: Int) -> Int {
+  mk(w) + mk(w)
+}

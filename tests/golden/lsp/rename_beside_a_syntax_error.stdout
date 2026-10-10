@@ -1,0 +1,13 @@
+16:13 error unexpected character: '@'
+> rename 10:4 sum
+error: `add` cannot be renamed now: rename_beside_a_syntax_error.silt has a syntax error at 16:13 (unexpected character: '@'); what the names in the declaration that holds it mean is not known, and a rename would leave them as they are
+> rename 20:10 m
+error: `n` cannot be renamed now: rename_beside_a_syntax_error.silt has a syntax error at 16:13 (unexpected character: '@'); what the names in the declaration that holds it mean is not known, and a rename would leave them as they are
+> references 10:4
+rename_beside_a_syntax_error.silt:10:4-10:7
+rename_beside_a_syntax_error.silt:21:3-21:6
+rename_beside_a_syntax_error.silt:25:13-25:16
+> highlight 10:4
+10:4-10:7
+21:3-21:6
+25:13-25:16

@@ -91,6 +91,12 @@ impl Server {
         if new_name == old_name {
             return Ok(None);
         }
+        if let Some(broken) = self.incomplete_for_rename(uri, &target) {
+            return Err(invalid(format!(
+                "`{old_name}` cannot be renamed now: {broken}; what the names in the declaration \
+                 that holds it mean is not known, and a rename would leave them as they are"
+            )));
+        }
         if let Some(clash) = self.rename_clash(uri, &target, &new_name) {
             return Err(invalid(format!(
                 "`{old_name}` cannot be renamed to `{new_name}`: {clash}, and the rename would \
