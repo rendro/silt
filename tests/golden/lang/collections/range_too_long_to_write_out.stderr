@@ -71,11 +71,17 @@
         |
      71 |   let _ = list.sum(1..9223372036854775807)
         |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ list.sum overflow
+  FAIL range_too_long_to_write_out.silt::test_product_that_is_no_int
+    error[runtime]: list.product overflow
+     --> range_too_long_to_write_out.silt:75:11
+        |
+     75 |   let _ = list.product(1..9223372036854775807)
+        |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ list.product overflow
   FAIL range_too_long_to_write_out.silt::test_an_assertion_shows_the_ends
     error[runtime]: assertion failed: [0, 1, 2, ..., 10000000] != []
-     --> range_too_long_to_write_out.silt:75:3
+     --> range_too_long_to_write_out.silt:79:3
         |
-     75 |   test.assert_eq(long(), [])
+     79 |   test.assert_eq(long(), [])
         |   ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed: [0, 1, 2, ..., 10000000] != []
 
-14 tests: 1 passed, 13 failed, 0 skipped
+15 tests: 1 passed, 14 failed, 0 skipped

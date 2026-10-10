@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::typed::{List, Map, Set, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::{IntSum, MAX_RANGE_MATERIALIZE, Value};
+use crate::value::{IntTotal, MAX_RANGE_MATERIALIZE, Value};
 use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
 
 fn some(value: Value) -> Value {
@@ -574,23 +574,18 @@ pub(crate) mod list {
             Ok(items)
         }
 
-        fn sort(xs: List) -> Result<Vec<Value>, VmError> {
+        fn sort(xs: List) -> Result<Value, VmError> {
             // Fn elements would sort by Arc pointer address (ASLR-
             // nondeterministic) — reject like the operator gates do.
             ensure_no_fn_in("list.sort", "Compare", xs)?;
-            let mut sorted = xs.to_vec()?;
-            sorted.sort();
-            Ok(sorted)
+            Ok(Value::List(xs.sorted()))
         }
 
-        fn unique(xs: List) -> Result<Vec<Value>, VmError> {
+        fn unique(xs: List) -> Result<Value, VmError> {
             // Fn elements would dedup by identity (Arc pointer / builtin
             // name) instead of erroring like `f == g` does.
             ensure_no_fn_in("list.unique", "Equal", xs)?;
-            let mut seen = BTreeSet::new();
-            let mut unique = xs.to_vec()?;
-            unique.retain(|x| seen.insert(x.clone()));
-            Ok(unique)
+            Ok(Value::List(xs.unique()))
         }
 
         fn contains(xs: List, elem: &Value) -> Result<bool, VmError> {
@@ -692,9 +687,9 @@ pub(crate) mod list {
 
         fn sum(xs: List) -> Result<i64, VmError> {
             match xs.sum_ints() {
-                IntSum::Sum(total) => Ok(total),
-                IntSum::Overflow => Err(VmError::new("list.sum overflow".into())),
-                IntSum::NotInts => Err(unsound("list.sum", "xs")),
+                IntTotal::Total(total) => Ok(total),
+                IntTotal::Overflow => Err(VmError::new("list.sum overflow".into())),
+                IntTotal::NotInts => Err(unsound("list.sum", "xs")),
             }
         }
 
@@ -712,16 +707,11 @@ pub(crate) mod list {
         }
 
         fn product(xs: List) -> Result<i64, VmError> {
-            let mut total: i64 = 1;
-            for item in xs.iter() {
-                let Value::Int(n) = item else {
-                    return Err(unsound("list.product", "xs"));
-                };
-                total = total
-                    .checked_mul(n)
-                    .ok_or_else(|| VmError::new("list.product overflow".into()))?;
+            match xs.product_ints() {
+                IntTotal::Total(total) => Ok(total),
+                IntTotal::Overflow => Err(VmError::new("list.product overflow".into())),
+                IntTotal::NotInts => Err(unsound("list.product", "xs")),
             }
-            Ok(total)
         }
 
         fn product_float(xs: List) -> Result<Value, VmError> {

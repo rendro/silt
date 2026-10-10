@@ -71,6 +71,10 @@ fn test_sum_that_is_no_int() {
   let _ = list.sum(1..9223372036854775807)
 }
 
+fn test_product_that_is_no_int() {
+  let _ = list.product(1..9223372036854775807)
+}
+
 fn test_an_assertion_shows_the_ends() {
   test.assert_eq(long(), [])
 }

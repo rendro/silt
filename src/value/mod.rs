@@ -18,7 +18,7 @@ mod tests;
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
 pub use fmt::{Shown, Written};
 pub(crate) use list::MAX_RANGE_MATERIALIZE;
-pub use list::{IntSum, IntoIter, Iter, List, TooLong};
+pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
 
 #[derive(Clone)]
 pub enum Value {

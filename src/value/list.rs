@@ -11,8 +11,10 @@
 //! nothing that tells one way of storing a list from another. What
 //! would otherwise visit every element of a list that holds none is
 //! asked here, and answered from the two ends ([`List::contains`],
-//! [`List::position`], [`List::sum_ints`]).
+//! [`List::position`], [`List::sum_ints`], [`List::product_ints`],
+//! [`List::sorted`], [`List::unique`]).
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -54,10 +56,10 @@ pub(super) enum Elements<'a> {
     Ints(i64, i64),
 }
 
-/// What [`List::sum_ints`] gives.
-pub enum IntSum {
-    Sum(i64),
-    /// The sum is no `Int`.
+/// What [`List::sum_ints`] and [`List::product_ints`] give.
+pub enum IntTotal {
+    Total(i64),
+    /// The sum, or the product, is no `Int`.
     Overflow,
     /// An element is no `Int`.
     NotInts,
@@ -227,20 +229,20 @@ impl List {
     }
 
     /// The sum of the elements of a list of Ints.
-    pub fn sum_ints(&self) -> IntSum {
+    pub fn sum_ints(&self) -> IntTotal {
         match self.elements() {
             Elements::Items(items) => {
                 let mut sum: i64 = 0;
                 for item in items {
                     let Value::Int(n) = item else {
-                        return IntSum::NotInts;
+                        return IntTotal::NotInts;
                     };
                     let Some(next) = sum.checked_add(*n) else {
-                        return IntSum::Overflow;
+                        return IntTotal::Overflow;
                     };
                     sum = next;
                 }
-                IntSum::Sum(sum)
+                IntTotal::Total(sum)
             }
             // Half of the count times the sum of the ends. (A product
             // that an `i128` does not hold is no `Int` halved either.)
@@ -248,10 +250,72 @@ impl List {
                 let count = hi as i128 - lo as i128 + 1;
                 let twice = (lo as i128 + hi as i128).checked_mul(count);
                 match twice.map(|twice| i64::try_from(twice / 2)) {
-                    Some(Ok(sum)) => IntSum::Sum(sum),
-                    _ => IntSum::Overflow,
+                    Some(Ok(sum)) => IntTotal::Total(sum),
+                    _ => IntTotal::Overflow,
                 }
             }
+        }
+    }
+
+    /// The product of the elements of a list of Ints. It is 0 if one
+    /// of them is 0, whatever the product of the others is.
+    pub fn product_ints(&self) -> IntTotal {
+        match self.elements() {
+            Elements::Items(items) => {
+                // `None` once the product so far is no `Int`: a 0
+                // further on makes it one again.
+                let mut product = Some(1_i64);
+                for item in items {
+                    match item {
+                        Value::Int(0) => return IntTotal::Total(0),
+                        Value::Int(n) => product = product.and_then(|p| p.checked_mul(*n)),
+                        _ => return IntTotal::NotInts,
+                    }
+                }
+                product.map_or(IntTotal::Overflow, IntTotal::Total)
+            }
+            Elements::Ints(lo, hi) if lo <= 0 && 0 <= hi => IntTotal::Total(0),
+            // With no 0 among them all but one are 2 or more, or -2 or
+            // less: the product is no `Int` before the 65th.
+            Elements::Ints(lo, hi) => {
+                let mut product: i64 = 1;
+                for n in lo..=hi {
+                    let Some(next) = product.checked_mul(n) else {
+                        return IntTotal::Overflow;
+                    };
+                    product = next;
+                }
+                IntTotal::Total(product)
+            }
+        }
+    }
+
+    /// The elements in ascending order, as a list. (A list that holds
+    /// no element has them in that order.)
+    pub fn sorted(&self) -> List {
+        match self.elements() {
+            Elements::Items(items) => {
+                let mut sorted = items.to_vec();
+                sorted.sort();
+                List::from(sorted)
+            }
+            Elements::Ints(..) => self.clone(),
+        }
+    }
+
+    /// The elements that are equal to none before them, as a list. (A
+    /// list that holds no element has none twice.)
+    pub fn unique(&self) -> List {
+        match self.elements() {
+            Elements::Items(items) => {
+                let mut seen = BTreeSet::new();
+                items
+                    .iter()
+                    .filter(|item| seen.insert(*item))
+                    .cloned()
+                    .collect()
+            }
+            Elements::Ints(..) => self.clone(),
         }
     }
 

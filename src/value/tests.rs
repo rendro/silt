@@ -555,13 +555,17 @@ fn the_elements_of_a_long_list_that_holds_none_are_not_made() {
     assert_eq!(Value::List(made(0..4)).writable(), Ok(()));
 }
 
+fn total(total: IntTotal) -> Result<i64, &'static str> {
+    match total {
+        IntTotal::Total(total) => Ok(total),
+        IntTotal::Overflow => Err("overflow"),
+        IntTotal::NotInts => Err("not ints"),
+    }
+}
+
 #[test]
 fn the_sum_of_a_list_of_ints() {
-    let sum = |list: &List| match list.sum_ints() {
-        IntSum::Sum(sum) => Ok(sum),
-        IntSum::Overflow => Err("overflow"),
-        IntSum::NotInts => Err("not ints"),
-    };
+    let sum = |list: &List| total(list.sum_ints());
     for xs in both() {
         assert_eq!(sum(&xs), Ok(45));
     }
@@ -581,4 +585,65 @@ fn the_sum_of_a_list_of_ints() {
         sum(&[Value::Int(1), Value::Unit].into_iter().collect()),
         Err("not ints")
     );
+}
+
+#[test]
+fn the_product_of_a_list_of_ints() {
+    let product = |list: &List| total(list.product_ints());
+    for xs in both() {
+        assert_eq!(product(&xs), Ok(0));
+    }
+    assert_eq!(product(&List::new()), Ok(1));
+    // However a list is stored, its product is the same.
+    for (lo, hi) in [(1, 20), (1, 21), (-20, -1), (-21, -1), (-3, -1), (7, 7)] {
+        assert_eq!(
+            product(&ints(lo, hi)),
+            product(&made(lo..=hi)),
+            "{lo}..{hi}"
+        );
+    }
+    assert_eq!(product(&ints(1, 20)), Ok(2_432_902_008_176_640_000));
+    assert_eq!(product(&ints(1, 21)), Err("overflow"));
+    assert_eq!(product(&ints(-3, -1)), Ok(-6));
+    assert_eq!(product(&ints(i64::MIN, i64::MIN)), Ok(i64::MIN));
+    assert_eq!(product(&ints(i64::MIN, i64::MIN + 1)), Err("overflow"));
+    // A 0 among the elements is the product, and no element of a list
+    // that holds none is visited for it: the product of the others may
+    // be no `Int`, and there may be nine quintillion of them.
+    for (lo, hi) in [(-100, 100), (0, 100), (-100, 0), (0, 0)] {
+        assert_eq!(product(&ints(lo, hi)), Ok(0), "{lo}..{hi}");
+        assert_eq!(product(&made(lo..=hi)), Ok(0), "{lo}..{hi}");
+    }
+    assert_eq!(product(&ints(0, i64::MAX)), Ok(0));
+    assert_eq!(product(&ints(i64::MIN, 0)), Ok(0));
+    assert_eq!(product(&ints(i64::MIN + 1, i64::MAX)), Ok(0));
+    assert_eq!(product(&ints(1, i64::MAX)), Err("overflow"));
+    assert_eq!(product(&ints(i64::MIN, -1)), Err("overflow"));
+    assert_eq!(product(&made([i64::MAX, 2])), Err("overflow"));
+    assert_eq!(product(&made([i64::MAX, 2, 0])), Ok(0));
+    assert_eq!(
+        product(&[Value::Int(1), Value::Unit].into_iter().collect()),
+        Err("not ints")
+    );
+}
+
+#[test]
+fn a_list_in_order_and_without_its_repeats() {
+    for xs in both() {
+        assert_eq!(xs.sorted(), xs);
+        assert_eq!(xs.unique(), xs);
+    }
+    let mixed = made([3, 1, 3, 2, 1]);
+    assert_eq!(elements(&mixed.sorted()), elements(&made([1, 1, 2, 3, 3])));
+    assert_eq!(elements(&mixed.unique()), elements(&made([3, 1, 2])));
+    assert!(List::new().sorted().is_empty());
+    assert!(List::new().unique().is_empty());
+    // A list that holds no element is in order and has none twice:
+    // none of its elements is made, however many there are.
+    let long = ints(1, i64::MAX);
+    assert!(long.to_vec().is_err());
+    assert_eq!(long.sorted().len(), long.len());
+    assert_eq!(long.sorted().last(), Some(Value::Int(i64::MAX)));
+    assert_eq!(long.unique().len(), long.len());
+    assert_eq!(long.unique().get(41), Some(Value::Int(42)));
 }
