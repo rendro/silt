@@ -17,6 +17,7 @@ mod lsp_destructured_binding_tests;
 mod lsp_diagnostics_completion_symbols_tests;
 mod lsp_diagnostics_user_import_filter_tests;
 mod lsp_doc_comment_extraction_tests;
+mod lsp_fixed_order_tests;
 mod lsp_fn_decl_rename_and_handlers_tests;
 mod lsp_fn_destructured_params_tests;
 mod lsp_hover_fn_decl_tests;
