@@ -1031,3 +1031,102 @@ fn after_a_refusal_the_client_is_heard_out_for_a_time() {
     assert_eq!(client.response().status, 400);
     assert_eq!(client.rest(), b"");
 }
+
+/// The server says its last word on a connection (408, or 503 when it
+/// ends) while a thread of the pool is still reading that connection.
+/// The write does not wait, and it does not disturb the read: after a
+/// 408 the client is heard out as after any refusal, however the two
+/// fall together.
+///
+/// Many connections at once whose bodies come in sixteen bytes at a
+/// time, so that their readers are in and out of the read all the
+/// while; the clock passes the time for a body once, and every
+/// connection that was answered must still take what its client
+/// sends. Then the server is cancelled under the same load.
+#[test]
+fn a_last_word_beside_a_read_does_not_end_the_read() {
+    use std::sync::atomic::AtomicBool;
+    const CONNECTIONS: usize = 32;
+    let clock = TestClock::default();
+    let server = Server::on(ECHO, Some(clock.clone()));
+    // (Bodies that all of the connections have room for at a time,
+    // and longer than what is sent of them.)
+    let head = format!(
+        "POST /slow HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {}\r\n\r\n",
+        2 * 1024 * 1024
+    );
+    // Connections whose heads are read, each with a thread that
+    // sends its body in small pieces until told to stop.
+    let trickling = |stop: &Arc<AtomicBool>| -> Vec<(Client, thread::JoinHandle<bool>)> {
+        (0..CONNECTIONS)
+            .map(|_| {
+                let mut client = server.connect();
+                client.send(head.as_bytes());
+                let mut line = String::new();
+                client.0.read_line(&mut line).expect("the interim response");
+                assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
+                client.0.read_line(&mut line).expect("its end");
+                let mut conn = client.0.get_ref().try_clone().expect("clone");
+                let stop = stop.clone();
+                let writer = thread::spawn(move || {
+                    let mut sent = 0;
+                    while !stop.load(Ordering::SeqCst) && sent < 256 * 1024 {
+                        if conn.write_all(&[b'b'; 16]).is_err() {
+                            return false;
+                        }
+                        sent += 16;
+                    }
+                    true
+                });
+                (client, writer)
+            })
+            .collect()
+    };
+
+    let mut answered = 0;
+    for _ in 0..6 {
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut clients = trickling(&stop);
+        // The time for a body passes, once: the clock then stands, so
+        // a connection that was answered is heard out without end.
+        clock.advance(TRANSFER_TIME + Duration::from_secs(1));
+        let patience = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < patience && !clients.iter_mut().all(|(client, _)| client.has_word())
+        {
+            thread::sleep(Duration::from_millis(2));
+        }
+        stop.store(true, Ordering::SeqCst);
+        for (mut client, writer) in clients {
+            let wrote = writer.join().expect("the writer");
+            // (One whose wait began after the clock moved has all the
+            // time yet: it is left alone.)
+            if !client.has_word() {
+                continue;
+            }
+            assert!(
+                wrote,
+                "the server stopped reading a body it had answered 408"
+            );
+            client.send(&vec![b'b'; 1024 * 1024]);
+            assert_eq!(client.response().status, 408);
+            assert_eq!(client.rest(), b"");
+            answered += 1;
+        }
+    }
+    assert!(answered > 0, "no connection reached its time limit");
+
+    // The server ends with bodies half read and still coming: every
+    // client is answered 503, or finds its connection closed.
+    let stop = Arc::new(AtomicBool::new(false));
+    let clients = trickling(&stop);
+    drop(server);
+    for (mut client, writer) in clients {
+        let _ = writer.join();
+        let last = client.rest();
+        assert!(
+            last.is_empty() || last.starts_with(b"HTTP/1.1 503 "),
+            "{:?}",
+            String::from_utf8_lossy(&last)
+        );
+    }
+}

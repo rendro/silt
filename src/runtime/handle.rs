@@ -414,6 +414,10 @@ enum TcpIo {
         /// `writing`.
         reading: Mutex<()>,
         writing: Mutex<()>,
+        /// Held while the socket is switched to non-blocking for one
+        /// call, where the system has no call that does not wait
+        /// (see [`without_waiting`]). Nowhere on Unix.
+        switching: Mutex<()>,
     },
     Tls {
         both: Mutex<Box<dyn ReadWrite>>,
@@ -436,6 +440,7 @@ impl TcpStreamHandle {
                 socket,
                 reading: Mutex::new(()),
                 writing: Mutex::new(()),
+                switching: Mutex::new(()),
             },
             closed: AtomicBool::new(false),
         })
@@ -507,10 +512,18 @@ impl TcpStreamHandle {
         use std::io::Read;
         match &self.io {
             TcpIo::Plain {
-                socket, reading, ..
+                socket,
+                reading,
+                switching,
+                ..
             } => {
                 let _turn = reading.lock();
-                (&*socket).read(buf)
+                loop {
+                    match (&*socket).read(buf) {
+                        Err(e) if switched_meanwhile(&e) => drop(switching.lock()),
+                        read => return read,
+                    }
+                }
             }
             TcpIo::Tls { both, .. } => both.lock().read(buf),
         }
@@ -534,10 +547,22 @@ impl TcpStreamHandle {
         use std::io::Write;
         match &self.io {
             TcpIo::Plain {
-                socket, writing, ..
+                socket,
+                writing,
+                switching,
+                ..
             } => {
                 let _turn = writing.lock();
-                (&*socket).write_all(buf)?;
+                let mut rest = buf;
+                while !rest.is_empty() {
+                    match (&*socket).write(rest) {
+                        Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                        Ok(n) => rest = &rest[n..],
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(e) if switched_meanwhile(&e) => drop(switching.lock()),
+                        Err(e) => return Err(e),
+                    }
+                }
                 (&*socket).flush()
             }
             TcpIo::Tls { both, .. } => {
@@ -553,13 +578,18 @@ impl TcpStreamHandle {
     /// must not wait where it is (a worker of the scheduler, a task
     /// that is being dropped). Nothing if a write is in flight, or the
     /// connection is closed or not a plain one.
+    ///
+    /// A read of the connection may be in flight on another thread
+    /// meanwhile: it is not disturbed (see [`send_now`]).
     pub fn write_now(&self, bytes: &[u8]) -> usize {
-        use std::io::Write;
         if self.is_closed() {
             return 0;
         }
         let TcpIo::Plain {
-            socket, writing, ..
+            socket,
+            writing,
+            switching,
+            ..
         } = &self.io
         else {
             return 0;
@@ -567,19 +597,15 @@ impl TcpStreamHandle {
         let Some(_turn) = writing.try_lock() else {
             return 0;
         };
-        if socket.set_nonblocking(true).is_err() {
-            return 0;
-        }
         let mut written = 0;
         while written < bytes.len() {
-            match (&*socket).write(&bytes[written..]) {
+            match send_now(socket, switching, &bytes[written..]) {
                 Ok(0) => break,
                 Ok(n) => written += n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(_) => break,
             }
         }
-        let _ = socket.set_nonblocking(false);
         written
     }
 
@@ -588,27 +614,26 @@ impl TcpStreamHandle {
     /// a read is in flight, or the connection is closed or not a plain
     /// one).
     pub fn read_now(&self, buf: &mut [u8]) -> Option<usize> {
-        use std::io::Read;
         if self.is_closed() {
             return None;
         }
         let TcpIo::Plain {
-            socket, reading, ..
+            socket,
+            reading,
+            switching,
+            ..
         } = &self.io
         else {
             return None;
         };
         let _turn = reading.try_lock()?;
-        socket.set_nonblocking(true).ok()?;
-        let read = loop {
-            match (&*socket).read(buf) {
-                Ok(n) => break Some(n),
+        loop {
+            match recv_now(socket, switching, buf) {
+                Ok(n) => return Some(n),
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => break None,
+                Err(_) => return None,
             }
-        };
-        let _ = socket.set_nonblocking(false);
-        read
+        }
     }
 
     /// Say that nothing more is written on a plain connection: the
@@ -674,6 +699,107 @@ impl TcpStreamHandle {
         #[cfg(not(windows))]
         let _ = self.io_socket;
     }
+}
+
+// "Without waiting" is a property of the one call, not a mode of the
+// socket: another thread may be in a read or a write of the same
+// connection (the reader of a request while its 408 is written), and
+// must not find the socket non-blocking.
+//
+// - Unix: `send` and `recv` with `MSG_DONTWAIT`. The socket's mode is
+//   never touched.
+// - Elsewhere (Windows) no such call exists. The socket is switched to
+//   non-blocking for the one call, under the connection's `switching`
+//   lock ([`without_waiting`]); a call that blocks already is not
+//   affected by the switch, and one that another thread begins inside
+//   the switch and that finds nothing to do (`WouldBlock`) waits for
+//   the lock and tries again ([`switched_meanwhile`]): to its caller
+//   it has only waited.
+
+/// Send what the system takes of `bytes` at once.
+#[cfg(unix)]
+fn send_now(socket: &std::net::TcpStream, _: &Mutex<()>, bytes: &[u8]) -> std::io::Result<usize> {
+    use std::os::unix::io::AsRawFd;
+    // A connection that the peer has closed gives an error, not a
+    // signal. (Apple's systems have no such flag: there the socket
+    // has the option, set by the standard library.)
+    #[cfg(not(target_vendor = "apple"))]
+    const FLAGS: libc::c_int = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    #[cfg(target_vendor = "apple")]
+    const FLAGS: libc::c_int = libc::MSG_DONTWAIT;
+    // SAFETY: the descriptor is the open socket's, and the pointer and
+    // length are those of `bytes`, which outlives the call.
+    let sent = unsafe {
+        libc::send(
+            socket.as_raw_fd(),
+            bytes.as_ptr().cast(),
+            bytes.len(),
+            FLAGS,
+        )
+    };
+    usize::try_from(sent).map_err(|_| std::io::Error::last_os_error())
+}
+
+/// Receive what is there, into `buf`; an error if nothing is.
+#[cfg(unix)]
+fn recv_now(socket: &std::net::TcpStream, _: &Mutex<()>, buf: &mut [u8]) -> std::io::Result<usize> {
+    use std::os::unix::io::AsRawFd;
+    // SAFETY: the descriptor is the open socket's, and the pointer and
+    // length are those of `buf`, which is not used otherwise during
+    // the call.
+    let received = unsafe {
+        libc::recv(
+            socket.as_raw_fd(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            libc::MSG_DONTWAIT,
+        )
+    };
+    usize::try_from(received).map_err(|_| std::io::Error::last_os_error())
+}
+
+#[cfg(not(unix))]
+fn send_now(
+    socket: &std::net::TcpStream,
+    switching: &Mutex<()>,
+    bytes: &[u8],
+) -> std::io::Result<usize> {
+    use std::io::Write;
+    without_waiting(socket, switching, |mut socket| socket.write(bytes))
+}
+
+#[cfg(not(unix))]
+fn recv_now(
+    socket: &std::net::TcpStream,
+    switching: &Mutex<()>,
+    buf: &mut [u8],
+) -> std::io::Result<usize> {
+    use std::io::Read;
+    without_waiting(socket, switching, |mut socket| socket.read(buf))
+}
+
+/// Do one call on `socket` that does not wait, where only a mode of
+/// the socket can say so: the socket is non-blocking for the call,
+/// under `switching`.
+#[cfg(any(not(unix), test))]
+fn without_waiting<T>(
+    socket: &std::net::TcpStream,
+    switching: &Mutex<()>,
+    call: impl FnOnce(&std::net::TcpStream) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let _switched = switching.lock();
+    socket.set_nonblocking(true)?;
+    let result = call(socket);
+    socket.set_nonblocking(false)?;
+    result
+}
+
+/// Whether a call that waits found nothing to do because the socket
+/// was non-blocking for another thread's call ([`without_waiting`]):
+/// it waits for that call's lock and tries again. Never on Unix,
+/// where no socket of a connection is switched.
+fn switched_meanwhile(error: &std::io::Error) -> bool {
+    cfg!(not(unix)) && error.kind() == std::io::ErrorKind::WouldBlock
 }
 
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
@@ -835,6 +961,91 @@ mod tests {
             .expect("the client's connection");
         conn.read_exact(&mut byte).expect("a read that waits");
         assert_eq!(&byte, b"x");
+    }
+
+    /// What must not wait does not: a write to a peer that reads
+    /// nothing stops when the system takes no more, a read of a
+    /// connection that has nothing says so, and a read on another
+    /// thread that waits meanwhile is not disturbed: it gets its bytes
+    /// when they come.
+    #[test]
+    fn a_call_that_does_not_wait_disturbs_no_call_that_does() {
+        use std::io::Write;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
+        let mut buf = [0u8; 16];
+        assert_eq!(conn.read_now(&mut buf), None);
+        // A reader waits on the connection on a thread of its own.
+        let reader = {
+            let conn = conn.clone();
+            std::thread::spawn(move || {
+                let mut all = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    match conn.read(&mut buf) {
+                        Ok(0) => return Ok(all),
+                        Ok(n) => all.extend_from_slice(&buf[..n]),
+                        Err(e) => return Err(e),
+                    }
+                }
+            })
+        };
+        // Meanwhile, writes that do not wait: more than the system
+        // takes for a peer that reads nothing.
+        let chunk = vec![b'w'; 64 * 1024];
+        let mut written = 0;
+        let mut full = false;
+        for _ in 0..10_000 {
+            let n = conn.write_now(&chunk);
+            written += n;
+            if n < chunk.len() {
+                full = true;
+                break;
+            }
+        }
+        assert!(
+            full,
+            "64 KiB x 10,000 were taken for a peer that reads nothing"
+        );
+        // The reader is still waiting, and gets what the peer sends.
+        for _ in 0..200 {
+            peer.write_all(b"0123456789").expect("write");
+            let _ = conn.write_now(b"x");
+        }
+        peer.shutdown(std::net::Shutdown::Write).expect("shutdown");
+        let read = reader
+            .join()
+            .expect("joined")
+            .expect("the reader was disturbed");
+        assert_eq!(read.len(), 2000);
+        assert!(written > 0);
+        assert_eq!(conn.read_now(&mut buf), Some(0));
+    }
+
+    /// The form for systems without a call that does not wait: the
+    /// socket is non-blocking for the one call and blocking after it.
+    #[test]
+    fn a_switched_call_leaves_the_socket_as_it_was() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (conn, _) = listener.accept().expect("accept");
+        let switching = Mutex::new(());
+        let mut buf = [0u8; 4];
+        let nothing = without_waiting(&conn, &switching, |mut conn| conn.read(&mut buf));
+        assert_eq!(
+            nothing.expect_err("nothing to read").kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        // Blocking again: a read waits for the peer's bytes.
+        let late = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            peer.write_all(b"late").expect("write");
+        });
+        (&conn).read_exact(&mut buf).expect("a read that waits");
+        assert_eq!(&buf, b"late");
+        late.join().expect("joined");
     }
 
     /// An accept that waits in the system's call when an `http.serve`
