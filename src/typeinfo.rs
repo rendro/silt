@@ -155,6 +155,11 @@ impl Tag {
         &self.ty
     }
 
+    /// The type alone.
+    pub fn into_ty(self) -> Arc<TypeInfo> {
+        self.ty
+    }
+
     pub fn type_id(&self) -> TypeId {
         self.ty.id
     }

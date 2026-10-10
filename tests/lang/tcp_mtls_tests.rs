@@ -203,8 +203,8 @@ fn main() -> String {{
         );
         let v = run(&src);
         match v {
-            Value::String(s) => s,
-            other => format!("unexpected:{other:?}"),
+            Value::String(s) => s.to_string(),
+            other => format!("unexpected:{other:?}").into(),
         }
     })
 }

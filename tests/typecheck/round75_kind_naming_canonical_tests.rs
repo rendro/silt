@@ -99,7 +99,7 @@ fn build_all_variants() -> AllVariants {
         int: Value::Int(7),
         float: Value::Float(1.5),
         bool_: Value::Bool(true),
-        string: Value::String("hi".to_string()),
+        string: Value::String("hi".into()),
         list: Value::list(vec![Value::Int(1)]),
         map: Value::Map(Arc::new({
             let mut m = BTreeMap::new();
@@ -111,7 +111,7 @@ fn build_all_variants() -> AllVariants {
             s.insert(Value::Int(1));
             s
         })),
-        tuple: Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
+        tuple: Value::tuple(vec![Value::Int(1), Value::Int(2)]),
         record: Value::Record(point_type(), Arc::new(record_fields)),
         // A variant names its enum type.
         variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
@@ -122,7 +122,7 @@ fn build_all_variants() -> AllVariants {
         builtin_fn: builtin("println"),
         variant_constructor: Value::VariantConstructor(bv::SOME.tag()),
         type_descriptor: Value::TypeDescriptor(point_type()),
-        primitive_descriptor: Value::PrimitiveDescriptor("Int".to_string()),
+        primitive_descriptor: Value::PrimitiveDescriptor("Int"),
         channel: Value::Channel(Channel::new(0, 0)),
         handle: Value::Handle(Arc::new(TaskHandle::new(0))),
         bytes: Value::Bytes(Arc::new(vec![1, 2, 3])),
@@ -214,7 +214,7 @@ fn user_facing_type_name_titlecase_aligned_with_kind() {
         // deliberate alias: a variant is named by its enum type.
         let ok = match v {
             Value::Record(ty, _) => ufn == ty.name,
-            Value::Variant(tag, _) => ufn == tag.ty().name,
+            Value::Variant(variant) => ufn == variant.ty().name,
             Value::VariantConstructor(tag) => ufn == format!("VariantConstructor `{tag}`"),
             Value::TypeDescriptor(ty) => ufn == format!("TypeDescriptor `{}`", ty.name),
             Value::PrimitiveDescriptor(name) => ufn == format!("PrimitiveDescriptor `{name}`"),

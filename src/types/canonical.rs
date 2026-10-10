@@ -693,7 +693,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
 pub fn dispatch_type_for_value(val: &Value) -> TypeId {
     let builtin = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
     match val {
-        Value::Variant(tag, _) => tag.type_id(),
+        Value::Variant(variant) => variant.type_id(),
         Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.id,
         Value::PrimitiveDescriptor(name) => TypeRef::builtin(name).id,
         Value::Int(_) => builtin(Type::Int),
@@ -721,7 +721,7 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
 /// show it.
 pub fn dispatch_type_name(val: &Value) -> String {
     match val {
-        Value::Variant(tag, _) => tag.ty().name.clone(),
+        Value::Variant(variant) => variant.ty().name.clone(),
         Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.name.clone(),
         _ => crate::typeinfo::builtin_type(dispatch_type_for_value(val))
             .name
@@ -1191,7 +1191,7 @@ mod tests {
             builtin_id("Bool")
         );
         assert_eq!(
-            dispatch_type_for_value(&Value::String(String::new())),
+            dispatch_type_for_value(&Value::String(String::new().into())),
             builtin_id("String")
         );
         assert_eq!(dispatch_type_for_value(&Value::Unit), builtin_id("Unit"));
@@ -1213,7 +1213,7 @@ mod tests {
             crate::typeinfo::ty::WEEKDAY
         );
         assert_eq!(
-            dispatch_type_for_value(&Value::PrimitiveDescriptor("Int".to_string())),
+            dispatch_type_for_value(&Value::PrimitiveDescriptor("Int")),
             builtin_id("Int")
         );
     }

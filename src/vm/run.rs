@@ -449,8 +449,8 @@ impl Vm {
         // `message` of a builtin error enum (`IoError`, ...): the row
         // of the enum, found by the type's id, called as any builtin.
         if method_name == "message"
-            && let Value::Variant(tag, _) = &receiver
-            && let Some(module) = registry().error_module(tag.ty().id)
+            && let Value::Variant(variant) = &receiver
+            && let Some(module) = registry().error_module(variant.ty().id)
             && let Some(row) = module.message.as_ref().filter(|row| row.enabled)
         {
             let args = self.stack.split_off(receiver_slot);
@@ -651,7 +651,7 @@ impl Vm {
                     }
                 }
                 self.stack.truncate(start);
-                self.push(Value::String(result));
+                self.push(Value::String(result.into()));
             }
             Instr::GetLocal { slot } => {
                 let base = self.frame().base_slot;
@@ -744,15 +744,13 @@ impl Vm {
             }
             Instr::MakeTuple { count } => {
                 let start = self.stack.len() - count;
-                let elements: Vec<Value> = self.stack[start..].to_vec();
-                self.stack.truncate(start);
+                let elements = self.stack.drain(start..).collect();
                 self.push(Value::Tuple(elements));
             }
             Instr::MakeList { count } => {
                 let start = self.stack.len() - count;
-                let elements: Vec<Value> = self.stack[start..].to_vec();
-                self.stack.truncate(start);
-                self.push(Value::list(elements));
+                let elements = self.stack.drain(start..).collect();
+                self.push(Value::List(elements));
             }
             Instr::MakeMap { pairs } => {
                 let total = pairs * 2;
@@ -862,7 +860,7 @@ impl Vm {
                     }
                     Value::Map(ref map) => {
                         let val = map
-                            .get(&Value::String(name.clone()))
+                            .get(&Value::String(name.clone().into()))
                             .cloned()
                             .ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?;
                         self.push(val);
@@ -900,7 +898,8 @@ impl Vm {
             }
             Instr::TestTag { tag } => {
                 let expected = self.chunk().tag(tag);
-                let result = matches!(self.peek(), Value::Variant(tag, _) if tag == expected);
+                let result =
+                    matches!(self.peek(), Value::Variant(variant) if variant.has_tag(expected));
                 self.push(Value::Bool(result));
             }
             Instr::TestEqual { k } => {
@@ -957,22 +956,25 @@ impl Vm {
                 }
             }
             Instr::DestructVariant { index } => {
-                let val = self.peek().clone();
-                if let Value::Variant(_, fields) = val {
-                    let field = fields.get(index).ok_or_else(|| {
-                        VmError::type_confusion(format!(
-                            "variant destructure: field index {} out of bounds (variant has {} fields)",
-                            index,
-                            fields.len()
-                        ))
-                    })?;
-                    self.push(field.clone());
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "variant destructure: expected variant, got {}",
-                        self.user_facing_type_name(&val)
-                    )));
-                }
+                let field = match self.peek() {
+                    Value::Variant(variant) => {
+                        let fields = variant.fields();
+                        fields.get(index).cloned().ok_or_else(|| {
+                            VmError::type_confusion(format!(
+                                "variant destructure: field index {} out of bounds (variant has {} fields)",
+                                index,
+                                fields.len()
+                            ))
+                        })?
+                    }
+                    other => {
+                        return Err(VmError::type_confusion(format!(
+                            "variant destructure: expected variant, got {}",
+                            self.user_facing_type_name(other)
+                        )));
+                    }
+                };
+                self.push(field);
             }
             Instr::DestructList { index } => {
                 let element = match self.peek() {
@@ -1054,31 +1056,33 @@ impl Vm {
                 self.push(Value::Bool(result));
             }
             Instr::TestMapHasKey { key } => {
-                let key_name = self.chunk().string(key).to_owned();
-                let val = self.peek();
-                let result = match val {
-                    Value::Map(map) => map.contains_key(&Value::String(key_name)),
+                // (The key is the constant itself, a String.)
+                let result = match self.peek() {
+                    Value::Map(map) => map.contains_key(self.chunk().constant(key)),
                     _ => false,
                 };
                 self.push(Value::Bool(result));
             }
             Instr::DestructMapValue { key } => {
-                let key_name = self.chunk().string(key).to_owned();
-                let val = self.peek().clone();
-                if let Value::Map(map) = val {
-                    let value = map
-                        .get(&Value::String(key_name.clone()))
-                        .cloned()
-                        .ok_or_else(|| {
-                            VmError::type_confusion(format!("map has no key '{key_name}'"))
-                        })?;
-                    self.push(value);
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "map destructure: expected map, got {}",
-                        self.user_facing_type_name(&val)
-                    )));
-                }
+                // (The key is the constant itself, a String.)
+                let value = match self.peek() {
+                    Value::Map(map) => {
+                        let chunk = self.chunk();
+                        map.get(chunk.constant(key)).cloned().ok_or_else(|| {
+                            VmError::type_confusion(format!(
+                                "map has no key '{}'",
+                                chunk.string(key)
+                            ))
+                        })?
+                    }
+                    other => {
+                        return Err(VmError::type_confusion(format!(
+                            "map destructure: expected map, got {}",
+                            self.user_facing_type_name(other)
+                        )));
+                    }
+                };
+                self.push(value);
             }
             Instr::Recur {
                 argc: arg_count,
@@ -1095,22 +1099,22 @@ impl Vm {
             Instr::QuestionMark => {
                 let val = self.peek().clone();
                 match val {
-                    Value::Variant(ref tag, ref fields) => match tag {
-                        _ if tag.is(bv::OK) || tag.is(bv::SOME) => {
+                    Value::Variant(variant) => match variant {
+                        _ if variant.is(bv::OK) || variant.is(bv::SOME) => {
                             self.pop();
-                            self.push(if fields.len() == 1 {
-                                fields[0].clone()
-                            } else {
-                                Value::Unit
+                            self.push(match variant.fields() {
+                                [value] => value.clone(),
+                                _ => Value::Unit,
                             });
                         }
-                        _ if tag.is(bv::ERR) || tag.is(bv::NONE) => {
+                        _ if variant.is(bv::ERR) || variant.is(bv::NONE) => {
                             let value = self.pop();
                             return Ok(DispatchResult::Return(value));
                         }
                         _ => {
                             return Err(VmError::type_confusion(format!(
-                                "`?` applies only to Result or Option; got variant `{tag}`"
+                                "`?` applies only to Result or Option; got variant `{}`",
+                                variant.name()
                             )));
                         }
                     },

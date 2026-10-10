@@ -51,9 +51,9 @@ fn days_in(year: i32, month: u32) -> u32 {
 fn time_parse_err(err: chrono::ParseError) -> Value {
     let msg = err.to_string();
     let inner = if msg.contains("out of range") {
-        Value::variant(bv::TIME_OUT_OF_RANGE, vec![Value::String(msg)])
+        Value::variant(bv::TIME_OUT_OF_RANGE, vec![Value::String(msg.into())])
     } else {
-        Value::variant(bv::TIME_PARSE_FORMAT, vec![Value::String(msg)])
+        Value::variant(bv::TIME_PARSE_FORMAT, vec![Value::String(msg.into())])
     };
     Value::variant(bv::ERR, vec![inner])
 }
@@ -65,7 +65,7 @@ fn time_out_of_range_err(msg: String) -> Value {
         bv::ERR,
         vec![Value::variant(
             bv::TIME_OUT_OF_RANGE,
-            vec![Value::String(msg)],
+            vec![Value::String(msg.into())],
         )],
     )
 }

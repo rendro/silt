@@ -73,7 +73,8 @@ impl Value {
                         pending.extend(items);
                     }
                 }
-                Value::Tuple(items) | Value::Variant(_, items) => pending.extend(items.iter()),
+                Value::Tuple(items) => pending.extend(items.iter()),
+                Value::Variant(variant) => pending.extend(variant.fields()),
                 Value::Set(items) => pending.extend(items.iter()),
                 Value::Map(entries) => {
                     for (k, v) in entries.iter() {
@@ -110,7 +111,7 @@ impl fmt::Debug for Value {
             }
             Value::Tuple(vs) => {
                 let mut t = f.debug_tuple("");
-                for v in vs {
+                for v in vs.iter() {
                     t.field(v);
                 }
                 t.finish()
@@ -125,7 +126,8 @@ impl fmt::Debug for Value {
                 }
                 write!(f, "}}")
             }
-            Value::Variant(name, fields) => {
+            Value::Variant(variant) => {
+                let (name, fields) = (variant.name(), variant.fields());
                 if fields.is_empty() {
                     write!(f, "{name}")
                 } else {
@@ -201,9 +203,10 @@ impl Value {
                     false => format!("{} {{{}}}", ty.name, items.join(", ")),
                 }
             }
-            Value::Variant(name, fields) => {
+            Value::Variant(variant) => {
+                let (name, fields) = (variant.name(), variant.fields());
                 if fields.is_empty() {
-                    name.name().to_string()
+                    name.to_string()
                 } else {
                     let items: Vec<String> = fields.iter().map(|v| v.format_silt()).collect();
                     format!("{name}({})", items.join(", "))
@@ -465,13 +468,14 @@ impl Value {
                     f.write_str("}")
                 }
             },
-            Value::Variant(name, fields) => {
+            Value::Variant(variant) => {
                 // Stdlib error variants render via
                 // their `Error::message()` implementation so that
                 // `format!("{e}")` and `e.message()` produce the same
                 // text — the "one way" principle. User enums are
                 // unaffected (the registry only covers stdlib errors).
-                if let Some(msg) = crate::builtins::error_text(name, fields.as_slice()) {
+                let (name, fields) = (variant.name(), variant.fields());
+                if let Some(msg) = crate::builtins::error_text(variant) {
                     return write!(f, "{msg}");
                 }
                 if fields.is_empty() {

@@ -1116,7 +1116,7 @@ impl Compiler {
             }
 
             ExprKind::StringLit(s, _) => {
-                let idx = self.add_constant(Value::String(s.clone()), span)?;
+                let idx = self.add_constant(Value::String(s.clone().into()), span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
@@ -1297,7 +1297,7 @@ impl Compiler {
             // the checker.)
             ExprKind::FieldAccess(expr, field, _) => {
                 self.compile_expr(expr)?;
-                let name_idx = self.add_constant(Value::String(resolve(*field)), span)?;
+                let name_idx = self.add_constant(Value::String(resolve(*field).into()), span)?;
                 self.emit(Asm::GetField { name: name_idx }, span)?;
             }
 
@@ -1306,7 +1306,7 @@ impl Compiler {
                 for part in parts {
                     match part {
                         StringPart::Literal(s) => {
-                            let idx = self.add_constant(Value::String(s.clone()), span)?;
+                            let idx = self.add_constant(Value::String(s.clone().into()), span)?;
                             self.emit(Asm::Constant { k: idx }, span)?;
                         }
                         StringPart::Expr(e) => {
@@ -1830,7 +1830,7 @@ impl Compiler {
             // The function a field holds: an ordinary call of it.
             Some(Selection::FieldCall) => {
                 self.compile_expr(receiver)?;
-                let name = self.add_constant(Value::String(resolve(method)), span)?;
+                let name = self.add_constant(Value::String(resolve(method).into()), span)?;
                 self.emit(Asm::GetField { name }, span)?;
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call(args.len(), tail, span)
@@ -2093,9 +2093,11 @@ impl Compiler {
         if crate::defs::builtin_types()
             .get(ty.id.0.0 as usize)
             .is_some()
-            && module::BUILTIN_PRIMITIVE_NAMES.contains(&name.as_str())
+            && let Some(primitive) = module::BUILTIN_PRIMITIVE_NAMES
+                .iter()
+                .find(|primitive| **primitive == name)
         {
-            return Some(Value::PrimitiveDescriptor(name));
+            return Some(Value::PrimitiveDescriptor(primitive));
         }
         Some(Value::TypeDescriptor(self.type_info(ty.id)))
     }
@@ -2240,7 +2242,7 @@ impl Compiler {
         tail: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let method = self.add_constant(Value::String(resolve(method)), span)?;
+        let method = self.add_constant(Value::String(resolve(method).into()), span)?;
         let name = self.units.defs.get(t.0).name;
         let of = self.globals.trait_index(t, resolve(name)).ok_or_else(|| {
             let limit = Limit {
@@ -2309,7 +2311,7 @@ impl Compiler {
     fn variant_value(&self, expr: &Expr) -> Option<Value> {
         let tag = self.variant_tag(Some(expr.res?))?;
         Some(match tag.arity() {
-            0 => Value::Variant(tag, Vec::new()),
+            0 => Value::variant(tag, Vec::new()),
             _ => Value::VariantConstructor(tag),
         })
     }
@@ -2696,7 +2698,7 @@ impl Compiler {
     fn name_constants(&mut self, names: &[Symbol], span: Span) -> Result<Vec<Const>, Diagnostic> {
         names
             .iter()
-            .map(|name| self.add_constant(Value::String(resolve(*name)), span))
+            .map(|name| self.add_constant(Value::String(resolve(*name).into()), span))
             .collect()
     }
 
@@ -2932,7 +2934,7 @@ mod tests {
         chunk
             .constants()
             .iter()
-            .any(|c| matches!(c, Value::String(v) if v == s))
+            .any(|c| matches!(c, Value::String(v) if **v == *s))
     }
 
     /// Check if an int constant exists in the chunk.
@@ -3309,12 +3311,12 @@ fn main() { Red }
         // A nullary variant is a Variant value, a constant where it is
         // used; the enum's description lists every variant.
         assert!(main.chunk().constants().iter().any(
-            |c| matches!(c, Value::Variant(tag, fields) if tag.name() == "Red" && fields.is_empty())
+            |c| matches!(c, Value::Variant(variant) if variant.name() == "Red" && variant.fields().is_empty())
         ));
-        let Some(Value::Variant(tag, _)) = main.chunk().constants().first() else {
+        let Some(Value::Variant(red)) = main.chunk().constants().first() else {
             panic!("main's first constant is the variant");
         };
-        let names: Vec<&str> = tag
+        let names: Vec<&str> = red
             .ty()
             .variants()
             .iter()

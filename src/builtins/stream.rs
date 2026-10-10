@@ -362,24 +362,26 @@ fn err_io(e: &std::io::Error) -> Value {
     use std::io::ErrorKind;
     let msg = e.to_string();
     let inner = match e.kind() {
-        ErrorKind::NotFound => Value::variant(bv::IO_NOT_FOUND, vec![Value::String(msg)]),
+        ErrorKind::NotFound => Value::variant(bv::IO_NOT_FOUND, vec![Value::String(msg.into())]),
         ErrorKind::PermissionDenied => {
-            Value::variant(bv::IO_PERMISSION_DENIED, vec![Value::String(msg)])
+            Value::variant(bv::IO_PERMISSION_DENIED, vec![Value::String(msg.into())])
         }
-        ErrorKind::AlreadyExists => Value::variant(bv::IO_ALREADY_EXISTS, vec![Value::String(msg)]),
+        ErrorKind::AlreadyExists => {
+            Value::variant(bv::IO_ALREADY_EXISTS, vec![Value::String(msg.into())])
+        }
         ErrorKind::InvalidInput | ErrorKind::InvalidData => {
-            Value::variant(bv::IO_INVALID_INPUT, vec![Value::String(msg)])
+            Value::variant(bv::IO_INVALID_INPUT, vec![Value::String(msg.into())])
         }
         ErrorKind::Interrupted => Value::variant(bv::IO_INTERRUPTED, vec![]),
         ErrorKind::UnexpectedEof => Value::variant(bv::IO_UNEXPECTED_EOF, vec![]),
         ErrorKind::WriteZero => Value::variant(bv::IO_WRITE_ZERO, vec![]),
-        _ => Value::variant(bv::IO_UNKNOWN, vec![Value::String(msg)]),
+        _ => Value::variant(bv::IO_UNKNOWN, vec![Value::String(msg.into())]),
     };
     Value::variant(bv::ERR, vec![inner])
 }
 
 /// Build an `Err(IoUnknown(msg))` for string-only failures.
-fn err_io_unknown(s: impl Into<String>) -> Value {
+fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
     Value::variant(
         bv::ERR,
         vec![Value::variant(
@@ -403,13 +405,13 @@ fn err_tcp(e: &std::io::Error) -> Value {
         | ErrorKind::AddrNotAvailable
         | ErrorKind::HostUnreachable
         | ErrorKind::NetworkUnreachable => {
-            Value::variant(bv::TCP_CONNECT, vec![Value::String(msg)])
+            Value::variant(bv::TCP_CONNECT, vec![Value::String(msg.into())])
         }
         ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
             Value::variant(bv::TCP_CLOSED, vec![])
         }
         ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::TCP_TIMEOUT, vec![]),
-        _ => Value::variant(bv::TCP_UNKNOWN, vec![Value::String(msg)]),
+        _ => Value::variant(bv::TCP_UNKNOWN, vec![Value::String(msg.into())]),
     };
     Value::variant(bv::ERR, vec![inner])
 }
@@ -444,9 +446,9 @@ fn reading(
                     stop.clone(),
                 )
             }
-            Got::Io(Value::Variant(name, mut fields)) if name.is(bv::SOME) => {
-                let item = fields.pop().unwrap_or(Value::Unit);
-                failed = matches!(&item, Value::Variant(name, _) if name.is(bv::ERR));
+            Got::Io(Value::Variant(read)) if read.is(bv::SOME) => {
+                let item = read.fields().last().cloned().unwrap_or(Value::Unit);
+                failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
                 Next::Emit(item)
             }
             _ => Next::Done(Value::Unit),
@@ -457,8 +459,8 @@ fn reading(
 /// The value inside `Ok(_)`, if `v` is one.
 fn ok_inner(v: &Value) -> Option<Value> {
     match v {
-        Value::Variant(name, fields) if name.is(bv::OK) && fields.len() == 1 => {
-            Some(fields[0].clone())
+        Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
+            Some(variant.fields()[0].clone())
         }
         _ => None,
     }
@@ -490,8 +492,8 @@ fn channel_list(name: &str, chs: List) -> Result<Vec<Arc<Channel>>, VmError> {
 fn bytes_to_write(v: Value, name: &str) -> Result<Result<Arc<Vec<u8>>, Value>, VmError> {
     match v {
         Value::Bytes(b) => Ok(Ok(b)),
-        Value::Variant(tag, fields) if tag.is(bv::ERR) && fields.len() == 1 => {
-            Ok(Err(Value::variant(bv::ERR, fields)))
+        Value::Variant(err) if err.is(bv::ERR) && err.fields().len() == 1 => {
+            Ok(Err(Value::Variant(err)))
         }
         other => match ok_inner(&other) {
             Some(Value::Bytes(b)) => Ok(Ok(b)),
@@ -590,13 +592,13 @@ builtins! {
             Ok(match got {
                 Got::Start | Got::Emitted => Next::Call(fn_val.clone(), vec![state.clone()]),
                 // Fn(state) -> Option((value, next_state))
-                Got::Returned(Value::Variant(name, mut fields))
-                    if name.is(bv::SOME) && fields.len() == 1 =>
+                Got::Returned(Value::Variant(some))
+                    if some.is(bv::SOME) && some.fields().len() == 1 =>
                 {
-                    match fields.pop() {
-                        Some(Value::Tuple(mut pair)) if pair.len() == 2 => {
-                            state = pair.pop().unwrap_or(Value::Unit);
-                            Next::Emit(pair.pop().unwrap_or(Value::Unit))
+                    match &some.fields()[0] {
+                        Value::Tuple(pair) if pair.len() == 2 => {
+                            state = pair[1].clone();
+                            Next::Emit(pair[0].clone())
                         }
                         _ => Next::Done(Value::Unit),
                     }
@@ -657,7 +659,7 @@ builtins! {
                 }
             }
             match lines.as_mut()?.next()? {
-                Ok(line) => Some(ok(Value::String(line))),
+                Ok(line) => Some(ok(Value::String(line.into()))),
                 Err(e) => Some(err_io(&e)),
             }
         })
@@ -723,7 +725,7 @@ builtins! {
                 }
             }
             let line = String::from_utf8_lossy(&current).to_string();
-            Some(ok(Value::String(line)))
+            Some(ok(Value::String(line.into())))
         })
     }
 
@@ -1090,7 +1092,7 @@ builtins! {
                     Next::Take(1)
                 }
                 Got::Value(_, vb) => match left.take() {
-                    Some(va) => Next::Emit(Value::Tuple(vec![va, vb])),
+                    Some(va) => Next::Emit(Value::tuple(vec![va, vb])),
                     None => return unexpected(),
                 },
                 Got::End => Next::Done(Value::Unit),

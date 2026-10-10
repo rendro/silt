@@ -94,7 +94,7 @@ fn key_and_value<S>(_: &S, entry: &Value, stack: &mut Vec<Value>) {
 /// The entries of a map as items.
 fn entries(m: &BTreeMap<Value, Value>) -> Vec<Value> {
     m.iter()
-        .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
+        .map(|(k, v)| Value::tuple(vec![k.clone(), v.clone()]))
         .collect()
 }
 
@@ -173,10 +173,10 @@ fn flat_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
 
 fn filter_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
     match result {
-        Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
-            out.push(fields[0].clone());
+        Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
+            out.push(variant.fields()[0].clone());
         }
-        Value::Variant(ref tag, _) if tag.is(bv::NONE) => {}
+        Value::Variant(variant) if variant.is(bv::NONE) => {}
         other => out.push(other),
     }
     next()
@@ -184,12 +184,12 @@ fn filter_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
 
 fn fold_until_step(acc: &mut Value, _item: Value, result: Value) -> Flow {
     match result {
-        Value::Variant(ref tag, ref fields) if tag.is(bv::CONTINUE) && fields.len() == 1 => {
-            *acc = fields[0].clone();
+        Value::Variant(variant) if variant.is(bv::CONTINUE) && variant.fields().len() == 1 => {
+            *acc = variant.fields()[0].clone();
             next()
         }
-        Value::Variant(ref tag, ref fields) if tag.is(bv::STOP) && fields.len() == 1 => {
-            stop(fields[0].clone())
+        Value::Variant(variant) if variant.is(bv::STOP) && variant.fields().len() == 1 => {
+            stop(variant.fields()[0].clone())
         }
         other => {
             *acc = other;
@@ -258,8 +258,8 @@ impl Native for Unfold {
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if self.called {
             match input {
-                Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
-                    match &fields[0] {
+                Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
+                    match &variant.fields()[0] {
                         Value::Tuple(pair) if pair.len() == 2 => {
                             self.out.push(pair[0].clone());
                             if self.out.len() > MAX_RANGE_MATERIALIZE {
@@ -273,7 +273,7 @@ impl Native for Unfold {
                         }
                     }
                 }
-                Value::Variant(ref tag, _) if tag.is(bv::NONE) => {
+                Value::Variant(variant) if variant.is(bv::NONE) => {
                     return as_list(&mut self.out).map(Step::Done);
                 }
                 other => {
@@ -532,7 +532,7 @@ pub(crate) mod list {
             Ok(xs
                 .iter()
                 .zip(ys.iter())
-                .map(|(x, y)| Value::Tuple(vec![x, y]))
+                .map(|(x, y)| Value::tuple(vec![x, y]))
                 .collect())
         }
 
@@ -657,7 +657,7 @@ pub(crate) mod list {
         fn enumerate(xs: List) -> Result<Vec<Value>, VmError> {
             let items = xs.to_vec()?.into_iter().enumerate();
             Ok(items
-                .map(|(i, item)| Value::Tuple(vec![Value::Int(i as i64), item]))
+                .map(|(i, item)| Value::tuple(vec![Value::Int(i as i64), item]))
                 .collect())
         }
 
@@ -766,9 +766,9 @@ pub(crate) mod map {
                 |kept, entry, keep| {
                     if truthy(&keep)
                         && let Value::Tuple(pair) = entry
-                        && let Ok([k, v]) = <[Value; 2]>::try_from(pair)
+                        && let [k, v] = &pair[..]
                     {
-                        kept.insert(k, v);
+                        kept.insert(k.clone(), v.clone());
                     }
                     next()
                 },
@@ -784,11 +784,11 @@ pub(crate) mod map {
                 BTreeMap::new(),
                 key_and_value,
                 |out, _, result| {
-                    let pair = match result {
-                        Value::Tuple(pair) => <[Value; 2]>::try_from(pair).ok(),
+                    let pair = match &result {
+                        Value::Tuple(pair) => <&[Value; 2]>::try_from(&pair[..]).ok(),
                         _ => None,
                     };
-                    let [k, v] = pair.ok_or_else(|| unsound("map.map", "f"))?;
+                    let [k, v] = pair.ok_or_else(|| unsound("map.map", "f"))?.clone();
                     out.insert(k, v);
                     next()
                 },
@@ -862,11 +862,13 @@ pub(crate) mod map {
         fn from_entries(entries: List) -> Result<BTreeMap<Value, Value>, VmError> {
             let mut result = BTreeMap::new();
             for entry in entries.iter() {
-                let pair = match entry {
-                    Value::Tuple(pair) => <[Value; 2]>::try_from(pair).ok(),
+                let pair = match &entry {
+                    Value::Tuple(pair) => <&[Value; 2]>::try_from(&pair[..]).ok(),
                     _ => None,
                 };
-                let [key, value] = pair.ok_or_else(|| unsound("map.from_entries", "entries"))?;
+                let [key, value] = pair
+                    .ok_or_else(|| unsound("map.from_entries", "entries"))?
+                    .clone();
                 // Runtime Fn gate on the KEY only (values are never
                 // compared): `map.from_entries` has no `where` bound
                 // that rules a function out as a key, and such keys

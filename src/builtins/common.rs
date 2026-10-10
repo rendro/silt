@@ -1,5 +1,7 @@
 //! Shared helper functions used by several builtin modules.
 
+use std::sync::Arc;
+
 use crate::typeinfo::bv;
 use crate::value::Value;
 
@@ -14,7 +16,7 @@ pub(crate) fn ok(v: Value) -> Value {
     Value::variant(bv::OK, vec![v])
 }
 
-pub(super) fn err(s: impl Into<String>) -> Value {
+pub(super) fn err(s: impl Into<Arc<str>>) -> Value {
     Value::variant(bv::ERR, vec![Value::String(s.into())])
 }
 

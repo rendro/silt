@@ -90,7 +90,7 @@ fn empty_map_value() -> Value {
 fn map_with(pairs: &[(&str, Value)]) -> Value {
     let mut m = BTreeMap::new();
     for (k, v) in pairs {
-        m.insert(Value::String((*k).to_string()), v.clone());
+        m.insert(Value::String((*k).into()), v.clone());
     }
     Value::Map(Arc::new(m))
 }
@@ -161,7 +161,7 @@ fn connect_with_unknown_keys_ignored() {
 /// `builtins::registry`), not an error of this function.
 #[test]
 fn connect_with_opts_of_another_kind_are_not_the_argument() {
-    let opts = map_with(&[("max_pool_size", Value::String("lots".to_string()))]);
+    let opts = map_with(&[("max_pool_size", Value::String("lots".into()))]);
     assert_eq!(read_max_pool_size_for_tests(&opts), None);
     assert_eq!(read_max_pool_size_for_tests(&Value::Int(1)), None);
 }

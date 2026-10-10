@@ -53,14 +53,14 @@ fn err_utf8(offset: usize) -> Value {
     ))
 }
 
-fn err_hex(msg: impl Into<String>) -> Value {
+fn err_hex(msg: impl Into<Arc<str>>) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_HEX,
         vec![Value::String(msg.into())],
     ))
 }
 
-fn err_base64(msg: impl Into<String>) -> Value {
+fn err_base64(msg: impl Into<Arc<str>>) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_BASE64,
         vec![Value::String(msg.into())],
@@ -120,7 +120,7 @@ builtins! {
 
     fn to_string(b: Bytes) -> Value {
         match std::str::from_utf8(b) {
-            Ok(s) => ok(Value::String(s.to_string())),
+            Ok(s) => ok(Value::String(s.into())),
             Err(e) => err_utf8(e.valid_up_to()),
         }
     }

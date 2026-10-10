@@ -1,0 +1,91 @@
+-- Reading a local, passing an argument and taking a pattern's part
+-- share the value: none of them copies a string, a tuple or a variant.
+-- (Each copied all of it, so the walk of a list of one's own took the
+-- square of its length: 18 s for 2,000 elements in a debug build, and
+-- every call that carried a long string copied the string.)
+import list
+import string
+
+type Chain {
+  End,
+  Link(Int, Chain),
+}
+
+type Tree {
+  Leaf,
+  Node(Tree, String, Tree),
+}
+
+fn chain(n: Int, acc: Chain) -> Chain {
+  match n {
+    0 -> acc
+    _ -> chain(n - 1, Link(n, acc))
+  }
+}
+
+fn total(c: Chain, acc: Int) -> Int {
+  match c {
+    End -> acc
+    Link(n, rest) -> total(rest, acc + n)
+  }
+}
+
+fn length(c: Chain) -> Int {
+  loop c = c, n = 0 {
+    match c {
+      End -> n
+      Link(_, rest) -> loop(rest, n + 1)
+    }
+  }
+}
+
+-- A tree whose every node holds the same long string.
+fn tree(depth: Int, label: String) -> Tree {
+  match depth {
+    0 -> Leaf
+    _ -> {
+      let below = tree(depth - 1, label)
+      Node(below, label, below)
+    }
+  }
+}
+
+fn labels(t: Tree) -> Int {
+  match t {
+    Leaf -> 0
+    Node(left, label, right) -> labels(left) + string.length(label) + labels(right)
+  }
+}
+
+-- A string and a tuple that holds it, carried through every call.
+fn carry(text: String, pair: (String, Int), left: Int) -> Int {
+  let (held, count) = pair
+  match left {
+    0 -> string.length(text) + string.length(held) + count
+    _ -> carry(text, (held, count + 1), left - 1)
+  }
+}
+
+fn main() {
+  let c = chain(64000, End)
+  println(total(c, 0))
+  println(length(c))
+  println(total(c, 0))
+
+  let long = string.repeat("silt", 50000)
+  println(carry(long, (long, 0), 50000))
+
+  -- 2^14 - 1 nodes share one string and their subtrees.
+  println(labels(tree(14, long)))
+
+  -- The value a name was given is the name's, whatever is made of it.
+  let pair = (long, [1, 2, 3])
+  let (text, items) = pair
+  let other = (string.to_upper(text), list.append(items, 4))
+  let (upper, more) = other
+  println(string.slice(text, 0, 8))
+  println(string.slice(upper, 0, 8))
+  println(items)
+  println(more)
+  println(pair == (long, [1, 2, 3]))
+}

@@ -95,7 +95,7 @@ impl Compiler {
             }
 
             PatternKind::StringLit(s, _) => {
-                let idx = self.add_constant(Value::String(s.clone()), span)?;
+                let idx = self.add_constant(Value::String(s.clone().into()), span)?;
                 self.emit(Asm::TestEqual { k: idx }, span)?;
                 let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
@@ -240,7 +240,7 @@ impl Compiler {
                     };
                     if !sub_pattern.irrefutable {
                         let field_idx =
-                            self.add_constant(Value::String(resolve(*field_name)), span)?;
+                            self.add_constant(Value::String(resolve(*field_name).into()), span)?;
                         self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
@@ -261,7 +261,7 @@ impl Compiler {
                     };
                     if !sub_pattern.irrefutable {
                         let field_idx =
-                            self.add_constant(Value::String(resolve(*field_name)), span)?;
+                            self.add_constant(Value::String(resolve(*field_name).into()), span)?;
                         self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
@@ -276,13 +276,14 @@ impl Compiler {
                 let mut all_jumps = Vec::new();
 
                 for (key, sub_pat) in entries {
-                    let key_idx = self.add_constant(Value::String(key.clone()), span)?;
+                    let key_idx = self.add_constant(Value::String(key.clone().into()), span)?;
                     self.emit(Asm::TestMapHasKey { key: key_idx }, span)?;
                     let key_jump = self.jump_if_false(span)?;
                     all_jumps.push((key_jump, base_depth));
 
                     if !sub_pat.irrefutable {
-                        let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
+                        let key_idx2 =
+                            self.add_constant(Value::String(key.clone().into()), span)?;
                         self.emit(Asm::DestructMapValue { key: key_idx2 }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pat, span, base_depth + 1)?;
@@ -816,7 +817,8 @@ impl Compiler {
                     self.emit(Asm::DestructListRest { start: *start }, span)?;
                 }
                 BindDestructKind::RecordField(name) => {
-                    let field_idx = self.add_constant(Value::String(resolve(*name)), span)?;
+                    let field_idx =
+                        self.add_constant(Value::String(resolve(*name).into()), span)?;
                     self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
                 }
                 BindDestructKind::RecordRest(names) => {
@@ -835,7 +837,7 @@ impl Compiler {
                     )?;
                 }
                 BindDestructKind::MapValue(key) => {
-                    let key_idx = self.add_constant(Value::String(key.clone()), span)?;
+                    let key_idx = self.add_constant(Value::String(key.clone().into()), span)?;
                     self.emit(Asm::DestructMapValue { key: key_idx }, span)?;
                 }
             }

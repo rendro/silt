@@ -11,6 +11,7 @@ mod convert;
 mod fmt;
 mod key;
 mod list;
+mod obj;
 
 #[cfg(test)]
 mod tests;
@@ -19,21 +20,21 @@ pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
 pub use fmt::{Shown, Written};
 pub(crate) use list::MAX_RANGE_MATERIALIZE;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+pub use obj::Variant;
 
 #[derive(Clone)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    String(String),
+    String(Arc<str>),
     List(List),
     Map(Arc<BTreeMap<Value, Value>>),
     Set(Arc<BTreeSet<Value>>),
-    Tuple(Vec<Value>),
+    Tuple(Arc<[Value]>),
     /// A record: its type and its fields by name.
     Record(Arc<TypeInfo>, Arc<BTreeMap<String, Value>>),
-    /// A variant: which variant of which enum, and its fields.
-    Variant(Tag, Vec<Value>),
+    Variant(Variant),
     VmClosure(Arc<bytecode::VmClosure>),
     /// A builtin function: its row of the builtin registry.
     BuiltinFn(BuiltinId),
@@ -47,7 +48,10 @@ pub enum Value {
     /// type, passed as a `type a` argument. Keeps `type T`-style values
     /// distinct from primitives (see `PrimitiveDescriptor`).
     TypeDescriptor(Arc<TypeInfo>),
-    PrimitiveDescriptor(String), // "Int", "Float", "String", "Bool" — for json.parse_map etc.
+    /// The token of a primitive type (`Int`, `Float`, `String`, `Bool`)
+    /// passed as a `type a` argument: its name, one of
+    /// [`crate::module::BUILTIN_PRIMITIVE_NAMES`].
+    PrimitiveDescriptor(&'static str),
     Channel(Arc<Channel>),
     Handle(Arc<TaskHandle>),
     /// Immutable byte sequence. Structural equality and hashing — two
@@ -76,7 +80,12 @@ impl Value {
     /// The variant `tag` (a [`Tag`], or a builtin variant of
     /// [`crate::typeinfo::bv`]) with the fields `fields`.
     pub fn variant(tag: impl Into<Tag>, fields: Vec<Value>) -> Value {
-        Value::Variant(tag.into(), fields)
+        Value::Variant(Variant::new(tag.into(), fields))
+    }
+
+    /// The tuple of `items`.
+    pub fn tuple(items: Vec<Value>) -> Value {
+        Value::Tuple(Arc::from(items))
     }
 
     /// A record of the builtin record type `ty` (`ty::DATE`).
@@ -157,7 +166,8 @@ impl Value {
                         pending.extend(items);
                     }
                 }
-                Value::Tuple(items) | Value::Variant(_, items) => pending.extend(items.iter()),
+                Value::Tuple(items) => pending.extend(items.iter()),
+                Value::Variant(variant) => pending.extend(variant.fields()),
                 Value::Set(items) => pending.extend(items.iter()),
                 Value::Map(entries) => {
                     for (k, v) in entries.iter() {

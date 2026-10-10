@@ -373,7 +373,9 @@ impl From<Vec<Value>> for List {
 
 impl FromIterator<Value> for List {
     fn from_iter<I: IntoIterator<Item = Value>>(items: I) -> List {
-        List::from(items.into_iter().collect::<Vec<Value>>())
+        let buf: Arc<[Value]> = items.into_iter().collect();
+        let len = buf.len();
+        List(Stored::Items { buf, start: 0, len })
     }
 }
 

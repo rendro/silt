@@ -63,18 +63,15 @@ fn no_timer() -> VmError {
 /// or `Send(channel, value)`.
 fn select_arms(ops: List) -> Result<Vec<Arm>, VmError> {
     let arm = |op: Value| {
-        let Value::Variant(name, fields) = op else {
+        let Value::Variant(variant) = op else {
             return None;
         };
-        match <[Value; 2]>::try_from(fields) {
-            Ok([channel, value]) if name.is(bv::SEND) => {
-                Some(Arm::Send(Chan::take(&channel)?.clone(), value))
+        match variant.fields() {
+            [channel, value] if variant.is(bv::SEND) => {
+                Some(Arm::Send(Chan::take(channel)?.clone(), value.clone()))
             }
-            Ok(_) => None,
-            Err(fields) => match fields.as_slice() {
-                [channel] if name.is(bv::RECV) => Some(Arm::Recv(Chan::take(channel)?.clone())),
-                _ => None,
-            },
+            [channel] if variant.is(bv::RECV) => Some(Arm::Recv(Chan::take(channel)?.clone())),
+            _ => None,
         }
     };
     ops.iter()
@@ -184,7 +181,7 @@ pub(crate) mod channel {
                     Outcome::Sent => Value::variant(bv::SENT, vec![]),
                     Outcome::Closed(_) | Outcome::Done => closed(),
                 };
-                Ok(Step::Done(Value::Tuple(vec![
+                Ok(Step::Done(Value::tuple(vec![
                     Value::Channel(channels[arm].clone()),
                     outcome,
                 ])))

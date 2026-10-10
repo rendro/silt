@@ -61,21 +61,22 @@ impl HostShape {
             (HostShape::Map(k, v), Value::Map(entries)) => entries
                 .iter()
                 .all(|(key, value)| k.admits(key) && v.admits(value)),
-            (HostShape::Option(item), Value::Variant(tag, payload)) => match payload.as_slice() {
-                [v] if tag.is(bv::SOME) => item.admits(v),
-                [] => tag.is(bv::NONE),
+            (HostShape::Option(item), Value::Variant(variant)) => match variant.fields() {
+                [v] if variant.is(bv::SOME) => item.admits(v),
+                [] => variant.is(bv::NONE),
                 _ => false,
             },
-            (HostShape::Result(ok, err), Value::Variant(tag, payload)) => {
-                match payload.as_slice() {
-                    [v] if tag.is(bv::OK) => ok.admits(v),
-                    [v] if tag.is(bv::ERR) => err.admits(v),
-                    _ => false,
-                }
-            }
+            (HostShape::Result(ok, err), Value::Variant(variant)) => match variant.fields() {
+                [v] if variant.is(bv::OK) => ok.admits(v),
+                [v] if variant.is(bv::ERR) => err.admits(v),
+                _ => false,
+            },
             (HostShape::Tuple(items), Value::Tuple(values)) => {
                 items.len() == values.len()
-                    && items.iter().zip(values).all(|(item, v)| item.admits(v))
+                    && items
+                        .iter()
+                        .zip(values.iter())
+                        .all(|(item, v)| item.admits(v))
             }
             _ => false,
         }
@@ -201,7 +202,7 @@ impl IntoValue for bool {
 impl FromValue for String {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
-            Value::String(s) => Ok(s.clone()),
+            Value::String(s) => Ok(s.to_string()),
             other => Err(format!("expected String, got {}", other.kind())),
         }
     }
@@ -209,13 +210,13 @@ impl FromValue for String {
 
 impl IntoValue for String {
     fn into_value(self) -> Result<Value, String> {
-        Ok(Value::String(self))
+        Ok(Value::String(self.into()))
     }
 }
 
 impl IntoValue for &str {
     fn into_value(self) -> Result<Value, String> {
-        Ok(Value::String(self.to_string()))
+        Ok(Value::String(self.into()))
     }
 }
 
@@ -262,7 +263,7 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
     fn into_value(self) -> Result<Value, String> {
         Ok(match self {
             Ok(v) => Value::variant(bv::OK, vec![v.into_value()?]),
-            Err(e) => Value::variant(bv::ERR, vec![Value::String(e)]),
+            Err(e) => Value::variant(bv::ERR, vec![Value::String(e.into())]),
         })
     }
 }

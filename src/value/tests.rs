@@ -109,15 +109,15 @@ fn unit_eq() {
 
 #[test]
 fn tuple_eq() {
-    let a = Value::Tuple(vec![Value::Int(1), Value::String("x".into())]);
-    let b = Value::Tuple(vec![Value::Int(1), Value::String("x".into())]);
+    let a = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
+    let b = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
     assert_eq!(a, b);
 }
 
 #[test]
 fn tuple_neq_different_lengths() {
-    let a = Value::Tuple(vec![Value::Int(1)]);
-    let b = Value::Tuple(vec![Value::Int(1), Value::Int(2)]);
+    let a = Value::tuple(vec![Value::Int(1)]);
+    let b = Value::tuple(vec![Value::Int(1), Value::Int(2)]);
     assert_ne!(a, b);
 }
 
@@ -217,7 +217,7 @@ fn variants_of_one_name_in_two_enums_stay_apart() {
     let a = TypeInfo::new_enum(TypeId(DefId(9000)), "A", &[("Red", 0), ("Blue", 0)]);
     let b = TypeInfo::new_enum(TypeId(DefId(9001)), "B", &[("Blue", 0), ("Red", 0)]);
     let value = |ty: &Arc<TypeInfo>, name: &str| {
-        Value::Variant(Tag::named(ty, name).expect("a variant"), vec![])
+        Value::variant(Tag::named(ty, name).expect("a variant"), vec![])
     };
     assert!(value(&a, "Red") < value(&a, "Blue"));
     assert!(value(&b, "Blue") < value(&b, "Red"));
@@ -287,7 +287,7 @@ fn display_empty_list() {
 
 #[test]
 fn display_tuple() {
-    let tuple = Value::Tuple(vec![Value::Int(1), Value::String("x".into())]);
+    let tuple = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
     assert_eq!(format!("{}", tuple), "(1, x)");
 }
 
@@ -545,7 +545,7 @@ fn the_elements_of_a_long_list_that_holds_none_are_not_made() {
     assert_eq!(long.writable(), long.to_vec().map(|_| ()));
     // A value that holds such a list is not written out for a program;
     // a host that formats it gets the ends.
-    let holder = Value::Tuple(vec![Value::Int(1), Value::List(long.clone())]);
+    let holder = Value::tuple(vec![Value::Int(1), Value::List(long.clone())]);
     assert_eq!(holder.writable(), long.writable());
     assert_eq!(holder.to_string(), "(1, [0, 1, 2, ..., 10000000])");
     assert_eq!(holder.format_silt(), "(1, [0, 1, 2, ..., 10000000])");

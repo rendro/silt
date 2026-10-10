@@ -205,7 +205,7 @@ pub(crate) enum Type<'a> {
 impl<'a> Arg<'a> for Type<'a> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
-            Value::PrimitiveDescriptor(name) => Some(Type::Primitive(match name.as_str() {
+            Value::PrimitiveDescriptor(name) => Some(Type::Primitive(match *name {
                 "Int" => FieldType::Int,
                 "Float" => FieldType::Float,
                 "String" => FieldType::String,
@@ -266,7 +266,7 @@ impl Ret for f64 {
 
 impl Ret for String {
     fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(Value::String(self)))
+        Ok(Step::Done(Value::String(self.into())))
     }
 }
 

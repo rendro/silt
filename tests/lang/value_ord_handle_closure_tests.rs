@@ -212,7 +212,7 @@ fn ord_value_types_still_content_compared() {
         Ordering::Less
     );
     assert_eq!(
-        Value::Tuple(vec![Value::Int(1)]).cmp(&Value::Tuple(vec![Value::Int(2)])),
+        Value::tuple(vec![Value::Int(1)]).cmp(&Value::tuple(vec![Value::Int(2)])),
         Ordering::Less
     );
     // Reflexivity for value types.

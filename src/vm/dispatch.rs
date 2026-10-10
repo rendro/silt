@@ -151,7 +151,7 @@ impl Vm {
                 if let Err(too_long) = receiver.writable() {
                     return Some(Err(too_long.into()));
                 }
-                Some(Ok(Value::String(self.display_value(receiver))))
+                Some(Ok(Value::String(self.display_value(receiver).into())))
             }
             "equal" => {
                 if extra_args.len() != 1 {

@@ -158,7 +158,7 @@ fn main() {
 "#;
     assert_eq!(
         run(source, host.clone()),
-        Ok(Value::Tuple(vec![
+        Ok(Value::tuple(vec![
             Value::Int(7),
             Value::Int(1),
             Value::Int(0),
@@ -288,7 +288,7 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
             Ok(Value::variant(bv::SOME, vec![Value::Int(1)]))
         })
         .function("fn pair() -> (Int, Bool)", |_: &[Value]| {
-            Ok(Value::Tuple(vec![Value::Int(1), Value::Bool(true)]))
+            Ok(Value::tuple(vec![Value::Int(1), Value::Bool(true)]))
         });
     let err = run(
         "import mylib\nfn main() { mylib.count() + 1 }",
@@ -312,7 +312,7 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
     // A result of the declared type passes.
     assert_eq!(
         run("import mylib\nfn main() { mylib.pair() }", host),
-        Ok(Value::Tuple(vec![Value::Int(1), Value::Bool(true)]))
+        Ok(Value::tuple(vec![Value::Int(1), Value::Bool(true)]))
     );
 }
 

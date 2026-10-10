@@ -30,7 +30,7 @@ pub use verify::{VerifyError, verify};
 enum ConstantKey {
     Int(i64),
     Bool(bool),
-    String(String),
+    String(Arc<str>),
     Float(u64), // f64::to_bits()
     /// A variant constructor (a pattern's variant test): its type and
     /// ordinal.
@@ -43,7 +43,7 @@ enum ConstantKey {
     /// id.
     Builtin(BuiltinId),
     /// A primitive type's descriptor (`Int` as a value), by its name.
-    Primitive(String),
+    Primitive(&'static str),
 }
 
 // ── Global slots ───────────────────────────────────────────────────
@@ -392,12 +392,12 @@ impl Chunk {
             Value::VariantConstructor(tag) => {
                 Some(ConstantKey::Variant(tag.type_id(), tag.ordinal()))
             }
-            Value::Variant(tag, fields) if fields.is_empty() => {
-                Some(ConstantKey::Nullary(tag.type_id(), tag.ordinal()))
+            Value::Variant(variant) if variant.fields().is_empty() => {
+                Some(ConstantKey::Nullary(variant.type_id(), variant.ordinal()))
             }
             Value::TypeDescriptor(ty) => Some(ConstantKey::Type(ty.id)),
             Value::BuiltinFn(id) => Some(ConstantKey::Builtin(*id)),
-            Value::PrimitiveDescriptor(name) => Some(ConstantKey::Primitive(name.clone())),
+            Value::PrimitiveDescriptor(name) => Some(ConstantKey::Primitive(name)),
             _ => None,
         };
         if let Some(&index) = key.as_ref().and_then(|k| self.constant_dedup.get(k)) {

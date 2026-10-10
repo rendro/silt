@@ -167,13 +167,9 @@ fn test_locals() {
 #[test]
 fn test_string_concat() {
     let script = make_function(|e| {
-        let a = e
-            .constant(Value::String("hello".to_string()), span())
-            .unwrap();
-        let b = e.constant(Value::String(" ".to_string()), span()).unwrap();
-        let c = e
-            .constant(Value::String("world".to_string()), span())
-            .unwrap();
+        let a = e.constant(Value::String("hello".into()), span()).unwrap();
+        let b = e.constant(Value::String(" ".into()), span()).unwrap();
+        let c = e.constant(Value::String("world".into()), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Constant { k: c }, span()).unwrap();
@@ -182,7 +178,7 @@ fn test_string_concat() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::String("hello world".to_string()));
+    assert_eq!(result, Value::String("hello world".into()));
 }
 
 #[test]
@@ -195,7 +191,7 @@ fn test_display_value() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::String("42".to_string()));
+    assert_eq!(result, Value::String("42".into()));
 }
 
 #[test]
@@ -246,7 +242,7 @@ fn test_make_tuple() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Tuple(vec![Value::Int(1), Value::Int(2)]));
+    assert_eq!(result, Value::tuple(vec![Value::Int(1), Value::Int(2)]));
 }
 
 #[test]
@@ -2080,7 +2076,7 @@ fn test_custom_display_trait() {
             }
         "#,
     );
-    assert_eq!(result, Value::String("Circle".to_string()));
+    assert_eq!(result, Value::String("Circle".into()));
 }
 
 #[test]
@@ -2621,7 +2617,7 @@ mod type_confusion {
     }
 
     fn string(s: &str) -> Value {
-        Value::String(s.to_string())
+        Value::String(s.into())
     }
 
     fn name(e: &mut Emitter, s: &str) -> crate::bytecode::Const {
@@ -2867,7 +2863,7 @@ mod type_confusion {
         confused(
             "tuple destructure: expected at least 3 elements, got 1",
             |e| {
-                push(e, Value::Tuple(vec![Value::Int(1)]));
+                push(e, Value::tuple(vec![Value::Int(1)]));
                 e.emit(Asm::DestructTuple { index: 2 }, span()).unwrap();
             },
         );

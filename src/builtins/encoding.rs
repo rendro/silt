@@ -185,7 +185,7 @@ builtins! {
             return err(msg);
         }
         match String::from_utf8(percent_decode_str(s).collect()) {
-            Ok(out) => ok(Value::String(out)),
+            Ok(out) => ok(Value::String(out.into())),
             Err(_) => err("decoded bytes are not valid UTF-8"),
         }
     }
@@ -197,7 +197,7 @@ builtins! {
         let mut out = String::new();
         for (at, pair) in pairs.to_vec()?.iter().enumerate() {
             let pair = match pair {
-                Value::Tuple(pair) => pair.as_slice(),
+                Value::Tuple(pair) => &pair[..],
                 _ => &[],
             };
             let [Value::String(key), Value::String(value)] = pair else {
@@ -238,7 +238,7 @@ builtins! {
                 Ok(val) => val,
                 Err(msg) => return err(format!("pair {i}: value: {msg}")),
             };
-            out.push(Value::Tuple(vec![Value::String(key), Value::String(val)]));
+            out.push(Value::tuple(vec![Value::String(key.into()), Value::String(val.into())]));
         }
         ok(Value::list(out))
     }

@@ -68,7 +68,7 @@ builtins! {
 
     fn split(s: &str, separator: &str) -> Vec<Value> {
         s.split(separator)
-            .map(|part| Value::String(part.to_string()))
+            .map(|part| Value::String(part.into()))
             .collect()
     }
 
@@ -155,7 +155,7 @@ builtins! {
     }
 
     fn chars(s: &str) -> Vec<Value> {
-        s.chars().map(|c| Value::String(c.to_string())).collect()
+        s.chars().map(|c| Value::String(c.encode_utf8(&mut [0; 4]).into())).collect()
     }
 
     fn repeat(s: &str, n: i64) -> Result<String, VmError> {
@@ -196,9 +196,9 @@ builtins! {
             )));
         };
         let (left, right) = s.split_at(boundary);
-        Ok(Value::Tuple(vec![
-            Value::String(left.to_string()),
-            Value::String(right.to_string()),
+        Ok(Value::tuple(vec![
+            Value::String(left.into()),
+            Value::String(right.into()),
         ]))
     }
 
@@ -220,7 +220,7 @@ builtins! {
                 break;
             }
             let trimmed = part.strip_suffix('\r').unwrap_or(part);
-            lines.push(Value::String(trimmed.to_string()));
+            lines.push(Value::String(trimmed.into()));
         }
         lines
     }

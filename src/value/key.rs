@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use super::list::Elements;
-use super::{List, Value};
+use super::{List, Value, Variant};
 use crate::typeinfo::ty;
 
 /// Compare a named field in two record field maps.
@@ -106,6 +106,36 @@ impl Hash for List {
     }
 }
 
+/// Two variants are equal if they are the same variant of the same
+/// type and their fields are equal.
+impl PartialEq for Variant {
+    fn eq(&self, other: &Variant) -> bool {
+        self.ordinal() == other.ordinal()
+            && self.type_id() == other.type_id()
+            && self.fields() == other.fields()
+    }
+}
+
+impl Eq for Variant {}
+
+impl PartialOrd for Variant {
+    fn partial_cmp(&self, other: &Variant) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Variants of one type order by declaration, then by their fields;
+/// variants of two types (which a program cannot compare) by their
+/// types' ids.
+impl Ord for Variant {
+    fn cmp(&self, other: &Variant) -> Ordering {
+        match (self.type_id(), self.ordinal()).cmp(&(other.type_id(), other.ordinal())) {
+            Ordering::Equal => self.fields().cmp(other.fields()),
+            unequal => unequal,
+        }
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -114,7 +144,7 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
-            (Value::Variant(na, fa), Value::Variant(nb, fb)) => na == nb && fa == fb,
+            (Value::Variant(a), Value::Variant(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
@@ -260,9 +290,7 @@ impl Ord for Value {
                     })
                 }
             }
-            // Variants of one enum order by declaration, then by their
-            // fields (see `Tag`'s `Ord`).
-            (Value::Variant(ta, fa), Value::Variant(tb, fb)) => ta.cmp(tb).then_with(|| fa.cmp(fb)),
+            (Value::Variant(a), Value::Variant(b)) => a.cmp(b),
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id.cmp(&b.id),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
             (Value::Channel(a), Value::Channel(b)) => a.id().cmp(&b.id()),
@@ -329,7 +357,7 @@ impl Hash for Value {
             Value::Tuple(vs) => {
                 state.write_u8(6);
                 vs.len().hash(state);
-                for v in vs {
+                for v in vs.iter() {
                     v.hash(state);
                 }
             }
@@ -363,9 +391,11 @@ impl Hash for Value {
                     v.hash(state);
                 }
             }
-            Value::Variant(tag, fields) => {
+            Value::Variant(variant) => {
                 state.write_u8(10);
-                tag.hash(state);
+                variant.type_id().hash(state);
+                variant.ordinal().hash(state);
+                let fields = variant.fields();
                 fields.len().hash(state);
                 for f in fields {
                     f.hash(state);

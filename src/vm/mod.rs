@@ -653,7 +653,7 @@ impl Vm {
 
     pub(crate) fn display_value(&self, val: &Value) -> String {
         match val {
-            Value::String(s) => s.clone(),
+            Value::String(s) => s.to_string(),
             Value::Int(n) => n.to_string(),
             Value::Bool(true) => "true".to_string(),
             Value::Bool(false) => "false".to_string(),
@@ -738,7 +738,7 @@ impl Vm {
             // diagnostic. Each is a deliberate alias documented above.
             Value::Record(ty, _) if ty.is_anon() => "an anonymous record".to_string(),
             Value::Record(ty, _) => ty.name.clone(),
-            Value::Variant(tag, _) => tag.ty().name.clone(),
+            Value::Variant(variant) => variant.ty().name.clone(),
             Value::VariantConstructor(tag) => {
                 format!("VariantConstructor `{tag}`")
             }

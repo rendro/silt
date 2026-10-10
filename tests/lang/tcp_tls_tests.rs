@@ -126,7 +126,7 @@ fn main() {{
     // or a clean cert/key parse path. Both indicate the cert PEM was
     // accepted — that's the key invariant for accept_tls.
     assert!(
-        s.starts_with("handshake-failed:") || s == "ok",
+        s.starts_with("handshake-failed:") || s == "ok".into(),
         "expected handshake-failed or ok, got: {s:?}"
     );
 }
