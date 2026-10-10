@@ -4,8 +4,6 @@
 //! bodies are not typed (`tcp`, `stream`); a typed body has none
 //! (`super::typed`).
 
-use std::sync::Arc;
-
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
@@ -28,7 +26,11 @@ pub(super) fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
     }
 }
 
-pub(super) fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>, VmError> {
+#[cfg(feature = "tcp")]
+pub(super) fn require_bytes(
+    arg: &Value,
+    fn_label: &str,
+) -> Result<std::sync::Arc<Vec<u8>>, VmError> {
     match arg {
         Value::Bytes(b) => Ok(b.clone()),
         other => Err(VmError::new(format!(

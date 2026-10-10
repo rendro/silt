@@ -319,8 +319,8 @@ impl Module {
 /// untyped entry point of a module whose rows are not all typed, the
 /// body of each row that has none of its own (`u`), which gives a
 /// value; `steps` is one that gives a [`Step`], of a module with
-/// functions that call functions or wait. With a `feature`, it is
-/// compiled only when the feature is built.
+/// functions that call functions or wait. With a `feature`, it and
+/// the rows' bodies are compiled only when the feature is built.
 macro_rules! module {
     (
         name: $name:literal,
@@ -333,7 +333,9 @@ macro_rules! module {
         $(shares: $shares:expr,)?
         $(call: $call:expr,)?
         $(steps: $steps:expr,)?
-        rows: [$($row:expr),* $(,)?] $(,)?
+        rows: [$(
+            $row:ident ( $($arg:expr),* $(,)? ) $(. $with:ident ( $($with_arg:expr),* ))*
+        ),* $(,)?] $(,)?
     ) => {{
         #[allow(unused_mut, unused_assignments)]
         let mut feature: Option<&'static str> = None;
@@ -361,6 +363,11 @@ macro_rules! module {
         #[allow(unused_mut, unused_assignments)]
         let mut shares: &'static [(&'static str, &'static str)] = &[];
         $(shares = &$shares;)?
+        let rows;
+        module!(
+            @rows rows, [$($feature)?],
+            [$({ $row ($($arg),*) [$(. $with ($($with_arg),*))*] })*]
+        );
         build_module(
             $name,
             (feature, built),
@@ -369,9 +376,28 @@ macro_rules! module {
             (types, derives, opaque),
             error,
             shares,
-            vec![$($row),*],
+            rows,
         )
     }};
+    (@rows $slot:ident, [], [$({ $row:ident ($($arg:expr),*) [$($with:tt)*] })*]) => {
+        $slot = vec![$($row($($arg),*) $($with)*),*];
+    };
+    // The rows of a module with a feature: where it is not built their
+    // bodies are not compiled, and each row is its signature and its
+    // summary.
+    (
+        @rows $slot:ident, [$feature:literal],
+        [$({ $row:ident ($signature:expr, $summary:expr $(, $body:expr)?) [$($with:tt)*] })*]
+    ) => {
+        #[cfg(feature = $feature)]
+        {
+            $slot = vec![$($row($signature, $summary $(, $body)?) $($with)*),*];
+        }
+        #[cfg(not(feature = $feature))]
+        {
+            $slot = vec![$(u($signature, $summary) $($with)*),*];
+        }
+    };
     (@call $slot:ident, [], [], []) => {};
     (@call $slot:ident, [], [$call:expr], []) => {
         $slot = Some(|vm, name, args| ($call)(vm, name, args).map(crate::vm::Step::Done));
